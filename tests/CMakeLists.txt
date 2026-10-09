@@ -157,6 +157,12 @@ add_test(NAME storage_adoption_contract COMMAND gti_storage_adoption_tests)
 add_executable(gti_object_lifetime_tests object_lifetime_tests.cpp)
 target_link_libraries(gti_object_lifetime_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME object_lifetime_contract COMMAND gti_object_lifetime_tests)
+add_executable(gti_text_address_bridge_tests text_address_bridge_tests.cpp)
+target_link_libraries(gti_text_address_bridge_tests PRIVATE gti_compiler gti_cpp_backend)
+add_test(NAME text_address_bridge_contract COMMAND gti_text_address_bridge_tests)
+add_executable(gti_source_prefix_owner_tests source_prefix_owner_tests.cpp)
+target_link_libraries(gti_source_prefix_owner_tests PRIVATE gti_compiler gti_cpp_backend)
+add_test(NAME source_prefix_owner_contract COMMAND gti_source_prefix_owner_tests)
 add_executable(gti_uninitialized_carrier_tests uninitialized_carrier_tests.cpp)
 target_link_libraries(gti_uninitialized_carrier_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME uninitialized_carrier_contract COMMAND gti_uninitialized_carrier_tests)
@@ -296,6 +302,11 @@ add_test(NAME embedding_foundation COMMAND gti_embedding_foundation_tests)
 add_executable("gti_runtime_failure_helper"
                "${PROJECT_SOURCE_DIR}/tests/runtime_failure_helper.cpp")
 target_link_libraries("gti_runtime_failure_helper"
+                      PRIVATE gti_runtime Threads::Threads)
+
+add_executable("gti_allocation_abort_helper"
+               "${PROJECT_SOURCE_DIR}/tests/allocation_abort_helper.cpp")
+target_link_libraries("gti_allocation_abort_helper"
                       PRIVATE gti_runtime Threads::Threads)
 
 add_executable("gti_compiler_library_smoke"
@@ -447,6 +458,18 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME source_storage_drain_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_storage_drain_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(source_storage_drain_runtime PROPERTIES TIMEOUT 240)
+  add_test(NAME source_prefix_owner_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_prefix_owner_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(source_prefix_owner_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME source_resource_prefix_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_resource_prefix_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(source_resource_prefix_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME source_text_address_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_text_address_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(source_text_address_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME source_prefix_string_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_prefix_string_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(source_prefix_string_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME inherited_cleanup_context_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/inherited_cleanup_context_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(inherited_cleanup_context_runtime PROPERTIES TIMEOUT 300)
@@ -455,6 +478,10 @@ if(Python3_Interpreter_FOUND)
       $<TARGET_FILE:gti> "${CMAKE_CXX_COMPILER}" $<TARGET_FILE:gti_runtime>
       $<TARGET_FILE:gti_runtime_thread_tests>)
   set_tests_properties(cleanup_context_scope_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME many_fallible_scope_guards_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/many_fallible_scope_guards_runtime_test.py"
+      $<TARGET_FILE:gti>)
+  set_tests_properties(many_fallible_scope_guards_runtime PROPERTIES TIMEOUT 300)
 
   add_test(NAME object_destroy_scalar_runtime
            COMMAND ${Python3_EXECUTABLE}
@@ -645,6 +672,23 @@ add_executable("gti_optimizer_safety_tests"
                "${PROJECT_SOURCE_DIR}/tests/optimizer_safety_tests.cpp")
 target_link_libraries("gti_optimizer_safety_tests" PRIVATE gti_compiler)
 add_test(NAME optimizer_safety COMMAND gti_optimizer_safety_tests)
+add_executable(gti_optimizer_raw_context_tests optimizer_raw_context_tests.cpp)
+target_link_libraries(gti_optimizer_raw_context_tests PRIVATE gti_compiler)
+add_test(NAME optimizer_raw_context COMMAND gti_optimizer_raw_context_tests)
+add_executable(gti_optimizer_intrinsic_context_tests optimizer_intrinsic_context_tests.cpp)
+target_link_libraries(gti_optimizer_intrinsic_context_tests PRIVATE gti_compiler)
+add_test(NAME optimizer_intrinsic_context COMMAND gti_optimizer_intrinsic_context_tests)
+add_executable(gti_optimizer_object_context_tests optimizer_object_context_tests.cpp)
+target_link_libraries(gti_optimizer_object_context_tests PRIVATE gti_compiler)
+add_test(NAME optimizer_object_context COMMAND gti_optimizer_object_context_tests)
+add_test(NAME optimizer_object_context_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/optimizer_object_context_runtime_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(optimizer_object_context_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME optimizer_raw_context_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/optimizer_raw_context_runtime_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(optimizer_raw_context_runtime PROPERTIES TIMEOUT 300)
 
 add_executable("gti_optimizer_analysis_tests"
                "${PROJECT_SOURCE_DIR}/tests/optimizer_analysis_tests.cpp")
@@ -1328,6 +1372,12 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti_runtime_failure_helper>"
   )
   add_test(
+    NAME allocation_abort_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/allocation_abort_runtime_test.py"
+            "$<TARGET_FILE:gti_allocation_abort_helper>"
+  )
+  add_test(
     NAME panic_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/panic_runtime_test.py"
@@ -1467,6 +1517,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(unique_scalar_allocation_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME process_allocation_elision
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/process_allocation_elision_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(process_allocation_elision PROPERTIES TIMEOUT 300)
   add_test(
     NAME unique_class_allocation_runtime
     COMMAND "${Python3_EXECUTABLE}"

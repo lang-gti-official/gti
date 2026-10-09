@@ -27,9 +27,10 @@ int32_t fill(std::resource_ref<probe::Bump> first, std::resource_ref<probe::Bump
   for (mut int32_t i = 0; i < 9; i++) {
     cells.emplace_back(std::string("cell"), i);
   }
-  // Growth 4 -> 8 -> 16 released the two earlier object/metadata pairs.
+  // Growth 4 -> 8 -> 16 released the two earlier object regions. Prefix
+  // ownership tracks one length and needs no per-slot metadata allocation.
   if (cells.size() != std::size_t(9) || cells.capacity() != std::size_t(16)) { return 1; }
-  if (first.get().live() != std::size_t(2)) { return 2; }
+  if (first.get().live() != std::size_t(1)) { return 2; }
   mut int32_t sum = 0;
   for (auto& cell : cells) { sum += cell.value(); }
   if (sum != 36) { return 3; }
@@ -64,9 +65,9 @@ int32_t fill(std::resource_ref<probe::Bump> first, std::resource_ref<probe::Bump
 }
 
 int main() {
-  // Each nonempty storage requests objects and then one live-state byte per slot.
-  // Three growth pairs plus one staging pair, and one parked pair respectively.
-  probe::Bump first{8, false};
+  // Three prefix object regions plus one sparse object/metadata pair. Sparse
+  // storage on the second resource still needs its separate live-state region.
+  probe::Bump first{5, false};
   probe::Bump second{2, false};
   unsafe {
     // Both resources hand out disjoint, aligned regions of their own inline
@@ -79,10 +80,10 @@ int main() {
   // 15 live cells + 3 parked cells were destroyed; plus 2 earlier drops.
   if (drops != 20) { return 20; }
   if (first.live() != std::size_t(0) || second.live() != std::size_t(0)) { return 21; }
-  if (first.issued() != uint64_t(8) || second.issued() != uint64_t(2)) { return 22; }
+  if (first.issued() != uint64_t(5) || second.issued() != uint64_t(2)) { return 22; }
   // Original descriptors, not alignment gaps, determine released byte counts.
   uint64_t bytes_per_slot = std::layout_of<Cell>().bytes + uint64_t(1);
-  if (first.released_bytes() != uint64_t(31) * bytes_per_slot ||
+  if (first.released_bytes() != uint64_t(31) * std::layout_of<Cell>().bytes + uint64_t(3) ||
       second.released_bytes() != uint64_t(4) * bytes_per_slot) { return 23; }
   std::println("bump resource ok");
   return 0;

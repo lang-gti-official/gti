@@ -241,6 +241,17 @@ GTI_FAILURE_NORETURN void gti_rt_failure_terminate_cleanup_v2(
     const gti_failure_artifact_descriptor_v1 *primary_artifact,
     const gti_failure_artifact_descriptor_v1 *secondary_artifact);
 
+/* Infallible allocation exhaustion is not a containable failure. Call at the
+ * allocation detector, BEFORE cleanup or managed-worker handoff. This performs
+ * a best-effort, allocation-free GTI-R0011 report and aborts the entire
+ * process. It never invokes observers, flushes streams, runs cleanup, or waits
+ * for a competing terminal report. An invalid record falls back to a
+ * descriptor-free allocation report; it cannot select another failure family.
+ */
+GTI_FAILURE_NORETURN void gti_rt_failure_abort_allocation_v2(
+    const gti_failure_record_v2 *record,
+    const gti_failure_artifact_descriptor_v1 *artifact);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,0 +1,50 @@
+#include <std/memory>
+
+// The range's checked owner is distinct from the synthesized iterator shell.
+// No standard-library container or private prefix capability is involved.
+class Bytes {
+  int value = 7;
+public:
+  Bytes() {}
+  int& read() { unsafe { return std::assume_ref(&this.value, this); } }
+};
+class Backing {
+  Bytes bytes;
+public:
+  Backing() {}
+  Bytes& prefix() { return this.bytes; }
+};
+class Stop {
+  int final_position;
+public:
+  Stop(int value) : final_position(value) {}
+  int position() { return this.final_position; }
+};
+class Cursor {
+  Bytes& bytes;
+  mut int position;
+public:
+  Cursor(Bytes& bytes, int position) : bytes(bytes), position(position) {}
+  int& operator*() { return this.bytes.read(); }
+  void operator++() mut { this.position++; }
+  bool operator!=(Stop end) { return this.position != end.position(); }
+};
+class Range {
+  Backing backing;
+public:
+  Range() {}
+  Cursor begin() { return Cursor(this.backing.prefix(), 0); }
+  Stop end() { return Stop(1); }
+};
+int ordinary() {
+  Range values{};
+  mut int sum = 0;
+  for (auto& value : values) { sum += value; }
+  return sum;
+}
+int main() {
+  expected<Range, int> values = Range();
+  mut int sum = 0;
+  for (auto& value : values.value()) { sum += value; }
+  return sum + ordinary() - 14;
+}

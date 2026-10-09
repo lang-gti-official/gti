@@ -1,0 +1,38 @@
+const int* relay_address(const int* address) { return address; }
+int* relay_mutable_address(int* address) { return address; }
+int relay_integer(int value) { return value; }
+unsafe void write_max(int* address) { unsafe { *address = 2147483647; } }
+
+class StageGauge {
+public:
+  mut int value = 7;
+  StageGauge() {}
+  int after_stage() {
+    unsafe {
+      if (relay_address(&this.value + 0) != &this.value) return 0;
+    }
+    return this.value + 1;
+  }
+  int after_raw_read() {
+    unsafe {
+      if (relay_integer(*(&this.value + 0)) != 7) return 0;
+    }
+    return this.value + 1;
+  }
+  int after_raw_write() mut {
+    unsafe { *relay_mutable_address(&this.value + 0) = 2147483647; }
+    return this.value + 1;
+  }
+  int after_unsafe_call() mut {
+    unsafe { write_max(&this.value + 0); }
+    return this.value + 1;
+  }
+};
+
+int main() {
+  mut StageGauge gauge{};
+  if (gauge.after_stage() != 8) return 1;
+  if (gauge.after_raw_read() != 8) return 2;
+  if (true) return gauge.after_raw_write();
+  return gauge.after_unsafe_call();
+}

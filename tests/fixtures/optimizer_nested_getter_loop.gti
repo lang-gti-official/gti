@@ -1,0 +1,54 @@
+#include <std/vector>
+
+class Tick {
+  mut uint64_t count = uint64_t(0);
+public:
+  Tick() {}
+  uint64_t read() { return this.count; }
+  void set(uint64_t value) mut { this.count = value; }
+  void step() mut {
+    if (this.count < uint64_t(4)) { this.count++; }
+  }
+};
+
+class InnerCounter {
+  mut Tick tick{};
+public:
+  InnerCounter() {}
+  uint64_t read() { return this.tick.read(); }
+  void step() mut { this.tick.step(); }
+  void set(uint64_t value) mut { this.tick.set(value); }
+};
+
+class NestedCounter {
+  mut InnerCounter counter{};
+public:
+  NestedCounter(uint64_t target) {
+    while (this.counter.read() < target) { this.counter.step(); }
+  }
+  uint64_t read() { return this.counter.read(); }
+  void set(uint64_t value) mut { this.counter.set(value); }
+};
+
+uint64_t observe_nested_counter(NestedCounter& counter) {
+  return counter.read();
+}
+uint64_t observe_vector_length(std::vector<int>& values) {
+  return values.size();
+}
+
+uint64_t changed_nested(mut NestedCounter& counter) {
+  if (counter.read() < uint64_t(5)) {
+    counter.set(uint64_t(18446744073709551615));
+    return counter.read() + uint64_t(1);
+  }
+  return uint64_t(0);
+}
+
+int main() {
+  mut NestedCounter counter{uint64_t(4)};
+  if (observe_nested_counter(counter) != uint64_t(4)) return 1;
+  std::vector<int> values{uint64_t(4)};
+  if (observe_vector_length(values) != uint64_t(4)) return 2;
+  return int(changed_nested(counter));
+}

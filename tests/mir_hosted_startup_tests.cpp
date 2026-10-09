@@ -432,10 +432,12 @@ void testOwnedScheduleAndPrinter() {
           !body->failureRecords.empty() &&
           countTerminators(lang::MirTerminatorKind::Invoke) ==
               body->failureRecords.size() &&
-          countTerminators(lang::MirTerminatorKind::ContainFailure) ==
+          countTerminators(lang::MirTerminatorKind::ContainFailure) +
+                  countTerminators(
+                      lang::MirTerminatorKind::TerminateCleanupFailure) ==
               body->failureRecords.size(),
-      "every failure-capable startup stage should route one contained "
-      "Stage-E failure record");
+      "every failure-capable startup stage should route one contained primary "
+      "or terminal secondary Stage-E failure record");
 
   const auto readView = std::find_if(
       plan->operations.begin(), plan->operations.end(),
@@ -470,7 +472,7 @@ void testOwnedScheduleAndPrinter() {
          "effects");
 
   const std::string dump = lang::MirPrinter().print(owned.mir);
-  expect(dump.starts_with("mir-v96 valid=") &&
+  expect(dump.starts_with("mir-v97 valid=") &&
              dump.find("hosted-startup kind=") != std::string::npos &&
              dump.find("hosted-operation @") != std::string::npos &&
              dump.find("hosted-startup-body") != std::string::npos &&

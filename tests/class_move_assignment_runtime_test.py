@@ -14,11 +14,9 @@ INCOMING_CLEANUP_CHECK = (
 )
 
 
-def cleanup_scope(block: str) -> str:
-    ordinal = re.escape(block.removeprefix("__gti_mir_bb_"))
+def cleanup_scope(_block: str) -> str:
     return (
-        r"::gti_internal::backend::mir_failure_cleanup_scope_v1 "
-        r"__gti_mir_cleanup_context_" + ordinal + r"\(__gti_mir_failure_record, "
+        r"__gti_mir_cleanup_context\.activate\(__gti_mir_failure_record, "
         r"&::gti_internal::backend::__gti_failure_artifact_descriptor_v1\);\s*"
     )
 
@@ -97,12 +95,9 @@ def main() -> int:
             r"(?P<slot>__gti_mir_p_\d+)\.construct\(std::move\(__gti_mir_p_\d+\.get\(\)\)\);\n"
             r"\s*(?P<status>__gti_mir_replacement_success_\d+) = [^\n]+"
             r"\}\((?P<destination>__gti_mir_p_\d+)\.get\(\)\);\n"
-            r"(?:\s*if \((?P=status)\) \{\s*goto (?P<success>__gti_mir_bb_\d+);"
+            r"\s*if \((?P=status)\) \{\s*goto (?P<success>__gti_mir_bb_\d+);"
             r"\s*\} else \{\s*" + INCOMING_CLEANUP_CHECK +
-            r"\s*goto (?P<failure>__gti_mir_bb_\d+);\s*\}\s*\}"
-            r"\s*(?P=success): \{\n)?"
-            r"\s*(?P=destination)\.get\(\) = std::move\((?P=slot)\.get\(\)\);\n"
-            r"\s*(?P=slot)\.destroy\(\);"
+            r"\s*goto (?P<failure>__gti_mir_bb_\d+);\s*\}"
         )
         schedule = list(schedule_pattern.finditer(generated))
         if len(schedule) != 3:
@@ -121,15 +116,28 @@ def main() -> int:
             start = generated.rfind("// GTI verified-MIR body:", 0, matched.start())
             end = generated.find("// GTI verified-MIR body:", matched.end())
             body = generated[start:end if end != -1 else len(generated)]
+            # Source-owner failure continuations can intervene in printed
+            # order. Bind publication to the exact successful branch label.
+            publication_pattern = re.compile(
+                re.escape(matched.group("success")) + r": \{\s*" +
+                re.escape(matched.group("destination")) +
+                r"\.get\(\) = std::move\(" + re.escape(matched.group("slot")) +
+                r"\.get\(\)\);\s*" + re.escape(matched.group("slot")) +
+                r"\.destroy\(\);"
+            )
+            if publication_pattern.search(body) is None:
+                sys.stderr.write("move replacement lost success-only publication and immediate shell retirement\n")
+                return 1
             rollback_pattern = re.compile(
                 re.escape(failure) + r": \{\s*" + cleanup_scope(failure) +
                 r"// GTI MIR failure-record \d+ cleanup\s*"
+                r"std::memset\(&__gti_mir_cleanup_failure_record, 0, sizeof\(__gti_mir_cleanup_failure_record\)\);\s*"
                 r"__gti_mir_drop_success_\d+ = " + re.escape(matched.group("slot")) +
-                r"\.destroy_with_failure\("
+                r"\.(?:destroy_with_failure|template destroy_unique_aggregate_with_failure<\d+>)\("
             )
             rollback = rollback_pattern.search(body)
             drops = re.findall(re.escape(matched.group("slot")) +
-                               r"\.destroy(?:_with_failure)?\(", body)
+                               r"\.(?:destroy|destroy_with_failure|template destroy_unique_aggregate_with_failure<\d+>)\(", body)
             if rollback is None or len(drops) != 2:
                 sys.stderr.write("fallible move replacement lost its exclusive source-slot rollback\n")
                 return 1

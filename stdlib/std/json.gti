@@ -1655,7 +1655,7 @@ expected<value, error> encode<T>(T& input) {
 }
 
 expected<std::vector<T>, error> decode_array<std::movable T>(
-    string_view source) {
+    string_view source) requires std::vector_element<T> {
   value document = ?parse(source);
   if (!document.is_array()) {
     return unexpected(error(errc::type_mismatch));

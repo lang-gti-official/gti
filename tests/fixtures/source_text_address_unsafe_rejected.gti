@@ -1,0 +1,6 @@
+#include <std/memory>
+int main() {
+  char owner = 'a';
+  std::string_view view = std::assume_string_view(&owner, uint64_t(1), owner);
+  return 0;
+}

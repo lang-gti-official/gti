@@ -13,10 +13,11 @@ uint64_t swap_allocation_count();
 int main() {
   mut std::vector<int32_t> a = std::vector<int32_t>();
   mut std::vector<int32_t> b = std::vector<int32_t>();
+  swap_observe_allocations();
   a.reserve(std::size_t(17));
   b.reserve(std::size_t(5));
   // Positive control: the observer must see actual storage allocations.
-  if (swap_allocation_count() < uint64_t(2)) { return 15; }
+  if (swap_allocation_count() != uint64_t(2)) { return 15; }
   a.push_back(1);
   a.push_back(2);
   b.push_back(9);
@@ -54,10 +55,12 @@ int main() {
   auto moved = std::move(empty);
   if (*moved.front() != 42) { return 7; }
 
+  swap_observe_allocations();
   mut std::string x = std::string("a\0b");
   mut std::string y = std::string("longer");
   x.reserve(std::size_t(19));
   y.reserve(std::size_t(31));
+  if (swap_allocation_count() != uint64_t(4)) { return 17; }
   swap_observe_allocations();
   for (mut int index = 0; index < 101; index++) { x.swap(y); }
   if (swap_allocation_count() != uint64_t(0) || x != "longer" ||

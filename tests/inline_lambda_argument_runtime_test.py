@@ -21,6 +21,16 @@ def fail(label: str, process: subprocess.CompletedProcess[str]) -> int:
 
 
 def validate_emission(generated: str, mode: str) -> bool:
+    # MIR place IDs are body-local. Source-defined storage introduces more
+    # bodies using the same slot numbers; they are not extra closure transfers.
+    entries = list(re.finditer(
+        r"^  bool __gti_entry__gti_mir_failure\([^\n]*\) \{\n"
+        r"(?P<body>.*?)^  \}\n", generated, re.MULTILINE | re.DOTALL,
+    ))
+    if len(entries) != 1:
+        sys.stderr.write(f"{mode} lost the exact entry failure body\n")
+        return False
+    generated = entries[0].group("body")
     stages = list(re.finditer(
         r"(?P<slot>__gti_mir_p_\d+)\.construct_from\(\[&\]\(\) \{ return "
         r"__gti_mir_closure_factory_(?P<identity>\d+)\((?P<capture>[^\n]+)\); \}\);",

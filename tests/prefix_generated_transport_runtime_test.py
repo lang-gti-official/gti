@@ -25,8 +25,13 @@ def main():
     cleanup = f"{fixture.name}:{line(fixture, '// token cleanup')}"
     cases = []
     for scenario in range(8):
-        marker = "// direct capacity" if scenario % 2 == 0 else "// pack capacity"
-        capacity = f"<std/prefix_constructor_test>:{line(helper, marker)}"
+        memory = fixture.parents[2] / "stdlib/std/memory.gti"
+        method = "void append_value(T value) mut" if scenario % 2 == 0 else "void append<Args...>(Args... args) mut"
+        memory_lines = memory.read_text().splitlines()
+        start = next(index for index, text in enumerate(memory_lines) if method in text)
+        capacity_line = next(index + 1 for index in range(start, len(memory_lines))
+                             if "require_relocation_capacity(this.live < this.slots)" in memory_lines[index])
+        capacity = f"<std/memory>:{capacity_line}"
         if scenario < 2:
             error = f"{capacity}: runtime error[GTI-R0010]: invalid_storage_state in relocation_capacity\n"
             cases.append((70, "89\n900\n", error))

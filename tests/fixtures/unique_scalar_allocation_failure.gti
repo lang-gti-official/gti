@@ -1,6 +1,9 @@
 #include <std/memory>
 
-extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+extern "C" {
+  void gti_test_fail_scalar_allocation(int32_t enabled);
+  int32_t gti_test_observe_scalar_allocation(const int32_t* value);
+}
 
 class marker {
   int32_t tag;
@@ -18,7 +21,7 @@ int32_t allocate(marker parameter) {
   marker inner = marker(2);
   unsafe { gti_test_fail_scalar_allocation(1); }
   auto owner = std::make_unique<int32_t>(produce_scalar());
-  return *owner;
+  unsafe { return gti_test_observe_scalar_allocation(&*owner); }
 }
 
 int main() {

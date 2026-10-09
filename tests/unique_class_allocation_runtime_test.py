@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 
+from allocation_abort_runtime_test import ABORT_STATUS
 
 def run(command):
     environment = os.environ.copy()
@@ -31,8 +32,6 @@ def main():
                             if "result(9 / divisor" in line)
     field_site = next(i for i, line in enumerate(source.read_text().splitlines(), 1)
                       if "5 / field_divisor" in line)
-    cleanup_site = next(i for i, line in enumerate(source.read_text().splitlines(), 1)
-                        if "return 7 / divisor;" in line)
     modes = [(f"{standard}-{level}", [f"-{level}", "--std", standard])
              for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
     modes.append(("sanitized", ["-O1", "--std", "c++23"]))
@@ -51,10 +50,12 @@ def main():
             assert "mir_object_allocation_v1<::__gti_program::Value>" in generated
             assert ".allocate();" in generated and ".release());" in generated
             assert "::backend::make_unique<::__gti_program::Value>" not in generated
+            assert "mir_object_allocation_v1<::__gti_program::Implicit>" in generated
+            assert "::backend::make_unique<::__gti_program::Implicit>" not in generated
             # Constructor parameters outlive completed fields on failure.
             # The enclosing Value destructor runs only after success.
             cases = [([], (0, "2\n6\n5\n4\n3\n1\n", "")),
-                     (["oom"], (70, "2\n3\n1\n",
+                     (["oom"], (ABORT_STATUS, "",
                       f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
                       "allocation_failure in unique_owner\n")),
                      (["constructor", "failure"], (70, "5\n4\n2\n3\n1\n",
@@ -64,10 +65,13 @@ def main():
                       (70, "4\n2\n3\n1\n",
                        f"{source.name}:{field_site}: runtime error[GTI-R0002]: "
                        "division_by_zero in integer_division\n")),
-                     (["secondary", "allocation", "failure"], (70, "cleanup\n",
-                      f"<std/memory>:{allocation_site}: runtime error[GTI-R0014]: "
-                      "failure_during_cleanup; primary [GTI-R0002] at "
-                      f"{source.name}:{cleanup_site}; secondary [GTI-R0011]\n"))]
+                     (["secondary", "allocation", "failure"], (ABORT_STATUS, "cleanup\n",
+                      f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
+                       "allocation_failure in unique_owner\n")),
+                     (["implicit"] * 5, (ABORT_STATUS, "",
+                      f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
+                      "allocation_failure in unique_owner\n")),
+                     (["implicit"] * 6, (0, "88\n77\n", ""))]
             for arguments, expected in cases:
                 result = run([str(binary), *arguments])
                 assert (result.returncode, result.stdout, result.stderr) == expected, (

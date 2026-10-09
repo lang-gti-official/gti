@@ -1338,6 +1338,27 @@ auto SemanticVisitor::Impl::activeAtomicConstraints(
 auto SemanticVisitor::Impl::structuralRequirementAvailable(
     StructuralConstraintKind kind,
     std::span<const SemanticType> arguments) const -> bool {
+  // These declaration-bound capabilities admit only complete, borrow-free
+  // scalar values. Their generic uses retain those structural guarantees;
+  // movement/copying alone says nothing about layout or stored borrows.
+  if ((kind == StructuralConstraintKind::ObjectLayout ||
+       kind == StructuralConstraintKind::IndependentObject) &&
+      arguments.size() == 1) {
+    const auto constraints = constraintOf(arguments.front());
+    if (!invalidConstraintSet(constraints)) {
+      for (const auto scalar : {GenericConstraintKind::Numeric,
+                                GenericConstraintKind::SignedNumeric,
+                                GenericConstraintKind::Integral,
+                                GenericConstraintKind::SignedIntegral,
+                                GenericConstraintKind::UnsignedIntegral,
+                                GenericConstraintKind::FloatingPoint,
+                                GenericConstraintKind::AtomicScalar,
+                                GenericConstraintKind::IntegralEnum}) {
+        if (hasConstraint(constraints, scalar))
+          return true;
+      }
+    }
+  }
   const std::vector<ExpandedStructuralRequirement> active =
       activeStructuralRequirements();
   const auto callableCapability = [](StructuralConstraintKind candidate)
@@ -2726,15 +2747,16 @@ auto SemanticVisitor::Impl::containsExactType(const SemanticType &type,
 }
 
 auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
-    const SemanticType &type, std::unordered_set<ClassId> &visiting) const
-    -> bool {
+    const SemanticType &type, std::unordered_set<ClassId> &visiting,
+    bool reviewedRawState) const -> bool {
   if (type.kind == SemanticType::FunctionItem) {
     // Parameters and results describe the selected target; they are not
     // stored state in the zero-state function-item value.
     return false;
   }
+  if (type.kind == SemanticType::RawPointer)
+    return !reviewedRawState;
   if (type.kind == SemanticType::Reference ||
-      type.kind == SemanticType::RawPointer ||
       type.kind == SemanticType::StringView) {
     return true;
   }
@@ -2744,20 +2766,32 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
                        type.lambdaCaptureTypes().end(),
                        [&](const SemanticType &capture) {
                          return containsDisallowedCallableCaptureState(
-                             capture, visiting);
+                             capture, visiting, reviewedRawState);
                        });
   }
   if (type.kind == SemanticType::Class && type.classId != 0 &&
       type.classId <= classes.size()) {
+    const ClassInfo &owner = classInfo(type.classId);
+    // A reviewed transfer assertion covers the wrapper's raw implementation
+    // state, not just native thread entry. Reopening that implementation here
+    // would reject source-defined owners which safely move their allocations.
+    // It cannot erase a tracked borrow or make a false conditional assertion
+    // true; unasserted raw fields still reach the conservative check below.
+    if (owner.transferPolicy == ConcurrencyCapabilityPolicy::UnsafeAsserted ||
+        owner.transferPolicy ==
+            ConcurrencyCapabilityPolicy::UnsafeConditional) {
+      const auto traits = typeTraits(type);
+      if (traits.transferCapable && !traits.containsBorrowedState)
+        reviewedRawState = true;
+    }
     if (!visiting.insert(type.classId).second) {
       return false;
     }
-    const ClassInfo &owner = classInfo(type.classId);
     const GenericSubstitution substitution = classSubstitution(type);
     bool found = false;
     if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
       found = containsDisallowedCallableCaptureState(
-          substituteType(base->type, substitution), visiting);
+          substituteType(base->type, substitution), visiting, reviewedRawState);
     }
     for (const FieldInfo &field : owner.fields) {
       if (found || field.declaration == nullptr) {
@@ -2766,7 +2800,8 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
       const auto member = owner.members.find(field.declaration->name().lexeme);
       if (member != owner.members.end()) {
         found = containsDisallowedCallableCaptureState(
-            substituteType(member->second.symbol.type, substitution), visiting);
+            substituteType(member->second.symbol.type, substitution), visiting,
+            reviewedRawState);
       }
     }
     visiting.erase(type.classId);
@@ -2784,14 +2819,14 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
                              entry.payloadTypes.end(),
                              [&](const SemanticType &payload) {
                                return containsDisallowedCallableCaptureState(
-                                   payload, visiting);
+                                   payload, visiting, reviewedRawState);
                              });
                        });
   }
   return std::any_of(type.arguments.begin(), type.arguments.end(),
                      [&](const SemanticType &argument) {
-                       return containsDisallowedCallableCaptureState(argument,
-                                                                     visiting);
+                       return containsDisallowedCallableCaptureState(
+                           argument, visiting, reviewedRawState);
                      });
 }
 
@@ -3132,7 +3167,7 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
         diagnostic.hints.emplace_back(
             "Pass a fresh task value or std::move(task); captures must own "
             "their state and cannot contain references, tracked borrows, "
-            "or raw pointers.");
+            "or unreviewed raw pointers.");
         ownedDiagnostics.emplace_back(std::move(diagnostic));
         continue;
       }
@@ -3163,7 +3198,9 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
            "Exact owned callable parameter declared here."});
       diagnostic.hints.emplace_back(
           "Move an exact movable callable whose stored state contains no "
-          "references, tracked borrowed state, or raw pointers.");
+          "references or tracked borrowed state. Raw implementation state "
+          "must be encapsulated by an owner with a valid unsafe transfer "
+          "contract; direct raw-pointer captures are not supported.");
       ownedDiagnostics.emplace_back(std::move(diagnostic));
     }
   }
@@ -3972,7 +4009,9 @@ auto SemanticVisitor::Impl::recordRawBorrowCall(
   if (resolved.declaration == nullptr ||
       (resolved.intrinsic != IntrinsicKind::None &&
        resolved.intrinsic != IntrinsicKind::RawBorrow &&
-       resolved.intrinsic != IntrinsicKind::RawBorrowMut))
+       resolved.intrinsic != IntrinsicKind::RawBorrowMut &&
+       resolved.intrinsic != IntrinsicKind::TextViewFromAddress &&
+       resolved.intrinsic != IntrinsicKind::CStringFromAddress))
     return;
   RawBorrowCallUse use{.caller = currentFunctionDeclaration,
                        .callee = resolved.declaration,
@@ -4093,6 +4132,15 @@ auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
     return witness;
   };
   const auto contractsFor = [&](const RawBorrowCallUse &use) {
+    if (use.intrinsic == IntrinsicKind::TextViewFromAddress ||
+        use.intrinsic == IntrinsicKind::CStringFromAddress)
+      // Text assertions retain the nominated checked borrow independently of
+      // pointer audit policy. Their raw bytes can legitimately be static (or
+      // null for an empty/nullable carrier), so a shorter witness need not be
+      // the address's physical owner. Still transport known expired address
+      // evidence through ordinary helpers, exactly as other raw assertions do.
+      return std::vector<RawBorrowContract>{
+          {.pointerParameter = 0, .access = AccessMode::ReadOnly}};
     if (use.intrinsic == IntrinsicKind::RawBorrow ||
         use.intrinsic == IntrinsicKind::RawBorrowMut)
       return std::vector<RawBorrowContract>{

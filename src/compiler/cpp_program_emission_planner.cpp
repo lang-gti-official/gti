@@ -554,7 +554,6 @@ public:
     const bool moveOnly =
         (symbol != nullptr && isMoveOnlyOwner(symbol->traits)) ||
         parameter.type.kind == SemanticType::UniqueOwner ||
-        parameter.type.kind == SemanticType::PrefixStorage ||
         parameter.type.kind == SemanticType::TypeParameter ||
         parameter.type.kind == SemanticType::TypePack;
     if (!reference && parameter.mutability == Mutability::Immutable &&
@@ -593,7 +592,6 @@ public:
     const bool moveOnly =
         (symbol != nullptr && isMoveOnlyOwner(symbol->traits)) ||
         projectedType.kind == SemanticType::UniqueOwner ||
-        projectedType.kind == SemanticType::PrefixStorage ||
         parameter.type.kind == SemanticType::TypeParameter ||
         parameter.type.kind == SemanticType::TypePack;
     if (!reference && parameter.mutability == Mutability::Immutable &&
@@ -4338,7 +4336,6 @@ public:
       case SemanticType::Reference:
       case SemanticType::UniqueOwner:
       case SemanticType::SharedPointer:
-      case SemanticType::PrefixStorage:
         return;
       case SemanticType::Class: {
         // The declaration-bound optional capability stores its exact value
@@ -8619,6 +8616,71 @@ public:
     const std::string appendSpelling =
         loweredFunctionInstanceSpelling(*appendRow, *appendDeclaration, append);
 
+    // Only the vector remains live when argument construction/append fails.
+    // Its exact generated drop is owned by HostedStartup, including the
+    // source-owner cleanup and secondary-failure terminal edge.
+    const auto emitArgumentFailureCleanup = [&](MirHostedStartupOperationKind
+                                                    producer) {
+      const auto *body = mir.hostedStartup();
+      bool foundProducer = false;
+      const MirInstruction *dropInstruction = nullptr;
+      for (const auto &operation : hosted->operations) {
+        if (operation.kind == producer) {
+          foundProducer = true;
+          continue;
+        }
+        if (!foundProducer)
+          continue;
+        if (operation.kind !=
+                MirHostedStartupOperationKind::RouteOperationFailure &&
+            operation.kind != MirHostedStartupOperationKind::DropFailureCleanup)
+          break;
+        if (operation.kind != MirHostedStartupOperationKind::DropFailureCleanup)
+          continue;
+        const auto *block =
+            body == nullptr ? nullptr : body->findBlock(operation.block);
+        if (block != nullptr)
+          for (const auto &instruction : block->instructions)
+            if (instruction.id == operation.instruction)
+              dropInstruction = &instruction;
+        break;
+      }
+      const auto *drop = dropInstruction == nullptr || body == nullptr ||
+                                 dropInstruction->lifecycle.size() != 1
+                             ? nullptr
+                             : body->findDropObligation(
+                                   dropInstruction->lifecycle.front().source);
+      if (drop == nullptr || drop->place != hosted->argumentVectorPlace ||
+          dropInstruction->destination != drop->place ||
+          drop->dropType != mirUniqueCleanupType(mir, entry->parameterTypes[1]))
+        throw std::logic_error(
+            "hosted argument cleanup lost its exact MIR recipe");
+      writeIndent();
+      output << "{\n";
+      ++indentation;
+      writeIndent();
+      output << "::gti_failure_record_v2 __gti_cleanup_failure{};\n";
+      writeIndent();
+      output << "::gti_internal::backend::mir_failure_cleanup_scope_v1 "
+                "__gti_cleanup_context(&__gti_failure_record, "
+                "&::gti_internal::backend::__gti_failure_artifact_descriptor_"
+                "v1);\n";
+      writeIndent();
+      output << "if (!"
+             << cppMirCleanupValueExpression(mir, drop->dropType,
+                                             "__gti_arguments",
+                                             "&__gti_cleanup_failure", "true")
+             << ") {\n";
+      ++indentation;
+      emitIncomingCleanupFailureCheck("&__gti_cleanup_failure");
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    };
+
     output << "\nint main(int __gti_native_argc, "
               "char **__gti_native_argv) {\n";
     ++indentation;
@@ -8685,6 +8747,8 @@ public:
       writeIndent();
       output << "if (!__gti_argument_success) {\n";
       ++indentation;
+      emitArgumentFailureCleanup(
+          MirHostedStartupOperationKind::ConstructArgumentString);
       emitHostedFailureTermination();
       --indentation;
       writeIndent();
@@ -8694,6 +8758,7 @@ public:
              << cppMirFailureSiblingSpelling(appendSpelling)
              << "(std::move(__gti_argument), &__gti_failure_record)) {\n";
       ++indentation;
+      emitArgumentFailureCleanup(MirHostedStartupOperationKind::CallAppend);
       emitHostedFailureTermination();
       --indentation;
       writeIndent();

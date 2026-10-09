@@ -1,3 +1,5 @@
+#include <std/vector>
+
 concept signed_value<T> =
     std::signed_numeric<T> && std::copyable<T>;
 
@@ -35,7 +37,17 @@ int read_box<T>(Box<T>& box)
   return box.get();
 }
 
+// Numeric constraints retain the scalar storage and relocation guarantees,
+// so an ordinary generic algorithm can use a vector without naming its
+// implementation's storage contract again.
+T stored_number<std::numeric T>(T value) {
+  mut std::vector<T> values{};
+  values.push_back(value);
+  return values[std::size_t(0)];
+}
+
 int main() {
+  if (stored_number(9) != 9 || stored_number(2.5) != 2.5) { return 4; }
   Box<int> box{7};
   if (read_box(box) != 7) { return 3; }
   Meter meter{};

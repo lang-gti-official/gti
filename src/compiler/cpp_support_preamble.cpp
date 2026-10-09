@@ -62,6 +62,12 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "mir_failure_cleanup_scope_v1",
       "mir_incoming_failure_cleanup_v1",
       "mir_check_incoming_cleanup_failure_v1",
+      "mir_terminate_cleanup_failure_v2",
+      "primary",
+      "secondary",
+      "primary_artifact",
+      "secondary_artifact",
+      "memset",
       "activate",
       "context_",
       "active_",
@@ -130,6 +136,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "assign_representation",
       "mir_restoring_exchange_into_v1",
       "mir_object_relocate_v1",
+      "mir_object_relocate_range_v1",
       "from_storage_address",
       "bytes",
       "callable",
@@ -745,6 +752,18 @@ void mir_object_relocate_v1(T *destination, T *source) {
   std::destroy_at(source);
 }
 
+// MIR has verified bitwise relocation, not merely failure-free movement.
+// memcpy begins the implicit-lifetime native representations; ending the old
+// trivial shells never invokes GTI cleanup. Extent and nonoverlap are unsafe
+// caller obligations, shared with the source API (including byte-size fit).
+template <typename T>
+void mir_object_relocate_range_v1(T *destination, T *source, std::uint64_t count) {
+  static_assert(std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>);
+  if (count == 0) return;
+  std::memcpy(destination, source, static_cast<std::size_t>(count) * sizeof(T));
+  std::destroy_n(source, static_cast<std::size_t>(count));
+}
+
 template <typename T>
 T mir_restoring_exchange_v1(T &destination, T &&replacement) {
   T previous(std::move(destination));
@@ -1178,6 +1197,28 @@ private:
   mir_failure_cleanup_context_v1 context_{};
   bool active_ = false;
 };
+// This envelope exists only on a terminal secondary-failure edge. Keeping it
+// in a separate native frame bounds caller stack storage independently of the
+// number of alternative cleanup paths. Managed-worker handoff may unwind out
+// of this call, so it must not be noexcept.
+[[noreturn]]
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((__cold__, __noinline__))
+#elif defined(_MSC_VER)
+__declspec(noinline)
+#endif
+inline void mir_terminate_cleanup_failure_v2(
+    const ::gti_failure_record_v2 *primary,
+    const ::gti_failure_record_v2 *secondary,
+    const ::gti_failure_artifact_descriptor_v1 *primary_artifact,
+    const ::gti_failure_artifact_descriptor_v1 *secondary_artifact) {
+  if (primary == nullptr || secondary == nullptr) std::abort();
+  const ::gti_failure_emergency_v2 emergency{
+      GTI_FAILURE_ABI_VERSION_V2, UINT32_C(0), *primary, *secondary};
+  ::gti_rt_failure_terminate_cleanup_v2(
+      &emergency, primary_artifact, secondary_artifact);
+}
+
 // This helper is reached only after a MIR operation fails. Keep its emergency
 // record/TLS work out of the successful caller's native inlining cost. It may
 // return for a first failure or unwind through the managed-worker handoff;
@@ -1761,474 +1802,6 @@ inline void optional_storage_reset(optional_storage<T> &value) {
   value.reset();
 }
 
-// Prefix-initialized storage (P-STORAGE-01): the live elements always form
-// the prefix [0, length_). Construction appends exactly at the live length,
-// destruction removes exactly the last live element, relocation transfers
-// the complete prefix, and reads check the logical prefix, so no per-slot
-// initialization bitmap exists. Character storage additionally reserves one
-// representation-private slot at the logical end and keeps it NUL-filled;
-// the slot is not part of the live prefix or its public capacity.
-template <typename T>
-class prefix_storage {
-public:
-  prefix_storage() = default;
-  explicit prefix_storage(std::uint64_t requested) { allocate(requested); }
-  prefix_storage(const prefix_storage &) = delete;
-  prefix_storage &operator=(const prefix_storage &) = delete;
-  prefix_storage(prefix_storage &&other) noexcept { take(std::move(other)); }
-  prefix_storage &operator=(prefix_storage &&other) noexcept {
-    if (this != &other) {
-      release();
-      take(std::move(other));
-    }
-    return *this;
-  }
-  ~prefix_storage() {
-    if (!mir_cleanup_emergency_abandonment()) release();
-  }
-
-  template <typename Cleanup>
-  [[nodiscard]] bool destroy_elements_with_failure(
-      ::gti_failure_record_v2 *record, bool unwinding,
-      const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
-    mir_cleanup_sequence_v1 sequence(record, unwinding, artifact);
-    while (length_ != 0) {
-      --length_;
-      T *element = std::launder(slot(length_));
-      const bool success = cleanup(*element, sequence.record(), sequence.unwinding());
-      if (!success && sequence.unwinding()) {
-        write_character_terminator();
-        (void)sequence.step(false);
-        return false;
-      }
-      std::destroy_at(element);
-      write_character_terminator();
-      if (!sequence.step(success)) return false;
-    }
-    release();
-    return sequence.success();
-  }
-
-  [[nodiscard]] std::uint64_t capacity() const noexcept { return capacity_; }
-  [[nodiscard]] std::uint64_t length() const noexcept { return length_; }
-
-  template <typename... Args>
-  void append(Args &&...args) {
-    if (length_ >= capacity_) {
-      storage_error("prefix storage append exceeds its capacity");
-    }
-    if constexpr (std::is_same_v<T, char8_t>) {
-      *slot(length_) = T(std::forward<Args>(args)...);
-    } else {
-      try {
-        construct_representation_at(slot(length_), std::forward<Args>(args)...);
-      } catch (const std::bad_alloc &) {
-        allocation_error();
-      }
-    }
-    ++length_;
-    write_character_terminator();
-  }
-
-  // Only an exact MIR-selected status constructor supplies this callback.
-  // A failed constructor leaves a disarmed native shell, not a live GTI
-  // element; the caller's prefix cleanup must not visit that slot.
-  template <typename Constructor>
-  [[nodiscard]] bool append_with_constructor(Constructor construct) {
-    if (length_ >= capacity_) std::abort();
-    T *destination = slot(length_);
-    if (!construct(destination)) {
-      std::destroy_at(destination);
-      return false;
-    }
-    ++length_;
-    write_character_terminator();
-    return true;
-  }
-
-  void pop() {
-    if (length_ == 0) {
-      storage_error("prefix storage pop on an empty prefix");
-    }
-    --length_;
-    if constexpr (std::is_same_v<T, char8_t>) {
-      write_character_terminator();
-    } else {
-      std::destroy_at(std::launder(slot(length_)));
-    }
-  }
-
-  template <typename Cleanup>
-  [[nodiscard]] bool pop_with_failure(::gti_failure_record_v2 *record,
-                                     Cleanup cleanup) {
-    if (length_ == 0) {
-      storage_error("prefix storage pop on an empty prefix");
-    }
-    --length_;
-    T *element = std::launder(slot(length_));
-    const bool success = cleanup(*element, record, false);
-    std::destroy_at(element);
-    write_character_terminator();
-    return success;
-  }
-
-  [[nodiscard]] const T &read(std::uint64_t index) const {
-    return *std::launder(slot(checked_prefix_index(index)));
-  }
-
-  [[nodiscard]] T &read_mut(std::uint64_t index) {
-    return *std::launder(slot(checked_prefix_index(index)));
-  }
-
-  [[nodiscard]] const T &read_unchecked(std::uint64_t index) const noexcept {
-    return *std::launder(slot(static_cast<std::size_t>(index)));
-  }
-
-  [[nodiscard]] T &read_mut_unchecked(std::uint64_t index) noexcept {
-    return *std::launder(slot(static_cast<std::size_t>(index)));
-  }
-
-  template <typename... Args>
-  void insert_at(std::uint64_t index, Args &&...args) {
-    if (index > length_) {
-      storage_error("prefix storage insert outside the live prefix");
-    }
-    if (length_ >= capacity_) {
-      storage_error("prefix storage insert exceeds its capacity");
-    }
-    if constexpr (std::is_same_v<T, char8_t>) {
-      for (std::size_t position = length_;
-           position > static_cast<std::size_t>(index); --position) {
-        *slot(position) = *slot(position - 1);
-      }
-      *slot(static_cast<std::size_t>(index)) =
-          T(std::forward<Args>(args)...);
-    } else {
-      for (std::size_t position = length_;
-           position > static_cast<std::size_t>(index); --position) {
-        try {
-          construct_representation_at(slot(position),
-                            std::move(*std::launder(slot(position - 1))));
-        } catch (const std::bad_alloc &) {
-          allocation_error();
-        }
-        std::destroy_at(std::launder(slot(position - 1)));
-      }
-      try {
-        construct_representation_at(slot(static_cast<std::size_t>(index)),
-                          std::forward<Args>(args)...);
-      } catch (const std::bad_alloc &) {
-        allocation_error();
-      }
-    }
-    ++length_;
-    write_character_terminator();
-  }
-
-  void erase_at(std::uint64_t index) {
-    if (index >= length_) {
-      storage_error("prefix storage erase outside the live prefix");
-    }
-    if constexpr (std::is_same_v<T, char8_t>) {
-      for (std::size_t position = static_cast<std::size_t>(index) + 1;
-           position < length_; ++position) {
-        *slot(position - 1) = *slot(position);
-      }
-    } else {
-      std::destroy_at(std::launder(slot(static_cast<std::size_t>(index))));
-      for (std::size_t position = static_cast<std::size_t>(index) + 1;
-           position < length_; ++position) {
-        try {
-          construct_representation_at(slot(position - 1),
-                            std::move(*std::launder(slot(position))));
-        } catch (const std::bad_alloc &) {
-          allocation_error();
-        }
-        std::destroy_at(std::launder(slot(position)));
-      }
-    }
-    --length_;
-    write_character_terminator();
-  }
-
-  template <typename Cleanup>
-  [[nodiscard]] bool erase_with_failure(std::uint64_t index,
-      ::gti_failure_record_v2 *record,
-      const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
-    if (index >= length_) {
-      storage_error("prefix storage erase outside the live prefix");
-    }
-    const std::size_t removed = static_cast<std::size_t>(index);
-    const std::size_t previous_length = length_;
-    // The prefix before the hole remains caller-owned. This operation owns
-    // the erased element and the detached suffix until it restores the prefix
-    // on success, or drains the suffix after the first cleanup failure.
-    length_ = removed;
-    T *element = std::launder(slot(removed));
-    const bool success = cleanup(*element, record, false);
-    std::destroy_at(element);
-    if (!success) {
-      mir_cleanup_sequence_v1 sequence(record, false, artifact);
-      (void)sequence.step(false);
-      for (std::size_t position = previous_length; position > removed + 1;) {
-        --position;
-        T *remaining = std::launder(slot(position));
-        const bool cleaned = cleanup(*remaining, sequence.record(), true);
-        // A second failure terminates before native teardown can run any
-        // remaining subobject destructor and obscure either failure record.
-        if (!cleaned) {
-          write_character_terminator();
-          (void)sequence.step(false);
-          return false;
-        }
-        std::destroy_at(remaining);
-      }
-      write_character_terminator();
-      return false;
-    }
-    // Verified MIR proves these generated moves cannot fail. Moved-from
-    // guards/handles are disarmed before their representation lifetime ends.
-    for (std::size_t position = removed + 1; position < previous_length; ++position) {
-      construct_representation_at(slot(position - 1), std::move(*std::launder(slot(position))));
-      std::destroy_at(std::launder(slot(position)));
-    }
-    length_ = previous_length - 1;
-    write_character_terminator();
-    return true;
-  }
-
-  template <bool Bitwise = false>
-  void relocate_to(prefix_storage &destination) {
-    if (destination.length_ != 0) {
-      storage_error("prefix storage relocation destination is occupied");
-    }
-    if (destination.capacity_ < length_) {
-      storage_error("prefix storage relocation exceeds the destination "
-                    "capacity");
-    }
-    if constexpr (Bitwise && std::is_trivially_copyable_v<T> &&
-                  std::is_trivially_move_constructible_v<T> &&
-                  std::is_trivially_destructible_v<T>) {
-      if (length_ != 0) {
-        std::memcpy(destination.slot(0), slot(0), sizeof(T) * length_);
-        if constexpr (!std::is_same_v<T, char8_t>) {
-          for (std::size_t index = 0; index < length_; ++index)
-            std::destroy_at(std::launder(slot(index)));
-        }
-      }
-      destination.length_ = length_;
-    } else if constexpr (std::is_same_v<T, char8_t>) {
-      for (std::size_t index = 0; index < length_; ++index) {
-        *destination.slot(index) = *slot(index);
-        ++destination.length_;
-      }
-    } else {
-      for (std::size_t index = 0; index < length_; ++index) {
-        try {
-          construct_representation_at(destination.slot(index),
-                            std::move(*std::launder(slot(index))));
-        } catch (const std::bad_alloc &) {
-          allocation_error();
-        }
-        ++destination.length_;
-        std::destroy_at(std::launder(slot(index)));
-      }
-    }
-    length_ = 0;
-    write_character_terminator();
-    destination.write_character_terminator();
-  }
-
-  [[nodiscard]] static bool try_allocate(std::uint64_t requested,
-                                         prefix_storage *result) noexcept {
-    if (result == nullptr) {
-      return false;
-    }
-    prefix_storage pending;
-    if (!pending.allocate_nothrow(requested)) {
-      return false;
-    }
-    *result = std::move(pending);
-    return true;
-  }
-
-private:
-  void allocate(std::uint64_t requested) {
-    if (!allocate_nothrow(requested)) {
-      allocation_error();
-    }
-  }
-
-  [[nodiscard]] bool allocate_nothrow(std::uint64_t requested) noexcept {
-    if (requested > (std::numeric_limits<std::size_t>::max)()) {
-      return false;
-    }
-    capacity_ = static_cast<std::size_t>(requested);
-    if (capacity_ == 0) {
-      return true;
-    }
-    std::size_t allocationCount = capacity_;
-    if constexpr (std::is_same_v<T, char8_t>) {
-      if (allocationCount == (std::numeric_limits<std::size_t>::max)()) {
-        capacity_ = 0;
-        return false;
-      }
-      ++allocationCount;
-    }
-    if (allocationCount >
-        (std::numeric_limits<std::size_t>::max)() / sizeof(T)) {
-      capacity_ = 0;
-      return false;
-    }
-    data_ = ::operator new(sizeof(T) * allocationCount,
-                           std::align_val_t{alignof(T)},
-                           std::nothrow);
-    if (data_ == nullptr) {
-      capacity_ = 0;
-      return false;
-    }
-    write_character_terminator();
-    return true;
-  }
-
-  [[nodiscard]] std::size_t checked_prefix_index(std::uint64_t index) const {
-    if (index >= length_) {
-      storage_error("prefix storage index out of the live prefix");
-    }
-    return static_cast<std::size_t>(index);
-  }
-
-  [[nodiscard]] T *slot(std::size_t index) const {
-    return reinterpret_cast<T *>(static_cast<std::byte *>(data_) +
-                                 sizeof(T) * index);
-  }
-
-  void write_character_terminator() noexcept {
-    if constexpr (std::is_same_v<T, char8_t>) {
-      if (data_ != nullptr) {
-        *slot(length_) = u8'\0';
-      }
-    }
-  }
-
-  void release() noexcept {
-    if (data_ != nullptr) {
-      for (std::size_t index = length_; index > 0; --index) {
-        std::destroy_at(std::launder(slot(index - 1)));
-      }
-      ::operator delete(data_, std::align_val_t{alignof(T)});
-    }
-    data_ = nullptr;
-    capacity_ = 0;
-    length_ = 0;
-  }
-
-  void take(prefix_storage &&other) noexcept {
-    data_ = other.data_;
-    capacity_ = other.capacity_;
-    length_ = other.length_;
-    other.data_ = nullptr;
-    other.capacity_ = 0;
-    other.length_ = 0;
-  }
-
-  void *data_ = nullptr;
-  std::size_t capacity_ = 0;
-  std::size_t length_ = 0;
-};
-
-template <typename T>
-inline prefix_storage<T> allocate_prefix_storage(std::uint64_t capacity) {
-  return prefix_storage<T>(capacity);
-}
-
-template <typename T, typename... Args>
-inline void prefix_storage_append(prefix_storage<T> &value, Args &&...args) {
-  value.append(std::forward<Args>(args)...);
-}
-
-template <typename T>
-inline void prefix_storage_pop(prefix_storage<T> &value) {
-  value.pop();
-}
-
-template <typename T>
-inline const T &prefix_storage_read(const prefix_storage<T> &value,
-                                    std::uint64_t index) {
-  return value.read(index);
-}
-
-template <typename T>
-inline T &prefix_storage_read_mut(prefix_storage<T> &value,
-                                  std::uint64_t index) {
-  return value.read_mut(index);
-}
-
-template <typename T>
-inline const T &prefix_storage_read_unchecked(const prefix_storage<T> &value,
-                                              std::uint64_t index) noexcept {
-  return value.read_unchecked(index);
-}
-
-template <typename T>
-inline T &prefix_storage_read_mut_unchecked(prefix_storage<T> &value,
-                                            std::uint64_t index) noexcept {
-  return value.read_mut_unchecked(index);
-}
-
-template <typename T>
-inline std::uint64_t prefix_storage_length(const prefix_storage<T> &value) {
-  return value.length();
-}
-
-inline std::string_view
-prefix_storage_text_view(const prefix_storage<char8_t> &value) noexcept {
-  if (value.length() == 0) {
-    return {};
-  }
-  return {reinterpret_cast<const char *>(
-              std::addressof(value.read_unchecked(0))),
-          static_cast<std::size_t>(value.length())};
-}
-
-inline const char *
-prefix_storage_c_string(const prefix_storage<char8_t> &value) noexcept {
-  static constexpr char empty = '\0';
-  if (value.capacity() == 0) {
-    return std::addressof(empty);
-  }
-  return reinterpret_cast<const char *>(
-      std::addressof(value.read_unchecked(0)));
-}
-
-inline const char *
-prefix_storage_try_c_string(const prefix_storage<char8_t> &value) noexcept {
-  for (std::uint64_t index = 0; index < value.length(); ++index) {
-    if (value.read_unchecked(index) == u8'\0') {
-      return nullptr;
-    }
-  }
-  return prefix_storage_c_string(value);
-}
-
-template <bool Bitwise = false, typename T>
-inline void prefix_storage_relocate(prefix_storage<T> &source,
-                                    prefix_storage<T> &destination) {
-  source.template relocate_to<Bitwise>(destination);
-}
-
-template <typename T, typename... Args>
-inline void prefix_storage_insert(prefix_storage<T> &value,
-                                  std::uint64_t index, Args &&...args) {
-  value.insert_at(index, std::forward<Args>(args)...);
-}
-
-template <typename T>
-inline void prefix_storage_erase(prefix_storage<T> &value,
-                                 std::uint64_t index) {
-  value.erase_at(index);
-}
-
 template <typename T, typename... Args>
 inline std::unique_ptr<T> make_unique(Args &&...args) {
   try {
@@ -2328,8 +1901,8 @@ public:
     std::swap(state_, other.state_);
     std::swap(view_, other.view_);
   }
-  // Failure leaves the consumed input intact for the caller's MIR failure
-  // rollback. Allocation succeeds before ownership is detached from it.
+  // Exhaustion leaves the input intact until the MIR allocation detector
+  // aborts, without cleanup. Ownership detaches only after allocation succeeds.
   static bool promote(std::unique_ptr<T> &source,
                       shared_owner &destination) noexcept {
     if (destination.state_ != nullptr || destination.view_ != nullptr)

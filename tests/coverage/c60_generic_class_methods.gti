@@ -1,7 +1,7 @@
 // Generic classes with constrained methods, chained instantiation and statics.
 #include <std/vector>
 
-class Stack<std::movable T> {
+class Stack<std::vector_element T> {
   mut std::vector<T> items;
 public:
   Stack() : items(std::vector<T>()) {}
@@ -20,7 +20,7 @@ public:
   B& second() { return this.right; }
 };
 
-int32_t depth<std::movable T>(Stack<T>& s) { return int32_t(s.size()); }
+int32_t depth<T>(Stack<T>& s) requires std::vector_element<T> { return int32_t(s.size()); }
 
 int main() {
   mut Stack<int32_t> numbers = Stack<int32_t>();

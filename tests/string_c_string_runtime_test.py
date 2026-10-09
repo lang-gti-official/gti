@@ -44,6 +44,13 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="gti-string-c-string-") as directory:
         root = Path(directory)
+        mir = root / "string-views.mir"
+        analyzed = run([compiler, source, "--emit-mir", "-o", mir])
+        assert analyzed.returncode == 0, (analyzed.stdout, analyzed.stderr)
+        operations = mir.read_text()
+        assert "intrinsic=c-string-from-address" in operations
+        assert "intrinsic=prefix-storage-c-string" not in operations
+        assert "intrinsic=prefix-storage-try-c-string" not in operations
         for name, flags, native_flags in modes:
             binary = root / name
             built = run(
@@ -62,8 +69,6 @@ def main():
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             generated = binary.with_suffix(".gti.cpp").read_text()
             assert "// GTI verified-MIR body:" in generated
-            assert "prefix_storage_c_string(" in generated
-            assert "prefix_storage_try_c_string(" in generated
 
             executed = run([binary])
             assert (executed.returncode, executed.stdout, executed.stderr) == (

@@ -1,0 +1,76 @@
+#include <std/string>
+#include <std/vector>
+
+extern "C" {
+  int32_t source_bridge_byte(c_string text, uint64_t index);
+  uint64_t source_bridge_length(c_string text);
+}
+
+int main() {
+  mut std::string text{};
+  if (!text.empty() || text.capacity() != uint64_t(0)) { return 1; }
+  {
+    c_string empty = text.c_string();
+    std::string_view counted = text.view();
+    auto characters = text.as_span();
+    if (empty == nullptr || source_bridge_length(empty) != uint64_t(0) ||
+        source_bridge_byte(empty, uint64_t(0)) != 0 || !counted.empty() ||
+        !characters.empty()) { return 2; }
+  }
+  text.reserve(uint64_t(8));
+  text.append("abc");
+  {
+    c_string terminated = text.c_string();
+    if (source_bridge_length(terminated) != uint64_t(3) ||
+        source_bridge_byte(terminated, text.size()) != 0) { return 3; }
+  }
+  {
+    mut auto characters = text.as_mutable_span();
+    characters[uint64_t(1)] = 'x';
+  }
+  if (text.view() != "axc" || text.capacity() != uint64_t(8)) { return 4; }
+  text.pop_back();
+  text.push_back('z');
+  text.resize(uint64_t(5));
+  if (text[uint64_t(3)] != '\0') { return 5; }
+  {
+    c_string native = text.c_string();
+    c_string rejected = text.try_c_string();
+    if (text.size() != uint64_t(5) ||
+        native == nullptr || rejected != nullptr ||
+        source_bridge_byte(native, text.size()) != 0) { return 5; }
+  }
+  text.resize(uint64_t(3));
+  text.insert(uint64_t(1), "bc");
+  text.erase(uint64_t(2), uint64_t(1));
+  text.replace(uint64_t(1), uint64_t(2), "qq");
+  if (text.view() != "aqqz") { return 6; }
+  text.shrink_to_fit();
+  if (text.capacity() != text.size()) { return 7; }
+  mut std::string copy = text.clone();
+  copy[uint64_t(0)] = 'Q';
+  if (text[uint64_t(0)] != 'a') { return 8; }
+  text.swap(copy);
+  if (text.view() != "Qqqz" || copy.view() != "aqqz") { return 9; }
+  {
+    mut std::vector<char> bytes{};
+    bytes.push_back('0');
+    bytes.push_back('1');
+    auto view = text.as_span();
+    auto other = bytes.as_span();
+    if (view[uint64_t(0)] != 'Q' || other[uint64_t(1)] != '1') { return 10; }
+  }
+  mut uint64_t visited = 0;
+  for (char value : text) { visited++; }
+  if (visited != text.size()) { return 11; }
+  text.clear();
+  if (!text.empty() || text.capacity() != uint64_t(4)) { return 12; }
+  text.shrink_to_fit();
+  if (text.capacity() != uint64_t(0)) { return 13; }
+  {
+    c_string empty = text.try_c_string();
+    if (empty == nullptr || source_bridge_byte(empty, uint64_t(0)) != 0) { return 14; }
+  }
+  text.push_back('!');
+  return text.view() == "!" ? 0 : 15;
+}

@@ -18,7 +18,7 @@ public:
   int32_t value() { return this.id; }
 };
 
-class Slot<std::move_constructible T> {
+class Slot<std::vector_element T> {
   mut std::vector<T> items;
 
 public:
@@ -30,7 +30,7 @@ public:
 
 T pass_through<std::movable T>(T value) { return std::move(value); }
 
-std::size_t fill<std::move_constructible T>(mut Slot<T>& slot, T first, T second) {
+std::size_t fill<T>(mut Slot<T>& slot, T first, T second) requires std::vector_element<T> {
   slot.put(std::move(first));
   slot.put(std::move(second));
   return slot.size();

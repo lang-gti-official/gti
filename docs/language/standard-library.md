@@ -216,8 +216,8 @@ The current implemented foundation includes:
   read-only `at`, `front`, and `back` methods support constexpr evaluation for
   supported elements; mutable access and iterator traversal remain runtime
   operations; and
-- `<std/string>` `std::string` as a move-only owner over private character
-  storage, including
+- `<std/string>` `std::string` as a move-only owner over a source-defined
+  terminated character prefix, including
   construction from an exact input iterator/sentinel pair whose dereference
   referent is `char`, indexed half-open range copying, front/back and mutable
   checked access, resize, owner-tied `c_string()` and checked
@@ -756,16 +756,23 @@ for insertion-result movement and scoped mutable access.
 
 ### Sequential Storage
 
-**Planned representation.** `std::vector` and `std::string` currently store
-elements in a compiler-private prefix-storage capability. They will move to
-Rust's `RawVec`/`Vec` layering, in ordinary GTI:
-- a source-defined raw buffer plus a length, with no per-slot metadata;
-- one check per safe public operation, then raw access internally;
-- `unsafe` unchecked accessors in the style of `get_unchecked`;
-- byte-copy relocation for bitwise-relocatable elements.
+`std::vector` and `std::string` use a source-defined raw buffer and one
+initialized-prefix count. The buffer owns its resource lease, pointer and
+capacity; it allocates no per-slot metadata. Safe operations check their
+logical bounds at the public boundary and use raw access internally. Growth
+transfers bitwise-relocatable elements as one byte copy; other supported
+elements retain verified per-element relocation. String's physical prefix
+includes one hidden initialized NUL, excluded from public size and capacity.
+Combined S-ALLOC-09 migration and performance acceptance remains in progress.
 
-Safe behavior does not change, apart from the allocation-failure model below.
-See
+`get_unchecked(size_t index)` on vector, string, array and span returns a
+read-only element reference and requires an explicit `unsafe` context. Vector,
+string, array and mutable span also provide `get_unchecked_mut(size_t index)`.
+The caller must establish `index < size()`; these operations perform no dynamic
+index check. The returned references still retain checked owner loans and
+exclude conflicting mutation. A string's hidden terminator and every index
+into an empty sequence are outside this contract. Safe `at` and `operator[]`
+keep their defined bounds failures. See
 [ADR 022](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
 
 `vector::swap`, `string::swap`, and `forward_list::swap` exchange their owned
@@ -833,10 +840,12 @@ constraint. Unsupported types are rejected at the call site, including in
 editor analysis, rather than only after the library body is instantiated.
 
 The current direct-query boundary admits primitive numeric/boolean/character
-types, raw pointers, integral enums, complete non-abstract classes, structs and
-passive unions, and positive concrete fixed arrays of admitted types. References,
-`void`, incomplete/opaque classes, interfaces, abstract classes, payload enums,
-direct `expected` types and compiler-private storage capabilities are excluded.
+types, raw pointers, integral and concrete payload enums, `string_view`,
+`c_string`, complete non-abstract classes, structs and passive unions, and
+positive concrete fixed arrays of admitted types. A direct `expected<T, E>`
+also has a layout when both alternatives are admitted; its success alternative
+may be `void`. References, `void` itself, incomplete/opaque classes, interfaces,
+abstract classes and compiler-private storage capabilities are excluded.
 Containing an owner field does not make an ordinary user class a private
 capability. This runtime descriptor is not a stable foreign ABI, an allocation,
 an initialization proof, or a new constant expression. The existing bounded
@@ -957,7 +966,14 @@ Constructor failure retains its original defined-failure identity and rollback;
 it is not converted into an allocation error.
 
 `<std/resource_vector>` supplies `resource_vector<T,R>`, a contiguous move-only
-container over that storage. It supports `size`, `capacity`, `empty`, indexed
+container over source-defined prefix ownership rather than sparse slot storage.
+Each nonempty capacity reservation acquires one object region from the bound
+resource; its initialized length needs no per-slot metadata allocation. Zero
+capacity acquires no region. Failed growth leaves the old allocation and live
+prefix unchanged, and element cleanup precedes the matching single release.
+This revises the earlier two-region resource-vector policy; public sparse
+`resource_storage<T,R>` retains its two-region contract above.
+The vector supports `size`, `capacity`, `empty`, indexed
 read-only/mutable access, `front`, `back`, read-only range iteration, `pop_back`,
 `clear` and `release`. `try_reserve`, `try_push_back` and `try_emplace_back`
 report allocation errors; their plain counterparts panic on allocation failure.
@@ -1032,8 +1048,10 @@ borrows prevent mutation, movement, or cleanup while an element reference is
 retained. The factories and classes are ordinary GTI source; only their
 underlying typed-storage operations are compiler-private.
 
-`std::vector<T>` requires move-constructible elements and rejects element
-types that retain borrowed state. Empty-slot growth and shifting do not require
+`std::vector<T>` requires `vector_element<T>`: a complete independent storage
+element with structural, failure-free relocation. It rejects retained checked
+borrows and address-stable host state; a custom move constructor alone does not
+establish relocation. Empty-slot growth and shifting do not require
 element assignment or grant permission to assign an otherwise nonassignable
 element. The vector is move-only even when `T` is copyable.
 `vector(n)` constructs `n` value-initialized elements, matching the familiar
@@ -1047,10 +1065,20 @@ elements may be copied and noncopyable movable elements are consumed once.
 This is in-place construction, but it is not C++ perfect forwarding and does
 not preserve every source value category.
 
-`insert(index, value)` and `erase(index)` support move-constructible, including
-move-only, elements. They use checked private slot shifts while the source-defined vector
-retains logical size, capacity growth, and API policy. Invalid indices take the
-defined storage failure path rather than performing unchecked memory access.
+`insert(index, value)` and `erase(index)` support these elements, including
+move-only values. The shared source prefix owner tracks one authoritative live
+length, constructs directly at final addresses and shifts through general
+typed relocation. It retires a slot before destruction and drains remaining
+objects in reverse order after a first failure; a second failure during cleanup
+terminates with both records. Capacity growth and API policy are ordinary source.
+Invalid indices take the checked bounds failure path.
+
+String uses the same owner with an extra initialized terminator excluded from
+its logical size/capacity. Empty strings use an allocation-free static sentinel.
+Vector and string therefore share the same checked span/iterator owner boundary,
+not separate compiler-recognized storage handles. Allocation, exact layout,
+object lifetime, generated relocation and checked loans remain distinct lower
+boundaries; moving policy into source does not remove those compiler facts.
 
 The ordinary vector iterator is read-only and retains one checked borrow of its
 owner. It is copy-constructible: copies retain the same shared owner dependency
@@ -1074,6 +1102,10 @@ pair. Local copies, moves, exact factory/relay returns, empty views, checked
 indexing, and iteration retain that dependency. Moving, destroying, or
 invalidating the owner while any retained view is live is rejected, and
 dropping the final view releases the owner for later mutation.
+The element contract is `std::storage_element<T>`. Generic span relays must
+carry `requires std::storage_element<T>` and include `<std/memory>` when
+spelling it; a span
+neither requires copying/moving its elements nor grants independent ownership.
 
 The same header provides exclusive, move-only `std::mutable_span<T>` through
 vector/string `as_mutable_span()` factories. Checked element access, mutable
@@ -1088,7 +1120,8 @@ progress and error semantics.
 
 `<std/paired_span>` provides an ordinary source-defined
 `std::paired_span<L, R>` over two read-only spans, including different element
-types. Its constructor takes the two spans by value; `size()` is the smaller
+types, each satisfying the span's `storage_element` contract. Its constructor
+takes the two spans by value; `size()` is the smaller
 input length, `empty()` tests that length, and `first(index)`/`second(index)`
 return checked references into the corresponding buffer. `subspan(offset,
 count)` returns a paired subview after validating against the common length.

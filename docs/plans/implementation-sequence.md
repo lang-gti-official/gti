@@ -5027,7 +5027,14 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
 
 ### S-ALLOC-08: Rust Allocation-Failure Model
 
-- **State/role:** accepted direction from the owner (2026-10-09); not started.
+- **State/role:** implementation in progress on the source-prefix task branch;
+  not integrated or accepted. The allocation-free runtime abort entry point
+  has focused subprocess coverage. Scalar/class/shared detector wiring and
+  terminal allocation edges have focused native evidence, including implicit
+  default classes; scalar process-owner elision has an O0/O3 counting oracle.
+  Remaining family/fallible/overflow controls, complete acceptance and measured
+  source-container performance remain open; the owner-loop probe still trails
+  its C++ comparisons despite allocation removal.
   The contract is
   [ADR 022's Rust allocation-failure revision](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09)
   and [ADR 007's exhaustion revision](../decisions/007-defined-runtime-failure.md#allocation-exhaustion-revision-2026-10-09).
@@ -5056,7 +5063,10 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
 
 ### S-ALLOC-09: Raw-Buffer Vector And String
 
-- **State/role:** accepted target representation (2026-10-09); not scheduled.
+- **State/role:** scheduled by the owner as the current task (2026-10-09);
+  implementation in progress, not integrated or accepted. The source-prefix
+  migration below is its existing implementation base, not proof that the
+  revised raw-buffer/checking/performance requirements are complete.
   The contract is
   [ADR 022's raw-buffer revision](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
   It covers migration candidates M01, M02 and M04 in the
@@ -5098,6 +5108,334 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   one installed freestanding smoke either builds using exactly those services
   or fails early with a target-capability diagnostic, never a native link
   surprise.
+
+### Source Prefix Ownership And Container Cutover — S-ALLOC-09 Working Ledger
+
+This work began under the provisional label S-ALLOC-08. The accepted allocation
+revision assigns that identifier to the allocation-failure model; this ledger
+now records the source-prefix implementation and evidence for S-ALLOC-09/M01.
+Earlier positive optimizer expectations remain evidence, not authority to keep
+redundant inner checks required by the old representation. Any change to those
+expectations must follow the new one-boundary-check contract and retain the
+same behavior, invalid-input, replay and performance guarantees.
+
+- **State:** implementation in progress; not accepted or integrated. The source
+  prefix engine, vector/views, terminated string owner and one-region resource
+  vector are implemented on the task branch. Focused native matrices cover
+  final-address construction, generated relocation, borrowed views and exact
+  first/secondary failure cleanup; shared-provider allocation counts are tested.
+  The native prefix engine and trusted prelude type/operation declarations
+  have been removed, together with prefix-specific native emission and private
+  handle cleanup shortcuts. Regression fixtures now exercise general lifetime
+  and borrowing operations. The prefix-specific semantic type, 12 intrinsic
+  tags, construction-preflight instruction and metadata, effect/name tables,
+  representation row and private optimizer facts are now removed as well.
+  General scalar, fixed-array and direct-index aggregate analysis remains.
+  Optimizer client fixtures now use ordinary `prefix_owner` operations, and
+  native evidence observes the source logical-bounds helper rather than the
+  retired private checked/unchecked read helpers. Their original positive
+  bounds and element-envelope requirements remain acceptance failures, not
+  silently changed to zero-discharge expectations: the optimized safety suite
+  currently reports six unmet proofs/context requirements. Source access puts
+  its inner check in a selected reference-returning callee, so the positive
+  query follows that exact borrowing call chain. Generic raw-memory/owned
+  construction summaries must recover the warranted facts without restoring a
+  nominal prefix-container rule. The first general optimizer prerequisite admits
+  contextual proofs before raw operations while retaining opaque per-operation
+  memory barriers and independently checked replay. It does not yet transport
+  raw-backed owned-construction or initialized-element facts. A second prerequisite preserves
+  existing field/context facts across the general pure scalar bounds detector;
+  its unrelated record proof does not invent a prefix-length invariant or
+  supply a prefix invariant. Ordinary parameterized constructor-field,
+  implicit-receiver, nested-subobject and class-result summaries are recovered
+  by a separate general prerequisite with unrelated record proofs and
+  raw-write negatives. The raw initialized-element and allocation transfer
+  prerequisites, and the remaining six source-owner requirements, remain open.
+  The combined unrelated record proof exposed 32 whole-program rounds consumed
+  solely by fixed-summary propagation. Dependency-based scheduling now bounds
+  each body to 32 analyses while retaining four-update widening and eight
+  consumed-context-update rejection; rejected facts invalidate their callers.
+  A 128-function ordinary chain proves every exact addition without increasing
+  that per-body cap. A separate 40-callee control exceeds the per-body budget,
+  withdraws its earlier contextual proof, rejects forged restoration and still
+  discovers the following independent client. Actual readonly scalar binding
+  copies now retain value facts across opaque/raw writes; references and mutable
+  memory do not. Eight-mode native controls preserve exact results and the
+  changed referent's overflow. This does not make raw/unknown calls effect-closed
+  or satisfy the remaining source-owner proof requirements. A permanently
+  unsupported call now takes a conservative opaque transfer and retains its
+  normal continuation, rather than masquerading as a pending source summary.
+  Exact opaque synchronizing effects still invalidate mutable memory even when
+  they report no direct writes. An unrelated by-value record client proves
+  the independent continuation without admitting its callee's owning argument.
+  Three formerly unreached record clients now pass; the safety suite retains
+  seven proof failures and native evidence retains its three failures.
+  Exact result-only integer moves now preserve an independent result envelope
+  while retiring the source. Unique unprojected by-value integer formals permit
+  bounded preservation of ordinary owned receiver fields; references, stored
+  borrowed paths and unrelated ownership transfers remain conservative. Source
+  allocation-result cleanup precedes final prefix-field publication, recovering
+  exact capacity and initial empty length without an allocation-freshness fact.
+  Neither prerequisite supplies initialized raw-element coverage.
+  Operation-free prepared Value inputs now forward an already computed SSA
+  value without inheriting its source expression's unsafe classification.
+  Actual pointer computation, raw loads/writes and unsafe calls retain their
+  classification. This general staging correction recovers the original exact
+  public logical-bounds and matching source-read requirement, reducing seven
+  optimizer acceptance failures to six without changing those tests. Owning
+  argument and raw initialized-element transfer remain open prerequisites.
+  General scalar getter-return field provenance is now implemented on the task
+  branch, without another container identity or allocation rule. Exact readonly
+  source members connect their result to one typed ordinary owned-field path
+  while that origin remains current, including nested forwarding. An unrelated
+  bounded getter-based constructor loop publishes exactly four at its observer.
+  Overlapping writes, mutable/unknown calls, raw/lifetime barriers and movement
+  retire the relation without changing earlier immutable values; disjoint owned
+  fields retain their correlation. Cached local snapshots, ambiguous fields and
+  copied-object inputs do not export a receiver identity. Stored references,
+  arrays, unions, byte fields and capability backing paths remain excluded.
+  Independent review exposed hidden global writes leaving stale object and
+  getter facts: completed summaries now carry a conservative global-write
+  barrier, including checked aliases/reborrows and declaration-field initializer
+  calls, even when the caller has no corresponding global Symbol place.
+  Independent scalar storage remains provable; canonical replay rejects stale
+  getter restoration. The optimized compiler passes all eight focused compiler,
+  optimizer and source-owner contract gates (47.97 seconds), and the complete
+  ordinary-object/getter/global-alias matrix passes all 320 native cases across
+  eight modes (52.59 seconds), including no-elide and ASan/UBSan. These results
+  do not resolve the original six optimizer and three native optimization-evidence
+  failures. The original
+  source-owner requirements remain unchanged; ordinary owning-class movement and
+  raw initialized-element coverage are separate prerequisites. Neither is
+  inferred from a getter name.
+  Handover review reproduced a separate general loss of precision in nested
+  ordinary counters: the refined outer field was overwritten while extracting
+  an older inner-object summary. Refinement now keeps exact owned-subobject
+  representations coherent. The unrelated two-level counter and the public
+  vector size constructor both publish exact length four; nested mutation
+  still rejects a forged stale overflow discharge. This is a prerequisite
+  correction, not completion of the remaining original optimizer requirements
+  or migration acceptance.
+  The next handover prerequisite admits exact generated scalar-record copy/move
+  through ordinary by-value calls and nested construction. Shared MIR effects
+  classify this structural transport and no-user-code record cleanup; selected
+  destructors, unsupported state and raw pointees remain conservative. Prepared
+  copies retain independent snapshots, source movement retires old storage, and
+  only reference formals export caller postconditions. Unrelated nested records,
+  later-argument mutation, copy mutation and real destructor execution have
+  focused replay/native coverage. Raw initialized-element coverage and returned
+  element provenance remain separate open prerequisites; the original six
+  optimizer and three native-evidence acceptance failures remain unchanged.
+  Owner-witness formation now preserves memory without inventing pointee facts,
+  reusing the verifier's checked-loan shape; non-mutating loan bookkeeping does
+  not reexecute its producer's unsafe operation. Actual alias writes and a
+  different pointee under the same witness remain checked. Generated ordinary
+  scalar-record final-address construction also uses shared structural effects
+  and the existing vacant-storage transfer. It preserves unrelated live fields,
+  not raw initialized-element coverage. The six original optimizer and three
+  native-evidence requirements remain open; these corrections are prerequisites,
+  not migration acceptance.
+  The plain-counter reduction is now repaired by a bounded, typed entry-relative
+  receiver-field summary. Repeated increments/decrements and nested forwarding
+  apply a proved delta to the current caller's field, rather than substituting
+  the joined absolute postcondition of all invocations. Only identical deltas
+  on every successful exit survive; aliases, raw mutation, reset, assignment
+  from another field and conditional updates retain their checks. Net-zero
+  updates do not discharge an intermediate overflow. The same general rule
+  recovers exact length four after four source-owner appends. Constructor
+  singleton entry envelopes and closed non-writing observer calls preserve
+  their independently established facts; arbitrary loop-produced singleton
+  values are not treated as invariants. The expanded 456-case native matrix
+  and eight focused compiler/optimizer gates pass, but the original six safety
+  and three native-evidence requirements still fail without weakened tests.
+  This is separate from the required raw-region initialization/element-value
+  provenance, which still needs coverage, actual address identity, and
+  conservative invalidation rather than a witness-to-pointee equivalence.
+  The first actual-address transfer now follows exact MIR address-of values
+  for existing scalar locals/owned fields, including pointer copies,
+  reassignment and same-address CFG joins. It recovers a current pointee value
+  without changing the raw load or its unsafe obligation. Changed/ambiguous
+  addresses, checked aliases, raw writes and lifetime replacement retain their
+  failure checks and reject forged discharges. This body-local prerequisite
+  does not yet provide raw-region initialization coverage or source-element
+  envelopes; the original nine optimizer/native assertions remain open.
+  The following selected-call prerequisite carries an exact raw-pointer formal
+  identity through ordinary returns and nested forwarding. It distinguishes a
+  passed address from the callee's own pointer-variable storage and permits
+  plain reassignment of that independent variable without interpreting it as
+  a pointee write. Raw/checked-alias writes and differing returned addresses
+  retain their checks. Actual entry-pointer values in receiver/checked-parameter
+  owned fields are now represented within the body, including nested records
+  and exact constant offsets. Six unrelated positive controls prove arithmetic
+  only after successful construction; six replacement/alias/hole/lifetime
+  controls retain checks and reject forged proofs. Constructor receivers,
+  stored-reference paths and unknown incoming contents are not admitted.
+  The next slice must export these actual typed field addresses and prove
+  successful initialized-index construction coverage before exporting element
+  facts, without equating a witness with an
+  allocation or assuming an indexed write initializes its complete interval.
+  Exact successful construction postconditions now cross selected source calls
+  through a receiver/checked-reference owned pointer field, as well as a raw
+  pointer formal. Caller substitution requires the actual tracked field address;
+  conditional construction, alias mutation and lifetime replacement remain
+  conservative. Vacant construction also records bounded exact fields already
+  live at construction time, allowing disjoint metadata writes without
+  retroactively treating later field facts as a non-alias proof. Constructor
+  pointer transport, repeated-call initialized-index coverage, record-pointee
+  envelopes and checked returned-element provenance remain required. These
+  general prerequisites do not by themselves close the original six safety
+  and three native-evidence acceptance requirements.
+  The successful scalar-construction prerequisite now records a value at one
+  exact typed address and constant element offset. Source calls relay successful
+  postconditions by pointer-formal ordinal; exact read-only value formals,
+  including concrete pack elements, substitute the caller's staged value.
+  Holes, conditional construction, raw/alias writes, parameter replacement and
+  lifetime replacement do not retain stale facts. Pointer identity is separate
+  from liveness; actual raw reads remain executable and opaque. This is not
+  initialized-region coverage: interprocedural pointer-field origins, indexed
+  coverage and checked returned-element provenance remain required before
+  the original container optimization gates can pass.
+  A further general prerequisite distinguishes inert address arithmetic and
+  typed pointer conversion from actual pointee/lifetime operations, and avoids
+  repeating an operation at an empty full-expression marker. Selected unsafe
+  source declarations retain actual body effect authority and caller obligations.
+  Ordinary record/scalar positives and raw-write negatives cover these boundaries;
+  raw initialized-element transfer and the same seven owner requirements remain
+  open. Independent nested-subobject, returned-container and stored-reference
+  mutation probes are now permanent unit/native regressions.
+  The next bounded prerequisite retains active non-byte scalar fields across
+  exact vacant integer construction and ordinary source wrappers. Shared MIR
+  effects no longer invent user code/synchronization for that exact shape;
+  raw writes and unsafe vacancy obligations remain. Successful-path transfer
+  summaries distinguish this supported opaque operation from unknown live-memory
+  barriers. Byte/array/union/stored-reference/backing paths fail closed, and
+  destruction or another unknown operation dominates the joined barrier. This
+  recovers an unrelated public `construct_at` proof, not the seven still-open
+  source-owner acceptance proofs. Pure boolean failure detectors also preserve
+  unrelated facts without introducing container knowledge. Source process
+  prefix construction now allocates through its already-initialized lease and
+  publishes slots last, avoiding two moved owner temporaries; provider validation
+  and exact original-descriptor release retain their existing ordering.
+  Source-computed boolean guards now refine their successful Invoke edge using
+  the existing branch comparison rule, with a bounded inert staging/identity/
+  negation walk. Unrelated direct and negated predicates prove arithmetic after
+  the guard, while a later write retains overflow. Failed edges obtain no
+  success refinement. The same seven owner proof requirements remain open.
+  Full admission/corpus/performance coverage
+  still needs acceptance; no performance-parity claim follows from retiring
+  the private proof model.
+  The `source_prefix_complete_elements` composition probe exposed two general
+  backend defects: local Expected publication rejected a nonraising owning
+  payload constructor, and checked reference results spuriously declared native
+  referent objects. The existing payload construction/publication proof now
+  admits complete prepared arguments and local destinations; exact loan-result
+  representation no longer invents default construction. This probe is now
+  registered in the source-owner native matrix, covering owning payload enums,
+  both Expected alternatives, growth, insertion, relocation, shrinking and
+  exactly-once destruction. Dedicated native controls also check argument
+  failure, primary/secondary cleanup, and a default-constructible referent with
+  observable constructor/destructor side effects. Full migration acceptance
+  still requires the remaining optimizer, corpus and performance gates.
+  Cutover exposed a general range-origin gap: synthesized cursors backed by
+  an accessor's `CallResult` loan selected their iterator shell instead of the
+  checked range owner. Lowering and the independent source-identity verifier
+  now preserve the exact owner for both local and accessor-backed cursors.
+  `testExpectedPayloadRangeLoans` and an unrelated user-defined range retain
+  that regression; forged iterator-shell sources remain rejected. No loan
+  containment rule or ordinary borrowed-carrier shell rule was relaxed.
+  Source-owned field rollback has a represented destructor-failure edge in
+  addition to the constructor edges. Lifecycle tests verify that exact field
+  and temporary result cleanup rather than requiring obsolete private-handle
+  helper spellings. The optimized ownership, frontend, declaration, backend
+  preflight and lifecycle suites pass on the task branch; the source-prefix
+  runtime and native prefix evidence also pass. Complete corpus admission,
+  optimizer regression migration, performance and installed-consumer evidence remain
+  acceptance gates, not consequences of those focused proofs.
+  Corpus iteration also found an unconstrained `std::json::decode_array`
+  definition: it now explicitly requires the vector's structural element
+  contract. The affected JSON example now compiles and runs natively. Its
+  reduced owning payload-enum receiver-field move/restore/return regression
+  required admitting the exact existing unpublished-result cleanup recipe,
+  and success-alternative rollback must not import native Expected's
+  copyable-error requirement. Owning enum and move-only-error result cleanup
+  pass all eight native modes, including primary/secondary cleanup failures;
+  the remaining full corpus and optimization gates are still outstanding.
+  The raw example scan reaches verified MIR for all 131 current sources
+  (26,048 ready bodies); this is not the native corpus oracle. Broader JSON
+  validation exposed repeated whole-CFG predecessor scans in cleanup-spine
+  verification and quadratic native body-template replacement. Verification
+  now indexes predecessor blocks once per invocation, with a 64-guard positive
+  and an extra-predecessor rejection. Template formatting uses append-only
+  passes with byte-identical comparison evidence. The formerly 300-second
+  MIR timeout completes locally in 12.38 seconds; the formerly 600-second
+  native timeout now builds. Native execution then exposed excessive stack
+  storage for mutually exclusive secondary-failure paths in a large ordinary
+  body. The backend now reserves one fresh invocation-local secondary record
+  and constructs terminal emergency envelopes out of line, without changing
+  MIR cleanup or the failure ABI. A many-guard structural check pins the
+  storage bound; its eight-mode native matrix preserves complete cleanup,
+  exact panic messages and immediate secondary termination. The complete JSON
+  fixture then ran at O0, while its O3 native build still exceeded the
+  600-second gate at that checkpoint.
+  A native profile identifies dominance-frontier/phi construction over the
+  large cleanup graph. The backend now retains one invocation-local cleanup
+  context across the verified primary chain and omits dead entry initializers
+  for statuses assigned by each Drop before its Invoke. Many-guard structural
+  and native checks preserve that exact assignment/activation schedule;
+  an isolated optimized native JSON snapshot now compiles with uninitialized
+  carrier warnings treated as errors and produces the expected complete output.
+  The complete compiler-driven JSON matrix subsequently passes in 512.66
+  seconds: source/MIR O0/O3, native document and codec endpoints, temporary
+  owners and owned-error regressions. No timeout was raised. Full acceptance
+  still requires the optimizer proofs, complete native corpus, installed
+  consumers and measured performance; it is not inferred merely from removing
+  those representation costs or from the isolated native replay.
+- **Outcome:** vector and its checked views use ordinary source-defined prefix
+  ownership, with one authoritative initialized length and no sparse bitmap.
+  Companion resource-vector shares the engine and retains the original bound
+  provider through cleanup, including while empty.
+- **Integration audit follow-up:** dependent aggregate trait queries now retain
+  the type parameter's declared/active relocation guarantees without granting
+  unconstrained or disjunctive permission. HIR retains exact enum identities
+  occurring only in generic arguments in both complete and reachable lowering.
+  Focused structural tests and the 16-case/eight-mode recursive native matrix
+  pass. The JSON surface timeout is repaired with immutable backend query
+  indexes; cached and direct plans retain byte-identical output. Owning-array
+  decomposition now uses the exact vacant-destination relocation proof and
+  passes its complete native matrix, including unrelated guarded destructors.
+  The broader failing audit gates still require acceptance. Test observers now follow the
+  real process provider and approved one-region vector policy, without weakening
+  zero-allocation swaps, reverse cleanup or sparse-storage's two-region contract.
+  The subsequent corpus repair restores numeric generic storage and reviewed
+  raw-state owned callbacks, while preserving tracked-borrow and unsafe-contract
+  boundaries. Expected payload field views no longer invent native default
+  objects; unrelated nested-owner tests cover real construction/destruction and
+  forged projection rejection. All 20 previously failing targeted corpus cases,
+  the eight-mode Expected publication matrix and updated examples pass. Current
+  full-suite/inventory, installed-consumer and performance evidence and the six
+  original optimizer safety/three native proof requirements remain open.
+- **Prerequisites:** completed `S-ALLOC-06/07` layout, final-address construction,
+  destruction, relocation, owner-witness references, process leases and resource
+  leases. Shared vector/string spans use the same source owner. The general
+  raw text/C-string bridge retains an exact owner-witness loan and explicit
+  unsafe validity obligations; it does not replace primitive text representation.
+- **Accepted companion policy:** one object region per nonempty resource-vector
+  reservation; zero reserves none. Public sparse storage still uses two. The
+  owner explicitly approved the observable request-count revision.
+  The strengthened source provider checks original provider/region identity,
+  address, extent and alignment, rejects malformed/duplicate release before
+  freeing, and verifies no outstanding original descriptors during panic
+  cleanup. Its combined Release matrix passes 16 native builds, 88 exact native
+  observations and six audit-Off/Warn compile-rejection checks; this is focused
+  evidence, not full migration acceptance.
+- **Remaining acceptance:** preserve admitted element types and public APIs,
+  exact ordered constructor arguments, loans/invalidation, first/secondary
+  failure identity and exactly-once cleanup. Test unrelated source owners,
+  malformed IR where general compiler facts change, all native differential/
+  no-elide/sanitizer modes, installed consumers, examples/censuses and measured
+  allocation/check/throughput parity. Remove actually subsumed operations rather
+  than retaining selectable fallback implementations. Update the operation
+  ownership ledger only as each migration is proven.
 
 ## Phase C: Concurrency And The Language Memory Model
 

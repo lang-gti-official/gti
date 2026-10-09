@@ -75,6 +75,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-stored-callable-") as temporary:
         for mode, flags, native in modes:
             for source, cases in [(fixtures / "stored_callable_invocation.gti", [(0, "", "")]),
+                                  (fixtures / "stored_callable_source_owner.gti", [(0, "8\n7\n", "")]),
                                   (failure, executions), (pack, pack_executions)]:
                 binary = pathlib.Path(temporary) / f"{source.stem}-{mode}"
                 command = [str(compiler), str(source), *flags, "-o", str(binary)]

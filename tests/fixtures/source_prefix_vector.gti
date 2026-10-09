@@ -1,0 +1,23 @@
+#include <std/vector>
+#include <std/span>
+
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2, 3});
+  values.reserve(std::size_t(8));
+  values.insert(std::size_t(1), 4);
+  values.erase(std::size_t(2));
+  values.swap_elements(std::size_t(0), std::size_t(2));
+  {
+    mut auto view = values.as_mutable_span();
+    for (mut int& value : view) { value += 10; }
+    auto part = view.subspan(std::size_t(1), std::size_t(2));
+    if (part[std::size_t(0)] != 14) { return 1; }
+  }
+  {
+    auto view = values.as_span();
+    if (view.size() != std::size_t(3) || view.back() != 11) { return 2; }
+  }
+  values.shrink_to_fit();
+  values.clear();
+  return values.size() == std::size_t(0) ? 0 : 3;
+}
