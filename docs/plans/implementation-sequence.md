@@ -5075,6 +5075,15 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   pass on the Mac mini. The two optimizer suites and vector/game-update runtime
   parity remain the acceptance blockers. See the canonical verification record
   for exact revisions, failures and measurement scope.
+  The reviewed `fe6a22d0` optimizer handoff is now integrated into the task
+  branch. Compact initialized-prefix relations prove first/last and bounded
+  indexed reads for an unrelated 5,000-element source sequence, with structural
+  append/endpoint requirements and forged-proof/native negatives. The handoff's
+  six focused suites and 490 native cases pass; combined-head revalidation is
+  still required. Region-preserving writes, record-region transport through
+  construction/cleanup, default scalar construction postconditions and general
+  loop-index/endpoint relations remain the named prerequisites of the six
+  source-container proof requirements and final vector/game performance parity.
   The contract is
   [ADR 022's raw-buffer revision](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
   It covers migration candidates M01, M02 and M04 in the

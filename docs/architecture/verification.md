@@ -314,6 +314,9 @@ oracle passes all 131 examples at O0/C++20 and O3/C++23 against those candidates
 including identical ownership and output. Candidate JSON and before/after
 function inventories remain under `/private/tmp/gti-s08-s09-body-origins`, with
 the native log at `/private/tmp/gti-combined-corpus-oracle-805e3e73.log`.
+The independent full emitter comparison also passes: 27,737 admitted bodies
+and 17,513/17,513 general-emission comparisons across the same 131 examples
+(`/private/tmp/gti-combined-emitter-corpus-805e3e73.log`).
 Committed baselines are not yet promoted while combined acceptance is open.
 
 `process_allocation_elision` forces one escaping allocation as a positive
