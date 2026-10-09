@@ -393,9 +393,13 @@ structural construction cannot overwrite a previously live non-byte object
 under the existing GTI non-overlap contract. It therefore preserves that
 object's value; it does not infer disjointness merely from different bases.
 
-Exact source summaries export only constructed addresses rooted in raw-pointer
-formals, relative to formal ordinal and element offset. Every successful exit
-must establish the fact. Failure edges retain the pre-operation state.
+Exact source summaries export constructed addresses rooted in raw-pointer
+formals or an ordinary pointer field of a receiver/checked-reference formal,
+relative to the receiver or formal ordinal, owned field path and element
+offset. Every successful exit must establish the fact. Failure edges retain
+the pre-operation state. A field postcondition applies only when the caller
+retains the actual prepared object's current field address; a callee field path
+cannot invent an entry value after replacement or unknown memory effects.
 An initializer exactly equal to a read-only by-value integer formal can retain
 that argument identity through neutral typed staging, including a verified
 concrete pack element. Applying the summary substitutes the caller's prepared
@@ -424,11 +428,25 @@ field can therefore justify subsequent scalar arithmetic, including an exact
 raw-parameter initialization helper, without removing the raw load or granting
 an unsafe operation new permission.
 
-This body-local rule does not export a constructed-field postcondition or
-initialize unknown pointer contents at entry. The remaining source-owner work
-needs interprocedural owned pointer-field/initialized-index coverage and checked
-returned-element provenance; a lifetime witness is still never a pointee or an
-allocation identity.
+This rule and its exact call postcondition do not initialize unknown pointer
+contents at entry. Successful vacant construction may additionally retain up
+to 64 exact non-byte owned fields already known live at construction time. A
+later write to that exact field cannot overlap the newly constructed object.
+This relation is captured once, not inferred from a field value learned after
+construction. Stored-reference/raw traversal, parent replacement and unknown
+writes do not use it. Joins intersect the relations. Call application captures
+only caller fields surviving complete input invalidation, before publishing
+callee postconditions; a field rebuilt by the callee therefore cannot become
+an invented disjointness proof. Callee-local field roots never enter a summary.
+Independent readonly pointer bindings retain their address across a checked
+referent write; exact replacement still retires the binding's value. Actual
+raw loads and unsafe obligations remain unchanged.
+
+The remaining source-owner work needs initialized-index coverage through
+repeated calls, record-pointee envelopes, constructor pointer-field transport
+and checked returned-element provenance. A lifetime witness is still never a
+pointee or an allocation identity. Different pointer fields never imply
+different allocations.
 
 Inert typed address arithmetic and pointer conversion neither read nor write a
 pointee, so they preserve unrelated memory facts. Apart from the exact typed

@@ -8,7 +8,79 @@ class AddressPair {
 public:
   mut int* slot = nullptr;
   mut int* other = nullptr;
+  mut int count = 0;
   AddressPair(int* slot, int* other) : slot(slot), other(other) {}
+
+  unsafe void initialize(int value) {
+    unsafe { std::construct_at(this.slot, value); }
+  }
+
+  unsafe void initialize_next() {
+    unsafe { std::construct_at(this.slot + 1, 7); }
+  }
+
+  unsafe void initialize_conditionally(bool condition) {
+    if (condition) {
+      unsafe { std::construct_at(this.slot, 7); }
+    }
+  }
+
+  unsafe void initialize_then_write_alias() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      *this.other = 2147483647;
+    }
+  }
+
+  unsafe int constructed_member_call() {
+    unsafe {
+      this.initialize(7);
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int constructed_member_offset() {
+    unsafe {
+      this.initialize_next();
+      int* pointer = this.slot + 1;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int constructed_field_metadata() mut {
+    if (this.count != 0) return 0;
+    unsafe {
+      std::construct_at(this.slot, 7);
+      this.count = 1;
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int bad_member_value() {
+    unsafe {
+      this.initialize(2147483647);
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int bad_member_conditional() {
+    unsafe {
+      this.initialize_conditionally(false);
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int bad_member_alias() {
+    unsafe {
+      this.initialize_then_write_alias();
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
 
   unsafe int constructed_field() {
     unsafe {
@@ -99,9 +171,31 @@ public:
 };
 
 struct NestedAddresses {
-  AddressPair addresses;
+  mut AddressPair addresses;
   NestedAddresses(int* slot, int* other) : addresses(AddressPair(slot, other)) {}
 };
+
+unsafe void initialize_nested_field(NestedAddresses& nested, int value) {
+  unsafe { std::construct_at(nested.addresses.slot, value); }
+}
+
+unsafe int constructed_reference_call(NestedAddresses& nested) {
+  unsafe {
+    initialize_nested_field(nested, 7);
+    int* pointer = nested.addresses.slot;
+    return *pointer + 1;
+  }
+}
+
+unsafe int constructed_reference_metadata(mut NestedAddresses& nested) {
+  if (nested.addresses.count != 0) return 0;
+  unsafe {
+    std::construct_at(nested.addresses.slot, 7);
+    nested.addresses.count = 1;
+    int* pointer = nested.addresses.slot;
+    return *pointer + 1;
+  }
+}
 
 unsafe int constructed_reference_field(AddressPair& addresses) {
   unsafe {
@@ -119,13 +213,63 @@ unsafe int constructed_nested_field(NestedAddresses& nested) {
   }
 }
 
+struct Metadata {
+  mut int count = 0;
+};
+
+unsafe int constructed_with_metadata(mut Metadata& metadata, int* address) {
+  if (metadata.count != 0) return 0;
+  unsafe {
+    std::construct_at(address, 7);
+    metadata.count = 1;
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int constructed_metadata_relay(mut Metadata& metadata, int* address) {
+  if (metadata.count != 0) return 0;
+  unsafe {
+    initialize_field_target(address, 7);
+    metadata.count = 1;
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_reconstructed_metadata(mut Metadata& metadata, int* address) {
+  unsafe {
+    std::destroy_at(&metadata.count);
+    initialize_field_target(address, 7);
+    // This fact is established AFTER construction; it cannot prove that
+    // address and metadata.count occupy disjoint storage.
+    if (metadata.count != 7) return 0;
+    metadata.count = 2147483647;
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_metadata_alias(mut Metadata& metadata, int* alias, int* address) {
+  if (metadata.count != 0) return 0;
+  unsafe {
+    std::destroy_at(alias);
+    initialize_field_target(address, 7);
+    if (metadata.count != 7) return 0;
+    metadata.count = 2147483647;
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
 int main() {
   mut std::uninitialized<int> storage{};
   mut int pair[2] = {0, 2147483647};
+  mut Metadata metadata{};
   unsafe {
     mut AddressPair addresses{storage.data(), &pair[1]};
     AddressPair aliasing{storage.data(), storage.data()};
-    NestedAddresses nested{storage.data(), &pair[1]};
+    mut NestedAddresses nested{storage.data(), &pair[1]};
     if (false) return addresses.bad_field_value();
     if (false) {
       std::destroy_at(&pair[0]);
@@ -136,6 +280,29 @@ int main() {
     if (false) return addresses.bad_field_redirect();
     if (false) return addresses.bad_field_old_address();
     if (false) return addresses.bad_field_replacement();
+    if (false) return addresses.bad_member_value();
+    if (false) {
+      AddressPair existing{&pair[1], &pair[1]};
+      return existing.bad_member_conditional();
+    }
+    if (false) return aliasing.bad_member_alias();
+    if (false) return bad_reconstructed_metadata(metadata, &metadata.count);
+    if (false) return bad_metadata_alias(metadata, &metadata.count, &metadata.count);
+    if (constructed_with_metadata(metadata, storage.data()) != 8) return 10;
+    std::destroy_at(storage.data());
+    metadata.count = 0;
+    if (constructed_metadata_relay(metadata, storage.data()) != 8) return 11;
+    std::destroy_at(storage.data());
+    if (addresses.constructed_field_metadata() != 8) return 12;
+    std::destroy_at(storage.data());
+    if (constructed_reference_metadata(nested) != 8) return 13;
+    std::destroy_at(storage.data());
+    addresses.initialize_conditionally(true);
+    std::destroy_at(storage.data());
+    if (addresses.constructed_member_call() != 8) return 7;
+    std::destroy_at(storage.data());
+    if (constructed_reference_call(nested) != 8) return 8;
+    std::destroy_at(storage.data());
     if (addresses.constructed_field() != 8) return 1;
     std::destroy_at(storage.data());
     if (addresses.constructed_field_relay() != 8) return 2;
@@ -149,6 +316,8 @@ int main() {
     std::destroy_at(&pair[1]);
     AddressPair offset{&pair[0], &pair[0]};
     if (offset.constructed_field_offset() != 8) return 5;
+    std::destroy_at(&pair[1]);
+    if (offset.constructed_member_offset() != 8) return 9;
   }
   return 0;
 }

@@ -337,11 +337,15 @@ int main() {
                       10);
   checkAddressFixture("optimizer_constructed_address_budget.gti",
                       {"within_budget"}, 1);
-  checkAddressFixture("optimizer_pointer_fields.gti",
-                      {"constructed_field", "constructed_field_relay",
-                       "constructed_field_offset", "constructed_copied_field",
-                       "constructed_reference_field",
-                       "constructed_nested_field"},
-                      6);
+  checkAddressFixture(
+      "optimizer_pointer_fields.gti",
+      {"constructed_field", "constructed_field_relay",
+       "constructed_field_offset", "constructed_copied_field",
+       "constructed_reference_field", "constructed_nested_field",
+       "constructed_member_call", "constructed_member_offset",
+       "constructed_reference_call", "constructed_with_metadata",
+       "constructed_metadata_relay", "constructed_field_metadata",
+       "constructed_reference_metadata"},
+      11);
   return failures == 0 ? 0 : 1;
 }

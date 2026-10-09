@@ -65,6 +65,11 @@ enum class AddressOriginKind { ExistingPlace, EntryPointer, EntryPointerField };
 struct ScalarAddress {
   AddressOriginKind kind = AddressOriginKind::ExistingPlace;
   MirPlaceId place = 0;
+  // Field addresses are relative to an ordinary object root, which may be the
+  // implicit This root zero. Repeated indirect place IDs for the same owned
+  // field path do not become different pointer values.
+  FieldPath field;
+  SemanticType fieldPointee;
   std::uint64_t elementOffset = 0;
   Evidence evidence;
   friend bool operator==(const ScalarAddress &,
@@ -77,13 +82,14 @@ struct ScalarAddress {
 struct ScalarAddressKey {
   AddressOriginKind kind;
   MirPlaceId place;
+  FieldPath field;
   std::uint64_t elementOffset;
   friend auto operator<=>(const ScalarAddressKey &,
                           const ScalarAddressKey &) = default;
 };
 
 [[nodiscard]] ScalarAddressKey addressKey(const ScalarAddress &address) {
-  return {address.kind, address.place, address.elementOffset};
+  return {address.kind, address.place, address.field, address.elementOffset};
 }
 
 struct ConstructedScalar {
@@ -92,13 +98,21 @@ struct ConstructedScalar {
   // interval endpoints. Summary substitution uses a formal ordinal, never
   // another body's local value/place identity.
   std::optional<std::size_t> valueParameter;
+  // Exact non-byte owned fields already known live when this vacant object
+  // was constructed. Their storage cannot overlap the new object. This is a
+  // lifetime relation captured then, not inferred from later scalar facts.
+  std::vector<FieldOrigin> disjointFields;
   friend bool operator==(const ConstructedScalar &,
                          const ConstructedScalar &) = default;
 };
 using ConstructedScalars = std::map<ScalarAddressKey, ConstructedScalar>;
 
 struct ConstructedParameter {
-  std::size_t parameter;
+  // A missing ordinal denotes the receiver. An empty path denotes a raw
+  // pointer formal; otherwise the address is that input object's entry field
+  // value. No callee-local place identity crosses the call boundary.
+  std::optional<std::size_t> parameter;
+  FieldPath field;
   std::uint64_t elementOffset;
   friend auto operator<=>(const ConstructedParameter &,
                           const ConstructedParameter &) = default;
@@ -683,6 +697,8 @@ integerForOperand(const MirBody &body, const AbstractState &state,
 
 [[nodiscard]] const SemanticType *
 addressPointeeType(const MirBody &body, const ScalarAddress &address) {
+  if (address.kind == AddressOriginKind::EntryPointerField)
+    return &address.fieldPointee;
   const auto *place = body.findPlace(address.place);
   if (!place)
     return nullptr;
@@ -717,6 +733,8 @@ void joinScalarAddresses(std::map<Key, ScalarAddress> &target,
     const auto found = incoming.find(entry->first);
     if (found == incoming.end() || entry->second.place != found->second.place ||
         entry->second.kind != found->second.kind ||
+        entry->second.field != found->second.field ||
+        entry->second.fieldPointee != found->second.fieldPointee ||
         entry->second.elementOffset != found->second.elementOffset)
       entry = target.erase(entry);
     else {
@@ -1823,9 +1841,56 @@ void invalidatePlaceRoot(const MirBody &body,
   const auto overlaps = [&](MirPlaceId place) {
     return aliases.relation(destination, place) != MirAliasRelation::NoAlias;
   };
+  const auto pointerFieldOverlaps = [&](const ScalarAddress &pointer) {
+    // Different owned fields are disjoint storage, but walking through a
+    // stored reference or raw pointer loses that guarantee. A checked root
+    // reference may have its one leading dereference before the owned path.
+    bool fieldSeen = false;
+    const bool owned = std::all_of(
+        written->projections.begin(), written->projections.end(),
+        [&](const auto &projection) {
+          if (projection.kind == MirProjectionKind::Field) {
+            fieldSeen = true;
+            return true;
+          }
+          return !fieldSeen &&
+                 projection.kind == MirProjectionKind::Dereference &&
+                 written->root == MirPlaceRootKind::Binding &&
+                 body.findPlace(pointer.place) &&
+                 body.findPlace(pointer.place)->type.kind ==
+                     SemanticType::Reference;
+        });
+    if (const auto path = fieldPath(body, pointer.place, destination, true);
+        owned && path) {
+      const auto prefix = std::min(path->size(), pointer.field.size());
+      return std::equal(path->begin(), path->begin() + prefix,
+                        pointer.field.begin());
+    }
+    return overlaps(pointer.place);
+  };
   std::erase_if(state.constructedScalars, [&](const auto &entry) {
     if (entry.first.kind == AddressOriginKind::ExistingPlace)
       return overlaps(entry.first.place);
+    for (const auto &field : entry.second.disjointFields) {
+      if (const auto path = fieldPath(body, field.root, destination);
+          path && *path == field.path &&
+          std::none_of(written->projections.begin(), written->projections.end(),
+                       [](const auto &projection) {
+                         return projection.kind ==
+                                MirProjectionKind::RawDereference;
+                       })) {
+        // A stored reference adds a dereference after an owned field. It is
+        // not the exact storage named by this relation.
+        bool fieldSeen = false;
+        bool indirect = false;
+        for (const auto &projection : written->projections) {
+          indirect |= fieldSeen && projection.kind != MirProjectionKind::Field;
+          fieldSeen |= projection.kind == MirProjectionKind::Field;
+        }
+        if (!indirect)
+          return false;
+      }
+    }
     // An incoming address cannot denote this invocation's independent
     // scalar/pointer variable. Reference/loan/aggregate writes still may
     // touch that address, and never use this exception.
@@ -1836,13 +1901,37 @@ void invalidatePlaceRoot(const MirBody &body,
             written->type.kind != SemanticType::RawPointer);
   });
   std::erase_if(state.scalarAddressValues, [&](const auto &entry) {
+    if (entry.second.kind == AddressOriginKind::EntryPointerField)
+      return pointerFieldOverlaps(entry.second);
     return entry.second.kind != AddressOriginKind::EntryPointer &&
            overlaps(entry.second.place);
   });
   std::erase_if(state.scalarAddressPlaces, [&](const auto &entry) {
-    return overlaps(entry.first) ||
-           (entry.second.kind != AddressOriginKind::EntryPointer &&
-            overlaps(entry.second.place));
+    const auto *binding = body.findPlace(entry.first);
+    const bool independentPointer =
+        entry.second.kind == AddressOriginKind::EntryPointer && binding &&
+        binding->root == MirPlaceRootKind::Binding && binding->binding &&
+        binding->projections.empty() &&
+        binding->access == AccessMode::ReadOnly &&
+        binding->type.kind == SemanticType::RawPointer &&
+        !binding->traits.containsBorrowedState;
+    const auto storedField =
+        entry.second.kind == AddressOriginKind::EntryPointerField
+            ? fieldPath(body, entry.second.place, entry.first)
+            : std::nullopt;
+    const bool disjointOwnedField = storedField &&
+                                    *storedField == entry.second.field &&
+                                    !pointerFieldOverlaps(entry.second);
+    // A checked referent write cannot change an independent readonly pointer
+    // variable. Exact replacement of that variable still retires its value.
+    return (overlaps(entry.first) && !disjointOwnedField &&
+            (!independentPointer ||
+             aliases.relation(destination, entry.first) ==
+                 MirAliasRelation::MustAlias)) ||
+           (entry.second.kind == AddressOriginKind::EntryPointerField
+                ? pointerFieldOverlaps(entry.second)
+                : (entry.second.kind != AddressOriginKind::EntryPointer &&
+                   overlaps(entry.second.place)));
   });
   // The relation belongs to an owned This path. Without such an exact path,
   // an aliasing write may change any receiver field. Do not turn different
@@ -2176,6 +2265,9 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
                                             MirBodyAddress address,
                                             const MirBody &body,
                                             AbstractState &state);
+[[nodiscard]] std::vector<FieldOrigin> liveScalarFields(
+    const MirProgram *program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state);
 [[nodiscard]] std::optional<FieldOrigin> receiverFieldOrigin(
     const MirProgram &program, MirBodyAddress address, const MirBody &body,
     const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state,
@@ -2402,10 +2494,35 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   std::vector<std::pair<ScalarAddress, ConstructedScalar>> constructed;
   for (const auto &[destination, postcondition] :
        summary.constructedParameters) {
-    if (destination.parameter >= instruction.operands.size())
+    if (destination.parameter &&
+        *destination.parameter >= instruction.operands.size())
       continue;
-    auto pointer = scalarAddressForOperand(
-        body, state, instruction.operands[destination.parameter]);
+    const auto *operand =
+        destination.parameter
+            ? &instruction.operands[*destination.parameter]
+            : (instruction.receiver ? &*instruction.receiver : nullptr);
+    if (!operand)
+      continue;
+    std::optional<ScalarAddress> pointer;
+    if (destination.field.empty()) {
+      pointer = scalarAddressForOperand(body, state, *operand);
+    } else {
+      const auto root = objectOriginForOperand(body, aliases, state, *operand);
+      // The actual prepared object's current pointer is required. A callee's
+      // field path alone cannot invent a caller entry identity after a write.
+      if (root)
+        for (const auto &place : body.places) {
+          const auto path = fieldPath(body, root, place.id);
+          if (!path || *path != destination.field)
+            continue;
+          if (const auto found = state.scalarAddressPlaces.find(
+                  canonicalPlace(aliases, place.id));
+              found != state.scalarAddressPlaces.end()) {
+            pointer = found->second;
+            break;
+          }
+        }
+    }
     if (!pointer)
       continue;
     pointer = offsetAddress(*pointer, destination.elementOffset, false);
@@ -2506,8 +2623,17 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   }
   state.liveMemoryBarrier =
       std::max(state.liveMemoryBarrier, summary.liveMemoryBarrier);
-  for (auto &[pointer, value] : constructed)
+  const auto disjointFields =
+      constructed.empty() ? std::vector<FieldOrigin>{}
+                          : liveScalarFields(&closedCalls->program, address,
+                                             body, aliases, state);
+  for (auto &[pointer, value] : constructed) {
+    // Capture after the complete call's input invalidation and before its
+    // postconditions. A field rebuilt by the callee is not an independently
+    // live object merely because the callee also exports a scalar value.
+    value.disjointFields = disjointFields;
     publishConstructedScalar(state, addressKey(pointer), std::move(value));
+  }
   if (summary.hasOpaqueEffects) {
     // Opacity blocks recurrence invariance; it is not independent write
     // authority. The exact effect summary above governs caller invalidation.
@@ -2935,6 +3061,32 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
       state.liveMemoryBarrier, LiveMemoryBarrier::VacantStructuralConstruction);
 }
 
+[[nodiscard]] std::vector<FieldOrigin> liveScalarFields(
+    const MirProgram *program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state) {
+  std::vector<FieldOrigin> result;
+  const auto retain = [&](FieldOrigin field) {
+    // Omitted relations lose precision. Never substitute a larger region or
+    // use an interval of field identities when the budget is exhausted.
+    if (result.size() < 64 &&
+        std::find(result.begin(), result.end(), field) == result.end())
+      result.push_back(std::move(field));
+  };
+  for (const auto &[root, object] : state.objects)
+    for (const auto &[path, fact] : object.integers) {
+      (void)fact;
+      if (liveScalarPath(program, address, body, root, path))
+        retain({root, path});
+    }
+  for (const auto &[place, fact] : state.integerPlaces) {
+    (void)fact;
+    if (const auto field =
+            fieldOriginForPlace(program, address, body, aliases, place))
+      retain(*field);
+  }
+  return result;
+}
+
 [[nodiscard]] bool independentValueParameter(const MirProgram *program,
                                              MirBodyAddress address,
                                              const MirPlace &place) {
@@ -3087,8 +3239,11 @@ void applyInstruction(const MirBody &body,
       value->evidence = merged(value->evidence, pointer->evidence);
       add(value->evidence, block.id);
       addInstruction(value->evidence, instruction.id);
-      publishConstructedScalar(state, addressKey(*pointer),
-                               ConstructedScalar{*value, parameter});
+      publishConstructedScalar(
+          state, addressKey(*pointer),
+          ConstructedScalar{
+              *value, parameter,
+              liveScalarFields(program, address, body, aliases, state)});
     }
     return;
   }
@@ -3885,6 +4040,11 @@ void joinConstructed(std::map<Key, ConstructedScalar> &target,
         joinedInteger(entry->second.value, found->second.value, widen);
     if (entry->second.valueParameter != found->second.valueParameter)
       entry->second.valueParameter.reset();
+    std::erase_if(entry->second.disjointFields, [&](const auto &field) {
+      return std::find(found->second.disjointFields.begin(),
+                       found->second.disjointFields.end(),
+                       field) == found->second.disjointFields.end();
+    });
     ++entry;
   }
 }
@@ -5157,20 +5317,21 @@ entryStateForContext(const MirProgram &program, MirBodyAddress address,
                    : nullptr;
       if (!type || *type != place.type)
         continue;
-      const auto root = canonicalPlace(aliases, place.id);
+      const auto owner = place.root == MirPlaceRootKind::This
+                             ? thisRoot(body)
+                             : rootForBinding(body, place.binding);
+      const auto path = fieldPath(body, owner, place.id);
+      if (!path)
+        continue;
       // The alias matrix deliberately treats indirect projections as MayAlias.
       // Two occurrences of this same checked parameter/receiver and exact
       // owned field path nevertheless load the same entry pointer value. This
       // equality does not make different fields or pointees disjoint.
-      const auto same = std::find_if(
-          body.places.begin(), body.places.end(), [&](const auto &candidate) {
-            return samePlaceRoot(candidate, place) &&
-                   candidate.projections == place.projections &&
-                   candidate.type == place.type;
-          });
-      entry.scalarAddressPlaces[root] =
+      entry.scalarAddressPlaces[canonicalPlace(aliases, place.id)] =
           ScalarAddress{.kind = AddressOriginKind::EntryPointerField,
-                        .place = same == body.places.end() ? root : same->id};
+                        .place = canonicalPlace(aliases, owner),
+                        .field = *path,
+                        .fieldPointee = place.type.arguments.front()};
     }
   for (std::size_t index = 0; index < bindings.size() && index < types.size();
        ++index) {
@@ -5495,10 +5656,24 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     joinConstructed(initialized, exits[index].constructedScalars, false);
   const auto pointerBindings = parameterBindings(program, address);
   const auto pointerTypes = parameterTypes(program, address);
-  for (const auto &[pointer, value] : initialized) {
+  for (auto &[pointer, value] : initialized) {
+    // These local storage identities justify only transfers inside this body.
+    // The caller independently captures surviving pre-call live fields.
+    value.disjointFields.clear();
     const auto *origin = body->findPlace(pointer.place);
-    if (pointer.kind != AddressOriginKind::EntryPointer || !origin ||
-        origin->root != MirPlaceRootKind::Binding ||
+    if (pointer.kind == AddressOriginKind::EntryPointerField && function &&
+        function->owner &&
+        (!pointer.place || (origin && origin->root == MirPlaceRootKind::This &&
+                            origin->projections.empty()))) {
+      result.summary.constructedParameters.emplace(
+          ConstructedParameter{std::nullopt, pointer.field,
+                               pointer.elementOffset},
+          value);
+      continue;
+    }
+    if ((pointer.kind != AddressOriginKind::EntryPointer &&
+         pointer.kind != AddressOriginKind::EntryPointerField) ||
+        !origin || origin->root != MirPlaceRootKind::Binding ||
         !origin->projections.empty())
       continue;
     for (std::size_t index = 0;
@@ -5506,7 +5681,8 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       if (pointerBindings[index] == origin->binding &&
           pointerTypes[index] == origin->type)
         result.summary.constructedParameters.emplace(
-            ConstructedParameter{index, pointer.elementOffset}, value);
+            ConstructedParameter{index, pointer.field, pointer.elementOffset},
+            value);
   }
   if (!returnPointers.empty() && returnPointers.size() == exits.size() &&
       returnPointers.front() &&

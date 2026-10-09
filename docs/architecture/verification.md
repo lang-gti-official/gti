@@ -724,6 +724,31 @@ proof requirements remain open, as do final full-suite, repository inventories,
 installed consumers and performance acceptance. The 0.394.3 candidate remains
 an unfinished migration, not a release-ready toolchain.
 
+The following exact field-call and live-metadata checkpoint passes thirteen
+pointer-field/address positives and eleven forged-proof negatives. Member and
+nested checked-reference calls export only successful exact-address construction;
+mixed conditional exits, unsafe alias writes and destroy/reconstruct cases
+retain their failures. In particular, a scalar fact learned after construction
+cannot be promoted to a non-alias relation. The complete raw-address matrix
+passes all 288 executions with six workers in 84.42 seconds, including both
+C++ standards, O0/O1/O3, no-elide and ASan/UBSan. The full compiler aggregate
+passes in 45.80 seconds and all six focused optimizer gates pass. The same run
+still fails the original six `optimizer_safety` requirements; none were removed
+or weakened. A freshly relinked native-evidence gate retains its three original
+proof/emission failures (19.84 seconds), with native behavioral checks passing.
+Source-owner, resource-prefix, terminated-string and worker-inventory gates
+also pass together in 97.44 seconds; formatting checks all 508 first-party
+C/C++ files with the pinned formatter.
+This is additional general analysis evidence, not migration or performance
+acceptance.
+
+Separately, the preceding `fe0d0530` snapshot passes the full detached body
+emitter corpus for all 131 sources: all 26,548 bodies are ready and all 16,647
+applicable general emissions match. It uses the reviewed temporary current
+inventory rather than prematurely refreshing repository baselines. Final
+current-head corpus, full-suite, installed-consumer and measured-performance
+acceptance remain required.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs
