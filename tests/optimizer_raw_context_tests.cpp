@@ -412,5 +412,7 @@ int main() {
                       {"after_local_result", "after_record_result"}, 1, false,
                       false, true);
   checkAddressFixture("optimizer_pointer_field_contents.gti", {"observe"}, 6);
+  checkAddressFixture("optimizer_sibling_field_publication.gti",
+                      {"sibling_publication"}, 4, false, false);
   return failures == 0 ? 0 : 1;
 }

@@ -517,6 +517,14 @@ inferred. The unrelated `Cell` regression retains its actual unsafe load and
 checks overwrite, retargeting, native/global aliases, a checked mutable borrow
 and destroy/reconstruct negatives with forged-proof rejection.
 
+Direct stores through ordinary owned receiver fields invalidate the selected
+subtree but preserve scalar facts for disjoint siblings. Materialized receiver
+places and the analysis-only implicit receiver obey the same rule. This does
+not extend to stored-reference or raw dereferences, unknown/native effects,
+pointee snapshots or initialized-element summaries. An unrelated source
+`Ledger` exercises publication through a nested member followed by a sibling
+store, with direct/borrowed/raw/native mutation negatives and canonical replay.
+
 Exact source summaries export constructed addresses rooted in raw-pointer
 formals or an ordinary pointer field of a receiver/checked-reference formal,
 relative to the receiver or formal ordinal, owned field path and element
