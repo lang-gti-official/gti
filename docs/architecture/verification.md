@@ -703,10 +703,26 @@ with operand emission. The unrelated two-level owning-field fixture has no
 extra default construction or destruction in all eight native modes; missing
 field identities and mismatched types still reject admission. The complete
 seven-fixture Expected publication matrix and preflight/census gates pass.
-The six original optimizer safety and three native proof requirements remain
-open, as do final full-suite, current inventories, installed consumers and
-performance acceptance. The 0.394.3 candidate remains an unfinished migration,
-not a release-ready toolchain.
+The subsequent native corpus oracle builds and runs all 131 examples at both
+endpoints, retaining 10,614 reviewed emitted body identities. The temporary
+LoweredProgram inventory is 55,959 declarations, 10,617 bodies and 5,427 generated
+items; repository baselines remain pending combined-suite acceptance. The full
+stdlib surface passes all 151 cases in 519.71 seconds with unchanged timeouts,
+including numeric generic source storage. The first-family runtime observer
+now requires the exact public vector bounds site instead of a retired private
+storage detector, and passes in 5.04 seconds.
+
+Body-local entry pointer-field tracking passes six unrelated positives and six
+forged-proof rejection controls, including nested owned fields and checked
+reference parameters. The complete raw-address native matrix passes all 248
+cases in 72.25 seconds with six workers: C++20/C++23 O0/O1/O3, no-elide and
+ASan/UBSan preserve success and exact overflow failures. The full compiler
+aggregate and six focused optimizer gates pass together in 45.01 seconds.
+This does not supply interprocedural initialized-field coverage or a checked
+returned-element envelope. The six original optimizer safety and three native
+proof requirements remain open, as do final full-suite, repository inventories,
+installed consumers and performance acceptance. The 0.394.3 candidate remains
+an unfinished migration, not a release-ready toolchain.
 
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 

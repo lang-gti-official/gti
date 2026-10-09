@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "081f8cd10b6610ebc4092c1e0e856f781b16ff044ffea710e3a92ab63743c2df",
+    "stdlib/prelude.gti": "042d7467598dda35f05134f711dec16ea3dd1363d0839f0375e9f35c449a6b07",
     "stdlib/std/algorithm.gti": "086493320ed1a6f40cc2ea35f0497f5bb1e42f96ca0356aadd8341635e683e26",
     "stdlib/std/array.gti": "5de4c3f94a2c653393fa23b6054372260d2375f142360b48b5948808213f8b05",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
@@ -749,6 +749,13 @@
       "mode": "run",
       "source": "tests/fixtures/numeric_boundaries.gti",
       "native_sources": ["tests/fixtures/numeric_boundaries_oracle.cpp"],
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "numeric-source-storage",
+      "mode": "run",
+      "source": "examples/33-source-concepts.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -2435,10 +2442,10 @@
       "id": "prelude.relocation",
       "source": "stdlib/prelude.gti",
       "status": "executable",
-      "operations": ["std::bitwise_relocatable", "std::relocatable"],
-      "case_ids": ["structural-relocation"],
-      "required_instantiations": ["deleted-copy passive class", "passive user class", "resource-owning user class"],
-      "evidence": ["tests/fixtures/structural_relocation.gti", "tests/structural_relocation_tests.cpp", "tests/structural_relocation_lsp_test.py", "stdlib/prelude.gti"]
+      "operations": ["std::bitwise_relocatable", "std::numeric", "std::relocatable"],
+      "case_ids": ["structural-relocation", "numeric-source-storage"],
+      "required_instantiations": ["deleted-copy passive class", "passive user class", "resource-owning user class", "numeric scalar in source vector"],
+      "evidence": ["tests/fixtures/structural_relocation.gti", "tests/structural_relocation_tests.cpp", "tests/structural_relocation_lsp_test.py", "examples/33-source-concepts.gti", "stdlib/prelude.gti"]
     },
     {
       "id": "process.executable",

@@ -5163,9 +5163,15 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   passed address from the callee's own pointer-variable storage and permits
   plain reassignment of that independent variable without interpreting it as
   a pointee write. Raw/checked-alias writes and differing returned addresses
-  retain their checks. The next slice must extend actual typed address
-  expressions to owned fields/indexes and prove successful construction
-  coverage before exporting element facts, without equating a witness with an
+  retain their checks. Actual entry-pointer values in receiver/checked-parameter
+  owned fields are now represented within the body, including nested records
+  and exact constant offsets. Six unrelated positive controls prove arithmetic
+  only after successful construction; six replacement/alias/hole/lifetime
+  controls retain checks and reject forged proofs. Constructor receivers,
+  stored-reference paths and unknown incoming contents are not admitted.
+  The next slice must export these actual typed field addresses and prove
+  successful initialized-index construction coverage before exporting element
+  facts, without equating a witness with an
   allocation or assuming an indexed write initializes its complete interval.
   The successful scalar-construction prerequisite now records a value at one
   exact typed address and constant element offset. Source calls relay successful
@@ -5174,7 +5180,7 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   Holes, conditional construction, raw/alias writes, parameter replacement and
   lifetime replacement do not retain stale facts. Pointer identity is separate
   from liveness; actual raw reads remain executable and opaque. This is not
-  initialized-region coverage: source-owner pointer-field origins, indexed
+  initialized-region coverage: interprocedural pointer-field origins, indexed
   coverage and checked returned-element provenance remain required before
   the original container optimization gates can pass.
   A further general prerequisite distinguishes inert address arithmetic and

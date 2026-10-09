@@ -78,4 +78,31 @@ if __name__ == "__main__":
             error = (f"{path.name}:{line}: runtime error[GTI-R0001]: "
                      "integer_overflow in addition\n")
             cases[name] = [((), (70, "", error))]
+        fields_path = fixture.parent / "optimizer_pointer_fields.gti"
+        fields_source = fields_path.read_text()
+        paths["pointer_fields"] = fields_path
+        cases["pointer_fields"] = [((), (0, "", ""))]
+        field_dispatches = {
+            "bad_field_value": "if (false) return addresses.bad_field_value();",
+            "bad_field_hole": "if (false) {",
+            "bad_field_alias": "if (false) return aliasing.bad_field_alias();",
+            "bad_field_redirect": "if (false) return addresses.bad_field_redirect();",
+            "bad_field_old_address": "if (false) return addresses.bad_field_old_address();",
+            "bad_field_replacement": "if (false) return addresses.bad_field_replacement();",
+        }
+        for function, dispatch in field_dispatches.items():
+            name = f"pointer_fields_{function}"
+            path = Path(temporary) / f"{name}.gti"
+            assert fields_source.count(dispatch) == 1
+            path.write_text(fields_source.replace(
+                dispatch, dispatch.replace("if (false)", "if (true)", 1)))
+            paths[name] = path
+            lines = fields_source.splitlines()
+            start = next(index for index, text in enumerate(lines, 1)
+                         if text.strip().startswith(f"unsafe int {function}("))
+            line = next(index for index, text in enumerate(lines, 1)
+                        if index > start and "return *pointer + 1;" in text)
+            error = (f"{path.name}:{line}: runtime error[GTI-R0001]: "
+                     "integer_overflow in addition\n")
+            cases[name] = [((), (70, "", error))]
         main(names=tuple(paths), cases=cases, fixture_paths=paths)
