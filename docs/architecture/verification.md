@@ -594,6 +594,30 @@ pass on this implementation (92.61 seconds). No new syntax or public API is
 introduced by this optimizer prerequisite; the source-owner examples remain
 part of the outer migration's required final corpus gate.
 
+The scalar-initialization checkpoint adds exact constructed values, constant
+typed offsets and successful source-wrapper postconditions. Read-only formal
+and concrete-pack identity preserves each caller's actual value. Five new
+positives and ten reached overflow controls distinguish holes, conditional
+construction, raw aliases, callee writes, parameter changes and lifetime
+replacement. A separate call-tree control proves the 1,024th retained address
+and rejects a forged proof for an address beyond the retention budget. Raw
+loads remain executable and opaque; O0 remains transformation-free and O2/O3
+proofs independently replay. The existing exact `+0` raw-read expectation now
+requires its proved field addition while additionally asserting the retained
+raw operation and non-closed call context; write barriers are unchanged.
+The optimized eight-gate selection passes in 58.49 seconds, including all 188
+compiler cases. The expanded address/raw matrix passes all 192 cases across
+eight modes, including no-elide and ASan/UBSan (six workers, 58.98 seconds).
+The fresh original acceptance gates still report six safety and three native
+evidence failures (23.18 seconds); none of those requirements were weakened.
+Owned pointer-field origins, initialized index coverage, checked element-return
+provenance and the full migration/release gates remain outstanding.
+The same final compiler also passes the source-owner, resource-prefix and
+terminated-string runtime gates (88.54 seconds), plus all 456 object/lifetime
+native cases across eight modes (six workers, 136.89 seconds). Formatting and version-policy
+checks pass. This remains an internal checkpoint of the pending 0.394.0
+migration, not a separately completed feature or release.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs

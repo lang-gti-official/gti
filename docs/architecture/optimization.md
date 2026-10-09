@@ -339,8 +339,10 @@ the place's current integer fact, not the pointer's lifetime witness, and
 retains the actual raw load and unsafe obligation. This does not make the body
 effect-closed or justify speculative execution. Pointer replacement follows
 the replacement identity; overlapping mutation, raw writes, lifetime operations
-and unknown effects retire the relation. Distinct conditional addresses,
-pointer arithmetic/conversion and raw regions remain outside this transfer.
+and unknown effects retire the existing-place relation. Distinct conditional
+addresses and pointer conversions remain outside this transfer. An exact
+nonnegative element displacement may preserve address identity, but a nonzero
+displacement cannot read the original place's scalar fact.
 In particular it is not an initialized
 prefix or allocation-freshness proof. These are prerequisites of transporting
 element facts for the source-defined storage client, not nominal exceptions
@@ -364,9 +366,44 @@ rule provides no initialized region, allocation freshness, field-address
 summary, pointer-arithmetic contract or lifetime permission; actual raw reads
 and the caller's unsafe obligations remain unchanged.
 
+Successful exact integer construction additionally establishes the value at
+one typed address: the root identity plus a constant nonnegative element offset.
+Only non-byte integer objects participate. This is neither a region extent nor
+coverage of intervening or neighbouring slots. Offset addition/subtraction is
+checked in the analysis; unsupported, negative or overflowing displacements
+yield no identity. The actual pointer operation and its unsafe obligations are
+unchanged. CFG joins intersect exact addresses and join their value envelopes.
+Each abstract state retains at most 1,024 such addresses; excess distinct
+addresses remain unproved. This bounds expansion through source call trees
+without treating missing entries as an initialized interval.
+Raw writes, unknown effects, synchronization, destruction and potentially
+aliasing checked writes invalidate constructed values. A subsequent vacant
+structural construction cannot overwrite a previously live non-byte object
+under the existing GTI non-overlap contract. It therefore preserves that
+object's value; it does not infer disjointness merely from different bases.
+
+Exact source summaries export only constructed addresses rooted in raw-pointer
+formals, relative to formal ordinal and element offset. Every successful exit
+must establish the fact. Failure edges retain the pre-operation state.
+An initializer exactly equal to a read-only by-value integer formal can retain
+that argument identity through neutral typed staging, including a verified
+concrete pack element. Applying the summary substitutes the caller's prepared
+argument; safe and overflowing calls to the same helper do not share a single
+invented constant. Mutable/replaced formals cannot use that equality. Evidence
+is rebased to the call rather than exporting body-local identities.
+
+Symbolic entry-pointer SSA values survive pointee invalidation as addresses
+only; read-only independent pointer bindings can retain those same values.
+Neither preserves initialized contents, liveness or dereference permission.
+Loads consult the exact surviving construction fact, keep their raw access,
+and remain opaque. The remaining source-owner work needs owned pointer-field
+origins, index coverage and checked returned-element provenance; a lifetime
+witness is still never a pointee or an allocation identity.
+
 Inert typed address arithmetic and pointer conversion neither read nor write a
-pointee, so they preserve unrelated memory facts. They introduce no address,
-extent, lifetime or initialized-element proof. Empty full-expression lifecycle
+pointee, so they preserve unrelated memory facts. Apart from the exact typed
+offset rule above, they introduce no address, extent, lifetime or
+initialized-element proof. Empty full-expression lifecycle
 markers can inherit an expression's unsafe classification but do not execute
 its operation again; actual lifecycle events and raw accesses remain distinct.
 A selected unsafe source function is analyzed under the ordinary exact-call
@@ -433,7 +470,8 @@ existing live non-byte integer facts along exact ordinary owned-field paths
 may survive this operation. Byte fields, arrays/indexes, union overlap, stored
 reference traversal, compiler-capability backing carriers, unresolved roots
 and loaded-origin/element facts are discarded. No pointer validity, region
-extent, fresh allocation or initialized-element fact is inferred.
+extent or fresh allocation is inferred. The exact scalar construction rule
+above can independently publish the newly constructed object's value.
 
 That same profile admits exact generated copy/move construction of ordinary
 scalar-field records into vacant final storage. The shared MIR-effects query
@@ -452,8 +490,8 @@ retain the stronger barrier. Exact source wrappers can forward the supported
 profile without losing unrelated live-field facts, but remain opaque and cannot
 establish recurrence invariance. Normal global, mutable-reference and receiver
 writes still invalidate their protected origins before proved postconditions
-are republished. Actual raw writes/reads, destruction, relocation, unsupported
-calls and synchronization retain full invalidation. Failed paths do not become
+are republished. Actual raw writes, unsupported reads, destruction, relocation,
+unsupported calls and synchronization retain full invalidation. Failed paths do not become
 successful-path postconditions. Unrelated public-wrapper, nested-object,
 byte/array and destroy/reconstruct controls exercise independent proof replay.
 This profile does not yet recover the outstanding raw-backed element-envelope

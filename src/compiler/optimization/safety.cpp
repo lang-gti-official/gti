@@ -63,9 +63,43 @@ enum class AddressOriginKind { ExistingPlace, EntryPointer };
 struct ScalarAddress {
   AddressOriginKind kind = AddressOriginKind::ExistingPlace;
   MirPlaceId place = 0;
+  std::uint64_t elementOffset = 0;
   Evidence evidence;
   friend bool operator==(const ScalarAddress &,
                          const ScalarAddress &) = default;
+};
+
+// One exact typed address, never an allocation extent or a whole initialized
+// region. Different bases are not a disjointness proof. Only successful
+// construction establishes a pointee fact; writes/destruction invalidate it.
+struct ScalarAddressKey {
+  AddressOriginKind kind;
+  MirPlaceId place;
+  std::uint64_t elementOffset;
+  friend auto operator<=>(const ScalarAddressKey &,
+                          const ScalarAddressKey &) = default;
+};
+
+[[nodiscard]] ScalarAddressKey addressKey(const ScalarAddress &address) {
+  return {address.kind, address.place, address.elementOffset};
+}
+
+struct ConstructedScalar {
+  IntegerFact value;
+  // Exact equality to a read-only by-value scalar formal, not matching
+  // interval endpoints. Summary substitution uses a formal ordinal, never
+  // another body's local value/place identity.
+  std::optional<std::size_t> valueParameter;
+  friend bool operator==(const ConstructedScalar &,
+                         const ConstructedScalar &) = default;
+};
+using ConstructedScalars = std::map<ScalarAddressKey, ConstructedScalar>;
+
+struct ConstructedParameter {
+  std::size_t parameter;
+  std::uint64_t elementOffset;
+  friend auto operator<=>(const ConstructedParameter &,
+                          const ConstructedParameter &) = default;
 };
 
 // Equality with one owned receiver field at entry, not an interval inferred
@@ -124,6 +158,7 @@ struct AbstractState {
   std::map<MirValueId, FieldOrigin> fieldOrigins;
   std::map<MirValueId, ScalarAddress> scalarAddressValues;
   std::map<MirPlaceId, ScalarAddress> scalarAddressPlaces;
+  ConstructedScalars constructedScalars;
   EntryRelativeFields entryRelativeFields;
   std::map<MirValueId, EntryRelativeField> entryRelativeValues;
   std::map<MirPlaceId, IntegerFact> aggregateElements;
@@ -138,6 +173,16 @@ struct AbstractState {
   friend bool operator==(const AbstractState &,
                          const AbstractState &) = default;
 };
+
+void publishConstructedScalar(AbstractState &state, ScalarAddressKey address,
+                              ConstructedScalar value) {
+  // Source call trees can compose exponentially many constant offsets.
+  // Bounded retention loses precision, never assumes unrecorded coverage.
+  constexpr std::size_t maximumAddresses = 1024;
+  if (state.constructedScalars.contains(address) ||
+      state.constructedScalars.size() < maximumAddresses)
+    state.constructedScalars.insert_or_assign(address, std::move(value));
+}
 
 template <typename T> struct ObservedFact {
   bool observed = false;
@@ -169,6 +214,7 @@ struct ClosedCallSummary {
   ObservedFact<FieldPath> receiverResultField;
   std::optional<std::size_t> returnedPointerParameter;
   bool localPointerWritesOnly = false;
+  std::map<ConstructedParameter, ConstructedScalar> constructedParameters;
   ObservedFact<ObjectFact> receiver;
   EntryRelativeFields receiverUpdates;
   std::vector<ObservedFact<ObjectFact>> argumentObjects;
@@ -668,7 +714,8 @@ void joinScalarAddresses(std::map<Key, ScalarAddress> &target,
   for (auto entry = target.begin(); entry != target.end();) {
     const auto found = incoming.find(entry->first);
     if (found == incoming.end() || entry->second.place != found->second.place ||
-        entry->second.kind != found->second.kind)
+        entry->second.kind != found->second.kind ||
+        entry->second.elementOffset != found->second.elementOffset)
       entry = target.erase(entry);
     else {
       entry->second.evidence =
@@ -676,6 +723,39 @@ void joinScalarAddresses(std::map<Key, ScalarAddress> &target,
       ++entry;
     }
   }
+}
+
+[[nodiscard]] std::optional<ScalarAddress>
+offsetAddress(ScalarAddress address, std::uint64_t offset, bool subtract) {
+  if (subtract) {
+    if (offset > address.elementOffset)
+      return std::nullopt;
+    address.elementOffset -= offset;
+  } else {
+    if (offset >
+        std::numeric_limits<std::uint64_t>::max() - address.elementOffset)
+      return std::nullopt;
+    address.elementOffset += offset;
+  }
+  return address;
+}
+
+// A pointer's SSA address value is independent of the pointee's mutable
+// memory. Read-only by-value bindings likewise retain that value. This does
+// not preserve liveness, initialized contents or any dereference permission.
+void preserveEntryPointerIdentities(const MirBody &body, AbstractState &state) {
+  std::erase_if(state.scalarAddressValues, [](const auto &entry) {
+    return entry.second.kind != AddressOriginKind::EntryPointer;
+  });
+  std::erase_if(state.scalarAddressPlaces, [&](const auto &entry) {
+    const auto *place = body.findPlace(entry.first);
+    return entry.second.kind != AddressOriginKind::EntryPointer || !place ||
+           place->root != MirPlaceRootKind::Binding || !place->binding ||
+           !place->projections.empty() ||
+           place->access != AccessMode::ReadOnly ||
+           place->type.kind != SemanticType::RawPointer ||
+           place->traits.containsBorrowedState;
+  });
 }
 
 [[nodiscard]] std::optional<EntryRelativeField>
@@ -859,6 +939,75 @@ adjust(CheckedIntegerValue value, int delta, CheckedIntegerDomain domain) {
                             instruction.result == value;
                    });
   return found == block->instructions.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] std::vector<HirBindingId>
+parameterBindings(const MirProgram &program, MirBodyAddress address);
+[[nodiscard]] std::vector<SemanticType>
+parameterTypes(const MirProgram &program, MirBodyAddress address);
+
+[[nodiscard]] std::optional<std::size_t>
+readonlyIntegerParameter(const MirProgram *program, MirBodyAddress address,
+                         const MirBody &body, MirOperand operand) {
+  if (!program || !constantIntegerDomain(operand.type))
+    return std::nullopt;
+  const auto bindings = parameterBindings(*program, address);
+  const auto types = parameterTypes(*program, address);
+  std::set<MirValueId> seen;
+  while (operand.kind == MirOperandKind::Value && operand.value &&
+         seen.insert(operand.value).second) {
+    const auto *instruction = definingInstruction(body, operand.value);
+    if (!instruction || instruction->operands.size() != 1 ||
+        instruction->info.type != operand.type ||
+        instruction->operands.front().type != operand.type ||
+        instruction->rawMemoryAccess || !instruction->lifecycle.empty() ||
+        instruction->unsafeOperation != UnsafeOperationKind::None ||
+        instruction->intrinsic != IntrinsicKind::None ||
+        instruction->receiver || instruction->destination)
+      return std::nullopt;
+    const auto effect = effects(*instruction);
+    if (effect.writesUnknownMemory || effect.invokesUserCode ||
+        effect.invokesRuntime || effect.maySynchronize)
+      return std::nullopt;
+    const bool transport =
+        instruction->kind == MirInstructionKind::Load ||
+        instruction->kind == MirInstructionKind::Move ||
+        (instruction->kind == MirInstructionKind::CallInput &&
+         instruction->operation == MirOperation::None) ||
+        (instruction->kind == MirInstructionKind::Compute &&
+         instruction->operation == MirOperation::Identity);
+    if (!transport)
+      return std::nullopt;
+    operand = instruction->operands.front();
+  }
+  const auto *place = body.findPlace(operand.place);
+  if (!place || place->root != MirPlaceRootKind::Binding || !place->binding ||
+      place->access != AccessMode::ReadOnly ||
+      place->traits.containsBorrowedState || place->type != operand.type ||
+      bindings.size() != types.size())
+    return std::nullopt;
+  std::size_t element = 0;
+  if (!place->projections.empty()) {
+    if (place->projections.size() != 1 ||
+        place->projections.front().kind != MirProjectionKind::PackElement ||
+        !place->projections.front().constantIndex)
+      return std::nullopt;
+    element = *place->projections.front().constantIndex;
+  } else if (std::count(bindings.begin(), bindings.end(), place->binding) !=
+             1) {
+    return std::nullopt;
+  }
+  // Concrete pack formals repeat their one binding in call-argument order.
+  // The verified PackElement identity selects an occurrence, not a scalar
+  // field inferred from a library name or a coincidentally matching type.
+  for (std::size_t index = 0; index < bindings.size(); ++index)
+    if (bindings[index] == place->binding) {
+      if (element == 0)
+        return types[index] == operand.type ? std::optional{index}
+                                            : std::nullopt;
+      --element;
+    }
+  return std::nullopt;
 }
 
 [[nodiscard]] MirOperation invertedComparison(MirOperation operation) {
@@ -1643,6 +1792,7 @@ void invalidatePlaceRoot(const MirBody &body,
                          AbstractState &state, MirPlaceId destination) {
   const MirPlace *written = body.findPlace(destination);
   if (written == nullptr) {
+    state.constructedScalars.clear();
     std::erase_if(state.integerPlaces, [&](const auto &fact) {
       return !immutableScalarBinding(body, fact.first);
     });
@@ -1663,11 +1813,26 @@ void invalidatePlaceRoot(const MirBody &body,
   const auto overlaps = [&](MirPlaceId place) {
     return aliases.relation(destination, place) != MirAliasRelation::NoAlias;
   };
+  std::erase_if(state.constructedScalars, [&](const auto &entry) {
+    if (entry.first.kind == AddressOriginKind::ExistingPlace)
+      return overlaps(entry.first.place);
+    // An incoming address cannot denote this invocation's independent
+    // scalar/pointer variable. Reference/loan/aggregate writes still may
+    // touch that address, and never use this exception.
+    return written->root != MirPlaceRootKind::Binding || !written->binding ||
+           !written->projections.empty() ||
+           written->traits.containsBorrowedState ||
+           (!constantIntegerDomain(written->type) &&
+            written->type.kind != SemanticType::RawPointer);
+  });
   std::erase_if(state.scalarAddressValues, [&](const auto &entry) {
-    return overlaps(entry.second.place);
+    return entry.second.kind != AddressOriginKind::EntryPointer &&
+           overlaps(entry.second.place);
   });
   std::erase_if(state.scalarAddressPlaces, [&](const auto &entry) {
-    return overlaps(entry.first) || overlaps(entry.second.place);
+    return overlaps(entry.first) ||
+           (entry.second.kind != AddressOriginKind::EntryPointer &&
+            overlaps(entry.second.place));
   });
   // The relation belongs to an owned This path. Without such an exact path,
   // an aliasing write may change any receiver field. Do not turn different
@@ -2224,6 +2389,41 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       *summary.returnedPointerParameter < instruction.operands.size())
     returnedAddress = scalarAddressForOperand(
         body, state, instruction.operands[*summary.returnedPointerParameter]);
+  std::vector<std::pair<ScalarAddress, ConstructedScalar>> constructed;
+  for (const auto &[destination, postcondition] :
+       summary.constructedParameters) {
+    if (destination.parameter >= instruction.operands.size())
+      continue;
+    auto pointer = scalarAddressForOperand(
+        body, state, instruction.operands[destination.parameter]);
+    if (!pointer)
+      continue;
+    pointer = offsetAddress(*pointer, destination.elementOffset, false);
+    if (!pointer)
+      continue;
+    auto value = postcondition.value;
+    stabilize(value);
+    std::optional<std::size_t> valueParameter;
+    if (postcondition.valueParameter) {
+      if (*postcondition.valueParameter >= instruction.operands.size())
+        continue;
+      const auto &operand = instruction.operands[*postcondition.valueParameter];
+      const auto actual = integerForOperand(body, state, operand);
+      if (!actual || actual->domain != value.domain)
+        continue;
+      value = *actual;
+      valueParameter = readonlyIntegerParameter(&closedCalls->program, address,
+                                                body, operand);
+    }
+    const auto *pointee = addressPointeeType(body, *pointer);
+    if (!pointee || constantIntegerDomain(*pointee) != value.domain)
+      continue;
+    value.evidence = merged(value.evidence, pointer->evidence);
+    add(value.evidence, block.id);
+    addInstruction(value.evidence, instruction.id);
+    constructed.emplace_back(*pointer,
+                             ConstructedScalar{value, valueParameter});
+  }
   // A missing numerical postcondition is not a write. Closed, non-writing,
   // non-escaping source calls retain caller memory even if analysis of local
   // result preparation no longer contains the borrowed input's object fact.
@@ -2296,6 +2496,8 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   }
   state.liveMemoryBarrier =
       std::max(state.liveMemoryBarrier, summary.liveMemoryBarrier);
+  for (auto &[pointer, value] : constructed)
+    publishConstructedScalar(state, addressKey(pointer), std::move(value));
   if (summary.hasOpaqueEffects) {
     // Opacity blocks recurrence invariance; it is not independent write
     // authority. The exact effect summary above governs caller invalidation.
@@ -2443,6 +2645,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
 
 void killUnknownMemory(const MirBody &body, AbstractState &state) {
   state.liveMemoryBarrier = LiveMemoryBarrier::Unknown;
+  state.constructedScalars.clear();
   // Readonly scalar copies are actual immutable values, not readonly
   // references to mutable storage. Valid unknown/raw effects cannot change
   // them; exact reinitialization still invalidates their own place above.
@@ -2457,8 +2660,7 @@ void killUnknownMemory(const MirBody &body, AbstractState &state) {
   state.fieldOrigins.clear();
   state.entryRelativeFields.clear();
   state.entryRelativeValues.clear();
-  state.scalarAddressValues.clear();
-  state.scalarAddressPlaces.clear();
+  preserveEntryPointerIdentities(body, state);
   state.aggregateOrigins.clear();
   state.objectValues.clear();
 }
@@ -2707,8 +2909,7 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
     return !liveScalarPath(program, address, body, 0, entry.first);
   });
   state.entryRelativeValues.clear();
-  state.scalarAddressValues.clear();
-  state.scalarAddressPlaces.clear();
+  preserveEntryPointerIdentities(body, state);
   state.aggregateOrigins.clear();
   state.objectValues.clear();
   state.hasOpaqueEffects = true;
@@ -2851,13 +3052,53 @@ void applyInstruction(const MirBody &body,
     return;
   if (program ? isMirStructuralFinalAddressConstruction(*program, instruction)
               : isMirScalarFinalAddressConstruction(instruction)) {
+    std::optional<ScalarAddress> pointer;
+    std::optional<IntegerFact> value;
+    std::optional<std::size_t> parameter;
+    if (isMirScalarFinalAddressConstruction(instruction) &&
+        instruction.operands.size() == 2) {
+      pointer = scalarAddressForOperand(body, state, instruction.operands[0]);
+      value = integerForOperand(body, state, instruction.operands[1]);
+      parameter = readonlyIntegerParameter(program, address, body,
+                                           instruction.operands[1]);
+    }
     preserveLiveScalarFactsForConstruction(program, address, body, state);
+    // Byte scalars can be backing representation for later construction, so
+    // this live-object profile deliberately does not retain them.
+    if (pointer && value && value->domain.width > 8) {
+      value->evidence = merged(value->evidence, pointer->evidence);
+      add(value->evidence, block.id);
+      addInstruction(value->evidence, instruction.id);
+      publishConstructedScalar(state, addressKey(*pointer),
+                               ConstructedScalar{*value, parameter});
+    }
     return;
   }
   if (inertRawAddressOperation(instruction)) {
     // Address arithmetic/conversion neither observes nor modifies a pointee.
-    // Preserve unrelated memory facts, but infer no address, extent, lifetime
-    // or initialized-element fact from this operation.
+    // An exact nonnegative element displacement preserves typed identity, but
+    // establishes no extent, lifetime or initialized-element coverage.
+    if ((instruction.operation == MirOperation::PointerAdd ||
+         instruction.operation == MirOperation::PointerSubtract) &&
+        instruction.operands.size() == 2) {
+      auto pointer =
+          scalarAddressForOperand(body, state, instruction.operands[0]);
+      const auto offset =
+          integerForOperand(body, state, instruction.operands[1]);
+      if (pointer && offset && singleton(*offset) && !offset->lower.negative &&
+          instruction.info.type == instruction.operands[0].type) {
+        pointer = offsetAddress(*pointer, offset->lower.magnitude,
+                                instruction.operation ==
+                                    MirOperation::PointerSubtract);
+        if (pointer) {
+          pointer->evidence = merged(pointer->evidence, offset->evidence);
+          add(pointer->evidence, block.id);
+          addInstruction(pointer->evidence, instruction.id);
+          addValue(pointer->evidence, *instruction.result);
+          state.scalarAddressValues[*instruction.result] = std::move(*pointer);
+        }
+      }
+    }
     state.integers.erase(*instruction.result);
     state.arrayValues.erase(*instruction.result);
     state.objectValues.erase(*instruction.result);
@@ -2901,9 +3142,26 @@ void applyInstruction(const MirBody &body,
           place->projections.front().kind ==
               MirProjectionKind::RawDereference) {
         const auto found = state.scalarAddressValues.find(place->value);
+        if (found != state.scalarAddressValues.end() &&
+            place->type == instruction.info.type) {
+          const auto initialized =
+              state.constructedScalars.find(addressKey(found->second));
+          if (initialized != state.constructedScalars.end() &&
+              constantIntegerDomain(instruction.info.type) ==
+                  initialized->second.value.domain) {
+            auto value = initialized->second.value;
+            value.evidence = merged(value.evidence, found->second.evidence);
+            state.integers[*instruction.result] =
+                rebased(std::move(value), block.id, instruction.id,
+                        *instruction.result, place->id);
+            state.hasOpaqueEffects = true;
+            return;
+          }
+        }
         const auto *original =
             found == state.scalarAddressValues.end() ||
-                    found->second.kind != AddressOriginKind::ExistingPlace
+                    found->second.kind != AddressOriginKind::ExistingPlace ||
+                    found->second.elementOffset != 0
                 ? nullptr
                 : body.findPlace(found->second.place);
         if (original && original->type == instruction.info.type &&
@@ -3594,6 +3852,25 @@ void joinAggregateElementIntegers(
   }
 }
 
+template <typename Key>
+void joinConstructed(std::map<Key, ConstructedScalar> &target,
+                     const std::map<Key, ConstructedScalar> &incoming,
+                     bool widen) {
+  for (auto entry = target.begin(); entry != target.end();) {
+    const auto found = incoming.find(entry->first);
+    if (found == incoming.end() ||
+        entry->second.value.domain != found->second.value.domain) {
+      entry = target.erase(entry);
+      continue;
+    }
+    entry->second.value =
+        joinedInteger(entry->second.value, found->second.value, widen);
+    if (entry->second.valueParameter != found->second.valueParameter)
+      entry->second.valueParameter.reset();
+    ++entry;
+  }
+}
+
 [[nodiscard]] bool mergeInto(AbstractState &target,
                              const AbstractState &incoming, bool widen) {
   if (!incoming.reachable) {
@@ -3620,6 +3897,8 @@ void joinAggregateElementIntegers(
   joinEntryRelative(target.entryRelativeValues, incoming.entryRelativeValues);
   joinScalarAddresses(target.scalarAddressValues, incoming.scalarAddressValues);
   joinScalarAddresses(target.scalarAddressPlaces, incoming.scalarAddressPlaces);
+  joinConstructed(target.constructedScalars, incoming.constructedScalars,
+                  widen);
   for (auto iterator = target.loadedOrigins.begin();
        iterator != target.loadedOrigins.end();) {
     const auto found = incoming.loadedOrigins.find(iterator->first);
@@ -5113,7 +5392,8 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       std::optional<std::size_t> returnedPointer;
       if (const auto pointer = scalarAddressForOperand(
               *body, transferred.output, *block.terminator.value);
-          pointer && pointer->kind == AddressOriginKind::EntryPointer) {
+          pointer && pointer->kind == AddressOriginKind::EntryPointer &&
+          pointer->elementOffset == 0) {
         const auto *origin = body->findPlace(pointer->place);
         const auto bindings = parameterBindings(program, address);
         const auto types = parameterTypes(program, address);
@@ -5155,6 +5435,24 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
   const auto *function = address.kind == MirBodyKind::Function
                              ? program.findFunctionInstance(address.owner)
                              : nullptr;
+  auto initialized = exits.front().constructedScalars;
+  for (std::size_t index = 1; index < exits.size(); ++index)
+    joinConstructed(initialized, exits[index].constructedScalars, false);
+  const auto pointerBindings = parameterBindings(program, address);
+  const auto pointerTypes = parameterTypes(program, address);
+  for (const auto &[pointer, value] : initialized) {
+    const auto *origin = body->findPlace(pointer.place);
+    if (pointer.kind != AddressOriginKind::EntryPointer || !origin ||
+        origin->root != MirPlaceRootKind::Binding ||
+        !origin->projections.empty())
+      continue;
+    for (std::size_t index = 0;
+         index < pointerBindings.size() && index < pointerTypes.size(); ++index)
+      if (pointerBindings[index] == origin->binding &&
+          pointerTypes[index] == origin->type)
+        result.summary.constructedParameters.emplace(
+            ConstructedParameter{index, pointer.elementOffset}, value);
+  }
   if (!returnPointers.empty() && returnPointers.size() == exits.size() &&
       returnPointers.front() &&
       std::all_of(returnPointers.begin(), returnPointers.end(),
