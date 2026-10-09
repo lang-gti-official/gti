@@ -332,6 +332,21 @@ passes all 35 C++20/C++23 O0/O2/O3 and ASan/UBSan observations, including explic
 overflow, native mutation, different storage and lifetime replacement negatives.
 The original six source-container safety requirements still fail; this bounded
 postcondition is a completed prerequisite, not container performance acceptance.
+The complete returned-address native matrix subsequently passes all 525
+observations (98 fixture/mode reports), including its existing lifetime,
+alias and mutation controls; forged proofs are rejected separately by the
+focused optimizer suite. The retained native log is
+`/private/tmp/gti-returned-address-zero-pack-894966ad.log`.
+
+The following checked-assignment slice preserves a prefix only at the same
+typed current address/subobject, with separately preserved endpoint metadata.
+Its value envelope is a weak update, not a claim that all elements were written.
+The same six optimizer suites pass; the expanded focused native fixture passes
+all 49 observations, including stored-value verification, overflow after a large
+element assignment, native mutation after assignment, and the earlier lifetime
+controls. Independent proof replay and O0 identity remain required and pass.
+The original six container requirements remain unmet. The runner retains the
+native evidence in `gti-combined-validation.rYUkTM/default-prefix-write-native.log`.
 
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish

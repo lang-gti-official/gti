@@ -18,6 +18,12 @@ public:
   unsafe int& at(uint64_t index) {
     unsafe { return std::assume_ref(this.pointer + index, this); }
   }
+  unsafe mut int& at(uint64_t index) mut {
+    unsafe { return std::assume_mut(this.pointer + index, this); }
+  }
+  unsafe void clobber() mut {
+    unsafe { opaque_pointer_effect(this.pointer); }
+  }
 };
 
 unsafe int default_sequence(ZeroSequence& sequence) {
@@ -63,6 +69,31 @@ unsafe int bad_default_explicit(int* pointer) {
   unsafe {
     std::construct_at(pointer, 2147483647);
     return *pointer + 1;
+  }
+}
+
+unsafe int modified_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 7;
+    int& value = sequence.at(uint64_t(17));
+    return value + 1;
+  }
+}
+
+unsafe int bad_modified_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 2147483647;
+    int& value = sequence.at(uint64_t(4095));
+    return value + 1;
+  }
+}
+
+unsafe int bad_modified_native(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 7;
+    sequence.clobber();
+    int& value = sequence.at(uint64_t(0));
+    return value + 1;
   }
 }
 
@@ -116,10 +147,14 @@ int main() {
       sequence.append_default();
     }
     int last = default_sequence(sequence);
+    if (false) return bad_modified_prefix(sequence);
+    if (false) return bad_modified_native(sequence);
+    int modified = modified_prefix(sequence);
+    bool stored = *(pointer + uint64_t(4095)) == 7;
     for (mut uint64_t index = 0; index < uint64_t(4096); index++) {
       std::destroy_at(pointer + index);
     }
     free(bytes);
-    return direct == 1 && packed == 1 && forwarded == 1 && unsigned_value == uint64_t(1) && last == 1 ? 0 : 1;
+    return direct == 1 && packed == 1 && forwarded == 1 && unsigned_value == uint64_t(1) && last == 1 && modified == 1 && stored ? 0 : 1;
   }
 }

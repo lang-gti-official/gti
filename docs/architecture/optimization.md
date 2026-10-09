@@ -688,13 +688,22 @@ An unrelated 5,000-element sequence exercises first/last and varying-index
 reads, with forged-proof and native controls for gaps, conditional construction,
 different values, retargeting, native writes and destructive replacement.
 
+A plain checked non-byte integer assignment can retain coverage at the same
+current pointer base and exact scalar subobject. It weakly joins the stored
+value with the previous prefix envelope: assigning one element does not imply
+that every element acquired that value. The endpoint must have a different
+integer width so the existing typed-store rule preserves its live metadata.
+No disjointness is inferred from different pointer fields; unmatched prefixes,
+unknown values, compound assignments and unsupported mutations lose coverage.
+Native effects and destructive replacement retain their ordinary barriers.
+
 Guard predicates contribute independent widening thresholds rather than
 preserving an earlier contextual singleton as a loop invariant. A threshold
 which itself expands on a widening edge is discarded. This lets affine length
 updates converge without enumerating the trip count or enlarging analysis
 budgets, while preserving bounded constructor/getter-loop proofs.
 
-The remaining source-owner goals include region-preserving element writes,
+The remaining source-owner goals include general region-preserving element writes,
 record-region transport across local construction/cleanup, and general
 loop-index/endpoint relations. The
 six existing source-container safety acceptance failures and end-to-end runtime
