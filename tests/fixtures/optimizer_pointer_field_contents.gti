@@ -1,0 +1,69 @@
+#include <std/memory>
+extern "C" {
+  void opaque_pointer_effect(int* pointer);
+  void retain_cell_pointer(int* pointer);
+  void overwrite_retained_cell();
+}
+
+class Cell {
+  mut int* address = nullptr;
+public:
+  Cell(int* destination) : address(destination) {
+    unsafe { std::construct_at(destination, 7); }
+  }
+  unsafe int observe() {
+    unsafe { return *this.address + 1; }
+  }
+  unsafe int bad_changed() mut {
+    unsafe {
+      *this.address = 2147483647;
+      return *this.address + 1;
+    }
+  }
+  unsafe int bad_native() mut {
+    unsafe {
+      opaque_pointer_effect(this.address);
+      return *this.address + 1;
+    }
+  }
+  unsafe int bad_retarget(int* other) mut {
+    this.address = other;
+    unsafe { return *this.address + 1; }
+  }
+  unsafe int bad_global() mut {
+    unsafe {
+      retain_cell_pointer(this.address);
+      overwrite_retained_cell();
+      return *this.address + 1;
+    }
+  }
+  unsafe int bad_borrowed() mut {
+    unsafe {
+      mut int& alias = std::assume_mut(this.address, this);
+      alias = 2147483647;
+      return *this.address + 1;
+    }
+  }
+  unsafe int bad_lifetime() mut {
+    unsafe {
+      std::destroy_at(this.address);
+      std::construct_at(this.address, 2147483647);
+      return *this.address + 1;
+    }
+  }
+};
+
+int main() {
+  mut int other = 2147483647;
+  mut std::uninitialized<int> storage{};
+  mut Cell cell{storage.data()};
+  unsafe {
+    if (false) return cell.bad_changed();
+    if (false) return cell.bad_native();
+    if (false) return cell.bad_retarget(&other);
+    if (false) return cell.bad_global();
+    if (false) return cell.bad_borrowed();
+    if (false) return cell.bad_lifetime();
+    return cell.observe() == 8 ? 0 : 1;
+  }
+}
