@@ -414,5 +414,7 @@ int main() {
   checkAddressFixture("optimizer_pointer_field_contents.gti", {"observe"}, 6);
   checkAddressFixture("optimizer_sibling_field_publication.gti",
                       {"sibling_publication"}, 4, false, false);
+  checkAddressFixture("optimizer_checked_address_store.gti",
+                      {"checked_write", "checked_compound"}, 4);
   return failures == 0 ? 0 : 1;
 }

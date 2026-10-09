@@ -94,6 +94,12 @@ def main():
         "bad_sibling_borrow": "ledger.bad_sibling_borrow()",
         "bad_sibling_direct": "ledger.bad_sibling_direct()",
     }, "return this.datum.value + 1;")
+    run_fixture(compiler, "optimizer_checked_address_store.gti", {
+        "bad_checked_overflow": "bad_checked_overflow(first.data(), owner)",
+        "bad_checked_native": "bad_checked_native(first.data(), owner)",
+        "bad_checked_other": "bad_checked_other(first.data(), &other, owner)",
+        "bad_checked_call": "bad_checked_call(first.data(), owner)",
+    }, " + 1;")
 
 
 if __name__ == "__main__":
