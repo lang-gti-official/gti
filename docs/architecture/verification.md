@@ -198,6 +198,20 @@ Artifacts, exact identities, raw samples and reports are retained in
 `/private/tmp/gti-vector-migration-6AEK9k`. The remaining hot-loop proof/transport
 gap is a release blocker; string improvements do not waive vector acceptance.
 
+Reconciliation checkpoint `9134c6a1` includes upstream editor profiles, checked
+integer overflow builtins and owning-lambda transport through main `26a9fb4c`.
+It passes the optimized all-target build, all 39 emitter preflight tests and
+13 focused integration gates (181.30 seconds), including pointer-field contents,
+resource cleanup, overflow builtin/portable parity and lambda ownership. The
+repeated vector comparison improves to 563.80 ms but still trails the same
+private path at 54.68 ms (semantic C++ 518.37 ms; idiomatic C++ 51.91 ms).
+Transferred hashes match the retained local binaries in
+`/private/tmp/gti-vector-reconciled-URKcru`; code size remains 128,080/142,064
+bytes. This backend improvement does not resolve the source-container proof
+gap. Reconciliation also registers the new lambda matrix's bounded workers and
+formats the previously integrated constructor-origin lambda with the pinned
+formatter; neither change relaxes its assertions.
+
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
 at O3 in both C++20/C++23, preserving the computed value. O0 retains both
