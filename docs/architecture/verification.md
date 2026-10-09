@@ -1743,11 +1743,20 @@ summaries. Production backend admission also rejects an erased dereference in a
 nested receiver path. A mixed nested constructor uses its field's permission,
 not the outer carrier's first dependency.
 
-The borrowing runtime gate runs three fixtures under C++20/C++23 at O0/O1/O3,
+The borrowing runtime gate covers five fixtures under C++20/C++23 at O0/O1/O3,
 disabled elision and ASan/UBSan. Constructor, relay, later-argument and temporary
 receiver failures additionally check exact failure identity, hosted exit status
 and reverse-order cleanup at O0/O3. The LSP checks the same ownership diagnostics,
 related source information, UTF-16 ranges, repair, hover and definition paths.
+The nested-argument cases compose reordered shared and exclusive fields through
+ordinary constructor SSA producers, plus an unrelated cleanup-owning carrier
+with both successful construction and failing-constructor rollback. Independent
+MIR mutations reject forged formal/result/input paths, changed permissions,
+substituted source/parent loans, missing moving prepared slots or ownership
+handoffs, and missing failure-edge child retirement. The resource-prefix
+cleanup fixture separately checks the same general ancestry rule. None of
+these tests grants authority from a standard-library name or matching caller
+metadata alone.
 
 Integral-enum regressions cover exact-width signed/unsigned defaults, integer
 presentations, explicit formatter precedence, malformed customization,

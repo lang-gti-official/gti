@@ -778,6 +778,19 @@ but cannot return a reference to its own shell or an ordinary owned field.
 A read-only method may expose a shared reference through a mutable reference
 field without granting the caller mutable access.
 
+Constructors may compose these carriers directly as fresh arguments, such as
+`bundle(Bundle(View(right), View(left)))`. Each result field retains the exact
+external owner selected by its constructor, including reordered inputs and
+shared/exclusive permissions; intermediate temporary shells do not become the
+owners. A cleanup-owning fresh argument transfers its object and dependency
+into the next constructor. If that construction fails, normal parameter and
+subobject rollback still run exactly once before the external loans retire.
+This does not permit copying an exclusive carrier, aliasing two exclusive
+fields, or using an owner while a retained loan remains live. The bounded
+constructor-origin proof follows ordinary constructor producers and their
+prepared inputs; this change does not introduce a new escaping-call or
+lifetime-annotation rule.
+
 Composed shared carriers conservatively retain their complete dependency set
 when a method exposes a reference or a subview. Such a projection does not yet
 release an unrelated owner independently. `std::paired_span<L, R>` is an ordinary
@@ -823,7 +836,8 @@ origin rather than using the carrier's first dependency. Caller metadata is
 checked against the callee's actual returned origins before backend entry.
 See [`109-borrowed-aggregates.gti`](../../examples/109-borrowed-aggregates.gti)
 for an application context borrowing four different service types and moving
-through a generic relay.
+through a generic relay, then composing the same dependencies through fresh
+nested constructor arguments.
 
 Local copies made inside a borrowed receiver/reference body currently require
 the same complete carrier type as that entry; a differently typed nested field
