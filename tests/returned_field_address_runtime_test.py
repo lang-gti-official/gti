@@ -115,6 +115,11 @@ def main():
         "bad_snapshot_loop": "bad_snapshot_loop()",
         "bad_snapshot_conditional": "bad_snapshot_conditional(true)",
     }, "return *pointer + 1;")
+    run_fixture(compiler, "optimizer_vacant_sequence.gti", {
+        "bad_vacant_replaced": "bad_vacant_replaced(first.data(), second.data())",
+        "bad_vacant_native": "bad_vacant_native(first.data(), second.data())",
+        "bad_vacant_lifetime": "bad_vacant_lifetime(first.data(), second.data())",
+    }, "return *pointer + 1;")
 
 
 if __name__ == "__main__":

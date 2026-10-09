@@ -1,0 +1,78 @@
+#include <std/memory>
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+class Publication {
+  mut uint64_t count = 0;
+public:
+  unsafe void append(int* pointer, int value) mut {
+    unsafe { std::construct_at(pointer, std::move(value)); }
+    this.count = uint64_t(1);
+  }
+  unsafe void replace(int* pointer, int* next) mut {
+    unsafe {
+      this.append(next, 9);
+      mut int& value = std::assume_mut(pointer, this);
+      value = 2147483647;
+    }
+  }
+  unsafe void native(int* pointer, int* next) mut {
+    unsafe {
+      this.append(next, 9);
+      opaque_pointer_effect(pointer);
+    }
+  }
+  unsafe void reconstruct(int* pointer, int* next) mut {
+    unsafe {
+      this.append(next, 9);
+      std::destroy_at(pointer);
+      std::construct_at(pointer, 2147483647);
+    }
+  }
+};
+
+unsafe int consecutive_vacant(int* pointer, int* next) {
+  mut Publication writer{};
+  unsafe {
+    writer.append(pointer, 7);
+    writer.append(next, 9);
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_vacant_replaced(int* pointer, int* next) {
+  mut Publication writer{};
+  unsafe {
+    writer.append(pointer, 7);
+    writer.replace(pointer, next);
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_vacant_native(int* pointer, int* next) {
+  mut Publication writer{};
+  unsafe {
+    writer.append(pointer, 7);
+    writer.native(pointer, next);
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_vacant_lifetime(int* pointer, int* next) {
+  mut Publication writer{};
+  unsafe {
+    writer.append(pointer, 7);
+    writer.reconstruct(pointer, next);
+    return *pointer + 1;
+  }
+}
+
+int main() {
+  mut std::uninitialized<int> first{};
+  mut std::uninitialized<int> second{};
+  unsafe {
+    if (false) return bad_vacant_replaced(first.data(), second.data());
+    if (false) return bad_vacant_native(first.data(), second.data());
+    if (false) return bad_vacant_lifetime(first.data(), second.data());
+    return consecutive_vacant(first.data(), second.data()) == 8 ? 0 : 1;
+  }
+}
