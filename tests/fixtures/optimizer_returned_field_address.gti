@@ -65,6 +65,44 @@ unsafe int returned_reference_field(AddressOwner& owner) {
   }
 }
 
+class AddressRelay {
+public:
+  mut AddressOwner owner;
+  AddressRelay(int* slot, int* other) : owner(AddressOwner(slot, other)) {}
+  unsafe int* address() { unsafe { return this.owner.address(); } }
+  unsafe int* reference_forward() { unsafe { return reference_address(this.owner); } }
+  unsafe int nested_returned_field() {
+    unsafe {
+      std::construct_at(this.owner.slot, 7);
+      int* pointer = this.address();
+      return *pointer + 1;
+    }
+  }
+  unsafe int nested_reference_field() {
+    unsafe {
+      std::construct_at(this.owner.slot, 7);
+      int* pointer = this.reference_forward();
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_reassigned_nested() mut {
+    unsafe {
+      std::construct_at(this.owner.slot, 7);
+      this.owner.slot = this.owner.other;
+      int* pointer = this.address();
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_opaque_nested() {
+    unsafe {
+      std::construct_at(this.owner.slot, 7);
+      opaque_pointer_effect(this.owner.slot);
+      int* pointer = this.address();
+      return *pointer + 1;
+    }
+  }
+};
+
 int main() {
   mut std::uninitialized<int> storage{};
   mut int other = 2147483647;
@@ -78,6 +116,13 @@ int main() {
     if (owner.returned_field() != 8) return 1;
     std::destroy_at(storage.data());
     if (returned_reference_field(owner) != 8) return 2;
+    std::destroy_at(storage.data());
+    mut AddressRelay relay{storage.data(), &other};
+    if (false) return relay.bad_reassigned_nested();
+    if (false) return relay.bad_opaque_nested();
+    if (relay.nested_returned_field() != 8) return 3;
+    std::destroy_at(storage.data());
+    if (relay.nested_reference_field() != 8) return 4;
     std::destroy_at(storage.data());
   }
   return 0;

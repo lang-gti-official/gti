@@ -53,6 +53,7 @@ struct FieldOrigin {
   MirPlaceId root = 0;
   FieldPath path;
   friend bool operator==(const FieldOrigin &, const FieldOrigin &) = default;
+  friend auto operator<=>(const FieldOrigin &, const FieldOrigin &) = default;
 };
 
 enum class AddressOriginKind { ExistingPlace, EntryPointer, EntryPointerField };
@@ -156,6 +157,8 @@ using EntryRelativeFields = std::map<FieldPath, EntryRelativeField>;
                                                  MirPlaceId placeId,
                                                  bool includeRoot);
 [[nodiscard]] MirPlaceId thisRoot(const MirBody &body);
+[[nodiscard]] MirPlaceId rootForBinding(const MirBody &body,
+                                        HirBindingId binding);
 struct AbstractState;
 void publishFieldFact(const MirBody &body, AbstractState &state,
                       const FieldOrigin &origin, const IntegerFact &fact);
@@ -194,6 +197,10 @@ struct AbstractState {
   std::map<MirValueId, FieldOrigin> fieldOrigins;
   std::map<MirValueId, ScalarAddress> scalarAddressValues;
   std::map<MirPlaceId, ScalarAddress> scalarAddressPlaces;
+  // Current values of ordinary owned pointer fields, including fields not
+  // materialized as a place in this body. Keys name storage; values name the
+  // address stored there. Neither alone establishes a live pointee.
+  std::map<FieldOrigin, ScalarAddress> fieldAddresses;
   ConstructedScalars constructedScalars;
   EntryRelativeFields entryRelativeFields;
   std::map<MirValueId, EntryRelativeField> entryRelativeValues;
@@ -762,6 +769,8 @@ offsetAddress(ScalarAddress address, std::uint64_t offset, bool subtract) {
 // not preserve liveness, initialized contents or any dereference permission.
 void preserveEntryPointerIdentities(const MirBody &body, AbstractState &state,
                                     bool vacantConstruction = false) {
+  if (!vacantConstruction)
+    state.fieldAddresses.clear();
   std::erase_if(state.scalarAddressValues, [&](const auto &entry) {
     return entry.second.kind != AddressOriginKind::EntryPointer &&
            !(vacantConstruction &&
@@ -1830,6 +1839,7 @@ void invalidatePlaceRoot(const MirBody &body,
     state.entryRelativeValues.clear();
     state.scalarAddressValues.clear();
     state.scalarAddressPlaces.clear();
+    state.fieldAddresses.clear();
     state.aggregateOrigins.clear();
     state.objectValues.clear();
     return;
@@ -1864,6 +1874,12 @@ void invalidatePlaceRoot(const MirBody &body,
     }
     return overlaps(pointer.place);
   };
+  std::erase_if(state.fieldAddresses, [&](const auto &entry) {
+    return pointerFieldOverlaps(
+        ScalarAddress{.kind = AddressOriginKind::EntryPointerField,
+                      .place = entry.first.root,
+                      .field = entry.first.path});
+  });
   std::erase_if(state.constructedScalars, [&](const auto &entry) {
     if (entry.first.kind == AddressOriginKind::ExistingPlace)
       return overlaps(entry.first.place);
@@ -2268,6 +2284,11 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
     const MirProgram &program, MirBodyAddress address, const MirBody &body,
     const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state,
     const MirInstruction &instruction, const FieldPath &path);
+[[nodiscard]] std::optional<FieldOrigin>
+ownedPointerFieldOrigin(const MirProgram *program, MirBodyAddress address,
+                        const MirBody &body,
+                        const MirPlaceAliasEscapeAnalysis &aliases,
+                        MirPlaceId place, const FieldPath &suffix = {});
 
 [[nodiscard]] bool
 mayAliasRepresentedGlobal(const MirBody &body,
@@ -2421,9 +2442,9 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
 // postconditions use this exact lookup; missing caller storage facts remain
 // unknown.
 [[nodiscard]] std::optional<ScalarAddress> inputAddressForCall(
-    const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
-    const AbstractState &state, const MirInstruction &instruction,
-    const InputAddress &input) {
+    const MirProgram &program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state,
+    const MirInstruction &instruction, const InputAddress &input) {
   if (input.parameter && *input.parameter >= instruction.operands.size())
     return std::nullopt;
   const auto *operand =
@@ -2437,6 +2458,11 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
   const auto root = objectOriginForOperand(body, aliases, state, *operand);
   if (!root)
     return std::nullopt;
+  if (const auto field = ownedPointerFieldOrigin(&program, address, body,
+                                                 aliases, root, input.field))
+    if (const auto found = state.fieldAddresses.find(*field);
+        found != state.fieldAddresses.end())
+      return found->second;
   for (const auto &place : body.places) {
     const auto path = fieldPath(body, root, place.id);
     if (!path || *path != input.field)
@@ -2518,13 +2544,15 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       !invocation->traits.maySynchronize;
   std::optional<ScalarAddress> returnedAddress;
   if (pointerRelayOnly)
-    returnedAddress = inputAddressForCall(body, aliases, state, instruction,
-                                          *summary.returnedPointer);
+    returnedAddress =
+        inputAddressForCall(closedCalls->program, address, body, aliases, state,
+                            instruction, *summary.returnedPointer);
   std::vector<std::pair<ScalarAddress, ConstructedScalar>> constructed;
   for (const auto &[destination, postcondition] :
        summary.constructedParameters) {
     auto pointer =
-        inputAddressForCall(body, aliases, state, instruction, destination);
+        inputAddressForCall(closedCalls->program, address, body, aliases, state,
+                            instruction, destination);
     if (!pointer)
       continue;
     if (destination.index) {
@@ -3026,6 +3054,32 @@ liveOwnedPathType(const MirProgram *program, MirBodyAddress address,
   const auto *type = liveOwnedPathType(program, address, body, root, suffix);
   const auto domain = type ? constantIntegerDomain(*type) : std::nullopt;
   return domain && domain->width > 8;
+}
+
+[[nodiscard]] std::optional<FieldOrigin>
+ownedPointerFieldOrigin(const MirProgram *program, MirBodyAddress address,
+                        const MirBody &body,
+                        const MirPlaceAliasEscapeAnalysis &aliases,
+                        MirPlaceId id, const FieldPath &suffix) {
+  const auto *place = body.findPlace(id);
+  if (!place || (place->root != MirPlaceRootKind::This &&
+                 place->root != MirPlaceRootKind::Binding))
+    return std::nullopt;
+  const auto root =
+      canonicalPlace(aliases, place->root == MirPlaceRootKind::This
+                                  ? thisRoot(body)
+                                  : rootForBinding(body, place->binding));
+  if (!root && place->root != MirPlaceRootKind::This)
+    return std::nullopt;
+  auto path = fieldPath(body, root, id, true);
+  if (!path)
+    return std::nullopt;
+  path->insert(path->end(), suffix.begin(), suffix.end());
+  const auto *type = liveOwnedPathType(program, address, body, root, *path);
+  if (path->empty() || !type || type->kind != SemanticType::RawPointer ||
+      type->arguments.size() != 1)
+    return std::nullopt;
+  return FieldOrigin{root, std::move(*path)};
 }
 
 [[nodiscard]] std::optional<FieldOrigin> fieldOriginForPlace(
@@ -3602,11 +3656,20 @@ void applyInstruction(const MirBody &body,
       if (instruction.info.type.kind == SemanticType::RawPointer &&
           instruction.info.type.arguments.size() == 1) {
         const auto found = state.scalarAddressPlaces.find(sourcePlace);
-        const auto *pointee = found == state.scalarAddressPlaces.end()
-                                  ? nullptr
-                                  : addressPointeeType(body, found->second);
+        std::optional<ScalarAddress> pointer =
+            found == state.scalarAddressPlaces.end()
+                ? std::nullopt
+                : std::optional{found->second};
+        if (!pointer)
+          if (const auto field = ownedPointerFieldOrigin(program, address, body,
+                                                         aliases, sourcePlace))
+            if (const auto stored = state.fieldAddresses.find(*field);
+                stored != state.fieldAddresses.end())
+              pointer = stored->second;
+        const auto *pointee =
+            pointer ? addressPointeeType(body, *pointer) : nullptr;
         if (pointee && *pointee == instruction.info.type.arguments.front()) {
-          auto origin = found->second;
+          auto origin = *pointer;
           addInstruction(origin.evidence, instruction.id);
           addValue(origin.evidence, *instruction.result);
           addPlace(origin.evidence, sourcePlace);
@@ -3780,6 +3843,11 @@ void applyInstruction(const MirBody &body,
       addInstruction(origin.evidence, instruction.id);
       addPlace(origin.evidence, destination);
       state.scalarAddressPlaces[destination] = origin;
+      if (const auto field = ownedPointerFieldOrigin(program, address, body,
+                                                     aliases, destination);
+          field && (state.fieldAddresses.contains(*field) ||
+                    state.fieldAddresses.size() < 1024))
+        state.fieldAddresses.insert_or_assign(*field, origin);
       if (instruction.result && instruction.info.type == source.type) {
         addValue(origin.evidence, *instruction.result);
         state.scalarAddressValues[*instruction.result] = std::move(origin);
@@ -4171,6 +4239,7 @@ void joinConstructed(std::map<Key, ConstructedScalar> &target,
   joinEntryRelative(target.entryRelativeValues, incoming.entryRelativeValues);
   joinScalarAddresses(target.scalarAddressValues, incoming.scalarAddressValues);
   joinScalarAddresses(target.scalarAddressPlaces, incoming.scalarAddressPlaces);
+  joinScalarAddresses(target.fieldAddresses, incoming.fieldAddresses);
   joinConstructed(target.constructedScalars, incoming.constructedScalars,
                   widen);
   for (auto iterator = target.loadedOrigins.begin();
@@ -5396,39 +5465,50 @@ entryStateForContext(const MirProgram &program, MirBodyAddress address,
   // receivers (not initialized yet), local objects, stored references, unions,
   // raw dereferences or capability backing paths. Exact writes retire the
   // field relation; it is never recreated from a later arbitrary load.
-  if (address.kind == MirBodyKind::Function)
-    for (const auto &place : body.places) {
-      if (place.type.kind != SemanticType::RawPointer ||
-          place.type.arguments.size() != 1 || place.projections.empty() ||
-          place.projections.back().kind != MirProjectionKind::Field)
-        continue;
-      bool incoming = place.root == MirPlaceRootKind::This;
-      if (place.root == MirPlaceRootKind::Binding)
-        for (std::size_t index = 0;
-             index < bindings.size() && index < types.size(); ++index)
-          incoming |= place.binding == bindings[index] &&
-                      types[index].kind == SemanticType::Reference;
-      const auto *type =
-          incoming ? liveOwnedPathType(&program, address, body, place.id)
-                   : nullptr;
-      if (!type || *type != place.type)
-        continue;
-      const auto owner = place.root == MirPlaceRootKind::This
-                             ? thisRoot(body)
-                             : rootForBinding(body, place.binding);
-      const auto path = fieldPath(body, owner, place.id);
-      if (!path)
-        continue;
-      // The alias matrix deliberately treats indirect projections as MayAlias.
-      // Two occurrences of this same checked parameter/receiver and exact
-      // owned field path nevertheless load the same entry pointer value. This
-      // equality does not make different fields or pointees disjoint.
-      entry.scalarAddressPlaces[canonicalPlace(aliases, place.id)] =
-          ScalarAddress{.kind = AddressOriginKind::EntryPointerField,
-                        .place = canonicalPlace(aliases, owner),
-                        .field = *path,
-                        .fieldPointee = place.type.arguments.front()};
-    }
+  if (address.kind == MirBodyKind::Function) {
+    std::size_t remaining = 1024;
+    const auto seed = [&](const auto &self, MirPlaceId root,
+                          const SemanticType &type, FieldPath path) -> void {
+      if (!remaining || path.size() > 32)
+        return;
+      --remaining;
+      if (type.kind == SemanticType::RawPointer && type.arguments.size() == 1) {
+        const auto *live =
+            liveOwnedPathType(&program, address, body, root, path);
+        if (!path.empty() && live && *live == type)
+          entry.fieldAddresses.emplace(
+              FieldOrigin{root, path},
+              ScalarAddress{.kind = AddressOriginKind::EntryPointerField,
+                            .place = root,
+                            .field = path,
+                            .fieldPointee = type.arguments.front()});
+        return;
+      }
+      if (type.kind != SemanticType::Class)
+        return;
+      const auto record = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const auto &candidate) { return candidate.type == type; });
+      if (record == program.classInstances().end() ||
+          record->kind == ClassKind::Union ||
+          record->compilerCapability != CompilerCapabilityTypeKind::None)
+        return;
+      for (const auto &field : record->declaredFields) {
+        auto nested = path;
+        nested.push_back(field.symbol);
+        self(self, root, field.type, std::move(nested));
+      }
+    };
+    if (const auto *type = implicitReceiverType(&program, address))
+      seed(seed, canonicalPlace(aliases, thisRoot(body)), *type, {});
+    for (std::size_t index = 0; index < bindings.size() && index < types.size();
+         ++index)
+      if (types[index].kind == SemanticType::Reference &&
+          types[index].arguments.size() == 1)
+        if (const auto root = rootForBinding(body, bindings[index]))
+          seed(seed, canonicalPlace(aliases, root),
+               types[index].arguments.front(), {});
+  }
   for (std::size_t index = 0; index < bindings.size() && index < types.size();
        ++index) {
     if (types[index].kind != SemanticType::RawPointer ||
