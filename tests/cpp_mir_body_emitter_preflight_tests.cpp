@@ -121,6 +121,112 @@ int many(int divisor) {
          "the many-guard body must be checked exactly once");
 }
 
+void testTypedCleanupAdapterInterning() {
+  const auto frontend =
+      analyzeWithStandardLibrary("typed-cleanup-adapters.gti", R"gti(
+class LeftError {
+  int divisor;
+public:
+  LeftError(int value) : divisor(value) {}
+  ~LeftError() { int left_failure = 1 / this.divisor; }
+};
+class RightError {
+  int divisor;
+public:
+  RightError(int value) : divisor(value) {}
+  ~RightError() { int right_failure = 2 / this.divisor; }
+};
+int many(int divisor) {
+  expected<int, LeftError> first = unexpected(LeftError(divisor));
+  expected<int, LeftError> second = unexpected(LeftError(divisor));
+  expected<bool, LeftError> different_type = unexpected(LeftError(divisor));
+  expected<int, RightError> different_recipe = unexpected(RightError(divisor));
+  return 3 / divisor;
+}
+int main() { return many(1); }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "unrelated source error types must lower with repeated typed cleanup");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(frontend, frontend.mir, standard));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    std::size_t checkedBodies = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      if (function.owner || function.parameterTypes.size() != 1)
+        continue;
+      std::vector<lang::MirDropType> recipes;
+      std::size_t drops = 0;
+      std::size_t secondaryFailures = 0;
+      for (const auto &block : function.body.blocks) {
+        secondaryFailures += block.terminator.kind ==
+                             lang::MirTerminatorKind::TerminateCleanupFailure;
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Drop ||
+              instruction.lifecycle.size() != 1)
+            continue;
+          const auto *drop = function.body.findDropObligation(
+              instruction.lifecycle.front().source);
+          if (!drop || drop->dropType.type.kind != lang::SemanticType::Expected)
+            continue;
+          ++drops;
+          if (std::find(recipes.begin(), recipes.end(), drop->dropType) ==
+              recipes.end())
+            recipes.push_back(drop->dropType);
+        }
+      }
+      if (drops == 0)
+        continue;
+      const auto original = function;
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+      const auto plan = emitter.buildPlan(address);
+      const auto text = emitter.emitFailureBodyText(plan, "typed-adapters", 1);
+      expect(text.emitted(), "typed cleanup adapter body must be admitted");
+      const auto occurrences = [&](std::string_view needle) {
+        std::size_t count = 0;
+        for (std::size_t position = text.text.find(needle);
+             position != std::string::npos;
+             position = text.text.find(needle, position + needle.size()))
+          ++count;
+        return count;
+      };
+      expect(recipes.size() == 3 && drops > recipes.size(),
+             "fixture distinguishes equal recipes, equal cleanup expressions "
+             "with different native types, and different source error recipes");
+      expect(occurrences("const auto __gti_mir_cleanup_adapter_") ==
+                     recipes.size() &&
+                 occurrences(".destroy_cleanup_with_failure(") == drops &&
+                 occurrences("[](auto &__gti_cleanup_value,") == recipes.size(),
+             "each exact typed recipe owns one captureless adapter but every "
+             "verified Drop still invokes it separately");
+      expect(text.text.find("const auto __gti_mir_cleanup_adapter_") <
+                     text.text.find("goto __gti_mir_bb_") &&
+                 occurrences("mir_terminate_cleanup_failure_v2(") ==
+                     secondaryFailures,
+             "adapter initialization precedes every label and preserves all "
+             "secondary-failure termination edges");
+      for (const auto &block : function.body.blocks)
+        expect(occurrences("__gti_mir_bb_" + std::to_string(block.id) +
+                           ": {") == 1,
+               "adapter sharing cannot coalesce or invent MIR blocks");
+      expect(emitter.emitFailureBodyText(address, "typed-adapters", 1).text ==
+                     text.text &&
+                 emitter.emitFailureBodyText(plan, "typed-adapters", 1).text ==
+                     text.text &&
+                 function == original,
+             "per-body inventories are deterministic, sealed in the detached "
+             "plan, and cannot mutate canonical MIR");
+      ++checkedBodies;
+    }
+    expect(checkedBodies == 1,
+           "the repeated cleanup body is checked once per native standard");
+  }
+}
+
 void testPropagationOnlyFailureContext() {
   const auto frontend = analyze("propagation-only-context.gti", R"gti(
 int divide(int value) { return 12 / value; }
@@ -5769,6 +5875,7 @@ constexpr NamedTest kTests[] = {
     {"testPropagationOnlyFailureContext", testPropagationOnlyFailureContext},
     {"testBoundedSecondaryFailureRecordStorage",
      testBoundedSecondaryFailureRecordStorage},
+    {"testTypedCleanupAdapterInterning", testTypedCleanupAdapterInterning},
     {"testOwningPayloadEnumRepresentationAdmission",
      testOwningPayloadEnumRepresentationAdmission},
     {"testOwningPayloadEnumTransportAdmissionFailsClosed",
