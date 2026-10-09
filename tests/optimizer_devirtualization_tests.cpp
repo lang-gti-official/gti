@@ -380,8 +380,8 @@ int main() { Increment concrete{}; Operation& view = concrete; return apply(view
 )");
   testConservative("function-item-parameter", R"(
 int apply(Operation& selected, int value) { return selected.run(value); }
-int call<Function>(Function function, Operation& selected) { return function(selected, 40); }
-int main() { Increment concrete{}; return apply(concrete, 40) + call(apply, concrete) - 82; }
+int call<Function>(Function function) { Increment concrete{}; return function(concrete, 40); }
+int main() { Increment concrete{}; return apply(concrete, 40) + call(apply) - 82; }
 )");
   testConservative("uncalled-parameter", R"(
 int apply(Operation& selected, int value) { return selected.run(value); }
