@@ -2141,11 +2141,10 @@ compoundCheckedOperation(MirOperation operation) {
   }
 }
 
-[[nodiscard]] std::optional<IntegerFact>
-compoundIntegerFact(const MirBody &body, const MirProgram *program,
-                    const MirPlaceAliasEscapeAnalysis &aliases,
-                    const AbstractState &state,
-                    const MirInstruction &instruction) {
+[[nodiscard]] std::optional<IntegerFact> compoundIntegerFact(
+    const MirBody &body, const MirProgram *program, MirBodyAddress address,
+    const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state,
+    const MirInstruction &instruction) {
   if (!instruction.destination || instruction.operands.size() != 1) {
     return std::nullopt;
   }
@@ -2160,7 +2159,8 @@ compoundIntegerFact(const MirBody &body, const MirProgram *program,
   if (const auto pointer = borrowedAddressForPlace(program, body, state,
                                                    *instruction.destination))
     if (const auto *place = body.findPlace(*instruction.destination))
-      left = integerAtAddress(body, state, *pointer, place->type);
+      left = integerAtAddress(body, state, *pointer, place->type, program,
+                              address);
   if (const std::optional<IndexedAggregateAccess> indexed =
           indexedAggregateAccess(program, body, aliases,
                                  *instruction.destination)) {
@@ -2278,16 +2278,24 @@ void retireScalarPointeeSnapshots(AbstractState &state) {
 
 void invalidatePlaceRoot(const MirBody &body,
                          const MirPlaceAliasEscapeAnalysis &aliases,
-                         AbstractState &state, MirPlaceId destination) {
+                         AbstractState &state, MirPlaceId destination,
+                         bool initializesFreshTemporary = false) {
+  const MirPlace *written = body.findPlace(destination);
+  const bool fresh = initializesFreshTemporary && written &&
+                     written->root == MirPlaceRootKind::Temporary &&
+                     written->projections.empty() &&
+                     !written->initiallyAvailable &&
+                     !written->traits.containsBorrowedState;
   // This bounded address relay does not infer reference/write disjointness.
   state.resultAlternatives.clear();
   state.placeAlternatives.clear();
   // A shell copy does not freeze memory reached through its pointers. Without
   // an exact pointee write/disjointness proof, any storage change retires all
   // transported snapshots; newly proved postconditions may be published later.
-  retireScalarPointeeSnapshots(state);
-  state.borrowedAddresses.clear();
-  const MirPlace *written = body.findPlace(destination);
+  if (!fresh) {
+    retireScalarPointeeSnapshots(state);
+    state.borrowedAddresses.clear();
+  }
   if (written == nullptr) {
     state.constructedScalars.clear();
     std::erase_if(state.integerPlaces, [&](const auto &fact) {
@@ -2309,6 +2317,14 @@ void invalidatePlaceRoot(const MirBody &body,
     return;
   }
   const auto overlaps = [&](MirPlaceId place) {
+    // Verified argument/result publication initializes a new temporary. Its
+    // local shell cannot overwrite another live object, even when the general
+    // escape analysis conservatively reports MayAlias. This says nothing
+    // about memory later accessed through pointers copied into that shell.
+    if (fresh) {
+      const auto *other = body.findPlace(place);
+      return other && samePlaceRoot(*written, *other);
+    }
     return aliases.relation(destination, place) != MirAliasRelation::NoAlias;
   };
   const auto pointerFieldOverlaps = [&](const ScalarAddress &pointer) {
@@ -2347,6 +2363,8 @@ void invalidatePlaceRoot(const MirBody &body,
   std::erase_if(state.constructedScalars, [&](const auto &entry) {
     if (entry.first.kind == AddressOriginKind::ExistingPlace)
       return overlaps(entry.first.place);
+    if (fresh)
+      return false;
     for (const auto &field : entry.second.disjointFields) {
       if (const auto path = fieldPath(body, field.root, destination);
           path && *path == field.path &&
@@ -2428,6 +2446,8 @@ void invalidatePlaceRoot(const MirBody &body,
                                        entry.first.begin());
                    }));
   const auto overlapsEntry = [&](const auto &entry) {
+    if (fresh)
+      return false;
     if (!knownOwnedPath)
       return true;
     const auto prefix =
@@ -2439,7 +2459,7 @@ void invalidatePlaceRoot(const MirBody &body,
   std::erase_if(state.entryRelativeValues, overlapsEntry);
   std::erase_if(state.fieldOrigins, [&](const auto &entry) {
     const auto &origin = entry.second;
-    if (origin.root != 0 && !overlaps(origin.root))
+    if ((origin.root != 0 || fresh) && !overlaps(origin.root))
       return false;
     if (const auto path = fieldPath(body, origin.root, destination)) {
       const auto prefix = std::min(path->size(), origin.path.size());
@@ -2449,6 +2469,8 @@ void invalidatePlaceRoot(const MirBody &body,
     return true;
   });
   std::erase_if(state.integerPlaces, [&](const auto &entry) {
+    if (fresh)
+      return overlaps(entry.first);
     const auto relation = aliases.relation(destination, entry.first);
     return relation != MirAliasRelation::NoAlias &&
            (relation == MirAliasRelation::MustAlias ||
@@ -2462,7 +2484,7 @@ void invalidatePlaceRoot(const MirBody &body,
                 [&](const auto &entry) { return overlaps(entry.first); });
   for (auto iterator = state.objects.begin();
        iterator != state.objects.end();) {
-    if (iterator->first != 0 && !overlaps(iterator->first)) {
+    if ((iterator->first != 0 || fresh) && !overlaps(iterator->first)) {
       ++iterator;
       continue;
     }
@@ -3512,7 +3534,9 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       summary.constructed.fact) {
     ObjectFact object = *summary.constructed.fact;
     stabilize(object);
-    invalidatePlaceRoot(body, aliases, state, *instruction.destination);
+    // Source-constructor effects have already been applied above. Publishing
+    // its successful result into a fresh temporary is only a shell write.
+    invalidatePlaceRoot(body, aliases, state, *instruction.destination, true);
     seedObjectFact(body, aliases, *instruction.destination, object, state);
   }
   if (instruction.loan && summary.result.observed) {
@@ -4018,6 +4042,7 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
   std::map<MirPlaceId, IntegerFact> fields;
   EntryRelativeFields updates;
   ConstructedScalars pointees;
+  std::map<FieldOrigin, ScalarAddress> receiverPointers;
   // The existing formal profile requires the exact by-value signature. A
   // passive drop may additionally retire independent local storage, witnessed
   // by its unprojected owning initialization. Reference/payload projections,
@@ -4044,8 +4069,22 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
                          initialization.operands.front().type == place->type;
                 });
           });
-  if (place && (independentLocal ||
+  const bool independentTemporary =
+      place && place->root == MirPlaceRootKind::Temporary &&
+      place->projections.empty() && !place->initiallyAvailable &&
+      !place->traits.containsBorrowedState;
+  if (place && (independentLocal || independentTemporary ||
                 independentValueParameter(program, address, *place))) {
+    // Structural movement/cleanup of independent value storage cannot write
+    // an owned receiver field. Retain entry pointer identities, not addresses
+    // observed after retargeting to storage that might now be retired.
+    for (const auto &[field, pointer] : state.fieldAddresses) {
+      const auto *root = body.findPlace(field.root);
+      if ((!field.root || (root && root->root == MirPlaceRootKind::This)) &&
+          pointer.kind != AddressOriginKind::ExistingPlace &&
+          !pointer.observation)
+        receiverPointers.emplace(field, pointer);
+    }
     for (const auto &[pointer, fact] : state.constructedScalars)
       if (pointer.kind != AddressOriginKind::ExistingPlace &&
           !pointer.observation)
@@ -4064,8 +4103,13 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
       });
       receiver.elements.reset();
       receiver.elementIntegers.clear();
-      receiver.scalarPointees.clear();
-      receiver.prefixes.clear();
+      std::erase_if(receiver.scalarPointees, [&](const auto &entry) {
+        return !receiverPointers.contains({root, entry.first.pointer});
+      });
+      std::erase_if(receiver.prefixes, [&](const auto &entry) {
+        return !receiverPointers.contains({root, entry.first.pointer}) ||
+               !receiver.integers.contains(entry.first.end);
+      });
       receivers.emplace(root, std::move(receiver));
     }
     for (const auto &[root, fact] : state.integerPlaces)
@@ -4080,6 +4124,7 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
   for (auto &[root, fact] : fields)
     state.integerPlaces.insert_or_assign(root, std::move(fact));
   state.entryRelativeFields.insert(updates.begin(), updates.end());
+  state.fieldAddresses.insert(receiverPointers.begin(), receiverPointers.end());
   for (auto &[pointer, fact] : pointees)
     publishConstructedScalar(state, pointer, std::move(fact));
 }
@@ -4435,7 +4480,8 @@ void applyInstruction(const MirBody &body,
       invalidateValueStorage(program, address, body, aliases, state,
                              source.place);
     if (instruction.destination)
-      invalidatePlaceRoot(body, aliases, state, *instruction.destination);
+      invalidatePlaceRoot(body, aliases, state, *instruction.destination,
+                          instruction.kind == MirInstructionKind::CallInput);
     state.loadedOrigins.erase(*instruction.result);
     state.fieldOrigins.erase(*instruction.result);
     state.aggregateOrigins.erase(*instruction.result);
@@ -4858,11 +4904,13 @@ void applyInstruction(const MirBody &body,
       relative.reset();
     }
     if (compoundCheckedOperation(instruction.operation)) {
-      fact = compoundIntegerFact(body, program, aliases, state, instruction);
+      fact = compoundIntegerFact(body, program, address, aliases, state,
+                                 instruction);
     }
     if (checkedAddress && fact && writtenDomain &&
         (instruction.operation == MirOperation::None ||
-         instruction.operation == MirOperation::Assign) &&
+         instruction.operation == MirOperation::Assign ||
+         compoundCheckedOperation(instruction.operation)) &&
         fact->domain == *writtenDomain) {
       // A checked scalar assignment changes an existing live element, not
       // the region's coverage. Retain only prefixes with this exact current
@@ -6354,7 +6402,7 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
         const std::optional<IntegerFact> result =
             instruction.kind == MirInstructionKind::Compute
                 ? computeIntegerFact(body, state, instruction)
-                : compoundIntegerFact(body, program, aliases, state,
+                : compoundIntegerFact(body, program, address, aliases, state,
                                       instruction);
         DefinedFailureDetail detail = DefinedFailureDetail::None;
         if (instruction.operation == MirOperation::Add ||
@@ -6958,23 +7006,28 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
                                       : nullptr;
         const bool localDestination =
             !instruction.destination ||
-            (destination && destination->root == MirPlaceRootKind::Binding &&
+            (destination &&
+             (destination->root == MirPlaceRootKind::Binding ||
+              destination->root == MirPlaceRootKind::Temporary) &&
              destination->projections.empty() &&
              !destination->traits.containsBorrowedState);
         if (localDestination &&
             (operand.kind != MirOperandKind::Move ||
-             (source && source->root == MirPlaceRootKind::Binding &&
-              source->projections.empty() &&
-              !source->traits.containsBorrowedState)))
+             (source && !source->traits.containsBorrowedState &&
+              ((source->root == MirPlaceRootKind::Binding &&
+                source->projections.empty()) ||
+               independentValueParameter(&program, address, *source)))))
           continue;
       }
       if (isMirStructuralValueDrop(program, instruction)) {
         const auto *destination = instruction.destination
                                       ? body.findPlace(*instruction.destination)
                                       : nullptr;
-        if (destination && destination->root == MirPlaceRootKind::Binding &&
-            destination->projections.empty() &&
-            !destination->traits.containsBorrowedState)
+        if (destination && !destination->traits.containsBorrowedState &&
+            (((destination->root == MirPlaceRootKind::Binding ||
+               destination->root == MirPlaceRootKind::Temporary) &&
+              destination->projections.empty()) ||
+             independentValueParameter(&program, address, *destination)))
           continue;
       }
       const auto effect = effects(program, instruction);

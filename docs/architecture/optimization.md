@@ -688,14 +688,30 @@ An unrelated 5,000-element sequence exercises first/last and varying-index
 reads, with forged-proof and native controls for gaps, conditional construction,
 different values, retargeting, native writes and destructive replacement.
 
-A plain checked non-byte integer assignment can retain coverage at the same
+A checked non-byte integer assignment can retain coverage at the same
 current pointer base and exact scalar subobject. It weakly joins the stored
 value with the previous prefix envelope: assigning one element does not imply
 that every element acquired that value. The endpoint must have a different
 integer width so the existing typed-store rule preserves its live metadata.
-No disjointness is inferred from different pointer fields; unmatched prefixes,
-unknown values, compound assignments and unsupported mutations lose coverage.
+Compound arithmetic uses the same exact-address/region query as a separate
+load and arithmetic operation, including its body-local parameter identity.
+Only a proved result envelope may update coverage. No disjointness is inferred
+from different pointer fields; unmatched prefixes, unknown results and
+unsupported mutations lose coverage.
 Native effects and destructive replacement retain their ordinary barriers.
+
+Verified structural argument staging writes a fresh independent temporary,
+not arbitrary caller memory. Its invalidation retires that slot's old local
+facts without discarding unrelated live-region facts. Successful source
+constructor-result publication uses the same rule only after applying the
+constructor's actual effects. This does not make the constructor pure or
+preserve facts across its unknown/native writes. Generated movement and passive
+cleanup of independent value parameters/temporaries can also preserve owned
+receiver fields and entry pointer identities; retargeted or existing-place
+pointee identities remain excluded. The typed mutation profile accepts exact
+concrete-pack value parameters and passive prepared temporaries, not borrowed
+projections or active destructors. An unrelated record sequence exercises these
+rules without a container-name exception.
 
 Guard predicates contribute independent widening thresholds rather than
 preserving an earlier contextual singleton as a loop invariant. A threshold
@@ -706,7 +722,7 @@ budgets, while preserving bounded constructor/getter-loop proofs.
 The remaining source-owner goals include general region-preserving element writes,
 record-region transport across local construction/cleanup, and general
 loop-index/endpoint relations. The
-six existing source-container safety acceptance failures and end-to-end runtime
+five remaining source-container safety acceptance failures and end-to-end runtime
 performance comparison remain open; this prefix slice is not their completion.
 A lifetime witness is still never a pointee or an allocation identity.
 Different pointer fields never imply different allocations.

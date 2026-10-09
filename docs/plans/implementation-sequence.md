@@ -5034,7 +5034,7 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   default classes; scalar process-owner elision has an O0/O3 counting oracle.
   The frozen `f8c9193c` full run passes family/fallible/overflow controls and
   complete corpus gates. Combined acceptance and measured source-container
-  performance remain open: six optimizer proof requirements and three native
+  performance remain open: five optimizer proof requirements and native
   evidence assertions still fail, and vector/game-update workloads materially
   trail the private-path comparisons. Allocation removal alone is insufficient.
   The contract is
@@ -5079,11 +5079,14 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   branch. Compact initialized-prefix relations prove first/last and bounded
   indexed reads for an unrelated 5,000-element source sequence, with structural
   append/endpoint requirements and forged-proof/native negatives. The handoff's
-  six focused suites and 490 native cases pass; combined-head revalidation is
-  still required. Region-preserving writes, record-region transport through
-  construction/cleanup and general
-  loop-index/endpoint relations remain the named prerequisites of the six
-  source-container proof requirements and final vector/game performance parity.
+  six focused suites and 490 native cases pass. The combined branch additionally
+  supports bounded checked writes, exact compound-address queries and fresh
+  structural argument/result staging, with a 4,096-element unrelated record
+  sequence and unsafe-mutation negatives. The original guarded call-context
+  bounds requirement now passes, leaving five source-container proof failures.
+  General region-preserving writes and record-region transport through local
+  construction/cleanup remain prerequisites of those proofs and final
+  vector/game performance parity; final combined acceptance is still required.
   The contract is
   [ADR 022's raw-buffer revision](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
   It covers migration candidates M01, M02 and M04 in the

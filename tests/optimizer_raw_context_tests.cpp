@@ -450,7 +450,9 @@ int main() {
   checkAddressFixture("optimizer_default_scalar_construction.gti",
                       {"default_scalar", "default_forwarded",
                        "default_unsigned", "default_sequence", "default_packed",
-                       "modified_prefix"},
-                      6, false, false);
+                       "modified_prefix", "compound_prefix"},
+                      8, false, false);
+  checkAddressFixture("optimizer_record_prefix.gti", {"record_prefix"}, 4,
+                      false, false);
   return failures == 0 ? 0 : 1;
 }
