@@ -98,15 +98,22 @@ int raw_constructor_case() {
   return raw.read();
 }
 
+extern "C" { int gti_optimizer_case(); }
+
 int main() {
+  int selected = gti_optimizer_case();
   mut Hazard danger{2147483647};
-  if (from_constructor() != 8) return danger.changed();
-  if (from_result() != 8) return danger.raw_changed();
+  if (from_constructor() != 8) return 1;
+  if (selected == 1) return danger.changed();
+  if (from_result() != 8) return 2;
+  if (selected == 2) return danger.raw_changed();
   Nested nested{7};
-  if (nested.read() != 8) return raw_constructor_case();
+  if (nested.read() != 8) return 3;
+  if (selected == 3) return raw_constructor_case();
   mut Gauge object{7};
   if (through_reference(object) != 8) return 6;
   if (object.after_address() != 8) return 7;
-  if (object.bump() != 10) return alias_case();
+  if (object.bump() != 10) return 4;
+  if (selected == 4) return alias_case();
   return danger.read();
 }

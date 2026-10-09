@@ -1176,6 +1176,19 @@ void refineCondition(const MirBody &body, MirBlockId block,
       variableFact->domain != constantFact->domain || variable->value == 0) {
     return;
   }
+  if (singleton(*variableFact)) {
+    const int order = compare(variableFact->lower, constantFact->lower);
+    const bool taken = operation == MirOperation::Less           ? order < 0
+                       : operation == MirOperation::LessEqual    ? order <= 0
+                       : operation == MirOperation::Greater      ? order > 0
+                       : operation == MirOperation::GreaterEqual ? order >= 0
+                       : operation == MirOperation::Equal        ? order == 0
+                                                                 : order != 0;
+    if (taken != branchTaken) {
+      state.reachable = false;
+      return;
+    }
+  }
 
   std::optional<CheckedIntegerValue> lower;
   std::optional<CheckedIntegerValue> upper;
