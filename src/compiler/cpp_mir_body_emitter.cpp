@@ -44778,13 +44778,19 @@ plainConstructedFieldTarget(const MirProgram &program,
         const bool consumed =
             std::find(consumedParameters.begin(), consumedParameters.end(),
                       drop->id) != consumedParameters.end();
+        // A consumed cleanup-free carrier retires only its moved-from passive
+        // shell; a consumed cleanup-bearing owner keeps its exact recipe.
+        const bool consumedPassive =
+            consumed && !drop->dropType.requiresActiveCleanup;
         if (!failureConstructorParameterCleanupDrop(program, constructor,
                                                     instruction) ||
-            (consumed ? !mirUniqueCleanupType(program, drop->dropType.type)
-                      : (drop->dropType.requiresActiveCleanup ||
-                         !failureConstructorPassiveBoundShell(
-                             program, drop->dropType.type, visiting) ||
-                         !instruction.definedFailure.empty())))
+            (consumed && !consumedPassive
+                 ? !mirUniqueCleanupType(program, drop->dropType.type)
+                 : (drop->dropType.requiresActiveCleanup ||
+                    !failureConstructorPassiveBoundShell(
+                        program, drop->dropType.type, visiting,
+                        consumedPassive) ||
+                    !instruction.definedFailure.empty())))
           return false;
       }
       if (!instruction.definedFailure.empty() &&
@@ -44960,7 +44966,6 @@ nativeConstructedArguments(const MirProgram &program,
             producer->operands.front().type != operand.type ||
             operand.type.kind != SemanticType::Class ||
             !producer->info.traits.movable ||
-            !mirUniqueCleanupType(program, operand.type) ||
             place->root != MirPlaceRootKind::Binding ||
             !place->projections.empty() || !place->initiallyAvailable ||
             place->type != operand.type || !place->key ||
@@ -45007,8 +45012,8 @@ nativeConstructedArguments(const MirProgram &program,
                   ? body.findDropObligation(producer->lifecycle.front().target)
                   : nullptr;
           const auto *valuePlace = drop ? body.findPlace(drop->place) : nullptr;
-          if (!drop || !valuePlace ||
-              drop->kind != MirDropObligationKind::Value ||
+          if (!mirUniqueCleanupType(program, operand.type) || !drop ||
+              !valuePlace || drop->kind != MirDropObligationKind::Value ||
               drop->initiallyActive || drop->dropType != prepared->dropType ||
               valuePlace->root != MirPlaceRootKind::Value ||
               valuePlace->value != source.value ||
@@ -45024,8 +45029,16 @@ nativeConstructedArguments(const MirProgram &program,
                                     .target = prepared->id})
             return std::nullopt;
         } else {
+          // A cleanup-free carrier has no unique cleanup recipe and no Value
+          // handoff. Its formal and prepared slot keep their own passive
+          // obligations; the slot is initialized directly by the staged input.
           std::unordered_set<HirClassInstanceId> visiting;
-          if (parameterDrop->dropType.requiresActiveCleanup ||
+          const auto *shell = uniqueClassInstanceForType(program, operand.type);
+          if (!shell || parameterDrop->dropType.requiresActiveCleanup ||
+              parameterDrop->dropType.destructor ||
+              parameterDrop->dropType.classInstance != shell->id ||
+              prepared->dropType.destructor ||
+              prepared->dropType.classInstance != shell->id ||
               !producer->lifecycle.empty() ||
               !failureConstructorPassiveBoundShell(program, operand.type,
                                                    visiting, true) ||

@@ -10176,9 +10176,11 @@ void testNestedConstructorArgumentPublication() {
   std::size_t checked = 0;
   std::size_t nested = 0;
   std::size_t movedFormals = 0;
+  std::size_t passiveMovedFormals = 0;
   for (const auto name : {"nested_carrier_arguments.gti",
                           "nested_owning_constructor_arguments.gti",
-                          "source_resource_prefix_cleanup.gti"}) {
+                          "source_resource_prefix_cleanup.gti",
+                          "nested_cleanup_free_moved_formal.gti"}) {
     const auto fixture =
         std::filesystem::path(__FILE__).parent_path() / "fixtures" / name;
     std::ifstream input(fixture);
@@ -10314,14 +10316,66 @@ void testNestedConstructorArgumentPublication() {
                  "unproved inner constructor cannot move across its Invoke "
                  "boundary");
         }
+        // A cleanup-free moved formal has no Value handoff: its exact Move
+        // event, formal identity and passive obligations carry the proof.
+        bool passive = false;
+        for (int mutation = 0; formal && mutation != 4; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              malformed.findConstructorInstance(constructor.id));
+          lang::MirInstruction *move = nullptr;
+          for (auto &block : changed->body.blocks)
+            for (auto &candidate : block.instructions)
+              if (!move && candidate.kind == lang::MirInstructionKind::Move &&
+                  std::find(field.argumentInstructions.begin(),
+                            field.argumentInstructions.end(),
+                            candidate.id) != field.argumentInstructions.end())
+                move = &candidate;
+          const auto *place =
+              move ? changed->body.findPlace(move->operands.front().place)
+                   : nullptr;
+          lang::MirDropObligation *formalDrop = nullptr;
+          for (auto &drop : changed->body.dropObligations)
+            if (place && drop.kind == lang::MirDropObligationKind::Binding &&
+                drop.place == place->id)
+              formalDrop = &drop;
+          if (!move || !place || !formalDrop ||
+              formalDrop->dropType.requiresActiveCleanup)
+            break;
+          passive = true;
+          if (mutation == 0)
+            move->ownership->kind = lang::OwnershipEventKind::Read;
+          if (mutation == 1)
+            formalDrop->dropType.requiresActiveCleanup = true;
+          if (mutation == 2)
+            move->lifecycle.push_back(
+                {.kind = lang::MirLifecycleEventKind::Move,
+                 .source = formalDrop->id,
+                 .target = formalDrop->id});
+          if (mutation == 3)
+            for (auto &binding : changed->parameterBindings)
+              if (binding == place->binding)
+                binding = 0;
+          expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
+                                                                 *changed)
+                         .empty() &&
+                     !lang::CppMirBodyEmitter(malformed, map)
+                          .supportsFailureBodyText(address),
+                 "cleanup-free moved formal rejects a lost Move event, "
+                 "cleanup-bearing formal, invented handoff or foreign "
+                 "binding " +
+                     std::to_string(mutation) + " in " + name);
+        }
+        passiveMovedFormals += passive;
       }
     }
     expect(!gti_test::emitCpp(frontend).contents.empty(),
            "nested constructor fixture reaches production emission");
   }
-  expect(checked >= 4 && nested >= 3 && movedFormals >= 1,
-         "fixtures cover shared, exclusive, owning and moved resource-formal "
-         "trees");
+  expect(checked >= 4 && nested >= 3 && movedFormals >= 1 &&
+             passiveMovedFormals >= 5,
+         "fixtures cover shared, exclusive, owning, moved resource-formal "
+         "and cleanup-free moved-formal trees");
 }
 
 void testPhysicalCarrierReferencePublication() {
