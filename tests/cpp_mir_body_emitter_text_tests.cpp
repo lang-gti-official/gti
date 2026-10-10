@@ -2732,6 +2732,130 @@ int main() {
          "transfer slot");
 }
 
+// The same cleanup-free Expected<Class, E> result may initialize one by-value
+// parameter of an exact ordinary constructor. Both the failure-form
+// construction and a constructor body's plain form move the staged wrapper,
+// and the moved-from representation is retired right after the construction.
+// A cleanup-owning payload keeps MIR's value-rooted transfer slot.
+// (Regression: a constructor consumer raised GTI-B0001.)
+void testCleanupFreeExpectedClassConstructorArgumentSlot() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-expected-class-constructor-argument.gti", R"(
+struct pair_value {
+  int32_t first = 0;
+  pair_value(int32_t first) : first(first) {}
+};
+
+class tracked {
+public:
+  int32_t value = 0;
+  tracked(int32_t value) : value(value) {}
+  ~tracked() {}
+};
+
+expected<pair_value, int32_t> make_pair(bool ok) {
+  if (ok) { return pair_value(5); }
+  return unexpected(4);
+}
+
+expected<tracked, int32_t> make_tracked(bool ok) {
+  if (ok) { return tracked(5); }
+  return unexpected(4);
+}
+
+class pair_holder {
+public:
+  int32_t first;
+  pair_holder(expected<pair_value, int32_t> result)
+      : first(result ? result.value().first : 0) {}
+};
+
+class tracked_holder {
+public:
+  int32_t value;
+  tracked_holder(expected<tracked, int32_t> result)
+      : value(result ? result.value().value : 0) {}
+};
+
+class outer {
+public:
+  mut int32_t first = 0;
+  outer(bool ok) {
+    pair_holder held{make_pair(ok)};
+    this.first = held.first;
+  }
+};
+
+int main() {
+  pair_holder held{make_pair(true)};
+  tracked_holder owned{make_tracked(true)};
+  outer nested{true};
+  return held.first + owned.value + nested.first - 15;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the Expected class constructor argument fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string passiveSlot =
+      "::gti_internal::backend::mir_lifetime_slot<std::expected<::__gti_"
+      "program::pair_value, std::int32_t>, true> ";
+  // Counts constructions that spell `marker` on a line naming `construction`.
+  // Each must move one declared slot and retire it on the next line.
+  const auto retiredConstructions = [&](std::string_view construction,
+                                        std::string_view marker) {
+    std::size_t count = 0;
+    for (std::size_t at = text.find(marker); at != std::string::npos;
+         at = text.find(marker, at + marker.size())) {
+      const std::size_t lineStart = text.rfind('\n', at) + 1;
+      const std::size_t lineEnd = text.find('\n', at);
+      const std::size_t idStart = at + marker.size();
+      const std::size_t idEnd = text.find(".get())", idStart);
+      if (lineEnd == std::string::npos || idEnd == std::string::npos ||
+          idEnd > lineEnd)
+        return std::size_t{0};
+      if (std::string_view(text)
+              .substr(lineStart, lineEnd - lineStart)
+              .find(construction) == std::string_view::npos)
+        continue;
+      const std::string slot =
+          "__gti_mir_v_" + text.substr(idStart, idEnd - idStart);
+      const std::size_t next = text.find_first_not_of(' ', lineEnd + 1);
+      if (text.find(passiveSlot + slot + ";") == std::string::npos ||
+          text.compare(next, slot.size() + 11, slot + ".destroy();") != 0)
+        return std::size_t{0};
+      ++count;
+    }
+    return count;
+  };
+  expect(retiredConstructions("::__gti_program::pair_holder(",
+                              ">{}, std::move(__gti_mir_v_") == 2,
+         "the entry and the constructor body's failure form should each move "
+         "a staged wrapper into the raising constructor and retire it "
+         "afterwards");
+  expect(retiredConstructions("__gti_mir_p_",
+                              ".construct(std::move(__gti_mir_v_") == 1,
+         "the constructor body's plain form should construct its binding from "
+         "the staged wrapper and retire it afterwards");
+  const std::size_t owned =
+      text.find("::__gti_program::tracked_holder(::gti_internal::backend::"
+                "mir_failure_constructor_tag_v1<");
+  expect(text.find("mir_lifetime_slot<std::expected<::__gti_program::tracked, "
+                   "std::int32_t>, true> __gti_mir_v_") == std::string::npos &&
+             owned != std::string::npos &&
+             text.find(">{}, __gti_mir_p_", owned) == text.find(">{}, ", owned),
+         "a cleanup-owning Expected constructor argument should keep MIR's "
+         "value-rooted transfer slot");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -2903,6 +3027,8 @@ constexpr NamedTest kTests[] = {
      testInvokePublishesScalarEdgeArguments},
     {"testCleanupFreeExpectedClassArgumentSlot",
      testCleanupFreeExpectedClassArgumentSlot},
+    {"testCleanupFreeExpectedClassConstructorArgumentSlot",
+     testCleanupFreeExpectedClassConstructorArgumentSlot},
 };
 
 } // namespace
