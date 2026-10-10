@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.397.7 — Moving a destructor-free borrowing class into a nested member
+
+- A constructor can now move a by-value parameter into a nested member
+  initializer when the parameter's class has no destructor and only carries a
+  borrow, as in `Slots(Lease lease) : buffer(Buffer(std::move(lease))) {}`
+  where `Lease` holds a `Pool&`. Such a program used to stop with internal
+  compiler error GTI-B0001 while generating its C++ representation,
+  although the same class with a user destructor already built. One or
+  several such members, shared or `mut` references, and a nested constructor
+  that can fail are all covered.
+
 ## 0.397.6 — `export` before declaration attributes
 
 - The formatter keeps the space between a word and a `[[...]]` attribute list.

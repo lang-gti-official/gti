@@ -1,0 +1,109 @@
+#include <std/utility>
+
+// Cleanup-free borrow carriers moved from a constructor formal into a nested
+// native member initializer. Lease and Cursor declare no destructor, so the
+// moved formal has only passive Binding and prepared-slot obligations.
+class Pool {
+  mut int32_t live;
+public:
+  Pool(int32_t live) : live(live) {}
+  int32_t count() { return this.live; }
+  void add(int32_t amount) mut { this.live += amount; }
+};
+
+class Lease {
+  Pool& pool;
+  int32_t weight;
+public:
+  Lease(Pool& pool, int32_t weight) : pool(pool), weight(weight) {}
+  Lease(Lease&& other) = default;
+  int32_t seen() { return this.pool.count() * this.weight; }
+};
+
+class Buffer {
+  Lease lease;
+public:
+  Buffer(Lease lease) : lease(std::move(lease)) {}
+  int32_t seen() { return this.lease.seen(); }
+};
+
+// One field built from one moved formal.
+class Slots {
+  Buffer buffer;
+public:
+  Slots(Lease lease) : buffer(Buffer(std::move(lease))) {}
+  int32_t seen() { return this.buffer.seen(); }
+};
+
+// Two fields, each built from its own moved formal; both leases borrow the
+// same caller binding.
+class Pair {
+  Buffer first;
+  Buffer second;
+public:
+  Pair(Lease left, Lease right)
+      : first(Buffer(std::move(left))), second(Buffer(std::move(right))) {}
+  int32_t seen() { return this.first.seen() * 100 + this.second.seen(); }
+};
+
+// An exclusive carrier is admitted only because it is moved, never copied.
+class Cursor {
+  mut Pool& pool;
+public:
+  Cursor(mut Pool& pool) : pool(pool) {}
+  Cursor(Cursor&& other) = default;
+  void bump(int32_t amount) mut { this.pool.add(amount); }
+};
+
+class Writer {
+  mut Cursor cursor;
+public:
+  Writer(Cursor cursor) : cursor(std::move(cursor)) {}
+  void bump(int32_t amount) mut { this.cursor.bump(amount); }
+};
+
+class Journal {
+  mut Writer writer;
+public:
+  Journal(Cursor cursor) : writer(Writer(std::move(cursor))) {}
+  void bump(int32_t amount) mut { this.writer.bump(amount); }
+};
+
+// A fallible child keeps its status boundary; its rollback retires the
+// consumed formal's moved-from passive shell.
+class Ledger {
+  Lease lease;
+  int32_t limit;
+public:
+  Ledger(Lease lease, int32_t base)
+      : lease(std::move(lease)), limit(base + 1) {} // checked addition
+  int32_t seen() { return this.lease.seen() + this.limit; }
+};
+
+class Audit {
+  Ledger ledger;
+public:
+  Audit(Lease lease, int32_t base) : ledger(Ledger(std::move(lease), base)) {}
+  int32_t seen() { return this.ledger.seen(); }
+};
+
+int main() {
+  Pool pool{5};
+  Slots slots{Lease(pool, 2)};
+  if (slots.seen() != 10) { return 1; }
+  Pair pair{Lease(pool, 3), Lease(pool, 7)};
+  if (pair.seen() != 1535) { return 2; }
+  if (slots.seen() != 10) { return 3; }
+
+  mut Pool counter{1};
+  {
+    mut Journal journal{Cursor(counter)};
+    journal.bump(4);
+    journal.bump(6);
+  }
+  if (counter.count() != 11) { return 4; }
+
+  Audit audit{Lease(pool, 4), 40};
+  if (audit.seen() != 61) { return 5; }
+  return 0;
+}
