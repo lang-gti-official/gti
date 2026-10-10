@@ -3,6 +3,7 @@
 #include "gti/semantic_analyzer.h"
 
 #include "diagnostic_registry.h"
+#include "gti/ast_clone.h"
 #include "gti/frontend_work.h"
 #include "gti/standard_library.h"
 #include "semantic_diagnostics.h"

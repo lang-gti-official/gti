@@ -1,7 +1,5 @@
 #include "semantic_analyzer_impl.h"
 
-#include "gti/ast_clone.h"
-
 namespace lang {
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
