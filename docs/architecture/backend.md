@@ -282,6 +282,14 @@ return-result reparent/rollback schedule. A non-owning placement adapter reuses
 the checked extraction helper against caller storage; it supplies neither
 implicit construction nor native unwinding. The state check still precedes
 construction, and MIR alone decides whether to destroy or publish the result.
+When the function instead returns a placement `Expected<Class, E>` whose
+success type is the extracted payload, a cleanup-free moved or copied
+extraction constructs one payload slot. The exact Return then constructs the
+Expected from it, the same publication cleanup-free calls and constructions
+use. A named Expected binding copied into that placement result likewise
+constructs its copy in representation storage, which the Return moves out. The
+copy is the one MIR selected for the `Load`, so no payload is limited to
+passive C-compatible records.
 
 Ordinary field chains projected from a checked class-payload extraction share
 that extraction's address. Admission checks every typed field projection;
@@ -1362,6 +1370,104 @@ uses the existing MIR cleanup of preceding owning arguments. Unrelated
 user-defined constructors exercise both infallible and failing construction,
 ordered subsequent arguments, and early failure before call entry.
 
+A fresh placement `Expected<Class, E>` source-call result consumed by one
+exact by-value parameter shares that representation-only slot when MIR gives
+it neither a value drop nor a value-rooted place. Every alternative must agree:
+each class alternative is a unique instance with a generated destructor, no
+active cleanup or drop state, no borrowed state and a move that cannot raise,
+and each other alternative is scalar. The transformed producer constructs the
+wrapper only on its Invoke success edge. The consumer is selected by the same
+call-argument proof as a cleanup-free construction: a static source function
+or a borrowed-receiver member, with exact parameter identity and dominance from
+the success edge. It moves the wrapper into its parameter, and the moved-from
+representation is retired after the call. Intervening argument preparation
+keeps its MIR position. A failure there ends only the generated representation
+at scope exit; there is no semantic Drop to invent. A non-placement Expected,
+such as a scalar payload with a cleanup-free class error, keeps its ordinary SSA
+local. An owning alternative keeps MIR's value drop and the value-rooted
+transfer slot described above.
+
+The same slot may instead feed one by-value parameter of an exact ordinary
+source constructor, mirroring the owning route's constructor consumer. The
+construction must match the constructor's parameter types and owner, carry no
+local failure site, and publish its own result into MIR's staged or published
+class slot. A raising constructor must cross the failure constructor boundary;
+a non-raising one carries no defined failure. Parameter identity and dominance
+are the shared call-argument conditions. Every construction form that spells
+these arguments moves the wrapper and retires the moved-from representation
+right after the construction. This covers the failure-tag constructor, the
+plain form of a constructor body, and an Initialize-published binding. A class
+value reaches a constructor parameter through MIR's prepared-parameter place
+instead, so only the Expected wrapper, which MIR gives no place, uses this
+consumer. A construction that is assigned to an existing binding, returned
+directly, or used as a member initializer has no such publication slot. Like
+the owning route, it still rejects body emission.
+
+A named binding of the same cleanup-free placement Expected that is copied into
+either consumer is staged the same way. This is the copied-binding Return rule
+with an argument consumer. MIR's `Load` copies one whole binding exactly: it
+has no defined failure, lifecycle event, generated drop or value-rooted place.
+The copy is constructed in its own representation-only slot at the `Load`, so
+later argument preparation cannot change what the consumer receives. A by-value
+parameter is a named binding too. The native wrapper is never
+default-constructed, which a payload with its own default constructor would
+reject. The consumer moves the copy's wrapper, never the binding, which keeps
+its value. The moved-from representation is retired after the call or
+construction. The consumer proofs and cleanup-free alternative conditions are
+the ones above. Semantics currently rejects copying an Expected whose payload
+needs cleanup, because that payload is move-only. If such a copy were admitted,
+it would still fail closed here.
+
+The same cleanup-free placement call result may instead replace one whole
+mutable binding of its type. MIR pairs that `Assign` with a
+`CleanupBeforeAssign`, whose recipe must be passive: no node has a destructor,
+owned pointee, closure, fixed array, polymorphic or recursive cleanup, or
+active cleanup. That cleanup executes nothing and cannot fail. The producer's
+success edge must reach that exact pair directly, as for a class result
+replacing a binding. The producer constructs the slot on success. The `Assign`
+move-assigns the staged wrapper into the binding, and the moved-from
+representation is retired immediately. A failing producer never constructs the
+slot and leaves the binding to MIR's failure cleanup. Native move assignment
+needs each class alternative's generated move constructor and move assignment.
+
+Other sources replace such a binding through the native wrapper's own
+assignment, after the same passive pair and with no value-initialized Expected
+local. A copy or move of another whole binding fuses into `destination =
+source` or `destination = std::move(source)`, extending the existing class copy
+and move assignment fusions. Each class alternative needs its generated copy or
+move constructor and assignment. A storage-free `Unexpected` constructs inline
+at the `Assign`, as it does at a binding initializer or a `Return`. A fresh
+cleanup-free construction of the success type fuses into the wrapper's
+converting assignment, extending the fresh class assignment fusion. An owning
+placement call result instead stays in its value-rooted slot. The `Assign` must
+carry MIR's `Replace` event from the result's value drop to the binding's drop.
+MIR's active `CleanupBeforeAssign` first retires the old value on its own
+success edge. The `Assign` then moves the slot's wrapper in, and the slot's
+`Drop` ends only the moved-from representation. On the cleanup's failure edge
+the result keeps its obligation and is cleaned there.
+
+Owning sources keep MIR's active, possibly fallible replacement cleanup, which
+retires the old value on its own success edge. A move out of another owning
+Expected binding stages in its value-rooted slot as a moved class does: the
+`Move` hands the source obligation to the slot, the `Assign` carries `Replace`
+into the binding, and the slot's `Drop` ends only the moved-from
+representation. An owning payload construction stages in its value-rooted slot
+as a class prvalue does. Because it converts into a distinct wrapper type,
+MIR's `Assign` transfers the staged obligation out with `TransferOut` rather
+than `Replace`, and no `Drop` follows. The `Assign` therefore ends the
+moved-from shell itself after the wrapper's converting move assignment. A
+storage-free `Unexpected` accepts the exact pair whether or not its cleanup is
+active; the wrapper's assignment then ends only the old alternative's
+representation. An `Unexpected` wrapping a fresh cleanup-free class
+construction spells that construction inline at a binding initializer or
+replacement, as at a `Return`. The construction, wrapper and publication must
+be adjacent, with only a passive replacement pair between them, so the
+construction never moves past observable cleanup. When an owning binding's
+active cleanup separates that construction from its replacement, the error is
+instead constructed at its own MIR position in a representation-only class
+slot, before the cleanup runs. The `Assign` moves it into the `Unexpected` and
+retires the slot, so a loop may construct it again.
+
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
 effects come from the lowered MIR and generated-item contracts. A nameable
@@ -2094,6 +2200,25 @@ field rollback obligation. The child's unpublished shell must independently
 support observation-free retirement. Multiple fallible native prefixes and
 nonempty unclaimed siblings remain excluded;
 this bounded route alone is not complete allocator/container validation.
+
+Several borrowed fields may form one native prefix, such as two owners leasing
+from one binding, only when every child is proved genuinely non-failing. A
+member-initializer list cannot stop after a failed child. The no-failure proof
+reads each constructor's success sequence, and the failure route of an Invoke
+whose exact callee is itself proved non-failing must stay a passive, exact
+schedule. One extension applies because that route cannot execute. It may roll
+back fields this constructor already published, each through the exact
+construction-rollback obligation armed on the success path, before the
+parameter shells. A rollback whose destructor can fail is its block's Invoke,
+whose failure edge reaches an empty block that only terminates cleanup failure.
+A parameter shell MIR proves definitely moved out need not be passive, because
+it is retired without its destructor. Every other drop, a malformed boundary,
+an unknown failure or an unarmed rollback still fails closed. The emitted
+constructor keeps its complete verified failure graph. A child uses
+its ordinary native overload only when that overload is published, which for a
+constructed-field schedule means no field still reports a status. Otherwise the
+call site uses the child's status-tag overload, so it never names an ordinary
+constructor that plain-body admission did not define.
 
 The same exact first-field schedule also admits a passive reference-bearing
 child with generated, observation-free destruction. This branch

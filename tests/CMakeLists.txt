@@ -839,6 +839,16 @@ add_test(NAME expected_class_return_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_return_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_class_return_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_class_argument_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_class_argument_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_class_argument_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_class_assignment_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_class_assignment_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME consuming_call_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/consuming_call_assignment_runtime_test.py"
@@ -2378,6 +2388,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures"
   )
   set_tests_properties(issues_208_210_211_regressions PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME issues_212_214_regressions
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/issues_212_214_regression_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures"
+  )
+  set_tests_properties(issues_212_214_regressions PROPERTIES TIMEOUT 300)
   add_test(
     NAME issue_144_class_array_field_runtime
     COMMAND "${Python3_EXECUTABLE}"

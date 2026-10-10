@@ -684,7 +684,10 @@ public:
   ~Outer() { observed = 1; }
 };
 Outer outer(Resource& resource) {
+  // The moved-from guard retires without its destructor; the unmoved witness
+  // still runs cleanup that can fail while the returned result is pending.
   Guard guard{resource};
+  Guard witness{resource};
   Outer result{std::move(guard)};
   return std::move(result);
 }

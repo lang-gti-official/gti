@@ -898,6 +898,110 @@ void testOwningAssignmentRequiresTransfer(
          "missing-transfer mutation covers bindings and array elements");
 }
 
+// Assigning an owning payload to a whole Expected binding converts it into a
+// distinct wrapper type. The Assign transfers the payload's value obligation
+// out, as a converting initialization does, while the binding's obligation
+// keeps owning the converted value; no later Drop names the transferred
+// payload. A same-typed Replace across the conversion, or no transfer at all,
+// fails verification. (Regression for issue #227: lowering emitted a Replace
+// whose source and target types differ.)
+void testConvertingOwningAssignmentTransfersOut(
+    const std::filesystem::path &fixtures) {
+  const auto library = fixtures.parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      lang::Frontend().analyze("converting-owning-assignment.gti", R"(
+class noisy {
+public:
+  int32_t id;
+  noisy(int32_t id) : id(id) {}
+  ~noisy() {}
+};
+expected<noisy, int32_t> make(bool ok) {
+  if (ok) { return noisy(1); }
+  return unexpected(2);
+}
+int main() {
+  mut expected<noisy, int32_t> current = make(true);
+  current = noisy(8);
+  return current ? 0 : 1;
+}
+)",
+                               {library / "prelude.gti"}, {}, {library});
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "converting owning assignment should lower to verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  bool found = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &block : body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *place = instruction.destination
+                                ? body.findPlace(*instruction.destination)
+                                : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Assign || !place ||
+            place->type.kind != lang::SemanticType::Expected ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().type.kind != lang::SemanticType::Class)
+          continue;
+        found = true;
+        const auto *source =
+            instruction.lifecycle.size() == 1
+                ? body.findDropObligation(instruction.lifecycle.front().source)
+                : nullptr;
+        expect(source != nullptr &&
+                   instruction.lifecycle.front().kind ==
+                       lang::MirLifecycleEventKind::TransferOut &&
+                   instruction.lifecycle.front().target == 0 &&
+                   source->dropType.type == instruction.operands.front().type,
+               "the converting Assign should transfer the payload obligation "
+               "out");
+        if (source == nullptr)
+          continue;
+        const bool laterDrop = std::any_of(
+            body.blocks.begin(), body.blocks.end(), [&](const auto &other) {
+              return std::any_of(
+                  other.instructions.begin(), other.instructions.end(),
+                  [&](const auto &item) {
+                    return item.kind == lang::MirInstructionKind::Drop &&
+                           !item.lifecycle.empty() &&
+                           item.lifecycle.front().source == source->id &&
+                           !item.lifecycle.front().failureCleanup;
+                  });
+            });
+        expect(!laterDrop, "no normal-path Drop should name the transferred "
+                           "payload obligation");
+        const lang::MirDropObligation *binding = nullptr;
+        for (const auto &drop : body.dropObligations)
+          if (drop.place == place->id &&
+              drop.kind == lang::MirDropObligationKind::Binding)
+            binding = &drop;
+        const auto mutate = [&](std::vector<lang::MirLifecycleEvent> events) {
+          auto malformed = frontend.mir;
+          auto *changedBody = lang::findMirBody(
+              malformed, {lang::MirBodyKind::Function, function.id});
+          auto &instructions = changedBody->findBlock(block.id)->instructions;
+          std::find_if(
+              instructions.begin(), instructions.end(),
+              [&](const auto &item) { return item.id == instruction.id; })
+              ->lifecycle = std::move(events);
+          return lang::verifyMirProgram(malformed).valid();
+        };
+        expect(!mutate({}),
+               "a converting owning assignment cannot omit its transfer");
+        expect(binding != nullptr &&
+                   !mutate({{.kind = lang::MirLifecycleEventKind::Replace,
+                             .source = source->id,
+                             .target = binding->id}}),
+               "a converting owning assignment cannot claim a same-typed "
+               "replacement");
+      }
+    }
+  }
+  expect(found, "the fixture should contain one converting owning Assign");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -914,6 +1018,8 @@ int main(int argc, char **argv) {
   testFoldedFloatDestructorKeepsFailureSummary();
   testPassiveCallAssignment(std::filesystem::path(argv[1]).parent_path());
   testOwningAssignmentRequiresTransfer(
+      std::filesystem::path(argv[1]).parent_path());
+  testConvertingOwningAssignmentTransfersOut(
       std::filesystem::path(argv[1]).parent_path());
   if (failures != 0) {
     std::cerr << failures << " owned lifecycle backend test(s) failed\n";

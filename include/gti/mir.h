@@ -1887,4 +1887,36 @@ mirDropFollowsDefiniteMove(const MirBlock &block,
                            MirDropObligationId obligation,
                            MirInstructionId beforeInstruction = 0);
 
+// The same proof when the block itself leaves the obligation untouched: it
+// follows invoke edges, from an invoke's success or failure continuation back
+// to the invoking block, until the obligation's last event. Any other incoming
+// edge, a merge or the entry stops it, so a partial CFG during lowering gives
+// the complete CFG's answer. Lowering, verification and the backend share
+// this one rule.
+[[nodiscard]] bool
+mirDropFollowsDefiniteMove(const MirBody &body, const MirBlock &block,
+                           MirDropObligationId obligation,
+                           MirInstructionId beforeInstruction = 0);
+
+// Each block's incoming edge count and, when its only incoming edge is an
+// invoke edge, the invoking block. Lowering records each terminator as it is
+// set; a complete body builds the same table at once.
+struct MirInvokeContinuations {
+  std::vector<std::uint32_t> incomingEdges;
+  std::vector<MirBlockId> invoker;
+  std::vector<bool> successEdge;
+
+  void record(const MirBlock &block);
+};
+
+[[nodiscard]] MirInvokeContinuations
+mirInvokeContinuations(const MirBody &body);
+
+// The same proof against a prepared continuation table, for callers that
+// query many drops of one body.
+[[nodiscard]] bool mirDropFollowsDefiniteMove(
+    const MirBody &body, const MirInvokeContinuations &continuations,
+    const MirBlock &block, MirDropObligationId obligation,
+    MirInstructionId beforeInstruction = 0);
+
 } // namespace lang
