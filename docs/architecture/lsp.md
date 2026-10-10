@@ -464,10 +464,14 @@ compiler work.
 - `didOpen`/`didChange` replace the full synchronized source, advance the
   document and canonical-source generations, erase the prior learned digest,
   invalidate affected dependants, and schedule analysis over all open-buffer
-  overlays. Generation checks make a stale result snapshot inaccessible to
-  requests, so advancing a root's analysis generation also releases that
-  snapshot's frontend result instead of keeping it until the replacement
-  publishes. A dedicated reclamation worker destroys released results, so
+  overlays. They publish nothing themselves: the client keeps the diagnostics
+  and semantic tokens it holds until a newer result replaces them, exactly as
+  clangd clients do while a rebuild runs. Publishing an edit-time subset made
+  every diagnostic in the edited file vanish on each keystroke and return
+  with the next result. Generation checks make a stale result snapshot
+  inaccessible to requests, so advancing a root's analysis generation also
+  releases that snapshot's frontend result instead of keeping it until the
+  replacement publishes. A dedicated reclamation worker destroys released results, so
   neither the protocol thread nor `stateMutex` pays for tearing down a large
   frontend graph, and a request that already holds a result keeps it alive.
   The snapshot keeps its generation and include-discovery flag for
@@ -500,9 +504,14 @@ compiler work.
   generations: re-analysing an unchanged dependant then invalidated every
   dependant above it in an include chain, so one shared-file edit re-analysed
   a five-file chain up to eleven times instead of five.
-  Diagnostic aggregation also excludes retained roots whose snapshot generation
-  is obsolete, rather than republishing their old errors under a newer document
-  version while replacement analysis is queued.
+- A root's published diagnostics stay in force until its next result replaces
+  them, including while a dependency edit has queued its re-analysis. When a
+  publication for an open file is assembled, each diagnostic is included only
+  if the text it was computed from is exactly that file's current text, so a
+  publication labelled with the file's current version never carries a range
+  from a superseded version. A dependant's diagnostics located in an edited
+  file therefore disappear with the edit and return with the dependant's new
+  result; its diagnostics in unchanged files stay visible throughout.
 - The dynamic file watcher covers `**/*.gti`, `**/gti.toml`, and `**/gti.lock`.
   A manifest or lockfile change invalidates semantic-token caches and
   reanalyses every open document, so configuration, package aliases, and
@@ -550,6 +559,30 @@ The analysis queue is first-in first-out, except that a root with a queued
 semantic request (hover, definition, references, and similar) runs before
 dependants queued ahead of it, so the document under the cursor is not
 answered last after a shared-dependency edit.
+
+An edit-triggered analysis (the edited document's own, and each dependant's)
+does not start at once. It waits for the document's median recent analysis
+time, bounded to 50-500 ms, and every further edit restarts the wait, so a
+typing burst is analysed once from its final text instead of once per
+keystroke with the newest edit queued behind an obsolete analysis. A semantic
+request waiting on the document, shutdown, opening a document, and project
+invalidation (manifest, lockfile, profile) run immediately. This is clangd's
+update-debounce policy; it was adopted after measuring that every keystroke
+re-runs whole-program semantic analysis and HIR over all loaded standard-
+library units (about 600 ms for a 73-line file with eight includes), which no
+parse cache reduces. `GTI_LSP_UPDATE_DEBOUNCE_MS` pins a fixed wait, and `0`
+disables it, for benchmarks and tests.
+
+`workspace/semanticTokens/refresh` is not sent per publication. A client
+re-requests tokens for a document it edited or opened itself. Only an analysis
+the document did not ask for (a dependency or project change) can change
+tokens the client holds, so after such a publication the server recomputes the
+document's tokens off the protocol thread, compares them with the ones last
+answered, and requests one refresh for the whole wave of dependant
+re-analyses once the pool is idle, and only if some document's tokens actually
+differ. Neovim answers a refresh by clearing and re-requesting the tokens of
+every attached buffer, so a refresh per result blanked all highlighting
+several times per keystroke.
 
 Every open document is its own whole-program root, so opening a project or
 editing a shared dependency queues one independent analysis per affected
