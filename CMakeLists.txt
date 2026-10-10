@@ -398,6 +398,7 @@ add_library(
   "src/compiler/optimization/sccp.cpp"
   "src/compiler/optimizer.cpp"
   "src/compiler/parser.cpp"
+  "src/compiler/process_memory_runtime.cpp"
   "src/compiler/semantic_model.cpp"
   "src/compiler/semantic_diagnostics.cpp"
   "src/compiler/semantic_spelling.cpp"

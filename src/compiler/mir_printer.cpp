@@ -270,7 +270,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v97 valid=" << program.valid() << '\n';
+    output << "mir-v98 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -636,7 +636,9 @@ public:
              << " noreturn=" << instance.neverReturns
              << " track-caller=" << instance.tracksCaller
              << " cthread-operation="
-             << static_cast<unsigned>(instance.cThreadOperation);
+             << static_cast<unsigned>(instance.cThreadOperation)
+             << " process-memory-operation="
+             << static_cast<unsigned>(instance.processMemoryOperation);
       effectSummary(instance.effectSummary);
       output << " roots=[";
       list(instance.virtualRoots);

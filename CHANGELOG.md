@@ -9,6 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.397.4 — Facts survive calls that cannot reach them
+
+- The optimizer now keeps what it knows about a local variable or object
+  across calls that never received it. These include native calls such as
+  printing, synchronizing calls, destroying another object, and building
+  another container through the process allocator. Previously any such call
+  erased everything it knew in the function.
+- A local passed by reference to unknown code, one whose address was taken,
+  and one whose constructor registered it are still treated as reachable.
+- In the matrix runtime probe, which builds three vectors, every check in the
+  inner loop is now removed. It runs about twice as fast (82 to 40 ms; the
+  C++ version takes 17 ms). Loops that print keep their counter checks
+  removed too.
+- Compile time at `-O2` is about 5–8% higher on large programs, because the
+  analysis now follows these facts through loops. `-O0` is unchanged.
+
 ## 0.397.3 — Smoother editing in the language server
 
 - `gti_lsp` no longer blanks and repaints the editor on every keystroke. An

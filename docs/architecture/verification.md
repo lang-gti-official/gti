@@ -1,5 +1,94 @@
 # Compiler Verification
 
+## Capture analysis (0.397.4)
+
+- **Analysis unit test.** `testCaptureSummariesAndLocalFlow` derives
+  summaries on real MIR:
+  - a returned receiver borrow and a returned reference parameter are
+    ReturnOnly;
+  - a receiver field's or reference parameter's raw address handed to native
+    code is Captured;
+  - reads capture nothing.
+
+  The local query reports a binding uncaptured before and at the native call
+  that receives its address, and captured after it. An unknown instruction
+  answers conservatively.
+- **Safety proofs.** `testUncapturedLocalsSurviveUnknownEffects` checks, at
+  O2 and O3:
+  - an uncaptured local keeps its value across a native call and through a
+    loop of them;
+  - five exposure routes keep the check: an address passed to native code, an
+    aggregate holding a borrow passed to a bodyless function, a constructor
+    registering its own field, an exposure before the use, and a capture on an
+    earlier loop iteration;
+  - a capture placed after the use does not affect it;
+  - a user container keeps its accessor check discharged across a second
+    container's allocation and a native call between loops, but not once
+    passed by reference to a bodyless function.
+
+  Every proof replays independently.
+- **Changed expectations.** Three earlier tests encoded the old blanket
+  invalidation:
+  - the mutable-input test's local before an unknown call is now provable,
+    and a new negative exposes the local first;
+  - the synchronization test now shows a reference parameter losing its fact
+    while the uncaptured loop counter keeps its bound (the accumulator stays
+    checked);
+  - the record-sequence negatives still keep every field check, and the
+    uncaptured loop counter is now proved.
+
+  The malformed staged-input test caught one real gap during development: an
+  empty or cyclic staging chain looked as if it carried no identity. Such
+  instructions now capture and involve every binding.
+- **Suites.** All optimizer, census, corpus and representation-snapshot CTests
+  pass. No baseline changes.
+- **Runtime.** Interleaved on an idle Apple M2 Max (3 warmups, 15 shuffled
+  rounds), the `matrix` probe runs 82.0 to 40.1 ms against 17.4 ms for C++,
+  and its inner loop now has no check. hashmap, vector-push, lambda and
+  strings are unchanged within noise. Most other probes lose a few counter
+  checks.
+- **Compile time.**
+  - Over 22 examples, `-O0` is unchanged and `-O2` takes about 5–8% longer.
+  - With preservation disabled the build matches the baseline, so the summaries
+    and flow add no measurable overhead.
+  - Preserving only object fields (which carry container lengths) costs about
+    0.3%. The rest comes from scalar locals, mostly loop counters, now kept
+    across opaque calls: the analysis iterates those loops to a fixpoint
+    instead of discarding the counter at each call. The owner accepted this
+    real-work cost.
+
+## Declared process-allocator runtime contract (0.397.4)
+
+- **Contract.** `process_provider_target_contract` covers the shared symbol and
+  signature table, including the arity, return type, symbol and pointer-access
+  mismatches. For macOS, Linux and Windows targets it checks the following:
+  - exactly the target-selected family classifies, and semantics, HIR and MIR
+    agree;
+  - each classified declaration has a local summary with no synchronization,
+    user code, trap, memory read or argument escape;
+  - `process_resource::allocate` and `release` no longer synchronize, and their
+    arguments do not escape.
+- **Negative cases.** An application declaration of
+  `gti_rt_native_size_max_v1` stays an unknown boundary. So do two
+  declarations in a patched trusted stdlib copy: `gti_rt_posix_free_v1` with
+  a `const void*` parameter, and `gti_rt_posix_pointer_size_v1` moved outside
+  `gti_internal`.
+- **Forgery.** The lowered verifier rejects lost private identity, and HIR
+  rejects a classification its semantic declaration lacks. The MIR verifier
+  rejects seven forgeries: symbol, signature, linkage, definition kind,
+  operation, an unrelated classified declaration and the target family. It
+  also rejects an erased classification.
+- **Regression.** The targeted selection of 95 CTests passes on a Release
+  build with unchanged baselines. It covers the semantic and MIR header
+  contracts, the MIR, lowered-program, C++ MIR emitter, optimizer, resource,
+  allocator and version-bumped suites, and the `mir_census_regression`,
+  `lowered_program_corpus_census`, `cpp_mir_body_emitter_census`,
+  `cpp_mir_representation_snapshot`, `cpp_mir_body_emitter_corpus` and
+  `mir_cutover_corpus_oracle` checks. The serialization gains the
+  `mir-v98`/`lowered-program-v17` headers, the classification field, and
+  more precise declaration and caller summaries. No census or snapshot
+  baseline needed an update.
+
 ## Scalar-leaf construction and floating stores (0.397.2)
 
 - **Effects.** The MIR effect test now requires the vacant-construction
