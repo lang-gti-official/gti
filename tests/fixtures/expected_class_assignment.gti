@@ -1,0 +1,161 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// An Expected<Class, E> binding replaced as a whole. A cleanup-free call
+// result, copy, move, Unexpected or payload construction replaces the native
+// wrapper after MIR's passive replacement cleanup. An owning call result moves
+// out of its value-rooted slot after MIR's active replacement cleanup.
+struct pair_value {
+  int32_t first = 0;
+  int32_t second = 0;
+  pair_value(int32_t first, int32_t second) : first(first), second(second) {}
+};
+
+// A cleanup-free class error alternative.
+struct code_value {
+  int32_t code = 0;
+  code_value(int32_t code) : code(code) {}
+};
+
+// An owning payload whose destructor reports each retirement.
+class noisy {
+public:
+  int32_t id;
+  noisy(int32_t id) : id(id) {}
+  ~noisy() { std::println(std::to_string(this.id)); }
+};
+
+int32_t bump(int32_t value) { return value + 1; }
+
+expected<pair_value, int32_t> make_pair(bool ok) {
+  if (ok) { return pair_value(5, 7); }
+  return unexpected(4);
+}
+
+expected<pair_value, code_value> make_coded(bool ok) {
+  if (ok) { return pair_value(2, 3); }
+  return unexpected(code_value(9));
+}
+
+expected<int32_t, int32_t> make_scalar(bool ok) {
+  if (ok) { return 5; }
+  return unexpected(4);
+}
+
+expected<noisy, int32_t> make_noisy(int32_t id) {
+  if (id > 0) { return noisy(id); }
+  return unexpected(-id);
+}
+
+// Replacing producers that fail before publishing a result.
+expected<pair_value, int32_t> make_bumped(int32_t value) {
+  return pair_value(bump(value), 0);
+}
+
+expected<noisy, int32_t> make_bumped_noisy(int32_t value) {
+  return noisy(bump(value));
+}
+
+int32_t read_pair(expected<pair_value, int32_t> result) {
+  return result ? result.value().first + result.value().second
+                : 100 + result.error();
+}
+
+int32_t read_coded(expected<pair_value, code_value> result) {
+  return result ? result.value().first * result.value().second
+                : 100 + result.error().code;
+}
+
+// A failure-propagating caller replaces its binding.
+expected<int32_t, int32_t> relay_replaced(bool ok) {
+  mut expected<pair_value, int32_t> current = make_pair(!ok);
+  current = make_pair(ok);
+  return read_pair(current);
+}
+
+// A constructor body replaces its local.
+class replacing_holder {
+public:
+  mut int32_t total = 0;
+  replacing_holder(bool ok) {
+    mut expected<pair_value, int32_t> current = make_pair(ok);
+    current = make_pair(!ok);
+    this.total = read_pair(current);
+  }
+};
+
+// Owning call results replace one binding through every alternative pair.
+// Each replaced value is retired exactly once; an error retires nothing.
+int32_t replace_owned() {
+  mut expected<noisy, int32_t> owned = make_noisy(1);
+  owned = make_noisy(2);
+  owned = make_noisy(-3);
+  owned = make_noisy(-4);
+  owned = make_noisy(5);
+  return owned ? owned.value().id : 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  bool yes = argc > 0;
+  bool no = !yes;
+  if (argc == 2) {
+    // A cleanup-free replacing call fails before the binding is replaced.
+    mut expected<pair_value, int32_t> replaced = make_pair(yes);
+    replaced = make_bumped(2147483647);
+    return read_pair(replaced);
+  }
+  if (argc == 3) {
+    // An owning replacing call fails; the old value is retired once.
+    mut expected<noisy, int32_t> owned = make_noisy(6);
+    owned = make_bumped_noisy(2147483647);
+    return owned ? owned.value().id : 1;
+  }
+  // Call results.
+  mut expected<pair_value, int32_t> replaced = make_pair(yes);
+  replaced = make_pair(no);
+  if (read_pair(replaced) != 104) { return 1; }
+  replaced = make_pair(yes);
+  if (read_pair(replaced) != 12) { return 2; }
+  mut int32_t replaced_total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    replaced = make_pair(index != 1);
+    replaced_total += read_pair(replaced);
+  }
+  if (replaced_total != 128) { return 3; }
+  mut expected<pair_value, code_value> coded = make_coded(no);
+  coded = make_coded(yes);
+  if (read_coded(coded) != 6) { return 4; }
+  auto relayed = relay_replaced(yes);
+  if (!relayed || relayed.value() != 12) { return 5; }
+  replacing_holder replacing{yes};
+  if (replacing.total != 104) { return 6; }
+  // Copies, moves, Unexpected values and payload constructions.
+  mut expected<pair_value, int32_t> target = make_pair(yes);
+  expected<pair_value, int32_t> source = make_pair(no);
+  target = source;
+  if (read_pair(target) != 104 || read_pair(source) != 104) { return 7; }
+  expected<pair_value, int32_t> movable = make_pair(yes);
+  target = std::move(movable);
+  if (read_pair(target) != 12) { return 8; }
+  target = unexpected(8);
+  if (read_pair(target) != 108) { return 9; }
+  target = pair_value(1, 2);
+  if (read_pair(target) != 3) { return 10; }
+  mut int32_t sourced_total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    if (index == 1) {
+      target = unexpected(index);
+    } else {
+      target = pair_value(index, index);
+    }
+    sourced_total += read_pair(target);
+  }
+  if (sourced_total != 105) { return 11; }
+  mut expected<int32_t, int32_t> scalar = make_scalar(yes);
+  scalar = unexpected(3);
+  if (scalar || scalar.error() != 3) { return 12; }
+  // Owning call results.
+  if (replace_owned() != 5) { return 13; }
+  return 0;
+}

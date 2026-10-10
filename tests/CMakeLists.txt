@@ -844,6 +844,11 @@ add_test(NAME expected_class_argument_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_argument_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_class_argument_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_class_assignment_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_class_assignment_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME consuming_call_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/consuming_call_assignment_runtime_test.py"

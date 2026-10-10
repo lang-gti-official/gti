@@ -6,8 +6,7 @@
 // constructor parameter. A cleanup-free result has no MIR drop; it is staged in
 // representation-only storage between the producer's success and the
 // consuming call or construction. A named binding copied into the same
-// parameters stages its copy the same way and keeps its own value. A call
-// result replacing a whole mutable binding is staged the same way too.
+// parameters stages its copy the same way and keeps its own value.
 struct pair_value {
   int32_t first = 0;
   int32_t second = 0;
@@ -151,29 +150,6 @@ int32_t forward_defaulted(expected<defaulted_value, int32_t> result) {
   return read_defaulted(result);
 }
 
-// A replacing producer that fails leaves the binding it would replace intact.
-expected<pair_value, int32_t> make_bumped(int32_t value) {
-  return pair_value(bump(value), 0);
-}
-
-// A failure-propagating caller replaces its binding.
-expected<int32_t, int32_t> relay_replaced(bool ok) {
-  mut expected<pair_value, int32_t> current = make_pair(!ok);
-  current = make_pair(ok);
-  return read_pair(current);
-}
-
-// A constructor body replaces its local.
-class replacing_holder {
-public:
-  mut int32_t total = 0;
-  replacing_holder(bool ok) {
-    mut expected<pair_value, int32_t> current = make_pair(ok);
-    current = make_pair(!ok);
-    this.total = read_pair(current);
-  }
-};
-
 // A failure-propagating caller copies one named binding twice.
 expected<int32_t, int32_t> relay_copied(bool ok) {
   expected<pair_value, int32_t> made = make_pair(ok);
@@ -219,12 +195,6 @@ int main(int argc, std::vector<std::string> argv) {
     expected<pair_value, int32_t> staged = make_pair(yes);
     between_holder failing{1, staged, bump(2147483647)};
     return failing.total;
-  }
-  if (argc == 6) {
-    // The replacing call fails before the binding is replaced.
-    mut expected<pair_value, int32_t> replaced = make_pair(yes);
-    replaced = make_bumped(2147483647);
-    return read_pair(replaced);
   }
   if (read_pair(make_pair(yes)) != 12) { return 1; }
   if (read_pair(make_pair(no)) != 104) { return 2; }
@@ -313,26 +283,5 @@ int main(int argc, std::vector<std::string> argv) {
       forward_defaulted(make_defaulted(no)) != 105) {
     return 44;
   }
-  // A call result replaces a whole mutable binding.
-  mut expected<pair_value, int32_t> replaced = make_pair(yes);
-  replaced = make_pair(no);
-  if (read_pair(replaced) != 104) { return 45; }
-  replaced = make_pair(yes);
-  if (read_pair(replaced) != 12) { return 46; }
-  mut int32_t replaced_total = 0;
-  for (mut int32_t index = 0; index < 3; index++) {
-    replaced = make_pair(index != 1);
-    replaced_total += read_pair(replaced);
-  }
-  if (replaced_total != 128) { return 47; }
-  mut expected<pair_value, code_value> replaced_coded = make_coded(no);
-  replaced_coded = make_coded(yes);
-  if (read_coded(replaced_coded) != 6) { return 48; }
-  auto relayed_replacement = relay_replaced(yes);
-  if (!relayed_replacement || relayed_replacement.value() != 12) {
-    return 49;
-  }
-  replacing_holder replacing{yes};
-  if (replacing.total != 104) { return 50; }
   return 0;
 }
