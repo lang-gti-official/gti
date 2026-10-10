@@ -2414,6 +2414,51 @@ void testExportPlacement() {
          "the formatter leaves a misplaced export for the parser's fix");
 }
 
+void testOwnLineCommentPlacement() {
+  const auto expectLayout = [](const std::string &input,
+                               const std::string &expected,
+                               const std::string &message) {
+    const std::string formatted = lang::Formatter().format(input);
+    expect(formatted == expected, message + ":\n" + formatted);
+    expect(lang::Formatter().format(formatted) == formatted,
+           message + " (idempotent)");
+  };
+
+  // A comment alone on its line describes what follows, so formatting keeps
+  // it there instead of attaching it to the statement before it.
+  const std::string namespaceScope = "int y = 2;\n// own line\nint x = 1;\n";
+  expectLayout(namespaceScope, namespaceScope,
+               "an own-line comment after a namespace-scope statement");
+  const std::string body = "int f() {\n  int y = 2;\n  // own line\n"
+                           "  return y;\n}\n";
+  expectLayout(body, body, "an own-line comment in a function body");
+  expectLayout("int f(){int y=2;\n// own line\nreturn y;}", body,
+               "an own-line comment keeps its line while its block reflows");
+  const std::string afterFunction =
+      "int f() {\n  return 1;\n}\n// next\nint g() {}\n// last\n";
+  expectLayout(afterFunction, afterFunction,
+               "an own-line comment after a closing brace");
+  const std::string interface =
+      "export module api;\n// The public surface.\nexport int answer();\n";
+  expectLayout(interface, interface,
+               "an own-line comment after a module declaration");
+  const std::string importer =
+      "import \"a.gti\";\n// Entry point.\nint main() {\n  return 0;\n}\n";
+  expectLayout(importer, importer, "an own-line comment after an import");
+  const std::string ownBlock = "int f() {\n  int y = 2;\n  /* own */\n"
+                               "  /* lead */ return y;\n}\n";
+  expectLayout(ownBlock, ownBlock,
+               "own-line block comments neither trail nor join statements");
+
+  const std::string trailing =
+      "int y = 2; // note\nint f() {\n  int z = 3; /* note */\n"
+      "  if (z > 0) {\n    return z;\n  } // done\n  return 0;\n}\n";
+  expectLayout(trailing, trailing, "trailing comments stay trailing");
+  expectLayout("int y=2;// note\nint x=1;/* note */\n",
+               "int y = 2; // note\nint x = 1; /* note */\n",
+               "trailing comments stay beside reformatted statements");
+}
+
 void testSourceModuleResolution() {
   const auto root = std::filesystem::weakly_canonical(
       std::filesystem::temp_directory_path() / "gti-module-resolution");
@@ -3038,6 +3083,7 @@ constexpr NamedTest kTests[] = {
     {"testSourceUnitDependencyGraph", testSourceUnitDependencyGraph},
     {"testSourceModuleInterfaces", testSourceModuleInterfaces},
     {"testExportPlacement", testExportPlacement},
+    {"testOwnLineCommentPlacement", testOwnLineCommentPlacement},
     {"testSourceModuleResolution", testSourceModuleResolution},
     {"testSourceModuleConfigurationDomains",
      testSourceModuleConfigurationDomains},
