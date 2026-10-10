@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.397.7 — Moving a destructor-free borrowing class into a nested member
+## 0.397.8 — Moving a destructor-free borrowing class into a nested member
 
 - A constructor can now move a by-value parameter into a nested member
   initializer when the parameter's class has no destructor and only carries a
