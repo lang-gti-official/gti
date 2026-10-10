@@ -1397,6 +1397,21 @@ consumer. A construction that is assigned to an existing binding, returned
 directly, or used as a member initializer has no such publication slot. Like
 the owning route, it still rejects body emission.
 
+A named binding of the same cleanup-free placement Expected that is copied into
+either consumer is staged the same way. This is the copied-binding Return rule
+with an argument consumer. MIR's `Load` copies one whole binding exactly: it
+has no defined failure, lifecycle event, generated drop or value-rooted place.
+The copy is constructed in its own representation-only slot at the `Load`, so
+later argument preparation cannot change what the consumer receives. A by-value
+parameter is a named binding too. The native wrapper is never
+default-constructed, which a payload with its own default constructor would
+reject. The consumer moves the copy's wrapper, never the binding, which keeps
+its value. The moved-from representation is retired after the call or
+construction. The consumer proofs and cleanup-free alternative conditions are
+the ones above. Semantics currently rejects copying an Expected whose payload
+needs cleanup, because that payload is move-only. If such a copy were admitted,
+it would still fail closed here.
+
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
 effects come from the lowered MIR and generated-item contracts. A nameable

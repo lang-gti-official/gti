@@ -2856,6 +2856,121 @@ int main() {
          "value-rooted transfer slot");
 }
 
+// A named cleanup-free Expected<Class, E> binding copied into one by-value
+// function or constructor parameter constructs MIR's Load copy in its own
+// representation-only slot. The consumer moves the copy's wrapper, never the
+// binding, and the moved-from representation is retired after the call or
+// construction. A non-placement Expected keeps its ordinary SSA local.
+// (Regression: the copied binding raised GTI-B0001 in the caller.)
+void testCleanupFreeExpectedClassCopiedArgumentSlot() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-expected-class-copied-argument.gti", R"(
+struct pair_value {
+  int32_t first = 0;
+  pair_value(int32_t first) : first(first) {}
+};
+
+struct code_value {
+  int32_t code = 0;
+  code_value(int32_t code) : code(code) {}
+};
+
+expected<pair_value, int32_t> make_pair(bool ok) {
+  if (ok) { return pair_value(5); }
+  return unexpected(4);
+}
+
+expected<int32_t, code_value> make_scalar(bool ok) {
+  if (ok) { return 5; }
+  return unexpected(code_value(4));
+}
+
+int32_t read_pair(expected<pair_value, int32_t> result) {
+  return result ? result.value().first : 0;
+}
+
+int32_t read_scalar(expected<int32_t, code_value> result) {
+  return result ? result.value() : 0;
+}
+
+class pair_holder {
+public:
+  int32_t first;
+  pair_holder(expected<pair_value, int32_t> result)
+      : first(result ? result.value().first : 0) {}
+};
+
+int main() {
+  expected<pair_value, int32_t> local = make_pair(true);
+  expected<int32_t, code_value> scalar = make_scalar(true);
+  pair_holder held{local};
+  return read_pair(local) + read_scalar(scalar) + held.first - 15;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the Expected class copied-argument fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string passiveSlot =
+      "::gti_internal::backend::mir_lifetime_slot<std::expected<::__gti_"
+      "program::pair_value, std::int32_t>, true> ";
+  // Counts consumers that spell `marker` on a line naming `consumer`. Each
+  // must move one declared slot that its copy constructed from a binding,
+  // and retire that slot after the consumer.
+  const auto copiedSlots = [&](std::string_view consumer,
+                               std::string_view marker) {
+    std::size_t count = 0;
+    for (std::size_t at = text.find(marker); at != std::string::npos;
+         at = text.find(marker, at + marker.size())) {
+      const std::size_t lineStart = text.rfind('\n', at) + 1;
+      const std::size_t lineEnd = text.find('\n', at);
+      const std::size_t idStart = at + marker.size();
+      const std::size_t idEnd = text.find(".get())", idStart);
+      if (lineEnd == std::string::npos || idEnd == std::string::npos ||
+          idEnd > lineEnd)
+        return std::size_t{0};
+      if (std::string_view(text)
+              .substr(lineStart, lineEnd - lineStart)
+              .find(consumer) == std::string_view::npos)
+        continue;
+      const std::string slot =
+          "__gti_mir_v_" + text.substr(idStart, idEnd - idStart);
+      const std::size_t copied = text.rfind(slot + ".construct(", at);
+      if (text.find(passiveSlot + slot + ";") == std::string::npos ||
+          copied == std::string::npos ||
+          text.compare(copied + slot.size() + 11, 12, "__gti_mir_p_") != 0 ||
+          text.find(slot + ".destroy();", lineEnd) == std::string::npos)
+        return std::size_t{0};
+      ++count;
+    }
+    return count;
+  };
+  expect(copiedSlots("read_pair__gti_mir_failure(",
+                     "read_pair__gti_mir_failure(std::move(__gti_mir_v_") == 1,
+         "the call should move the copy staged from the named binding and "
+         "retire its slot afterwards");
+  expect(copiedSlots("::__gti_program::pair_holder(",
+                     ">{}, std::move(__gti_mir_v_") == 1,
+         "the construction should move the copy staged from the named "
+         "binding and retire its slot afterwards");
+  expect(text.find("read_pair__gti_mir_failure(std::move(__gti_mir_p_") ==
+             std::string::npos,
+         "a copied binding should never be moved into the parameter");
+  expect(text.find("mir_lifetime_slot<std::expected<std::int32_t, "
+                   "::__gti_program::code_value>") == std::string::npos &&
+             text.find("read_scalar__gti_mir_failure(__gti_mir_v_") !=
+                 std::string::npos,
+         "a non-placement Expected copied argument should keep its ordinary "
+         "SSA local");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -3029,6 +3144,8 @@ constexpr NamedTest kTests[] = {
      testCleanupFreeExpectedClassArgumentSlot},
     {"testCleanupFreeExpectedClassConstructorArgumentSlot",
      testCleanupFreeExpectedClassConstructorArgumentSlot},
+    {"testCleanupFreeExpectedClassCopiedArgumentSlot",
+     testCleanupFreeExpectedClassCopiedArgumentSlot},
 };
 
 } // namespace

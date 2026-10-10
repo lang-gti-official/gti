@@ -318,6 +318,10 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
+      "suite": "text"
+    },
+    {
       "name": "testForwardListEmplacementPublication",
       "suite": "lifecycle"
     },

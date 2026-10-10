@@ -28006,39 +28006,47 @@ classSsaLifetimeSlot(const MirProgram &program,
       !value->info.traits.containsBorrowedState;
   const MirInstruction *producer =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
-  // A copied Expected binding returned by placement constructs the copy in
-  // representation storage that the return publication then moves out. The
-  // payload's own copy is the representation copy MIR selected for the Load.
-  if (value && value->info.type.kind == SemanticType::Expected &&
-      value->info.type.arguments.size() == 2 &&
-      body.returnType == value->info.type && value->info.traits.copyable &&
-      !value->info.traits.containsBorrowedState &&
-      expectedClassPlacementResultType(program, representations,
-                                       value->info.type) &&
-      producer && producer->kind == MirInstructionKind::Load &&
-      producer->result == valueId && producer->info.type == value->info.type &&
-      !producer->receiver && !producer->destination &&
-      producer->operands.size() == 1 &&
-      producer->operands.front().kind == MirOperandKind::Copy &&
-      producer->operands.front().type == value->info.type &&
-      producer->lifecycle.empty() && producer->definedFailure.empty() &&
-      producer->localFailureSites.empty()) {
-    const auto *source = body.findPlace(producer->operands.front().place);
+  // A placement Expected copied from a named binding constructs the copy in
+  // representation storage. The payload's own copy is the representation copy
+  // MIR selected for the Load, and its sole consumer moves the copy out.
+  const MirPlace *copiedBinding =
+      value && value->info.type.kind == SemanticType::Expected &&
+              value->info.type.arguments.size() == 2 &&
+              value->info.traits.copyable &&
+              !value->info.traits.containsBorrowedState &&
+              expectedClassPlacementResultType(program, representations,
+                                               value->info.type) &&
+              producer && producer->kind == MirInstructionKind::Load &&
+              producer->result == valueId &&
+              producer->info.type == value->info.type && !producer->receiver &&
+              !producer->destination && producer->operands.size() == 1 &&
+              producer->operands.front().kind == MirOperandKind::Copy &&
+              producer->operands.front().type == value->info.type &&
+              producer->lifecycle.empty() && producer->definedFailure.empty() &&
+              producer->localFailureSites.empty() &&
+              std::none_of(body.dropObligations.begin(),
+                           body.dropObligations.end(),
+                           [&](const auto &drop) {
+                             return drop.generatedValue == valueId;
+                           })
+          ? body.findPlace(producer->operands.front().place)
+          : nullptr;
+  if (copiedBinding && (copiedBinding->type != value->info.type ||
+                        !copiedBinding->traits.copyable ||
+                        copiedBinding->root != MirPlaceRootKind::Binding ||
+                        !copiedBinding->projections.empty()))
+    copiedBinding = nullptr;
+  // A Return publishing the placement result moves the copy out.
+  if (copiedBinding && body.returnType == value->info.type) {
     const auto uses = body.usesOf(valueId);
     const auto *returned =
         uses.size() == 1 && uses.front().kind == MirValueUseKind::Terminator
             ? body.findBlock(uses.front().block)
             : nullptr;
-    if (source && source->type == value->info.type && source->traits.copyable &&
-        source->root == MirPlaceRootKind::Binding &&
-        source->projections.empty() && returned &&
-        returned->terminator.kind == MirTerminatorKind::Return &&
+    if (returned && returned->terminator.kind == MirTerminatorKind::Return &&
         returned->terminator.value &&
         returned->terminator.value->value == valueId &&
-        returned->terminator.value->type == value->info.type &&
-        std::none_of(
-            body.dropObligations.begin(), body.dropObligations.end(),
-            [&](const auto &drop) { return drop.generatedValue == valueId; })) {
+        returned->terminator.value->type == value->info.type) {
       const auto position = std::find_if(
           returned->instructions.begin(), returned->instructions.end(),
           [&](const auto &item) { return &item == producer; });
@@ -28055,6 +28063,33 @@ classSsaLifetimeSlot(const MirProgram &program,
                 .returnBlock = returned,
                 .consumerKind = ClassSsaSlotConsumerKind::Return};
       }
+    }
+  }
+  // One by-value source function or constructor parameter instead moves the
+  // copy's safe wrapper, under the same proofs as a cleanup-free call result.
+  // Only the moved-from representation remains, so every alternative must be
+  // cleanup-free, and MIR gives the copy no value-rooted place.
+  if (copiedBinding &&
+      cleanupFreeExpectedClassAlternatives(program, value->info.type) &&
+      std::none_of(body.places.begin(), body.places.end(),
+                   [&](const auto &place) {
+                     return place.root == MirPlaceRootKind::Value &&
+                            place.value == valueId;
+                   })) {
+    const auto uses = body.usesOf(valueId);
+    if (uses.size() == 1) {
+      if (const auto *consumer = classSsaCallArgumentConsumer(
+              program, body, *value, *producer, uses.front()))
+        return {.value = value,
+                .producer = producer,
+                .consumer = consumer,
+                .consumerKind = ClassSsaSlotConsumerKind::CallArgument};
+      if (const auto *construction = classSsaConstructorArgumentConsumer(
+              program, body, *value, *producer, uses.front()))
+        return {.value = value,
+                .producer = producer,
+                .consumer = construction,
+                .consumerKind = ClassSsaSlotConsumerKind::ConstructorArgument};
     }
   }
   // A cleanup-free Expected<Class, E> source result passed directly to one
@@ -28807,6 +28842,23 @@ classSsaLifetimeSlot(const MirProgram &program,
                                     .consumer = consumer,
                                     .consumerKind =
                                         ClassSsaSlotConsumerKind::CallArgument};
+}
+
+// The Load that copies a named Expected binding into its representation-only
+// slot for one Return or by-value argument.
+[[nodiscard]] bool
+copiedExpectedBindingSlot(const MirProgram &program,
+                          const CppMirBodyEmissionMap &representations,
+                          const MirBody &body, const MirInstruction &load) {
+  if (load.kind != MirInstructionKind::Load || !load.result ||
+      load.info.type.kind != SemanticType::Expected)
+    return false;
+  const ClassSsaLifetimeSlot slot =
+      classSsaLifetimeSlot(program, representations, body, *load.result);
+  return slot.producer == &load &&
+         (slot.consumerKind == ClassSsaSlotConsumerKind::Return ||
+          slot.consumerKind == ClassSsaSlotConsumerKind::CallArgument ||
+          slot.consumerKind == ClassSsaSlotConsumerKind::ConstructorArgument);
 }
 
 // The same proof that emits a checked payload publication must also select
@@ -34768,18 +34820,13 @@ private:
                   "stage\n";
         return;
       }
-      if (instruction.result &&
-          instruction.info.type.kind == SemanticType::Expected) {
-        const auto slot = classSsaLifetimeSlot(program, representations,
-                                               facts.body, *instruction.result);
-        if (slot.producer == &instruction &&
-            slot.consumerKind == ClassSsaSlotConsumerKind::Return) {
-          output << "__gti_mir_v_" << *instruction.result << ".construct(";
-          emitStoragePlaceValue(
-              facts, *facts.body.findPlace(instruction.operands.front().place));
-          output << ");\n";
-          return;
-        }
+      if (copiedExpectedBindingSlot(program, representations, facts.body,
+                                    instruction)) {
+        output << "__gti_mir_v_" << *instruction.result << ".construct(";
+        emitStoragePlaceValue(
+            facts, *facts.body.findPlace(instruction.operands.front().place));
+        output << ");\n";
+        return;
       }
       if (instruction.result) {
         if (const MirPlace *destination = expectedCopyDestinationSlot(
@@ -52063,9 +52110,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               expectedObserverLoadConsumer(body, instruction) == nullptr &&
               expectedCopyDestinationSlot(program_, body,
                                           *instruction.result) == nullptr &&
-              classSsaLifetimeSlot(program_, representations_, body,
-                                   *instruction.result)
-                      .consumerKind != ClassSsaSlotConsumerKind::Return &&
+              !copiedExpectedBindingSlot(program_, representations_, body,
+                                         instruction) &&
               !classCopyAssignmentFusion(program_, body, instruction)) {
             return false;
           }
