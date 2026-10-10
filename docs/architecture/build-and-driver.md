@@ -235,8 +235,12 @@ Stable versions describe user-visible toolchain behavior. Internal compiler or
 runtime work, tests, and documentation alone retain `VERSION` and reach users
 through nightly. `scripts/check_release_version.py` conservatively identifies
 potentially shipped files, including deletions and moves. An unchanged version
-requires each affected first-parent commit (or a merge's complete destination-
-parent delta) to carry these Git trailers:
+requires each affected commit delivered by the checked range to carry these
+Git trailers. A merge commit is judged by what it introduces beyond every
+parent, which is its conflict resolution: a hosted pull-request merge or an
+upstream reconciliation merge introduces nothing, carries no trailers, and
+relies on the branch commits it delivers, each judged on its own. CI judges a
+pull request from its merge base with `main`, not from the tip of `main`.
 
 ```text
 Release-Impact: internal
