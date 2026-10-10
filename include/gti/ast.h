@@ -384,6 +384,16 @@ struct CompilerConstraintBinding {
   std::string name;
 };
 
+// `@compiler_type("<binding>")` on a class declaration in a trusted
+// standard-library unit. The compiler binds the class by this name, never by
+// its public spelling: either to construct instances of it (an ordinary class
+// the compiler must be able to name) or to compute its instances (a forward
+// declaration whose uses semantics rewrites to another type).
+struct CompilerTypeBinding {
+  Token attribute;
+  std::string name;
+};
+
 class MemberRequirement;
 
 // A constraint leaf is either a named concept application or an exact member
@@ -583,6 +593,7 @@ class ClassDecl;
 class CompileErrorDirective;
 class ConceptDecl;
 class ConditionalStmt;
+class ConstexprForStmt;
 class ConstructorDecl;
 class DestructorDecl;
 class DoWhileStmt;
@@ -761,6 +772,7 @@ public:
   visitCompileErrorDirective(const CompileErrorDirective &stmt) = 0;
   virtual void visitConceptDecl(const ConceptDecl &stmt) = 0;
   virtual void visitConditionalStmt(const ConditionalStmt &stmt) = 0;
+  virtual void visitConstexprForStmt(const ConstexprForStmt &stmt) = 0;
   virtual void visitConstructorDecl(const ConstructorDecl &stmt) = 0;
   virtual void visitDestructorDecl(const DestructorDecl &stmt) = 0;
   virtual void visitDoWhileStmt(const DoWhileStmt &stmt) = 0;
@@ -794,6 +806,7 @@ enum class StmtKind : std::uint8_t {
   CompileErrorDirective,
   ConceptDecl,
   ConditionalStmt,
+  ConstexprForStmt,
   ConstructorDecl,
   DestructorDecl,
   DoWhileStmt,
@@ -1640,6 +1653,15 @@ public:
   }
 
   [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const std::optional<Token> &patternAuto() const {
+    return patternAuto_;
+  }
+  [[nodiscard]] const std::optional<Token> &patternReference() const {
+    return patternReference_;
+  }
+  [[nodiscard]] const std::optional<Token> &patternMutability() const {
+    return patternMutability_;
+  }
   [[nodiscard]] bool isReferencePattern() const {
     return patternReference_.has_value();
   }
@@ -1818,20 +1840,22 @@ private:
 
 class ClassDecl final : public StmtOfKind<StmtKind::ClassDecl> {
 public:
-  ClassDecl(std::vector<ClassAttribute> attributes, Token keyword,
-            ClassKind kind, Token name,
-            std::optional<TypeRef> exactSpecialization,
-            std::vector<GenericParameter> genericParameters,
-            std::vector<BaseSpecifier> bases, StmtList members,
-            bool forwardDeclaration = false,
-            std::vector<TypeRef> genericArgumentPatterns = {})
+  ClassDecl(
+      std::vector<ClassAttribute> attributes, Token keyword, ClassKind kind,
+      Token name, std::optional<TypeRef> exactSpecialization,
+      std::vector<GenericParameter> genericParameters,
+      std::vector<BaseSpecifier> bases, StmtList members,
+      bool forwardDeclaration = false,
+      std::vector<TypeRef> genericArgumentPatterns = {},
+      std::optional<CompilerTypeBinding> compilerTypeBinding = std::nullopt)
       : attributes_(std::move(attributes)), keyword_(std::move(keyword)),
         kind_(kind), name_(std::move(name)),
         exactSpecialization_(std::move(exactSpecialization)),
         genericParameters_(std::move(genericParameters)),
         genericArgumentPatterns_(std::move(genericArgumentPatterns)),
         bases_(std::move(bases)), members_(std::move(members)),
-        forwardDeclaration_(forwardDeclaration) {}
+        forwardDeclaration_(forwardDeclaration),
+        compilerTypeBinding_(std::move(compilerTypeBinding)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitClassDecl(*this);
@@ -1865,6 +1889,10 @@ public:
   [[nodiscard]] bool isForwardDeclaration() const {
     return forwardDeclaration_;
   }
+  [[nodiscard]] const std::optional<CompilerTypeBinding> &
+  compilerTypeBinding() const {
+    return compilerTypeBinding_;
+  }
 
 private:
   std::vector<ClassAttribute> attributes_;
@@ -1877,6 +1905,7 @@ private:
   std::vector<BaseSpecifier> bases_;
   StmtList members_;
   bool forwardDeclaration_ = false;
+  std::optional<CompilerTypeBinding> compilerTypeBinding_;
 };
 
 struct EnumeratorDecl {
@@ -2339,6 +2368,69 @@ private:
   StmtPtr thenBranch_;
   StmtPtr elseBranch_;
   std::optional<Token> constexprKeyword_;
+};
+
+// `constexpr for ( [mut] type IDENTIFIER : sequence ) statement`.
+//
+// Compile-time iteration over a finite sequence of types: the sequence
+// expression's class type carries exactly one type pack as its generic
+// arguments, and the body is analysed once per element with the binding
+// initialized to a default-constructed element. The parser synthesizes the
+// element binding; semantic analysis clones it and the body once per element
+// (see `cloneStmt`) so every copy has its own identity. Nothing of the loop
+// survives semantic analysis except the expanded copies.
+class ConstexprForStmt final : public StmtOfKind<StmtKind::ConstexprForStmt> {
+public:
+  ConstexprForStmt(Token constexprKeyword, Token forKeyword,
+                   Mutability bindingMutability, TypeRef bindingType,
+                   Token bindingName, Token colon, ExprPtr sequence,
+                   StmtPtr body, StmtPtr elementBinding,
+                   const Call *elementInitializer)
+      : constexprKeyword_(std::move(constexprKeyword)),
+        forKeyword_(std::move(forKeyword)),
+        bindingMutability_(bindingMutability),
+        bindingType_(std::move(bindingType)),
+        bindingName_(std::move(bindingName)), colon_(std::move(colon)),
+        sequence_(std::move(sequence)), body_(std::move(body)),
+        elementBinding_(std::move(elementBinding)),
+        elementInitializer_(elementInitializer) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitConstexprForStmt(*this);
+  }
+
+  [[nodiscard]] const Token &constexprKeyword() const {
+    return constexprKeyword_;
+  }
+  [[nodiscard]] const Token &forKeyword() const { return forKeyword_; }
+  [[nodiscard]] Mutability bindingMutability() const {
+    return bindingMutability_;
+  }
+  [[nodiscard]] const TypeRef &bindingType() const { return bindingType_; }
+  [[nodiscard]] const Token &bindingName() const { return bindingName_; }
+  [[nodiscard]] const Token &colon() const { return colon_; }
+  [[nodiscard]] const ExprPtr &sequence() const { return sequence_; }
+  [[nodiscard]] const StmtPtr &body() const { return body_; }
+  // The synthesized `auto name = <element>` declaration; its initializer is
+  // the generated call that semantic analysis binds to the current element.
+  [[nodiscard]] const StmtPtr &elementBinding() const {
+    return elementBinding_;
+  }
+  [[nodiscard]] const Call *elementInitializer() const {
+    return elementInitializer_;
+  }
+
+private:
+  Token constexprKeyword_;
+  Token forKeyword_;
+  Mutability bindingMutability_;
+  TypeRef bindingType_;
+  Token bindingName_;
+  Token colon_;
+  ExprPtr sequence_;
+  StmtPtr body_;
+  StmtPtr elementBinding_;
+  const Call *elementInitializer_ = nullptr;
 };
 
 class LoopControlStmt final : public StmtOfKind<StmtKind::LoopControlStmt> {

@@ -1,0 +1,123 @@
+// <std/meta> -- compile-time reflection over GTI declarations.
+//
+// A metaobject is an ordinary empty value whose generic arguments are the
+// canonical identity of what it describes: `type<T>` for a type and
+// `field<T, I>` for instance field `I` of `T` in declaration order. Every
+// query is an ordinary method that calls a compiler-private operation on those
+// arguments. The compiler folds each answer to a constant as soon as the
+// arguments are concrete, so a program that consumes reflection at compile
+// time carries no reflection data at run time; a name used at run time is an
+// ordinary string literal.
+//
+// `@compiler_type` binds a class to the compiler by its binding name, never by
+// its public spelling: `list` and `field` are the classes the compiler builds
+// a field list from, and `field_list`/`field_type` are computed types whose
+// concrete instances the compiler rewrites.
+
+namespace gti_internal {
+uint64_t meta_field_count<T>();
+std::string_view meta_field_name<T, uint64_t I>();
+bool meta_field_is_public<T, uint64_t I>();
+std::string_view meta_type_name<T>();
+uint64_t meta_type_kind<T>();
+}
+
+namespace std {
+namespace meta {
+
+/// The category of a type, as `type<T>::kind()` reports it.
+enum class kind {
+  unknown = 0,
+  structure = 1,
+  class_type = 2,
+  interface_type = 3,
+  union_type = 4,
+  enumeration = 5,
+  integral = 6,
+  floating_point = 7,
+  boolean = 8,
+  character = 9,
+  text = 10,
+  reference = 11,
+  array = 12,
+  raw_pointer = 13,
+  unique_owner = 14,
+  shared_owner = 15,
+  callable = 16,
+  void_type = 17,
+};
+
+/// A finite compile-time sequence of types; `constexpr for` iterates its
+/// elements, binding each as a default-constructed value.
+@compiler_type("meta_list") struct list<Elements...> {
+public:
+  constexpr list() {}
+};
+
+/// The exact type of instance field `I` of `T`: a computed type the compiler
+/// rewrites to the field's type wherever `T` and `I` are concrete, so it can
+/// be spelled in any type position.
+@compiler_type("meta_field_type") struct field_type<T, uint64_t I> {};
+
+/// `list<field<T, 0>, field<T, 1>, ...>` over the instance fields of `T`, in
+/// declaration order; a computed type like `field_type`.
+@compiler_type("meta_field_list") struct field_list<T> {};
+
+/// Describes the type `T`.
+@compiler_type("meta_type") struct type<T> {
+public:
+  constexpr type() {}
+  /// The qualified spelling of `T`.
+  constexpr std::string_view name() { return gti_internal::meta_type_name<T>(); }
+  constexpr bool is_struct() { return gti_internal::meta_type_kind<T>() == uint64_t(1); }
+  constexpr bool is_class() { return gti_internal::meta_type_kind<T>() == uint64_t(2); }
+  constexpr bool is_interface() { return gti_internal::meta_type_kind<T>() == uint64_t(3); }
+  constexpr bool is_union() { return gti_internal::meta_type_kind<T>() == uint64_t(4); }
+  constexpr bool is_enum() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }
+  constexpr bool is_integral() { return gti_internal::meta_type_kind<T>() == uint64_t(6); }
+  constexpr bool is_floating_point() { return gti_internal::meta_type_kind<T>() == uint64_t(7); }
+  constexpr bool is_bool() { return gti_internal::meta_type_kind<T>() == uint64_t(8); }
+  constexpr bool is_char() { return gti_internal::meta_type_kind<T>() == uint64_t(9); }
+  constexpr bool is_text() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
+  /// The number of instance fields when `T` is a struct or class, else 0.
+  constexpr uint64_t field_count() { return gti_internal::meta_field_count<T>(); }
+};
+
+/// Describes instance field `I`, in declaration order, of `T`.
+@compiler_type("meta_field") struct field<T, uint64_t I> {
+public:
+  constexpr field() {}
+  /// The field's declared name.
+  constexpr std::string_view name() { return gti_internal::meta_field_name<T, I>(); }
+  /// The field's position in declaration order.
+  constexpr uint64_t index() { return I; }
+  constexpr bool is_public() { return gti_internal::meta_field_is_public<T, I>(); }
+  /// The exact field type as a type metaobject; pass it to a generic
+  /// function to deduce the type (`decode(field.type(), input)`).
+  constexpr type<field_type<T, I>> type() {
+    return std::meta::type<field_type<T, I>>();
+  }
+  /// The field of `owner`, as the place `owner.<name>` with the same access,
+  /// borrowing and visibility rules as writing it directly where `get` is
+  /// called. A private field is accessible only where direct access is.
+  field_type<T, I>& get(T& owner);
+  mut field_type<T, I>& get_mut(mut T& owner) mut;
+};
+
+/// The instance fields of `T`, in declaration order.
+constexpr field_list<T> fields_of<T>() {
+  return field_list<T>();
+}
+
+constexpr type<T> type_of<T>() { return type<T>(); }
+constexpr std::string_view name_of<T>() { return gti_internal::meta_type_name<T>(); }
+constexpr bool is_struct<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(1); }
+constexpr bool is_class<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(2); }
+constexpr bool is_enum<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }
+constexpr bool is_integral<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(6); }
+constexpr bool is_floating_point<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(7); }
+constexpr bool is_bool<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(8); }
+constexpr bool is_text<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
+
+}
+}
