@@ -1,0 +1,29 @@
+#include <std/meta>
+
+struct Player {
+  uint32_t health = 100;
+  float speed = 1.5;
+  bool alive = true;
+};
+
+uint64_t count_fields() {
+  mut uint64_t count = 0;
+  constexpr for (auto field : std::meta::fields_of<Player>()) {
+    count = count + 1;
+  }
+  return count;
+}
+
+int main() {
+  Player player = {.health = uint32_t(7), .speed = 2.0, .alive = false};
+  mut uint64_t sum = 0;
+  constexpr for (auto field : std::meta::fields_of<Player>()) {
+    if constexpr (field.index() == uint64_t(0)) {
+      sum = sum + uint64_t(field.get(player));
+    }
+  }
+  if (count_fields() != uint64_t(3)) { return 1; }
+  if (sum != uint64_t(7)) { return 2; }
+  if (std::meta::name_of<Player>() != "Player") { return 3; }
+  return 0;
+}

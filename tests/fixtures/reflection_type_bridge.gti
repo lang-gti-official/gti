@@ -1,0 +1,19 @@
+#include <std/meta>
+
+struct Player {
+  uint32_t health = 100;
+  float speed = 1.5;
+};
+
+double widen<std::numeric U>(std::meta::type<U> tag, U value) { return double(value); }
+
+int main() {
+  Player player = {.health = uint32_t(2), .speed = 0.5};
+  mut double sum = 0.0;
+  constexpr for (auto field : std::meta::fields_of<Player>()) {
+    sum = sum + widen(field.type(), field.get(player));
+  }
+  std::meta::field_type<Player, 1> speed = 2.5;
+  if (sum != 2.5 || speed != 2.5) { return 1; }
+  return 0;
+}
