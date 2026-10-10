@@ -1677,6 +1677,202 @@ int32_t main() {
   }
 }
 
+void testScalarLeafSequenceStores() {
+  // User containers over the source prefix owner. Vacant construction of a
+  // floating, enum or record element, movement of a by-value scalar fill and
+  // a checked floating store through the returned element reference all keep
+  // the container's live length. A caller-local index then proves `at`. An
+  // index reaching the length, or an opaque call in the loop, keeps it.
+  const std::string containers = R"(
+#include <std/memory>
+extern "C" {
+  void analysis_barrier();
+}
+
+class samples<std::storage_element T> {
+  mut std::detail::prefix_owner<T> data;
+
+public:
+  samples(uint64_t count) : data(std::detail::prefix_owner<T>(count)) {
+    while (this.data.length() < count) {
+      unsafe { this.data.append_unchecked(); }
+    }
+  }
+
+  uint64_t size() {
+    return this.data.length();
+  }
+
+  mut T& at(uint64_t index) mut {
+    uint64_t live = this.data.length();
+    gti_internal::index_bounds_check(index, live);
+    unsafe { return this.data.read_mut_unchecked(index); }
+  }
+};
+
+class filled<std::storage_element T> {
+  mut std::detail::prefix_owner<T> data;
+
+public:
+  filled(uint64_t count, T fill) : data(std::detail::prefix_owner<T>(count)) {
+    while (this.data.length() < count) {
+      unsafe { this.data.append_value_unchecked(fill); }
+    }
+  }
+
+  uint64_t size() {
+    return this.data.length();
+  }
+
+  T& at(uint64_t index) {
+    uint64_t live = this.data.length();
+    gti_internal::index_bounds_check(index, live);
+    unsafe { return this.data.read_unchecked(index); }
+  }
+};
+
+struct body {
+  body() {}
+
+  mut double mass = 1.0d;
+  mut int64_t hits = 0;
+};
+
+enum class shade : int32_t { dark, light };
+)";
+  struct Case {
+    std::string_view name;
+    std::string program;
+    std::size_t bounds;
+    std::string_view expectation;
+  };
+  const std::vector<Case> cases = {
+      {"floating-store", R"(
+void ramp(mut samples<double>& values) {
+  for (mut uint64_t index = 0; index < values.size(); index++) {
+    values.at(index) = double(index) * 0.5d;
+  }
+}
+
+int32_t main() {
+  mut samples<double> values = samples<double>(uint64_t(16));
+  ramp(values);
+  for (mut uint64_t index = 0; index < values.size(); index++) {
+    values.at(index) += 1.0d;
+  }
+  return int32_t(values.at(uint64_t(3)));
+}
+)",
+       1,
+       "value-initialized floating elements and checked floating stores "
+       "must keep the live length"},
+      {"floating-field-store", R"(
+void weigh(mut samples<body>& bodies) {
+  for (mut uint64_t index = 0; index < bodies.size(); index++) {
+    bodies.at(index).mass *= 0.5d;
+  }
+}
+
+int32_t main() {
+  mut samples<body> bodies = samples<body>(uint64_t(16));
+  weigh(bodies);
+  return int32_t(bodies.at(uint64_t(3)).mass);
+}
+)",
+       1,
+       "a floating field store through an element reference must keep the "
+       "live length"},
+      {"scalar-fill", R"(
+double total(filled<double>& values) {
+  mut double sum = 0.0d;
+  for (mut uint64_t index = 0; index < values.size(); index++) {
+    sum += values.at(index);
+  }
+  return sum;
+}
+
+int32_t main() {
+  filled<double> values = filled<double>(uint64_t(16), 0.5d);
+  return int32_t(total(values));
+}
+)",
+       1,
+       "moving a by-value floating fill into vacant storage must keep the "
+       "live length"},
+      {"enum-fill", R"(
+int32_t count_dark(filled<shade>& values) {
+  mut int32_t dark = 0;
+  for (mut uint64_t index = 0; index < values.size(); index++) {
+    if (values.at(index) == shade::dark) { dark++; }
+  }
+  return dark;
+}
+
+int32_t main() {
+  filled<shade> values = filled<shade>(uint64_t(16), shade::light);
+  return count_dark(values);
+}
+)",
+       1, "an integral enum fill shares the scalar construction profile"},
+      {"floating-past-end", R"(
+void ramp(mut samples<double>& values) {
+  for (mut uint64_t index = 0; index <= values.size(); index++) {
+    values.at(index) = double(index) * 0.5d;
+  }
+}
+
+int32_t main() {
+  mut samples<double> values = samples<double>(uint64_t(16));
+  ramp(values);
+  return int32_t(values.at(uint64_t(3)));
+}
+)",
+       0, "an index reaching the live length must keep the check"},
+      {"floating-barrier", R"(
+void ramp(mut samples<double>& values) {
+  for (mut uint64_t index = 0; index < values.size(); index++) {
+    values.at(index) = double(index) * 0.5d;
+    analysis_barrier();
+  }
+}
+
+int32_t main() {
+  mut samples<double> values = samples<double>(uint64_t(16));
+  ramp(values);
+  return int32_t(values.at(uint64_t(3)));
+}
+)",
+       0, "an opaque call after the floating store must keep the check"},
+  };
+  for (const Case &fixture : cases) {
+    const lang::FrontendResult frontend = analyzeTrusted(
+        "optimizer-scalar-leaf-" + std::string(fixture.name) + ".gti",
+        containers + fixture.program);
+    expect(frontend.canGenerateCode(), "the " + std::string(fixture.name) +
+                                           " fixture should pass the frontend");
+    if (!frontend.canGenerateCode()) {
+      for (const lang::Diagnostic &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      continue;
+    }
+    for (const auto level :
+         {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+      const lang::OptimizedProgram optimized = lang::OptimizationPipeline().run(
+          {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+      const std::size_t bounds = functionDischarges(
+          frontend, optimized, "at", lang::MirSafetyCheckFamily::Bounds);
+      expect(optimized.valid() && bounds == fixture.bounds,
+             std::string(fixture.name) + ": " +
+                 std::string(fixture.expectation) +
+                 " (bounds=" + std::to_string(bounds) + ")");
+      expect(lang::verifyMirOptimizationCoherence(
+                 frontend.mir, optimized.mir, optimized.report.transformations)
+                 .valid(),
+             std::string(fixture.name) + " proofs must independently replay");
+    }
+  }
+}
+
 void testGuardedClosedCallContextWidening() {
   const std::string source = R"(
 #include <std/memory>
@@ -1942,6 +2138,7 @@ int main() {
   testClosedIndexedRecordFieldEnvelope();
   testGuardedClosedCallContextWidening();
   testSourceRecordSequenceEnvelopes();
+  testScalarLeafSequenceStores();
   testChainedFixedArrayDimensionBounds();
   if (failures != 0) {
     std::cerr << failures << " optimizer safety test(s) failed\n";

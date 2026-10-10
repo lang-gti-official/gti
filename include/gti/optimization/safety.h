@@ -94,7 +94,7 @@ struct MirClosedCallSafetyAnalysis {
 // address, or initialized coverage.
 // Selected unsafe source functions use actual body effects;
 // a successful path with a raw barrier cannot export effect closure.
-// Exact vacant integer-scalar/generated scalar-record construction preserves
+// Exact vacant scalar/generated scalar-record construction preserves
 // unrelated active non-byte owned-field facts through source wrappers. It stays
 // opaque; byte/array/union/stored-reference/backing paths and actual unknown
 // live-memory effects remain conservative. This supplies no raw-region/element

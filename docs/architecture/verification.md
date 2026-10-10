@@ -1,5 +1,33 @@
 # Compiler Verification
 
+## Scalar-leaf construction and floating stores (0.397.2)
+
+- **Effects.** The MIR effect test now requires the vacant-construction
+  profile for `double`, `float`, `bool` and raw-pointer pointees, with and
+  without an argument. A `double` pointee with a `float` argument keeps the
+  conservative profile, as do the existing selected-constructor, cleanup and
+  forged-classification controls.
+- **Proofs.** `testScalarLeafSequenceStores` uses user containers over the
+  source prefix owner and counts the bounds proof in their `at` accessor at O2
+  and O3:
+  - discharged: value-initialized `double` elements with checked floating
+    stores in a callee and in `main`; a floating field store into record
+    elements; a by-value `double` fill; and an integral-enum fill;
+  - retained: an index reaching the live length, and an opaque call after the
+    floating store.
+
+  Every proof replays independently. The optimizer and census CTests pass with
+  unchanged baselines, and no runtime-audit probe's emitted C++ changes.
+  Compiled with `--optimization-remarks`, read loops over a size-constructed
+  `std::vector<bool>` or `std::vector<char>` now discharge the accessor check
+  that 0.397.0 kept. A loop storing into `bool` elements still keeps it.
+- **Performance.** A smoothing loop over one 65,536-element `std::vector<double>`
+  (3,000 passes, then a sum) keeps no bounds check in either accessor. On an
+  Apple M2 Max (3 warmups, 15 shuffled interleaved rounds), its median drops
+  from 904.8 to 395.7 ms at `-O2` and from 904.5 to 396.1 ms at `-O3`, with
+  identical output. The same C++ built with `c++ -std=c++23 -O2` runs in
+  451.6 ms.
+
 ## Source prefix ownership and allocation abort acceptance (0.397.0)
 
 S-ALLOC-08 and S-ALLOC-09 are accepted on the reconciled task head. The

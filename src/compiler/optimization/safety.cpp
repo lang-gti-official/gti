@@ -366,10 +366,12 @@ struct ClosedCallSummary {
   std::map<InputField, InputAddress> pointerFieldValues;
   // A bounded typed-MIR mutation profile, not a replacement effect summary.
   // All writes to existing nonlocal objects are checked non-byte integers of
-  // one width. Vacant structural construction is independent; pointer,
-  // aggregate, byte, raw/native and destructive lifecycle writes reject it.
+  // one width or checked floating scalars. Vacant structural construction is
+  // independent; pointer, aggregate, byte, raw/native and destructive
+  // lifecycle writes reject it.
   bool scalarStoresOnly = false;
   std::optional<unsigned> scalarStoreWidth;
+  bool floatingScalarStores = false;
   std::map<InputAddress, ConstructedScalar> constructedParameters;
   ObservedFact<ObjectFact> receiver;
   EntryRelativeFields receiverUpdates;
@@ -2933,6 +2935,12 @@ void invalidateObjectOperand(const MirBody &body,
 }
 
 [[nodiscard]] bool parameterAllowsMutation(const SemanticType &type);
+// A checked floating write targets one live floating object. Live objects
+// never partially overlap, so it changes no live integer object and no
+// pointer/reference carrier. It publishes no integer value.
+[[nodiscard]] bool floatingScalar(const SemanticType &type) {
+  return type.kind == SemanticType::Float || type.kind == SemanticType::Double;
+}
 struct DisjointScalarFields {
   std::map<MirPlaceId, IntegerFieldFacts> objects;
   std::map<MirPlaceId, IntegerFact> places;
@@ -3437,8 +3445,9 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
           : DisjointScalarFields{};
   // A store profile without a store width admits only callee-frame writes:
   // independent locals, local transfers/drops and equally closed callees.
-  const bool frameLocalWrites =
-      summary.scalarStoresOnly && !summary.scalarStoreWidth;
+  const bool frameLocalWrites = summary.scalarStoresOnly &&
+                                !summary.scalarStoreWidth &&
+                                !summary.floatingScalarStores;
   const bool pointerRelayOnly =
       (summary.returnedPointer || summary.returnedBorrow) &&
       !summary.hasOpaqueEffects && !summary.mayWriteGlobals && invocation &&
@@ -4262,7 +4271,7 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
   // that this body owns independent parameter storage. Callers still prove
   // the particular scalar/generated operation touches only that storage.
   return parameterOrdinal(*program, address, place).has_value() &&
-         (constantIntegerDomain(place.type).has_value() ||
+         (isMirScalarValueType(program, place.type) ||
           place.type.kind == SemanticType::Class);
 }
 
@@ -4363,7 +4372,8 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
     publishConstructedScalar(state, pointer, std::move(fact));
 }
 
-[[nodiscard]] bool scalarResultMove(const MirInstruction &instruction,
+[[nodiscard]] bool scalarResultMove(const MirProgram *program,
+                                    const MirInstruction &instruction,
                                     const MirBody &body) {
   if (instruction.kind != MirInstructionKind::Move || !instruction.result ||
       instruction.destination || instruction.operands.size() != 1 ||
@@ -4371,7 +4381,7 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
       instruction.operation != MirOperation::None || instruction.receiver ||
       !instruction.lifecycle.empty() || instruction.rawMemoryAccess ||
       instruction.unsafeOperation != UnsafeOperationKind::None ||
-      !constantIntegerDomain(instruction.info.type))
+      !isMirScalarValueType(program, instruction.info.type))
     return false;
   const auto *source = body.findPlace(instruction.operands.front().place);
   const auto effect = effects(instruction);
@@ -4570,17 +4580,22 @@ void applyInstruction(const MirBody &body,
     std::optional<ObjectFact> record;
     std::optional<std::size_t> parameter;
     pointer = scalarAddressForOperand(body, state, instruction.operands[0]);
-    if (isMirScalarFinalAddressConstruction(instruction) &&
-        instruction.operands.size() == 1) {
+    // Every scalar leaf shares the vacant-construction effect profile; only
+    // an integer pointee also publishes the constructed value.
+    const auto integerPointee =
+        isMirScalarFinalAddressConstruction(instruction)
+            ? constantIntegerDomain(
+                  instruction.operands[0].type.arguments.front())
+            : std::nullopt;
+    if (integerPointee && instruction.operands.size() == 1) {
       // The sealed zero-argument scalar construction value-initializes its
       // exact pointee. This is a successful construction postcondition, not
       // a claim that vacant bytes or neighbouring elements contain zero.
-      value = IntegerFact{.domain = *constantIntegerDomain(
-                              instruction.operands[0].type.arguments.front()),
-                          .lower = {},
-                          .upper = {}};
-    } else if (instruction.operands.size() == 2) {
-      if (isMirScalarFinalAddressConstruction(instruction)) {
+      value = IntegerFact{.domain = *integerPointee, .lower = {}, .upper = {}};
+    } else if (instruction.operands.size() == 2 &&
+               (integerPointee ||
+                !isMirScalarFinalAddressConstruction(instruction))) {
+      if (integerPointee) {
         value = integerForOperand(body, state, instruction.operands[1]);
         parameter = readonlyIntegerParameter(program, address, body,
                                              instruction.operands[1]);
@@ -4763,13 +4778,13 @@ void applyInstruction(const MirBody &body,
     }
     return;
   }
-  if (scalarResultMove(instruction, body)) {
+  if (scalarResultMove(program, instruction, body)) {
     const auto &source = instruction.operands.front();
     const auto fact =
         integerForPlace(body, state, canonicalPlace(aliases, source.place));
     // Movement retires the source. Do not retain place-derived origins or
     // make a later source read usable; only the independent result SSA value
-    // receives the old scalar envelope. Exact by-value integer parameters
+    // receives the old scalar envelope. Exact by-value scalar parameters
     // cannot overlap owned receiver fields, including an unmaterialized This.
     invalidateValueStorage(program, address, body, aliases, state,
                            source.place);
@@ -5120,7 +5135,8 @@ void applyInstruction(const MirBody &body,
         physicalDestination &&
         physicalDestination->root == MirPlaceRootKind::Binding &&
         physicalDestination->projections.empty() &&
-        constantIntegerDomain(physicalDestination->type) &&
+        (constantIntegerDomain(physicalDestination->type) ||
+         floatingScalar(physicalDestination->type)) &&
         !physicalDestination->traits.containsBorrowedState &&
         instruction.lifecycle.empty() && !instruction.rawMemoryAccess &&
         !effect.invokesUserCode && !effect.invokesRuntime &&
@@ -5141,15 +5157,21 @@ void applyInstruction(const MirBody &body,
     const auto writtenDomain =
         physicalDestination ? constantIntegerDomain(physicalDestination->type)
                             : std::nullopt;
+    const std::optional<unsigned> writtenWidth =
+        writtenDomain ? std::optional<unsigned>{writtenDomain->width}
+                      : std::nullopt;
+    const bool typedScalarWrite =
+        (writtenDomain && writtenDomain->width > 8) ||
+        (physicalDestination && floatingScalar(physicalDestination->type));
     const auto untouchedFields =
-        instruction.kind == MirInstructionKind::Assign && writtenDomain &&
-                writtenDomain->width > 8 && !instruction.rawMemoryAccess &&
+        instruction.kind == MirInstructionKind::Assign && typedScalarWrite &&
+                !instruction.rawMemoryAccess &&
                 instruction.unsafeOperation == UnsafeOperationKind::None &&
                 instruction.lifecycle.empty() && !effect.invokesUserCode &&
                 !effect.invokesRuntime && !effect.writesUnknownMemory &&
                 !effect.maySynchronize
             ? preserveDifferentWidthFields(program, address, body, state,
-                                           writtenDomain->width)
+                                           writtenWidth)
             : DisjointScalarFields{};
     // The written scalar is the physical destination; its canonical alias
     // representative may be the borrowed owner rather than the referent.
@@ -5159,7 +5181,7 @@ void applyInstruction(const MirBody &body,
         instruction.unsafeOperation == UnsafeOperationKind::None &&
         instruction.lifecycle.empty() && !effect.invokesUserCode &&
         !effect.invokesRuntime && !effect.writesUnknownMemory &&
-        !effect.maySynchronize && writtenDomain && writtenDomain->width > 8;
+        !effect.maySynchronize && typedScalarWrite;
     const auto checkedAddress =
         typedCheckedWrite ? borrowedAddressForPlace(program, body, state,
                                                     *instruction.destination)
@@ -5249,7 +5271,7 @@ void applyInstruction(const MirBody &body,
       fact = compoundIntegerFact(body, program, address, aliases, state,
                                  instruction);
     }
-    if (checkedBase && writtenDomain &&
+    if (checkedBase && typedScalarWrite &&
         (instruction.operation == MirOperation::None ||
          instruction.operation == MirOperation::Assign ||
          compoundCheckedOperation(instruction.operation))) {
@@ -5269,7 +5291,8 @@ void applyInstruction(const MirBody &body,
       for (const auto &[root, object] : state.objects) {
         for (const auto &[path, envelope] : object.prefixes) {
           const bool joined = path.subobject == checkedBase->subobject &&
-                              fact && envelope.domain == fact->domain &&
+                              fact && writtenDomain &&
+                              envelope.domain == fact->domain &&
                               fact->domain == *writtenDomain;
           if (!joined && !disjointSubobject(path.subobject))
             continue;
@@ -5277,7 +5300,7 @@ void applyInstruction(const MirBody &body,
           const auto end = object.integers.find(path.end);
           if (base == state.fieldAddresses.end() || base->second.index ||
               !base->second.subobject.empty() || end == object.integers.end() ||
-              end->second.domain.width == writtenDomain->width)
+              end->second.domain.width == writtenWidth)
             continue;
           auto compared = addressKey(*checkedBase);
           compared.index.reset();
@@ -7396,6 +7419,7 @@ struct ContextualBodyResult {
 struct ScalarStoreProfile {
   bool supported = false;
   std::optional<unsigned> width;
+  bool floating = false;
 };
 
 [[nodiscard]] std::optional<InputAddress>
@@ -7443,11 +7467,13 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
   };
   const auto closedProfile = [&](MirBodyAddress target) {
     const auto callee = round.summaries.find(target);
-    return !round.rejected.contains(target) &&
-           callee != round.summaries.end() && callee->second.complete &&
-           callee->second.scalarStoresOnly &&
-           (!callee->second.scalarStoreWidth ||
-            addWidth(*callee->second.scalarStoreWidth));
+    if (round.rejected.contains(target) || callee == round.summaries.end() ||
+        !callee->second.complete || !callee->second.scalarStoresOnly ||
+        (callee->second.scalarStoreWidth &&
+         !addWidth(*callee->second.scalarStoreWidth)))
+      return false;
+    result.floating = result.floating || callee->second.floatingScalarStores;
+    return true;
   };
   if (address.kind == MirBodyKind::Constructor)
     if (const auto *constructor =
@@ -7497,7 +7523,7 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
           return {};
         continue;
       }
-      if (scalarResultMove(instruction, body)) {
+      if (scalarResultMove(&program, instruction, body)) {
         const auto *source = body.findPlace(instruction.operands.front().place);
         if (source && source->root == MirPlaceRootKind::Binding &&
             source->projections.empty())
@@ -7548,6 +7574,8 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
             (callee->second.scalarStoreWidth &&
              !addWidth(*callee->second.scalarStoreWidth)))
           return {};
+        result.floating =
+            result.floating || callee->second.floatingScalarStores;
         continue;
       }
       if (instruction.rawMemoryAccess ||
@@ -7561,8 +7589,9 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
                                     : nullptr;
       const auto domain =
           destination ? constantIntegerDomain(destination->type) : std::nullopt;
+      const bool floating = destination && floatingScalar(destination->type);
       const bool independentScalar =
-          destination && domain &&
+          destination && (domain || floating) &&
           destination->root == MirPlaceRootKind::Binding &&
           destination->projections.empty() &&
           !destination->traits.containsBorrowedState;
@@ -7574,6 +7603,12 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
           instruction.lifecycle.empty() && !effect.invokesRuntime &&
           !effect.movesValue && !effect.dropsValue && addWidth(domain->width))
         continue;
+      if (instruction.kind == MirInstructionKind::Assign && floating &&
+          instruction.lifecycle.empty() && !effect.invokesRuntime &&
+          !effect.movesValue && !effect.dropsValue) {
+        result.floating = true;
+        continue;
+      }
       if (effect.writesPlace || effect.movesValue || effect.dropsValue)
         return {};
     }
@@ -7752,6 +7787,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
   const auto scalarStores = scalarStoreProfile(program, address, *body, round);
   result.summary.scalarStoresOnly = scalarStores.supported;
   result.summary.scalarStoreWidth = scalarStores.width;
+  result.summary.floatingScalarStores = scalarStores.floating;
   result.summary.hasOpaqueEffects =
       std::any_of(exits.begin(), exits.end(), [](const AbstractState &state) {
         return state.hasOpaqueEffects;
