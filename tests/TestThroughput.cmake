@@ -4,6 +4,17 @@ set(GTI_TEST_CASE_JOBS "2" CACHE STRING "Bounded workers per parallel test suite
 if(NOT GTI_TEST_CASE_JOBS MATCHES "^[1-9][0-9]*$")
   message(FATAL_ERROR "GTI_TEST_CASE_JOBS must be a positive integer")
 endif()
+# The largest compound suites bound the suite's critical path: with two
+# workers each took eight to ten minutes alone on a tree that finishes in
+# twenty. They reserve more workers; the scheduler charges them accordingly.
+set(GTI_TEST_HEAVY_CASE_JOBS "4" CACHE STRING
+  "Bounded workers for the largest parallel test suites")
+if(NOT GTI_TEST_HEAVY_CASE_JOBS MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "GTI_TEST_HEAVY_CASE_JOBS must be a positive integer")
+endif()
+set(gti_heavy_case_suites
+  stdlib_surface returned_field_address_runtime json_stdlib
+  generic_algorithm_breadth complete_containers)
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
@@ -31,6 +42,7 @@ if(Python3_Interpreter_FOUND)
     coverage_composition_runtime
     generic_enum_instances_runtime generic_payload_enum_runtime hosted_constructor_identity_runtime
     hosted_exit_status_runtime
+    json_stdlib returned_field_address_runtime
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
     lambda_base_reference_runtime lambda_owning_transport_runtime lambda_pack_invocation_runtime
     nested_borrow_fields nested_guarded_expected_runtime
@@ -63,9 +75,13 @@ if(Python3_Interpreter_FOUND)
     if(NOT TEST "${suite}")
       message(FATAL_ERROR "Parallel case suite is not registered: ${suite}")
     endif()
+    set(gti_suite_jobs "${GTI_TEST_CASE_JOBS}")
+    if(suite IN_LIST gti_heavy_case_suites)
+      set(gti_suite_jobs "${GTI_TEST_HEAVY_CASE_JOBS}")
+    endif()
     set_property(TEST "${suite}" APPEND PROPERTY ENVIRONMENT
-      "GTI_TEST_CASE_JOBS=${GTI_TEST_CASE_JOBS}")
-    set_tests_properties("${suite}" PROPERTIES PROCESSORS "${GTI_TEST_CASE_JOBS}")
+      "GTI_TEST_CASE_JOBS=${gti_suite_jobs}")
+    set_tests_properties("${suite}" PROPERTIES PROCESSORS "${gti_suite_jobs}")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "bounded-case-workers")
     # Fresh CTest trees give unknown tests zero cost. Without a hint, one-slot
     # tests can keep filling the budget while compound suites wait for enough
@@ -76,6 +92,46 @@ if(Python3_Interpreter_FOUND)
       set_tests_properties("${suite}" PROPERTIES COST "${gti_case_timeout}")
     else()
       set_tests_properties("${suite}" PROPERTIES COST 1)
+    endif()
+  endforeach()
+  foreach(suite IN LISTS gti_heavy_case_suites)
+    if(NOT suite IN_LIST gti_parallel_case_suites)
+      message(FATAL_ERROR "Heavy case suite is not a parallel case suite: ${suite}")
+    endif()
+  endforeach()
+  # Long single-process gates get the same cold-tree ordering hint. A fresh
+  # CTest tree knows no durations, so without a hint these start late and run
+  # alone at the end. Values are measured seconds from a full run, used only
+  # for scheduling order; no case, assertion or timeout changes.
+  set(gti_long_gate_costs
+    failure_metadata 520
+    cpp_mir_body_emitter_corpus 500
+    allocator_raw_audit_independence 290
+    operator_relay_pipeline 285
+    filesystem_operations_runtime 220
+    language_coverage_corpus 170
+    complete_containers_collection 165
+    class_expression_consumers_runtime 155
+    aggregate_projection_runtime 140
+    panic_runtime 140
+    container_contract_failure 115
+    cli_workflow 95
+    mir_cutover_corpus_oracle 85
+    constructor_pack_field_runtime 85
+    expected_transform_error_runtime 85
+    pack_parameter_runtime 85
+    simd_runtime 85)
+  list(LENGTH gti_long_gate_costs gti_long_gate_count)
+  math(EXPR gti_long_gate_last "${gti_long_gate_count} - 1")
+  foreach(index RANGE 0 ${gti_long_gate_last} 2)
+    list(GET gti_long_gate_costs ${index} gti_long_gate)
+    math(EXPR gti_cost_index "${index} + 1")
+    list(GET gti_long_gate_costs ${gti_cost_index} gti_long_gate_cost)
+    if(NOT TEST "${gti_long_gate}")
+      message(FATAL_ERROR "Long gate is not registered: ${gti_long_gate}")
+    endif()
+    if(NOT gti_long_gate IN_LIST gti_parallel_case_suites)
+      set_tests_properties("${gti_long_gate}" PROPERTIES COST "${gti_long_gate_cost}")
     endif()
   endforeach()
   add_test(NAME test_case_jobs
