@@ -1356,6 +1356,24 @@ uses the existing MIR cleanup of preceding owning arguments. Unrelated
 user-defined constructors exercise both infallible and failing construction,
 ordered subsequent arguments, and early failure before call entry.
 
+A fresh placement `Expected<Class, E>` source-call result consumed by one
+exact by-value parameter shares that representation-only slot when MIR gives
+it neither a value drop nor a value-rooted place. Every alternative must agree:
+each class alternative is a unique instance with a generated destructor, no
+active cleanup or drop state, no borrowed state and a move that cannot raise,
+and each other alternative is scalar. The transformed producer constructs the
+wrapper only on its Invoke success edge. The consumer is selected by the same
+call-argument proof as a cleanup-free construction: a static source function
+or a borrowed-receiver member, with exact parameter identity and dominance from
+the success edge. It moves the wrapper into its parameter, and the moved-from
+representation is retired after the call. Intervening argument preparation
+keeps its MIR position. A failure there ends only the generated representation
+at scope exit; there is no semantic Drop to invent. A non-placement Expected,
+such as a scalar payload with a cleanup-free class error, keeps its ordinary SSA
+local. An owning alternative keeps MIR's value drop and the value-rooted
+transfer slot described above. Constructor consumers of such a result are
+outside this proof and still reject body emission.
+
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
 effects come from the lowered MIR and generated-item contracts. A nameable
