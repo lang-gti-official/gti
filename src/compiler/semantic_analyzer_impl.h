@@ -4815,6 +4815,10 @@ private:
     std::vector<RawProgramStorageState> rawProgramStorage;
     bool measureTopLevelStatements = false;
     bool onDemandBodyAnalysis = false;
+    // `constexpr for` expansion state is per declaration: a demanded callee
+    // must neither consume nor reset the caller's expansion budget.
+    std::vector<ConstexprForFrame> constexprForFrames;
+    std::size_t constexprForExpandedBodies = 0;
   };
   [[nodiscard]] BodyLocalState captureBodyLocalState();
   void restoreBodyLocalState(BodyLocalState state);

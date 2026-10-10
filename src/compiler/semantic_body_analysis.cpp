@@ -2624,7 +2624,9 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
       .rawPointerLoops = std::move(valueFlow.rawPointerLoops),
       .rawProgramStorage = saveRawProgramStorage(),
       .measureTopLevelStatements = measureTopLevelStatements,
-      .onDemandBodyAnalysis = onDemandBodyAnalysis};
+      .onDemandBodyAnalysis = onDemandBodyAnalysis,
+      .constexprForFrames = std::move(constexprForFrames),
+      .constexprForExpandedBodies = constexprForExpandedBodies};
   // The clean state a declaration-level body starts from; keep in step with
   // prepareInstanceAnalysis.
   scopes.clear();
@@ -2667,6 +2669,8 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
   currentProgramEffectOwner = {};
   valueFlow.rawPointerLoops = {};
   measureTopLevelStatements = false;
+  constexprForFrames.clear();
+  constexprForExpandedBodies = 0;
   return state;
 }
 
@@ -2716,6 +2720,8 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
   restoreRawProgramStorage(std::move(state.rawProgramStorage));
   measureTopLevelStatements = state.measureTopLevelStatements;
   onDemandBodyAnalysis = state.onDemandBodyAnalysis;
+  constexprForFrames = std::move(state.constexprForFrames);
+  constexprForExpandedBodies = state.constexprForExpandedBodies;
 }
 
 // A caller may need a fact that only the callee's body analysis produces

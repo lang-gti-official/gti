@@ -215,6 +215,48 @@ void checkFixtures(const std::filesystem::path &root,
                  orderedDiagnostics.diagnostics[1].primary.line,
          "demanded callee diagnostics follow the caller's");
 
+  // A demand issued from inside a `constexpr for` expansion: both orders are
+  // accepted, and a demanded callee's own diagnostic is reported once, after
+  // the caller, without being attributed to the caller's expansion.
+  const char *const expandingCaller = R"(int main() {
+  std::list<int> priorities = {2, 4, 4, 9};
+  int urgent = 9;
+  mut int hits = 0;
+  constexpr for (auto element : std::meta::list<int32_t, bool>()) {
+    auto found = my_find(priorities.begin(), priorities.end(), urgent);
+    if (found != priorities.end()) { hits = hits + 1; }
+  }
+  return hits == 2 ? 0 : 1;
+}
+)";
+  const std::string metaIncludes = includes + "#include <std/meta>\n";
+  const auto expansionCalleeFirst =
+      analyzeSource(root, directory, "expansion-callee-first.gti",
+                    metaIncludes + kGenericFind + "\n" + expandingCaller);
+  const auto expansionCallerFirst =
+      analyzeSource(root, directory, "expansion-caller-first.gti",
+                    metaIncludes + expandingCaller + "\n" + kGenericFind);
+  expect(expansionCalleeFirst.diagnostics.empty() &&
+             expansionCalleeFirst.hirValid,
+         "callee-first demand from a constexpr for expansion is accepted");
+  expect(expansionCallerFirst.diagnostics.empty() &&
+             expansionCallerFirst.hirValid,
+         "caller-first demand from a constexpr for expansion is accepted");
+  const auto expansionDiagnostic = analyzeSource(
+      root, directory, "expansion-diagnostic.gti",
+      metaIncludes + expandingCaller + "\n" +
+          std::string(kGenericFind)
+              .replace(
+                  std::string(kGenericFind).find("return std::move(first);"),
+                  std::string("return std::move(first);").size(),
+                  "int oops = missing_in_callee;\n  return std::move(first);"));
+  expect(expansionDiagnostic.diagnostics.size() == 1 &&
+             expansionDiagnostic.diagnostics[0].related.empty() &&
+             expansionDiagnostic.diagnostics[0].message.find(
+                 "missing_in_callee") != std::string::npos,
+         "a demanded callee's diagnostic is not attributed to the caller's "
+         "constexpr for expansion");
+
   // Mutual recursion between two carrier-returning generics terminates and
   // is accepted in either order.
   const char *const ping =
