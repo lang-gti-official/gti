@@ -35,7 +35,9 @@ void write<T>(mut binary_writer& out, T& value) {
     if constexpr (field.type().is_integral()) {
       write_integral(out, field.get(value), uint64_t(4));
     } else if constexpr (field.type().is_bool()) {
-      out.bytes.push_back(field.get(value) ? uint8_t(1) : uint8_t(0));
+      mut uint8_t flag = 0;
+      if (field.get(value)) { flag = uint8_t(1); }
+      out.bytes.push_back(flag);
     } else if constexpr (field.type().is_struct()) {
       write(out, field.get(value));
     }
@@ -44,7 +46,9 @@ void write<T>(mut binary_writer& out, T& value) {
 
 void write_by_hand(mut binary_writer& out, Entity& value) {
   write_integral(out, value.id, uint64_t(4));
-  out.bytes.push_back(value.alive ? uint8_t(1) : uint8_t(0));
+  mut uint8_t alive = 0;
+  if (value.alive) { alive = uint8_t(1); }
+  out.bytes.push_back(alive);
   write_integral(out, value.position.x, uint64_t(4));
   write_integral(out, value.position.y, uint64_t(4));
 }
