@@ -3,10 +3,21 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 import subprocess
 import sys
 import tempfile
+
+# Peak resident memory one optimized compile of these fixtures may reach. This
+# is a regression guard, not a benchmark. Before the SCCP solver shared
+# unchanged per-block facts, the -O3 compile of stdlib_surface_json.gti peaked
+# at roughly 11 GiB (its `main` body has about 63,000 blocks), and the full
+# suite overlaps several such compiles; afterwards it peaks near 3 GiB. The
+# ceiling leaves about twice that for allocator and platform variance while a
+# return to per-block fact copies, or a new whole-program retention of similar
+# size, still fails here instead of exhausting the machine.
+PEAK_RESIDENT_LIMIT_BYTES = 6 * 1024 ** 3
 
 
 def run(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
@@ -17,6 +28,31 @@ def run(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProces
         timeout=timeout,
         check=False,
     )
+
+
+def run_measured(command: list[str]) -> tuple[subprocess.CompletedProcess[str], int]:
+    """Run one child and return its result with its peak resident size in bytes.
+
+    wait4 reports the reaped child's own resource usage, the figure
+    `/usr/bin/time -l` prints as the maximum resident set size. There is no
+    per-call timeout; the CTest timeout bounds the whole test.
+    """
+    with tempfile.TemporaryFile(mode="w+") as stdout, tempfile.TemporaryFile(
+        mode="w+"
+    ) as stderr:
+        with subprocess.Popen(command, text=True, stdout=stdout, stderr=stderr) as child:
+            _, status, usage = os.wait4(child.pid, 0)
+            # Popen has not observed the exit; record it so the context manager
+            # does not wait again for an already reaped process.
+            child.returncode = os.waitstatus_to_exitcode(status)
+        stdout.seek(0)
+        stderr.seek(0)
+        result = subprocess.CompletedProcess(
+            command, child.returncode, stdout.read(), stderr.read()
+        )
+    # ru_maxrss is bytes on macOS and kibibytes on Linux.
+    peak = usage.ru_maxrss if sys.platform == "darwin" else usage.ru_maxrss * 1024
+    return result, peak
 
 
 def require_success(result: subprocess.CompletedProcess[str], label: str) -> None:
@@ -42,10 +78,20 @@ def main() -> int:
             for source_name in mir_cases:
                 source = fixtures / source_name
                 mir = output / f"{source.stem}-{optimization[1:]}.mir"
-                compiled = run(
-                    [gti, str(source), "--emit-mir", optimization, "-o", str(mir)]
-                )
-                require_success(compiled, f"emit MIR {source_name} {optimization}")
+                command = [gti, str(source), "--emit-mir", optimization, "-o", str(mir)]
+                if optimization == "-O3":
+                    compiled, peak = run_measured(command)
+                    require_success(compiled, f"emit MIR {source_name} {optimization}")
+                    if peak > PEAK_RESIDENT_LIMIT_BYTES:
+                        raise AssertionError(
+                            f"emit MIR {source_name} {optimization} peaked at "
+                            f"{peak / 1024 ** 3:.2f} GiB resident, above the "
+                            f"{PEAK_RESIDENT_LIMIT_BYTES / 1024 ** 3:.0f} GiB "
+                            "compiler memory guard"
+                        )
+                else:
+                    compiled = run(command)
+                    require_success(compiled, f"emit MIR {source_name} {optimization}")
                 if not mir.is_file():
                     raise AssertionError(
                         f"emit MIR {source_name} {optimization} produced no artifact"
