@@ -366,6 +366,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testCrossBlockDefiniteMoveRetiresShell",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testMoveOnlyClassResultReceiverFieldTransfer",
       "suite": "lifecycle"
     },

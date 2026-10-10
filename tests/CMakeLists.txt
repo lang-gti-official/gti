@@ -2379,6 +2379,14 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(issues_208_210_211_regressions PROPERTIES TIMEOUT 300)
   add_test(
+    NAME issues_212_214_regressions
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/issues_212_214_regression_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures"
+  )
+  set_tests_properties(issues_212_214_regressions PROPERTIES TIMEOUT 300)
+  add_test(
     NAME issue_144_class_array_field_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/issue_144_class_array_field_runtime_test.py"

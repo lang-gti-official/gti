@@ -1,0 +1,50 @@
+#include <std/resource>
+#include <std/memory>
+#include <std/utility>
+
+// The three provider forwarding forms reported in issue #212, each returning
+// a named Expected local from inside an unsafe block.
+class Forwarding {
+  std::process_resource upstream{};
+public:
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    unsafe {
+      auto granted = this.upstream.allocate(request);
+      return granted;
+    }
+  }
+  unsafe expected<std::raw_allocation, std::alloc_errc> observed(std::layout request) {
+    unsafe {
+      auto granted = this.upstream.allocate(request);
+      if (granted && granted.value().bytes == uint64_t(0)) {
+        return unexpected(std::alloc_errc::size_overflow);
+      }
+      return granted;
+    }
+  }
+  unsafe expected<std::raw_allocation, std::alloc_errc> unwrapped(std::layout request) {
+    unsafe {
+      auto granted = this.upstream.allocate(request);
+      if (!granted) { return unexpected(granted.error()); }
+      return std::move(granted).value();
+    }
+  }
+};
+
+int main() {
+  Forwarding provider{};
+  std::process_resource heap{};
+  mut int32_t failures = 0;
+  unsafe {
+    auto first = provider.allocate(std::layout(uint64_t(16), uint64_t(8)));
+    if (!first || first.value().bytes < uint64_t(16)) { failures += 1; }
+    if (first) { heap.release(std::move(first).value()); }
+    auto second = provider.observed(std::layout(uint64_t(24), uint64_t(8)));
+    if (!second || second.value().bytes < uint64_t(24)) { failures += 1; }
+    if (second) { heap.release(std::move(second).value()); }
+    auto third = provider.unwrapped(std::layout(uint64_t(32), uint64_t(8)));
+    if (!third || third.value().bytes < uint64_t(32)) { failures += 1; }
+    if (third) { heap.release(std::move(third).value()); }
+  }
+  return failures;
+}
