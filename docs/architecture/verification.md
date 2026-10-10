@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Backend crash fixes for #212–#214 (0.397.8)
+## Backend crash fixes for #212–#214 (0.397.9)
 
 - **Regression programs.** `issues_212_214_regressions` builds and runs five
   self-checking fixtures at O0 and O3 under C++20 and C++23:

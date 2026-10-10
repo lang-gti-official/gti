@@ -2135,8 +2135,16 @@ Parameter loan for an exclusive formal. Passive shared carriers use generated
 copies. A whole owning formal may instead use its explicit Move, Binding-to-Value
 handoff, prepared-slot reparenting and callee TransferOut witness. Such a formal
 cannot also acquire a body-local owner or be cleaned as an unmoved value.
-Passive exclusive carriers are admitted only on exact construction/movement
-paths; this does not grant copying or empty reference shells.
+A cleanup-free formal, such as a destructor-free class that only carries a
+borrow, has no unique cleanup recipe and therefore no Value handoff. It uses
+the same exact Move ownership event and formal binding when its Binding
+obligation and prepared slot are both passive and destructor-free, the staged
+input initializes that slot directly, and the type is a passive bound shell.
+The row records only the moved formal; no value, rollback or cleanup
+obligation is invented, and its failure-edge Binding drop retires a passive
+moved-from shell. Passive exclusive carriers are admitted only on exact
+construction/movement paths; this does not grant copying or empty reference
+shells.
 
 Every inner constructor is independently proved genuinely non-failing before
 its Invoke can be fused. Braced native argument lists retain GTI's left-to-right
