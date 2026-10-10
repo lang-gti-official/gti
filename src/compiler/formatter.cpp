@@ -274,9 +274,11 @@ public:
         }
         break;
       case Kind::LeftBracket:
+        // Consecutive attribute lists stay adjacent: `[[a]][[b]]`.
         if (isLambdaCaptureStart(lexemes, index) ||
             isStructuredBindingStart(lexemes, index) ||
-            isAttributeListStart(lexemes, index)) {
+            (isAttributeListStart(lexemes, index) &&
+             (previous == nullptr || previous->kind != Kind::RightBracket))) {
           state.space();
         } else {
           state.trimSpaces();
