@@ -2569,6 +2569,20 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
               compilerCapability == CompilerCapabilityTypeKind::NativeCScalar
                   ? *parseNativeCScalarKind(classDecl->name().lexeme)
                   : NativeCScalarKind::None});
+      if (const std::optional<CompilerTypeBinding> &binding =
+              classDecl->compilerTypeBinding()) {
+        const std::optional<CompilerTypeKind> kind =
+            compilerTypeKind(binding->name);
+        if (!kind || !isMetaLibraryUnit(currentSourceUnit)) {
+          report(binding->attribute,
+                 "@compiler_type is reserved for compiler-owned classes "
+                 "declared in their trusted standard-library unit.",
+                 "GTI-S2049");
+        } else {
+          classes.back().compilerType = *kind;
+          compilerTypeClasses.insert_or_assign(*kind, id);
+        }
+      }
       if (familyPrimary != 0) {
         auto &members = classInfo(familyPrimary).signatureFamilyMembers;
         if (members.empty()) {
@@ -2673,6 +2687,227 @@ auto SemanticVisitor::Impl::selectSignatureClassDefinition(
   return id;
 }
 
+auto SemanticVisitor::Impl::compilerTypeKind(std::string_view binding)
+    -> std::optional<CompilerTypeKind> {
+  if (binding == "meta_list") {
+    return CompilerTypeKind::MetaList;
+  }
+  if (binding == "meta_field") {
+    return CompilerTypeKind::MetaField;
+  }
+  if (binding == "meta_type") {
+    return CompilerTypeKind::MetaType;
+  }
+  if (binding == "meta_field_list") {
+    return CompilerTypeKind::MetaFieldList;
+  }
+  if (binding == "meta_field_type") {
+    return CompilerTypeKind::MetaFieldType;
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::compilerTypeClass(CompilerTypeKind kind) const
+    -> ClassId {
+  const auto found = compilerTypeClasses.find(kind);
+  return found == compilerTypeClasses.end() ? 0 : found->second;
+}
+
+auto SemanticVisitor::Impl::metaFieldCount(const SemanticType &type) const
+    -> std::uint64_t {
+  if (type.kind != SemanticType::Class || type.classId == 0 ||
+      type.classId > classes.size()) {
+    return 0;
+  }
+  return classInfo(type.classId).fields.size();
+}
+
+auto SemanticVisitor::Impl::metaTypeKind(const SemanticType &type) const
+    -> std::uint64_t {
+  // Mirrors `std::meta::kind` in stdlib/std/meta.gti.
+  switch (type.kind) {
+  case SemanticType::Class: {
+    if (type.classId == 0 || type.classId > classes.size()) {
+      return 0;
+    }
+    switch (classInfo(type.classId).kind) {
+    case ClassKind::Struct:
+      return 1;
+    case ClassKind::Class:
+      return 2;
+    case ClassKind::Interface:
+      return 3;
+    case ClassKind::Union:
+      return 4;
+    }
+    return 0;
+  }
+  case SemanticType::Enum:
+    return 5;
+  case SemanticType::Int8:
+  case SemanticType::Int16:
+  case SemanticType::Int32:
+  case SemanticType::Int64:
+  case SemanticType::UInt8:
+  case SemanticType::UInt16:
+  case SemanticType::UInt32:
+  case SemanticType::UInt64:
+    return 6;
+  case SemanticType::Float:
+  case SemanticType::Double:
+    return 7;
+  case SemanticType::Bool:
+    return 8;
+  case SemanticType::Char:
+    return 9;
+  case SemanticType::StringView:
+  case SemanticType::CString:
+    return 10;
+  case SemanticType::Reference:
+    return 11;
+  case SemanticType::Array:
+    return 12;
+  case SemanticType::RawPointer:
+    return 13;
+  case SemanticType::UniqueOwner:
+    return 14;
+  case SemanticType::SharedPointer:
+    return 15;
+  case SemanticType::Function:
+  case SemanticType::FunctionItem:
+  case SemanticType::NativeFunction:
+  case SemanticType::Lambda:
+    return 16;
+  case SemanticType::Void:
+    return 17;
+  default:
+    return 0;
+  }
+}
+
+auto SemanticVisitor::Impl::metaFieldFacts(const SemanticType &owner,
+                                           std::uint64_t index) const
+    -> std::optional<MetaFieldFacts> {
+  if (owner.kind != SemanticType::Class || owner.classId == 0 ||
+      owner.classId > classes.size()) {
+    return std::nullopt;
+  }
+  const ClassInfo &info = classInfo(owner.classId);
+  if (index >= info.fields.size() ||
+      info.fields[index].declaration == nullptr) {
+    return std::nullopt;
+  }
+  const VariableDecl &declaration = *info.fields[index].declaration;
+  const auto member = info.members.find(declaration.name().lexeme);
+  if (member == info.members.end()) {
+    return std::nullopt;
+  }
+  return MetaFieldFacts{
+      .name = declaration.name().lexeme,
+      .isPublic = member->second.access == AccessModifier::Public,
+      .type = substituteSymbol(member->second.symbol, owner).type,
+      .declaration = &declaration};
+}
+
+auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
+    -> SemanticType {
+  if (type.kind != SemanticType::Class || type.classId == 0 ||
+      type.classId > classes.size()) {
+    return type;
+  }
+  const ClassInfo &info = classInfo(type.classId);
+  switch (info.compilerType) {
+  case CompilerTypeKind::MetaFieldList: {
+    const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
+    const ClassId field = compilerTypeClass(CompilerTypeKind::MetaField);
+    if (type.arguments.size() != 1 || list == 0 || field == 0 ||
+        containsOpenTypeParameter(type.arguments.front())) {
+      return type;
+    }
+    const SemanticType &subject = type.arguments.front();
+    std::vector<SemanticType> elements;
+    const std::uint64_t count = metaFieldCount(subject);
+    elements.reserve(count);
+    for (std::uint64_t index = 0; index < count; ++index) {
+      elements.push_back(SemanticType::classType(
+          field, {subject}, {CompileTimeValue::uint64(index)}));
+    }
+    return SemanticType::classType(list, std::move(elements));
+  }
+  case CompilerTypeKind::MetaFieldType: {
+    if (type.arguments.size() != 1 || type.valueArguments.size() != 1 ||
+        type.valueArguments.front().kind != CompileTimeValue::UInt64 ||
+        containsOpenTypeParameter(type.arguments.front())) {
+      return type;
+    }
+    const std::optional<MetaFieldFacts> facts = metaFieldFacts(
+        type.arguments.front(), type.valueArguments.front().value);
+    return facts ? facts->type : type;
+  }
+  default:
+    return type;
+  }
+}
+
+auto SemanticVisitor::Impl::compileTimeSequenceElements(
+    const SemanticType &type) const
+    -> std::optional<std::vector<SemanticType>> {
+  if (type.kind != SemanticType::Class || type.classId == 0 ||
+      type.classId > classes.size()) {
+    return std::nullopt;
+  }
+  const ClassInfo &info = classInfo(type.classId);
+  if (info.genericParameters.size() != 1 ||
+      !info.genericParameters.front().pack ||
+      info.genericParameters.front().value) {
+    return std::nullopt;
+  }
+  std::vector<SemanticType> elements;
+  for (const SemanticType &argument : type.arguments) {
+    if (argument.kind == SemanticType::TypePack) {
+      if (!argument.concretePack) {
+        return std::nullopt;
+      }
+      elements.insert(elements.end(), argument.arguments.begin(),
+                      argument.arguments.end());
+    } else {
+      elements.push_back(argument);
+    }
+  }
+  return elements;
+}
+
+auto SemanticVisitor::Impl::isConstexprDefaultConstructible(
+    const SemanticType &type) const -> bool {
+  switch (type.kind) {
+  case SemanticType::Int8:
+  case SemanticType::Int16:
+  case SemanticType::Int32:
+  case SemanticType::Int64:
+  case SemanticType::UInt8:
+  case SemanticType::UInt16:
+  case SemanticType::UInt32:
+  case SemanticType::UInt64:
+  case SemanticType::Float:
+  case SemanticType::Double:
+  case SemanticType::Bool:
+  case SemanticType::Char:
+    return true;
+  case SemanticType::Class: {
+    if (type.classId == 0 || type.classId > classes.size()) {
+      return false;
+    }
+    const ConstructorInfo *constructor =
+        defaultConstructor(classInfo(type.classId));
+    return constructor != nullptr && constructor->declaration != nullptr &&
+           constructor->declaration->isConstexpr() &&
+           constructor->access == AccessModifier::Public;
+  }
+  default:
+    return false;
+  }
+}
+
 auto SemanticVisitor::Impl::selectExactClassSpecialization(
     SemanticType type) const -> SemanticType {
   for (SemanticType &argument : type.arguments) {
@@ -2684,6 +2919,7 @@ auto SemanticVisitor::Impl::selectExactClassSpecialization(
   for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
     argument = selectExactClassSpecialization(std::move(argument));
   }
+  type = rewriteCompilerType(std::move(type));
   if (type.kind != SemanticType::Class || type.classId == 0 ||
       type.classId > classes.size() ||
       classInfo(type.classId).exactSpecializationPrimary != 0) {
@@ -5426,6 +5662,17 @@ auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
   }
   if (const auto *loop = stmtAs<RangeForStmt>(statement)) {
     collectBorrowReturnExpressions(loop->lowered().get(), returns);
+    return;
+  }
+  if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
+    if (const ConstexprForExpansion *expansion =
+            semanticModel.findConstexprForExpansion(*loop)) {
+      for (const ConstexprForIteration &iteration : expansion->iterations) {
+        collectBorrowReturnExpressions(iteration.block.get(), returns);
+      }
+    } else {
+      collectBorrowReturnExpressions(loop->body().get(), returns);
+    }
     return;
   }
   if (const auto *loop = stmtAs<DoWhileStmt>(statement)) {

@@ -384,6 +384,14 @@ struct HirBody {
   std::vector<HirDropObligation> dropObligations;
   std::vector<HirValue> values;
   std::vector<HirDirectInitialization> directInitializations;
+  // Source expressions that semantics aliased to another expression (a
+  // reflected field access and the projection it denotes): the source shares
+  // the aliased expression's value without a value of its own.
+  struct SourceAlias {
+    const Expr *source = nullptr;
+    HirValueId value = 0;
+  };
+  std::vector<SourceAlias> sourceAliases;
   std::vector<HirStatement> statements;
   std::vector<HirStatementId> roots;
 
