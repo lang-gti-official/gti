@@ -1,5 +1,37 @@
 # Compiler Verification
 
+## Declared process-allocator runtime contract (unreleased groundwork)
+
+- **Contract.** `process_provider_target_contract` covers the shared symbol and
+  signature table, including the arity, return type, symbol and pointer-access
+  mismatches. For macOS, Linux and Windows targets it checks the following:
+  - exactly the target-selected family classifies, and semantics, HIR and MIR
+    agree;
+  - each classified declaration has a local summary with no synchronization,
+    user code, trap, memory read or argument escape;
+  - `process_resource::allocate` and `release` no longer synchronize, and their
+    arguments do not escape.
+- **Negative cases.** An application declaration of
+  `gti_rt_native_size_max_v1` stays an unknown boundary. So do two
+  declarations in a patched trusted stdlib copy: `gti_rt_posix_free_v1` with
+  a `const void*` parameter, and `gti_rt_posix_pointer_size_v1` moved outside
+  `gti_internal`.
+- **Forgery.** The lowered verifier rejects lost private identity, and HIR
+  rejects a classification its semantic declaration lacks. The MIR verifier
+  rejects seven forgeries: symbol, signature, linkage, definition kind,
+  operation, an unrelated classified declaration and the target family. It
+  also rejects an erased classification.
+- **Regression.** The targeted selection of 95 CTests passes on a Release
+  build with unchanged baselines. It covers the semantic and MIR header
+  contracts, the MIR, lowered-program, C++ MIR emitter, optimizer, resource,
+  allocator and version-bumped suites, and the `mir_census_regression`,
+  `lowered_program_corpus_census`, `cpp_mir_body_emitter_census`,
+  `cpp_mir_representation_snapshot`, `cpp_mir_body_emitter_corpus` and
+  `mir_cutover_corpus_oracle` checks. The serialization gains the
+  `mir-v98`/`lowered-program-v17` headers, the classification field, and
+  more precise declaration and caller summaries. No census or snapshot
+  baseline needed an update.
+
 ## Scalar-leaf construction and floating stores (0.397.2)
 
 - **Effects.** The MIR effect test now requires the vacant-construction
