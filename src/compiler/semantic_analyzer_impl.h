@@ -102,15 +102,18 @@ public:
                                    const SourceSpan &site);
   void closeConcreteProgramEffects(const ProgramInitializationPlan &plan);
 
-  explicit Impl(TargetInfo target, const SourceGraph *sourceGraph,
-                bool toolingOccurrences, FrontendWorkMetrics *workMetrics,
-                const SourceManager *sources,
-                RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
-                bool requireFunctionDefinitions = false)
+  explicit Impl(
+      TargetInfo target, const SourceGraph *sourceGraph,
+      bool toolingOccurrences, FrontendWorkMetrics *workMetrics,
+      const SourceManager *sources,
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
+      bool requireFunctionDefinitions = false,
+      TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete)
       : target(std::move(target)), sourceGraph(sourceGraph), sources(sources),
         toolingOccurrences(toolingOccurrences), workMetrics(workMetrics),
         rawPointerAudit(rawPointerAudit),
-        requireFunctionDefinitions(requireFunctionDefinitions) {
+        requireFunctionDefinitions(requireFunctionDefinitions),
+        trustedBodies(trustedBodies) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
   }
 
@@ -269,6 +272,13 @@ public:
   void visitRangeForStmt(const RangeForStmt &stmt) override;
 
   void visitFunctionDecl(const FunctionDecl &stmt) override;
+  // Trusted-body deferral; see TrustedBodyAnalysis and analyzeDeferredBodies.
+  [[nodiscard]] bool deferTrustedBody(const FunctionDecl &stmt) const;
+  void analyzeFunctionBody(const FunctionDecl &stmt,
+                           const FunctionInfo *functionInfo,
+                           bool declarationErrors,
+                           bool constexprDeclarationValid);
+  void analyzeDeferredBodies();
 
   void visitIfStmt(const IfStmt &stmt) override;
 
@@ -874,6 +884,9 @@ private:
     Token declaration;
     const VariableDecl *variableDeclaration = nullptr;
     const Parameter *parameterDeclaration = nullptr;
+    // Lexical order of a namespace global's declaration statement; 0 for
+    // every other symbol. See symbolVisibleNow.
+    std::size_t declarationOrder = 0;
     SemanticLoanId retainedLoan = 0;
     std::vector<SemanticLoanId> storageLoans;
     bool lambdaCapture = false;
@@ -4387,6 +4400,55 @@ private:
     std::unordered_set<const SwitchStmt *> recoveredExhaustiveSwitches;
     std::vector<std::unordered_map<std::string, Token>> lambdaUncapturedLocals;
     bool measureTopLevelStatements = false;
+    // Trusted bodies the lexical pass skipped; see TrustedBodyAnalysis.
+    struct DeferredBody {
+      const FunctionDecl *declaration = nullptr;
+      FunctionId function = 0;
+      std::vector<std::string> namespaceScope;
+      SourceUnitId sourceUnit = 0;
+      std::optional<ClassId> owner;
+      bool declarationErrors = false;
+      bool constexprDeclarationValid = false;
+      std::size_t declarationOrder = 0;
+    };
+    std::vector<DeferredBody> deferredBodies;
+    // Declarations visitFunctionDecl has processed, bodies analyzeFunctionBody
+    // has run, and bodies currently being analysed; see ensureBodyAnalyzed.
+    std::unordered_set<const FunctionDecl *> visitedFunctionDeclarations;
+    std::unordered_set<const FunctionDecl *> analyzedBodies;
+    std::unordered_set<const FunctionDecl *> bodiesInProgress;
+    bool bodyPhaseActive = false;
+    bool onDemandBodyAnalysis = false;
+    // Lexical order of every declaration-level statement the body pass has
+    // processed, assigned in source order. Namespace globals and constexpr
+    // definitions are visible to a body only when their order is lower than
+    // the body's own, which is what the lexical pass guaranteed implicitly
+    // before the pass became resumable.
+    std::unordered_map<const Stmt *, std::size_t> declarationOrders;
+    std::size_t declarationOrderCounter = 0;
+    std::size_t currentDeclarationOrder = 0;
+    // The resumable top-level walk; see runLexicalPass.
+    struct LexicalFrame {
+      const StmtList *statements = nullptr;
+      std::size_t index = 0;
+      std::size_t region = 0;
+      const NamespaceDecl *space = nullptr;
+      const ClassDecl *owner = nullptr;
+      ClassId ownerId = 0;
+      SourceUnitId sourceUnit = 0;
+      bool reachable = true;
+      bool reportedUnreachable = false;
+    };
+    std::vector<LexicalFrame> lexicalFrames;
+    std::size_t lexicalFrameVersion = 0;
+    // Declaration-level loan flow between leaves of the walk; a paused
+    // leaf's own loan flow lives in its BodyLocalState.
+    LoanFlowState lexicalLoanFlow;
+    // Diagnostics emitted while a demand advanced the walk past the leaf
+    // being analysed, one entry per open leaf. They are appended after that
+    // leaf's own diagnostics so the result reads in source order.
+    std::vector<std::vector<Diagnostic>> heldDiagnostics;
+    std::unordered_set<const FunctionDecl *> lexicallyReachableFunctions;
     SemanticType currentType = SemanticType::Unknown;
     SemanticType currentReturnType = SemanticType::Unknown;
     std::optional<ClassId> currentClass;
@@ -4552,6 +4614,147 @@ private:
   std::vector<std::unordered_map<std::string, Token>> &lambdaUncapturedLocals =
       requestSession.lambdaUncapturedLocals;
   bool &measureTopLevelStatements = requestSession.measureTopLevelStatements;
+  std::vector<RequestSessionState::DeferredBody> &deferredBodies =
+      requestSession.deferredBodies;
+  std::unordered_set<const FunctionDecl *> &visitedFunctionDeclarations =
+      requestSession.visitedFunctionDeclarations;
+  std::unordered_set<const FunctionDecl *> &analyzedBodies =
+      requestSession.analyzedBodies;
+  std::unordered_set<const FunctionDecl *> &bodiesInProgress =
+      requestSession.bodiesInProgress;
+  bool &bodyPhaseActive = requestSession.bodyPhaseActive;
+  bool &onDemandBodyAnalysis = requestSession.onDemandBodyAnalysis;
+  std::unordered_map<const Stmt *, std::size_t> &declarationOrders =
+      requestSession.declarationOrders;
+  std::size_t &declarationOrderCounter = requestSession.declarationOrderCounter;
+  std::size_t &currentDeclarationOrder = requestSession.currentDeclarationOrder;
+  std::vector<RequestSessionState::LexicalFrame> &lexicalFrames =
+      requestSession.lexicalFrames;
+  std::size_t &lexicalFrameVersion = requestSession.lexicalFrameVersion;
+  LoanFlowState &lexicalLoanFlow = requestSession.lexicalLoanFlow;
+  std::vector<std::vector<Diagnostic>> &heldDiagnostics =
+      requestSession.heldDiagnostics;
+  std::unordered_set<const FunctionDecl *> &lexicallyReachableFunctions =
+      requestSession.lexicallyReachableFunctions;
+
+  // Declaration-level lexical order. `beginDeclaration` gives a declaration
+  // statement the next order and makes it current for the analysis of its
+  // own initializer or body; the guard restores the enclosing order.
+  struct DeclarationOrderScope {
+    Impl &impl;
+    std::size_t enclosing;
+    DeclarationOrderScope(Impl &impl, const Stmt &stmt)
+        : impl(impl), enclosing(impl.currentDeclarationOrder) {
+      if (impl.instanceAnalysisActive)
+        return;
+      const auto found = impl.declarationOrders.find(&stmt);
+      impl.currentDeclarationOrder =
+          found != impl.declarationOrders.end()
+              ? found->second
+              : impl.declarationOrders
+                    .emplace(&stmt, ++impl.declarationOrderCounter)
+                    .first->second;
+    }
+    ~DeclarationOrderScope() { impl.currentDeclarationOrder = enclosing; }
+  };
+  [[nodiscard]] bool declaredBeforeCurrent(const Stmt *declaration) const {
+    if (instanceAnalysisActive)
+      return true;
+    const auto found = declarationOrders.find(declaration);
+    return found != declarationOrders.end() &&
+           found->second < currentDeclarationOrder;
+  }
+  [[nodiscard]] bool symbolVisibleNow(const Symbol &symbol) const {
+    return instanceAnalysisActive || symbol.variableDeclaration == nullptr ||
+           symbol.declarationOrder == 0 ||
+           symbol.declarationOrder < currentDeclarationOrder;
+  }
+
+  // The resumable lexical pass over the program's declarations.
+  void runLexicalPass(const StmtList &declarations);
+  void advanceLexicalPass(const FunctionDecl *until);
+  void rebuildLexicalEnvironment();
+  void enterLexicalNamespace(const NamespaceDecl &space, SourceUnitId unit);
+  bool enterLexicalClass(const ClassDecl &classDecl, SourceUnitId unit);
+  void exitLexicalFrame();
+  void processLexicalLeaf(const StmtPtr &statement, bool measure);
+  void indexLexicallyReachableFunctions(const StmtList &declarations);
+  [[nodiscard]] bool lexicalAdvanceAllowed() const {
+    return (functionDepth > 0 || constructorDepth > 0 || destructorDepth > 0) &&
+           !analyzingFieldInitializer && !analyzingDefaultArgument;
+  }
+  void beginClassBody(const ClassDecl &stmt, const ClassInfo &info,
+                      const SemanticType &type);
+  void endClassBody(const ClassInfo &info);
+
+  // The body-local analysis state one function body owns. On-demand body
+  // analysis moves it aside, analyses the callee from a clean state, and
+  // restores it; the field list mirrors prepareInstanceAnalysis, which resets
+  // the same state for a concrete instance. Program-wide accumulations
+  // (model, catalog, diagnostics, identity counters, constexpr definitions)
+  // are deliberately not part of it.
+  struct BodyLocalState {
+    ScopeStack scopes;
+    decltype(RequestSessionState::typeParameterScopes) typeParameterScopes;
+    decltype(RequestSessionState::valueParameterScopes) valueParameterScopes;
+    decltype(RequestSessionState::typePackScopes) typePackScopes;
+    decltype(RequestSessionState::requirementScopes) requirementScopes;
+    decltype(RequestSessionState::currentNamespace) currentNamespace;
+    SourceUnitId currentSourceUnit = 0;
+    std::optional<ClassId> currentClass;
+    const FunctionDecl *currentFunctionDeclaration = nullptr;
+    bool analyzingFieldInitializer = false;
+    bool analyzingConstructorInitializer = false;
+    bool analyzingDefaultArgument = false;
+    bool analyzingDependentConstantCondition = false;
+    bool constantConditionGenericDependency = false;
+    decltype(RequestSessionState::currentDefaultArgumentRoot)
+        currentDefaultArgumentRoot{};
+    decltype(RequestSessionState::currentDefaultParameterNames)
+        currentDefaultParameterNames;
+    bool analyzingCallCallee = false;
+    bool currentStaticMemberFunction = false;
+    bool allowPackTypeReference = false;
+    LoanFlowState loanFlow;
+    std::vector<ValueControlFlowContext> valueControlFlow;
+    decltype(RequestSessionState::contextualInitializerType)
+        contextualInitializerType;
+    decltype(RequestSessionState::contextualInitializerExpression)
+        contextualInitializerExpression{};
+    decltype(RequestSessionState::contextualOperatorIntegerType)
+        contextualOperatorIntegerType;
+    decltype(RequestSessionState::contextualCallableResult)
+        contextualCallableResult;
+    ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
+    decltype(RequestSessionState::suppressedProjectedPlaceReads)
+        suppressedProjectedPlaceReads;
+    std::size_t constructorDepth = 0;
+    std::size_t destructorDepth = 0;
+    std::size_t functionDepth = 0;
+    std::size_t loopDepth = 0;
+    std::size_t switchDepth = 0;
+    std::size_t lambdaDepth = 0;
+    decltype(RequestSessionState::lambdaUncapturedLocals)
+        lambdaUncapturedLocals;
+    decltype(RequestSessionState::structuredBindingElements)
+        structuredBindingElements;
+    SemanticType currentType = SemanticType::Unknown;
+    SemanticType currentReturnType = SemanticType::Unknown;
+    ProgramEffectOwner currentProgramEffectOwner;
+    decltype(ValueFlowState::rawPointerLoops) rawPointerLoops;
+    std::vector<RawProgramStorageState> rawProgramStorage;
+    bool measureTopLevelStatements = false;
+    bool onDemandBodyAnalysis = false;
+  };
+  [[nodiscard]] BodyLocalState captureBodyLocalState();
+  void restoreBodyLocalState(BodyLocalState state);
+  // Analyses `function`'s body now if it has not been analysed yet, so a
+  // body-derived fact a caller consumes never depends on source order.
+  void ensureBodyAnalyzed(const FunctionInfo &function);
+  void enterDeclarationContext(const std::vector<std::string> &namespaceScope,
+                               SourceUnitId sourceUnit,
+                               std::optional<ClassId> owner);
+  void exitDeclarationContext(std::optional<ClassId> owner);
   SemanticType &currentType = requestSession.currentType;
   SemanticType &currentReturnType = requestSession.currentReturnType;
   std::optional<ClassId> &currentClass = requestSession.currentClass;
@@ -4640,6 +4843,7 @@ private:
   // Fragment analysis may resolve declarations without publishing executable
   // code. Closed executable/library requests need every actual GTI call target.
   bool requireFunctionDefinitions = false;
+  TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
 };
 
 } // namespace lang

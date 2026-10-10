@@ -25,6 +25,10 @@ struct FrontendWorkMetrics {
   std::size_t semanticRegistrationMicroseconds = 0;
   std::size_t semanticBodyMicroseconds = 0;
   std::size_t semanticTrustedBodyMicroseconds = 0;
+  // Trusted bodies the lexical pass deferred, and how many were analysed on
+  // demand; see TrustedBodyAnalysis.
+  std::size_t semanticDeferredBodies = 0;
+  std::size_t semanticAnalyzedDeferredBodies = 0;
   std::size_t semanticApplicationBodyMicroseconds = 0;
   std::size_t semanticFinalizationMicroseconds = 0;
   std::size_t hirMicroseconds = 0;
@@ -48,6 +52,8 @@ struct FrontendWorkMetrics {
     semanticRegistrationMicroseconds = 0;
     semanticBodyMicroseconds = 0;
     semanticTrustedBodyMicroseconds = 0;
+    semanticDeferredBodies = 0;
+    semanticAnalyzedDeferredBodies = 0;
     semanticApplicationBodyMicroseconds = 0;
     semanticFinalizationMicroseconds = 0;
     hirMicroseconds = 0;

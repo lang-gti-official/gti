@@ -128,10 +128,12 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   const auto *construction = std::get_if<ResolvedConstructionInfo>(&selected);
   const auto *info =
       function && *function ? stagingModel.findFunction(**function) : nullptr;
-  if ((function && (info == nullptr ||
-                    !constexprDefinitionsAnalyzed.contains(*function))) ||
+  if ((function &&
+       (info == nullptr || !constexprDefinitionsAnalyzed.contains(*function) ||
+        !declaredBeforeCurrent(*function))) ||
       (construction &&
-       !constexprConstructorsAnalyzed.contains(construction->declaration))) {
+       (!constexprConstructorsAnalyzed.contains(construction->declaration) ||
+        !declaredBeforeCurrent(construction->declaration)))) {
     return std::nullopt;
   }
   const std::size_t enclosingDepth = context.work->stagingDepth;
@@ -169,8 +171,14 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       worker->catalog = catalog.snapshotForInstanceAnalysis();
       worker->semanticModel = stagingModel;
       worker->valueFlow = valueFlow;
-      worker->constexprDefinitionsAnalyzed = constexprDefinitionsAnalyzed;
-      worker->constexprConstructorsAnalyzed = constexprConstructorsAnalyzed;
+      for (const FunctionDecl *definition : constexprDefinitionsAnalyzed) {
+        if (declaredBeforeCurrent(definition))
+          worker->constexprDefinitionsAnalyzed.insert(definition);
+      }
+      for (const auto *definition : constexprConstructorsAnalyzed) {
+        if (declaredBeforeCurrent(definition))
+          worker->constexprConstructorsAnalyzed.insert(definition);
+      }
       worker->requestSession.constexprWork = context.work;
       // Concrete constant bodies also demand source access summaries. Share
       // their request-local cycle/depth accounting, not mutable body state.
