@@ -73,6 +73,19 @@ The earlier historical regression in #169 is not considered fully recovered mere
 this one cause improves. Follow-on RT-2 through RT-10 need their individual
 prerequisites and measured clients; they are not added to this implementation.
 
+## Active: Compile-Time Reflection, Phase 1 (2026-10-10)
+
+The owner accepted [`reflection.md`](reflection.md) with its decisions and
+started phase 1: `constexpr for` over compile-time sequences, `std::meta`
+metaobjects for types and fields, compiler-bound types and compiler-private
+field operations, and a binary writer as the proof client. The campaign
+touches the parser, semantic analysis (expansion, constant folding, place
+formation), HIR lowering and the trusted standard library; it adds no MIR
+operation and no backend behaviour. It is not exclusive: unrelated work may
+proceed, but changes to `if constexpr` deferral, constant folding or class
+registration should reconcile with it. Status and residual questions live in
+the plan document.
+
 ## Stabilization Reset: 2026-10-08
 
 The owner paused new issue-campaign work to finish the existing lifetime/storage
