@@ -28,6 +28,33 @@ for what minor and patch releases mean.
   construction sits between the move and the end of scope, so those
   constructors no longer carry an impossible failure path.
 
+## 0.397.10 — `expected` results passed straight to constructor parameters
+
+- Fix internal compiler error GTI-B0001 when a call's `expected<T, E>` result
+  is passed directly to a by-value `expected<T, E>` constructor parameter, as
+  in `holder h{make(true)}`, and `T` is a class that needs no cleanup. Binding
+  the result to a local first is no longer necessary. The fix covers class
+  error types, arguments before and after the `expected`, classes with a
+  destructor, loops, temporaries such as `holder(make(true)).get()`,
+  constructions inside another constructor's body, callers that propagate
+  failure, and both the value and the error state.
+- Assigning such a construction to an existing variable, returning it
+  directly, or using it as a member initializer still reports GTI-B0001, as
+  it already did for payloads that own resources.
+
+## 0.397.9 — `expected` results passed straight to by-value parameters
+
+- Fix internal compiler error GTI-B0001 when a call's `expected<T, E>` result
+  is passed directly to a by-value `expected<T, E>` parameter, as in
+  `check(make(true))`, and `T` is a class that needs no cleanup, such as a
+  struct of plain fields. Before, this only built when the result was first
+  bound to a local. The fix covers class error types, arguments before and
+  after the `expected`, member-function calls, callers that propagate failure,
+  and both the value and the error state. Payloads that own resources, such as
+  a `std::string` field, already built and are unchanged.
+- Passing such a result directly to a constructor parameter still reports
+  GTI-B0001; bind it to a local first.
+
 ## 0.397.8 — Moving a destructor-free borrowing class into a nested member
 
 - A constructor can now move a by-value parameter into a nested member
