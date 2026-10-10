@@ -218,8 +218,11 @@ jobs:
           GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
           GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
           # ASan/UBSan instrumentation at -O1 -g needs more memory per
-          # unit than the plain native build.
+          # unit than the plain native build, and an instrumented compiler
+          # test suite several times more than its plain run: six workers
+          # on a 12 GiB runner had the ownership suite OOM-killed.
           GTI_MEMORY_PER_JOB_MIB: 3072
+          GTI_MEMORY_PER_TEST_MIB: 4096
         run: bash scripts/configure_ci_resources.sh
 
       - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang
@@ -279,13 +282,18 @@ jobs:
         run: cmake --build build-sanitized --parallel "${GTI_JOBS}"
 
       - name: Test compiler and driver libraries
+        # Instrumented suites run several times slower than plain ones, so
+        # tests without their own TIMEOUT get an hour instead of CTest's
+        # 1500-second default. The whole generated-C++ corpus is the plain
+        # native job's gate; here the emitter's preflight, text, lifecycle,
+        # census and protocol checks cover the emitter under ASan/UBSan.
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: >-
           ctest --test-dir build-sanitized --output-on-failure
-          --parallel "${GTI_TEST_JOBS}"
-          -R 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline|failure_metadata|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter|cpp_mir_program_plan|cpp_mir_representation_snapshot'
+          --parallel "${GTI_TEST_JOBS}" --timeout 3600
+          -R 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline|failure_metadata|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter_(preflight|text|lifecycle|census|corpus_protocol)$|cpp_mir_program_plan|cpp_mir_representation_snapshot'
 
       - name: Report compiler cache statistics
         if: always()

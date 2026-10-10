@@ -35,31 +35,35 @@ if [[ -r "${meminfo}" ]]; then
     fi
   done < "${meminfo}"
 fi
-memory_jobs="${detected_jobs}"
-per_job="${GTI_MEMORY_PER_JOB_MIB:-}"
-if [[ -n "${per_job}" ]]; then
-  if [[ ! "${per_job}" =~ ^[1-9][0-9]*$ ]]; then
-    echo "GTI_MEMORY_PER_JOB_MIB must be a positive integer" >&2
-    exit 1
-  fi
-  if [[ -n "${memory_mib}" ]]; then
-    memory_jobs=$(( memory_mib / per_job ))
-    if (( memory_jobs < 1 )); then
-      memory_jobs=1
+# The same bound applies to CTest workers when the workflow states the memory
+# one test process needs (GTI_MEMORY_PER_TEST_MIB): sanitizer-instrumented
+# suites grow several times larger than their plain builds.
+memory_bound() {
+  local name="$1" budget="$2" what="$3" bound="${detected_jobs}"
+  if [[ -n "${budget}" ]]; then
+    if [[ ! "${budget}" =~ ^[1-9][0-9]*$ ]]; then
+      echo "${name} must be a positive integer" >&2
+      exit 1
     fi
-    if (( memory_jobs < detected_jobs )); then
-      echo "Memory bounds compile jobs: ${memory_mib} MiB visible, ${per_job} MiB per job" >&2
+    if [[ -n "${memory_mib}" ]]; then
+      bound=$(( memory_mib / budget ))
+      if (( bound < 1 )); then
+        bound=1
+      fi
+      if (( bound < detected_jobs )); then
+        echo "Memory bounds ${what}: ${memory_mib} MiB visible, ${budget} MiB each" >&2
+      else
+        bound="${detected_jobs}"
+      fi
     fi
   fi
-fi
-if (( memory_jobs < detected_jobs )); then
-  default_jobs="${memory_jobs}"
-else
-  default_jobs="${detected_jobs}"
-fi
+  printf '%s\n' "${bound}"
+}
+default_jobs="$(memory_bound GTI_MEMORY_PER_JOB_MIB "${GTI_MEMORY_PER_JOB_MIB:-}" "compile jobs")"
+default_test_jobs="$(memory_bound GTI_MEMORY_PER_TEST_MIB "${GTI_MEMORY_PER_TEST_MIB:-}" "CTest workers")"
 
 jobs="${GTI_CONFIGURED_JOBS:-${default_jobs}}"
-test_jobs="${GTI_CONFIGURED_TEST_JOBS:-${detected_jobs}}"
+test_jobs="${GTI_CONFIGURED_TEST_JOBS:-${default_test_jobs}}"
 for value in "${jobs}" "${test_jobs}"; do
   if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
     echo "GTI_JOBS and GTI_TEST_JOBS must be positive integers" >&2
