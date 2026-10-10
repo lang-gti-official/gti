@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.397.10 — Faster raw-pointer audit
+## 0.397.11 — Faster raw-pointer audit
 
 - `--raw-pointer-audit=warn` and `strict` (and the profile setting) run several
   times faster on programs that include much of the standard library, with
