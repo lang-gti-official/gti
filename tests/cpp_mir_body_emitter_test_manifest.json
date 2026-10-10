@@ -310,6 +310,30 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeExpectedClassArgumentSlot",
+      "suite": "text"
+    },
+    {
+      "name": "testCleanupFreeExpectedClassConstructorArgumentSlot",
+      "suite": "text"
+    },
+    {
+      "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
+      "suite": "text"
+    },
+    {
+      "name": "testCleanupFreeExpectedClassAssignmentSlot",
+      "suite": "text"
+    },
+    {
+      "name": "testExpectedClassReplacementSources",
+      "suite": "text"
+    },
+    {
+      "name": "testOwningExpectedReplacementSources",
+      "suite": "text"
+    },
+    {
       "name": "testForwardListEmplacementPublication",
       "suite": "lifecycle"
     },
@@ -363,6 +387,10 @@
     },
     {
       "name": "testBodyOrderedPassivePolicyConstructor",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCrossBlockDefiniteMoveRetiresShell",
       "suite": "lifecycle"
     },
     {

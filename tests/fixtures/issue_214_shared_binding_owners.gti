@@ -1,0 +1,56 @@
+#include <std/resource_vector>
+#include <std/resource>
+#include <std/memory>
+
+// Several owners lease from one resource binding inside a single class.
+class Inventory {
+  mut std::resource_vector<int32_t, std::process_resource> counts;
+  mut std::resource_vector<int32_t, std::process_resource> prices;
+public:
+  Inventory(std::resource_ref<std::process_resource> resource)
+      : counts(std::resource_vector<int32_t, std::process_resource>(resource)),
+        prices(std::resource_vector<int32_t, std::process_resource>(resource)) {}
+  void add(int32_t count, int32_t price) mut {
+    this.counts.push_back(count);
+    this.prices.push_back(price);
+  }
+  std::size_t lines() { return this.counts.size(); }
+  std::size_t priced() { return this.prices.size(); }
+};
+
+class SlotMap<std::storage_element T, std::memory_resource R> {
+  mut std::resource_storage<T, R> values;
+  mut std::resource_vector<uint32_t, R> free;
+public:
+  SlotMap(std::resource_ref<R> resource)
+      : values(std::resource_storage<T, R>(resource)),
+        free(std::resource_vector<uint32_t, R>(resource)) {}
+  void release(uint32_t slot) mut { this.free.push_back(slot); }
+  std::size_t holes() { return this.free.size(); }
+  std::size_t capacity() { return this.values.capacity(); }
+};
+
+int32_t run(std::resource_ref<std::process_resource> resource) {
+  mut Inventory inventory{resource};
+  inventory.add(3, 10);
+  inventory.add(4, 20);
+  if (inventory.lines() != std::size_t(2) ||
+      inventory.priced() != std::size_t(2)) {
+    return 1;
+  }
+  mut SlotMap<int64_t, std::process_resource> slots{resource};
+  slots.release(uint32_t(7));
+  if (slots.holes() != std::size_t(1) || slots.capacity() != std::size_t(0)) {
+    return 2;
+  }
+  return 0;
+}
+
+int main() {
+  std::process_resource heap{};
+  mut int32_t result = 0;
+  unsafe {
+    result = run(std::bind_resource(heap));
+  }
+  return result;
+}
