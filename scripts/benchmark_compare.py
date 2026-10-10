@@ -892,7 +892,12 @@ def load_build_provenance(
         report,
         {"schema", "producer", "project", "sources", "native", "artifact"}
         | ({"debug_info"} if "debug_info" in report else set())
-        | ({"raw_pointer_audit"} if "raw_pointer_audit" in report else set()),
+        | ({"raw_pointer_audit"} if "raw_pointer_audit" in report else set())
+        | (
+            {"raw_pointer_audit_library_findings"}
+            if "raw_pointer_audit_library_findings" in report
+            else set()
+        ),
         "GTI build report",
     )
     if report["schema"] != 2 or isinstance(report["schema"], bool):
@@ -905,6 +910,14 @@ def load_build_provenance(
     }:
         raise BenchmarkError("GTI build report raw_pointer_audit must be off, warn, or strict")
     report["raw_pointer_audit"] = raw_pointer_audit
+    # The additive library-findings visibility flag only selects which audit
+    # diagnostics the driver reports; older schema-2 reports omit it (hidden).
+    library_findings = report.get("raw_pointer_audit_library_findings", False)
+    if not isinstance(library_findings, bool):
+        raise BenchmarkError(
+            "GTI build report raw_pointer_audit_library_findings must be a boolean"
+        )
+    report["raw_pointer_audit_library_findings"] = library_findings
     # Schema-2 reports predating source debugging omit this additive field.
     # This harness never requests GTI source mappings, so accepting a true
     # policy would silently measure a different generated-source workflow.
