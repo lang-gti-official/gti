@@ -1492,6 +1492,22 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                                SemanticType type) const
     -> ExpressionInfo {
   const ExprKind kind = expr.exprKind();
+  if (const Expr *alias = semanticModel.findExpressionAlias(expr)) {
+    // A reflected field access is the place its alias denotes; the call's
+    // own borrow access decides whether that place is writable through it.
+    if (const ExpressionInfo *info = semanticModel.findExpression(*alias)) {
+      ExpressionInfo result = *info;
+      result.type = std::move(type);
+      if (const auto *call = exprAs<Call>(&expr)) {
+        const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+        if (resolved != nullptr &&
+            resolved->borrowAccess != AccessMode::Mutable) {
+          result.access = AccessMode::ReadOnly;
+        }
+      }
+      return result;
+    }
+  }
   const auto borrowedTextType = [](const SemanticType &candidate) {
     return candidate.kind == SemanticType::StringView ||
            candidate.kind == SemanticType::CString;
@@ -2180,6 +2196,13 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::SourceFunctionName:
         case IntrinsicKind::SourceLine:
         case IntrinsicKind::SourceColumn:
+        case IntrinsicKind::MetaFieldCount:
+        case IntrinsicKind::MetaFieldName:
+        case IntrinsicKind::MetaFieldIsPublic:
+        case IntrinsicKind::MetaTypeName:
+        case IntrinsicKind::MetaTypeKind:
+        case IntrinsicKind::MetaFieldGet:
+        case IntrinsicKind::MetaFieldGetMut:
         case IntrinsicKind::SimdAdd:
         case IntrinsicKind::SimdSubtract:
         case IntrinsicKind::SimdMultiply:
@@ -2869,6 +2892,16 @@ auto SemanticVisitor::Impl::isPolymorphicLibraryUnit(
          unit->standardLibraryName == "std/polymorphic";
 }
 
+auto SemanticVisitor::Impl::isMetaLibraryUnit(SourceUnitId sourceUnit) const
+    -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/meta";
+}
+
 auto SemanticVisitor::Impl::isSourceLocationLibraryUnit(
     SourceUnitId sourceUnit) const -> bool {
   if (sourceGraph == nullptr) {
@@ -3040,6 +3073,7 @@ auto SemanticVisitor::Impl::recordToolingSymbol(
        .name = name.lexeme,
        .qualifiedName = std::move(qualified),
        .sourceUnit = sourceUnit,
+       .expansion = name.expansion,
        .nameSpan = span,
        .declarationSpan = span,
        .definitionSpan =
@@ -3062,7 +3096,8 @@ auto SemanticVisitor::Impl::symbolForDeclaration(const Token &name) const
     -> SymbolId {
   return semanticModel.symbolForDeclaration(
       sourceUnitFor(name), tokenSpan(name),
-      name.generated ? std::string_view{name.lexeme} : std::string_view{});
+      name.generated ? std::string_view{name.lexeme} : std::string_view{},
+      name.expansion);
 }
 
 auto SemanticVisitor::Impl::bindingSymbolKind(SemanticBindingKind bindingKind)
@@ -6423,6 +6458,9 @@ auto SemanticVisitor::Impl::semanticPlace(const Expr *expression)
   if (expression == nullptr) {
     return {};
   }
+  if (const Expr *alias = semanticModel.findExpressionAlias(*expression)) {
+    return semanticPlace(alias);
+  }
   const ExprKind kind = expression->exprKind();
   if (kind == ExprKind::Grouping) {
     return semanticPlace(
@@ -7693,10 +7731,29 @@ auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
     return receiverStateSymbol();
   if (place.root == 0)
     return nullptr;
+  // A binding names this root exactly when its declaration token carries the
+  // key the identity was recorded under: the database maps each declaration
+  // key (source unit, name span, generated lexeme) to one identity and keeps
+  // that key on the identity's record. Comparing the record's fields costs an
+  // integer compare per candidate, where `symbolForDeclaration` hashed a key
+  // per candidate, and a miss visits every namespace symbol of every unit.
+  const SymbolRecord *record = semanticModel.database().findSymbol(place.root);
+  if (record == nullptr)
+    return nullptr;
+  const std::string_view generatedName =
+      record->generated ? std::string_view{record->name} : std::string_view{};
   const auto find = [&](auto &bindings) -> Symbol * {
-    for (auto &[_, symbol] : bindings)
-      if (symbolForDeclaration(symbol.declaration) == place.root)
+    for (auto &[_, symbol] : bindings) {
+      const Token &name = symbol.declaration;
+      if (name.position != record->nameSpan.start)
+        continue;
+      const std::string_view tokenGeneratedName =
+          name.generated ? std::string_view{name.lexeme} : std::string_view{};
+      if (tokenSpan(name).end == record->nameSpan.end &&
+          tokenGeneratedName == generatedName &&
+          sourceUnitFor(name) == record->sourceUnit)
         return &symbol;
+    }
     return nullptr;
   };
   for (auto &scope : scopes)
@@ -7968,7 +8025,15 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   // snapshot; only the normalized result facts leave this worker.
   auto worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
                                        sources, RawPointerAuditMode::Warn);
-  worker->catalog = catalog.snapshotForInstanceAnalysis();
+  // Every snapshot of the sealed catalog is identical, and the instance
+  // analysis below asserts the worker's catalog unchanged on exit, so a
+  // snapshot released by an earlier query is the same as a fresh one.
+  if (state->idleCatalogs.empty()) {
+    worker->catalog = catalog.snapshotForInstanceAnalysis();
+  } else {
+    worker->catalog = std::move(state->idleCatalogs.back());
+    state->idleCatalogs.pop_back();
+  }
   worker->semanticModel = semanticModel;
   worker->valueFlow = valueFlow;
   // Cached summaries must describe global pointer inputs, not freeze the
@@ -8026,6 +8091,7 @@ auto SemanticVisitor::Impl::runRawResultQuery(
           : worker->analyzeFunctionInstance(entry->function, entry->ownerTypes,
                                             entry->ownerValues, entry->types,
                                             entry->values);
+  state->idleCatalogs.push_back(std::move(worker->catalog));
   entry->valid = analysis.valid();
   if (!entry->valid)
     for (const auto &diagnostic : analysis.diagnostics)

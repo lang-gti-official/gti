@@ -181,6 +181,9 @@ than mixed into the active queue.
   C-first `gti bindgen` plan: current bounded C17/LP64/LLP64 import, its
   scalable libclang migration, and the later C++/build-integration gates
 - [LSP evolution](plans/lsp-evolution.md)
+- [Compile-time semantic reflection](plans/reflection.md) — three-phase
+  proposal for metaobjects, `constexpr for`, attributes, enums, structural
+  construction, with the open questions each phase must answer
 - [Performance tooling](plans/performance-tooling.md)
 - [Archived plan records](plans/archive/README.md) — completed delivery plans,
   migrations, and historical checkpoints retained without presenting them as
