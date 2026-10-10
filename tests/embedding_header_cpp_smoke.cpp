@@ -1,6 +1,7 @@
 #include "fixtures/embedding/gti_embedding_v1.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <type_traits>
 
 static_assert(GTI_EMBED_ABI_VERSION_V1 == 1);

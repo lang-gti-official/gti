@@ -63,7 +63,7 @@ lang::FrontendResult analyze(const std::string &body) {
 }
 
 void checkSchedules() {
-  for (const std::string &program :
+  for (const std::string program :
        {"mut Counter owner{}; service(owner).advance(2); return owner.value - "
         "6;",
         "mut Counter owner{}; int value = Service(owner).read(); return value "

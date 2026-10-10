@@ -63,6 +63,9 @@ jobs:
         env:
           GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
           GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          # The bundled LLVM/Clang build compiles its large units beside
+          # GTI's; running one per processor exhausted the runner's memory.
+          GTI_MEMORY_PER_JOB_MIB: 3072
         run: bash scripts/configure_ci_resources.sh
 
       - name: Install Linux build dependencies, Ninja, and Clang
