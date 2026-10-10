@@ -298,6 +298,13 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(),                                // SourceFunctionName
     harmless(),                                // SourceLine
     harmless(),                                // SourceColumn
+    harmless(), // MetaFieldCount: folded in semantics, never executes.
+    harmless(), // MetaFieldName
+    harmless(), // MetaFieldIsPublic
+    harmless(), // MetaTypeName
+    harmless(), // MetaTypeKind
+    harmless(), // MetaFieldGet: aliased to the field projection it denotes.
+    harmless(), // MetaFieldGetMut
     MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdAdd
     MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdSubtract
     MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdMultiply
@@ -564,6 +571,13 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "source-function-name",
     "source-line",
     "source-column",
+    "meta-field-count",
+    "meta-field-name",
+    "meta-field-is-public",
+    "meta-type-name",
+    "meta-type-kind",
+    "meta-field-get",
+    "meta-field-get-mut",
     "simd-add",
     "simd-subtract",
     "simd-multiply",
