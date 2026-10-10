@@ -545,6 +545,52 @@ rows retain the source declaration so the C++ backend can emit the alias in its
 owning class; no HIR or MIR instruction is introduced because an alias has no
 runtime effect.
 
+## Compile-Time Iteration And Reflection
+
+`constexpr for` is expanded by semantic analysis and is gone afterwards.
+`visitConstexprForStmt` analyzes the sequence expression, requires a class
+type with one type-pack argument list (`compileTimeSequenceElements`), and
+defers when the type contains an open generic parameter, using the same
+deferral marks as a dependent `if constexpr`. Otherwise it clones the body
+once per element with `cloneStmt` (`ast_clone.cpp`), builds the element
+binding `[constexpr] auto name = <element>()`, wraps both in a block and
+analyzes the block. Every copy's tokens carry an expansion id
+(`Token::expansion`), which is part of the declaration-symbol key
+(`DeclarationKey`, `SymbolRecord::expansion`), so the declarations of one copy
+have identities distinct from the original's and from other copies' while
+uses of outer declarations keep theirs. The generated element initializer is
+bound to a default construction of the element by `visitCallExpr`. The
+expansion is recorded on the statement (`recordConstexprForExpansion`;
+`nullopt` means deferred) and the copies are owned by the model
+(`adoptExpansionArena`) because HIR and instance deltas point into them. HIR
+lowers the recorded blocks as a `CompileTimeBranch`, exactly like a selected
+`if constexpr` branch, so MIR and the backend see ordinary statements.
+
+The trusted `std/meta` unit binds two kinds of declaration. Functions in
+`gti_internal` (`meta_field_count`, `meta_field_name`, `meta_field_is_public`,
+`meta_type_name`, `meta_type_kind`) are intrinsics bound by unit and name
+(`trustedIntrinsicKind`); `analyzeMetaIntrinsicCall` records the call and,
+when its generic arguments are concrete, the answer as a program constant with
+a substitution, so the call never executes; `metaIntrinsicConstant` gives the
+constexpr interpreter the same answer under its substitution. Classes carry
+`@compiler_type("<binding>")` (`ClassInfo::compilerType`): `meta_list`,
+`meta_field` and `meta_type` are ordinary classes the compiler must be able
+to name, and `meta_field_list` and `meta_field_type` are computed types that
+`rewriteCompilerType` rewrites in `selectExactClassSpecialization`, the
+canonicalization point both `typeOf` and `substituteType` pass through, as
+soon as their arguments are concrete.
+
+`field.get(owner)` and `get_mut` on a `meta_field` value are intercepted in
+`visitCallExpr` (`analyzeMetaFieldAccess`): semantics synthesizes the
+projection `owner.<field>` as an expression owned by the model, analyzes it in
+the caller's context, and records it as the call's alias
+(`recordExpressionAlias`). Classification, place walking (`semanticPlace`),
+HIR lowering and the HIR source-alias table (`HirBody::sourceAliases`) follow
+the alias, so every access, borrow and lowering rule is the direct access's.
+The call keeps a `ResolvedCallInfo` with the `MetaFieldGet`/`MetaFieldGetMut`
+kind for passes that read the call shape; it has no borrow origin because it
+is the place itself.
+
 ## Request Sessions
 
 Function-signature syntax has a distinct `TypeRef` shape and resolves to

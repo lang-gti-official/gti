@@ -375,6 +375,9 @@ module.exports = grammar({
         ")",
       ),
 
+    compiler_type_binding: ($) =>
+      seq("@", "compiler_type", "(", field("binding", $.string_literal), ")"),
+
     concept_declaration: ($) =>
       choice(
         seq(
@@ -437,6 +440,7 @@ module.exports = grammar({
 
     class_declaration: ($) =>
       seq(
+        optional(field("compiler_binding", $.compiler_type_binding)),
         optional(
           field("attributes", $.class_attribute_list),
         ),
@@ -1010,6 +1014,7 @@ module.exports = grammar({
         $.unsafe_statement,
         $.while_statement,
         $.for_statement,
+        $.constexpr_for_statement,
         $.switch_statement,
         $.break_statement,
         $.continue_statement,
@@ -1063,6 +1068,18 @@ module.exports = grammar({
             field("range", $.expression),
           ),
         ),
+        ")",
+        field("body", $.statement),
+      ),
+
+    constexpr_for_statement: ($) =>
+      seq(
+        "constexpr",
+        "for",
+        "(",
+        field("binding", $.range_for_declaration),
+        ":",
+        field("sequence", $.expression),
         ")",
         field("body", $.statement),
       ),
