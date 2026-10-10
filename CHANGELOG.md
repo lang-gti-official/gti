@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.397.1 — Faster compilation of library-heavy programs
+
+- GTI no longer re-verifies a whole program it has already verified within the
+  same compilation step. Programs that use much of the standard library, such
+  as the JSON, HTTP and library-workflow examples, spend about 17% less time
+  in GTI at `-O0` and `-O1`. Generated C++ and diagnostics are unchanged.
+
 ## 0.397.0 — Source-defined vector and string; allocation exhaustion aborts
 
 - **Allocation exhaustion now aborts, as in Rust.** When an infallible

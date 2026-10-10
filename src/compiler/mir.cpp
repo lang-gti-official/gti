@@ -4843,6 +4843,14 @@ rewriteMirDeadInstruction(MirProgram &program, MirBodyAddress address,
   if (!verifyMirProgram(program).valid()) {
     return std::nullopt;
   }
+  return mir_detail::rewriteVerifiedMirDeadInstruction(program, address,
+                                                       instructionId);
+}
+
+std::optional<MirDeadInstructionRewrite>
+mir_detail::rewriteVerifiedMirDeadInstruction(MirProgram &program,
+                                              MirBodyAddress address,
+                                              MirInstructionId instructionId) {
   MirProgram candidate = program;
   MirBody *body = findMirBody(candidate, address);
   if (body == nullptr || instructionId == 0) {
