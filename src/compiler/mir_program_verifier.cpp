@@ -324,7 +324,8 @@ callableSourceBindingForOperand(const MirBody &body, const MirOperand &operand,
                                         const MirOperand &operand,
                                         HirBindingId binding,
                                         std::size_t depth = 0) {
-  if (depth > body.values.size() + body.instructionCount() ||
+  if ((depth > body.values.size() &&
+       depth > body.values.size() + body.instructionCount()) ||
       operand.kind != MirOperandKind::Value || binding == 0) {
     return false;
   }
@@ -461,7 +462,8 @@ hasOneExactExecutableValueUse(const MirBody &body, MirValueId valueId,
     MirValueUseKind expectedKind = MirValueUseKind::Terminator,
     MirInstructionId expectedInstruction = 0,
     std::size_t expectedOperandIndex = 0, std::size_t depth = 0) {
-  if (depth > body.values.size() + body.instructionCount() ||
+  if ((depth > body.values.size() &&
+       depth > body.values.size() + body.instructionCount()) ||
       operand.kind != MirOperandKind::Value || binding == 0 ||
       !hasOneExactExecutableValueUse(body, operand.value, expectedKind,
                                      expectedInstruction,
@@ -1161,7 +1163,8 @@ callableSourceBindingForValue(const MirBody &body, MirValueId valueId,
 [[nodiscard]] std::optional<HirBindingId>
 callableSourceBindingForPlace(const MirBody &body, MirPlaceId placeId,
                               std::size_t depth) {
-  if (depth > body.places.size() + body.values.size() + body.loans.size() +
+  if (depth > body.places.size() + body.values.size() + body.loans.size() &&
+      depth > body.places.size() + body.values.size() + body.loans.size() +
                   body.instructionCount()) {
     return std::nullopt;
   }
@@ -1212,7 +1215,8 @@ callableSourceBindingForOperand(const MirBody &body, const MirOperand &operand,
 [[nodiscard]] std::optional<HirBindingId>
 callableSourceBindingForValue(const MirBody &body, MirValueId valueId,
                               std::size_t depth) {
-  if (depth > body.places.size() + body.values.size() + body.loans.size() +
+  if (depth > body.places.size() + body.values.size() + body.loans.size() &&
+      depth > body.places.size() + body.values.size() + body.loans.size() +
                   body.instructionCount()) {
     return std::nullopt;
   }
