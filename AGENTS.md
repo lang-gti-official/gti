@@ -54,6 +54,15 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   first meaningful checkpoint. Commit and push coherent checkpoints before
   pauses/handoffs and at completion. Do not leave meaningful task work only in
   an opaque local checkout or reuse another task's branch.
+- Run every full build and every full or broad test suite through the shared
+  build window, whether or not the helper runs it:
+  `python3 scripts/build_window.py --kind build -- cmake --build <tree> ...` and
+  `python3 scripts/build_window.py --kind suite -- ctest --test-dir <tree> ...`.
+  The window is one counted semaphore under the Git common directory, shared
+  by every worktree and session on the machine, so concurrent agents stop
+  stacking full suites on each other. Focused tests (`ctest -R '^name$'`, one
+  harness fixture) and single-file compiles run directly. `verify` takes a
+  suite slot itself; `build_window.py --status` shows who holds the slots.
 - Use `scripts/agent_workflow.py` for lifecycle operations. Reconcile upstream,
   validate the resulting head/base, and merge only through Gitea PRs. Respect
   required checks/reviews. No direct pushes to `main`, rewritten shared history,

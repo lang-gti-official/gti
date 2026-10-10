@@ -842,6 +842,16 @@ add_test(NAME expected_class_return_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_return_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_class_return_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_class_argument_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_class_argument_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_class_argument_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_class_assignment_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_class_assignment_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME consuming_call_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/consuming_call_assignment_runtime_test.py"
@@ -1345,6 +1355,12 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/agent_workflow_test.py"
   )
+  add_test(
+    NAME build_window
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/build_window_test.py"
+  )
+  set_tests_properties(build_window PROPERTIES TIMEOUT 120)
   add_test(
     NAME cmake_test_ownership
     COMMAND "${Python3_EXECUTABLE}"
@@ -2397,6 +2413,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures"
   )
   set_tests_properties(issues_208_210_211_regressions PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME issues_212_214_regressions
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/issues_212_214_regression_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures"
+  )
+  set_tests_properties(issues_212_214_regressions PROPERTIES TIMEOUT 300)
   add_test(
     NAME issue_144_class_array_field_runtime
     COMMAND "${Python3_EXECUTABLE}"

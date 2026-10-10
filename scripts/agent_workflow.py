@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import importlib.util
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,6 +23,19 @@ CANONICAL = "https://git.internal.howetotech.dev/gti-lang/gti.git"
 API = "https://git.internal.howetotech.dev/api/v1/repos/gti-lang/gti"
 REPOSITORY = "gti-lang/gti"
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
+LOCK_WAIT_SECONDS = 30.0
+
+
+def load_build_window():
+    """Import the sibling build-window module without requiring scripts/ on sys.path."""
+    path = Path(__file__).resolve().with_name("build_window.py")
+    spec = importlib.util.spec_from_file_location("gti_build_window", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+build_window = load_build_window()
 
 
 class WorkflowError(RuntimeError):
@@ -88,14 +103,24 @@ class Workflow:
         self.state_dir = self.common / "gti-agent-workflow"
         self.state_dir.mkdir(exist_ok=True)
         self.api = api or Gitea(self.primary)
+        # Heavy validation runs inside the shared build window, never under
+        # the metadata lock, so peers can register and inspect tasks meanwhile.
+        self.window = build_window.Window(build_window.directory_for(self.common))
+        self.lock_wait = LOCK_WAIT_SECONDS
 
     @contextmanager
     def lock(self):
+        """Short repo-wide lock for metadata operations; waits briefly, never removes a live lock."""
         path = self.state_dir / "lock"
-        try:
-            path.mkdir()
-        except FileExistsError as error:
-            raise WorkflowError(f"Another workflow operation holds {path}; if interrupted, inspect its owner before removing the lock") from error
+        deadline = time.monotonic() + self.lock_wait
+        while True:
+            try:
+                path.mkdir()
+                break
+            except FileExistsError as error:
+                if time.monotonic() >= deadline:
+                    raise WorkflowError(f"Another workflow operation holds {path}; if interrupted, inspect its owner before removing the lock") from error
+                time.sleep(0.2)
         try:
             (path / "owner.json").write_text(json.dumps({"pid": os.getpid(), "time": self.now()}))
             yield
@@ -313,34 +338,57 @@ class Workflow:
         return self.checkpoint(task)
 
     def verify(self, task, checks):
-        state = self.load(task)
-        if state["phase"] in {"merged", "synced", "completed", "abandoned"} or (state.get("pr") and self.pull(state)["state"] != "open"):
-            raise WorkflowError("Task is integrated or closed; do not validate it as new work")
-        root = self.tree(state)
-        clean(root)
-        base = self.fetch()
-        head = git(root, "rev-parse", "HEAD")
-        if not self.ancestor(base, head):
-            raise WorkflowError("main advanced; reconcile before verification")
-        if state.get("published_head") != head:
-            raise WorkflowError("Checkpoint the current head before verification")
-        if not isinstance(checks, list) or not checks or any(not isinstance(c, list) or not c or
-                             any(not isinstance(a, str) or not a for a in c) for c in checks):
-            raise WorkflowError("Checks must be a nonempty JSON array of argv arrays")
-        state.pop("verified", None)
-        self.save(state, "verifying")
-        for command in checks:
-            result = subprocess.run(command, cwd=root, check=False)
-            if result.returncode:
-                self.save(state, "blocked")
-                raise WorkflowError("Validation failed; correct it and verify again")
-        clean(root)
-        if git(root, "rev-parse", "HEAD") != head or self.fetch() != base:
-            self.save(state, "active")
-            raise WorkflowError("Head or main changed during validation; reconcile and verify again")
-        state["verified"] = {"head": head, "base": base, "checks": checks, "at": self.now()}
-        self.save(state, "ready")
-        return state
+        """Record the attempt under the lock, run the checks in a build-window suite slot, then record the result.
+
+        The metadata lock is held only while task records change, so a peer's
+        `start`, `status`, `checkpoint` or `cleanup` never waits on validation.
+        The checks themselves hold one `suite` slot of the shared build window.
+        """
+        with self.lock():
+            state = self.load(task)
+            if state["phase"] in {"merged", "synced", "completed", "abandoned"} or (state.get("pr") and self.pull(state)["state"] != "open"):
+                raise WorkflowError("Task is integrated or closed; do not validate it as new work")
+            root = self.tree(state)
+            clean(root)
+            base = self.fetch()
+            head = git(root, "rev-parse", "HEAD")
+            if not self.ancestor(base, head):
+                raise WorkflowError("main advanced; reconcile before verification")
+            if state.get("published_head") != head:
+                raise WorkflowError("Checkpoint the current head before verification")
+            if not isinstance(checks, list) or not checks or any(not isinstance(c, list) or not c or
+                                 any(not isinstance(a, str) or not a for a in c) for c in checks):
+                raise WorkflowError("Checks must be a nonempty JSON array of argv arrays")
+            state.pop("verified", None)
+            self.save(state, "verifying")
+        try:
+            with self.window.acquire("suite", [sys.executable, __file__, "verify", task],
+                                     worktree=str(root), checks=checks):
+                for command in checks:
+                    result = subprocess.run(command, cwd=root, check=False)
+                    if result.returncode:
+                        self.record(task, "verifying", "blocked")
+                        raise WorkflowError("Validation failed; correct it and verify again")
+        except build_window.WindowError as error:
+            self.record(task, "verifying", "active")
+            raise WorkflowError(str(error)) from error
+        with self.lock():
+            state = self.load(task)
+            clean(root)
+            if (state["phase"] != "verifying" or state.get("published_head") != head or
+                    git(root, "rev-parse", "HEAD") != head or self.fetch() != base):
+                self.save(state, "active")
+                raise WorkflowError("Head or main changed during validation; reconcile and verify again")
+            state["verified"] = {"head": head, "base": base, "checks": checks, "at": self.now()}
+            self.save(state, "ready")
+            return state
+
+    def record(self, task, expected, phase):
+        """Move a task from `expected` to `phase` under the lock, leaving concurrent changes alone."""
+        with self.lock():
+            state = self.load(task)
+            if state["phase"] == expected:
+                self.save(state, phase)
 
     def protection(self, configure=False):
         rules = self.api.request("GET", "/branch_protections")
@@ -535,13 +583,16 @@ def main():
     args = parser.parse_args()
     try:
         workflow = Workflow(args.repo)
+        if args.command == "verify":
+            # verify takes the metadata lock itself, only around record changes.
+            result = workflow.verify(args.task, json.loads(Path(args.checks_file).read_text()))
+            print(json.dumps(result, indent=2))
+            return 0
         with workflow.lock():
             if args.command == "start":
                 result = workflow.start(args.task, args.title, args.worktree, args.branch, args.adopt)
             elif args.command == "checkpoint":
                 result = workflow.checkpoint(args.task, args.message, args.paths)
-            elif args.command == "verify":
-                result = workflow.verify(args.task, json.loads(Path(args.checks_file).read_text()))
             elif args.command == "finish":
                 result = workflow.finish(args.task, Path(args.body_file).read_text(), args.pr_only)
             elif args.command == "abandon":

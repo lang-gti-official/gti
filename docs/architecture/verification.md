@@ -1,5 +1,59 @@
 # Compiler Verification
 
+## Backend crash fixes for #212–#214 (0.397.9)
+
+- **Regression programs.** `issues_212_214_regressions` builds and runs five
+  self-checking fixtures at O0 and O3 under C++20 and C++23:
+  - a user-defined payload returned four ways from a named `expected`;
+  - the issue's forwarding provider in its three reported forms;
+  - every container call reported through a raw-pointer field, plus a method
+    on the pointee itself;
+  - the issue's `Inventory` and its generic `SlotMap` variant;
+  - a user-defined lease chain with the same shape, plus the shape that
+    compiled but did not link.
+
+  Every fixture fails to build before this change.
+- **Shared proof.** `testCrossBlockDefiniteMoveRetiresShell`:
+  - proves both continuations of an invoke after a move;
+  - keeps the destructor edge at the entry, a merge, a cycle, a non-invoke
+    edge, and a conditional, tombstoned or re-initialized move;
+  - checks a moved parameter's real retirements after an invoke end to end;
+  - confirms that restoring the destructor edge fails verification.
+- **Changed expectations.** Five tests relied on an impossible failure path,
+  a moved-from shell's destructor:
+  - the forward-list emplacement test's unpublished-return cleanup coverage
+    now uses a guard whose destructor can genuinely fail after the returned
+    borrow forms;
+  - the cleanup-bound mutation fixture's `outer()` gains an unmoved guard, so
+    a genuinely fallible cleanup still runs while its result is pending;
+  - the lambda transport fixture's `named_exact_lambda` gains an unmoved
+    printing witness for its pending-result preflight shape, and its runtime
+    test expects the witness's output;
+  - the collection-initialization return-tail fixture gains an unmoved
+    witness, so its moved-from cleanup tail still spans blocks;
+  - the owned-callable transport fixture's exact-field `own` takes a by-value
+    tracer, which keeps its pending-result rollback mutations reachable.
+- **No-failure proof scope.** An earlier draft accepted any route after an
+  impossible failure. `cthread_semantic_ir`'s fail-closed mutations showed
+  that this dropped the rule that such routes stay passive and exact. The
+  proof now accepts only exact rollbacks of fields already published and
+  definitely moved parameter shells, and every mutation is rejected again.
+- **A real gap found during development.** An earlier draft followed any
+  unique incoming edge. In `forward_list_algorithms`, lowering saw a single
+  predecessor that later became a loop header, and verification rejected the
+  drop. The proof now follows only invoke edges, which lowering never adds
+  later.
+- **Compile time.** Scanning every block for a predecessor at each drop made
+  failure-route drains quadratic: the `json` standard-library fixture took
+  over ten minutes. Lowering now records invoke continuations as each
+  terminator is set, and verification builds the same table once per body.
+  Compile time is back to the pre-change level (that fixture: 24.8 s before,
+  25.2 s after; five other large fixtures within 2%).
+- **Suites.** 160 targeted CTests pass: every MIR, emitter, census, snapshot,
+  failure, lifecycle, cleanup, constructor, `expected`, resource, optimizer and
+  issue-regression test, in Release with `-j8`. No census baseline changes;
+  the emitter test manifest lists the new unit test.
+
 ## Capture analysis (0.397.4)
 
 - **Analysis unit test.** `testCaptureSummariesAndLocalFlow` derives
@@ -3017,7 +3071,21 @@ required-check refusal. It checks preservation of dirty/divergent local main,
 cleanup refusal for new commits/ignored/source files, conditional branch
 deletion, abandonment, locks and preservation of existing protection settings.
 It performs no production network request or GTI compilation. Live lifecycle
-delivery verifies the actual instance's draft, protection and merge APIs.
+delivery verifies the actual instance's draft, protection and merge APIs. It
+also checks that `verify` releases the metadata lock while its checks run,
+holds exactly one build-window `suite` slot for them, reclaims a slot whose
+owner exited, reports a live holder when the window is full, and lets a peer
+task checkpoint while validation is in progress.
+
+`build_window` exercises `scripts/build_window.py` in a temporary directory:
+slot files record owner pid, time, kind and command and disappear on release;
+a waiter blocks until a full window frees a slot and prints who holds it; a
+bounded wait reports the holders; a slot of an exited pid is reclaimed while a
+live one never is; the suite and build counts come from defaults, the
+`GTI_BUILD_WINDOW_*` environment and overriding flags; the CLI holds its slot
+for the whole wrapped command, propagates the command's exit status and lists
+holders with `--status`; and an interrupt delivered to the process group
+releases the slot. The last check is POSIX-only.
 
 ## CLI terminal colour
 
@@ -5748,7 +5816,10 @@ python3 tests/owning_function_runtime_test.py build/gti --jobs 1
 On a 12-core host with sufficient memory, a larger accounted allocation can
 shorten long-suite tails while still letting three four-worker suites share
 the machine. Reconfigure the same Ninja tree rather than launching multiple
-uncoordinated CTest runs:
+uncoordinated CTest runs, and wrap whole-suite runs and full builds in the
+shared build window (`python3 scripts/build_window.py --kind suite|build --
+<command>`, described with the agent workflow), which admits one suite and
+two builds at a time across every worktree on the host:
 
 ```sh
 cmake -S . -B build -DGTI_TEST_CASE_JOBS=4
