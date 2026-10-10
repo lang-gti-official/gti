@@ -19,7 +19,7 @@
     edge, and a conditional, tombstoned or re-initialized move;
   - checks a moved parameter's real retirements after an invoke end to end;
   - confirms that restoring the destructor edge fails verification.
-- **Changed expectations.** Three tests relied on an impossible failure path,
+- **Changed expectations.** Five tests relied on an impossible failure path,
   a moved-from shell's destructor:
   - the forward-list emplacement test's unpublished-return cleanup coverage
     now uses a guard whose destructor can genuinely fail after the returned
@@ -28,7 +28,16 @@
     a genuinely fallible cleanup still runs while its result is pending;
   - the lambda transport fixture's `named_exact_lambda` gains an unmoved
     printing witness for its pending-result preflight shape, and its runtime
-    test expects the witness's output.
+    test expects the witness's output;
+  - the collection-initialization return-tail fixture gains an unmoved
+    witness, so its moved-from cleanup tail still spans blocks;
+  - the owned-callable transport fixture's exact-field `own` takes a by-value
+    tracer, which keeps its pending-result rollback mutations reachable.
+- **No-failure proof scope.** An earlier draft accepted any route after an
+  impossible failure. `cthread_semantic_ir`'s fail-closed mutations showed
+  that this dropped the rule that such routes stay passive and exact. The
+  proof now accepts only exact rollbacks of fields already published and
+  definitely moved parameter shells, and every mutation is rejected again.
 - **A real gap found during development.** An earlier draft followed any
   unique incoming edge. In `forward_list_algorithms`, lowering saw a single
   predecessor that later became a loop header, and verification rejected the
