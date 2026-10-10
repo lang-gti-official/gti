@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.398.2 — Generic callees declared after their caller
+## 0.398.3 — Generic callees declared after their caller
 
 - A generic function that returns a moved by-value parameter, such as an
   iterator-returning `find`, can now be declared after the function that calls
@@ -18,6 +18,23 @@ for what minor and patch releases mean.
   callee first was accepted. The caller now asks for the callee's body
   analysis on demand; declaration-order rules are unchanged, so namespace
   globals and `constexpr` definitions must still precede their uses.
+
+## 0.398.2 — Faster C++ emission for long function bodies
+
+- The C++ backend no longer re-derives two per-body facts for every
+  statement it admits and emits: which `Move` may publish a class-valued
+  return directly, and whether a drop's cleanup recipe is the unique cleanup
+  of its type. Both answers are now remembered per body, and the return-move
+  proof looks blocks up by position instead of scanning. For a single long
+  function body this removed most of the compile: `gti --emit-cpp` on
+  `tests/fixtures/stdlib_surface_json.gti` (one `main` that generates about
+  34 MB of C++) takes about 7 s of CPU instead of 28 s at `-O0` and 55 s
+  instead of 77 s at `-O2`; `stdlib_surface_format.gti` drops from 2.3 s to
+  1.8 s at `-O0`. Ordinary programs change by a few percent at most. The MIR
+  verifier also stops recounting a body's instructions at every step of its
+  callable-metadata recursion. Generated C++, emitted MIR and diagnostics are
+  byte-for-byte unchanged across the examples, the standard-library surface
+  fixtures and the multi-file example projects at `-O0` and `-O2`.
 
 ## 0.398.1 — Faster raw-pointer audit
 
