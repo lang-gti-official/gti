@@ -67,7 +67,11 @@ not a second semantic or test-selection authority.
    `Release`, `RelWithDebInfo`, or `MinSizeRel`; never report an unoptimized
    compiler as verification evidence. If the available tree is unoptimized,
    create a separate optimized Ninja build rather than repurposing the active
-   tree.
+   tree. Run every full build and every whole or broad CTest or harness run
+   through the shared build window,
+   `python3 scripts/build_window.py --kind build|suite -- <command>`, so
+   concurrent sessions share the host; focused `-R` selections and
+   single-file compiles run directly.
 3. For a substantial compiler change, use the broad sequence in the canonical
    verification document after focused checks pass. Keep
    `scripts/local_language_audit.py --full` non-gating; turn any bug it finds

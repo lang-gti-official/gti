@@ -32,9 +32,11 @@ holder fresh_exact_lambda(int32_t divisor) {
   return invoke(holder::one(resource(2)), divisor);
 }
 
-// The moved-from parameter is dropped after the call, so the result remains
-// an unpublished obligation until the return.
+// The unmoved witness is dropped after the call and its destructor can fail,
+// so the result remains an unpublished obligation until the return. The
+// moved-from parameter shell never runs a destructor.
 holder named_exact_lambda(holder value, int32_t divisor) {
+  resource witness{5};
   auto invoke = [](holder inner, int32_t divisor) -> holder {
     int32_t named_check = int32_t(1) / divisor;
     return std::move(inner);

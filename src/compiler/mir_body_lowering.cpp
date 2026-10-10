@@ -778,23 +778,24 @@ private:
 
   [[nodiscard]] FailurePropagationKind
   normalizedDestructorPropagation(MirDropObligationId obligation) const {
-    const MirBlock *block = output.findBlock(current);
-    if (block != nullptr && mirDropFollowsDefiniteMove(*block, obligation)) {
-      return FailurePropagationKind::None;
-    }
     const MirDropObligation *drop = output.findDropObligation(obligation);
     if (drop == nullptr) {
       return FailurePropagationKind::None;
     }
-    if (mirDropHasPolymorphicCleanup(drop->dropType))
-      return FailurePropagationKind::Destructor;
+    bool mayRaise = mirDropHasPolymorphicCleanup(drop->dropType);
     for (const auto target : mirDropDestructorTargets(drop->dropType)) {
-      if (target == 0 || target > definedFailureEffects.destructors.size() ||
-          definedFailureEffects.destructors[target - 1]) {
-        return FailurePropagationKind::Destructor;
-      }
+      mayRaise = mayRaise || target == 0 ||
+                 target > definedFailureEffects.destructors.size() ||
+                 definedFailureEffects.destructors[target - 1];
     }
-    return FailurePropagationKind::None;
+    // A moved-from shell is retired without running its destructor, even
+    // when the move happened before an invoke split its block.
+    const MirBlock *block = output.findBlock(current);
+    return mayRaise && (block == nullptr ||
+                        !mirDropFollowsDefiniteMove(output, invokeContinuations,
+                                                    *block, obligation))
+               ? FailurePropagationKind::Destructor
+               : FailurePropagationKind::None;
   }
 
   [[nodiscard]] std::optional<MirDropType>
@@ -1622,6 +1623,7 @@ private:
     if (MirBlock *block = currentBlock();
         block != nullptr && block->terminator.kind == MirTerminatorKind::None) {
       block->terminator = std::move(terminator);
+      invokeContinuations.record(*block);
     }
   }
 
@@ -4144,8 +4146,12 @@ private:
       valid = false;
       return {};
     }
+    // A raw-pointer method receiver (`pointer->method()`) is the pointee
+    // itself. A field reached through the pointer (`pointer->field.method()`)
+    // is an ordinary place below that pointee and keeps its projections.
     if (receiver->kind == HirValueKind::MemberAccess &&
         receiver->unsafeOperation == UnsafeOperationKind::RawMember &&
+        receiver->info.category != ValueCategory::Place &&
         !receiver->operands.empty()) {
       const HirValueId pointerId = receiver->operands.front();
       const HirValue *pointer = findValue(pointerId);
@@ -8365,9 +8371,22 @@ private:
                     destinationPlace->projections.empty()
                 ? dropObligationForBinding(destinationPlace->binding)
                 : 0;
-        appendLifecycle(assign, {.kind = MirLifecycleEventKind::Replace,
-                                 .source = sourceObligation,
-                                 .target = target});
+        const MirDropObligation *sourceDrop =
+            output.findDropObligation(sourceObligation);
+        if (sourceDrop != nullptr && destinationPlace != nullptr &&
+            sourceDrop->dropType.type != destinationPlace->type) {
+          // A conversion into a distinct owning wrapper, such as a payload
+          // replacing an Expected binding, transfers the source object out of
+          // its own lifetime. The destination keeps its obligation, which now
+          // owns the converted value, as for a storage-free source.
+          appendLifecycle(assign, {.kind = MirLifecycleEventKind::TransferOut,
+                                   .source = sourceObligation});
+          (void)removeTemporary(sourceObligation);
+        } else {
+          appendLifecycle(assign, {.kind = MirLifecycleEventKind::Replace,
+                                   .source = sourceObligation,
+                                   .target = target});
+        }
       }
       const auto assignment = appendInstruction(std::move(assign));
       if (preparation != 0) {
@@ -11093,6 +11112,8 @@ private:
   const HirProgramInitializationPlan *programInitialization = nullptr;
   MirProgramInitializationPlan *loweredProgramInitialization = nullptr;
   MirBody output;
+  // Invoke continuations of `output`, recorded as each terminator is set.
+  MirInvokeContinuations invokeContinuations;
   MirBlockId current = 0;
   ProgramInitializationStepId currentProgramInitializationStep = 0;
   MirInstructionId nextInstruction = 1;

@@ -1,0 +1,41 @@
+#include <std/vector>
+#include <std/memory>
+
+// Methods on a class-typed field reached through a raw pointer use that field
+// as their receiver; a method on the pointee itself uses the pointee.
+struct State {
+  mut std::vector<int32_t> items;
+  int32_t count() { return int32_t(this.items.size()); }
+  void bump() mut { this.items.push_back(1); }
+};
+
+class Holder {
+  mut std::unique_ptr<State> owner;
+  mut State* state = nullptr;
+public:
+  Holder() : owner(std::make_unique<State>()) { this.state = &*this.owner; }
+  void add(int32_t value) { unsafe { this.state->items.push_back(value); } }
+  bool empty() { unsafe { return this.state->items.empty(); } }
+  std::size_t size() { unsafe { return this.state->items.size(); } }
+  int32_t last() { unsafe { return this.state->items.back(); } }
+  void drop_last() { unsafe { this.state->items.pop_back(); } }
+  void bump() { unsafe { this.state->bump(); } }
+  int32_t count() { unsafe { return this.state->count(); } }
+};
+
+int main() {
+  Holder holder{};
+  if (!holder.empty()) { return 1; }
+  holder.add(4);
+  holder.add(9);
+  holder.bump();
+  if (holder.size() != std::size_t(3) || holder.last() != 1 ||
+      holder.count() != 3) {
+    return 2;
+  }
+  holder.drop_last();
+  if (holder.last() != 9 || holder.empty() || holder.count() != 2) {
+    return 3;
+  }
+  return 0;
+}

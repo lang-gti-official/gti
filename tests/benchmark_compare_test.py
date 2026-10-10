@@ -1779,6 +1779,48 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
             ),
             "raw_pointer_audit must be off, warn, or strict",
         )
+    require(
+        sequential_report.get("raw_pointer_audit_library_findings") is False,
+        "benchmark sidecar did not record the default hidden library findings",
+    )
+    legacy_findings_report = copy.deepcopy(legacy_audit_report)
+    del legacy_findings_report["raw_pointer_audit_library_findings"]
+    legacy_findings_path = root / "legacy-library-findings-report.json"
+    legacy_findings_path.write_text(
+        json.dumps(legacy_findings_report), encoding="utf-8"
+    )
+    decoded_legacy = module.load_build_provenance(
+        legacy_findings_path, selected_gti, selected_cxx, sequential_entry
+    )
+    require(
+        decoded_legacy["build"]["raw_pointer_audit_library_findings"] is False,
+        "legacy schema-2 report did not default library findings to hidden",
+    )
+    for visibility in (False, True):
+        visibility_report = copy.deepcopy(sequential_report)
+        visibility_report["raw_pointer_audit_library_findings"] = visibility
+        visibility_path = root / "valid-library-findings-report.json"
+        visibility_path.write_text(json.dumps(visibility_report), encoding="utf-8")
+        decoded_visibility = module.load_build_provenance(
+            visibility_path, selected_gti, selected_cxx, sequential_entry
+        )
+        require(
+            decoded_visibility["build"]["raw_pointer_audit_library_findings"]
+            is visibility,
+            "decoded provenance lost its library findings visibility",
+        )
+    for visibility in (1, 0, "true", None, [], {}):
+        visibility_report = copy.deepcopy(sequential_report)
+        visibility_report["raw_pointer_audit_library_findings"] = visibility
+        visibility_path = root / "invalid-library-findings-report.json"
+        visibility_path.write_text(json.dumps(visibility_report), encoding="utf-8")
+        expect_benchmark_error(
+            module,
+            lambda: module.load_build_provenance(
+                visibility_path, selected_gti, selected_cxx, sequential_entry
+            ),
+            "raw_pointer_audit_library_findings must be a boolean",
+        )
     for invalid_policy, diagnostic in (
         (True, "must disable source debug info"),
         (1, "debug_info must be a boolean"),
