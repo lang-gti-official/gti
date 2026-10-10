@@ -1,0 +1,50 @@
+#include <std/vector>
+#include <std/string>
+
+// A borrowed receiver reached through a reference parameter and field path is
+// staged before its conditional argument, whose checked conversions branch
+// before the consuming call. The receiver's address stays stable across that
+// diamond for a standard container and for an unrelated user-defined sink.
+
+struct Flags { bool alive = true; bool armed = false; };
+struct binary_writer { mut { std::vector<uint8_t> bytes; } };
+
+class ByteSink {
+  mut int total = 0;
+  mut int count = 0;
+public:
+  ByteSink() {}
+  void accept(uint8_t value) mut {
+    this.total = this.total + int(value);
+    this.count = this.count + 1;
+  }
+  int sum() { return this.total; }
+  int size() { return this.count; }
+};
+struct Frame { mut { ByteSink sink; } };
+struct Session { mut { Frame frame; } };
+
+void write(mut binary_writer& out, Flags& value) {
+  out.bytes.push_back(value.alive ? uint8_t(1) : uint8_t(0));
+  out.bytes.push_back(value.armed ? uint8_t(1) : uint8_t(0));
+}
+
+void record(mut Session& session, Flags& value, int wide) {
+  session.frame.sink.accept(value.alive ? uint8_t(wide) : uint8_t(0)); // conversion-failure
+  session.frame.sink.accept(value.armed ? uint8_t(7) : uint8_t(wide));
+}
+
+int main(int argc, std::vector<std::string> args) {
+  Flags flags = {.alive = true, .armed = false};
+  mut binary_writer out = {.bytes = std::vector<uint8_t>()};
+  write(out, flags);
+  std::println(out.bytes.size());
+  std::println(int(out.bytes[std::size_t(0)]));
+  std::println(int(out.bytes[std::size_t(1)]));
+  mut Session session = {.frame = {.sink = ByteSink()}};
+  int wide = argc > 1 ? 300 : 5;
+  record(session, flags, wide);
+  std::println(session.frame.sink.sum());
+  std::println(session.frame.sink.size());
+  return 0;
+}
