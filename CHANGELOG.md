@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.397.10 — Generic callees declared after their caller
+## 0.397.11 — Generic callees declared after their caller
 
 - A generic function that returns a moved by-value parameter, such as an
   iterator-returning `find`, can now be declared after the function that calls
