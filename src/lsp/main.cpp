@@ -79,6 +79,31 @@ unsigned analysisWorkerCountFromEnvironment() {
                     maximumDefaultAnalysisWorkers);
 }
 
+// An edit does not start its analysis at once. The scheduler waits for a
+// short, adaptive period so a burst of keystrokes collapses into one
+// whole-program analysis of the final text, as clangd's update debounce does.
+// The wait is the document's median recent analysis time, bounded below so a
+// trivially cheap file still coalesces and above so a slow file is never
+// deferred for long. A semantic request waiting on the document ends the wait
+// immediately. `GTI_LSP_UPDATE_DEBOUNCE_MS` pins a fixed wait (0 disables it)
+// for benchmarks and tests.
+constexpr std::chrono::milliseconds minimumUpdateDebounce{50};
+constexpr std::chrono::milliseconds maximumUpdateDebounce{500};
+constexpr std::size_t analysisDurationHistory = 8;
+
+std::optional<std::chrono::microseconds> fixedUpdateDebounceFromEnvironment() {
+  if (const char *configured = std::getenv("GTI_LSP_UPDATE_DEBOUNCE_MS");
+      configured != nullptr && *configured != '\0') {
+    const char *end = configured + std::strlen(configured);
+    unsigned value = 0;
+    const auto [last, error] = std::from_chars(configured, end, value);
+    if (error == std::errc{} && last == end && value <= 10000) {
+      return std::chrono::milliseconds(value);
+    }
+  }
+  return std::nullopt;
+}
+
 #if !defined(GTI_BUILD_STDLIB_ROOT)
 #define GTI_BUILD_STDLIB_ROOT ""
 #endif
@@ -102,6 +127,13 @@ struct SemanticToken {
   std::uint32_t length = 0;
   std::uint32_t type = 0;
   std::uint32_t modifiers = 0;
+
+  bool operator==(const SemanticToken &other) const {
+    return position.line == other.position.line &&
+           position.character == other.position.character &&
+           length == other.length && type == other.type &&
+           modifiers == other.modifiers;
+  }
 };
 
 std::optional<std::filesystem::path> frontendTracePathFromEnvironment() {
@@ -1564,11 +1596,26 @@ void flattenDocumentSymbols(
   }
 }
 
+// Why a document's analysis was scheduled. Edits are debounced; opening a
+// document and project-wide invalidation run at once. Only an analysis the
+// document did not ask for itself (a dependency or project change) can change
+// the semantic tokens a client already holds without the client knowing, so
+// only those publications may request a token refresh.
+enum class AnalysisTrigger {
+  Opened,
+  DocumentChanged,
+  DependencyChanged,
+  ProjectChanged,
+};
+
 struct AnalysisRequest {
   std::string uri;
   std::string source;
   std::optional<std::int64_t> version;
   std::uint64_t generation = 0;
+  AnalysisTrigger trigger = AnalysisTrigger::Opened;
+  // Earliest start time; see `minimumUpdateDebounce`.
+  SteadyClock::time_point readyAt{};
   std::uint64_t includeDiscoveryGeneration = 0;
   std::optional<std::string> projectProfile;
   std::unordered_map<std::string, std::string> sourceOverrides;
@@ -1975,7 +2022,6 @@ private:
     }
     const std::string uri = documentKeyFromUri(clientUri);
     std::vector<AnalysisRequest> requests;
-    std::vector<DiagnosticPublication> publications;
     {
       const std::lock_guard lock(stateMutex);
       clientUris[uri] = clientUri;
@@ -1995,19 +2041,17 @@ private:
       semanticTokenCache.erase(uri);
       ++contentGenerations[uri];
       requests.push_back(makeAnalysisRequestLocked(
-          uri, version, advanceAnalysisGenerationLocked(uri)));
-      std::unordered_set<std::string> affected;
+          uri, version, advanceAnalysisGenerationLocked(uri),
+          AnalysisTrigger::Opened));
       // Dependants read this file from disk while it was closed. Only those
       // whose text differs from the opened overlay need analysing again.
       invalidateDependentsLocked(
-          uri, affected, requests,
+          uri, requests,
           alreadyOpen ? std::nullopt
                       : std::optional<std::uint64_t>(
                             lang::sourceTextDigest(documents[uri])));
-      publications = publicationsForLocked(affected);
     }
     rejectPendingSemanticRequests(requests, -32801, "Content modified");
-    publish(std::move(publications));
     scheduleAnalyses(std::move(requests));
   }
 
@@ -2027,7 +2071,6 @@ private:
       const std::optional<std::int64_t> version =
           integerMember(member(params, "textDocument"), "version");
       std::vector<AnalysisRequest> requests;
-      std::vector<DiagnosticPublication> publications;
       {
         const std::lock_guard lock(stateMutex);
         clientUris[uri] = clientUri;
@@ -2044,13 +2087,15 @@ private:
         semanticTokenCache.erase(uri);
         ++contentGenerations[uri];
         requests.push_back(makeAnalysisRequestLocked(
-            uri, version, advanceAnalysisGenerationLocked(uri)));
-        std::unordered_set<std::string> affected;
-        invalidateDependentsLocked(uri, affected, requests);
-        publications = publicationsForLocked(affected);
+            uri, version, advanceAnalysisGenerationLocked(uri),
+            AnalysisTrigger::DocumentChanged));
+        invalidateDependentsLocked(uri, requests);
       }
+      // Nothing is published here. The client keeps the diagnostics it has
+      // until a newer result replaces them, exactly as it keeps its semantic
+      // tokens; publishing an edit-time subset made every diagnostic in the
+      // file vanish and reappear on each keystroke.
       rejectPendingSemanticRequests(requests, -32801, "Content modified");
-      publish(std::move(publications));
       scheduleAnalyses(std::move(requests));
     }
   }
@@ -2107,7 +2152,9 @@ private:
       dependenciesByRoot.erase(uri);
       pendingAnalyses.erase(uri);
       ++contentGenerations[uri];
-      invalidateDependentsLocked(uri, affected, requests);
+      invalidateDependentsLocked(uri, requests);
+      // The closed root's diagnostics leave every file they touched now;
+      // dependants keep theirs until their own re-analysis replaces them.
       publications = publicationsForLocked(affected);
       clientUris.erase(uri);
     }
@@ -2127,10 +2174,8 @@ private:
     }
 
     std::vector<AnalysisRequest> requests;
-    std::vector<DiagnosticPublication> publications;
     {
       const std::lock_guard lock(stateMutex);
-      std::unordered_set<std::string> affected;
       bool projectModelChanged = false;
       for (const JsonValue &change : *changedFiles) {
         const std::string clientUri = stringMember(&change, "uri");
@@ -2153,35 +2198,32 @@ private:
           const std::string canonical = canonicalPath(*changedPath).string();
           invalidateFrontendSourceLocked(canonical);
         }
-        affected.insert(uri);
-        invalidateDependentsLocked(uri, affected, requests);
+        invalidateDependentsLocked(uri, requests);
       }
       if (projectModelChanged) {
-        invalidateProjectSnapshotsLocked(affected, requests);
+        invalidateProjectSnapshotsLocked(requests);
       }
-      publications = publicationsForLocked(affected);
     }
     rejectPendingSemanticRequests(requests, -32801, "Content modified");
-    publish(std::move(publications));
     scheduleAnalyses(std::move(requests));
   }
 
   void
-  invalidateProjectSnapshotsLocked(std::unordered_set<std::string> &affected,
-                                   std::vector<AnalysisRequest> &requests) {
+  invalidateProjectSnapshotsLocked(std::vector<AnalysisRequest> &requests) {
     requests.clear();
     ++includeDiscoveryGeneration;
     for (const auto &[uri, source] : documents) {
       (void)source;
-      affected.insert(uri);
-      semanticTokenCache.erase(uri);
+      // The token cache stays: publication compares the new tokens with it
+      // and asks for a refresh only when the project change altered them.
       const auto version = documentVersions.find(uri);
       requests.push_back(makeAnalysisRequestLocked(
           uri,
           version == documentVersions.end()
               ? std::nullopt
               : std::optional<std::int64_t>(version->second),
-          advanceAnalysisGenerationLocked(uri)));
+          advanceAnalysisGenerationLocked(uri),
+          AnalysisTrigger::ProjectChanged));
     }
   }
 
@@ -2219,19 +2261,15 @@ private:
       selected = name->str();
     }
     std::vector<AnalysisRequest> requests;
-    std::vector<DiagnosticPublication> publications;
     {
       const std::lock_guard lock(stateMutex);
       if (selected == projectProfile) {
         return;
       }
       projectProfile = std::move(selected);
-      std::unordered_set<std::string> affected;
-      invalidateProjectSnapshotsLocked(affected, requests);
-      publications = publicationsForLocked(affected);
+      invalidateProjectSnapshotsLocked(requests);
     }
     rejectPendingSemanticRequests(requests, -32801, "Content modified");
-    publish(std::move(publications));
     scheduleAnalyses(std::move(requests));
   }
 
@@ -2299,6 +2337,8 @@ private:
       }
     }
     if (queued) {
+      // A waiting request ends the document's update debounce.
+      analysisCondition.notify_all();
       return;
     }
 
@@ -2376,29 +2416,35 @@ private:
                                         const std::string &uri,
                                         SemanticRequestKind kind) {
     SnapshotAccess access;
-    const std::lock_guard lock(stateMutex);
-    const auto document = documents.find(uri);
-    const auto generation = analysisGenerations.find(uri);
-    const auto snapshot = analysisSnapshots.find(uri);
-    if (document != documents.end() &&
-        generation != analysisGenerations.end() &&
-        snapshot != analysisSnapshots.end() &&
-        snapshot->second.generation == generation->second &&
-        snapshot->second.frontend != nullptr) {
-      access.source = document->second;
-      access.snapshot = snapshot->second;
-      access.current = true;
-    } else if (id != nullptr && document != documents.end() &&
-               generation != analysisGenerations.end()) {
-      pendingSemanticRequests.push_back({.id = *id,
-                                         .params = params != nullptr
-                                                       ? JsonValue(*params)
-                                                       : JsonValue(nullptr),
-                                         .idKey = requestIdKey(id),
-                                         .uri = uri,
-                                         .generation = generation->second,
-                                         .kind = kind});
-      access.queued = true;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto document = documents.find(uri);
+      const auto generation = analysisGenerations.find(uri);
+      const auto snapshot = analysisSnapshots.find(uri);
+      if (document != documents.end() &&
+          generation != analysisGenerations.end() &&
+          snapshot != analysisSnapshots.end() &&
+          snapshot->second.generation == generation->second &&
+          snapshot->second.frontend != nullptr) {
+        access.source = document->second;
+        access.snapshot = snapshot->second;
+        access.current = true;
+      } else if (id != nullptr && document != documents.end() &&
+                 generation != analysisGenerations.end()) {
+        pendingSemanticRequests.push_back({.id = *id,
+                                           .params = params != nullptr
+                                                         ? JsonValue(*params)
+                                                         : JsonValue(nullptr),
+                                           .idKey = requestIdKey(id),
+                                           .uri = uri,
+                                           .generation = generation->second,
+                                           .kind = kind});
+        access.queued = true;
+      }
+    }
+    if (access.queued) {
+      // A waiting request ends the document's update debounce.
+      analysisCondition.notify_all();
     }
     return access;
   }
@@ -3081,11 +3127,13 @@ private:
 
   AnalysisRequest makeAnalysisRequestLocked(const std::string &uri,
                                             std::optional<std::int64_t> version,
-                                            std::uint64_t generation) const {
+                                            std::uint64_t generation,
+                                            AnalysisTrigger trigger) const {
     AnalysisRequest request{.uri = uri,
                             .source = documents.at(uri),
                             .version = version,
-                            .generation = generation};
+                            .generation = generation,
+                            .trigger = trigger};
     request.includeDiscoveryGeneration = includeDiscoveryGeneration;
     request.projectProfile = projectProfile;
     for (const auto &[documentUri, documentSource] : documents) {
@@ -3107,9 +3155,13 @@ private:
   // `openedDigest` is the digest of a newly opened overlay. A root whose
   // published analysis read exactly that text sees no change and keeps its
   // result; opening a file the editor merely navigated to is then free.
+  //
+  // A dependant keeps its published diagnostics until its own re-analysis
+  // replaces them. `publicationsForLocked` still drops any diagnostic whose
+  // file text is no longer the one it was computed for, so the editor never
+  // sees a range from a superseded version of an open file.
   void invalidateDependentsLocked(
-      const std::string &changedUri, std::unordered_set<std::string> &affected,
-      std::vector<AnalysisRequest> &requests,
+      const std::string &changedUri, std::vector<AnalysisRequest> &requests,
       std::optional<std::uint64_t> openedDigest = std::nullopt) {
     for (const auto &[rootUri, dependencies] : dependenciesByRoot) {
       const auto snapshot = analysisSnapshots.find(rootUri);
@@ -3124,13 +3176,6 @@ private:
           dependency->second != 0 && dependency->second == *openedDigest) {
         continue;
       }
-      if (const auto previous = diagnosticsByRoot.find(rootUri);
-          previous != diagnosticsByRoot.end()) {
-        for (const LspDiagnostic &diagnostic : previous->second) {
-          affected.insert(diagnostic.uri);
-        }
-        diagnosticsByRoot.erase(previous);
-      }
       pendingAnalyses.erase(rootUri);
       const std::uint64_t generation = advanceAnalysisGenerationLocked(rootUri);
       if (documents.contains(rootUri)) {
@@ -3140,7 +3185,7 @@ private:
             version == documentVersions.end()
                 ? std::nullopt
                 : std::optional<std::int64_t>(version->second),
-            generation));
+            generation, AnalysisTrigger::DependencyChanged));
       }
     }
   }
@@ -3413,11 +3458,43 @@ private:
     }
   }
 
+  // The wait before an edit-triggered analysis may start: the document's
+  // median recent analysis time within the fixed bounds, or the pinned value.
+  [[nodiscard]] std::chrono::microseconds
+  updateDebounceLocked(const std::string &uri) const {
+    if (fixedUpdateDebounce) {
+      return *fixedUpdateDebounce;
+    }
+    const auto history = analysisDurations.find(uri);
+    if (history == analysisDurations.end() || history->second.empty()) {
+      return minimumUpdateDebounce;
+    }
+    std::vector<std::chrono::microseconds> sorted(history->second.begin(),
+                                                  history->second.end());
+    std::sort(sorted.begin(), sorted.end());
+    return std::clamp<std::chrono::microseconds>(sorted[sorted.size() / 2],
+                                                 minimumUpdateDebounce,
+                                                 maximumUpdateDebounce);
+  }
+
   void scheduleAnalysis(AnalysisRequest request) {
     {
       const std::lock_guard lock(stateMutex);
       if (stoppingAnalysis) {
         return;
+      }
+      const SteadyClock::time_point now = SteadyClock::now();
+      switch (request.trigger) {
+      case AnalysisTrigger::DocumentChanged:
+      case AnalysisTrigger::DependencyChanged:
+        // Each further edit restarts the wait, so a typing burst is analysed
+        // once, from its final text.
+        request.readyAt = now + updateDebounceLocked(request.uri);
+        break;
+      case AnalysisTrigger::Opened:
+      case AnalysisTrigger::ProjectChanged:
+        request.readyAt = now;
+        break;
       }
       if (!pendingAnalyses.contains(request.uri)) {
         analysisOrder.push_back(request.uri);
@@ -3430,8 +3507,13 @@ private:
   // Takes the next runnable analysis, or nothing. A document already being
   // analysed is not started again on another worker: its newer request stays
   // pending until the running analysis finishes, so rapid edits to one file
-  // cannot occupy the whole pool with results that will be discarded.
-  [[nodiscard]] std::optional<AnalysisRequest> takeNextAnalysisLocked() {
+  // cannot occupy the whole pool with results that will be discarded. A
+  // debounced request is not runnable before `readyAt` unless a semantic
+  // request is waiting on its document or the server is draining; `wake`
+  // receives the earliest deferred start so the caller can sleep until it.
+  [[nodiscard]] std::optional<AnalysisRequest>
+  takeNextAnalysisLocked(SteadyClock::time_point now,
+                         std::optional<SteadyClock::time_point> &wake) {
     const auto take =
         [this](std::unordered_map<std::string, AnalysisRequest>::iterator
                    pending) {
@@ -3460,6 +3542,13 @@ private:
         ++entry;
         continue;
       }
+      if (!drainingAnalyses && pending->second.readyAt > now) {
+        if (!wake || pending->second.readyAt < *wake) {
+          wake = pending->second.readyAt;
+        }
+        ++entry;
+        continue;
+      }
       analysisOrder.erase(entry);
       return take(pending);
     }
@@ -3472,13 +3561,18 @@ private:
       {
         std::unique_lock lock(stateMutex);
         std::optional<AnalysisRequest> next;
-        analysisCondition.wait(lock, [this, &next] {
-          if (stoppingAnalysis) {
-            return true;
+        while (!stoppingAnalysis) {
+          std::optional<SteadyClock::time_point> wake;
+          next = takeNextAnalysisLocked(SteadyClock::now(), wake);
+          if (next) {
+            break;
           }
-          next = takeNextAnalysisLocked();
-          return next.has_value();
-        });
+          if (wake) {
+            analysisCondition.wait_until(lock, *wake);
+          } else {
+            analysisCondition.wait(lock);
+          }
+        }
         if (stoppingAnalysis) {
           if (next) {
             activeAnalysisUris.erase(next->uri);
@@ -3487,6 +3581,7 @@ private:
         }
         request = std::move(*next);
       }
+      const SteadyClock::time_point analysisStart = SteadyClock::now();
 
       // Driver resolution runs on the worker but outside the crash guard. The
       // guard remains the narrow compiler-only boundary documented in the LSP
@@ -3544,9 +3639,28 @@ private:
         break;
       }
 
+      bool sendRefresh = false;
       {
         const std::lock_guard lock(stateMutex);
         activeAnalysisUris.erase(request.uri);
+        std::deque<std::chrono::microseconds> &history =
+            analysisDurations[request.uri];
+        history.push_back(std::chrono::duration_cast<std::chrono::microseconds>(
+            SteadyClock::now() - analysisStart));
+        if (history.size() > analysisDurationHistory) {
+          history.pop_front();
+        }
+        // One refresh per wave of dependency re-analyses, once the pool is
+        // idle. Clients may answer a refresh by discarding and re-requesting
+        // the tokens of every open document, so it is never sent per result.
+        if (semanticTokenRefreshPending && pendingAnalyses.empty() &&
+            activeAnalysisUris.empty()) {
+          semanticTokenRefreshPending = false;
+          sendRefresh = true;
+        }
+      }
+      if (sendRefresh) {
+        requestSemanticTokenRefresh();
       }
       // Wakes idle workers for a newer request of this document and lets
       // `flushAnalyses` observe the pool becoming idle.
@@ -3606,6 +3720,8 @@ private:
     std::vector<DiagnosticPublication> publications;
     std::optional<AnalysisRequest> retry;
     std::deque<PendingSemanticRequest> semanticRequests;
+    std::optional<std::vector<SemanticToken>> heldTokens;
+    AnalysisSnapshot published;
     {
       const std::lock_guard lock(stateMutex);
       const auto generation = analysisGenerations.find(request.uri);
@@ -3646,7 +3762,8 @@ private:
             version == documentVersions.end()
                 ? std::nullopt
                 : std::optional<std::int64_t>(version->second),
-            advanceAnalysisGenerationLocked(request.uri));
+            advanceAnalysisGenerationLocked(request.uri),
+            AnalysisTrigger::DependencyChanged);
       } else {
         for (const auto &[path, identity] : analysis.sourceIdentities) {
           frontendSnapshots.publish(path, identity);
@@ -3674,7 +3791,24 @@ private:
             .rootPath = std::move(analysis.rootPath),
             .frontend = std::move(analysis.frontend),
             .includeSuggestionsRequested = includeSuggestionsRequested};
-        semanticTokenCache.erase(request.uri);
+        switch (request.trigger) {
+        case AnalysisTrigger::Opened:
+        case AnalysisTrigger::DocumentChanged:
+          // The client re-requests tokens after its own edit; the entry was
+          // already dropped when the text changed.
+          semanticTokenCache.erase(request.uri);
+          break;
+        case AnalysisTrigger::DependencyChanged:
+        case AnalysisTrigger::ProjectChanged:
+          // The client holds tokens it has no reason to re-request. Keep
+          // them so the comparison below can tell whether they changed.
+          if (const auto held = semanticTokenCache.find(request.uri);
+              held != semanticTokenCache.end()) {
+            heldTokens = held->second.tokens;
+            published = analysisSnapshots.at(request.uri);
+          }
+          break;
+        }
         publications = publicationsForLocked(affected);
         for (auto pending = pendingSemanticRequests.begin();
              pending != pendingSemanticRequests.end();) {
@@ -3696,7 +3830,38 @@ private:
     }
     publish(std::move(publications));
     dispatchSemanticRequests(std::move(semanticRequests));
-    requestSemanticTokenRefresh();
+    if (heldTokens) {
+      reconcileHeldSemanticTokens(request, published, std::move(*heldTokens));
+    }
+  }
+
+  // A dependency or project change re-analysed a document whose client
+  // already holds semantic tokens. Compute the new tokens off the protocol
+  // thread and compare: unchanged tokens become the cache for the new
+  // generation and need no client round trip; changed tokens request one
+  // refresh once the pool is idle.
+  void reconcileHeldSemanticTokens(const AnalysisRequest &request,
+                                   const AnalysisSnapshot &snapshot,
+                                   std::vector<SemanticToken> heldTokens) {
+    if (snapshot.frontend == nullptr) {
+      return;
+    }
+    const lang::SourceUnitId sourceUnit =
+        snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
+    std::vector<SemanticToken> tokens = collectSemanticTokens(
+        request.source, snapshot.frontend.get(), sourceUnit);
+    const std::lock_guard lock(stateMutex);
+    const auto generation = analysisGenerations.find(request.uri);
+    if (generation == analysisGenerations.end() ||
+        generation->second != request.generation ||
+        !documents.contains(request.uri)) {
+      return;
+    }
+    if (tokens != heldTokens) {
+      semanticTokenRefreshPending = true;
+    }
+    semanticTokenCache[request.uri] = {.generation = request.generation,
+                                       .tokens = std::move(tokens)};
   }
 
   // Advances a root's analysis generation. Its retained snapshot can then no
@@ -3795,20 +3960,20 @@ private:
         roots.push_back(root);
       }
       std::sort(roots.begin(), roots.end());
+      // An open file's publication carries its current version, so it may
+      // include only diagnostics computed from exactly that text. A root
+      // awaiting re-analysis still contributes the diagnostics it placed in
+      // files whose text has not changed since it read them.
+      const auto openText = documents.find(uri);
       for (const std::string &root : roots) {
-        // Retained snapshots keep their storage until replacement, but their
-        // diagnostics cannot be relabelled with a newer document version.
-        const auto snapshot = analysisSnapshots.find(root);
-        const auto generation = analysisGenerations.find(root);
-        if (snapshot == analysisSnapshots.end() ||
-            generation == analysisGenerations.end() ||
-            snapshot->second.generation != generation->second) {
-          continue;
-        }
         const std::vector<LspDiagnostic> &diagnostics =
             diagnosticsByRoot.at(root);
         for (const LspDiagnostic &diagnostic : diagnostics) {
           if (diagnostic.uri != uri) {
+            continue;
+          }
+          if (openText != documents.end() &&
+              diagnostic.source != openText->second) {
             continue;
           }
           const lang::SourceSpan &span = diagnostic.diagnostic.primary;
@@ -3877,6 +4042,9 @@ private:
 
   void flushAnalyses() {
     std::unique_lock lock(stateMutex);
+    // Shutdown runs every pending analysis now rather than after its wait.
+    drainingAnalyses = true;
+    analysisCondition.notify_all();
     analysisCondition.wait(lock, [this] {
       return pendingAnalyses.empty() && activeAnalysisUris.empty();
     });
@@ -4039,6 +4207,16 @@ private:
   std::unordered_map<std::string, CachedSemanticTokens> semanticTokenCache;
   std::unordered_map<std::string, AnalysisRequest> pendingAnalyses;
   std::deque<std::string> analysisOrder;
+  // Recent wall-clock analysis durations per document, newest last; they size
+  // that document's update debounce.
+  std::unordered_map<std::string, std::deque<std::chrono::microseconds>>
+      analysisDurations;
+  const std::optional<std::chrono::microseconds> fixedUpdateDebounce =
+      fixedUpdateDebounceFromEnvironment();
+  bool drainingAnalyses = false;
+  // Set when a dependency or project re-analysis changed tokens a client
+  // holds; cleared when the one refresh for that wave is sent.
+  bool semanticTokenRefreshPending = false;
   std::deque<CompletionRequest> completionRequests;
   std::deque<PendingSemanticRequest> pendingSemanticRequests;
   std::unordered_set<std::string> activeCompletionRequests;
