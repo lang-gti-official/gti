@@ -28,6 +28,16 @@ for what minor and patch releases mean.
   constants; reflected access is the field projection itself, under the
   ordinary access, mutability and borrowing rules of the call site. A program
   that consumes reflection at compile time carries no reflection data.
+## 0.397.11 — Optimized compiles of large bodies use far less memory
+
+- Compiling at `-O2` or `-O3` no longer needs gigabytes of memory for a large
+  function body. The sparse-constant solver kept a complete copy of every
+  value's fact for every basic block; it now shares facts that a block leaves
+  unchanged. Compiling `tests/fixtures/stdlib_surface_json.gti` at `-O3`
+  peaks near 3 GiB resident instead of 8 to 11 GiB and finishes about 20%
+  sooner, with byte-identical generated C++ and unchanged optimization
+  results. The `json_stdlib` test now fails if such a compile exceeds 6 GiB.
+
 ## 0.397.9 — Backend crashes fixed for `expected` values and resource owners
 
 - Returning a named `expected` local now compiles, whatever its payload:

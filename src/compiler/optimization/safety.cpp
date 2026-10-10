@@ -6755,7 +6755,7 @@ solveStatesOnce(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
                 const std::vector<bool> *wideningBlocks = nullptr) {
   AbstractState entry = entryState == nullptr ? AbstractState{} : *entryState;
   entry.reachable = true;
-  const MirForwardDataflowResult<AbstractState> solved = runMirForwardDataflow(
+  MirForwardDataflowResult<AbstractState> solved = runMirForwardDataflow(
       body, std::move(entry),
       [&](const MirBlock &block, const AbstractState &incoming) {
         const BlockTransfer transfer = transferBlock(
@@ -6783,10 +6783,12 @@ solveStatesOnce(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   if (!solved.converged()) {
     return {};
   }
+  // Adopt the solved states instead of copying every block's maps while the
+  // solver's own copy is still alive; the solver result is not reused.
   std::vector<AbstractState> incoming(body.blocks.size());
   for (std::size_t index = 0; index < solved.incoming.size(); ++index) {
     if (solved.incoming[index]) {
-      incoming[index] = *solved.incoming[index];
+      incoming[index] = std::move(*solved.incoming[index]);
     }
   }
   return incoming;
