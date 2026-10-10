@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Expected<Class, E> call results and copied named bindings pass to by-value
-parameters, including ordinary constructor parameters."""
+parameters, including ordinary constructor parameters, and call results replace
+mutable bindings."""
 
 from pathlib import Path
 
@@ -24,6 +25,9 @@ if __name__ == "__main__":
          (70, "", f"{fixture.name}:{overflow}: runtime error[GTI-R0001]: "
                   "integer_overflow in addition\n")),
         (("later-argument-failure", "copied", "binding", "constructor"),
+         (70, "", f"{fixture.name}:{overflow}: runtime error[GTI-R0001]: "
+                  "integer_overflow in addition\n")),
+        (("replacing-call-failure", "keeps", "the", "old", "binding"),
          (70, "", f"{fixture.name}:{overflow}: runtime error[GTI-R0001]: "
                   "integer_overflow in addition\n")),
     ]})

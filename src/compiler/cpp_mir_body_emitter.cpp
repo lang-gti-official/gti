@@ -27983,6 +27983,97 @@ cleanupFreeExpectedClassAlternatives(const MirProgram &program,
   return consumer;
 }
 
+// The same Expected may instead replace one whole mutable binding of its type.
+// MIR pairs the Assign with a CleanupBeforeAssign; every alternative is
+// cleanup-free, so that replacement cleanup is inactive and cannot fail. The
+// native wrapper move-assigns, which needs each class alternative's generated
+// move constructor and move assignment. The producer's success edge reaches the
+// exact pair directly, as for a class result replacing a binding.
+[[nodiscard]] const MirInstruction *classSsaExpectedAssignmentConsumer(
+    const MirProgram &program, const MirBody &body, const MirValue &value,
+    const MirInstruction &producer, const MirValueUse &use) {
+  const MirInstruction *consumer =
+      use.kind == MirValueUseKind::InstructionOperand
+          ? findInstruction(body, use.instruction)
+          : nullptr;
+  const MirPlace *destination = consumer && consumer->destination
+                                    ? body.findPlace(*consumer->destination)
+                                    : nullptr;
+  const MirValue *result = consumer && consumer->result
+                               ? body.findValue(*consumer->result)
+                               : nullptr;
+  const MirInstruction *cleanup =
+      consumer && consumer->replacementPair != 0
+          ? findInstruction(body, consumer->replacementPair)
+          : nullptr;
+  if (!consumer || consumer->kind != MirInstructionKind::Assign ||
+      consumer->operation != MirOperation::Assign || consumer->receiver ||
+      consumer->operands.size() != 1 ||
+      consumer->operands.front().kind != MirOperandKind::Value ||
+      consumer->operands.front().value != value.id ||
+      consumer->operands.front().type != value.info.type ||
+      consumer->info.type != value.info.type ||
+      !consumer->localFailureSites.empty() ||
+      !consumer->definedFailure.empty() || !consumer->lifecycle.empty() ||
+      consumer->fullExpressionEnd != 0 || consumer->cleanupBoundaryEnd != 0 ||
+      !result || result->definition != consumer->id ||
+      result->info.type != value.info.type ||
+      !body.usesOf(result->id).empty() ||
+      std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const MirDropObligation &drop) {
+                    return drop.generatedValue == result->id;
+                  }) ||
+      !destination || destination->root != MirPlaceRootKind::Binding ||
+      !destination->projections.empty() ||
+      destination->type != value.info.type ||
+      destination->access != AccessMode::Mutable ||
+      !destination->traits.moveAssignable ||
+      (consumer->replacementPair != 0 &&
+       (!cleanup || cleanup->kind != MirInstructionKind::CleanupBeforeAssign ||
+        cleanup->replacementPair != consumer->id ||
+        cleanup->destination != consumer->destination ||
+        !cleanup->replacementCleanup ||
+        cleanup->replacementCleanup->type != destination->type ||
+        !cleanup->definedFailure.empty() ||
+        !cleanup->localFailureSites.empty())))
+    return nullptr;
+  for (const SemanticType &alternative : value.info.type.arguments) {
+    const MirClassInstance *instance =
+        alternative.kind == SemanticType::Class
+            ? uniqueClassInstanceForType(program, alternative)
+            : nullptr;
+    if (alternative.kind == SemanticType::Class &&
+        (!instance ||
+         instance->moveConstructor != SpecialMemberStatus::Generated ||
+         instance->moveAssignment != SpecialMemberStatus::Generated ||
+         !instance->traits.moveAssignable))
+      return nullptr;
+  }
+  // The success edge begins with the pair; a non-checked producer is followed
+  // by it in its own block.
+  const MirBlock *invoke = invokeProducerBlock(body, producer);
+  const MirBlock *block = invoke ? body.findBlock(invoke->terminator.target)
+                                 : body.findBlock(value.definitionBlock);
+  if (!block)
+    return nullptr;
+  auto at = block->instructions.begin();
+  if (!invoke) {
+    at = std::find_if(
+        block->instructions.begin(), block->instructions.end(),
+        [&](const MirInstruction &item) { return item.id == producer.id; });
+    if (at == block->instructions.end())
+      return nullptr;
+    ++at;
+  }
+  if (cleanup) {
+    if (at == block->instructions.end() || at->id != cleanup->id)
+      return nullptr;
+    ++at;
+  }
+  return at != block->instructions.end() && at->id == consumer->id ? consumer
+                                                                   : nullptr;
+}
+
 // Some class SSA producers cannot use an ordinary initialized C++ local. This
 // exact no-alias, at-most-one-consumer shape gives the result uninitialized
 // representation storage. It is not a semantic drop: the value is transferred
@@ -28098,7 +28189,8 @@ classSsaLifetimeSlot(const MirProgram &program,
   // shares the cleanup-free class result's representation-only slot: the
   // producer constructs it on success, the consumer moves its safe wrapper,
   // and only the moved-from representation is retired after that call or
-  // construction. Owning alternatives keep MIR's value drop and its
+  // construction. A result replacing a whole mutable binding is moved into it
+  // the same way. Owning alternatives keep MIR's value drop and its
   // value-rooted transfer slot; a non-placement Expected keeps its ordinary
   // SSA local.
   if (value && value->info.type.kind == SemanticType::Expected &&
@@ -28130,6 +28222,13 @@ classSsaLifetimeSlot(const MirProgram &program,
             : nullptr;
     if (consumer == nullptr)
       consumer = construction;
+    const auto *assignment =
+        uses.size() == 1 && consumer == nullptr
+            ? classSsaExpectedAssignmentConsumer(program, body, *value,
+                                                 *producer, uses.front())
+            : nullptr;
+    if (consumer == nullptr)
+      consumer = assignment;
     if (target && target->linkage == LanguageLinkage::Gti &&
         target->definitionKind == MirDefinitionKind::Source &&
         target->returnType == value->info.type &&
@@ -28146,9 +28245,11 @@ classSsaLifetimeSlot(const MirProgram &program,
               .producer = producer,
               .consumer = consumer,
               .consumerKind =
-                  construction != nullptr
-                      ? ClassSsaSlotConsumerKind::ConstructorArgument
-                      : ClassSsaSlotConsumerKind::CallArgument};
+                  assignment != nullptr
+                      ? ClassSsaSlotConsumerKind::Assignment
+                      : (construction != nullptr
+                             ? ClassSsaSlotConsumerKind::ConstructorArgument
+                             : ClassSsaSlotConsumerKind::CallArgument)};
   }
   if (const auto *returned =
           cleanupFreeExpectedUnexpectedReturn(program, body, valueId)) {
