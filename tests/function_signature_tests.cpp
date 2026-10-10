@@ -60,7 +60,7 @@ void classSignaturePatternSyntax() {
            "pattern head must not consume its class body");
   }
 
-  for (const std::string &ordinary :
+  for (const std::string ordinary :
        {"class Box<T> {};", "class Types<Args...> {};",
         "class Tag<S = void()> {};", "class Constrained<SomeConcept T> {};",
         "class Sized<uint64_t N = (2 + 3)> {};"}) {
@@ -77,7 +77,7 @@ void classSignaturePatternSyntax() {
     }
   }
 
-  for (const std::string &malformed :
+  for (const std::string malformed :
        {"class Bad<R(Args...> {};", "class Bad<R(,)> {};",
         "class Bad<R(Args...) {};"}) {
     lang::Parser brokenParser(lexer.scan(malformed));
@@ -1309,7 +1309,7 @@ void mutableSignatureArguments() {
     }
     expect(checked, "mutable callback contains an element entry loan");
   }
-  for (const std::string &body :
+  for (const std::string body :
        {"void change(mut int& value) {} int main() { std::function<void(mut "
         "int&)> fn{change}; int x = 0; fn(x); return 0; }",
         "void change(mut int& value) {} int main() { std::function<void(mut "

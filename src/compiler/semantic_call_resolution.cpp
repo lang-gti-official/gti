@@ -4039,7 +4039,9 @@ auto SemanticVisitor::Impl::recordRawBorrowCall(
       member && resolved.receiverMode != CallReceiverMode::None) {
     use.receiver = rawBorrowArgument(member->object(), call.paren());
   } else if (resolved.receiverMode != CallReceiverMode::None) {
-    use.receiver.emplace();
+    // Brace-initialize rather than emplace(): Clang 18 does not consider this
+    // aggregate constructible from no arguments, so optional::emplace fails.
+    use.receiver = RawBorrowCallArgument{};
     use.receiver->place = {.receiver = true};
     for (const auto &field : rawPointerFieldsAt(use.receiver->place))
       mergeRawPointerOrigins(use.receiver->origins, field.origins);
