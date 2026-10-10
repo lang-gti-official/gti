@@ -1073,14 +1073,63 @@ exactInvocationShell(const MirInstruction &instruction,
           instruction.constructorTarget.has_value());
 }
 
+// The declared contract of GTI's own process-allocator runtime ABI, bound by
+// the verified trusted declaration identity rather than a public spelling.
+// Process allocation is not an observable language effect, and no operation
+// synchronizes, runs GTI code, traps or retains an argument:
+// - target queries and the alignment query read no memory; the latter only
+//   inspects its address value;
+// - allocation returns fresh storage or null; the POSIX form also writes its
+//   `int32_t* status` pointee, stated as `writesUnknownMemory` because the
+//   current vocabulary has no exact-pointee write;
+// - release retires a block that, by the lease contract, holds no live object.
+//   It is stated as `writesUnknownMemory` so no fact about the retired bytes
+//   survives the call; the allocator's own internal ordering (C11's
+//   free-to-next-allocation edge) carries no GTI-visible value.
+// The result stays non-removable, non-reorderable and non-speculatable;
+// allocation elision is a separate mechanism.
+[[nodiscard]] std::optional<MirEffectSummary>
+processMemoryRuntimeSummary(const MirFunctionInstance &function) {
+  MirEffectTraits traits{.invokesRuntime = true, .targetDependent = true};
+  switch (function.processMemoryOperation) {
+  case ProcessMemoryRuntimeOperation::NativeSizeMax:
+  case ProcessMemoryRuntimeOperation::AddressIsAligned:
+  case ProcessMemoryRuntimeOperation::PosixPointerSize:
+  case ProcessMemoryRuntimeOperation::PosixOutOfMemoryStatus:
+  case ProcessMemoryRuntimeOperation::PosixInvalidArgumentStatus:
+    break;
+  case ProcessMemoryRuntimeOperation::PosixAllocate:
+    traits.writesUnknownMemory = true;
+    traits.allocates = true;
+    break;
+  case ProcessMemoryRuntimeOperation::AlignedAllocate:
+    traits.allocates = true;
+    break;
+  case ProcessMemoryRuntimeOperation::PosixRelease:
+  case ProcessMemoryRuntimeOperation::AlignedRelease:
+    traits.writesUnknownMemory = true;
+    break;
+  case ProcessMemoryRuntimeOperation::None:
+  case ProcessMemoryRuntimeOperation::Count:
+    return std::nullopt;
+  }
+  MirEffectSummary result;
+  result.traits = traits;
+  result.argumentsEscape.assign(function.parameterTypes.size(), false);
+  return result;
+}
+
 [[nodiscard]] const MirEffectSummary *
 summaryForAddress(const MirProgram &program, MirBodyAddress address) {
   switch (address.kind) {
   case MirBodyKind::Function: {
     const MirFunctionInstance *instance =
         program.findFunctionInstance(address.owner);
+    // A classified runtime declaration's stored summary is exact-checked
+    // against its contract; other declarations remain unknown boundaries.
     return instance != nullptr &&
-                   instance->definitionKind == MirDefinitionKind::Source
+                   (instance->definitionKind == MirDefinitionKind::Source ||
+                    processMemoryRuntimeSummary(*instance).has_value())
                ? &instance->effectSummary
                : nullptr;
   }
@@ -2043,6 +2092,17 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
     node.local.traits = harmless();
     node.local.argumentsEscape.assign(node.parameterCount, false);
     if (!node.exactDefinition || node.body == nullptr) {
+      const MirFunctionInstance *declaration =
+          node.address.kind == MirBodyKind::Function
+              ? program.findFunctionInstance(node.address.owner)
+              : nullptr;
+      if (const auto declared = declaration == nullptr
+                                    ? std::nullopt
+                                    : processMemoryRuntimeSummary(*declaration);
+          declared && !node.exactDefinition) {
+        node.local = *declared;
+        continue;
+      }
       node.local = conservativeSummary(node.parameterCount, node.hasReceiver);
       node.unknownBoundary = true;
       continue;

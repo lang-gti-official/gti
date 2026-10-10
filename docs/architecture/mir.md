@@ -82,7 +82,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v97`, `mir-body-v81`).
+instruction, body, and caller-assignment facts (`mir-v98`, `mir-body-v81`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -255,8 +255,8 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v97`/`mir-body-v81`,
-with `lowered-program-v16` declaration metadata. It retains exact concrete
+The combined deterministic serialization is currently `mir-v98`/`mir-body-v81`,
+with `lowered-program-v17` declaration metadata. It retains exact concrete
 integral and payload enum identities, including their type/value arguments,
 alternative fields and lifecycle facts. Version 95 also records
 generated-default constructor identity explicitly on each constructor instance
@@ -275,7 +275,7 @@ its condition and that its result agrees with the payload's concrete MIR
 capabilities; nominal facts remain frontend-owned, while real builtin aggregate
 components compose those facts. Removing the condition or changing the derived
 capability is invalid MIR. The declaration catalog preserves the generic
-condition in `lowered-program-v16`, and optimization replay includes these facts.
+condition in `lowered-program-v17`, and optimization replay includes these facts.
 
 MIR also copies the artifact program kind and a pointer-free
 `MirEmbeddingPlan`. Each canonical row names the exact source
@@ -299,14 +299,14 @@ from actual alternative fields; nominal generic metadata does not become a
 stored component. Missing exact rows remain invalid rather than granting a
 storage or capability exemption.
 
-The combined serialization is `mir-v97`/`lowered-program-v16`, preserving
+The combined serialization is `mir-v98`/`lowered-program-v17`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,
 foreign-owner, and wrongly substituted aliases; program verification rejects
 open concrete types and duplicate identities. Declaration-bound value argument
 expressions are serialized as owned typed metadata, never evaluated by a backend.
-Those program/declaration additions did not change body operations. The current
+Those program/declaration additions did not change body operations. The
 `mir-v97`/`mir-body-v81` cutover removes the private prefix semantic/intrinsic
 family and construction-preflight instruction and field. Ordered call inputs
 now have no private extra-use exception; source capacity checks use ordinary
@@ -1105,7 +1105,9 @@ traps, moves, drops, loans, synchronization, and receiver/argument escape.
 `deriveMirProgramEffectSummaries` uses a deterministic call-graph fixed point.
 Exact acyclic static calls may consume proved target summaries; recursive
 components, virtual dispatch, declarations, native boundaries, and unresolved
-calls remain conservative. Verification independently derives the least
+calls remain conservative. The one declaration exception is the declared
+process-allocator runtime contract below: its exact classified declarations
+carry a precise local summary that callers consume like a source summary. Verification independently derives the least
 summary, rejects under-approximation, and accepts conservative
 over-approximation.
 Version 20 introduced function-definition provenance and the first MIR-owned
@@ -2967,6 +2969,38 @@ policy, and the complete hosted ordering. The C++ backend admits these rows as
 part of the hosted schedule; it does not discover lifecycle from public wrapper
 names. The detached declaration/adapter contract is serialized as
 `lowered-program-v9`.
+
+`mir-v98`/`lowered-program-v17` retain `ProcessMemoryRuntimeOperation` on the
+exact private native declarations of the process allocator's runtime ABI
+(`std/memory`'s `gti_internal::runtime` block): the native size and address
+alignment queries, the POSIX pointer-size/`ENOMEM`/`EINVAL` queries, POSIX
+allocation and release, and the Windows aligned allocation pair. Semantics
+classifies only C-linkage, bodyless, non-generic, compiler-private
+declarations of the trusted `std/memory` unit whose symbol and signature both
+match the shared table in `process_memory_runtime.h`; an application
+declaration of the same symbol stays an ordinary native boundary. HIR and the
+lowered builder exact-compare the field, the lowered verifier requires private
+identity, and MIR verification re-derives the operation from the symbol and
+signature and requires C linkage, declaration definition kind, no owner or
+arguments, and the target-selected family (Windows aligned pair, POSIX family
+elsewhere). Calls remain ordinary native `Call` instructions; no body
+operation changes.
+
+`deriveMirProgramEffectSummaries` gives a classified declaration this local
+summary instead of the conservative native boundary, and `summaryForAddress`
+lets callers consume its verified stored summary. Every operation invokes the
+runtime and is target-dependent; none synchronizes, runs GTI code, traps,
+reads place or unknown memory, or retains an argument. Allocation additionally
+`allocates`; POSIX allocation writes its `int32_t*` status pointee, and release
+retires a block that holds no live object under the lease contract. Both are
+stated as `writesUnknownMemory`, the current vocabulary's sound stand-in for
+an exact-pointee write and for retiring storage. The free-to-next-allocation
+ordering inside the native allocator carries no GTI-visible value, so it is
+not `maySynchronize`. Removal, reordering, and speculation remain denied;
+allocation elision is a separate mechanism. Verification rejects a forged
+symbol, signature, linkage, definition kind, operation, unrelated
+classified declaration, or target family, and an erased classification
+whose callers keep the precise summary.
 
 M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
 reparenting, active drop, and LIFO full-expression obligations. MIR v18 added
