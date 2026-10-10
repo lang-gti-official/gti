@@ -316,6 +316,12 @@ source-local static declarations. Visibility errors explain whether a
 declaration is private or its public interface was not imported; they must not
 offer an include fix that would bypass a module boundary. No fix guesses which
 declarations an author intends to export.
+An `export` written after a declaration's attribute lists, `@` bindings or
+specifiers is parser-owned `GTI-P0001` at the misplaced keyword. Its one edit
+replaces the prefix through `export` with `export` followed by the prefix's
+original text, so comments within the prefix survive. The edit is withheld
+when a comment separates the prefix from `export`, or when the parser has no
+source text for the unit. Recovery parses the declaration as exported.
 
 `GTI-B1401` owns a selected Objective-C++ `.mm` native source for a non-macOS
 target. Point at the exact `cpp-sources` manifest array element and name the

@@ -65,6 +65,19 @@ struct FrontendOptions {
   // builds set this, while inspection of every declaration's lowering does
   // not.
   bool lowerReachableOnly = false;
+  // Lower HIR only for the program roots and the entry source unit's own
+  // declarations, discovering everything they reach. Concrete-instance
+  // diagnostics are then reported for the entry unit's code and the library
+  // code it instantiates, not for library instances nothing in the entry unit
+  // reaches. Editor snapshots set this; `gti check` and builds never do, so
+  // their diagnostics remain complete. Meaningful only with `stopAfter == Hir`.
+  bool lowerEntryUnitOnly = false;
+  // Report raw-pointer audit findings located inside compiler-trusted units
+  // (the prelude and the standard library) to an application. Off by default:
+  // such a finding describes the library's own implementation, which the
+  // library checks with that unit as the entry. The audit still analyses
+  // those bodies, because application provenance flows through them.
+  bool reportLibraryAuditFindings = false;
 };
 
 struct FrontendResult {

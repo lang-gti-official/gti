@@ -121,6 +121,13 @@ Line comments, block comments, and strings remain separate scanner concerns
 because the compiler lexer intentionally discards comments. The formatter
 preserves inline and multiline `/* ... */` contents, normalizes continuation
 indentation beneath the containing structure, and remains idempotent.
+Comment placement follows source lines. A comment that begins on the same
+line as the preceding code stays trailing, as in `int y = 2; // note`. A line
+comment that begins its own line, or a block comment alone on its line, keeps
+its own line even where formatting joins or reflows the surrounding code, so
+it continues to describe the code after it. A statement-ending `;` or closing
+`}` keeps its line open only for a comment on that same line, so a block
+comment leading the next line's code never joins two statements.
 Formatting does not consult emitted C++ or delegate GTI syntax decisions to a
 native C++ tool.
 
@@ -233,6 +240,14 @@ after the receiver qualifier `mut` or `&&`. `requires` is a GTI keyword, but the
 formatter's recovery-oriented lexer does not assign compiler token kinds. A
 non-clause occurrence is therefore formatted without clause indentation while
 the compiler remains responsible for rejecting it as an identifier.
+
+A `[[...]]` attribute list keeps one space after a preceding word, `)` or
+comment on the same line, as in `export [[track_caller]] void f()`,
+`else [[discard]] f();` and `if (ready) [[discard]] f();`. Consecutive lists
+stay adjacent, as in `[[c_array(count)]][[link_name("values")]]`. A subscript
+whose operand starts with a lambda capture is not an attribute list: its inner
+`]` is followed by `(`, not `]`. The formatter does not move a misplaced
+`export`; the parser's fix does.
 
 Lambda capture lists use ordinary comma and assignment spacing. The supported
 owned form is written `[target = std::move(source)]`; formatting preserves the

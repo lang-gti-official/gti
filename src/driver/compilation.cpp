@@ -31,6 +31,7 @@ FrontendResult analyze(const CompilationRequest &request,
       .requireFunctionDefinitions = request.requiresFunctionDefinitions(),
       .progress = progress};
   options.rawPointerAudit = request.rawPointerAudit();
+  options.reportLibraryAuditFindings = request.rawPointerAuditLibraryFindings();
   options.program = request.program();
   // Artifacts contain only code the program roots reach.
   options.lowerReachableOnly = true;
@@ -257,7 +258,8 @@ CompilationRequest::CompilationRequest(
     OptimizationOutputRequest optimizationOutputs, WarningPolicy warnings,
     bool debugInfo, PackageWarningPolicy packageWarnings,
     RawPointerAuditMode rawPointerAudit, ProgramRequest program,
-    ConfigurationFlags declaredConfigurationFlags)
+    ConfigurationFlags declaredConfigurationFlags,
+    bool rawPointerAuditLibraryFindings)
     : entryPath(std::move(entry)),
       standardLibraryLayout(std::move(standardLibrary)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
@@ -268,7 +270,8 @@ CompilationRequest::CompilationRequest(
       requestedOptimizationOutputs(optimizationOutputs),
       requestedProgram(std::move(program)), warningPolicy(std::move(warnings)),
       packageWarningPolicy(std::move(packageWarnings)),
-      sourceDebugInfo(debugInfo), rawPointerAuditMode(rawPointerAudit) {
+      sourceDebugInfo(debugInfo), rawPointerAuditMode(rawPointerAudit),
+      reportLibraryAuditFindings(rawPointerAuditLibraryFindings) {
   normalizeConfigurationFlags(configuredFlags);
   normalizeConfigurationFlags(declaredFlags);
 }
@@ -293,6 +296,10 @@ bool CompilationRequest::debugInfo() const { return sourceDebugInfo; }
 
 RawPointerAuditMode CompilationRequest::rawPointerAudit() const {
   return rawPointerAuditMode;
+}
+
+bool CompilationRequest::rawPointerAuditLibraryFindings() const {
+  return reportLibraryAuditFindings;
 }
 
 const std::vector<PackageSourceRoot> &

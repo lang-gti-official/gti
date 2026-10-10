@@ -792,9 +792,9 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
                         std::vector<Diagnostic> &diagnostics) {
   validateFields(table,
                  {"optimization", "cpp-standard", "execution-profile",
-                  "raw-pointer-audit", "disabled-warnings",
-                  "dependency-warnings", "keep-cpp", "debug-info", "native",
-                  "defines"},
+                  "raw-pointer-audit", "raw-pointer-audit-library-findings",
+                  "disabled-warnings", "dependency-warnings", "keep-cpp",
+                  "debug-info", "native", "defines"},
                  "profile", sourceName, source, diagnostics);
   profile.defines =
       parseConfigurationDefines(table, "Profile", sourceName, source,
@@ -862,6 +862,18 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
       diagnostics.push_back(buildDiagnostic(
           "GTI-B1005", sourceSpan(sourceName, source, *audit),
           "Profile raw pointer audit must be 'off', 'warn', or 'strict'."));
+    }
+  }
+
+  if (const toml::node *libraryFindings =
+          table.get("raw-pointer-audit-library-findings")) {
+    if (const auto value = libraryFindings->value<bool>()) {
+      profile.rawPointerAuditLibraryFindings = *value;
+    } else {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, *libraryFindings),
+          "Profile field 'raw-pointer-audit-library-findings' must be a "
+          "boolean."));
     }
   }
 
