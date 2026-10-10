@@ -1371,8 +1371,23 @@ keeps its MIR position. A failure there ends only the generated representation
 at scope exit; there is no semantic Drop to invent. A non-placement Expected,
 such as a scalar payload with a cleanup-free class error, keeps its ordinary SSA
 local. An owning alternative keeps MIR's value drop and the value-rooted
-transfer slot described above. Constructor consumers of such a result are
-outside this proof and still reject body emission.
+transfer slot described above.
+
+The same slot may instead feed one by-value parameter of an exact ordinary
+source constructor, mirroring the owning route's constructor consumer. The
+construction must match the constructor's parameter types and owner, carry no
+local failure site, and publish its own result into MIR's staged or published
+class slot. A raising constructor must cross the failure constructor boundary;
+a non-raising one carries no defined failure. Parameter identity and dominance
+are the shared call-argument conditions. Every construction form that spells
+these arguments moves the wrapper and retires the moved-from representation
+right after the construction. This covers the failure-tag constructor, the
+plain form of a constructor body, and an Initialize-published binding. A class
+value reaches a constructor parameter through MIR's prepared-parameter place
+instead, so only the Expected wrapper, which MIR gives no place, uses this
+consumer. A construction that is assigned to an existing binding, returned
+directly, or used as a member initializer has no such publication slot. Like
+the owning route, it still rejects body emission.
 
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure

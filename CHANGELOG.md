@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.397.10 — `expected` results passed straight to constructor parameters
+
+- Fix internal compiler error GTI-B0001 when a call's `expected<T, E>` result
+  is passed directly to a by-value `expected<T, E>` constructor parameter, as
+  in `holder h{make(true)}`, and `T` is a class that needs no cleanup. Binding
+  the result to a local first is no longer necessary. The fix covers class
+  error types, arguments before and after the `expected`, classes with a
+  destructor, loops, temporaries such as `holder(make(true)).get()`,
+  constructions inside another constructor's body, callers that propagate
+  failure, and both the value and the error state.
+- Assigning such a construction to an existing variable, returning it
+  directly, or using it as a member initializer still reports GTI-B0001, as
+  it already did for payloads that own resources.
+
 ## 0.397.9 — `expected` results passed straight to by-value parameters
 
 - Fix internal compiler error GTI-B0001 when a call's `expected<T, E>` result

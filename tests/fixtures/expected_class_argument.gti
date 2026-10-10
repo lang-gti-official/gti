@@ -2,9 +2,10 @@
 #include <std/utility>
 #include <std/vector>
 
-// An Expected<Class, E> call result passed directly to a by-value parameter.
-// A cleanup-free result has no MIR drop; it is staged in representation-only
-// storage between the producer's success and the consuming call.
+// An Expected<Class, E> call result passed directly to a by-value function or
+// constructor parameter. A cleanup-free result has no MIR drop; it is staged in
+// representation-only storage between the producer's success and the
+// consuming call or construction.
 struct pair_value {
   int32_t first = 0;
   int32_t second = 0;
@@ -75,12 +76,70 @@ expected<int32_t, int32_t> relay(bool ok) {
   return read_pair(make_pair(ok));
 }
 
+// The same result may initialize an ordinary constructor's by-value parameter.
+class pair_holder {
+public:
+  int32_t total;
+  pair_holder(expected<pair_value, int32_t> result)
+      : total(result ? result.value().first + result.value().second
+                     : 100 + result.error()) {}
+  int32_t get() { return this.total; }
+};
+
+class between_holder {
+public:
+  int32_t total;
+  between_holder(int32_t before, expected<pair_value, int32_t> result,
+                 int32_t after)
+      : total(result ? before * result.value().first + after
+                     : before + after - result.error()) {}
+};
+
+class coded_holder {
+public:
+  int32_t total;
+  coded_holder(expected<pair_value, code_value> result)
+      : total(result ? result.value().first * result.value().second
+                     : 100 + result.error().code) {}
+};
+
+// A constructed owner with a destructor consumes the result the same way.
+class tracked_holder {
+public:
+  int32_t total;
+  tracked_holder(expected<pair_value, int32_t> result)
+      : total(result ? result.value().first : 100 + result.error()) {}
+  ~tracked_holder() {}
+};
+
+// An owning payload keeps MIR's value drop and its transfer slot.
+class named_holder {
+public:
+  int32_t size;
+  named_holder(expected<named_value, int32_t> result)
+      : size(result ? int32_t(result.value().text.size())
+                    : 100 + result.error()) {}
+};
+
+int32_t read_holder(pair_holder holder) { return holder.total; }
+
+expected<int32_t, int32_t> relay_holder(bool ok) {
+  pair_holder holder{make_pair(ok)};
+  return holder.total;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   bool yes = argc > 0;
   bool no = !yes;
   if (argc == 2) {
     // A later argument fails after the staged result was published.
     return read_between(1, make_pair(yes), bump(2147483647));
+  }
+  if (argc == 3) {
+    // A later constructor argument fails after the staged result was
+    // published.
+    between_holder failing{1, make_pair(yes), bump(2147483647)};
+    return failing.total;
   }
   if (read_pair(make_pair(yes)) != 12) { return 1; }
   if (read_pair(make_pair(no)) != 104) { return 2; }
@@ -100,5 +159,35 @@ int main(int argc, std::vector<std::string> argv) {
     total += read_pair(make_pair(index != 1));
   }
   if (total != 128) { return 12; }
+  pair_holder held{make_pair(yes)};
+  if (held.total != 12) { return 13; }
+  pair_holder held_error{make_pair(no)};
+  if (held_error.total != 104) { return 14; }
+  between_holder spaced{3, make_pair(yes), 4};
+  if (spaced.total != 19) { return 15; }
+  between_holder spaced_error{3, make_pair(no), 4};
+  if (spaced_error.total != 3) { return 16; }
+  coded_holder coded_result{make_coded(yes)};
+  if (coded_result.total != 6) { return 17; }
+  coded_holder coded_error{make_coded(no)};
+  if (coded_error.total != 109) { return 18; }
+  tracked_holder tracked{make_pair(yes)};
+  if (tracked.total != 5) { return 19; }
+  tracked_holder tracked_error{make_pair(no)};
+  if (tracked_error.total != 104) { return 20; }
+  named_holder named{make_named(yes)};
+  if (named.size != 7) { return 21; }
+  named_holder named_error{make_named(no)};
+  if (named_error.size != 106) { return 22; }
+  if (pair_holder(make_pair(yes)).get() != 12) { return 23; }
+  if (read_holder(pair_holder(make_pair(no))) != 104) { return 24; }
+  auto relayed_holder = relay_holder(no);
+  if (!relayed_holder || relayed_holder.value() != 104) { return 25; }
+  mut int32_t held_total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    pair_holder looped{make_pair(index != 1)};
+    held_total += looped.total;
+  }
+  if (held_total != 128) { return 26; }
   return 0;
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Expected<Class, E> call results pass directly to by-value parameters."""
+"""Expected<Class, E> call results pass directly to by-value parameters,
+including ordinary constructor parameters."""
 
 from pathlib import Path
 
@@ -14,6 +15,9 @@ if __name__ == "__main__":
     main(names=(fixture.stem,), cases={fixture.stem: [
         ((), (0, "", "")),
         (("later-argument-failure",),
+         (70, "", f"{fixture.name}:{overflow}: runtime error[GTI-R0001]: "
+                  "integer_overflow in addition\n")),
+        (("later-argument-failure", "constructor"),
          (70, "", f"{fixture.name}:{overflow}: runtime error[GTI-R0001]: "
                   "integer_overflow in addition\n")),
     ]})
