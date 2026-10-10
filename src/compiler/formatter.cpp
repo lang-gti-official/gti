@@ -108,25 +108,36 @@ public:
         state.directiveLine = true;
         state.includeLine = lexeme.text == "#include";
         break;
+      // A comment alone on its source line describes what follows it, so it
+      // keeps its own line rather than trailing the preceding code.
       case Kind::LineComment:
         if (state.lineHasContent) {
-          state.trailingCommentSpace();
+          if (startsSourceLine(lexemes, index)) {
+            state.newline();
+          } else {
+            state.trailingCommentSpace();
+          }
         }
         state.append(lexeme.text);
         state.newline();
         break;
-      case Kind::BlockComment:
+      case Kind::BlockComment: {
+        const bool endsLine = endsSourceLine(lexemes, index);
         if (state.lineHasContent) {
-          state.space();
+          if (endsLine && startsSourceLine(lexemes, index)) {
+            state.newline();
+          } else {
+            state.space();
+          }
         }
         state.appendBlockComment(lexeme.text);
-        if (index + 1 >= lexemes.size() ||
-            lexemes[index + 1].kind == Kind::Newline) {
+        if (endsLine) {
           state.newline();
         } else {
           state.space();
         }
         break;
+      }
       case Kind::Word:
       case Kind::Number:
       case Kind::String:
@@ -210,7 +221,7 @@ public:
                !(afterBrace->kind == Kind::Word &&
                  (afterBrace->text == "else" ||
                   (doBody && afterBrace->text == "while"))) &&
-               !isComment(afterBrace->kind))) {
+               !commentFollowsOnLine(lexemes, index))) {
             state.newline();
           }
           break;
@@ -252,7 +263,7 @@ public:
             (next->kind != Kind::Semicolon && next->kind != Kind::Comma &&
              !(next->kind == Kind::Word &&
                (next->text == "else" || (doBody && next->text == "while"))) &&
-             !isComment(next->kind)) ||
+             !commentFollowsOnLine(lexemes, index)) ||
             (options.breakBeforeBraces == BraceBreakingStyle::Allman &&
              next->kind == Kind::Word && next->text == "else")) {
           state.newline();
@@ -359,7 +370,7 @@ public:
         state.trimSpaces();
         state.append(";");
         if ((state.parenthesisDepth == 0 || state.atBlockStatementLevel()) &&
-            (next == nullptr || !isComment(next->kind))) {
+            !commentFollowsOnLine(lexemes, index)) {
           state.newline();
         } else {
           state.space();
@@ -2003,6 +2014,24 @@ private:
       return false;
     }
     return retokenizes({preceding[1], preceding[0], &current});
+  }
+
+  // Comment placement follows source lines: only a comment on the same line
+  // trails the code before it.
+  static bool startsSourceLine(const std::vector<Lexeme> &lexemes,
+                               std::size_t index) {
+    return index == 0 || lexemes[index - 1].kind == Kind::Newline;
+  }
+
+  static bool endsSourceLine(const std::vector<Lexeme> &lexemes,
+                             std::size_t index) {
+    return index + 1 >= lexemes.size() ||
+           lexemes[index + 1].kind == Kind::Newline;
+  }
+
+  static bool commentFollowsOnLine(const std::vector<Lexeme> &lexemes,
+                                   std::size_t index) {
+    return index + 1 < lexemes.size() && isComment(lexemes[index + 1].kind);
   }
 
   static const Lexeme *previousSignificant(const std::vector<Lexeme> &lexemes,
