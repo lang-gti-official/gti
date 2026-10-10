@@ -41,6 +41,15 @@ instructions override integration. What is specific to Claude Code:
   enforces it.
 - The Git stash stack is shared by every worktree and session. Never use a bare
   `git stash` or `git stash pop`.
+- Full builds and full suites go through the shared build window, because
+  several Claude Code sessions commonly validate at once on this machine:
+  `python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8`
+  and `python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 6`.
+  Focused `ctest -R '^name$'` runs and single-file `gti` compiles need no slot.
+  The helper's `verify` takes a suite slot itself and no longer holds the
+  metadata lock while checks run, so `start --adopt`, `status`, `checkpoint`
+  and `cleanup` do not wait on a peer's validation. Check
+  `python3 scripts/build_window.py --status` before starting heavy work.
 
 ## Skills
 
