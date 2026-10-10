@@ -221,6 +221,21 @@ generated-default constructors collect field origins; generated copy/move
 construction preserves existing maps. Imported facts retain lifetime-ending
 flags and participate in the ordinary checked-loan/write machinery.
 
+Each query worker is a fresh analyzer that copies the caller's current semantic
+model and value flow, so a nested query observes exactly the caller's facts at
+the demand. Its catalog is a sealed snapshot of the request catalog; because
+the catalog is sealed before body analysis and asserted unchanged across every
+instance analysis, all snapshots are identical, and a worker takes one released
+by an earlier query from the request-local query state instead of
+re-registering every callable declaration. Resolving a raw origin's root place
+back to its binding compares each candidate binding's declaration key (source
+unit, name span, generated lexeme) with the identity's `SymbolRecord`; this is
+the relation `symbolForDeclaration` establishes, evaluated without a hashed
+lookup per candidate. A root that no live binding names (an ended scope, or
+another body's local) still visits every namespace symbol of every unit, and
+the per-query model and value-flow copies remain the audit's dominant cost on
+library-heavy programs.
+
 The same workers collect raw memory-access preconditions: normalized input
 origins, read/write permission, and whether the operation checks loans or only
 address lifetime (pointer arithmetic). Import substitutes actual caller facts

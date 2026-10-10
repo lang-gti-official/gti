@@ -860,6 +860,8 @@ private:
     std::optional<Diagnostic> failure;
   };
 
+  struct SemanticCatalog;
+
   struct RawResultQueryState {
     // Interned diagnostic records only. Keeping evidence is independent of
     // admitting a complete root result to the bounded reuse cache.
@@ -869,6 +871,11 @@ private:
     std::size_t nextIdentity = 1;
     std::size_t depth = 0;
     std::optional<bool> hasRawGlobals;
+    // Sealed catalog snapshots released by completed query workers. The
+    // request catalog is sealed and asserted unchanged across every instance
+    // analysis, so each snapshot has the same content; a later worker takes a
+    // released one instead of re-registering every callable declaration.
+    std::vector<SemanticCatalog> idleCatalogs;
   };
 
   struct Symbol {
