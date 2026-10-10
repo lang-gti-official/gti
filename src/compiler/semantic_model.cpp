@@ -165,8 +165,7 @@ void collectActiveProgramStatement(const Stmt *statement,
   } else if (const auto *loop = stmtAs<RangeForStmt>(statement)) {
     collectActiveProgramStatement(loop->lowered().get(), target, result);
   } else if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
-    collectActiveProgramStatement(loop->elementBinding().get(), target,
-                                  result);
+    collectActiveProgramStatement(loop->elementBinding().get(), target, result);
     collectActiveProgramStatement(loop->body().get(), target, result);
   } else if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
     for (const SwitchArm &arm : selection->arms()) {
@@ -384,10 +383,9 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
   if (symbol.sourceUnit == 0 || symbol.nameSpan.end <= symbol.nameSpan.start) {
     return 0;
   }
-  const DeclarationKey key{symbol.sourceUnit, symbol.nameSpan.start,
-                           symbol.nameSpan.end,
-                           symbol.generated ? symbol.name : std::string{},
-                           symbol.expansion};
+  const DeclarationKey key{
+      symbol.sourceUnit, symbol.nameSpan.start, symbol.nameSpan.end,
+      symbol.generated ? symbol.name : std::string{}, symbol.expansion};
   if (const auto found = symbolsByDeclaration.find(key);
       found != symbolsByDeclaration.end()) {
     SymbolRecord &existing = symbolRecords[found->second - baseSymbolCount - 1];
@@ -421,9 +419,9 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
   }
 
   if (base != nullptr) {
-    if (const auto inherited = base->symbolForDeclaration(
-            symbol.sourceUnit, symbol.nameSpan, key.generatedName,
-            symbol.expansion)) {
+    if (const auto inherited =
+            base->symbolForDeclaration(symbol.sourceUnit, symbol.nameSpan,
+                                       key.generatedName, symbol.expansion)) {
       // The declaration already has a base identity; instance analysis
       // reuses it and skips base-record enrichment (the delta is
       // discarded after lowering, so enrichment would be invisible).
@@ -451,14 +449,11 @@ void SemanticDatabase::setSymbolDocumentation(
       std::move(documentationMarkdown);
 }
 
-[[nodiscard]] SymbolId
-SemanticDatabase::symbolForDeclaration(SourceUnitId sourceUnit,
-                                       const SourceSpan &span,
-                                       std::string_view generatedName,
-                                       std::uint32_t expansion) const {
-  const auto found = symbolsByDeclaration.find(
-      DeclarationKey{sourceUnit, span.start, span.end,
-                     std::string(generatedName), expansion});
+[[nodiscard]] SymbolId SemanticDatabase::symbolForDeclaration(
+    SourceUnitId sourceUnit, const SourceSpan &span,
+    std::string_view generatedName, std::uint32_t expansion) const {
+  const auto found = symbolsByDeclaration.find(DeclarationKey{
+      sourceUnit, span.start, span.end, std::string(generatedName), expansion});
   if (found != symbolsByDeclaration.end()) {
     return found->second;
   }
@@ -1961,8 +1956,9 @@ void SemanticModel::recordConstexprForExpansion(
   constexprForExpansions.insert_or_assign(&statement, std::move(expansion));
 }
 
-const Expr &SemanticModel::recordExpressionAlias(
-    const Expr &expression, std::shared_ptr<const Expr> alias) {
+const Expr &
+SemanticModel::recordExpressionAlias(const Expr &expression,
+                                     std::shared_ptr<const Expr> alias) {
   const Expr &result = *alias;
   expressionAliases.insert_or_assign(&expression, std::move(alias));
   return result;
@@ -2341,11 +2337,9 @@ void SemanticModel::setSymbolDocumentation(SymbolId symbol,
                                           std::move(documentationMarkdown));
 }
 
-[[nodiscard]] SymbolId
-SemanticModel::symbolForDeclaration(SourceUnitId sourceUnit,
-                                    const SourceSpan &span,
-                                    std::string_view generatedName,
-                                    std::uint32_t expansion) const {
+[[nodiscard]] SymbolId SemanticModel::symbolForDeclaration(
+    SourceUnitId sourceUnit, const SourceSpan &span,
+    std::string_view generatedName, std::uint32_t expansion) const {
   return semanticDatabase.symbolForDeclaration(sourceUnit, span, generatedName,
                                                expansion);
 }
