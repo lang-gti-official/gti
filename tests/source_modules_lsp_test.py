@@ -22,7 +22,7 @@ def main():
             "  int hidden() { return 42; }\n"
             "  export int answer() { return hidden(); }\n"
             "  struct Detail { int read() { return 7; } };\n"
-            "  export Detail make() { return Detail{}; }\n"
+            "  export Detail make() { return Detail(); }\n"
             "}\n"
         )
         write(main_path, source)

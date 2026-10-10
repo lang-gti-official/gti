@@ -3738,14 +3738,8 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
             and message["params"].get("version") == 1
             and not has_error_diagnostics(message["params"])
         )
-        refresh = session.receive_until(
-            lambda message: message.get("method")
-            == "workspace/semanticTokens/refresh"
-        )
-        session.send(
-            {"jsonrpc": "2.0", "id": refresh["id"], "result": None}
-        )
-
+        # Opening a document never asks the client to refresh tokens: the
+        # client requests them itself once the document is open.
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -8816,6 +8810,256 @@ def test_pending_semantic_request_cancellation(executable, root):
         session.close()
 
 
+def initialize_session(session, capabilities=None):
+    session.send(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"capabilities": capabilities or {}},
+        }
+    )
+    session.receive_until(lambda message: message.get("id") == 1)
+    session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+
+
+def full_change(uri, version, source):
+    return {
+        "jsonrpc": "2.0",
+        "method": "textDocument/didChange",
+        "params": {
+            "textDocument": {"uri": uri, "version": version},
+            "contentChanges": [{"text": source}],
+        },
+    }
+
+
+def assert_no_message(session, predicate, timeout):
+    # Succeeds only when nothing matching arrives within `timeout`; other
+    # messages received meanwhile are consumed.
+    try:
+        unexpected = session.receive_until(predicate, timeout=timeout)
+    except AssertionError as error:
+        assert "timed out" in str(error), error
+        return
+    raise AssertionError(f"unexpected message: {unexpected}")
+
+
+def is_refresh(message):
+    return message.get("method") == "workspace/semanticTokens/refresh"
+
+
+def test_edits_keep_diagnostics_until_replaced(executable, root):
+    # An edit publishes nothing by itself. The dependant's error stays in the
+    # editor while its re-analysis runs, and the first publication after the
+    # edit is the new result, never an empty interim set.
+    dependency_path = root / "retained-lib.gti"
+    entry_path = root / "retained-root.gti"
+    dependency_source = "int retained_value() { return 1; }\n"
+    entry_source = (
+        '#include "retained-lib.gti"\n'
+        "int main() { return retained_value() + missing_name; }\n"
+    )
+    dependency_path.write_text(dependency_source, encoding="utf-8")
+    entry_path.write_text(entry_source, encoding="utf-8")
+    dependency_uri = dependency_path.resolve().as_uri()
+    entry_uri = entry_path.resolve().as_uri()
+    session = LspSession(
+        executable, environment=dict(os.environ, GTI_LSP_UPDATE_DEBOUNCE_MS="0")
+    )
+    try:
+        initialize_session(session)
+        open_document(session, dependency_uri, dependency_source)
+        opened = open_document(
+            session, entry_uri, entry_source, expect_clean=False
+        )
+        assert has_error_diagnostics(opened["params"]), opened
+
+        def publications_for(uri, received):
+            def matches(message):
+                if message.get("method") == "textDocument/publishDiagnostics":
+                    received.append(message)
+                    return message["params"]["uri"] == uri
+                return False
+
+            return matches
+
+        # A dependency edit that changes nothing the root sees.
+        received = []
+        session.send(
+            full_change(dependency_uri, 2, dependency_source + "// edited\n")
+        )
+        republished = session.receive_until(publications_for(entry_uri, received))
+        assert has_error_diagnostics(republished["params"]), republished
+        assert republished["params"]["version"] == 1, republished
+        assert [
+            message for message in received if message["params"]["uri"] == entry_uri
+        ] == [republished], received
+
+        # The root's own edit keeps the error; its first publication is the
+        # new version's result.
+        received = []
+        session.send(full_change(entry_uri, 2, entry_source + "// edited\n"))
+        republished = session.receive_until(publications_for(entry_uri, received))
+        assert republished["params"]["version"] == 2, republished
+        assert has_error_diagnostics(republished["params"]), republished
+        assert [
+            message for message in received if message["params"]["uri"] == entry_uri
+        ] == [republished], received
+    finally:
+        session.close()
+
+
+def test_dependency_reanalysis_refreshes_tokens_only_when_changed(
+    executable, root
+):
+    # A client re-requests tokens after its own edits, so publication never
+    # asks for a refresh then. After a dependency edit the server compares the
+    # dependant's new tokens with the ones the client holds and requests one
+    # refresh only when they differ.
+    dependency_path = root / "refresh-lib.gti"
+    entry_path = root / "refresh-root.gti"
+    dependency_source = "int shared_counter = 1;\n"
+    entry_source = (
+        '#include "refresh-lib.gti"\n'
+        "int main() { return shared_counter; }\n"
+    )
+    dependency_path.write_text(dependency_source, encoding="utf-8")
+    entry_path.write_text(entry_source, encoding="utf-8")
+    dependency_uri = dependency_path.resolve().as_uri()
+    entry_uri = entry_path.resolve().as_uri()
+    session = LspSession(
+        executable, environment=dict(os.environ, GTI_LSP_UPDATE_DEBOUNCE_MS="0")
+    )
+    try:
+        initialize_session(
+            session,
+            {"workspace": {"semanticTokens": {"refreshSupport": True}}},
+        )
+        open_document(session, dependency_uri, dependency_source)
+        open_document(session, entry_uri, entry_source)
+        assert_no_message(session, is_refresh, timeout=0.5)
+
+        use = lsp_position(entry_source, entry_source.index("shared_counter;"))
+
+        def root_tokens(request_id):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/semanticTokens/full",
+                    "params": {"textDocument": {"uri": entry_uri}},
+                }
+            )
+            data = session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]["data"]
+            return semantic_tokens_by_position(data)
+
+        held = root_tokens(2)
+        assert held[(use["line"], use["character"])]["modifiers"] & 4, held
+
+        # A dependency edit that leaves the root's tokens unchanged.
+        session.send(
+            full_change(dependency_uri, 2, dependency_source + "// note\n")
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == entry_uri
+        )
+        assert_no_message(session, is_refresh, timeout=1.0)
+        assert root_tokens(3) == held
+
+        # The global becomes mutable, so the root's use loses `readonly`.
+        session.send(full_change(dependency_uri, 3, "mut int shared_counter = 1;\n"))
+        refresh = session.receive_until(is_refresh, timeout=10)
+        session.send({"jsonrpc": "2.0", "id": refresh["id"], "result": None})
+        assert_no_message(session, is_refresh, timeout=0.5)
+        changed = root_tokens(4)
+        assert not changed[(use["line"], use["character"])]["modifiers"] & 4, changed
+
+        # The root's own edit: the client re-requests on its own, no refresh.
+        session.send(full_change(entry_uri, 2, entry_source + "// edited\n"))
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == entry_uri
+            and message["params"].get("version") == 2
+        )
+        assert_no_message(session, is_refresh, timeout=0.5)
+    finally:
+        session.close()
+
+
+def test_update_debounce_coalesces_edits(executable, root):
+    # A burst of edits is analysed once, from its final text, after the wait;
+    # a semantic request waiting on the document ends the wait at once.
+    path = root / "debounce.gti"
+    source = "int debounce_value() { return 1; }\n"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    trace_path = root / "debounce-trace.jsonl"
+    trace_path.unlink(missing_ok=True)
+    session = LspSession(
+        executable,
+        environment=dict(
+            os.environ,
+            GTI_LSP_FRONTEND_TRACE=str(trace_path),
+            GTI_LSP_UPDATE_DEBOUNCE_MS="2000",
+            GTI_LSP_ANALYSIS_WORKERS="1",
+        ),
+    )
+    closed = False
+    try:
+        initialize_session(session)
+        open_document(session, uri, source)
+        last_version = 6
+        for version in range(2, last_version + 1):
+            session.send(full_change(uri, version, source + f"// edit {version}\n"))
+            time.sleep(0.05)
+        final = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == last_version,
+            timeout=30,
+        )
+        assert not has_error_diagnostics(final["params"]), final
+
+        session.send(full_change(uri, 7, source + "// hovered\n"))
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, source.index("debounce_value")),
+                },
+            }
+        )
+        start = time.monotonic()
+        hover = session.receive_until(lambda message: message.get("id") == 2)
+        elapsed = time.monotonic() - start
+        assert hover.get("result") is not None, hover
+        assert elapsed < 1.5, elapsed
+        session.close()
+        closed = True
+        generations = [
+            record["generation"]
+            for record in (
+                json.loads(line)
+                for line in trace_path.read_text(encoding="utf-8").splitlines()
+            )
+            if record["kind"] == "analysis"
+        ]
+        assert generations == [1, last_version, 7], generations
+    finally:
+        if not closed:
+            session.close()
+
+
 def test_worker_survives_failed_analysis(executable, root):
     """Analysis that cannot complete must leave the worker and its state usable.
 
@@ -10268,6 +10512,11 @@ def main():
     test_watched_dependency_reanalysis(sys.argv[1], root)
     test_worker_survives_failed_analysis(sys.argv[1], root)
     test_pending_semantic_request_cancellation(sys.argv[1], root)
+    test_edits_keep_diagnostics_until_replaced(sys.argv[1], root)
+    test_dependency_reanalysis_refreshes_tokens_only_when_changed(
+        sys.argv[1], root
+    )
+    test_update_debounce_coalesces_edits(sys.argv[1], root)
     test_semantic_hover(sys.argv[1], root)
     test_class_scoped_type_alias_tooling(sys.argv[1], root)
     test_documentation_hover(sys.argv[1], root)
