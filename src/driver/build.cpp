@@ -967,6 +967,9 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   identity.add(
       "raw-pointer-audit",
       rawPointerAuditModeName(request.compilation().rawPointerAudit()));
+  identity.add("raw-pointer-audit-library-findings",
+               static_cast<std::uint64_t>(
+                   request.compilation().rawPointerAuditLibraryFindings()));
   for (const std::string &group :
        request.compilation().warnings().disabledGroups()) {
     identity.add("warning.disabled-group", group);
@@ -2599,6 +2602,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     buildProvenance = BuildProvenance{
         .debugInfo = request.compilation().debugInfo(),
         .rawPointerAudit = request.compilation().rawPointerAudit(),
+        .rawPointerAuditLibraryFindings =
+            request.compilation().rawPointerAuditLibraryFindings(),
         .compilerBuild = currentCompilerBuildIdentity(),
         .project = request.buildReport()->project,
         .source = std::move(*source),

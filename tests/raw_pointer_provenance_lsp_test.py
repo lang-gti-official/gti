@@ -6,6 +6,7 @@ import pathlib
 import sys
 import tempfile
 
+from lsp_project_facts_test import AUDIT_TEST_ENVIRONMENT, audited_diagnostics
 from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
 
 
@@ -26,14 +27,12 @@ def main():
         path = pathlib.Path(root) / "main.gti"
         path.write_text(valid)
         uri = path.as_uri()
-        session = LspSession(sys.argv[1], ["--raw-pointer-audit=strict"])
+        session = LspSession(sys.argv[1], ["--raw-pointer-audit=strict"],
+                             environment=AUDIT_TEST_ENVIRONMENT)
 
         def published(version):
-            result = session.receive_until(lambda message:
-                message.get("method") == "textDocument/publishDiagnostics"
-                and message["params"].get("uri") == uri
-                and message["params"].get("version") == version)
-            return [item for item in result["params"]["diagnostics"]
+            # The edit-path publication, then the background audit's.
+            return [item for item in audited_diagnostics(session, uri, version)
                     if item.get("severity") == 1]
 
         def change(version, source):

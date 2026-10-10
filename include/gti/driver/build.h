@@ -228,6 +228,8 @@ struct BuildProvenance {
   // Additive schema-2 policy field. Older reports imply false.
   bool debugInfo = false;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
+  // Additive policy field. Older reports imply false.
+  bool rawPointerAuditLibraryFindings = false;
   BuildFileProvenance producerExecutable;
   CompilerBuildIdentity compilerBuild;
   std::optional<BuildProjectProvenance> project;

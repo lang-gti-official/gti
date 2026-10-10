@@ -3,6 +3,7 @@
 """Project/package graph integration tests for gti_lsp (T-LSP-04)."""
 
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -85,6 +86,20 @@ def diagnostics_for(session, uri, version=None, predicate=None):
         return predicate is None or predicate(params.get("diagnostics", []))
 
     return session.receive_until(matches)["params"]["diagnostics"]
+
+
+def audited_diagnostics(session, uri, version=None, audit=True):
+    """Diagnostics once the background raw-pointer audit of `version` has
+    published. With the audit enabled a version publishes twice: the edit-path
+    result, then the audit's additions. Sessions set GTI_LSP_AUDIT_QUIET_MS=0 so
+    the second publication follows at once."""
+    diagnostics = diagnostics_for(session, uri, version)
+    if audit:
+        diagnostics = diagnostics_for(session, uri, version)
+    return diagnostics
+
+
+AUDIT_TEST_ENVIRONMENT = dict(os.environ, GTI_LSP_AUDIT_QUIET_MS="0")
 
 
 def completion_labels(session, request_id, uri, source):

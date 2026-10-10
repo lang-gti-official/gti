@@ -9,8 +9,10 @@ namespace lang {
 
 class HirLowerer::Impl {
 public:
-  explicit Impl(TargetInfo target, bool reachablePrefix)
-      : target(std::move(target)), reachablePrefixRequested(reachablePrefix) {}
+  explicit Impl(TargetInfo target, HirLoweringScope scope)
+      : target(std::move(target)),
+        reachablePrefixRequested(scope.reachablePrefix),
+        entryDeclarations(scope.entryDeclarations) {}
 
   [[nodiscard]] HirLoweringResult lowerConstantFunction(
       const SemanticModel &semantics, SemanticInstanceProvider &provider,
@@ -98,9 +100,20 @@ public:
     // roots first. Every instance is appended to its table when first
     // enqueued and is complete once processed, so the tables at this point
     // are a closed prefix of the final program: nothing discovered later is
-    // referenced from it. Otherwise every declaration is seeded first, which
-    // keeps the complete program's established instance order.
-    if (reachablePrefixRequested) {
+    // referenced from it. An entry-unit scope seeds the roots and the unit's
+    // own declarations and never seeds the rest. Otherwise every declaration
+    // is seeded first, which keeps the complete program's established
+    // instance order.
+    if (entryDeclarations) {
+      seedProgramRoots(source.declarations());
+      const StmtList &declarations = source.declarations();
+      const std::size_t end =
+          std::min(declarations.size(),
+                   entryDeclarations->first + entryDeclarations->second);
+      for (std::size_t index = entryDeclarations->first; index < end; ++index) {
+        seedDeclaration(declarations[index], std::nullopt);
+      }
+    } else if (reachablePrefixRequested) {
       seedProgramRoots(source.declarations());
     } else {
       seedDeclarations(source.declarations(), std::nullopt);
@@ -114,7 +127,7 @@ public:
     const InstanceCounts reachable = instanceCounts();
     // Every other declaration is still lowered: concrete semantic analysis of
     // its instances is what reports their diagnostics.
-    if (reachablePrefixRequested) {
+    if (reachablePrefixRequested && !entryDeclarations) {
       seedDeclarations(source.declarations(), std::nullopt);
       processPendingInstances();
     }
@@ -1089,92 +1102,96 @@ private:
   void seedDeclarations(const StmtList &declarations,
                         std::optional<ClassId> enclosingClass) {
     for (const StmtPtr &statement : declarations) {
-      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
-        if (const StmtList *branch = conditional->activeBranch(target)) {
-          seedDeclarations(*branch, enclosingClass);
-        }
-        continue;
-      }
-      if (const auto *namespaceDeclaration =
-              stmtAs<NamespaceDecl>(statement.get())) {
-        seedDeclarations(namespaceDeclaration->declarations(), enclosingClass);
-        continue;
-      }
-      if (const auto *externC = stmtAs<ExternCDecl>(statement.get())) {
-        seedDeclarations(externC->declarations(), enclosingClass);
-        continue;
-      }
-      if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
-        if (const TypeAliasInfo *info = baseModel->findTypeAlias(*alias))
-          seedEnumIdentities(info->type);
-        continue;
-      }
-      if (const auto *classDeclaration = stmtAs<ClassDecl>(statement.get())) {
-        const ClassTypeInfo *classInfo =
-            baseModel->findClassType(*classDeclaration);
-        if (classInfo != nullptr) {
-          for (const ClassBaseTypeInfo &base : classInfo->bases) {
-            seedConcreteDeclarationType(base.type);
-          }
-          for (const ClassFieldTypeInfo &field : classInfo->fields) {
-            seedConcreteDeclarationType(field.type);
-          }
-          for (const ClassFieldTypeInfo &field : classInfo->staticFields) {
-            seedConcreteDeclarationType(field.type);
-          }
-        }
-        if (classInfo != nullptr && classInfo->genericParameters.empty()) {
-          (void)enqueueClass(SemanticType::classType(classInfo->id));
-        }
-        seedDeclarations(classDeclaration->members(),
-                         classInfo == nullptr
-                             ? std::optional<ClassId>{}
-                             : std::optional<ClassId>{classInfo->id});
-        continue;
-      }
-      if (const auto *enumDeclaration = stmtAs<EnumDecl>(statement.get())) {
-        const EnumTypeInfo *info = baseModel->findEnumType(*enumDeclaration);
-        if (info != nullptr && info->genericParameters.empty()) {
-          enqueueEnum(SemanticType::enumType(info->id));
-        }
-        continue;
-      }
-      if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
-        const FunctionInfo *info = baseModel->findFunction(*function);
-        if (info != nullptr) {
-          seedConcreteDeclarationType(info->returnType);
-          for (const SemanticType &parameter : info->parameterTypes) {
-            seedConcreteDeclarationType(parameter);
-          }
-        }
-        if (info == nullptr || !info->genericParameters.empty()) {
-          continue;
-        }
-        std::vector<SemanticType> classArguments;
-        if (info->ownerClass != 0) {
-          const ClassTypeInfo *owner =
-              baseModel->findClassType(info->ownerClass);
-          if (owner == nullptr || !owner->genericParameters.empty()) {
-            continue;
-          }
-        }
-        (void)enqueueFunction(*info, classArguments, {}, {}, {},
-                              info->returnType, info->parameterTypes);
-        continue;
-      }
-      if (const auto *constructor = stmtAs<ConstructorDecl>(statement.get())) {
-        if (const ConstructorInfo *info =
-                baseModel->findConstructor(*constructor)) {
-          for (const SemanticType &parameter : info->parameterTypes) {
-            seedConcreteDeclarationType(parameter);
-          }
-        }
-        continue;
-      }
-      // Program-wide storage is lowered once from the semantic initialization
-      // plan after declaration seeding. Its order is not the combined AST
-      // visitation order, and class statics share the module body with globals.
+      seedDeclaration(statement, enclosingClass);
     }
+  }
+
+  void seedDeclaration(const StmtPtr &statement,
+                       std::optional<ClassId> enclosingClass) {
+    if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        seedDeclarations(*branch, enclosingClass);
+      }
+      return;
+    }
+    if (const auto *namespaceDeclaration =
+            stmtAs<NamespaceDecl>(statement.get())) {
+      seedDeclarations(namespaceDeclaration->declarations(), enclosingClass);
+      return;
+    }
+    if (const auto *externC = stmtAs<ExternCDecl>(statement.get())) {
+      seedDeclarations(externC->declarations(), enclosingClass);
+      return;
+    }
+    if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
+      if (const TypeAliasInfo *info = baseModel->findTypeAlias(*alias))
+        seedEnumIdentities(info->type);
+      return;
+    }
+    if (const auto *classDeclaration = stmtAs<ClassDecl>(statement.get())) {
+      const ClassTypeInfo *classInfo =
+          baseModel->findClassType(*classDeclaration);
+      if (classInfo != nullptr) {
+        for (const ClassBaseTypeInfo &base : classInfo->bases) {
+          seedConcreteDeclarationType(base.type);
+        }
+        for (const ClassFieldTypeInfo &field : classInfo->fields) {
+          seedConcreteDeclarationType(field.type);
+        }
+        for (const ClassFieldTypeInfo &field : classInfo->staticFields) {
+          seedConcreteDeclarationType(field.type);
+        }
+      }
+      if (classInfo != nullptr && classInfo->genericParameters.empty()) {
+        (void)enqueueClass(SemanticType::classType(classInfo->id));
+      }
+      seedDeclarations(classDeclaration->members(),
+                       classInfo == nullptr
+                           ? std::optional<ClassId>{}
+                           : std::optional<ClassId>{classInfo->id});
+      return;
+    }
+    if (const auto *enumDeclaration = stmtAs<EnumDecl>(statement.get())) {
+      const EnumTypeInfo *info = baseModel->findEnumType(*enumDeclaration);
+      if (info != nullptr && info->genericParameters.empty()) {
+        enqueueEnum(SemanticType::enumType(info->id));
+      }
+      return;
+    }
+    if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
+      const FunctionInfo *info = baseModel->findFunction(*function);
+      if (info != nullptr) {
+        seedConcreteDeclarationType(info->returnType);
+        for (const SemanticType &parameter : info->parameterTypes) {
+          seedConcreteDeclarationType(parameter);
+        }
+      }
+      if (info == nullptr || !info->genericParameters.empty()) {
+        return;
+      }
+      std::vector<SemanticType> classArguments;
+      if (info->ownerClass != 0) {
+        const ClassTypeInfo *owner = baseModel->findClassType(info->ownerClass);
+        if (owner == nullptr || !owner->genericParameters.empty()) {
+          return;
+        }
+      }
+      (void)enqueueFunction(*info, classArguments, {}, {}, {}, info->returnType,
+                            info->parameterTypes);
+      return;
+    }
+    if (const auto *constructor = stmtAs<ConstructorDecl>(statement.get())) {
+      if (const ConstructorInfo *info =
+              baseModel->findConstructor(*constructor)) {
+        for (const SemanticType &parameter : info->parameterTypes) {
+          seedConcreteDeclarationType(parameter);
+        }
+      }
+      return;
+    }
+    // Program-wide storage is lowered once from the semantic initialization
+    // plan after declaration seeding. Its order is not the combined AST
+    // visitation order, and class statics share the module body with globals.
   }
 
   void lowerEmbeddingPlan() {
@@ -6177,6 +6194,9 @@ private:
 
   TargetInfo target;
   bool reachablePrefixRequested = false;
+  // Top-level declaration range of the entry unit when lowering is scoped to
+  // it; see `HirLoweringScope`.
+  std::optional<std::pair<std::size_t, std::size_t>> entryDeclarations;
   SemanticInstanceProvider *instanceProvider = nullptr;
   const SemanticModel *baseModel = nullptr;
   HirLoweringResult output;
@@ -6222,8 +6242,8 @@ private:
   std::unordered_set<HirValueId> collectionResults;
 };
 
-HirLowerer::HirLowerer(TargetInfo target, bool reachablePrefix)
-    : impl(std::make_unique<Impl>(std::move(target), reachablePrefix)) {}
+HirLowerer::HirLowerer(TargetInfo target, HirLoweringScope scope)
+    : impl(std::make_unique<Impl>(std::move(target), scope)) {}
 
 HirLowerer::~HirLowerer() = default;
 HirLowerer::HirLowerer(HirLowerer &&) noexcept = default;
