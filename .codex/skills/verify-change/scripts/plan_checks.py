@@ -135,7 +135,9 @@ def classify(paths: Iterable[str]) -> dict[str, list[str]]:
             add("documentation/plans")
         if under(path, ".codex/", ".claude/", ".agents/") or path in {
             "scripts/agent_workflow.py",
+            "scripts/build_window.py",
             "tests/agent_workflow_test.py",
+            "tests/build_window_test.py",
         }:
             add("agent automation")
         if not matched:
@@ -174,7 +176,13 @@ def candidate_checks(paths: list[str], groups: dict[str, list[str]]) -> list[Che
             )
         )
     if needs_build:
-        checks.append(Check("build", "cmake --build build -j4", "compiled surfaces changed"))
+        checks.append(
+            Check(
+                "build",
+                "python3 scripts/build_window.py --kind build -- cmake --build build -j4",
+                "compiled surfaces changed; a full build holds a build-window slot",
+            )
+        )
     if "compiler/frontend" in groups:
         checks.append(
             Check(
@@ -238,22 +246,27 @@ def candidate_checks(paths: list[str], groups: dict[str, list[str]]) -> list[Che
             )
         )
     if any(
-        path in {"scripts/agent_workflow.py", "tests/agent_workflow_test.py"}
+        path in {
+            "scripts/agent_workflow.py",
+            "scripts/build_window.py",
+            "tests/agent_workflow_test.py",
+            "tests/build_window_test.py",
+        }
         for path in paths
     ):
         checks.append(
             Check(
                 "agent-workflow",
-                "ctest --test-dir build --output-on-failure -R '^agent_workflow$'",
-                "the agent task lifecycle helper or its regression changed",
+                "ctest --test-dir build --output-on-failure -R '^(agent_workflow|build_window)$'",
+                "the agent task lifecycle helper, the build window, or their regressions changed",
             )
         )
     if "build/release" in groups:
         checks.append(
             Check(
                 "build-release",
-                "ctest --test-dir build --output-on-failure",
-                "build, packaging, or release behavior can affect the full matrix",
+                "python3 scripts/build_window.py --kind suite -- ctest --test-dir build --output-on-failure",
+                "build, packaging, or release behavior can affect the full matrix; a whole suite holds a build-window slot",
             )
         )
 
