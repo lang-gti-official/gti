@@ -216,6 +216,8 @@ ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
                             .cppStandard = profile.cppStandard,
                             .executionProfile = profile.executionProfile,
                             .rawPointerAudit = profile.rawPointerAudit,
+                            .rawPointerAuditLibraryFindings =
+                                profile.rawPointerAuditLibraryFindings,
                             .warningPolicy = profile.warningPolicy,
                             .dependencyWarnings = profile.dependencyWarnings,
                             .defines = profile.defines});

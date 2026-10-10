@@ -606,7 +606,14 @@ Editor analysis requests `FrontendOptions::stopAfter = Hir`. HIR is the
 compiler-owned discovery point for concrete generic instances, so stopping at
 symbolic semantics made valid editor snapshots omit diagnostics that
 `gti check` reports for instantiated generic bodies and dependent
-`static_assert` declarations. The LSP does not query HIR, and it does not
+`static_assert` declarations. It also sets `lowerEntryUnitOnly`: lowering
+seeds the program roots and the open file's own declarations and discovers
+only what they reach, instead of every declaration in every loaded unit.
+Instance diagnostics for the open file's code, including library bodies it
+instantiates, are therefore identical to `gti check`; an instance that only
+unreached library code requests is not reported in the editor, because it is
+that library's own `gti check` concern and the complete lowering cost about
+a third of every keystroke. The LSP does not query HIR, and it does not
 build failure metadata or MIR. It releases the HIR program as soon as the
 analysis returns, once HIR's diagnostics are in the result, so retained
 snapshots hold syntax, semantics, and source identity only. Code generation
@@ -662,14 +669,36 @@ The selected profile also supplies warning-group and dependency-warning policy.
 It also supplies `raw-pointer-audit = "off"|"warn"|"strict"`. A process option
 `gti_lsp --raw-pointer-audit=off|warn|strict` explicitly overrides that profile;
 without either selection standalone documents use `off`. Duplicate, missing,
-or unknown process values are rejected. Analysis and completion both pass the
-resolved enum to the compiler before analysis, rather than filtering raw
-diagnostics afterwards. Mandatory type/unsafe/checked-borrow errors remain
-errors in every mode. Audit warning/error severity comes from the same
-frontend boundary as CLI compilation; the LSP does not promote findings or
-infer safety itself. Watched manifest changes invalidate these snapshots even
-when source bytes are unchanged. No environment-variable or independent
-dynamic editor policy is introduced.
+or unknown process values are rejected. Mandatory type/unsafe/checked-borrow
+errors remain errors in every mode. Audit warning/error severity comes from
+the same frontend boundary as CLI compilation; the LSP does not promote
+findings or infer safety itself. Watched manifest changes invalidate these
+snapshots even when source bytes are unchanged. No independent dynamic editor
+policy is introduced.
+
+The audit never runs on the edit path. It is whole-program provenance
+analysis the compiler cannot interrupt, and it made one analysis of an
+eight-include file take 41 s instead of 0.6 s, so with it on the edit path
+every keystroke stalled the editor for the audit's duration. Edit-path
+analysis and completion always pass `Off`. When the selected mode is `warn`
+or `strict`, each published generation additionally schedules a background
+audit: the same analysis of the same text with the profile's mode, on one
+dedicated worker that starts only when no analysis or completion is pending
+and the document has been quiet for two seconds (`GTI_LSP_AUDIT_QUIET_MS`
+pins the period for tests), or at once on `didSave`. A newer generation
+replaces a waiting audit; a finished audit publishes only if its generation
+is still current. Its findings are the diagnostics the ordinary result did
+not already contain, stored per root and published as additions to that
+generation's set, so a document with the audit enabled publishes twice per
+settled version: the edit-path result, then the audit's additions. Findings
+belong to their generation: a dependency or project change retires them
+until the next audit, even when the file's text is unchanged. Among several
+waiting audits the most recently scheduled runs first. The protocol layer
+holds no list of audit codes; the audit result is diffed against the ordinary
+result. The frontend has already applied the profile's
+`raw-pointer-audit-library-findings` policy, so by default the editor never
+shows standard-library implementation findings for an application file. Because a running audit cannot be cancelled, `exit` ends the process
+without waiting for it.
 
 The protocol adapter applies the shared driver's primary-source package
 classifier when publishing diagnostics, not a directory-name heuristic.

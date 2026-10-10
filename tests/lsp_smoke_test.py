@@ -9060,6 +9060,232 @@ def test_update_debounce_coalesces_edits(executable, root):
             session.close()
 
 
+AUDIT_SOURCE = (
+    "int main() {\n"
+    "  mut const int* pointer = nullptr;\n"
+    "  { int value = 7; pointer = &value; }\n"
+    "  unsafe { return *pointer; }\n"
+    "}\n"
+)
+
+
+def publication_for(session, uri, version, timeout=30):
+    return session.receive_until(
+        lambda message: message.get("method") == "textDocument/publishDiagnostics"
+        and message["params"]["uri"] == uri
+        and message["params"].get("version") == version,
+        timeout=timeout,
+    )["params"]["diagnostics"]
+
+
+def audit_codes(diagnostics):
+    return sorted(
+        item["code"]
+        for item in diagnostics
+        if item.get("code", "").startswith("GTI-S210")
+    )
+
+
+def analysis_kinds(trace_path):
+    return [
+        (record["kind"], record["generation"])
+        for record in (
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+        )
+        if record["kind"] in ("analysis", "audit")
+    ]
+
+
+def test_raw_pointer_audit_runs_in_background(executable, root):
+    # The edit-path result never carries audit findings; the background audit
+    # publishes them afterwards as additions to the same version.
+    path = root / "audit-background.gti"
+    path.write_text(AUDIT_SOURCE, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    trace_path = root / "audit-background-trace.jsonl"
+    trace_path.unlink(missing_ok=True)
+    session = LspSession(
+        executable,
+        ["--raw-pointer-audit=warn"],
+        environment=dict(
+            os.environ,
+            GTI_LSP_FRONTEND_TRACE=str(trace_path),
+            GTI_LSP_AUDIT_QUIET_MS="0",
+        ),
+    )
+    closed = False
+    try:
+        initialize_session(session)
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": AUDIT_SOURCE,
+                    }
+                },
+            }
+        )
+        first = publication_for(session, uri, 1)
+        assert audit_codes(first) == [], first
+        second = publication_for(session, uri, 1)
+        assert audit_codes(second) == ["GTI-S2101"], second
+        # The addition is published with the ordinary result, not instead of it.
+        assert all(item.get("severity") == 2 for item in second), second
+        session.close()
+        closed = True
+        assert analysis_kinds(trace_path) == [("analysis", 1), ("audit", 1)]
+    finally:
+        if not closed:
+            session.close()
+
+
+def test_raw_pointer_audit_waits_for_quiet_or_save(executable, root):
+    # An audit waits for the quiet period; an edit meanwhile replaces it with
+    # the newer generation's audit, and saving starts that one immediately.
+    path = root / "audit-save.gti"
+    path.write_text(AUDIT_SOURCE, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    trace_path = root / "audit-save-trace.jsonl"
+    trace_path.unlink(missing_ok=True)
+    session = LspSession(
+        executable,
+        ["--raw-pointer-audit=warn"],
+        environment=dict(
+            os.environ,
+            GTI_LSP_FRONTEND_TRACE=str(trace_path),
+            GTI_LSP_AUDIT_QUIET_MS="60000",
+            GTI_LSP_UPDATE_DEBOUNCE_MS="0",
+        ),
+    )
+    closed = False
+    try:
+        initialize_session(session)
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": AUDIT_SOURCE,
+                    }
+                },
+            }
+        )
+        assert audit_codes(publication_for(session, uri, 1)) == []
+        edited = AUDIT_SOURCE + "// edited\n"
+        session.send(full_change(uri, 2, edited))
+        assert audit_codes(publication_for(session, uri, 2)) == []
+        # Nothing has been audited: the quiet period is a minute long.
+        assert_no_message(
+            session,
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics",
+            timeout=0.5,
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        saved = publication_for(session, uri, 2)
+        assert audit_codes(saved) == ["GTI-S2101"], saved
+        session.close()
+        closed = True
+        # Only the saved generation was audited; the superseded one never ran.
+        assert analysis_kinds(trace_path) == [
+            ("analysis", 1),
+            ("analysis", 2),
+            ("audit", 2),
+        ], analysis_kinds(trace_path)
+    finally:
+        if not closed:
+            session.close()
+
+
+def test_editor_hir_scope_follows_open_file(executable, root):
+    # Editor HIR lowers the open file's declarations and what they reach. A
+    # concrete instance that only unreached library code requests is not
+    # reported; once the open file reaches that code, its diagnostic appears
+    # in the library file exactly as `gti check` reports it.
+    library_path = root / "scope-lib.gti"
+    entry_path = root / "scope-root.gti"
+    library_source = (
+        "class Bound<T, uint64_t N> {\n"
+        '  static_assert(N <= uint64_t(4), "capacity too large");\n'
+        "};\n"
+        "int lib_only() {\n"
+        "  Bound<int32_t, 5> value{};\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    entry_source = (
+        '#include "scope-lib.gti"\n'
+        "int main() {\n"
+        "  Bound<int32_t, 4> value{};\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    library_path.write_text(library_source, encoding="utf-8")
+    entry_path.write_text(entry_source, encoding="utf-8")
+    library_uri = library_path.resolve().as_uri()
+    entry_uri = entry_path.resolve().as_uri()
+    session = LspSession(
+        executable, environment=dict(os.environ, GTI_LSP_UPDATE_DEBOUNCE_MS="0")
+    )
+    try:
+        initialize_session(session)
+        received = []
+
+        def library_publication(message):
+            if message.get("method") == "textDocument/publishDiagnostics":
+                received.append(message["params"])
+            return (
+                message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == entry_uri
+            )
+
+        open_document(session, entry_uri, entry_source)
+        # Nothing the open file reaches instantiates Bound<int32_t, 5>.
+        assert_no_message(
+            session,
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == library_uri
+            and bool(message["params"]["diagnostics"]),
+            timeout=0.5,
+        )
+
+        reaching = entry_source.replace("return 0;", "return lib_only();")
+        session.send(full_change(entry_uri, 2, reaching))
+        failed = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == library_uri
+            and any(
+                item.get("code") == "GTI-S2079"
+                for item in message["params"]["diagnostics"]
+            )
+        )["params"]["diagnostics"]
+        failure = next(item for item in failed if item["code"] == "GTI-S2079")
+        assert "capacity too large" in failure["message"], failure
+        assert failure["range"]["start"] == lsp_position(
+            library_source, library_source.index("N <= uint64_t(4)")
+        ), failure
+    finally:
+        session.close()
+
+
 def test_worker_survives_failed_analysis(executable, root):
     """Analysis that cannot complete must leave the worker and its state usable.
 
@@ -10517,6 +10743,9 @@ def main():
         sys.argv[1], root
     )
     test_update_debounce_coalesces_edits(sys.argv[1], root)
+    test_raw_pointer_audit_runs_in_background(sys.argv[1], root)
+    test_raw_pointer_audit_waits_for_quiet_or_save(sys.argv[1], root)
+    test_editor_hir_scope_follows_open_file(sys.argv[1], root)
     test_semantic_hover(sys.argv[1], root)
     test_class_scoped_type_alias_tooling(sys.argv[1], root)
     test_documentation_hover(sys.argv[1], root)

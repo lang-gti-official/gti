@@ -804,6 +804,8 @@ std::string serializeBuildProvenanceJson(const BuildProvenance &provenance) {
          << ",\n  \"debug_info\": " << (provenance.debugInfo ? "true" : "false")
          << ",\n  \"raw_pointer_audit\": ";
   writeJsonString(stream, rawPointerAuditModeName(provenance.rawPointerAudit));
+  stream << ",\n  \"raw_pointer_audit_library_findings\": "
+         << (provenance.rawPointerAuditLibraryFindings ? "true" : "false");
   stream << ",\n  \"producer\": {\n    \"executable\": ";
   writeBuildFileJson(stream, provenance.producerExecutable);
   stream << ",\n    \"compiler_build\": {\"state\":";
@@ -960,6 +962,12 @@ parseBuildProvenanceJson(std::string_view text, std::string &errorMessage) {
       return std::nullopt;
     }
     provenance.rawPointerAudit = *parsed;
+  }
+  if (document->member("raw_pointer_audit_library_findings") != nullptr &&
+      !requireBoolean(*document, "raw_pointer_audit_library_findings", "report",
+                      provenance.rawPointerAuditLibraryFindings,
+                      errorMessage)) {
+    return std::nullopt;
   }
   if (document->member("debug_info") != nullptr &&
       !requireBoolean(*document, "debug_info", "report", provenance.debugInfo,
@@ -1221,6 +1229,10 @@ compareBuildProvenance(const BuildProvenance &recorded,
   compareValue(differences, "build policy", "raw pointer audit",
                std::string(rawPointerAuditModeName(recorded.rawPointerAudit)),
                std::string(rawPointerAuditModeName(observed.rawPointerAudit)));
+  compareValue(differences, "build policy",
+               "raw pointer audit library findings",
+               recorded.rawPointerAuditLibraryFindings ? "true" : "false",
+               observed.rawPointerAuditLibraryFindings ? "true" : "false");
   compareFile(differences, "producer executable", recorded.producerExecutable,
               observed.producerExecutable);
   compareValue(

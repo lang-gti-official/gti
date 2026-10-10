@@ -66,6 +66,7 @@ struct ProjectFactsProfile {
   CppStandard cppStandard = CppStandard::Cpp23;
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
+  bool rawPointerAuditLibraryFindings = false;
   WarningPolicy warningPolicy;
   bool dependencyWarnings = true;
   ConfigurationFlags defines;

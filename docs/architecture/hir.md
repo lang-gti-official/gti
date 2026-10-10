@@ -97,6 +97,20 @@ both adapter families, enums, and instance symbols.
 
 `HirLoweringResult::reachable` carries that prefix only when it is smaller and
 passes `verifyHirProgramPlans`; otherwise lowering uses the complete program.
+
+### Entry-unit scope
+
+`HirLoweringScope::entryDeclarations`, set by the frontend from
+`FrontendOptions::lowerEntryUnitOnly`, seeds the program roots above plus the
+entry source unit's own top-level declaration range exactly as complete
+seeding does, drains the worklist once, and seeds nothing else. The result
+holds what the entry unit's code reaches and reports only those instances'
+diagnostics. Editor snapshots use it so an open file's instance diagnostics
+match `gti check` for that file's code while library instances nothing in
+the file reaches are left to the library's own check. `gti check` and builds
+never set it; their diagnostics stay complete. The scope is a seeding choice,
+not a semantic one: every lowered instance is lowered exactly as in complete
+lowering.
 The frontend lowers the prefix to MIR. The lowered-program declaration
 inventory then omits a non-generic class, function, or constructor that has no
 instance. Generic declarations remain, because retained templates can name

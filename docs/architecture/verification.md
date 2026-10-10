@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Backend crash fixes for #212–#214 (0.397.6)
+## Backend crash fixes for #212–#214 (0.397.8)
 
 - **Regression programs.** `issues_212_214_regressions` builds and runs five
   self-checking fixtures at O0 and O3 under C++20 and C++23:
@@ -4516,6 +4516,7 @@ upstream code.
 | `block_comment_pipeline` | line tracking, literal exclusion, non-nesting block-comment lexing, unterminated diagnostics, frontend composition, and formatter preservation/idempotence |
 | `constructor_formatting` | constructor-list packing, colon placement and indentation configuration; exact default/opt-in layouts; nested argument/lambda/collection isolation, comments, conditional declarations, tabs, malformed input, token preservation and idempotence; `lsp_protocol` additionally covers configuration discovery and reload |
 | `block_comment_lsp` | multiline UTF-16 semantic tokens, literal exclusion, formatting, and publication of the shared unterminated-comment diagnostic |
+| `comment_placement_lsp` | document formatting with client indentation keeps own-line line and block comments on their own lines after statements and closing braces, keeps trailing comments trailing, and returns no edit for already formatted comments |
 | `source_text_pipeline` | strict UTF-8 validation and no-cascade recovery, leading-BOM offsets, ASCII token boundaries, Unicode string/comment preservation, LF/CRLF line identity, lone-CR rejection, source locations, and formatter preservation/idempotence |
 | `source_text_lsp` | BOM-aware UTF-16 token positions, Unicode and CRLF document acceptance, LF formatter output, exact lone-CR diagnostic publication, and next-generation clearing |
 | `layout_query_pipeline` | bounded `sizeof(type)`/`alignof(type)` syntax, semantics, diagnostics, constants, HIR/MIR, formatter, and backend literals |

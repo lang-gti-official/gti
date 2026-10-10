@@ -24,6 +24,31 @@
 namespace lang {
 namespace {
 
+bool isRawAuditDiagnostic(const Diagnostic &diagnostic) {
+  return diagnostic.code == "GTI-S2101" || diagnostic.code == "GTI-S2102" ||
+         diagnostic.code == "GTI-S2103";
+}
+
+// The audit analyses the whole program, because application provenance flows
+// through standard-library bodies, but by default it reports only what the
+// application can act on. A finding located inside a compiler-trusted unit
+// (the prelude or the standard library) describes that library's own
+// implementation, which the library's maintainers check with the library unit
+// itself as the entry; it is dropped unless that unit is this compilation's
+// entry unit or `reportLibraryAuditFindings` opts in. Findings in application
+// code that calls into the library are unaffected.
+void dropTrustedAuditFindings(std::vector<Diagnostic> &diagnostics,
+                              const SourceGraph &sourceGraph) {
+  const SourceUnitId entry = sourceGraph.entryUnit();
+  std::erase_if(diagnostics, [&](const Diagnostic &diagnostic) {
+    if (!isRawAuditDiagnostic(diagnostic))
+      return false;
+    const SourceUnitId unit =
+        sourceGraph.sourceUnitForPath(diagnostic.primary.source);
+    return unit != entry && sourceGraph.isCompilerTrusted(unit);
+  });
+}
+
 bool promoteRawAuditDiagnostics(std::vector<Diagnostic> &diagnostics,
                                 RawPointerAuditMode mode) {
   if (mode != RawPointerAuditMode::Strict)
@@ -31,8 +56,7 @@ bool promoteRawAuditDiagnostics(std::vector<Diagnostic> &diagnostics,
   bool promoted = false;
   for (auto &diagnostic : diagnostics) {
     if (diagnostic.severity == DiagnosticSeverity::Warning &&
-        (diagnostic.code == "GTI-S2101" || diagnostic.code == "GTI-S2102" ||
-         diagnostic.code == "GTI-S2103")) {
+        isRawAuditDiagnostic(diagnostic)) {
       diagnostic.severity = DiagnosticSeverity::Error;
       promoted = true;
     }
@@ -380,11 +404,13 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
           options.workMetrics->parsedUnits.push_back(unit->path.string());
         }
         std::size_t estimatedInputBytes = estimatedTokenBytes(unit->tokens);
-        if (const std::string *source =
-                result.sources.find(unit->path.string())) {
+        const std::string *source = result.sources.find(unit->path.string());
+        if (source != nullptr) {
           estimatedInputBytes += source->size();
         }
-        Parser parser(std::move(unit->tokens));
+        Parser parser(std::move(unit->tokens), source == nullptr
+                                                   ? std::string_view{}
+                                                   : std::string_view{*source});
         Program parsed = parser.parse();
         appendParserDiagnostics(result.diagnostics, parser.errors(),
                                 result.sourceGraph, unitId);
@@ -457,6 +483,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // Complete the requested inference phases before applying CI policy, so
   // Strict and Warn discover the same concrete bodies and audit findings.
   const auto applyAuditPolicy = [&] {
+    if (!options.reportLibraryAuditFindings)
+      dropTrustedAuditFindings(result.diagnostics, result.sourceGraph);
     if (promoteRawAuditDiagnostics(result.diagnostics, options.rawPointerAudit))
       result.semanticValid = false;
   };
@@ -482,7 +510,15 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   HirLoweringResult hir = [&] {
     const PhaseTimeScope timeScope("gti-hir-lowering");
     const ProgressScope progress(options.progress, ProgressPhase::HirLowering);
-    return HirLowerer(options.target, options.lowerReachableOnly)
+    HirLoweringScope scope{.reachablePrefix = options.lowerReachableOnly};
+    if (options.lowerEntryUnitOnly) {
+      if (const SourceUnit *entry =
+              result.sourceGraph.findUnit(result.sourceGraph.entryUnit())) {
+        scope.entryDeclarations = {entry->declarationStart,
+                                   entry->declarationCount};
+      }
+    }
+    return HirLowerer(options.target, scope)
         .lower(result.program, semantic.model(), semantic);
   }();
   if (options.workMetrics != nullptr) {

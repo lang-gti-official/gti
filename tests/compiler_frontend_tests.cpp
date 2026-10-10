@@ -2321,6 +2321,144 @@ namespace active {
   }
 }
 
+void testExportPlacement() {
+  const auto root =
+      std::filesystem::temp_directory_path() / "gti-export-placement";
+  const auto entry = root / "main.gti";
+  const auto api = std::filesystem::weakly_canonical(root / "api.gti").string();
+  const auto analyze = [&](const std::string &interface) {
+    return lang::Frontend().analyze(
+        entry,
+        "import \"api.gti\";\nint main() { return api::checked(1) - 2; }\n", {},
+        {{api, interface}});
+  };
+  const auto interfaceWith = [](const std::string &prefix) {
+    return "export module api;\nnamespace api {\n  " + prefix +
+           " int checked(int value) { return value + 1; }\n}\n";
+  };
+  expect(analyze(interfaceWith("export [[track_caller]]")).canGenerateCode(),
+         "export precedes a declaration's attribute list");
+
+  struct Misplaced {
+    std::string prefix;
+    std::optional<std::string> replacement;
+  };
+  for (const Misplaced &misplaced :
+       {Misplaced{"[[track_caller]] export", "export [[track_caller]]"},
+        Misplaced{"constexpr export", "export constexpr"},
+        Misplaced{"[[track_caller]] /* traced */ [[discardable]]\n  export",
+                  "export [[track_caller]] /* traced */ [[discardable]]"},
+        Misplaced{"[[track_caller]] /* before */ export", std::nullopt}}) {
+    const std::string interface = interfaceWith(misplaced.prefix);
+    const auto result = analyze(interface);
+    const std::size_t start = interface.find(misplaced.prefix);
+    const std::size_t keyword =
+        interface.rfind("export", start + misplaced.prefix.size());
+    // Recovery publishes the declaration as exported, so the importer's call
+    // adds no visibility error to the misplaced-export syntax error.
+    expect(result.diagnostics.size() == 1 && !result.canGenerateCode(),
+           "a misplaced export is one syntax error: " + misplaced.prefix);
+    if (result.diagnostics.size() != 1) {
+      continue;
+    }
+    const lang::Diagnostic &diagnostic = result.diagnostics.front();
+    expect(diagnostic.code == "GTI-P0001" &&
+               diagnostic.message.find("'export' must begin the declaration") !=
+                   std::string::npos &&
+               diagnostic.primary.source == api &&
+               diagnostic.primary.start == keyword &&
+               diagnostic.primary.end == keyword + 6,
+           "the misplaced export is reported at its keyword: " +
+               misplaced.prefix);
+    if (!misplaced.replacement) {
+      expect(diagnostic.fixes.empty(),
+             "a comment before the misplaced export withholds the edit");
+      continue;
+    }
+    expect(diagnostic.fixes.size() == 1 &&
+               diagnostic.fixes.front().span.start == start &&
+               diagnostic.fixes.front().span.end == keyword + 6 &&
+               diagnostic.fixes.front().replacement == *misplaced.replacement,
+           "the edit moves export before the verbatim prefix: " +
+               misplaced.prefix);
+    if (diagnostic.fixes.size() == 1) {
+      std::string fixed = interface;
+      fixed.replace(start, keyword + 6 - start, *misplaced.replacement);
+      expect(analyze(fixed).canGenerateCode(),
+             "applying the edit yields a valid exported declaration: " + fixed);
+    }
+  }
+
+  const std::string spaced = lang::Formatter().format(
+      "export module api;\nexport[[track_caller]] void check(bool ready) {}\n"
+      "int choose(bool ready) {\n  if (ready)[[discard]] choose(false);\n"
+      "  else[[discard]] choose(true);\n  return 0;\n}\n"
+      "int first(int[2] values) { return values[[](int i) -> int { return i; "
+      "}(0)]; }\n"
+      "export[[track_caller]] [[discardable]] int both() { return 1; }\n");
+  expect(
+      spaced.find("export [[track_caller]] void check") != std::string::npos &&
+          spaced.find("if (ready) [[discard]] choose") != std::string::npos &&
+          spaced.find("else [[discard]] choose") != std::string::npos &&
+          spaced.find("values[") != std::string::npos &&
+          spaced.find("values [") == std::string::npos &&
+          spaced.find("export [[track_caller]][[discardable]] int both") !=
+              std::string::npos &&
+          lang::Formatter().format(spaced) == spaced,
+      "an attribute list is spaced from a preceding keyword, while "
+      "consecutive lists and a lambda subscript stay attached: " +
+          spaced);
+  const std::string misplaced =
+      "export module api;\n[[track_caller]] export void check(bool ready) {}\n";
+  expect(lang::Formatter().format(misplaced) == misplaced,
+         "the formatter leaves a misplaced export for the parser's fix");
+}
+
+void testOwnLineCommentPlacement() {
+  const auto expectLayout = [](const std::string &input,
+                               const std::string &expected,
+                               const std::string &message) {
+    const std::string formatted = lang::Formatter().format(input);
+    expect(formatted == expected, message + ":\n" + formatted);
+    expect(lang::Formatter().format(formatted) == formatted,
+           message + " (idempotent)");
+  };
+
+  // A comment alone on its line describes what follows, so formatting keeps
+  // it there instead of attaching it to the statement before it.
+  const std::string namespaceScope = "int y = 2;\n// own line\nint x = 1;\n";
+  expectLayout(namespaceScope, namespaceScope,
+               "an own-line comment after a namespace-scope statement");
+  const std::string body = "int f() {\n  int y = 2;\n  // own line\n"
+                           "  return y;\n}\n";
+  expectLayout(body, body, "an own-line comment in a function body");
+  expectLayout("int f(){int y=2;\n// own line\nreturn y;}", body,
+               "an own-line comment keeps its line while its block reflows");
+  const std::string afterFunction =
+      "int f() {\n  return 1;\n}\n// next\nint g() {}\n// last\n";
+  expectLayout(afterFunction, afterFunction,
+               "an own-line comment after a closing brace");
+  const std::string interface =
+      "export module api;\n// The public surface.\nexport int answer();\n";
+  expectLayout(interface, interface,
+               "an own-line comment after a module declaration");
+  const std::string importer =
+      "import \"a.gti\";\n// Entry point.\nint main() {\n  return 0;\n}\n";
+  expectLayout(importer, importer, "an own-line comment after an import");
+  const std::string ownBlock = "int f() {\n  int y = 2;\n  /* own */\n"
+                               "  /* lead */ return y;\n}\n";
+  expectLayout(ownBlock, ownBlock,
+               "own-line block comments neither trail nor join statements");
+
+  const std::string trailing =
+      "int y = 2; // note\nint f() {\n  int z = 3; /* note */\n"
+      "  if (z > 0) {\n    return z;\n  } // done\n  return 0;\n}\n";
+  expectLayout(trailing, trailing, "trailing comments stay trailing");
+  expectLayout("int y=2;// note\nint x=1;/* note */\n",
+               "int y = 2; // note\nint x = 1; /* note */\n",
+               "trailing comments stay beside reformatted statements");
+}
+
 void testSourceModuleResolution() {
   const auto root = std::filesystem::weakly_canonical(
       std::filesystem::temp_directory_path() / "gti-module-resolution");
@@ -2944,6 +3082,8 @@ constexpr NamedTest kTests[] = {
     {"testDefiniteReturnAnalysis", testDefiniteReturnAnalysis},
     {"testSourceUnitDependencyGraph", testSourceUnitDependencyGraph},
     {"testSourceModuleInterfaces", testSourceModuleInterfaces},
+    {"testExportPlacement", testExportPlacement},
+    {"testOwnLineCommentPlacement", testOwnLineCommentPlacement},
     {"testSourceModuleResolution", testSourceModuleResolution},
     {"testSourceModuleConfigurationDomains",
      testSourceModuleConfigurationDomains},

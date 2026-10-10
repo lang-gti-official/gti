@@ -108,25 +108,36 @@ public:
         state.directiveLine = true;
         state.includeLine = lexeme.text == "#include";
         break;
+      // A comment alone on its source line describes what follows it, so it
+      // keeps its own line rather than trailing the preceding code.
       case Kind::LineComment:
         if (state.lineHasContent) {
-          state.trailingCommentSpace();
+          if (startsSourceLine(lexemes, index)) {
+            state.newline();
+          } else {
+            state.trailingCommentSpace();
+          }
         }
         state.append(lexeme.text);
         state.newline();
         break;
-      case Kind::BlockComment:
+      case Kind::BlockComment: {
+        const bool endsLine = endsSourceLine(lexemes, index);
         if (state.lineHasContent) {
-          state.space();
+          if (endsLine && startsSourceLine(lexemes, index)) {
+            state.newline();
+          } else {
+            state.space();
+          }
         }
         state.appendBlockComment(lexeme.text);
-        if (index + 1 >= lexemes.size() ||
-            lexemes[index + 1].kind == Kind::Newline) {
+        if (endsLine) {
           state.newline();
         } else {
           state.space();
         }
         break;
+      }
       case Kind::Word:
       case Kind::Number:
       case Kind::String:
@@ -210,7 +221,7 @@ public:
                !(afterBrace->kind == Kind::Word &&
                  (afterBrace->text == "else" ||
                   (doBody && afterBrace->text == "while"))) &&
-               !isComment(afterBrace->kind))) {
+               !commentFollowsOnLine(lexemes, index))) {
             state.newline();
           }
           break;
@@ -252,7 +263,7 @@ public:
             (next->kind != Kind::Semicolon && next->kind != Kind::Comma &&
              !(next->kind == Kind::Word &&
                (next->text == "else" || (doBody && next->text == "while"))) &&
-             !isComment(next->kind)) ||
+             !commentFollowsOnLine(lexemes, index)) ||
             (options.breakBeforeBraces == BraceBreakingStyle::Allman &&
              next->kind == Kind::Word && next->text == "else")) {
           state.newline();
@@ -274,8 +285,11 @@ public:
         }
         break;
       case Kind::LeftBracket:
+        // Consecutive attribute lists stay adjacent: `[[a]][[b]]`.
         if (isLambdaCaptureStart(lexemes, index) ||
-            isStructuredBindingStart(lexemes, index)) {
+            isStructuredBindingStart(lexemes, index) ||
+            (isAttributeListStart(lexemes, index) &&
+             (previous == nullptr || previous->kind != Kind::RightBracket))) {
           state.space();
         } else {
           state.trimSpaces();
@@ -356,7 +370,7 @@ public:
         state.trimSpaces();
         state.append(";");
         if ((state.parenthesisDepth == 0 || state.atBlockStatementLevel()) &&
-            (next == nullptr || !isComment(next->kind))) {
+            !commentFollowsOnLine(lexemes, index)) {
           state.newline();
         } else {
           state.space();
@@ -2002,6 +2016,24 @@ private:
     return retokenizes({preceding[1], preceding[0], &current});
   }
 
+  // Comment placement follows source lines: only a comment on the same line
+  // trails the code before it.
+  static bool startsSourceLine(const std::vector<Lexeme> &lexemes,
+                               std::size_t index) {
+    return index == 0 || lexemes[index - 1].kind == Kind::Newline;
+  }
+
+  static bool endsSourceLine(const std::vector<Lexeme> &lexemes,
+                             std::size_t index) {
+    return index + 1 >= lexemes.size() ||
+           lexemes[index + 1].kind == Kind::Newline;
+  }
+
+  static bool commentFollowsOnLine(const std::vector<Lexeme> &lexemes,
+                                   std::size_t index) {
+    return index + 1 < lexemes.size() && isComment(lexemes[index + 1].kind);
+  }
+
   static const Lexeme *previousSignificant(const std::vector<Lexeme> &lexemes,
                                            std::size_t index) {
     while (index > 0) {
@@ -2363,6 +2395,30 @@ private:
       } else if (lexemes[current].kind == Kind::RightBracket && --depth == 0) {
         const Lexeme *next = nextSignificant(lexemes, current);
         return next != nullptr && next->kind == Kind::LeftParen;
+      }
+    }
+    return false;
+  }
+
+  // The outer '[' of a `[[...]]` declaration or statement attribute list,
+  // such as after `export` or `else`. A subscript whose operand begins with a
+  // lambda capture closes its inner '[' before '(' rather than ']'.
+  static bool isAttributeListStart(const std::vector<Lexeme> &lexemes,
+                                   std::size_t index) {
+    const Lexeme *previous = previousSignificant(lexemes, index);
+    const Lexeme *inner = nextSignificant(lexemes, index);
+    if (inner == nullptr || inner->kind != Kind::LeftBracket ||
+        (previous != nullptr && previous->kind == Kind::LeftBracket)) {
+      return false;
+    }
+    std::size_t depth = 0;
+    for (std::size_t current = static_cast<std::size_t>(inner - lexemes.data());
+         current < lexemes.size(); ++current) {
+      if (lexemes[current].kind == Kind::LeftBracket) {
+        ++depth;
+      } else if (lexemes[current].kind == Kind::RightBracket && --depth == 0) {
+        const Lexeme *next = nextSignificant(lexemes, current);
+        return next != nullptr && next->kind == Kind::RightBracket;
       }
     }
     return false;
