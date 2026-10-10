@@ -28793,14 +28793,21 @@ classSsaLifetimeSlot(const MirProgram &program,
 
 // The value kinds whose returned Move a plain body stages in its own slot.
 // `returnMoveDefinition` admits only owning (lexically dropped) arrays and
-// Expected values with a class alternative.
+// Expected values with a class alternative. A moved class value may also be
+// the success alternative the Return wraps into an Expected result, as the
+// failure form's publication into its Expected result storage does.
 [[nodiscard]] bool plainReturnMoveType(const MirBody &body,
                                        const SemanticType &type) {
-  return (type.kind == SemanticType::Class ||
-          type.kind == SemanticType::Lambda ||
-          type.kind == SemanticType::Array ||
-          type.kind == SemanticType::Expected) &&
-         type == body.returnType;
+  const bool expectedValue = type.kind == SemanticType::Class &&
+                             body.returnType.kind == SemanticType::Expected &&
+                             body.returnType.arguments.size() == 2 &&
+                             body.returnType.arguments.front() == type;
+  return ((type.kind == SemanticType::Class ||
+           type.kind == SemanticType::Lambda ||
+           type.kind == SemanticType::Array ||
+           type.kind == SemanticType::Expected) &&
+          type == body.returnType) ||
+         expectedValue;
 }
 
 // The staging slots a plain callee's class result constructs into: it replaces
@@ -31062,7 +31069,8 @@ public:
         writeIndent();
         output << lifetimeSlotSpelling() << '<'
                << bodyLocalTypeSpelling(facts.body, place.type);
-        if (representationOnlySlotPlace(facts.body, place)) {
+        if (representationOnlySlotPlace(facts.body, place) ||
+            returnedCallArgumentSlot(facts.body, place)) {
           output << ", true";
         }
         output << "> __gti_mir_p_" << place.id << ";\n";
@@ -32798,6 +32806,128 @@ private:
       return false;
     }
     return !dropObligationGovernsSlot(body, place);
+  }
+
+  // One argument storage a consuming call retires once it returns: the
+  // moved-from shell of a staged argument its TransferOut handed off. Exactly
+  // one of `place` (a place slot) and `value` (a class SSA slot) names it.
+  struct RetiredCallArgument {
+    MirPlaceId place = 0;
+    MirValueId value = 0;
+    bool payloadEnum = false;
+    std::string_view note;
+  };
+
+  // Every call emission retires its consumed argument storage through this
+  // one enumeration, so the slots a returned call leaves to scope exit are
+  // exactly the ones its statements would otherwise destroy.
+  template <typename Visit>
+  void forEachRetiredCallArgument(const MirBody &body,
+                                  const MirInstruction &call,
+                                  Visit &&visit) const {
+    for (const MirOperand &operand : call.operands) {
+      if (operand.kind != MirOperandKind::Value) {
+        continue;
+      }
+      if (const auto *stage =
+              materializedConstructorArgumentStage(body, operand.value)) {
+        visit(RetiredCallArgument{.place = *stage->destination});
+        continue;
+      }
+      if (inlineNestedCallResult(program, representations, body,
+                                 operand.value) != nullptr) {
+        // The nested prvalue is destroyed by the consuming C++ full
+        // expression; no MIR-backed local was materialized to retire.
+        continue;
+      }
+      const ClassSsaLifetimeSlot valueSlot =
+          classSsaLifetimeSlot(program, representations, body, operand.value);
+      if (valueSlot.consumer == &call &&
+          valueSlot.consumerKind == ClassSsaSlotConsumerKind::CallArgument) {
+        visit(RetiredCallArgument{.value = operand.value});
+        continue;
+      }
+      const StagedClassResult staged =
+          stagedClassResultForResult(body, operand.value);
+      if (staged.consumer != &call || staged.slot == nullptr) {
+        continue;
+      }
+      visit(RetiredCallArgument{.place =
+                                    canonicalSlotPlaceId(body, *staged.slot)});
+    }
+    for (const MirOperand &operand : call.operands) {
+      if (operand.kind != MirOperandKind::Value) {
+        continue;
+      }
+      const PayloadEnumFreshArgumentStage fresh =
+          payloadEnumFreshArgumentStageForStagedValue(program, body,
+                                                      operand.value);
+      if (fresh.consumer == &call && fresh.slot != nullptr) {
+        visit(RetiredCallArgument{
+            .place = canonicalSlotPlaceId(body, *fresh.slot),
+            .payloadEnum = true,
+            .note = " // end transferred payload-enum representation"});
+        continue;
+      }
+      const PayloadEnumDirectMoveArgument direct =
+          payloadEnumDirectMoveArgument(program, body, operand.value);
+      if (direct.consumer == &call && direct.move.slot != nullptr) {
+        visit(RetiredCallArgument{
+            .place = canonicalSlotPlaceId(body, *direct.move.slot),
+            .payloadEnum = true,
+            .note = " // end direct payload-enum argument representation"});
+        continue;
+      }
+      const PayloadEnumDirectFreshArgument directFresh =
+          payloadEnumDirectFreshArgument(program, body, operand.value);
+      if (directFresh.consumer == &call && directFresh.slot != nullptr) {
+        visit(RetiredCallArgument{
+            .place = canonicalSlotPlaceId(body, *directFresh.slot),
+            .payloadEnum = true,
+            .note = " // end direct fresh payload-enum argument "
+                    "representation"});
+      }
+    }
+  }
+
+  // A plain body spells a class result returned at its defining call as
+  // `return <call>` (`returnCallDefinition`), so no statement can follow
+  // the call to retire the argument storage it consumed. MIR already ended
+  // each such obligation at the call's TransferOut; only the moved-from
+  // representation remains, and C++ destroys a block's locals after the
+  // return statement initializes the returned object. Those slots therefore
+  // end that representation at scope exit, in the order the failure form
+  // retires them after publishing into its result storage.
+  [[nodiscard]] bool returnedCallArgumentSlot(const MirBody &body,
+                                              const MirPlace &place) const {
+    if (failureForm || indirectResultForm) {
+      return false;
+    }
+    for (const MirBlock &block : body.blocks) {
+      const MirTerminator &terminator = block.terminator;
+      if (terminator.kind != MirTerminatorKind::Return || !terminator.value ||
+          terminator.value->kind != MirOperandKind::Value) {
+        continue;
+      }
+      const MirInstruction *call =
+          returnCallDefinition(body, terminator.value->value);
+      if (call == nullptr) {
+        continue;
+      }
+      bool retired = false;
+      forEachRetiredCallArgument(
+          body, *call, [&](const RetiredCallArgument &argument) {
+            const MirPlace *slot =
+                argument.place == 0 ? nullptr : body.findPlace(argument.place);
+            retired =
+                retired || (slot != nullptr &&
+                            canonicalSlotPlaceId(body, *slot) == place.id);
+          });
+      if (retired) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // Direct publication can execute more than once when its verified block is
@@ -39349,79 +39479,26 @@ private:
       }
       return emitted;
     };
+    const auto retireConsumedArguments = [&](bool payloadEnum) {
+      forEachRetiredCallArgument(
+          facts.body, instruction, [&](const RetiredCallArgument &argument) {
+            if (argument.payloadEnum != payloadEnum) {
+              return;
+            }
+            writeIndent();
+            if (argument.value != 0) {
+              output << "__gti_mir_v_" << argument.value;
+            } else {
+              output << "__gti_mir_p_" << argument.place;
+            }
+            output << ".destroy();" << argument.note << '\n';
+          });
+    };
     const auto retireConsumedClassResultStages = [&] {
-      for (const MirOperand &operand : instruction.operands) {
-        if (operand.kind != MirOperandKind::Value) {
-          continue;
-        }
-        if (const auto *stage = materializedConstructorArgumentStage(
-                facts.body, operand.value)) {
-          writeIndent();
-          output << "__gti_mir_p_" << *stage->destination << ".destroy();\n";
-          continue;
-        }
-        if (inlineNestedCallResult(program, representations, facts.body,
-                                   operand.value) != nullptr) {
-          // The nested prvalue is destroyed by the consuming C++ full
-          // expression; no MIR-backed local was materialized to retire.
-          continue;
-        }
-        const ClassSsaLifetimeSlot valueSlot = classSsaLifetimeSlot(
-            program, representations, facts.body, operand.value);
-        if (valueSlot.consumer == &instruction &&
-            valueSlot.consumerKind == ClassSsaSlotConsumerKind::CallArgument) {
-          writeIndent();
-          output << "__gti_mir_v_" << operand.value << ".destroy();\n";
-          continue;
-        }
-        const StagedClassResult staged =
-            stagedClassResultForResult(facts.body, operand.value);
-        if (staged.consumer != &instruction || staged.slot == nullptr) {
-          continue;
-        }
-        writeIndent();
-        output << "__gti_mir_p_"
-               << canonicalSlotPlaceId(facts.body, *staged.slot)
-               << ".destroy();\n";
-      }
+      retireConsumedArguments(false);
     };
     const auto retireConsumedPayloadEnumArguments = [&] {
-      for (const MirOperand &operand : instruction.operands) {
-        if (operand.kind != MirOperandKind::Value) {
-          continue;
-        }
-        const PayloadEnumFreshArgumentStage fresh =
-            payloadEnumFreshArgumentStageForStagedValue(program, facts.body,
-                                                        operand.value);
-        if (fresh.consumer == &instruction && fresh.slot != nullptr) {
-          writeIndent();
-          output << "__gti_mir_p_"
-                 << canonicalSlotPlaceId(facts.body, *fresh.slot)
-                 << ".destroy(); // end transferred payload-enum "
-                    "representation\n";
-          continue;
-        }
-        const PayloadEnumDirectMoveArgument direct =
-            payloadEnumDirectMoveArgument(program, facts.body, operand.value);
-        if (direct.consumer == &instruction && direct.move.slot != nullptr) {
-          writeIndent();
-          output << "__gti_mir_p_"
-                 << canonicalSlotPlaceId(facts.body, *direct.move.slot)
-                 << ".destroy(); // end direct payload-enum argument "
-                    "representation\n";
-          continue;
-        }
-        const PayloadEnumDirectFreshArgument directFresh =
-            payloadEnumDirectFreshArgument(program, facts.body, operand.value);
-        if (directFresh.consumer == &instruction &&
-            directFresh.slot != nullptr) {
-          writeIndent();
-          output << "__gti_mir_p_"
-                 << canonicalSlotPlaceId(facts.body, *directFresh.slot)
-                 << ".destroy(); // end direct fresh payload-enum argument "
-                    "representation\n";
-        }
-      }
+      retireConsumedArguments(true);
     };
     if (instruction.kind == MirInstructionKind::Call &&
         (instruction.intrinsic == IntrinsicKind::MutexLock ||
@@ -41851,6 +41928,7 @@ private:
     // A failure form publishes a plain call's returned class result straight
     // into its uninitialized result storage, exactly where a plain form spells
     // `return <call>`: nothing executable follows the call before Return.
+    bool returnedAtCall = false;
     const bool nativeIndirectReturn =
         instruction.result &&
         (((failureForm || indirectResultForm) &&
@@ -41900,6 +41978,7 @@ private:
         // The class result publishes at its consuming return: the call
         // spells the return expression and the value never declares.
         output << "return ";
+        returnedAtCall = true;
       } else {
         output << "__gti_mir_v_" << *instruction.result << " = ";
       }
@@ -41944,6 +42023,11 @@ private:
         assignmentResult.consumerKind == ClassSsaSlotConsumerKind::Discard) {
       writeIndent();
       output << "__gti_mir_v_" << *instruction.result << ".destroy();\n";
+    }
+    if (returnedAtCall) {
+      // The consumed argument slots end their moved-from representations at
+      // scope exit (`returnedCallArgumentSlot`).
+      return;
     }
     retireConsumedClassResultStages();
     retireConsumedPayloadEnumArguments();
@@ -43099,6 +43183,18 @@ private:
           writeIndent();
           output << "return __gti_mir_p_"
                  << canonicalSlotPlaceId(facts.body, *returned) << ".take();\n";
+          return;
+        }
+        // A fresh active variant was constructed in its value-rooted slot.
+        if (const PayloadEnumFreshReturnPublication fresh =
+                payloadEnumFreshReturnPublication(program, representations,
+                                                  facts.body,
+                                                  terminator.value->value);
+            fresh && fresh.returnBlock == &block) {
+          writeIndent();
+          output << "return __gti_mir_p_"
+                 << canonicalSlotPlaceId(facts.body, *fresh.slot)
+                 << ".take();\n";
           return;
         }
         // A returned owning payload enum was moved into its value-rooted
@@ -54521,6 +54617,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             return false;
           }
         }
+        // An owning array result has no declarable C++ local either. A
+        // failure-free callee constructs it in the exact slot its own
+        // Initialize activates, publishes it into its one consuming place, or
+        // stages a cleanup-free array for its consumer.
+        if (!failureForm && instruction.result && instruction.functionTarget &&
+            cppMirOwningArrayPlacementResult(program_, instruction.info.type) &&
+            fixedArrayValueDestinationSlot(program_, body, instruction) ==
+                nullptr &&
+            valueRootedPlacementCallResultSlot(program_, representations_, body,
+                                               *instruction.result)
+                    .producer != &instruction &&
+            !classSsaLifetimeSlot(program_, representations_, body,
+                                  *instruction.result) &&
+            returnedCallResultSlot(program_, body, *instruction.result) ==
+                nullptr) {
+          return false;
+        }
         if (failureForm) {
           const MirFunctionInstance *target =
               instruction.functionTarget
@@ -56061,8 +56174,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           activePayloadEnumReturn && returnedDefinition != nullptr &&
           returnedDefinition->kind == MirInstructionKind::Compute &&
           returnedDefinition->operation == MirOperation::PayloadConstruct;
+      // A plain body constructs the fresh variant in its value-rooted slot and
+      // its Return moves it out of that slot.
       const PayloadEnumFreshReturnPublication freshPayload =
-          failureForm && directFreshPayloadReturn
+          directFreshPayloadReturn
               ? payloadEnumFreshReturnPublication(program_, representations_,
                                                   body,
                                                   block.terminator.value->value)
@@ -56070,7 +56185,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (directFreshPayloadReturn && freshPayload.returnBlock != &block) {
         // This value has no C++ local: only the exact verified
         // PayloadConstruct -> TransferOut -> Return schedule may publish it
-        // through the transformed callable's result pointer.
+        // through the transformed callable's result pointer or, in a plain
+        // body, from its slot.
         return false;
       }
       if (failureForm && activePayloadEnumReturn && !directFreshPayloadReturn &&

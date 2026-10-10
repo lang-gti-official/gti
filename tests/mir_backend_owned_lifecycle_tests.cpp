@@ -739,8 +739,12 @@ void testCommaUsesGeneralMir(const std::filesystem::path &fixture) {
                                        lang::OptimizationLevel::O0);
   const std::string generated =
       emit(frontend, frontend.mir, compatibility).contents;
-  expect(hasBodyMarker(generated, "function", plain->id) &&
-             hasFailureBodyMarker(generated, "function", comma->id) &&
+  // The comma body emits in the form its failure effects select.
+  const bool commaBody =
+      comma->mayRaiseDefinedFailure
+          ? hasFailureBodyMarker(generated, "function", comma->id)
+          : hasBodyMarker(generated, "function", comma->id);
+  expect(hasBodyMarker(generated, "function", plain->id) && commaBody &&
              hasBodyMarker(generated, "constructor", constructor->id) &&
              hasBodyMarker(generated, "destructor", destructor->id) &&
              generated.find("owned-lifecycle-call-v1") == std::string::npos,

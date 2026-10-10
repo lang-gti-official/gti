@@ -524,7 +524,9 @@ class Cursor {
   int inline_value = 7;
 public:
   Cursor(int& source) : owner(source) {}
-  int& operator*() { return this.inline_value; }
+  // The checked addition keeps a failure edge, so the temporary also has a
+  // failure-cleanup endpoint after its interior result loan.
+  int& operator*() { int checked = this.inline_value + 0; return this.inline_value; }
   int& ref() { return this.inline_value; }
 )gti") + (cleanup ? "  ~Cursor() {}\n" : "") +
            R"gti(

@@ -2618,6 +2618,11 @@ int main() { return exercise() - 5; }
       if (mutation == 2)
         call->functionTarget = first;
       if (mutation == 3) {
+        // The failure-free exercise is one block, so nothing precedes its
+        // consumer to bypass; the fallible variant keeps separate argument
+        // construction blocks.
+        if (consumerBlock == body.entry)
+          continue;
         lang::MirBlock bypass;
         for (const auto &block : body.blocks)
           bypass.id = std::max(bypass.id, block.id);
