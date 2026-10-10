@@ -792,7 +792,8 @@ private:
     // when the move happened before an invoke split its block.
     const MirBlock *block = output.findBlock(current);
     return mayRaise && (block == nullptr ||
-                        !mirDropFollowsDefiniteMove(output, *block, obligation))
+                        !mirDropFollowsDefiniteMove(output, invokeContinuations,
+                                                    *block, obligation))
                ? FailurePropagationKind::Destructor
                : FailurePropagationKind::None;
   }
@@ -1622,6 +1623,7 @@ private:
     if (MirBlock *block = currentBlock();
         block != nullptr && block->terminator.kind == MirTerminatorKind::None) {
       block->terminator = std::move(terminator);
+      invokeContinuations.record(*block);
     }
   }
 
@@ -11097,6 +11099,8 @@ private:
   const HirProgramInitializationPlan *programInitialization = nullptr;
   MirProgramInitializationPlan *loweredProgramInitialization = nullptr;
   MirBody output;
+  // Invoke continuations of `output`, recorded as each terminator is set.
+  MirInvokeContinuations invokeContinuations;
   MirBlockId current = 0;
   ProgramInitializationStepId currentProgramInitializationStep = 0;
   MirInstructionId nextInstruction = 1;

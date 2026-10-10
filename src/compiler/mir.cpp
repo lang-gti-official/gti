@@ -12988,7 +12988,43 @@ bool mirDropFollowsDefiniteMove(const MirBlock &block,
              MirDefiniteMoveState::Moved;
 }
 
-bool mirDropFollowsDefiniteMove(const MirBody &body, const MirBlock &block,
+void MirInvokeContinuations::record(const MirBlock &block) {
+  const std::vector<MirBlockId> outgoing = successors(block.terminator);
+  for (const MirBlockId successor : outgoing) {
+    if (successor == 0) {
+      continue;
+    }
+    if (successor > incomingEdges.size()) {
+      incomingEdges.resize(successor, 0);
+      invoker.resize(successor, 0);
+      successEdge.resize(successor, false);
+    }
+    const std::size_t index = successor - 1;
+    const bool invoke = block.terminator.kind == MirTerminatorKind::Invoke;
+    if (++incomingEdges[index] == 1 && invoke) {
+      invoker[index] = block.id;
+      successEdge[index] = block.terminator.target == successor;
+    } else {
+      invoker[index] = 0;
+      successEdge[index] = false;
+    }
+  }
+}
+
+MirInvokeContinuations mirInvokeContinuations(const MirBody &body) {
+  MirInvokeContinuations continuations;
+  continuations.incomingEdges.assign(body.blocks.size(), 0);
+  continuations.invoker.assign(body.blocks.size(), 0);
+  continuations.successEdge.assign(body.blocks.size(), false);
+  for (const MirBlock &block : body.blocks) {
+    continuations.record(block);
+  }
+  return continuations;
+}
+
+bool mirDropFollowsDefiniteMove(const MirBody &body,
+                                const MirInvokeContinuations &continuations,
+                                const MirBlock &block,
                                 MirDropObligationId obligation,
                                 MirInstructionId beforeInstruction) {
   if (obligation == 0) {
@@ -13005,29 +13041,17 @@ bool mirDropFollowsDefiniteMove(const MirBody &body, const MirBlock &block,
   // apply on both edges; an invoke's success lifecycle applies only on its
   // success edge, as in lifecycle verification.
   while (state == MirDefiniteMoveState::Untouched) {
-    if (current->id == body.entry) {
+    const std::size_t index = current->id - 1;
+    if (current->id == body.entry || index >= continuations.invoker.size() ||
+        continuations.invoker[index] == 0) {
       return false;
     }
-    const MirBlock *predecessor = nullptr;
-    bool successEdge = false;
-    bool invokeEdge = false;
-    std::size_t edges = 0;
-    for (const MirBlock &candidate : body.blocks) {
-      for (const MirBlockId successor : successors(candidate.terminator)) {
-        if (successor != current->id) {
-          continue;
-        }
-        ++edges;
-        predecessor = &candidate;
-        invokeEdge = candidate.terminator.kind == MirTerminatorKind::Invoke;
-        successEdge = invokeEdge && candidate.terminator.target == current->id;
-      }
-    }
-    if (edges != 1 || !invokeEdge || !visited.insert(predecessor->id).second) {
+    const MirBlock *predecessor = body.findBlock(continuations.invoker[index]);
+    if (predecessor == nullptr || !visited.insert(predecessor->id).second) {
       return false;
     }
     state = blockDefiniteMove(*predecessor, obligation, 0);
-    if (successEdge) {
+    if (continuations.successEdge[index]) {
       for (const MirLifecycleEvent &event :
            predecessor->terminator.successLifecycle) {
         applyDefiniteMoveEvent(event, obligation, state);
@@ -13036,6 +13060,13 @@ bool mirDropFollowsDefiniteMove(const MirBody &body, const MirBlock &block,
     current = predecessor;
   }
   return state == MirDefiniteMoveState::Moved;
+}
+
+bool mirDropFollowsDefiniteMove(const MirBody &body, const MirBlock &block,
+                                MirDropObligationId obligation,
+                                MirInstructionId beforeInstruction) {
+  return mirDropFollowsDefiniteMove(body, mirInvokeContinuations(body), block,
+                                    obligation, beforeInstruction);
 }
 
 } // namespace lang
