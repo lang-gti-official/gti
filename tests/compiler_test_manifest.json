@@ -14,6 +14,10 @@
       "suite": "frontend"
     },
     {
+      "name": "testExportPlacement",
+      "suite": "frontend"
+    },
+    {
       "name": "testSourceModuleResolution",
       "suite": "frontend"
     },
