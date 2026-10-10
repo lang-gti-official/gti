@@ -168,7 +168,7 @@ int main() {
          "regression exercises both exact receiver staging and later-call "
          "failure retirement");
 
-  for (const std::string &source :
+  for (const std::string source :
        {"#include <std/string>\nstd::string produce() { return "
         "std::string(\"hello\"); }\nint main() { auto view = produce().view(); "
         "return int(view.size()); }",
