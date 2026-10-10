@@ -179,6 +179,19 @@ function or variable is invalid, as is an export outside an interface. Exports
 inside active configuration branches are allowed; headers and imports must be
 unconditional and at source-unit top level.
 
+`export` begins the declaration it publishes. It precedes the declaration's
+attribute lists, `@` bindings and specifiers such as `unsafe`, `static` and
+`constexpr`:
+
+```gti
+export [[track_caller]] void check(bool condition) {}
+export unsafe int raw_value() { return 0; }
+```
+
+Writing `export` later, as in `[[track_caller]] export void check(...)`, is a
+syntax error. Its fix moves `export` to the front and leaves the attributes and
+specifiers in their written order.
+
 `import "api.gti";` imports a relative interface, including in direct compilation.
 With an explicit package graph, `import local;` selects `[modules].local` in the
 owning package, `import dependency.name;` selects a module of a direct dependency,

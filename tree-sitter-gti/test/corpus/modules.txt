@@ -50,3 +50,34 @@ import std.span;
       (standard_library_component (identifier))))
   (import_declaration (module_name (identifier) (identifier)))
   (include_directive (string_literal)))
+
+==================
+Export precedes declaration attributes and specifiers
+==================
+
+export module api;
+export [[track_caller]] void check(bool condition) {}
+export unsafe int raw() { return 0; }
+
+---
+
+(source_file
+  (module_declaration (identifier))
+  (export_declaration
+    (function_declaration
+      (function_contract_attribute)
+      (type)
+      (identifier)
+      (parameter_clause
+        (parameter (type (primitive_type)) (identifier)))
+      (block)))
+  (export_declaration
+    (function_declaration
+      (type (primitive_type))
+      (identifier)
+      (parameter_clause)
+      (block
+        (return_statement
+          (initializer_expression
+            (primary_expression
+              (literal (integer_literal)))))))))

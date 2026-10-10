@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.397.6 — `export` before declaration attributes
+
+- The formatter keeps the space between a word and a `[[...]]` attribute list.
+  `export [[track_caller]] void f()` no longer becomes `export[[track_caller]]`,
+  and statement attributes after `else` or a condition's `)` stay spaced the
+  same way.
+- `export` must come first in a declaration, before its attribute lists, `@`
+  bindings and specifiers such as `unsafe`, `static` and `constexpr`. This was
+  already the only accepted order, but `[[track_caller]] export void f()` used
+  to fail with an unrelated message. It now reports that `export` must begin
+  the declaration, at the misplaced keyword, with an edit that moves `export`
+  to the front. Any comments inside the prefix are kept. Editors analyze the
+  declaration as exported until the edit is applied.
+
 ## 0.397.5 — Raw-pointer audit off the edit path; editor HIR scoped to the open file
 
 - `gti_lsp` no longer runs the raw-pointer audit while you type. With

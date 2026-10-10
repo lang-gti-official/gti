@@ -234,6 +234,12 @@ formatter's recovery-oriented lexer does not assign compiler token kinds. A
 non-clause occurrence is therefore formatted without clause indentation while
 the compiler remains responsible for rejecting it as an identifier.
 
+A `[[...]]` attribute list keeps one space after a preceding word or `)` on
+the same line, as in `export [[track_caller]] void f()`, `else [[discard]] f();`
+and `if (ready) [[discard]] f();`. A subscript whose operand starts with a
+lambda capture is not an attribute list: its inner `]` is followed by `(`, not
+`]`. The formatter does not move a misplaced `export`; the parser's fix does.
+
 Lambda capture lists use ordinary comma and assignment spacing. The supported
 owned form is written `[target = std::move(source)]`; formatting preserves the
 initializer expression and is idempotent, while semantic analysis—not the

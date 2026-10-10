@@ -40,7 +40,8 @@ private:
   };
 
 public:
-  explicit Impl(std::vector<Token> tokens) : tokens(std::move(tokens)) {
+  Impl(std::vector<Token> tokens, std::string_view source)
+      : tokens(std::move(tokens)), source(source) {
     if (this->tokens.empty()) {
       this->tokens.emplace_back(TokenKind::END_OF_FILE, "", std::monostate{}, 0,
                                 1);
@@ -135,6 +136,24 @@ private:
   }
 
   StmtPtr declarationWithoutExtent() {
+    if (const std::optional<std::size_t> offset = misplacedExportOffset()) {
+      // Recover as though 'export' had been written first, so tooling keeps
+      // the exported declaration while the syntax error prevents generation.
+      const Token keyword = peekAt(*offset);
+      reportMisplacedExport(*offset);
+      if (peekAt(*offset + 1).kind == TokenKind::EXPORT) {
+        throw error(peekAt(*offset + 1),
+                    "A declaration cannot repeat 'export'.");
+      }
+      tokens.erase(tokens.begin() +
+                   static_cast<std::ptrdiff_t>(current + *offset));
+      StmtPtr result = declaration();
+      if (result->exportKeyword()) {
+        throw error(keyword, "A declaration cannot repeat 'export'.");
+      }
+      result->setExportKeyword(keyword);
+      return result;
+    }
     if (match({TokenKind::EXPORT})) {
       const Token keyword = previous();
       StmtPtr result = declaration();
@@ -195,6 +214,101 @@ private:
 
     throw error(peek(), "Expect a namespace, concept, enum, class, struct, "
                         "interface, union, function, or variable declaration.");
+  }
+
+  // 'export' publishes a whole declaration, so it precedes the attribute
+  // lists, '@' bindings and specifiers that belong to the declared entity.
+  // Returns the offset of an 'export' written after at least one of them.
+  [[nodiscard]] std::optional<std::size_t> misplacedExportOffset() const {
+    std::size_t offset = 0;
+    // A prefix never contains a statement or body delimiter, so an unclosed
+    // list stops at the declaration rather than scanning the rest of the unit.
+    const auto skipBalanced = [&](TokenKind open, TokenKind close) {
+      std::size_t depth = 0;
+      do {
+        const TokenKind kind = peekAt(offset).kind;
+        if (kind == TokenKind::END_OF_FILE || kind == TokenKind::SEMICOLON ||
+            kind == TokenKind::LEFT_BRACE || kind == TokenKind::RIGHT_BRACE) {
+          return false;
+        }
+        depth += kind == open;
+        depth -= kind == close;
+        ++offset;
+      } while (depth > 0);
+      return true;
+    };
+    while (true) {
+      const TokenKind kind = peekAt(offset).kind;
+      if (kind == TokenKind::LEFT_BRACKET &&
+          peekAt(offset + 1).kind == TokenKind::LEFT_BRACKET) {
+        if (!skipBalanced(TokenKind::LEFT_BRACKET, TokenKind::RIGHT_BRACKET)) {
+          return std::nullopt;
+        }
+      } else if (kind == TokenKind::AT &&
+                 peekAt(offset + 1).kind == TokenKind::IDENTIFIER &&
+                 peekAt(offset + 2).kind == TokenKind::LEFT_PAREN) {
+        offset += 2;
+        if (!skipBalanced(TokenKind::LEFT_PAREN, TokenKind::RIGHT_PAREN)) {
+          return std::nullopt;
+        }
+      } else if (kind == TokenKind::UNSAFE || kind == TokenKind::VIRTUAL ||
+                 kind == TokenKind::STATIC || kind == TokenKind::CONSTEXPR ||
+                 kind == TokenKind::MUT) {
+        ++offset;
+      } else {
+        break;
+      }
+    }
+    if (offset == 0 || peekAt(offset).kind != TokenKind::EXPORT) {
+      return std::nullopt;
+    }
+    return offset;
+  }
+
+  void reportMisplacedExport(std::size_t offset) {
+    const Token &keyword = peekAt(offset);
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-P0001", DiagnosticPhase::Parsing, keyword,
+        "'export' must begin the declaration, before its attributes and "
+        "specifiers.");
+    diagnostic.hints.emplace_back(
+        "Write 'export' first, as in 'export [[track_caller]] void f()'.");
+    // The prefix moves verbatim, keeping any comments inside it. Only the
+    // whitespace before 'export' is dropped; a comment there withholds the
+    // edit rather than discarding or reattaching it.
+    const Token &first = peek();
+    const Token &last = peekAt(offset - 1);
+    const std::size_t prefixEnd = last.position + last.lexeme.size();
+    const bool sameSource = std::all_of(
+        tokens.begin() + static_cast<std::ptrdiff_t>(current),
+        tokens.begin() + static_cast<std::ptrdiff_t>(current + offset + 1),
+        [&](const Token &token) {
+          return !token.generated && !token.completion &&
+                 token.source == keyword.source;
+        });
+    if (sameSource && first.position <= prefixEnd &&
+        prefixEnd <= keyword.position &&
+        source.substr(std::min(first.position, source.size()),
+                      first.lexeme.size()) == first.lexeme &&
+        source.substr(std::min(keyword.position, source.size()),
+                      keyword.lexeme.size()) == keyword.lexeme &&
+        std::all_of(source.begin() + static_cast<std::ptrdiff_t>(prefixEnd),
+                    source.begin() +
+                        static_cast<std::ptrdiff_t>(keyword.position),
+                    [](char character) {
+                      return character == ' ' || character == '\t' ||
+                             character == '\n' || character == '\r';
+                    })) {
+      SourceSpan spelling = tokenSpan(first);
+      spelling.end = keyword.position + keyword.lexeme.size();
+      diagnostic.fixes.push_back(
+          {.span = spelling,
+           .replacement =
+               "export " + std::string(source.substr(
+                               first.position, prefixEnd - first.position)),
+           .message = "Move 'export' to the start of the declaration"});
+    }
+    diagnostics.emplace_back(std::move(diagnostic));
   }
 
   StmtPtr attributedDeclaration() {
@@ -3712,6 +3826,7 @@ private:
   }
 
   std::vector<Token> tokens;
+  std::string_view source;
   std::vector<ParseDiagnostic> diagnostics;
   std::size_t current = 0;
   std::size_t nestingDepth = 0;
@@ -3728,8 +3843,8 @@ private:
   bool missingTokenError = false;
 };
 
-Parser::Parser(std::vector<Token> tokens)
-    : impl(std::make_unique<Impl>(std::move(tokens))) {}
+Parser::Parser(std::vector<Token> tokens, std::string_view source)
+    : impl(std::make_unique<Impl>(std::move(tokens), source)) {}
 
 Parser::~Parser() = default;
 Parser::Parser(Parser &&) noexcept = default;
