@@ -52,6 +52,10 @@ jobs:
           if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
             base="$(git rev-parse HEAD^)"
           fi
+          # A pull request's base.sha is the current tip of main, which is
+          # not an ancestor of a branch that main has advanced past. Judge
+          # the branch from where it forked instead.
+          base="$(git merge-base "${base}" "${GTI_HEAD_SHA}")"
           python3 scripts/check_release_version.py "${base}" "${GTI_HEAD_SHA}"
 
   tree-sitter:
@@ -89,6 +93,7 @@ jobs:
         env:
           GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
           GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 2048
         run: bash scripts/configure_ci_resources.sh
 
       - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang
@@ -212,6 +217,7 @@ jobs:
         env:
           GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
           GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 2048
         run: bash scripts/configure_ci_resources.sh
 
       - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang

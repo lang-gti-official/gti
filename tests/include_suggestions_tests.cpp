@@ -65,7 +65,7 @@ namespace example {
   class Factory { public: static int make() { return 3; } };
 }
 )");
-  for (const std::string &source :
+  for (const std::string source :
        {"int main() { return example::test(); }",
         "int main() { example::Value value{}; return value.n; }",
         "using Selected = example::Number;",
@@ -195,7 +195,7 @@ void conceptsAndGenericDeclarations() {
           "namespace example { concept Number<T> = std::numeric<T>; T "
           "identity<T>(T value) requires std::copyable<T> { return value; } "
           "struct Box<T> { T value; }; }");
-  for (const std::string &source :
+  for (const std::string source :
        {"T identity<T>(T value) requires example::Number<T> { return value; } "
         "int main() { return identity(2); }",
         "int main() { return example::identity(4); }",
