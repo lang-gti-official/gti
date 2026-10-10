@@ -5,7 +5,8 @@
 // An Expected<Class, E> call result passed directly to a by-value function or
 // constructor parameter. A cleanup-free result has no MIR drop; it is staged in
 // representation-only storage between the producer's success and the
-// consuming call or construction.
+// consuming call or construction. A named binding copied into the same
+// parameters stages its copy the same way and keeps its own value.
 struct pair_value {
   int32_t first = 0;
   int32_t second = 0;
@@ -123,6 +124,49 @@ public:
 
 int32_t read_holder(pair_holder holder) { return holder.total; }
 
+// A by-value parameter is itself a named binding that a call may copy.
+int32_t forward_pair(expected<pair_value, int32_t> result) {
+  return read_pair(result);
+}
+
+// A payload with its own default constructor. Staging a copy never
+// default-constructs the payload.
+struct defaulted_value {
+  int32_t value = 0;
+  defaulted_value() : value(9) {}
+  defaulted_value(int32_t value) : value(value) {}
+};
+
+expected<defaulted_value, int32_t> make_defaulted(bool ok) {
+  if (ok) { return defaulted_value(3); }
+  return unexpected(5);
+}
+
+int32_t read_defaulted(expected<defaulted_value, int32_t> result) {
+  return result ? result.value().value : 100 + result.error();
+}
+
+int32_t forward_defaulted(expected<defaulted_value, int32_t> result) {
+  return read_defaulted(result);
+}
+
+// A failure-propagating caller copies one named binding twice.
+expected<int32_t, int32_t> relay_copied(bool ok) {
+  expected<pair_value, int32_t> made = make_pair(ok);
+  return read_pair(made) + read_pair(made);
+}
+
+// A constructor body copies its local into another constructor's parameter.
+class copying_holder {
+public:
+  mut int32_t total = 0;
+  copying_holder(bool ok) {
+    expected<pair_value, int32_t> made = make_pair(ok);
+    pair_holder held{made};
+    this.total = held.total + read_pair(made);
+  }
+};
+
 expected<int32_t, int32_t> relay_holder(bool ok) {
   pair_holder holder{make_pair(ok)};
   return holder.total;
@@ -139,6 +183,17 @@ int main(int argc, std::vector<std::string> argv) {
     // A later constructor argument fails after the staged result was
     // published.
     between_holder failing{1, make_pair(yes), bump(2147483647)};
+    return failing.total;
+  }
+  if (argc == 4) {
+    // A later argument fails after the copied binding was staged.
+    expected<pair_value, int32_t> staged = make_pair(yes);
+    return read_between(1, staged, bump(2147483647));
+  }
+  if (argc == 5) {
+    // A later constructor argument fails after the copied binding was staged.
+    expected<pair_value, int32_t> staged = make_pair(yes);
+    between_holder failing{1, staged, bump(2147483647)};
     return failing.total;
   }
   if (read_pair(make_pair(yes)) != 12) { return 1; }
@@ -189,5 +244,44 @@ int main(int argc, std::vector<std::string> argv) {
     held_total += looped.total;
   }
   if (held_total != 128) { return 26; }
+  // Named bindings copied into the same parameters keep their own values.
+  expected<pair_value, int32_t> local = make_pair(yes);
+  expected<pair_value, int32_t> local_error = make_pair(no);
+  if (read_pair(local) != 12) { return 27; }
+  if (read_pair(local_error) != 104) { return 28; }
+  if (read_between(3, local, 4) + read_pair(local) != 31) { return 29; }
+  if (read_between(3, local_error, 4) != 3) { return 30; }
+  expected<pair_value, code_value> local_coded = make_coded(yes);
+  expected<pair_value, code_value> local_coded_error = make_coded(no);
+  if (read_coded(local_coded) != 6) { return 31; }
+  if (read_coded(local_coded_error) != 109) { return 32; }
+  if (view.read(local) != 17 || view.read(local_error) != 6) { return 33; }
+  if (forward_pair(local) != 12 || forward_pair(local_error) != 104) {
+    return 34;
+  }
+  auto relayed_copy = relay_copied(yes);
+  if (!relayed_copy || relayed_copy.value() != 24) { return 35; }
+  mut int32_t copied_total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    expected<pair_value, int32_t> each = make_pair(index != 1);
+    copied_total += read_pair(each);
+  }
+  if (copied_total != 128) { return 36; }
+  pair_holder copied_held{local};
+  if (copied_held.total != 12) { return 37; }
+  between_holder copied_between{3, local_error, 4};
+  if (copied_between.total != 3) { return 38; }
+  coded_holder copied_coded{local_coded_error};
+  if (copied_coded.total != 109) { return 39; }
+  tracked_holder copied_tracked{local};
+  if (copied_tracked.total != 5) { return 40; }
+  if (pair_holder(local_error).get() != 104) { return 41; }
+  copying_holder nested{yes};
+  if (nested.total != 24) { return 42; }
+  if (local.value().first != 5 || local_error.error() != 4) { return 43; }
+  if (forward_defaulted(make_defaulted(yes)) != 3 ||
+      forward_defaulted(make_defaulted(no)) != 105) {
+    return 44;
+  }
   return 0;
 }
