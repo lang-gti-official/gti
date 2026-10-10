@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import argparse
 import pathlib
 import subprocess
 import sys
 import tempfile
+
+from case_jobs import configured_jobs, positive_jobs, run_cases
 
 
 def run(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
@@ -29,38 +32,68 @@ def require_success(result: subprocess.CompletedProcess[str], label: str) -> Non
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: json_stdlib_test.py <gti> <fixture-directory>")
-
-    gti = str(pathlib.Path(sys.argv[1]).resolve())
-    fixtures = pathlib.Path(sys.argv[2]).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("gti")
+    parser.add_argument("fixtures")
+    parser.add_argument("--jobs", type=positive_jobs, default=configured_jobs(),
+                        help="bounded concurrent compile-and-run workers")
+    arguments = parser.parse_args()
+    gti = str(pathlib.Path(arguments.gti).resolve())
+    fixtures = pathlib.Path(arguments.fixtures).resolve()
     mir_cases = ("stdlib_surface_json.gti", "stdlib_json_codec.gti")
-
     with tempfile.TemporaryDirectory(prefix="gti-json-stdlib-") as temporary:
         output = pathlib.Path(temporary)
+        # Each MIR emission and each native build-and-run is an independent
+        # bounded-worker case; results are checked in the original order with
+        # the same expectations and timeouts as the serial form.
+        plan = []
         for optimization in ("-O0", "-O3"):
             for source_name in mir_cases:
-                source = fixtures / source_name
+                plan.append((f"mir:{source_name}:{optimization}",
+                             ("mir", source_name, None, optimization)))
+        for standard, optimization in (("c++23", "-O0"), ("c++20", "-O3")):
+            for source_name in (*mir_cases, "json_temporary_owner.gti"):
+                plan.append((f"native:{source_name}:{standard}:{optimization}",
+                             ("native", source_name, standard, optimization)))
+        plan.append(("regression:json_expected_value_backend_bug.gti",
+                     ("regression", "json_expected_value_backend_bug.gti", None, "-O0")))
+
+        def work(case):
+            kind, source_name, standard, optimization = case
+            source = fixtures / source_name
+            if kind == "mir":
                 mir = output / f"{source.stem}-{optimization[1:]}.mir"
                 compiled = run(
                     [gti, str(source), "--emit-mir", optimization, "-o", str(mir)]
                 )
-                require_success(compiled, f"emit MIR {source_name} {optimization}")
-                if not mir.is_file():
-                    raise AssertionError(
-                        f"emit MIR {source_name} {optimization} produced no artifact"
-                    )
-
-        for standard, optimization in (("c++23", "-O0"), ("c++20", "-O3")):
-            for source_name in (*mir_cases, "json_temporary_owner.gti"):
-                source = fixtures / source_name
+                return (compiled, mir.is_file(), None)
+            if kind == "native":
                 binary = output / f"{source.stem}-{standard}-{optimization[1:]}"
                 compiled = run(
                     [gti, str(source), "--std", standard, optimization,
                      "-o", str(binary)], timeout=600
                 )
+                if compiled.returncode != 0:
+                    return (compiled, False, None)
+                return (compiled, True, run([str(binary)], timeout=30))
+            binary = output / "json-expected-value-backend-bug"
+            compiled = run([gti, str(source), "-O0", "-o", str(binary)], timeout=60)
+            if compiled.returncode != 0:
+                return (compiled, False, None)
+            return (compiled, True, run([str(binary)]))
+
+        def observe(key, outcome):
+            kind, source_name, standard, optimization = dict(plan)[key]
+            compiled, produced, executed = outcome
+            if kind == "mir":
+                require_success(compiled, f"emit MIR {source_name} {optimization}")
+                if not produced:
+                    raise AssertionError(
+                        f"emit MIR {source_name} {optimization} produced no artifact"
+                    )
+                return
+            if kind == "native":
                 require_success(compiled, f"native {source_name} {standard} {optimization}")
-                executed = run([str(binary)], timeout=30)
                 require_success(executed, f"run {source_name} {standard} {optimization}")
                 expected = (
                     'demo\n{"name":"demo","private":true,"count":42,"items":["one",2]}\n'
@@ -68,13 +101,11 @@ def main() -> int:
                 )
                 if executed.stdout != expected or executed.stderr:
                     raise AssertionError(f"unexpected JSON output: {executed}")
+                return
+            require_success(compiled, "native owning-error expected regression")
+            require_success(executed, "run owning-error expected regression")
 
-        regression = fixtures / "json_expected_value_backend_bug.gti"
-        binary = output / "json-expected-value-backend-bug"
-        compiled = run([gti, str(regression), "-O0", "-o", str(binary)], timeout=60)
-        require_success(compiled, "native owning-error expected regression")
-        require_success(run([str(binary)]), "run owning-error expected regression")
-
+        run_cases(plan, work, arguments.jobs, observe)
     return 0
 
 
