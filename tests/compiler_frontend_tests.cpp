@@ -2394,16 +2394,19 @@ void testExportPlacement() {
       "int choose(bool ready) {\n  if (ready)[[discard]] choose(false);\n"
       "  else[[discard]] choose(true);\n  return 0;\n}\n"
       "int first(int[2] values) { return values[[](int i) -> int { return i; "
-      "}(0)]; }\n");
+      "}(0)]; }\n"
+      "export[[track_caller]] [[discardable]] int both() { return 1; }\n");
   expect(
       spaced.find("export [[track_caller]] void check") != std::string::npos &&
           spaced.find("if (ready) [[discard]] choose") != std::string::npos &&
           spaced.find("else [[discard]] choose") != std::string::npos &&
           spaced.find("values[") != std::string::npos &&
           spaced.find("values [") == std::string::npos &&
+          spaced.find("export [[track_caller]][[discardable]] int both") !=
+              std::string::npos &&
           lang::Formatter().format(spaced) == spaced,
-      "an attribute list is spaced from a preceding keyword, while a "
-      "lambda subscript stays attached: " +
+      "an attribute list is spaced from a preceding keyword, while "
+      "consecutive lists and a lambda subscript stay attached: " +
           spaced);
   const std::string misplaced =
       "export module api;\n[[track_caller]] export void check(bool ready) {}\n";
