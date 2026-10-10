@@ -18053,7 +18053,9 @@ public:
 
 T relay<T>(T value) { return std::move(value); }
 
-CallableOwner<T> own<T>(T value) {
+// The unmoved witness's cleanup can fail while the returned owner is pending;
+// the moved-from parameter shell retires without a destructor.
+CallableOwner<T> own<T>(T value, DropTracer witness) {
   return CallableOwner<T>(std::move(value));
 }
 
@@ -18064,12 +18066,12 @@ void transport() {
   };
   auto returned = relay(std::move(operation));
   if (returned() != 7) { return; }
-  auto owner = own(std::move(returned));
+  auto owner = own(std::move(returned), DropTracer(1));
 }
 
 int main() {
   transport();
-  return cleanup_count - 1;
+  return cleanup_count - 2;
 }
 )");
   if (!frontend.canGenerateCode()) {
