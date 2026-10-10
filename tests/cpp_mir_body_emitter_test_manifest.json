@@ -310,6 +310,14 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeExpectedClassArgumentSlot",
+      "suite": "text"
+    },
+    {
+      "name": "testCleanupFreeExpectedClassConstructorArgumentSlot",
+      "suite": "text"
+    },
+    {
       "name": "testForwardListEmplacementPublication",
       "suite": "lifecycle"
     },
