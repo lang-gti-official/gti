@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.398.1 — Generic callees declared after their caller
+## 0.398.2 — Generic callees declared after their caller
 
 - A generic function that returns a moved by-value parameter, such as an
   iterator-returning `find`, can now be declared after the function that calls
@@ -18,6 +18,22 @@ for what minor and patch releases mean.
   callee first was accepted. The caller now asks for the callee's body
   analysis on demand; declaration-order rules are unchanged, so namespace
   globals and `constexpr` definitions must still precede their uses.
+
+## 0.398.1 — Faster raw-pointer audit
+
+- `--raw-pointer-audit=warn` and `strict` (and the profile setting) run
+  several times faster on programs that include much of the standard library,
+  with the same findings at the same sites in the same order. Measured back to
+  back, checking `tests/fixtures/stdlib_surface_format.gti` with the audit on
+  fell from 65 s to 15 s (1.8 s with the audit off), and
+  `stdlib_surface_algorithm.gti` fell from 2.5 s to 1.3 s (0.5 s off). Almost
+  all of the removed time was overhead rather than analysis: every
+  interprocedural provenance query rebuilt the whole callable catalog for its
+  worker, and every lookup of a raw address's root hashed a declaration key
+  for each namespace symbol of each source unit. Workers now reuse released
+  catalog snapshots, and root lookups compare declaration keys directly. The
+  audit still copies the caller's semantic model and value flow per query, so
+  it remains far more expensive than compiling with the audit off.
 
 ## 0.398.0 — Compile-time reflection and `constexpr for`
 
@@ -38,6 +54,7 @@ for what minor and patch releases mean.
   constants; reflected access is the field projection itself, under the
   ordinary access, mutability and borrowing rules of the call site. A program
   that consumes reflection at compile time carries no reflection data.
+
 ## 0.397.11 — Optimized compiles of large bodies use far less memory
 
 - Compiling at `-O2` or `-O3` no longer needs gigabytes of memory for a large
