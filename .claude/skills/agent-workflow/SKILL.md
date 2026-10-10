@@ -72,11 +72,16 @@ for VERSION and release-trailer decisions.
     ["ctest", "--test-dir", "build-release", "--output-on-failure", "-R", "^owning_gate$"]]
    ```
 
-   Build necessary targets first. The helper executes these commands in the
-   task worktree and binds passing evidence to the clean, published head and
-   current remote base. It does not select adequate tests or prove their
-   quality; that remains the agent's responsibility. Changes or upstream
-   advancement require revalidation.
+   Build necessary targets first, through a build-window slot:
+   `python3 scripts/build_window.py --kind build -- cmake --build <tree> ...`.
+   The helper executes these commands in the task worktree inside a
+   build-window `suite` slot and holds its metadata lock only while recording,
+   so other sessions can still start, checkpoint and inspect tasks while it
+   waits for or runs validation; `python3 scripts/build_window.py --status`
+   shows who holds the window. It binds passing evidence to the clean,
+   published head and current remote base. It does not select adequate tests
+   or prove their quality; that remains the agent's responsibility. Changes or
+   upstream advancement require revalidation.
 3. Write the final PR description to a temporary file, including behaviour,
    validation and limitations. Run `finish <task> --body-file <file>`.
    It marks the PR ready, checks validation and branch protection, merges through
@@ -117,7 +122,8 @@ remove it with Git.
 `status [task]` reports local records plus remote PR state. Retry after an
 interrupted request; PR lookup prevents duplicate creation, and confirmed merges
 can resume sync/cleanup without merging twice. Inspect a stale lock's owner
-before removing that exact lock directory. Records are recovery aids; Gitea PRs
+before removing that exact lock directory; the lock is short, and a build-window
+slot whose owner exited is reclaimed on its own. Records are recovery aids; Gitea PRs
 and published Git commits remain the work inventory. Losing local records can
 be recovered by adopting the preserved branch and rediscovering its PR.
 

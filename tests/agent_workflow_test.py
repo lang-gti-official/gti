@@ -2,11 +2,16 @@
 """Exercise task lifecycle with real disposable Git repositories and a fake Gitea."""
 
 import importlib.util
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+import unittest.mock
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("agent_workflow", ROOT / "scripts/agent_workflow.py")
@@ -96,11 +101,21 @@ class Lifecycle(unittest.TestCase):
         git(self.primary, "commit", "-m", "initial")
         git(self.primary, "push", "-u", "origin", "main")
         self.api = Gitea(self.remote)
+        self.env = unittest.mock.patch.dict(os.environ)
+        self.env.start()
+        for name in list(os.environ):
+            if name.startswith(module.build_window.ENV_PREFIX):
+                del os.environ[name]
         self.flow = module.Workflow(self.primary, self.api, enforce_origin=False)
+        self.flow.lock_wait = 0
+        self.flow.window.poll = 0.05
+        self.window_messages = []
+        self.flow.window.log = self.window_messages.append
         self.worktree = self.root / "task"
         self.branch = "codex/task"
 
     def tearDown(self):
+        self.env.stop()
         self.temp.cleanup()
 
     def start(self):
@@ -364,6 +379,98 @@ class Lifecycle(unittest.TestCase):
             self.flow.checkpoint("task", "delete", ["old"])
         self.assertEqual(git(self.worktree, "rev-parse", "HEAD"), head)
         self.assertEqual(git(self.worktree, "diff", "--cached", "--name-only"), "")
+
+    def probe(self, expression):
+        """A check command that exits 0 only when `expression` holds while the checks run."""
+        lock = str(self.flow.state_dir / "lock")
+        suite = str(self.flow.window.directory / "suite")
+        return [sys.executable, "-c",
+                f"import glob, json, os, sys\nlock = {lock!r}\nsuite = {suite!r}\n"
+                f"holders = [json.load(open(p)) for p in glob.glob(suite + '/*.json')]\n"
+                f"sys.exit(0 if ({expression}) else 3)"]
+
+    def test_verify_releases_lock_and_holds_one_suite_slot(self):
+        self.start()
+        self.checkpoint()
+        state = self.flow.verify("task", [self.probe(
+            "not os.path.exists(lock) and len(holders) == 1 and holders[0]['pid'] == os.getppid()"
+            " and holders[0]['kind'] == 'suite' and holders[0]['checks'][0][0] == sys.executable")])
+        self.assertEqual(state["phase"], "ready")
+        self.assertEqual(self.flow.window.holders("suite"), [])
+        self.assertFalse((self.flow.state_dir / "lock").exists())
+        self.assertEqual(self.window_messages, [])
+        with self.assertRaisesRegex(Error, "Validation failed"):
+            self.flow.verify("task", [self.probe("os.path.exists(lock)")])
+        self.assertEqual(self.flow.load("task")["phase"], "blocked")
+        self.assertEqual(self.flow.window.holders("suite"), [])
+
+    def test_verify_waits_for_a_live_suite_holder_and_reclaims_an_exited_one(self):
+        self.start()
+        self.checkpoint()
+        exited = subprocess.Popen([sys.executable, "-c", "pass"])
+        exited.wait()
+        suite = self.flow.window.directory / "suite"
+        suite.mkdir(parents=True)
+        (suite / "stale.json").write_text(json.dumps({"pid": exited.pid, "time": "earlier",
+                                                      "kind": "suite", "command": ["ctest"]}))
+        self.flow.verify("task", [self.probe("len(holders) == 1")])
+        self.assertFalse((suite / "stale.json").exists())
+        self.assertTrue(any(m.startswith("reclaimed suite slot") for m in self.window_messages))
+        self.flow.checkpoint("task")  # drops the verification and returns to active
+        self.assertNotIn("verified", self.flow.load("task"))
+        with self.flow.window.acquire("suite", ["ctest", "--test-dir", "build-release"]):
+            self.flow.window.timeout = 0.2
+            with self.assertRaisesRegex(Error, "timed out .*ctest --test-dir build-release"):
+                self.flow.verify("task", [[sys.executable, "-c", "pass"]])
+            self.assertEqual(self.flow.load("task")["phase"], "active")
+            self.assertFalse((self.flow.state_dir / "lock").exists())
+        self.flow.window.timeout = None
+        self.flow.verify("task", [[sys.executable, "-c", "pass"]])
+        self.assertEqual(self.flow.load("task")["phase"], "ready")
+
+    def test_metadata_commands_run_while_verify_executes_checks(self):
+        self.start()
+        self.checkpoint()
+        other = self.root / "other"
+        self.flow.start("other", "Other task", other, "codex/other")
+        wait = (self.flow.state_dir / "wait-here")
+        checks = [[sys.executable, "-c",
+                   f"import os, time\nwhile not os.path.exists({str(wait)!r}): time.sleep(0.02)"]]
+        result = {}
+        thread = threading.Thread(target=lambda: result.update(state=self.flow.verify("task", checks)))
+        thread.start()
+        try:
+            deadline = time.monotonic() + 10
+            while not self.flow.window.holders("suite") and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertEqual(len(self.flow.window.holders("suite")), 1)
+            self.assertEqual(self.flow.load("task")["phase"], "verifying")
+            records = {s["task"]: s for s in self.flow.status()}
+            self.assertEqual(records["task"]["phase"], "verifying")
+            (other / "other.txt").write_text("peer\n")
+            self.flow.checkpoint("other", "peer checkpoint", ["other.txt"])
+            self.assertTrue(self.api.prs[-1]["head"]["ref"] == "codex/other")
+        finally:
+            wait.write_text("go\n")
+            thread.join(timeout=20)
+        self.assertEqual(result["state"]["phase"], "ready")
+        self.assertEqual(self.flow.window.holders("suite"), [])
+
+    def test_lock_waits_briefly_for_a_short_holder(self):
+        self.flow.lock_wait = 5
+        released = []
+
+        def hold():
+            with self.flow.lock():
+                time.sleep(0.4)
+                released.append(time.monotonic())
+
+        thread = threading.Thread(target=hold)
+        thread.start()
+        time.sleep(0.1)
+        with self.flow.lock():
+            self.assertGreaterEqual(time.monotonic(), released[0])
+        thread.join()
 
     def test_closed_remote_branch_never_reused(self):
         self.ready()

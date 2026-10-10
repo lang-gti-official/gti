@@ -3017,7 +3017,21 @@ required-check refusal. It checks preservation of dirty/divergent local main,
 cleanup refusal for new commits/ignored/source files, conditional branch
 deletion, abandonment, locks and preservation of existing protection settings.
 It performs no production network request or GTI compilation. Live lifecycle
-delivery verifies the actual instance's draft, protection and merge APIs.
+delivery verifies the actual instance's draft, protection and merge APIs. It
+also checks that `verify` releases the metadata lock while its checks run,
+holds exactly one build-window `suite` slot for them, reclaims a slot whose
+owner exited, reports a live holder when the window is full, and lets a peer
+task checkpoint while validation is in progress.
+
+`build_window` exercises `scripts/build_window.py` in a temporary directory:
+slot files record owner pid, time, kind and command and disappear on release;
+a waiter blocks until a full window frees a slot and prints who holds it; a
+bounded wait reports the holders; a slot of an exited pid is reclaimed while a
+live one never is; the suite and build counts come from defaults, the
+`GTI_BUILD_WINDOW_*` environment and overriding flags; the CLI holds its slot
+for the whole wrapped command, propagates the command's exit status and lists
+holders with `--status`; and an interrupt delivered to the process group
+releases the slot. The last check is POSIX-only.
 
 ## CLI terminal colour
 
@@ -5748,7 +5762,10 @@ python3 tests/owning_function_runtime_test.py build/gti --jobs 1
 On a 12-core host with sufficient memory, a larger accounted allocation can
 shorten long-suite tails while still letting three four-worker suites share
 the machine. Reconfigure the same Ninja tree rather than launching multiple
-uncoordinated CTest runs:
+uncoordinated CTest runs, and wrap whole-suite runs and full builds in the
+shared build window (`python3 scripts/build_window.py --kind suite|build --
+<command>`, described with the agent workflow), which admits one suite and
+two builds at a time across every worktree on the host:
 
 ```sh
 cmake -S . -B build -DGTI_TEST_CASE_JOBS=4
