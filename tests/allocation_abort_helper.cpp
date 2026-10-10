@@ -24,7 +24,8 @@ void marker(char value) {
   (void)WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), &value, 1, &written,
                   nullptr);
 #else
-  (void)::write(STDOUT_FILENO, &value, 1);
+  // GCC's warn_unused_result ignores a void cast; name the result instead.
+  [[maybe_unused]] const ssize_t written = ::write(STDOUT_FILENO, &value, 1);
 #endif
 }
 
@@ -79,6 +80,13 @@ void *operator new(std::size_t size) {
 void *operator new[](std::size_t size) { return ::operator new(size); }
 void operator delete(void *address) noexcept { std::free(address); }
 void operator delete[](void *address) noexcept { std::free(address); }
+// GCC requires the sized forms beside the unsized replacements.
+void operator delete(void *address, std::size_t) noexcept {
+  std::free(address);
+}
+void operator delete[](void *address, std::size_t) noexcept {
+  std::free(address);
+}
 
 int main(int argc, char **argv) {
   if (argc != 2)

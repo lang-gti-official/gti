@@ -140,7 +140,7 @@ void testRawPointerAstPrinting() {
          "AST printing should keep pointee const before the first qualified "
          "type segment");
 
-  for (const std::string &type :
+  for (const std::string type :
        {"native::Cell***", "const native::Cell***", "native::Cell* const*",
         "const native::Cell* const** const*"}) {
     lang::Parser nested(lexer.scan("[]() -> " + type + " { return nullptr; }"));

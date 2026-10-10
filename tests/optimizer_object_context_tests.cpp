@@ -70,7 +70,7 @@ int checkTerminalContexts() {
     if (terminal)
       expect(context && !context->returnInterval,
              "terminal calls publish no fabricated successful return value");
-    for (const auto [level, candidate] :
+    for (const auto &[level, candidate] :
          {std::pair{lang::OptimizationLevel::O0, &o0},
           std::pair{lang::OptimizationLevel::O2, &o2},
           std::pair{lang::OptimizationLevel::O3, &o3}}) {

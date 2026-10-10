@@ -941,7 +941,7 @@ int main() {
 }
 
 void checkReferenceCopies() {
-  for (const std::string &function :
+  for (const std::string function :
        {"int copied(Shared& source) { Shared local = source; return "
         "local.read(); }",
         "int copied(mut Shared& source) { Shared local = source; return "
@@ -1119,7 +1119,7 @@ void checkInvalidations() {
 }
 
 void checkShellEscapes() {
-  for (const std::string &bad :
+  for (const std::string bad :
        {"Shared& bad(Shared& source) { Shared local = source; return local; }",
         "Shared& bad(Shared source) { return source; }",
         "class Leaker { Shared stored; public: "
