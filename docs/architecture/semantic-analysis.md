@@ -452,7 +452,8 @@ on declaration-wide registration. It currently:
 7. records class types and lifecycle facts, validates alias target constraints,
    then seals the declaration catalog;
 8. copies namespace-symbol value state into the body-owned value-flow session
-   and analyzes declaration bodies in lexical scopes;
+   and analyzes declaration bodies in a resumable lexical pass (see "Body
+   Order And Demand" below);
 9. finalizes callable forwarding and argument contracts; and
 10. finalizes the program-initialization plan and semantic occurrences.
 
@@ -479,6 +480,49 @@ require bodies through their structural eligibility rules.
 This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
 analysis, and finalization—not only a visitor method.
+
+### Body Order And Demand
+
+Stage 8 walks the program's declarations in source order through explicit
+frames: the program list, each open namespace body, each active conditional
+branch, and each class member list. Every declaration is analysed exactly once,
+in its own position; the frames hold no analysis state, and the
+declaration-level environment (program scope, namespace path, open class
+scopes, declaration-level loan flow) is rebuilt from them whenever they change
+under a paused body.
+
+A few facts are produced only by a callee's body analysis. Today the only one
+is whether a function returns a moved by-value parameter, which decides what a
+by-value borrow-carrier result (an iterator returned by a generic `find`, for
+example) borrows from. A consumer of such a fact asks for the body through
+`ensureBodyAnalyzed` instead of reading whatever the walk has produced so far:
+
+- when the walk has not reached the callee, the caller's body-local state is
+  set aside, the walk advances through every intervening declaration in order,
+  analyses the callee in its own position, and the caller resumes;
+- a compiler-trusted body the pass deferred (test mode, below) is analysed in
+  its own declaration context;
+- a body already in progress (recursion), concrete-instance reanalysis, a
+  demand from outside a function body, and a declaration the walk cannot reach
+  (a local function, an inactive conditional branch) leave the fact
+  unavailable, exactly as a later declaration did before.
+
+Lexical visibility is a property of position, not of analysis time. Each
+declaration carries a lexical order. A namespace global declared at or after
+the current declaration is invisible to it (`GTI-S2001`), and a `constexpr`
+definition or constructor is available to constant evaluation only when it is
+declared before the current declaration (`GTI-S2057`), whether or not a demand
+has already analysed it. A body analysed early therefore sees exactly what it
+would have seen in sequence: the globals and constant definitions that precede
+it, including ones that follow its caller.
+
+`TrustedBodyAnalysis::Deferred` is a test mode of `FrontendOptions` that
+analyses compiler-trusted bodies after the application bodies, in reverse
+lexical order. The `body_analysis_order` test proves that it produces the same
+diagnostics as the complete pass over the examples and the standard-library
+tests, and checks fixtures for both orders of the moved-return generic, global
+and `constexpr` visibility across a demand, and mutually recursive demands.
+Compilation always analyses every body.
 
 Text-return relay predeclaration consults the owning class's registered instance
 fields for implicit receiver spellings as well as explicit `this` paths.

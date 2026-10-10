@@ -249,8 +249,14 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
           worker->catalog = catalog.snapshotForInstanceAnalysis();
           worker->semanticModel = semanticModel;
           worker->valueFlow = valueFlow;
-          worker->constexprDefinitionsAnalyzed = constexprDefinitionsAnalyzed;
-          worker->constexprConstructorsAnalyzed = constexprConstructorsAnalyzed;
+          for (const FunctionDecl *definition : constexprDefinitionsAnalyzed) {
+            if (declaredBeforeCurrent(definition))
+              worker->constexprDefinitionsAnalyzed.insert(definition);
+          }
+          for (const auto *definition : constexprConstructorsAnalyzed) {
+            if (declaredBeforeCurrent(definition))
+              worker->constexprConstructorsAnalyzed.insert(definition);
+          }
           worker->genericDefaultConstants = genericDefaultConstants;
           worker->defaultArgumentSyntax = defaultArgumentSyntax;
           worker->defaultArgumentDependencies = defaultArgumentDependencies;
@@ -3811,6 +3817,9 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
     -> bool {
   const std::string qualified = qualifiedName(scope, name.lexeme);
   symbol.qualifiedName = qualified;
+  if (symbol.variableDeclaration != nullptr && !instanceAnalysisActive) {
+    symbol.declarationOrder = currentDeclarationOrder;
+  }
   const bool scopePrivate =
       compilerPrivateDeclaration(symbol.sourceUnit, scope);
   symbol.compilerPrivate = symbol.compilerPrivate || scopePrivate ||
@@ -4489,7 +4498,7 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
   for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
     const auto found =
         symbols.find(qualifiedName(currentNamespace, depth - 1, name.lexeme));
-    if (found != symbols.end()) {
+    if (found != symbols.end() && symbolVisibleNow(found->second)) {
       return &found->second;
     }
   }
@@ -4517,7 +4526,7 @@ auto SemanticVisitor::Impl::resolvePlaceSymbol(const Token &name) -> Symbol * {
   for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
     const auto found =
         symbols->find(qualifiedName(currentNamespace, depth - 1, name.lexeme));
-    if (found != symbols->end()) {
+    if (found != symbols->end() && symbolVisibleNow(found->second)) {
       return &found->second;
     }
   }
@@ -4605,7 +4614,7 @@ auto SemanticVisitor::Impl::resolveQualified(const NamePath &path) const
   const auto &symbols = currentNamespaceSymbols();
   const auto symbol =
       symbols.find(*resolvedNamespace + "::" + path.last().lexeme);
-  if (symbol != symbols.end()) {
+  if (symbol != symbols.end() && symbolVisibleNow(symbol->second)) {
     return &symbol->second;
   }
   const EnumeratorRecord *enumerator = resolveEnumerator(path);
@@ -4642,7 +4651,9 @@ auto SemanticVisitor::Impl::resolveQualifiedPlaceSymbol(const NamePath &path)
   }
   const auto symbol =
       symbols->find(*resolvedNamespace + "::" + path.last().lexeme);
-  return symbol == symbols->end() ? nullptr : &symbol->second;
+  return symbol == symbols->end() || !symbolVisibleNow(symbol->second)
+             ? nullptr
+             : &symbol->second;
 }
 
 auto SemanticVisitor::Impl::resolveInitialNamespaceGlobally(
@@ -8004,8 +8015,14 @@ auto SemanticVisitor::Impl::runRawResultQuery(
     seedGlobals(bindings);
   for (auto &[_, bindings] : worker->valueFlow.visibleNamespaceSymbols)
     seedGlobals(bindings);
-  worker->constexprDefinitionsAnalyzed = constexprDefinitionsAnalyzed;
-  worker->constexprConstructorsAnalyzed = constexprConstructorsAnalyzed;
+  for (const FunctionDecl *definition : constexprDefinitionsAnalyzed) {
+    if (declaredBeforeCurrent(definition))
+      worker->constexprDefinitionsAnalyzed.insert(definition);
+  }
+  for (const auto *definition : constexprConstructorsAnalyzed) {
+    if (declaredBeforeCurrent(definition))
+      worker->constexprConstructorsAnalyzed.insert(definition);
+  }
   worker->genericDefaultConstants = genericDefaultConstants;
   worker->defaultArgumentSyntax = defaultArgumentSyntax;
   worker->defaultArgumentDependencies = defaultArgumentDependencies;

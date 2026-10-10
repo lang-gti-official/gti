@@ -6706,6 +6706,11 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       declarationInfo = &*concreteDeclaration;
     }
   }
+  // Whether the callee returns a moved parameter is a body-derived fact; ask
+  // for the body first so the answer is the same whatever the source order.
+  if (declarationInfo != nullptr) {
+    ensureBodyAnalyzed(*declarationInfo);
+  }
   const FunctionReturnBorrowSummary concreteBorrow =
       functionReturnBorrowSummary(
           function.returnType, function.parameterTypes, function.ownerClass,

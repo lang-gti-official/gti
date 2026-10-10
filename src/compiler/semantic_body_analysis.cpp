@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include <iterator>
+
 namespace lang {
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
@@ -155,8 +157,12 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   beginScope();
   const auto bodyStart = std::chrono::steady_clock::now();
   measureTopLevelStatements = workMetrics != nullptr;
-  analyze(program.declarations());
+  bodyPhaseActive = true;
+  indexLexicallyReachableFunctions(program.declarations());
+  runLexicalPass(program.declarations());
   measureTopLevelStatements = false;
+  analyzeDeferredBodies();
+  bodyPhaseActive = false;
   recordGenericDefaultConstantUses();
   validateDefaultArgumentCycles();
   endScope();
@@ -680,17 +686,13 @@ auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
   unsafeDepth = enclosingUnsafeDepth;
 }
 
-auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
-  const auto registered = classDeclIds.find(&stmt);
-  if (registered == classDeclIds.end()) {
-    return;
-  }
-
-  const std::optional<ClassId> enclosingClass = currentClass;
-  const std::vector<std::string> enclosingNamespace = currentNamespace;
-  currentClass = registered->second;
-  const ClassInfo &info = classInfo(*currentClass);
-  const SemanticType type = openClassType(info.id);
+// The work visitClassDecl does before its members (tooling symbol, base and
+// field validation, generic scope), shared with the resumable lexical pass.
+// The caller has set currentClass; this leaves the class's type-parameter
+// scope open.
+auto SemanticVisitor::Impl::beginClassBody(const ClassDecl &stmt,
+                                           const ClassInfo &info,
+                                           const SemanticType &type) -> void {
   if (stmt.exactSpecialization() &&
       stmt.exactSpecialization()->name.segments.size() > 1) {
     const NamePath namespacePath(std::vector<Token>(
@@ -745,11 +747,10 @@ auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
       }
     }
   }
-  beginScope();
-  for (const auto &[name, member] : info.members) {
-    scopes.back().emplace(name, member.symbol);
-  }
-  analyze(stmt.members());
+}
+
+// The work visitClassDecl does after its members.
+auto SemanticVisitor::Impl::endClassBody(const ClassInfo &info) -> void {
   if (info.designatedConstructor) {
     // Reserve declaration identities for the lowered inventory. Analyze the
     // generated body only when concrete HIR selects it, like an instance.
@@ -762,6 +763,26 @@ auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
       semanticModel.record(parameter, std::move(binding));
     }
   }
+}
+
+auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
+  const DeclarationOrderScope declarationOrder{*this, stmt};
+  const auto registered = classDeclIds.find(&stmt);
+  if (registered == classDeclIds.end()) {
+    return;
+  }
+  const std::optional<ClassId> enclosingClass = currentClass;
+  const std::vector<std::string> enclosingNamespace = currentNamespace;
+  currentClass = registered->second;
+  const ClassInfo &info = classInfo(*currentClass);
+  const SemanticType type = openClassType(info.id);
+  beginClassBody(stmt, info, type);
+  beginScope();
+  for (const auto &[name, member] : info.members) {
+    scopes.back().emplace(name, member.symbol);
+  }
+  analyze(stmt.members());
+  endClassBody(info);
   endScope();
   endTypeParameterScope();
   currentNamespace = enclosingNamespace;
@@ -786,6 +807,7 @@ auto SemanticVisitor::Impl::visitCompileErrorDirective(
 
 auto SemanticVisitor::Impl::visitStaticAssertDecl(const StaticAssertDecl &stmt)
     -> void {
+  const DeclarationOrderScope declarationOrder{*this, stmt};
   const std::size_t diagnosticsBefore = diagnostics.size();
   const bool enclosingStaticAssert = analyzingDependentConstantCondition;
   const bool enclosingDependency = constantConditionGenericDependency;
@@ -852,6 +874,7 @@ auto SemanticVisitor::Impl::visitStaticAssertDecl(const StaticAssertDecl &stmt)
 
 auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     -> void {
+  const DeclarationOrderScope declarationOrder{*this, stmt};
   const std::size_t constructorDiagnosticStart = diagnostics.size();
   if (!currentClass) {
     report(stmt.name(),
@@ -1328,6 +1351,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
 
 auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
     -> void {
+  const DeclarationOrderScope declarationOrder{*this, stmt};
   if (!currentClass) {
     report(stmt.tilde(),
            "Destructors can only be declared in a class or struct.",
@@ -1762,6 +1786,14 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
 
 auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     -> void {
+  const DeclarationOrderScope declarationOrder{*this, stmt};
+  // A declaration analysed on demand (see ensureBodyAnalyzed) is complete;
+  // the lexical pass must not process it a second time. Concrete-instance
+  // reanalysis is a separate request and always runs.
+  if (!instanceAnalysisActive &&
+      !visitedFunctionDeclarations.insert(&stmt).second) {
+    return;
+  }
   const std::size_t functionDiagnosticStart = diagnostics.size();
   const std::vector<GenericParameterInfo> &genericParameters =
       genericParametersFor(stmt);
@@ -2097,6 +2129,66 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     endTypeParameterScope();
     return;
   }
+  const bool declarationErrors = hasErrorDiagnostics(
+      std::span(diagnostics).subspan(functionDiagnosticStart));
+  if (!instanceAnalysisActive && analyzedBodies.contains(&stmt)) {
+    endRequirementScope();
+    endTypeParameterScope();
+    return;
+  }
+  if (deferTrustedBody(stmt)) {
+    deferredBodies.push_back(
+        {.declaration = &stmt,
+         .function = functionInfo == nullptr ? 0 : functionInfo->id,
+         .namespaceScope = currentNamespace,
+         .sourceUnit = currentSourceUnit,
+         .owner = currentClass,
+         .declarationErrors = declarationErrors,
+         .constexprDeclarationValid = constexprDeclarationValid,
+         .declarationOrder = currentDeclarationOrder});
+    endRequirementScope();
+    endTypeParameterScope();
+    return;
+  }
+  analyzeFunctionBody(stmt, functionInfo, declarationErrors,
+                      constexprDeclarationValid);
+  endRequirementScope();
+  endTypeParameterScope();
+}
+
+// The declaration half of visitFunctionDecl has run (symbols, occurrences,
+// contracts, signature validation); this is the body half. A trusted body
+// deferred by the lexical pass re-enters here later with its declaration's
+// namespace, class and generic scopes re-established, so the analysis it
+// performs is the one it would have performed in place.
+auto SemanticVisitor::Impl::analyzeFunctionBody(
+    const FunctionDecl &stmt, const FunctionInfo *functionInfo,
+    bool declarationErrors, bool constexprDeclarationValid) -> void {
+  if (!instanceAnalysisActive) {
+    analyzedBodies.insert(&stmt);
+    bodiesInProgress.insert(&stmt);
+  }
+  struct InProgressGuard {
+    Impl &impl;
+    const FunctionDecl &stmt;
+    ~InProgressGuard() { impl.bodiesInProgress.erase(&stmt); }
+  } inProgressGuard{*this, stmt};
+  const std::size_t bodyDiagnosticStart = diagnostics.size();
+  const Token &functionToken =
+      stmt.operatorName() ? stmt.operatorName()->symbol : stmt.name();
+  const bool isEntryPoint = functionInfo != nullptr && functionInfo->entryPoint;
+  const bool methodDeclaration = currentClass && functionDepth == 0;
+  const auto reportContract = [&](const Token &where, std::string message) {
+    diagnostics.push_back(makeDiagnostic(DiagnosticId::InvalidFunctionContract,
+                                         where, {std::move(message)}));
+  };
+  // Errors anywhere in this function so far: the declaration half plus the
+  // body analysed here.
+  const auto functionErrors = [&] {
+    return declarationErrors ||
+           hasErrorDiagnostics(
+               std::span(diagnostics).subspan(bodyDiagnosticStart));
+  };
   const SemanticType enclosingReturnType = currentReturnType;
   const ReceiverMutability enclosingReceiverMutability =
       currentReceiverMutability;
@@ -2165,9 +2257,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   const FlowSummary functionFlow = summarizeFlow(stmt.body()->statements());
   const bool canFallThrough = functionFlow.canFallThrough;
   if (functionInfo != nullptr && functionInfo->neverReturns &&
-      !loanFlow.deferredConstexprSelection &&
-      !hasErrorDiagnostics(
-          std::span(diagnostics).subspan(functionDiagnosticStart)) &&
+      !loanFlow.deferredConstexprSelection && !functionErrors() &&
       (canFallThrough || functionFlow.normalReturn != nullptr)) {
     reportContract(
         functionFlow.normalReturn != nullptr
@@ -2193,9 +2283,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   }
   finalizeLoanFlow();
   endScope();
-  if (stmt.isConstexpr() && constexprDeclarationValid &&
-      !hasErrorDiagnostics(
-          std::span(diagnostics).subspan(functionDiagnosticStart))) {
+  if (stmt.isConstexpr() && constexprDeclarationValid && !functionErrors()) {
     constexprDefinitionsAnalyzed.insert(&stmt);
   }
   --functionDepth;
@@ -2208,8 +2296,554 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   currentFunctionDeclaration = enclosingFunctionDeclaration;
   currentProgramEffectOwner = enclosingEffectOwner;
   restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
-  endRequirementScope();
-  endTypeParameterScope();
+}
+
+// A trusted (prelude or standard-library) body is deferred when the policy
+// asks for it. Polymorphic members are reached through dispatch rather than a
+// resolved declaration, so they are always analysed in place; the entry unit
+// is the file being checked and is never deferred.
+auto SemanticVisitor::Impl::deferTrustedBody(const FunctionDecl &stmt) const
+    -> bool {
+  if (trustedBodies == TrustedBodyAnalysis::Complete ||
+      instanceAnalysisActive || onDemandBodyAnalysis || functionDepth != 0 ||
+      lambdaDepth != 0 || sourceGraph == nullptr || currentSourceUnit == 0 ||
+      currentSourceUnit == sourceGraph->entryUnit() ||
+      !sourceGraph->isCompilerTrusted(currentSourceUnit)) {
+    return false;
+  }
+  if (stmt.isVirtual() || stmt.isOverride() || stmt.isPure()) {
+    return false;
+  }
+  if (currentClass && classInfo(*currentClass).kind == ClassKind::Interface) {
+    return false;
+  }
+  // The language requires a constexpr definition to be analysed before a
+  // constant-evaluated call to it; deferral would break that rule.
+  if (stmt.isConstexpr()) {
+    return false;
+  }
+  return true;
+}
+
+auto SemanticVisitor::Impl::enterDeclarationContext(
+    const std::vector<std::string> &namespaceScope, SourceUnitId sourceUnit,
+    std::optional<ClassId> owner) -> void {
+  currentNamespace = namespaceScope;
+  currentSourceUnit = sourceUnit;
+  currentClass = owner;
+  if (owner) {
+    const ClassInfo &info = classInfo(*owner);
+    beginTypeParameterScope(info.genericParameters);
+    beginScope();
+    for (const auto &[name, member] : info.members) {
+      scopes.back().emplace(name, member.symbol);
+    }
+  }
+}
+
+auto SemanticVisitor::Impl::exitDeclarationContext(std::optional<ClassId> owner)
+    -> void {
+  if (owner) {
+    endScope();
+    endTypeParameterScope();
+  }
+}
+
+auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
+  BodyLocalState state{
+      .scopes = std::move(scopes),
+      .typeParameterScopes = std::move(typeParameterScopes),
+      .valueParameterScopes = std::move(valueParameterScopes),
+      .typePackScopes = std::move(typePackScopes),
+      .requirementScopes = std::move(requirementScopes),
+      .currentNamespace = std::move(currentNamespace),
+      .currentSourceUnit = currentSourceUnit,
+      .currentClass = currentClass,
+      .currentFunctionDeclaration = currentFunctionDeclaration,
+      .analyzingFieldInitializer = analyzingFieldInitializer,
+      .analyzingConstructorInitializer = analyzingConstructorInitializer,
+      .analyzingDefaultArgument = analyzingDefaultArgument,
+      .analyzingDependentConstantCondition =
+          analyzingDependentConstantCondition,
+      .constantConditionGenericDependency = constantConditionGenericDependency,
+      .currentDefaultArgumentRoot = currentDefaultArgumentRoot,
+      .currentDefaultParameterNames = std::move(currentDefaultParameterNames),
+      .analyzingCallCallee = analyzingCallCallee,
+      .currentStaticMemberFunction = currentStaticMemberFunction,
+      .allowPackTypeReference = allowPackTypeReference,
+      .loanFlow = std::move(loanFlow),
+      .valueControlFlow = std::move(valueControlFlow),
+      .contextualInitializerType = contextualInitializerType,
+      .contextualInitializerExpression = contextualInitializerExpression,
+      .contextualOperatorIntegerType = contextualOperatorIntegerType,
+      .contextualCallableResult = contextualCallableResult,
+      .currentReceiverMutability = currentReceiverMutability,
+      .suppressedProjectedPlaceReads = std::move(suppressedProjectedPlaceReads),
+      .constructorDepth = constructorDepth,
+      .destructorDepth = destructorDepth,
+      .functionDepth = functionDepth,
+      .loopDepth = loopDepth,
+      .switchDepth = switchDepth,
+      .lambdaDepth = lambdaDepth,
+      .lambdaUncapturedLocals = std::move(lambdaUncapturedLocals),
+      .structuredBindingElements = std::move(structuredBindingElements),
+      .currentType = currentType,
+      .currentReturnType = currentReturnType,
+      .currentProgramEffectOwner = currentProgramEffectOwner,
+      .rawPointerLoops = std::move(valueFlow.rawPointerLoops),
+      .rawProgramStorage = saveRawProgramStorage(),
+      .measureTopLevelStatements = measureTopLevelStatements,
+      .onDemandBodyAnalysis = onDemandBodyAnalysis};
+  // The clean state a declaration-level body starts from; keep in step with
+  // prepareInstanceAnalysis.
+  scopes.clear();
+  typeParameterScopes.clear();
+  valueParameterScopes.clear();
+  typePackScopes.clear();
+  requirementScopes.clear();
+  currentNamespace.clear();
+  currentSourceUnit = 0;
+  currentClass.reset();
+  currentFunctionDeclaration = nullptr;
+  analyzingFieldInitializer = false;
+  analyzingConstructorInitializer = false;
+  analyzingDefaultArgument = false;
+  analyzingDependentConstantCondition = false;
+  constantConditionGenericDependency = false;
+  currentDefaultArgumentRoot = nullptr;
+  currentDefaultParameterNames.clear();
+  analyzingCallCallee = false;
+  currentStaticMemberFunction = false;
+  allowPackTypeReference = false;
+  loanFlow = {};
+  valueControlFlow.clear();
+  contextualInitializerType.reset();
+  contextualInitializerExpression = nullptr;
+  contextualOperatorIntegerType.reset();
+  contextualCallableResult.reset();
+  currentReceiverMutability = ReceiverMutability::ReadOnly;
+  suppressedProjectedPlaceReads.clear();
+  constructorDepth = 0;
+  destructorDepth = 0;
+  functionDepth = 0;
+  loopDepth = 0;
+  switchDepth = 0;
+  lambdaDepth = 0;
+  lambdaUncapturedLocals.clear();
+  structuredBindingElements.clear();
+  currentType = SemanticType::Unknown;
+  currentReturnType = SemanticType::Unknown;
+  currentProgramEffectOwner = {};
+  valueFlow.rawPointerLoops = {};
+  measureTopLevelStatements = false;
+  return state;
+}
+
+auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
+    -> void {
+  scopes = std::move(state.scopes);
+  typeParameterScopes = std::move(state.typeParameterScopes);
+  valueParameterScopes = std::move(state.valueParameterScopes);
+  typePackScopes = std::move(state.typePackScopes);
+  requirementScopes = std::move(state.requirementScopes);
+  currentNamespace = std::move(state.currentNamespace);
+  currentSourceUnit = state.currentSourceUnit;
+  currentClass = state.currentClass;
+  currentFunctionDeclaration = state.currentFunctionDeclaration;
+  analyzingFieldInitializer = state.analyzingFieldInitializer;
+  analyzingConstructorInitializer = state.analyzingConstructorInitializer;
+  analyzingDefaultArgument = state.analyzingDefaultArgument;
+  analyzingDependentConstantCondition =
+      state.analyzingDependentConstantCondition;
+  constantConditionGenericDependency = state.constantConditionGenericDependency;
+  currentDefaultArgumentRoot = state.currentDefaultArgumentRoot;
+  currentDefaultParameterNames = std::move(state.currentDefaultParameterNames);
+  analyzingCallCallee = state.analyzingCallCallee;
+  currentStaticMemberFunction = state.currentStaticMemberFunction;
+  allowPackTypeReference = state.allowPackTypeReference;
+  loanFlow = std::move(state.loanFlow);
+  valueControlFlow = std::move(state.valueControlFlow);
+  contextualInitializerType = state.contextualInitializerType;
+  contextualInitializerExpression = state.contextualInitializerExpression;
+  contextualOperatorIntegerType = state.contextualOperatorIntegerType;
+  contextualCallableResult = state.contextualCallableResult;
+  currentReceiverMutability = state.currentReceiverMutability;
+  suppressedProjectedPlaceReads =
+      std::move(state.suppressedProjectedPlaceReads);
+  constructorDepth = state.constructorDepth;
+  destructorDepth = state.destructorDepth;
+  functionDepth = state.functionDepth;
+  loopDepth = state.loopDepth;
+  switchDepth = state.switchDepth;
+  lambdaDepth = state.lambdaDepth;
+  lambdaUncapturedLocals = std::move(state.lambdaUncapturedLocals);
+  structuredBindingElements = std::move(state.structuredBindingElements);
+  currentType = state.currentType;
+  currentReturnType = state.currentReturnType;
+  currentProgramEffectOwner = state.currentProgramEffectOwner;
+  valueFlow.rawPointerLoops = std::move(state.rawPointerLoops);
+  restoreRawProgramStorage(std::move(state.rawProgramStorage));
+  measureTopLevelStatements = state.measureTopLevelStatements;
+  onDemandBodyAnalysis = state.onDemandBodyAnalysis;
+}
+
+// A caller may need a fact that only the callee's body analysis produces
+// (today: whether the body returns a moved parameter, which decides what a
+// by-value borrow-carrier result borrows from). Lexical order used to decide
+// whether that fact existed yet. Instead the consumer asks for the body:
+//
+// - a trusted body the lexical pass deferred is analysed now, in its own
+//   declaration context and under its own lexical order, so it sees exactly
+//   the globals and constexpr definitions that precede it;
+// - a declaration the lexical pass has not reached yet is reached now: the
+//   caller's body-local state is set aside, the top-level walk advances
+//   through every intervening declaration exactly once, in order, analyses
+//   the requested declaration in its own position, and the caller resumes.
+//
+// Recursion (the body is in progress), concrete-instance reanalysis, the
+// registration phase, demands from outside a function body, and declarations
+// the walk cannot reach (inactive branches, local functions) leave the fact
+// unavailable, exactly as before.
+auto SemanticVisitor::Impl::ensureBodyAnalyzed(const FunctionInfo &function)
+    -> void {
+  const FunctionDecl *declaration = function.declaration;
+  if (!bodyPhaseActive || instanceAnalysisActive || declaration == nullptr ||
+      declaration->body() == nullptr || analyzedBodies.contains(declaration) ||
+      bodiesInProgress.contains(declaration)) {
+    return;
+  }
+  const auto deferred = std::find_if(
+      deferredBodies.begin(), deferredBodies.end(),
+      [declaration](const RequestSessionState::DeferredBody &body) {
+        return body.declaration == declaration;
+      });
+  if (deferred != deferredBodies.end()) {
+    const RequestSessionState::DeferredBody body = *deferred;
+    BodyLocalState enclosing = captureBodyLocalState();
+    const std::size_t enclosingOrder = currentDeclarationOrder;
+    enterDeclarationContext(body.namespaceScope, body.sourceUnit, body.owner);
+    const FunctionInfo *info = semanticModel.findFunction(*declaration);
+    beginTypeParameterScope(genericParametersFor(*declaration));
+    if (beginRequirementScope(info)) {
+      currentDeclarationOrder = body.declarationOrder;
+      analyzeFunctionBody(*declaration, info, body.declarationErrors,
+                          body.constexprDeclarationValid);
+    }
+    endRequirementScope();
+    endTypeParameterScope();
+    exitDeclarationContext(body.owner);
+    restoreBodyLocalState(std::move(enclosing));
+    currentDeclarationOrder = enclosingOrder;
+    return;
+  }
+  if (visitedFunctionDeclarations.contains(declaration) ||
+      !lexicallyReachableFunctions.contains(declaration) ||
+      !lexicalAdvanceAllowed()) {
+    return;
+  }
+  BodyLocalState enclosing = captureBodyLocalState();
+  const std::size_t enclosingOrder = currentDeclarationOrder;
+  const std::size_t diagnosticsBefore = diagnostics.size();
+  rebuildLexicalEnvironment();
+  advanceLexicalPass(declaration);
+  restoreBodyLocalState(std::move(enclosing));
+  currentDeclarationOrder = enclosingOrder;
+  if (!heldDiagnostics.empty() && diagnostics.size() > diagnosticsBefore) {
+    // Keep the demanding leaf's diagnostics first; the advanced
+    // declarations' diagnostics follow it once it completes.
+    std::vector<Diagnostic> &held = heldDiagnostics.back();
+    held.insert(
+        held.end(),
+        std::make_move_iterator(diagnostics.begin() +
+                                static_cast<std::ptrdiff_t>(diagnosticsBefore)),
+        std::make_move_iterator(diagnostics.end()));
+    diagnostics.erase(diagnostics.begin() +
+                          static_cast<std::ptrdiff_t>(diagnosticsBefore),
+                      diagnostics.end());
+  }
+  // The walk may have deferred the body it reached; analyse it now.
+  if (!analyzedBodies.contains(declaration)) {
+    ensureBodyAnalyzed(function);
+  }
+}
+
+// ---- The resumable lexical pass -------------------------------------------
+//
+// The body phase walks the program's declarations in source order, exactly as
+// `analyze(program.declarations())` did, but keeps its position in explicit
+// frames (the program list, each open namespace body, each open class member
+// list, each active conditional branch) so that `ensureBodyAnalyzed` can
+// advance the walk from inside a body and resume it afterwards. Frames hold
+// no analysis state of their own: the declaration-level environment (program
+// scope, namespace path, open class scopes, declaration-level loan flow) is
+// rebuilt from the frames whenever they change under a paused leaf. Every
+// declaration is processed exactly once, in source order.
+
+auto SemanticVisitor::Impl::indexLexicallyReachableFunctions(
+    const StmtList &declarations) -> void {
+  for (const StmtPtr &statement : declarations) {
+    if (!statement) {
+      continue;
+    }
+    if (const auto *space = stmtAs<NamespaceDecl>(statement.get())) {
+      indexLexicallyReachableFunctions(space->declarations());
+    } else if (const auto *conditional =
+                   stmtAs<ConditionalStmt>(statement.get())) {
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        indexLexicallyReachableFunctions(*branch);
+      }
+    } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
+      indexLexicallyReachableFunctions(classDecl->members());
+    } else if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
+      lexicallyReachableFunctions.insert(function);
+    }
+  }
+}
+
+auto SemanticVisitor::Impl::runLexicalPass(const StmtList &declarations)
+    -> void {
+  lexicalFrames.clear();
+  lexicalFrames.push_back({.statements = &declarations,
+                           .region = loanFlow.nextRegion++,
+                           .sourceUnit = currentSourceUnit});
+  ++lexicalFrameVersion;
+  lexicalLoanFlow = loanFlow;
+  advanceLexicalPass(nullptr);
+  loanFlow = lexicalLoanFlow;
+}
+
+auto SemanticVisitor::Impl::rebuildLexicalEnvironment() -> void {
+  scopes.clear();
+  typeParameterScopes.clear();
+  valueParameterScopes.clear();
+  typePackScopes.clear();
+  requirementScopes.clear();
+  currentNamespace.clear();
+  currentClass.reset();
+  currentSourceUnit = 0;
+  loanFlow = lexicalLoanFlow;
+  beginScope();
+  for (const RequestSessionState::LexicalFrame &frame : lexicalFrames) {
+    currentSourceUnit = frame.sourceUnit;
+    if (frame.space != nullptr) {
+      currentNamespace.emplace_back(frame.space->name().lexeme);
+    }
+    if (frame.owner != nullptr) {
+      const ClassInfo &info = classInfo(frame.ownerId);
+      currentClass = frame.ownerId;
+      currentNamespace = info.namespaceScope;
+      beginTypeParameterScope(info.genericParameters);
+      beginScope();
+      for (const auto &[name, member] : info.members) {
+        scopes.back().emplace(name, member.symbol);
+      }
+    }
+  }
+}
+
+auto SemanticVisitor::Impl::enterLexicalNamespace(const NamespaceDecl &space,
+                                                  SourceUnitId unit) -> void {
+  currentSourceUnit = unit;
+  const SymbolId symbol =
+      recordToolingSymbol(space.name(), SymbolKind::Namespace,
+                          qualifiedName(currentNamespace, space.name().lexeme),
+                          SemanticType::Unknown);
+  attachDeclarationDocumentation(symbol, space);
+  semanticModel.recordOccurrence(
+      {.sourceUnit = currentSourceUnit,
+       .span = tokenSpan(space.name()),
+       .kind = SemanticOccurrenceKind::Symbol,
+       .symbol = symbol,
+       .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+       .name = space.name().lexeme});
+  currentNamespace.emplace_back(space.name().lexeme);
+  lexicalFrames.push_back({.statements = &space.declarations(),
+                           .region = loanFlow.nextRegion++,
+                           .space = &space,
+                           .sourceUnit = unit});
+  ++lexicalFrameVersion;
+}
+
+auto SemanticVisitor::Impl::enterLexicalClass(const ClassDecl &classDecl,
+                                              SourceUnitId unit) -> bool {
+  const auto registered = classDeclIds.find(&classDecl);
+  if (registered == classDeclIds.end()) {
+    return false;
+  }
+  const DeclarationOrderScope declarationOrder{*this, classDecl};
+  currentSourceUnit = unit;
+  currentClass = registered->second;
+  const ClassInfo &info = classInfo(*currentClass);
+  const SemanticType type = openClassType(info.id);
+  beginClassBody(classDecl, info, type);
+  lexicalFrames.push_back({.statements = &classDecl.members(),
+                           .region = loanFlow.nextRegion++,
+                           .owner = &classDecl,
+                           .ownerId = info.id,
+                           .sourceUnit = unit});
+  ++lexicalFrameVersion;
+  rebuildLexicalEnvironment();
+  return true;
+}
+
+auto SemanticVisitor::Impl::exitLexicalFrame() -> void {
+  const RequestSessionState::LexicalFrame frame = lexicalFrames.back();
+  if (frame.owner != nullptr) {
+    endClassBody(classInfo(frame.ownerId));
+  }
+  lexicalFrames.pop_back();
+  ++lexicalFrameVersion;
+  lexicalLoanFlow = loanFlow;
+  rebuildLexicalEnvironment();
+}
+
+auto SemanticVisitor::Impl::processLexicalLeaf(const StmtPtr &statement,
+                                               bool measure) -> void {
+  const std::size_t version = lexicalFrameVersion;
+  const std::size_t depth = lexicalFrames.size();
+  const StmtList *list = lexicalFrames.back().statements;
+  const std::size_t index = lexicalFrames.back().index;
+  const auto start = measure ? std::chrono::steady_clock::now()
+                             : std::chrono::steady_clock::time_point{};
+  measureTopLevelStatements = false;
+  heldDiagnostics.emplace_back();
+  analyze(statement);
+  {
+    std::vector<Diagnostic> held = std::move(heldDiagnostics.back());
+    heldDiagnostics.pop_back();
+    diagnostics.insert(diagnostics.end(), std::make_move_iterator(held.begin()),
+                       std::make_move_iterator(held.end()));
+  }
+  measureTopLevelStatements = measure;
+  if (measure && workMetrics != nullptr) {
+    const std::size_t elapsed = static_cast<std::size_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start)
+            .count());
+    const SourceUnitId unit = statementSourceUnit(*statement);
+    if (sourceGraph != nullptr && sourceGraph->isCompilerTrusted(unit)) {
+      workMetrics->semanticTrustedBodyMicroseconds += elapsed;
+    } else {
+      workMetrics->semanticApplicationBodyMicroseconds += elapsed;
+    }
+  }
+  const bool advanced = lexicalFrameVersion != version ||
+                        lexicalFrames.size() != depth ||
+                        lexicalFrames.back().statements != list ||
+                        lexicalFrames.back().index != index;
+  if (advanced) {
+    // A demand advanced the walk while this leaf ran. The walk's own state
+    // (frames, declaration-level loan flow, reachability) is already current;
+    // only the environment this leaf ran in must be rebuilt from it.
+    rebuildLexicalEnvironment();
+    return;
+  }
+  lexicalLoanFlow = loanFlow;
+  lexicalFrames.back().reachable =
+      summarizeFlow(statement.get()).canFallThrough;
+}
+
+auto SemanticVisitor::Impl::advanceLexicalPass(const FunctionDecl *until)
+    -> void {
+  while (!lexicalFrames.empty()) {
+    if (until != nullptr && visitedFunctionDeclarations.contains(until)) {
+      return;
+    }
+    RequestSessionState::LexicalFrame &frame = lexicalFrames.back();
+    if (frame.index >= frame.statements->size()) {
+      exitLexicalFrame();
+      continue;
+    }
+    const StmtPtr &statement = (*frame.statements)[frame.index++];
+    if (!statement) {
+      continue;
+    }
+    loanFlow.currentRegion = frame.region;
+    loanFlow.currentOrder = frame.index;
+    loanFlow.currentStatement = statement.get();
+    if (!frame.reachable && !frame.reportedUnreachable) {
+      frame.reportedUnreachable = true;
+      if (!instanceAnalysisActive && statement->extent()) {
+        Diagnostic diagnostic = makeDiagnostic(
+            DiagnosticId::UnreachableStatement, *statement->extent());
+        diagnostic.tags.push_back(DiagnosticTag::Unnecessary);
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+    }
+    const SourceUnitId statementUnit = statementSourceUnit(*statement);
+    const SourceUnitId unit =
+        statementUnit != 0 ? statementUnit : frame.sourceUnit;
+    if (const auto *space = stmtAs<NamespaceDecl>(statement.get())) {
+      enterLexicalNamespace(*space, unit);
+      continue;
+    }
+    if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        lexicalFrames.push_back({.statements = branch,
+                                 .region = loanFlow.nextRegion++,
+                                 .sourceUnit = unit});
+        ++lexicalFrameVersion;
+      }
+      continue;
+    }
+    if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
+      (void)enterLexicalClass(*classDecl, unit);
+      continue;
+    }
+    processLexicalLeaf(statement, measureTopLevelStatements);
+  }
+}
+
+// Analyses the bodies the lexical pass deferred, in reverse lexical order;
+// this is the test mode that proves results do not depend on body order. Each
+// body is analysed exactly as in place: its namespace, source unit, owning
+// class scope with members, generic parameters and requirement scope are
+// re-established around the shared body half.
+auto SemanticVisitor::Impl::analyzeDeferredBodies() -> void {
+  if (deferredBodies.empty()) {
+    return;
+  }
+  const auto start = std::chrono::steady_clock::now();
+  std::size_t analyzedCount = 0;
+  const auto analyzeOne = [&](const RequestSessionState::DeferredBody body) {
+    if (analyzedBodies.contains(body.declaration)) {
+      return; // Analysed on demand by a caller meanwhile.
+    }
+    ++analyzedCount;
+    const std::vector<std::string> enclosingNamespace = currentNamespace;
+    const SourceUnitId enclosingUnit = currentSourceUnit;
+    const std::optional<ClassId> enclosingClass = currentClass;
+    enterDeclarationContext(body.namespaceScope, body.sourceUnit, body.owner);
+    const FunctionInfo *functionInfo =
+        semanticModel.findFunction(*body.declaration);
+    beginTypeParameterScope(genericParametersFor(*body.declaration));
+    const bool requirementsValid = beginRequirementScope(functionInfo);
+    if (requirementsValid) {
+      const std::size_t enclosingOrder = currentDeclarationOrder;
+      currentDeclarationOrder = body.declarationOrder;
+      analyzeFunctionBody(*body.declaration, functionInfo,
+                          body.declarationErrors,
+                          body.constexprDeclarationValid);
+      currentDeclarationOrder = enclosingOrder;
+    }
+    endRequirementScope();
+    endTypeParameterScope();
+    exitDeclarationContext(body.owner);
+    currentNamespace = enclosingNamespace;
+    currentSourceUnit = enclosingUnit;
+    currentClass = enclosingClass;
+  };
+  for (std::size_t index = deferredBodies.size(); index > 0; --index) {
+    analyzeOne(deferredBodies[index - 1]);
+  }
+  if (workMetrics != nullptr) {
+    workMetrics->semanticTrustedBodyMicroseconds += static_cast<std::size_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start)
+            .count());
+    workMetrics->semanticDeferredBodies += deferredBodies.size();
+    workMetrics->semanticAnalyzedDeferredBodies += analyzedCount;
+  }
 }
 
 auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
@@ -3111,6 +3745,7 @@ auto SemanticVisitor::Impl::visitConceptDecl(const ConceptDecl &stmt) -> void {
 }
 auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     -> void {
+  const DeclarationOrderScope declarationOrder{*this, stmt};
   const std::size_t declarationDiagnosticStart = diagnostics.size();
   if (stmt.type().name.last().kind == TokenKind::AUTO) {
     semanticModel.recordFullExpression(stmt, stmt.initializer());
@@ -9847,7 +10482,8 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
         "The selected call does not name a constexpr function.");
   }
-  if (!constexprDefinitionsAnalyzed.contains(declaration)) {
+  if (!constexprDefinitionsAnalyzed.contains(declaration) ||
+      !declaredBeforeCurrent(declaration)) {
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
         "The constexpr definition of '" + declaration->name().lexeme +
