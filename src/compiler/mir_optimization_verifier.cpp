@@ -6,6 +6,7 @@
 #include "gti/optimization/devirtualization.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
+#include "mir_verification_support.h"
 
 #include <algorithm>
 #include <functional>
@@ -23,15 +24,30 @@ MirVerificationResult
 verifyMirOptimizationCoherence(const MirProgram &source,
                                const MirProgram &optimized,
                                const std::vector<MirTransformRecord> &records) {
+  return mir_detail::verifyVerifiedMirOptimizationCoherence(
+      source, optimized, records, false, false);
+}
+
+MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
+    const MirProgram &source, const MirProgram &optimized,
+    const std::vector<MirTransformRecord> &records, bool sourceVerified,
+    bool optimizedVerified) {
   MirVerificationResult result;
-  const MirVerificationResult sourceVerification = verifyMirProgram(source);
-  if (!sourceVerification.valid()) {
-    return sourceVerification;
+  if (!sourceVerified) {
+    const MirVerificationResult sourceVerification = verifyMirProgram(source);
+    if (!sourceVerification.valid()) {
+      return sourceVerification;
+    }
   }
-  const MirVerificationResult optimizedVerification =
-      verifyMirProgram(optimized);
-  if (!optimizedVerification.valid()) {
-    return optimizedVerification;
+  // Verification depends only on program content. A program identical to
+  // one already verified here, such as an unoptimized program or a replay
+  // snapshot that no record changed, is not verified again.
+  if (!optimizedVerified && optimized != source) {
+    const MirVerificationResult optimizedVerification =
+        verifyMirProgram(optimized);
+    if (!optimizedVerification.valid()) {
+      return optimizedVerification;
+    }
   }
 
   const auto reject = [&](MirBodyAddress address, std::string message,
@@ -81,6 +97,11 @@ verifyMirOptimizationCoherence(const MirProgram &source,
   }
 
   MirProgram candidate = source;
+  const auto verifyCandidate = [&] {
+    return candidate == source || candidate == optimized
+               ? MirVerificationResult{}
+               : verifyMirProgram(candidate);
+  };
   for (const MirBodyAddress address : enumerateMirBodyAddresses(source)) {
     const MirBody *sourceBody = findMirBody(source, address);
     const MirBody *optimizedBody = findMirBody(optimized, address);
@@ -598,7 +619,7 @@ verifyMirOptimizationCoherence(const MirProgram &source,
       return result;
     }
   }
-  const MirVerificationResult foldedVerification = verifyMirProgram(candidate);
+  const MirVerificationResult foldedVerification = verifyCandidate();
   if (!foldedVerification.valid()) {
     return foldedVerification;
   }
@@ -671,10 +692,13 @@ verifyMirOptimizationCoherence(const MirProgram &source,
     consumed[index] = true;
   }
 
-  const MirVerificationResult safetyVerification = verifyMirProgram(candidate);
+  const MirVerificationResult safetyVerification = verifyCandidate();
   if (!safetyVerification.valid()) {
     return safetyVerification;
   }
+  // Whether the candidate is known to pass verifyMirProgram; unknown after an
+  // unreachable-block rewrite, which verifies only its own body.
+  std::optional<bool> candidateVerified = true;
 
   for (std::size_t index = 0; index < records.size(); ++index) {
     const MirTransformRecord &record = records[index];
@@ -694,6 +718,7 @@ verifyMirOptimizationCoherence(const MirProgram &source,
              record.block);
       return result;
     }
+    candidateVerified.reset();
     if (record.instruction != 0 || record.place != 0 ||
         record.replacementLiteral ||
         record.sourceValue != rewrite->sourceValue ||
@@ -721,9 +746,19 @@ verifyMirOptimizationCoherence(const MirProgram &source,
           record.proof != MirTransformProofKind::DeadUnusedComputation) {
         continue;
       }
+      // The canonical rewrite verifies its input first. A failed rewrite
+      // leaves the candidate unchanged and a successful one verifies its
+      // result, so one check of the candidate answers every attempt.
+      if (!candidateVerified) {
+        candidateVerified = verifyCandidate().valid();
+      }
+      if (!*candidateVerified) {
+        continue;
+      }
       MirProgram replay = candidate;
       const std::optional<MirDeadInstructionRewrite> rewrite =
-          rewriteMirDeadInstruction(replay, record.body, record.instruction);
+          mir_detail::rewriteVerifiedMirDeadInstruction(replay, record.body,
+                                                        record.instruction);
       const std::vector<MirValueId> values =
           rewrite && rewrite->result ? std::vector<MirValueId>{*rewrite->result}
                                      : std::vector<MirValueId>{};
@@ -762,12 +797,14 @@ verifyMirOptimizationCoherence(const MirProgram &source,
     rebuildMirReachability(*body);
   }
 
-  const MirVerificationResult candidateVerification =
-      verifyMirProgram(candidate);
-  if (!candidateVerification.valid()) {
-    return candidateVerification;
+  const bool replayMatches = candidate == optimized;
+  if (!replayMatches) {
+    const MirVerificationResult candidateVerification = verifyCandidate();
+    if (!candidateVerification.valid()) {
+      return candidateVerification;
+    }
   }
-  if (candidate != optimized) {
+  if (!replayMatches) {
     const std::vector<MirBodyAddress> bodyAddresses =
         enumerateMirBodyAddresses(candidate);
     const auto mismatchedBody =
