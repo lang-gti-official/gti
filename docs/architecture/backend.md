@@ -75,7 +75,13 @@ proved success-only result slot and ordinary ordered transfer/failure cleanup.
 No AST/HIR-only enum execution route is introduced.
 
 A staged call receiver can cross the existing scalar conditional-argument
-control flow when its exact origin remains unchanged. Checked numeric alias
+control flow when its exact origin remains unchanged. The receiver place may be
+a bare local, the exact full-expression slot, or a binding-rooted path of field
+selections and reference dereferences, such as a container field inside a
+`mut { }` group reached through a `mut` reference parameter: references are
+never reseated and field offsets are constant, so re-spelling that place at the
+consuming call denotes the object staged before the diamond. Index, raw-memory
+and pack projections remain outside this proof. Checked numeric alias
 and concrete type-parameter conversions use MIR's numeric-intrinsic `Call`
 representation; they receive the same staging admission as `Compute/Convert`.
 The conversion still executes at its own instruction, with its original Invoke

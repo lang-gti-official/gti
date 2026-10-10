@@ -11,19 +11,19 @@ for what minor and patch releases mean.
 
 ## 0.397.11 — Faster raw-pointer audit
 
-- `--raw-pointer-audit=warn` and `strict` (and the profile setting) run several
-  times faster on programs that include much of the standard library, with
-  the same findings at the same sites in the same order. Checking
-  `tests/fixtures/stdlib_surface_format.gti` with the audit on fell from 99 s
-  to 13 s (2.4 s with the audit off); `stdlib_surface_algorithm.gti` fell
-  from 3.6 s to 1.2 s (0.6 s off). Almost all of the removed time was
-  overhead rather than analysis: every interprocedural provenance query
-  rebuilt the whole callable catalog for its worker, and every lookup of a
-  raw address's root hashed a declaration key for each namespace symbol of
-  each source unit. Workers now reuse released catalog snapshots, and root
-  lookups compare declaration keys directly. The audit still copies the
-  caller's semantic model and value flow per query, so it remains far more
-  expensive than compiling with the audit off.
+- `--raw-pointer-audit=warn` and `strict` (and the profile setting) run
+  several times faster on programs that include much of the standard library,
+  with the same findings at the same sites in the same order. Measured back to
+  back, checking `tests/fixtures/stdlib_surface_format.gti` with the audit on
+  fell from 65 s to 15 s (1.8 s with the audit off), and
+  `stdlib_surface_algorithm.gti` fell from 2.5 s to 1.3 s (0.5 s off). Almost
+  all of the removed time was overhead rather than analysis: every
+  interprocedural provenance query rebuilt the whole callable catalog for its
+  worker, and every lookup of a raw address's root hashed a declaration key
+  for each namespace symbol of each source unit. Workers now reuse released
+  catalog snapshots, and root lookups compare declaration keys directly. The
+  audit still copies the caller's semantic model and value flow per query, so
+  it remains far more expensive than compiling with the audit off.
 
 ## 0.397.9 — Backend crashes fixed for `expected` values and resource owners
 
