@@ -1,0 +1,104 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// An Expected<Class, E> call result passed directly to a by-value parameter.
+// A cleanup-free result has no MIR drop; it is staged in representation-only
+// storage between the producer's success and the consuming call.
+struct pair_value {
+  int32_t first = 0;
+  int32_t second = 0;
+  pair_value(int32_t first, int32_t second) : first(first), second(second) {}
+};
+
+// A cleanup-free class error alternative.
+struct code_value {
+  int32_t code = 0;
+  code_value(int32_t code) : code(code) {}
+};
+
+// An owning payload keeps MIR's value drop and its transfer slot.
+struct named_value {
+  std::string text;
+  named_value(std::string text) : text(std::move(text)) {}
+};
+
+expected<pair_value, int32_t> make_pair(bool ok) {
+  if (ok) { return pair_value(5, 7); }
+  return unexpected(4);
+}
+
+expected<pair_value, code_value> make_coded(bool ok) {
+  if (ok) { return pair_value(2, 3); }
+  return unexpected(code_value(9));
+}
+
+expected<named_value, int32_t> make_named(bool ok) {
+  if (ok) { return named_value(std::string("payload")); }
+  return unexpected(int32_t(6));
+}
+
+int32_t bump(int32_t value) { return value + 1; }
+
+int32_t read_pair(expected<pair_value, int32_t> result) {
+  return result ? result.value().first + result.value().second
+                : 100 + result.error();
+}
+
+int32_t read_between(int32_t before, expected<pair_value, int32_t> result,
+                     int32_t after) {
+  return result ? before * result.value().first + after
+                : before + after - result.error();
+}
+
+int32_t read_coded(expected<pair_value, code_value> result) {
+  return result ? result.value().first * result.value().second
+                : 100 + result.error().code;
+}
+
+int32_t read_named(expected<named_value, int32_t> result) {
+  return result ? int32_t(result.value().text.size()) : 100 + result.error();
+}
+
+class reader {
+  int32_t offset;
+public:
+  reader(int32_t offset) : offset(offset) {}
+  int32_t read(expected<pair_value, int32_t> result) {
+    return result ? result.value().second + this.offset
+                  : this.offset - result.error();
+  }
+};
+
+// A failure-propagating caller stages the argument in its transformed body.
+expected<int32_t, int32_t> relay(bool ok) {
+  return read_pair(make_pair(ok));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  bool yes = argc > 0;
+  bool no = !yes;
+  if (argc == 2) {
+    // A later argument fails after the staged result was published.
+    return read_between(1, make_pair(yes), bump(2147483647));
+  }
+  if (read_pair(make_pair(yes)) != 12) { return 1; }
+  if (read_pair(make_pair(no)) != 104) { return 2; }
+  if (read_between(3, make_pair(yes), 4) != 19) { return 3; }
+  if (read_between(3, make_pair(no), 4) != 3) { return 4; }
+  if (read_coded(make_coded(yes)) != 6) { return 5; }
+  if (read_coded(make_coded(no)) != 109) { return 6; }
+  if (read_named(make_named(yes)) != 7) { return 7; }
+  if (read_named(make_named(no)) != 106) { return 8; }
+  reader view{10};
+  if (view.read(make_pair(yes)) != 17) { return 9; }
+  if (view.read(make_pair(no)) != 6) { return 10; }
+  auto relayed = relay(yes);
+  if (!relayed || relayed.value() != 12) { return 11; }
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    total += read_pair(make_pair(index != 1));
+  }
+  if (total != 128) { return 12; }
+  return 0;
+}
