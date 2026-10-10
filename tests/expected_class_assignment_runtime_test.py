@@ -16,7 +16,7 @@ if __name__ == "__main__":
     failure = (f"{fixture.name}:{overflow}: runtime error[GTI-R0001]: "
                "integer_overflow in addition\n")
     main(names=(fixture.stem,), cases={fixture.stem: [
-        ((), (0, "1\n2\n5\n11\n12\n13\n14\n", "")),
+        ((), (0, "1\n2\n5\n11\n12\n13\n14\n1030\n21\n1031\n22\n23\n", "")),
         (("replacing-call-failure",), (70, "", failure)),
         (("owning", "replacing-call-failure"), (70, "6\n", failure)),
     ]})

@@ -1456,9 +1456,11 @@ representation. An `Unexpected` wrapping a fresh cleanup-free class
 construction spells that construction inline at a binding initializer or
 replacement, as at a `Return`. The construction, wrapper and publication must
 be adjacent, with only a passive replacement pair between them, so the
-construction never moves past observable cleanup. A fresh class error replacing
-an owning binding, where an active cleanup separates construction from
-publication, is not admitted yet.
+construction never moves past observable cleanup. When an owning binding's
+active cleanup separates that construction from its replacement, the error is
+instead constructed at its own MIR position in a representation-only class
+slot, before the cleanup runs. The `Assign` moves it into the `Unexpected` and
+retires the slot, so a loop may construct it again.
 
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure

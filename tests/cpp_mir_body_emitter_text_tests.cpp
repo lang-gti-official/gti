@@ -3186,7 +3186,9 @@ int main() {
 // their value-rooted slot, and the converted payload, which MIR transfers out
 // at the Assign, has its shell ended there. An Unexpected wrapping a fresh
 // cleanup-free class error constructs inline when it initializes or replaces
-// a binding. (Regression for issue #227: these raised GTI-B0001, the payload
+// a binding behind a passive pair. Behind an owning binding's active cleanup,
+// the error is constructed in its slot at its own position and moved in at
+// the Assign. (Regression for issue #227: these raised GTI-B0001, the payload
 // conversion while constructing MIR.)
 void testOwningExpectedReplacementSources() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
@@ -3215,6 +3217,11 @@ expected<tracked, int32_t> make_tracked(bool ok) {
   return unexpected(4);
 }
 
+expected<tracked, code_value> make_coded_tracked(bool ok) {
+  if (ok) { return tracked(5); }
+  return unexpected(code_value(4));
+}
+
 int main() {
   mut expected<tracked, int32_t> owned = make_tracked(true);
   expected<tracked, int32_t> moved = make_tracked(true);
@@ -3223,8 +3230,10 @@ int main() {
   owned = tracked(9);
   mut expected<pair_value, code_value> coded = unexpected(code_value(6));
   coded = unexpected(code_value(7));
-  return (owned ? owned.value().value : 0) + (coded ? 0 : coded.error().code) -
-         16;
+  mut expected<tracked, code_value> owned_coded = make_coded_tracked(true);
+  owned_coded = unexpected(code_value(8));
+  return (owned ? owned.value().value : 0) + (coded ? 0 : coded.error().code) +
+         (owned_coded ? 0 : owned_coded.error().code) - 24;
 }
 )gti");
   expect(frontend.canGenerateCode(),
@@ -3281,6 +3290,24 @@ int main() {
               std::string::npos,
       "an Unexpected wrapping a fresh class error should construct inline "
       "at a binding initializer and replacement");
+  std::size_t stagedErrors = 0;
+  for (std::size_t index = 0; index + 1 < lines.size(); ++index) {
+    const std::string marker = ".get(), std::unexpected(std::move(__gti_mir_v_";
+    const std::size_t staged = lines[index].find(marker);
+    if (staged == std::string::npos ||
+        !contains(lines[index], "assign_representation("))
+      continue;
+    const std::size_t idStart = staged + marker.size() - 12;
+    const std::string slot = lines[index].substr(
+        idStart, lines[index].find(".get())", idStart) - idStart);
+    if (lines[index + 1] == slot + ".destroy();" &&
+        text.find(slot + ".construct(") != std::string::npos)
+      ++stagedErrors;
+  }
+  expect(stagedErrors == 1,
+         "a fresh class error replacing an owning binding should be "
+         "constructed in its slot at its MIR position, moved into the "
+         "Unexpected at the Assign and retired there");
   expect(text.find("std::expected<::__gti_program::tracked, std::int32_t> "
                    "__gti_mir_v_") == std::string::npos,
          "no owning replacement should declare a value-initialized Expected "

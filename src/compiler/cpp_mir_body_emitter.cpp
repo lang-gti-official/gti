@@ -28143,6 +28143,7 @@ enum class ClassSsaSlotConsumerKind {
   FieldInitialization,
   ExpectedInitialization,
   UnexpectedReturn,
+  UnexpectedAssignment,
   PayloadOperand,
 };
 
@@ -28982,7 +28983,8 @@ classSsaLifetimeSlot(const MirProgram &program,
       }
       return {};
     }
-    if (consumer && consumer->kind == MirInstructionKind::Compute &&
+    const bool unexpectedWrapper =
+        consumer && consumer->kind == MirInstructionKind::Compute &&
         consumer->operation == MirOperation::Unexpected && consumer->result &&
         !consumer->destination && !consumer->receiver &&
         consumer->operands.size() == 1 && use.operandIndex == 0 &&
@@ -28994,10 +28996,69 @@ classSsaLifetimeSlot(const MirProgram &program,
             std::vector<SemanticType>{value->info.type} &&
         consumer->lifecycle.empty() && consumer->definedFailure.empty() &&
         consumer->localFailureSites.empty() &&
-        body.returnType.kind == SemanticType::Expected &&
+        mirTypeMoveIsDefinedFailureFree(program, value->info.type);
+    // The same passive error may instead feed an Unexpected that replaces a
+    // whole Expected binding across MIR's replacement pair, whose cleanup of
+    // the old value may run code and fail. Unlike an inline construction,
+    // the error is constructed at its own MIR position, before that cleanup.
+    // It waits in its slot, and the Assign moves it into the wrapper and
+    // retires the slot.
+    if (unexpectedWrapper && directConstructionProducer &&
+        !inlineUnexpectedClassConstruction(program, body, valueId)) {
+      const MirInstruction *assignment =
+          expectedAssignmentFromUnexpected(body, *consumer->result);
+      const MirPlace *destination =
+          assignment && assignment->destination
+              ? body.findPlace(*assignment->destination)
+              : nullptr;
+      const MirInstruction *pair =
+          destination ? exactReplacementPair(body, *assignment, *destination)
+                      : nullptr;
+      const MirBlock *produced = body.findBlock(value->definitionBlock);
+      const MirBlock *invoke = invokeProducerBlock(body, *producer);
+      const MirBlock *wrapped =
+          invoke ? body.findBlock(invoke->terminator.target) : produced;
+      // The construction is immediately followed by its wrapper, then by the
+      // exact pair, then the Assign, which may begin the pair's Invoke success
+      // block.
+      const auto follows = [&](const MirBlock *block,
+                               const MirInstruction &first,
+                               const MirInstruction &second) {
+        if (block == nullptr)
+          return false;
+        const auto position =
+            std::find_if(block->instructions.begin(), block->instructions.end(),
+                         [&](const auto &item) { return item.id == first.id; });
+        if (position == block->instructions.end())
+          return false;
+        if (std::next(position) != block->instructions.end())
+          return std::next(position)->id == second.id;
+        const MirBlock *success =
+            block->terminator.kind == MirTerminatorKind::Invoke &&
+                    block->terminator.invokeInstruction == first.id
+                ? body.findBlock(block->terminator.target)
+                : nullptr;
+        return success != nullptr && !success->instructions.empty() &&
+               success->instructions.front().id == second.id;
+      };
+      const bool constructionWrapped =
+          invoke ? wrapped != nullptr && !wrapped->instructions.empty() &&
+                       wrapped->instructions.front().id == consumer->id
+                 : follows(produced, *producer, *consumer);
+      if (assignment && destination && pair &&
+          destination->type.arguments.back() == value->info.type &&
+          constructionWrapped && wrapped != nullptr &&
+          (pair == assignment ? follows(wrapped, *consumer, *assignment)
+                              : follows(wrapped, *consumer, *pair) &&
+                                    follows(wrapped, *pair, *assignment)))
+        return {.value = value,
+                .producer = producer,
+                .consumer = consumer,
+                .consumerKind = ClassSsaSlotConsumerKind::UnexpectedAssignment};
+    }
+    if (unexpectedWrapper && body.returnType.kind == SemanticType::Expected &&
         body.returnType.arguments.size() == 2 &&
-        body.returnType.arguments.back() == value->info.type &&
-        mirTypeMoveIsDefinedFailureFree(program, value->info.type)) {
+        body.returnType.arguments.back() == value->info.type) {
       // The passive error is constructed at its MIR instruction, not deferred
       // across its Invoke. Its sole wrapper is consumed by the proved Return.
       // The error has no owning lifetime or borrowed state. Scope cleanup may
@@ -33352,12 +33413,16 @@ private:
 
   void emitUnexpectedOperand(const ScalarBodyFacts &facts,
                              const MirOperand &operand) {
-    if (operand.kind == MirOperandKind::Value &&
-        classSsaLifetimeSlot(program, representations, facts.body,
-                             operand.value)
-                .consumerKind == ClassSsaSlotConsumerKind::UnexpectedReturn) {
-      output << "std::move(__gti_mir_v_" << operand.value << ".get())";
-      return;
+    if (operand.kind == MirOperandKind::Value) {
+      const ClassSsaSlotConsumerKind kind =
+          classSsaLifetimeSlot(program, representations, facts.body,
+                               operand.value)
+              .consumerKind;
+      if (kind == ClassSsaSlotConsumerKind::UnexpectedReturn ||
+          kind == ClassSsaSlotConsumerKind::UnexpectedAssignment) {
+        output << "std::move(__gti_mir_v_" << operand.value << ".get())";
+        return;
+      }
     }
     const InlineUnexpectedClassConstruction inlineConstruction =
         operand.kind == MirOperandKind::Value
@@ -35521,6 +35586,16 @@ private:
                << '(';
         emitUnexpectedOperand(facts, wrapper->operands.front());
         output << "));\n";
+        const MirOperand &error = wrapper->operands.front();
+        if (error.kind == MirOperandKind::Value &&
+            classSsaLifetimeSlot(program, representations, facts.body,
+                                 error.value)
+                    .consumerKind ==
+                ClassSsaSlotConsumerKind::UnexpectedAssignment) {
+          // End the moved-from error before a loop can reuse its slot.
+          writeIndent();
+          output << "__gti_mir_v_" << error.value << ".destroy();\n";
+        }
         return;
       }
       if (const auto *slot = owningPayloadEnumAssignmentSlot(
@@ -37839,6 +37914,8 @@ private:
            constructionSlot.consumerKind ==
                ClassSsaSlotConsumerKind::UnexpectedReturn ||
            constructionSlot.consumerKind ==
+               ClassSsaSlotConsumerKind::UnexpectedAssignment ||
+           constructionSlot.consumerKind ==
                ClassSsaSlotConsumerKind::ExpectedInitialization ||
            constructionSlot.consumerKind ==
                ClassSsaSlotConsumerKind::PayloadOperand) &&
@@ -37909,6 +37986,8 @@ private:
                  ClassSsaSlotConsumerKind::CallArgument ||
              constructionSlot.consumerKind ==
                  ClassSsaSlotConsumerKind::UnexpectedReturn ||
+             constructionSlot.consumerKind ==
+                 ClassSsaSlotConsumerKind::UnexpectedAssignment ||
              constructionSlot.consumerKind ==
                  ClassSsaSlotConsumerKind::ExpectedInitialization ||
              constructionSlot.consumerKind ==
@@ -51558,6 +51637,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::UnexpectedReturn ||
                constructionSlot.consumerKind ==
+                   ClassSsaSlotConsumerKind::UnexpectedAssignment ||
+               constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::ExpectedInitialization ||
                constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::PayloadOperand);
@@ -51617,6 +51698,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                    ClassSsaSlotConsumerKind::CallArgument ||
                constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::UnexpectedReturn ||
+               constructionSlot.consumerKind ==
+                   ClassSsaSlotConsumerKind::UnexpectedAssignment ||
                constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::ExpectedInitialization ||
                constructionSlot.consumerKind ==

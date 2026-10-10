@@ -109,6 +109,33 @@ int32_t replace_owned_sources() {
   return owned ? owned.value().id : 0;
 }
 
+// A class error whose constructor reports its construction.
+int32_t announce(int32_t code) {
+  std::println(std::to_string(1000 + code));
+  return code;
+}
+
+struct announced_code {
+  int32_t code = 0;
+  announced_code(int32_t code) : code(announce(code)) {}
+};
+
+expected<noisy, announced_code> make_announced(int32_t id) {
+  if (id > 0) { return noisy(id); }
+  return unexpected(announced_code(-id));
+}
+
+// A fresh class error replacing an owning binding is constructed before the
+// old value's cleanup runs, also when a loop reuses its staging.
+int32_t replace_owned_errors() {
+  mut expected<noisy, announced_code> owned = make_announced(21);
+  for (mut int32_t index = 0; index < 2; index++) {
+    owned = unexpected(announced_code(30 + index));
+    owned = make_announced(22 + index);
+  }
+  return owned ? owned.value().id : 0;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   bool yes = argc > 0;
   bool no = !yes;
@@ -176,5 +203,6 @@ int main(int argc, std::vector<std::string> argv) {
   // Owning call results, moves, Unexpected values and payloads.
   if (replace_owned() != 5) { return 15; }
   if (replace_owned_sources() != 14) { return 16; }
+  if (replace_owned_errors() != 23) { return 17; }
   return 0;
 }
