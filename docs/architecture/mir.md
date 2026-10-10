@@ -2310,12 +2310,18 @@ available/moved/uninitialized fixed point over lifecycle events. Parameters
 begin active; value and lexical initialization activate obligations; move,
 reparent, replacement, and transfer-out preserve exactly one owner; and normal
 return/exit edges must retain no active obligation. Each assignment must carry
-exactly one `Replace` event for every active-cleanup value obligation it consumes.
-Verification checks this requirement independently of
-the events present in the instruction, so deleting the whole event list cannot
-leave an owning RHS scheduled for destruction after publication. The rule applies
-equally to owned bindings, aggregate elements and checked borrowed referents;
-the latter two do not acquire an independent destination obligation.
+exactly one `Replace` event for every active-cleanup value obligation it
+consumes. Verification checks this requirement independently of the events
+present in the instruction, so deleting the whole event list cannot leave an
+owning RHS scheduled for destruction after publication. The rule applies equally
+to owned bindings, aggregate elements and checked borrowed referents; the latter
+two do not acquire an independent destination obligation. An assignment that
+converts its owning source into a distinct wrapper type, such as a payload
+replacing an `Expected` binding, instead carries exactly one `TransferOut` of
+that obligation, as a converting initialization does. The destination keeps its
+own obligation, which now owns the converted value, and no later Drop names the
+transferred source. A same-typed `Replace` across the conversion fails
+verification.
 Full-expression cleanup is LIFO, lexical cleanup is reverse construction order,
 and a temporary created
 only by a logical or conditional branch retains a path-conditional obligation

@@ -1438,9 +1438,27 @@ carry MIR's `Replace` event from the result's value drop to the binding's drop.
 MIR's active `CleanupBeforeAssign` first retires the old value on its own
 success edge. The `Assign` then moves the slot's wrapper in, and the slot's
 `Drop` ends only the moved-from representation. On the cleanup's failure edge
-the result keeps its obligation and is cleaned there. Owning moves,
-`Unexpected` values and payload constructions, and an `Unexpected` wrapping a
-fresh class error, are not admitted yet.
+the result keeps its obligation and is cleaned there.
+
+Owning sources keep MIR's active, possibly fallible replacement cleanup, which
+retires the old value on its own success edge. A move out of another owning
+Expected binding stages in its value-rooted slot as a moved class does: the
+`Move` hands the source obligation to the slot, the `Assign` carries `Replace`
+into the binding, and the slot's `Drop` ends only the moved-from
+representation. An owning payload construction stages in its value-rooted slot
+as a class prvalue does. Because it converts into a distinct wrapper type,
+MIR's `Assign` transfers the staged obligation out with `TransferOut` rather
+than `Replace`, and no `Drop` follows. The `Assign` therefore ends the
+moved-from shell itself after the wrapper's converting move assignment. A
+storage-free `Unexpected` accepts the exact pair whether or not its cleanup is
+active; the wrapper's assignment then ends only the old alternative's
+representation. An `Unexpected` wrapping a fresh cleanup-free class
+construction spells that construction inline at a binding initializer or
+replacement, as at a `Return`. The construction, wrapper and publication must
+be adjacent, with only a passive replacement pair between them, so the
+construction never moves past observable cleanup. A fresh class error replacing
+an owning binding, where an active cleanup separates construction from
+publication, is not admitted yet.
 
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure

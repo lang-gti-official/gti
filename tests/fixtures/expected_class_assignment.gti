@@ -4,8 +4,9 @@
 
 // An Expected<Class, E> binding replaced as a whole. A cleanup-free call
 // result, copy, move, Unexpected or payload construction replaces the native
-// wrapper after MIR's passive replacement cleanup. An owning call result moves
-// out of its value-rooted slot after MIR's active replacement cleanup.
+// wrapper after MIR's passive replacement cleanup. An owning call result,
+// move, Unexpected or payload replaces it after MIR's active replacement
+// cleanup.
 struct pair_value {
   int32_t first = 0;
   int32_t second = 0;
@@ -96,6 +97,18 @@ int32_t replace_owned() {
   return owned ? owned.value().id : 0;
 }
 
+// Owning moves, Unexpected values and payloads replace the same binding. The
+// moved-from source is never retired again.
+int32_t replace_owned_sources() {
+  mut expected<noisy, int32_t> owned = make_noisy(11);
+  expected<noisy, int32_t> moved = make_noisy(12);
+  owned = std::move(moved);
+  owned = unexpected(3);
+  owned = noisy(13);
+  owned = noisy(14);
+  return owned ? owned.value().id : 0;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   bool yes = argc > 0;
   bool no = !yes;
@@ -155,7 +168,13 @@ int main(int argc, std::vector<std::string> argv) {
   mut expected<int32_t, int32_t> scalar = make_scalar(yes);
   scalar = unexpected(3);
   if (scalar || scalar.error() != 3) { return 12; }
-  // Owning call results.
-  if (replace_owned() != 5) { return 13; }
+  // An Unexpected wrapping a fresh class error initializes or replaces.
+  expected<pair_value, code_value> fresh_error = unexpected(code_value(6));
+  if (read_coded(fresh_error) != 106) { return 13; }
+  coded = unexpected(code_value(7));
+  if (read_coded(coded) != 107) { return 14; }
+  // Owning call results, moves, Unexpected values and payloads.
+  if (replace_owned() != 5) { return 15; }
+  if (replace_owned_sources() != 14) { return 16; }
   return 0;
 }

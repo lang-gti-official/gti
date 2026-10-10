@@ -8371,9 +8371,22 @@ private:
                     destinationPlace->projections.empty()
                 ? dropObligationForBinding(destinationPlace->binding)
                 : 0;
-        appendLifecycle(assign, {.kind = MirLifecycleEventKind::Replace,
-                                 .source = sourceObligation,
-                                 .target = target});
+        const MirDropObligation *sourceDrop =
+            output.findDropObligation(sourceObligation);
+        if (sourceDrop != nullptr && destinationPlace != nullptr &&
+            sourceDrop->dropType.type != destinationPlace->type) {
+          // A conversion into a distinct owning wrapper, such as a payload
+          // replacing an Expected binding, transfers the source object out of
+          // its own lifetime. The destination keeps its obligation, which now
+          // owns the converted value, as for a storage-free source.
+          appendLifecycle(assign, {.kind = MirLifecycleEventKind::TransferOut,
+                                   .source = sourceObligation});
+          (void)removeTemporary(sourceObligation);
+        } else {
+          appendLifecycle(assign, {.kind = MirLifecycleEventKind::Replace,
+                                   .source = sourceObligation,
+                                   .target = target});
+        }
       }
       const auto assignment = appendInstruction(std::move(assign));
       if (preparation != 0) {
