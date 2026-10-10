@@ -1,0 +1,16 @@
+#include <std/meta>
+struct Nothing {};
+int main() {
+  mut uint64_t count = 0;
+  constexpr for (auto field : std::meta::fields_of<Nothing>()) {
+    count = count + 1;
+  }
+  constexpr for (auto a : std::meta::list<int, bool>()) {
+    constexpr for (auto b : std::meta::list<Nothing>()) {
+      count = count + 1;
+    }
+  }
+  if (count != uint64_t(2)) { return 1; }
+  if (std::meta::type_of<Nothing>().field_count() != uint64_t(0)) { return 2; }
+  return 0;
+}
