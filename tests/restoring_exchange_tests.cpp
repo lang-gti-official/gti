@@ -345,7 +345,7 @@ int main() {
            "dependency exchange explains the existing view-storage boundary "
            "without an unsafe fix");
   }
-  for (const std::string &program :
+  for (const std::string program :
        {"class Fixed { public: Fixed() {} Fixed(Fixed&& other) = delete; }; "
         "int main() { mut Fixed a{}; mut Fixed b{}; std::swap(a,b); return 0; "
         "}",
@@ -356,13 +356,13 @@ int main() {
     expect(!denied.canGenerateCode(), "deleted movement and arbitrary "
                                       "reference consumption remain forbidden");
   }
-  for (const std::string &body : {"mut int x = 1; std::swap(x, x);",
-                                  "int x = 1; mut int y = 2; std::swap(x, y);",
-                                  "mut int x = 1; int old = "
-                                  "std::exchange(x, std::move(x));",
-                                  "mut int x = 1; int& borrowed = x; "
-                                  "std::exchange(x, 2); return borrowed;",
-                                  "mut int x = 1; return std::move(x);"}) {
+  for (const std::string body : {"mut int x = 1; std::swap(x, x);",
+                                 "int x = 1; mut int y = 2; std::swap(x, y);",
+                                 "mut int x = 1; int old = "
+                                 "std::exchange(x, std::move(x));",
+                                 "mut int x = 1; int& borrowed = x; "
+                                 "std::exchange(x, 2); return borrowed;",
+                                 "mut int x = 1; return std::move(x);"}) {
     // The last case exercises the unchanged baseline, not a negative case.
     const auto probe = analyzeWithStandardLibrary(
         "restoring-borrow.gti",
@@ -535,7 +535,7 @@ int main() {
     expect(arrayArguments >= 4,
            "array transport mutations cover stdlib and unrelated constructors");
   }
-  for (const std::string &body :
+  for (const std::string body :
        {"mut std::vector<int> v{}; v.push_back(1); int& item = "
         "v[std::size_t(0)]; v.swap_elements(std::size_t(0), std::size_t(0)); "
         "return item;",

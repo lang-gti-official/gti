@@ -23,7 +23,11 @@ policy below without bypassing that lifecycle.
   `scripts/check_release_version.py` classifies as shipped, end that commit's
   message with a `Release-Impact: internal` trailer and one nonempty
   `Release-Reason:` trailer explaining why no user-visible behavior changes.
-  Documentation and agent-automation commits need neither. See
+  Documentation and agent-automation commits need neither, and neither does
+  an automatic merge: the policy judges a merge commit only by what differs
+  from the automatic merge of its parents, so a reconciliation merge
+  that resolved a conflict in a shipped file needs the trailers in its own
+  message (`git commit --amend`) before the checkpoint. See
   [the release policy](../../../docs/architecture/build-and-driver.md).
 
 ## Commit And Reconcile

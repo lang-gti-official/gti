@@ -4862,8 +4862,23 @@ compilation and CTest. `scripts/configure_ci_resources.sh` uses `nproc` (not
 `nproc --all`), then host-appropriate `sysctl` or `getconf` when unavailable;
 failed/invalid detection falls back to one. Repository variables `GTI_JOBS`
 and `GTI_TEST_JOBS` independently override those defaults and must be positive
-integers. Runner CPU/memory provisioning and timeouts remain external policy;
-the helper does not infer a safe memory budget. A small ASan/UBSan preflight
+integers. A workflow step that states `GTI_MEMORY_PER_JOB_MIB` additionally
+caps the detected compile default by the memory `/proc/meminfo` reports
+(`GTI_MEMINFO` names another file for tests), never below one job and never
+touching an explicit override; `GTI_MEMORY_PER_TEST_MIB` bounds the detected
+CTest worker default the same way. The release build states 3072 MiB per
+compile job because its bundled LLVM/Clang units compile beside GTI's largest
+units, the native CI build 2048 MiB, and the ASan/UBSan build 3072 MiB per
+compile job and 4096 MiB per test worker, since an instrumented compiler
+suite grows several times larger than its plain run (six workers on a 12 GiB
+runner had the ownership suite OOM-killed). The sanitizer job also gives
+tests without their own `TIMEOUT` an hour (`ctest --timeout 3600`) and runs
+the emitter's preflight, text, lifecycle, census and corpus-protocol checks
+rather than the whole generated-C++ corpus, and omits `failure_metadata`:
+both exceeded an hour under ASan on the 6-core runner and remain the plain
+native job's gates. Runner provisioning and timeouts
+remain external policy; the helper prints the processors and memory it saw so
+a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution
 is an explicit host capability controlled by
 `GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled. The generic

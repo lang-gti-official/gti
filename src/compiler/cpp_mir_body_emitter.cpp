@@ -276,32 +276,35 @@ struct IndexedMirBody {
 // Each emitter operation remembers which index belongs to each body it has
 // asked about, so hot lookups need not consult the scope's keyed storage.
 // Representation scopes enclose emitter operations, so a remembered index
-// outlives the operation that remembers it.
-thread_local std::unordered_map<const MirBody *, IndexedMirBody *>
-    *operationMirBodyIndexes = nullptr;
+// outlives the operation that remembers it. The outermost lookup scope on a
+// thread owns the table for its lifetime; nested scopes reuse it. The table
+// lives in the thread-local itself rather than behind a pointer to a scope
+// member, so no local's address outlives its scope.
+thread_local std::optional<
+    std::unordered_map<const MirBody *, IndexedMirBody *>>
+    operationMirBodyIndexes;
 
 class MirBodyLookupScope {
 public:
-  MirBodyLookupScope() {
-    if (operationMirBodyIndexes == nullptr) {
-      owned_.emplace();
-      operationMirBodyIndexes = &*owned_;
+  MirBodyLookupScope() : owner_(!operationMirBodyIndexes.has_value()) {
+    if (owner_) {
+      operationMirBodyIndexes.emplace();
     }
   }
   ~MirBodyLookupScope() {
-    if (owned_) {
-      operationMirBodyIndexes = nullptr;
+    if (owner_) {
+      operationMirBodyIndexes.reset();
     }
   }
   MirBodyLookupScope(const MirBodyLookupScope &) = delete;
   MirBodyLookupScope &operator=(const MirBodyLookupScope &) = delete;
 
 private:
-  std::optional<std::unordered_map<const MirBody *, IndexedMirBody *>> owned_;
+  const bool owner_;
 };
 
 [[nodiscard]] IndexedMirBody *indexedMirBody(const MirBody &body) {
-  if (operationMirBodyIndexes == nullptr) {
+  if (!operationMirBodyIndexes.has_value()) {
     return nullptr;
   }
   const auto [found, inserted] =
@@ -567,7 +570,10 @@ resultProducersOf(const MirBody &body, MirValueId value) {
                        });
   }
   if (!index->dropSlots) {
-    IndexedMirBody::DropSlots &governed = index->dropSlots.emplace();
+    // Clang 18 does not consider this aggregate constructible from no
+    // arguments, so pass a braced value instead of calling emplace().
+    IndexedMirBody::DropSlots &governed =
+        index->dropSlots.emplace(IndexedMirBody::DropSlots{});
     for (const MirDropObligation &obligation : body.dropObligations) {
       const MirPlace *dropPlace = body.findPlace(obligation.place);
       if (dropPlace == nullptr) {
