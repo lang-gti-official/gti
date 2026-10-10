@@ -4,6 +4,7 @@
 #include "gti/optimization/pass.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
+#include "mir_verification_support.h"
 
 #include <algorithm>
 #include <iterator>
@@ -424,6 +425,9 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
                "and schedule facts");
     }
   }
+  // Each dead-instruction claim is proven against the unchanged source
+  // program, which the canonical rewrite would otherwise verify per claim.
+  std::optional<bool> sourceVerified;
   for (std::size_t index = 0; index < queuedDeadInstructions.size(); ++index) {
     const MirInstructionKey &cleanup = queuedDeadInstructions[index];
     if (index != 0 && cleanup == queuedDeadInstructions[index - 1]) {
@@ -431,8 +435,12 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
                "duplicate MIR dead-instruction removal");
       continue;
     }
+    if (!sourceVerified) {
+      sourceVerified = verifyMirProgram(program).valid();
+    }
     MirProgram replay = program;
-    if (!rewriteMirDeadInstruction(replay, cleanup.body, cleanup.instruction)) {
+    if (!*sourceVerified || !mir_detail::rewriteVerifiedMirDeadInstruction(
+                                replay, cleanup.body, cleanup.instruction)) {
       addError(result, cleanup.body, 0, cleanup.instruction,
                "MIR dead-instruction removal is not proven by exact uses and "
                "effects");
@@ -756,9 +764,17 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
       touched.push_back(cleanup.body);
     }
   }
+  // A failed rewrite leaves the candidate unchanged and a successful one
+  // verifies its result, so the candidate needs verifying only once here.
+  std::optional<bool> candidateVerified;
   for (const MirInstructionKey &cleanup : queuedDeadInstructions) {
+    if (!candidateVerified) {
+      candidateVerified = verifyMirProgram(candidate).valid();
+    }
     const std::optional<MirDeadInstructionRewrite> rewrite =
-        rewriteMirDeadInstruction(candidate, cleanup.body, cleanup.instruction);
+        *candidateVerified ? mir_detail::rewriteVerifiedMirDeadInstruction(
+                                 candidate, cleanup.body, cleanup.instruction)
+                           : std::nullopt;
     if (!rewrite) {
       addError(result, cleanup.body, 0, cleanup.instruction,
                "MIR dead-instruction removal failed during atomic mutation");

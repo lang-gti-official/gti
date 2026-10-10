@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Scalar-leaf construction and floating stores (0.397.1)
+## Scalar-leaf construction and floating stores (0.397.2)
 
 - **Effects.** The MIR effect test now requires the vacant-construction
   profile for `double`, `float`, `bool` and raw-pointer pointees, with and

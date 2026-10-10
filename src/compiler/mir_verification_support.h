@@ -1,13 +1,32 @@
 #pragma once
 
+#include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace lang::mir_detail {
+
+// Whole-program verification depends only on program content, and callers
+// often hold a program they have just verified. These entry points skip only
+// that repeated check; every other step, and so every result, is unchanged.
+//
+// rewriteMirDeadInstruction for a program that already passed
+// verifyMirProgram.
+[[nodiscard]] std::optional<MirDeadInstructionRewrite>
+rewriteVerifiedMirDeadInstruction(MirProgram &program, MirBodyAddress body,
+                                  MirInstructionId instruction);
+// verifyMirOptimizationCoherence where `sourceVerified` or
+// `optimizedVerified` records that the program already passed
+// verifyMirProgram.
+[[nodiscard]] MirVerificationResult verifyVerifiedMirOptimizationCoherence(
+    const MirProgram &source, const MirProgram &optimized,
+    const std::vector<MirTransformRecord> &records, bool sourceVerified,
+    bool optimizedVerified);
 
 struct CanonicalPlace {
   MirPlaceRootKind root = MirPlaceRootKind::Value;
