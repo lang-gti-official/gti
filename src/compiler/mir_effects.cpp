@@ -715,7 +715,21 @@ MirEffectTraits effects(SynchronizationOperationKind kind) {
   return enumEffects(kind, synchronizationEffects);
 }
 
-bool isMirScalarFinalAddressConstruction(const MirInstruction &instruction) {
+bool isMirScalarValueType(const MirProgram *program, const SemanticType &type) {
+  return constantIntegerDomain(type) || type.kind == SemanticType::Float ||
+         type.kind == SemanticType::Double || type.kind == SemanticType::Bool ||
+         type.kind == SemanticType::Char ||
+         type.kind == SemanticType::NullPtr ||
+         type.kind == SemanticType::RawPointer ||
+         (program && type.kind == SemanticType::Enum &&
+          program->findIntegralEnum(type));
+}
+
+namespace {
+// The sealed zero/one-argument construction shape with no selected
+// constructor, cleanup, adapter or lifecycle event. Returns its pointee type.
+const SemanticType *
+scalarFinalAddressPointee(const MirInstruction &instruction) {
   if (instruction.tombstone || instruction.kind != MirInstructionKind::Call ||
       instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
       instruction.constructorTarget || instruction.elementCleanup ||
@@ -729,15 +743,21 @@ bool isMirScalarFinalAddressConstruction(const MirInstruction &instruction) {
       instruction.operation != MirOperation::None ||
       instruction.synchronization.kind != SynchronizationOperationKind::None ||
       instruction.operands.empty() || instruction.operands.size() > 2)
-    return false;
+    return nullptr;
   const auto &address = instruction.operands.front().type;
   if (address.kind != SemanticType::RawPointer ||
       address.arguments.size() != 1 ||
       address.pointerAccess != AccessMode::Mutable ||
-      !constantIntegerDomain(address.arguments.front()))
-    return false;
-  return instruction.operands.size() == 1 ||
-         instruction.operands.back().type == address.arguments.front();
+      (instruction.operands.size() == 2 &&
+       instruction.operands.back().type != address.arguments.front()))
+    return nullptr;
+  return &address.arguments.front();
+}
+} // namespace
+
+bool isMirScalarFinalAddressConstruction(const MirInstruction &instruction) {
+  const auto *pointee = scalarFinalAddressPointee(instruction);
+  return pointee && isMirScalarValueType(nullptr, *pointee);
 }
 
 namespace {
@@ -752,11 +772,7 @@ bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
     if (remaining == 0)
       return false;
     --remaining;
-    if (constantIntegerDomain(type) || type.kind == SemanticType::Float ||
-        type.kind == SemanticType::Double || type.kind == SemanticType::Bool ||
-        type.kind == SemanticType::Char || type.kind == SemanticType::NullPtr ||
-        type.kind == SemanticType::RawPointer ||
-        (type.kind == SemanticType::Enum && program.findIntegralEnum(type)))
+    if (isMirScalarValueType(&program, type))
       return true;
     if (operation == StructuralValueOperation::Drop &&
         (type.kind == SemanticType::Expected ||
@@ -814,7 +830,8 @@ bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
 
 bool isMirStructuralFinalAddressConstruction(
     const MirProgram &program, const MirInstruction &instruction) {
-  if (isMirScalarFinalAddressConstruction(instruction))
+  if (const auto *pointee = scalarFinalAddressPointee(instruction);
+      pointee && isMirScalarValueType(&program, *pointee))
     return true;
   if (instruction.constructorTarget || instruction.operands.size() != 2 ||
       (instruction.constructorKind != ConstructorKind::Copy &&
