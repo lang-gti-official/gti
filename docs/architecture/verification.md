@@ -4874,8 +4874,9 @@ suite grows several times larger than its plain run (six workers on a 12 GiB
 runner had the ownership suite OOM-killed). The sanitizer job also gives
 tests without their own `TIMEOUT` an hour (`ctest --timeout 3600`) and runs
 the emitter's preflight, text, lifecycle, census and corpus-protocol checks
-rather than the whole generated-C++ corpus, which exceeded CTest's default
-timeout under ASan and remains the plain native job's gate. Runner provisioning and timeouts
+rather than the whole generated-C++ corpus, and omits `failure_metadata`:
+both exceeded an hour under ASan on the 6-core runner and remain the plain
+native job's gates. Runner provisioning and timeouts
 remain external policy; the helper prints the processors and memory it saw so
 a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution
