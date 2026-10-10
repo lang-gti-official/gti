@@ -9,6 +9,25 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.397.6 — Three backend crashes fixed
+
+- Returning a named `expected` local now compiles, whatever its payload:
+  `return granted;`, observing it before returning it,
+  `return std::move(granted).value();` and `return granted.value();`. This is
+  the natural way to write a forwarding `std::memory_resource` provider
+  (#212).
+- Calling a method on a class-typed field reached through a raw pointer, such
+  as `this.state->items.push_back(value)` inside `unsafe`, no longer stops the
+  compiler (#213).
+- A class can hold several owners leasing from one resource binding, such as
+  two `std::resource_vector`s, or a `std::resource_storage` beside a
+  `std::resource_vector`, as `<std/resource>` documents (#214). A related
+  shape that compiled but failed to link is fixed too.
+- Destroying a by-value parameter after it has been moved never runs its
+  destructor. The compiler now recognises this even when a call or
+  construction sits between the move and the end of scope, so those
+  constructors no longer carry an impossible failure path.
+
 ## 0.397.4 — Facts survive calls that cannot reach them
 
 - The optimizer now keeps what it knows about a local variable or object

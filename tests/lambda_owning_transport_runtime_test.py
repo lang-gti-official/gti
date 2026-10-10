@@ -16,11 +16,11 @@ def transport_cases():
                 "division_by_zero in integer_division\n")
 
     return {fixture.stem: [
-        ((), (0, "20\n10\n3\n15\n1\n2\n4\n", "")),
-        (("argument",), (70, "20\n10\n3\n1\n2\n4\n", failure("12 / divisor"))),
+        ((), (0, "20\n5\n10\n3\n15\n1\n2\n4\n", "")),
+        (("argument",), (70, "20\n5\n10\n3\n1\n2\n4\n", failure("12 / divisor"))),
         (("fresh", "lambda"), (70, "2\n4\n", failure("fresh_check"))),
         (("named", "lambda", "call"),
-         (70, "20\n1\n2\n4\n", failure("named_check"))),
+         (70, "20\n1\n5\n2\n4\n", failure("named_check"))),
     ]}
 
 

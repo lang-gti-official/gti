@@ -12931,35 +12931,111 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   return verifyMirLoanFlow(body, owner);
 }
 
+namespace {
+
+enum class MirDefiniteMoveState : std::uint8_t {
+  Untouched,
+  Moved,
+  Retained,
+  Invalid,
+};
+
+void applyDefiniteMoveEvent(const MirLifecycleEvent &event,
+                            MirDropObligationId obligation,
+                            MirDefiniteMoveState &state) {
+  if (event.source == obligation) {
+    state = !event.conditional && (event.kind == MirLifecycleEventKind::Move ||
+                                   event.kind == MirLifecycleEventKind::Replace)
+                ? MirDefiniteMoveState::Moved
+                : MirDefiniteMoveState::Retained;
+  }
+  if (event.target == obligation) {
+    state = MirDefiniteMoveState::Retained;
+  }
+}
+
+// The obligation's state after the block's instructions before
+// `beforeInstruction` (zero means block end), or Untouched when none of them
+// names it.
+[[nodiscard]] MirDefiniteMoveState
+blockDefiniteMove(const MirBlock &block, MirDropObligationId obligation,
+                  MirInstructionId beforeInstruction) {
+  MirDefiniteMoveState state = MirDefiniteMoveState::Untouched;
+  for (const MirInstruction &instruction : block.instructions) {
+    if (instruction.tombstone) {
+      if (instruction.id == beforeInstruction) {
+        return MirDefiniteMoveState::Invalid;
+      }
+      continue;
+    }
+    if (instruction.id == beforeInstruction) {
+      return state;
+    }
+    for (const MirLifecycleEvent &event : instruction.lifecycle) {
+      applyDefiniteMoveEvent(event, obligation, state);
+    }
+  }
+  return beforeInstruction == 0 ? state : MirDefiniteMoveState::Invalid;
+}
+
+} // namespace
+
 bool mirDropFollowsDefiniteMove(const MirBlock &block,
+                                MirDropObligationId obligation,
+                                MirInstructionId beforeInstruction) {
+  return obligation != 0 &&
+         blockDefiniteMove(block, obligation, beforeInstruction) ==
+             MirDefiniteMoveState::Moved;
+}
+
+bool mirDropFollowsDefiniteMove(const MirBody &body, const MirBlock &block,
                                 MirDropObligationId obligation,
                                 MirInstructionId beforeInstruction) {
   if (obligation == 0) {
     return false;
   }
-  bool moved = false;
-  for (const MirInstruction &instruction : block.instructions) {
-    if (instruction.tombstone) {
-      if (instruction.id == beforeInstruction) {
-        return false;
-      }
-      continue;
+  MirDefiniteMoveState state =
+      blockDefiniteMove(block, obligation, beforeInstruction);
+  std::unordered_set<MirBlockId> visited{block.id};
+  const MirBlock *current = &block;
+  // An untouched invoke continuation inherits the state at the end of its
+  // invoke. Lowering creates each continuation with that single edge, so the
+  // answer is the same on a partial and a complete CFG. Any other block may
+  // still become a merge or loop header and ends the proof. Instructions
+  // apply on both edges; an invoke's success lifecycle applies only on its
+  // success edge, as in lifecycle verification.
+  while (state == MirDefiniteMoveState::Untouched) {
+    if (current->id == body.entry) {
+      return false;
     }
-    if (instruction.id == beforeInstruction) {
-      return moved;
-    }
-    for (const MirLifecycleEvent &event : instruction.lifecycle) {
-      if (event.source == obligation) {
-        moved = !event.conditional &&
-                (event.kind == MirLifecycleEventKind::Move ||
-                 event.kind == MirLifecycleEventKind::Replace);
+    const MirBlock *predecessor = nullptr;
+    bool successEdge = false;
+    bool invokeEdge = false;
+    std::size_t edges = 0;
+    for (const MirBlock &candidate : body.blocks) {
+      for (const MirBlockId successor : successors(candidate.terminator)) {
+        if (successor != current->id) {
+          continue;
+        }
+        ++edges;
+        predecessor = &candidate;
+        invokeEdge = candidate.terminator.kind == MirTerminatorKind::Invoke;
+        successEdge = invokeEdge && candidate.terminator.target == current->id;
       }
-      if (event.target == obligation) {
-        moved = false;
+    }
+    if (edges != 1 || !invokeEdge || !visited.insert(predecessor->id).second) {
+      return false;
+    }
+    state = blockDefiniteMove(*predecessor, obligation, 0);
+    if (successEdge) {
+      for (const MirLifecycleEvent &event :
+           predecessor->terminator.successLifecycle) {
+        applyDefiniteMoveEvent(event, obligation, state);
       }
     }
+    current = predecessor;
   }
-  return beforeInstruction == 0 && moved;
+  return state == MirDefiniteMoveState::Moved;
 }
 
 } // namespace lang

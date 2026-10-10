@@ -5383,7 +5383,7 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
           obligation != nullptr &&
                   mirDropMayRaiseDefinedFailure(program,
                                                 obligation->dropType) &&
-                  !mirDropFollowsDefiniteMove(block, obligation->id,
+                  !mirDropFollowsDefiniteMove(body, block, obligation->id,
                                               instruction.id)
               ? FailurePropagationKind::Destructor
               : FailurePropagationKind::None;

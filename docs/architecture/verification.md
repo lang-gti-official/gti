@@ -1,5 +1,44 @@
 # Compiler Verification
 
+## Backend crash fixes for #212–#214 (0.397.6)
+
+- **Regression programs.** `issues_212_214_regressions` builds and runs five
+  self-checking fixtures at O0 and O3 under C++20 and C++23:
+  - a user-defined payload returned four ways from a named `expected`;
+  - the issue's forwarding provider in its three reported forms;
+  - every container call reported through a raw-pointer field, plus a method
+    on the pointee itself;
+  - the issue's `Inventory` and its generic `SlotMap` variant;
+  - a user-defined lease chain with the same shape, plus the shape that
+    compiled but did not link.
+
+  Every fixture fails to build before this change.
+- **Shared proof.** `testCrossBlockDefiniteMoveRetiresShell`:
+  - proves both continuations of an invoke after a move;
+  - keeps the destructor edge at the entry, a merge, a cycle, a non-invoke
+    edge, and a conditional, tombstoned or re-initialized move;
+  - checks a moved parameter's real retirements after an invoke end to end;
+  - confirms that restoring the destructor edge fails verification.
+- **Changed expectations.** Three tests relied on an impossible failure path,
+  a moved-from shell's destructor:
+  - the forward-list emplacement test's unpublished-return cleanup coverage
+    now uses a guard whose destructor can genuinely fail after the returned
+    borrow forms;
+  - the cleanup-bound mutation fixture's `outer()` gains an unmoved guard, so
+    a genuinely fallible cleanup still runs while its result is pending;
+  - the lambda transport fixture's `named_exact_lambda` gains an unmoved
+    printing witness for its pending-result preflight shape, and its runtime
+    test expects the witness's output.
+- **A real gap found during development.** An earlier draft followed any
+  unique incoming edge. In `forward_list_algorithms`, lowering saw a single
+  predecessor that later became a loop header, and verification rejected the
+  drop. The proof now follows only invoke edges, which lowering never adds
+  later.
+- **Suites.** 160 targeted CTests pass: every MIR, emitter, census, snapshot,
+  failure, lifecycle, cleanup, constructor, `expected`, resource, optimizer and
+  issue-regression test, in Release with `-j8`. No census baseline changes;
+  the emitter test manifest lists the new unit test.
+
 ## Capture analysis (0.397.4)
 
 - **Analysis unit test.** `testCaptureSummariesAndLocalFlow` derives

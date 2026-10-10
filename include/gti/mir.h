@@ -1887,4 +1887,15 @@ mirDropFollowsDefiniteMove(const MirBlock &block,
                            MirDropObligationId obligation,
                            MirInstructionId beforeInstruction = 0);
 
+// The same proof when the block itself leaves the obligation untouched: it
+// follows invoke edges, from an invoke's success or failure continuation back
+// to the invoking block, until the obligation's last event. Any other incoming
+// edge, a merge or the entry stops it, so a partial CFG during lowering gives
+// the complete CFG's answer. Lowering, verification and the backend share
+// this one rule.
+[[nodiscard]] bool
+mirDropFollowsDefiniteMove(const MirBody &body, const MirBlock &block,
+                           MirDropObligationId obligation,
+                           MirInstructionId beforeInstruction = 0);
+
 } // namespace lang

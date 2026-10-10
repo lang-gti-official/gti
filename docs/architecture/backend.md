@@ -276,6 +276,14 @@ return-result reparent/rollback schedule. A non-owning placement adapter reuses
 the checked extraction helper against caller storage; it supplies neither
 implicit construction nor native unwinding. The state check still precedes
 construction, and MIR alone decides whether to destroy or publish the result.
+When the function instead returns a placement `Expected<Class, E>` whose
+success type is the extracted payload, a cleanup-free moved or copied
+extraction constructs one payload slot. The exact Return then constructs the
+Expected from it, the same publication cleanup-free calls and constructions
+use. A named Expected binding copied into that placement result likewise
+constructs its copy in representation storage, which the Return moves out. The
+copy is the one MIR selected for the `Load`, so no payload is limited to
+passive C-compatible records.
 
 Ordinary field chains projected from a checked class-payload extraction share
 that extraction's address. Admission checks every typed field projection;
@@ -2088,6 +2096,21 @@ field rollback obligation. The child's unpublished shell must independently
 support observation-free retirement. Multiple fallible native prefixes and
 nonempty unclaimed siblings remain excluded;
 this bounded route alone is not complete allocator/container validation.
+
+Several borrowed fields may form one native prefix, such as two owners leasing
+from one binding, only when every child is proved genuinely non-failing. A
+member-initializer list cannot stop after a failed child. The no-failure proof
+reads each constructor's success sequence. An Invoke whose exact callee is
+itself proved non-failing has a failure route that cannot execute, so the
+proof accounts for that route's blocks, failure records and failure boundaries
+without requiring its cleanup to be passive. A field rollback there may destroy
+an earlier field whose destructor can fail. The route must stay disjoint from
+the success path and never return. The emitted constructor keeps its complete
+verified failure graph; only the proof treats the route as dead. A child uses
+its ordinary native overload only when that overload is published, which for a
+constructed-field schedule means no field still reports a status. Otherwise the
+call site uses the child's status-tag overload, so it never names an ordinary
+constructor that plain-body admission did not define.
 
 The same exact first-field schedule also admits a passive reference-bearing
 child with generated, observation-free destruction. This branch

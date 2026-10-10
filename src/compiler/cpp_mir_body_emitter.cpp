@@ -10171,7 +10171,7 @@ directOwnerDrop(const MirProgram &program, const MirBody &body,
     return nullptr;
   const auto propagation =
       mirDropMayRaiseDefinedFailure(program, drop->dropType) &&
-              !mirDropFollowsDefiniteMove(*home, drop->id, instruction.id)
+              !mirDropFollowsDefiniteMove(body, *home, drop->id, instruction.id)
           ? FailurePropagationKind::Destructor
           : FailurePropagationKind::None;
   if (instruction.definedFailure.propagation != propagation ||
@@ -18782,12 +18782,15 @@ struct DirectExpectedClassExtraction {
   const MirPlace *receiverSource = nullptr;
   const MirPlace *destination = nullptr;
   const MirBlock *returnBlock = nullptr;
+  // The payload of a placement Expected<Class, E> return. The extraction
+  // constructs the payload slot; that exact Return constructs the Expected.
+  const MirBlock *payloadReturnBlock = nullptr;
   bool unexpectedReturn = false;
 
   [[nodiscard]] explicit operator bool() const {
     return value != nullptr && call != nullptr && receiverSource != nullptr &&
            (destination != nullptr || returnBlock != nullptr ||
-            unexpectedReturn);
+            payloadReturnBlock != nullptr || unexpectedReturn);
   }
 };
 
@@ -19011,6 +19014,19 @@ directExpectedClassExtraction(const MirProgram &program, const MirBody &body,
               .receiverMove = receiverMove,
               .receiverSource = receiverSource,
               .returnBlock = returned};
+    }
+  }
+  if (body.returnType.kind == SemanticType::Expected &&
+      body.returnType.arguments.size() == 2 &&
+      body.returnType.arguments.front() == value->info.type &&
+      expectedClassPlacementStorageEligible(program, body.returnType) &&
+      uniqueValueDrop(body, valueId, value->info.type) == nullptr) {
+    if (const auto *returned = passiveResultReturnBlock(body, *value, *call)) {
+      return {.value = value,
+              .call = call,
+              .receiverMove = receiverMove,
+              .receiverSource = receiverSource,
+              .payloadReturnBlock = returned};
     }
   }
   if (cleanupFreeExpectedUnexpectedReturn(program, body, valueId)) {
@@ -21613,13 +21629,19 @@ expectedPayloadReturnSlot(const MirProgram &program,
       expectedOwnedClassExtractionDestination(body, valueId) != nullptr &&
       expectedOwnedClassExtractionDestination(body, valueId)->root ==
           MirPlaceRootKind::Value;
+  const bool cleanupFreeExtractionProducer =
+      producer != nullptr &&
+      directExpectedClassExtraction(program, body, valueId)
+              .payloadReturnBlock != nullptr;
   if (value == nullptr ||
       !expectedClassPlacementResultType(program, representations,
                                         body.returnType) ||
       value->info.type != body.returnType.arguments.front() ||
-      value->info.category != ValueCategory::Value ||
+      (value->info.category != ValueCategory::Value &&
+       !cleanupFreeExtractionProducer) ||
       value->info.traits.drop != DropKind::Lexical || producer == nullptr ||
-      (!constructorProducer && !callProducer && !extractionProducer) ||
+      (!constructorProducer && !callProducer && !extractionProducer &&
+       !cleanupFreeExtractionProducer) ||
       !producer->result || *producer->result != valueId ||
       producer->destination || (constructorProducer && producer->receiver)) {
     return {};
@@ -21628,7 +21650,8 @@ expectedPayloadReturnSlot(const MirProgram &program,
     // A cleanup-free constructor or ordinary call produces one local payload
     // slot. Only the exact Return constructs the Expected envelope; a failed
     // producer leaves both the slot and the caller output uninitialized.
-    if (!constructorProducer && !callProducer) {
+    if (!constructorProducer && !callProducer &&
+        !cleanupFreeExtractionProducer) {
       return {};
     }
     const MirBlock *returnBlock =
@@ -27830,15 +27853,15 @@ classSsaLifetimeSlot(const MirProgram &program,
       !value->info.traits.containsBorrowedState;
   const MirInstruction *producer =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
+  // A copied Expected binding returned by placement constructs the copy in
+  // representation storage that the return publication then moves out. The
+  // payload's own copy is the representation copy MIR selected for the Load.
   if (value && value->info.type.kind == SemanticType::Expected &&
       value->info.type.arguments.size() == 2 &&
       body.returnType == value->info.type && value->info.traits.copyable &&
       !value->info.traits.containsBorrowedState &&
-      passiveCAbiRecordInstance(program, value->info.type.arguments.front()) &&
-      cppRequiresIndirectValueTransport(program,
-                                        value->info.type.arguments.front()) &&
-      expectedTypeRepresentation(value->info.type.arguments.back()) ==
-          CppMirTypeRepresentationKind::Scalar &&
+      expectedClassPlacementResultType(program, representations,
+                                       value->info.type) &&
       producer && producer->kind == MirInstructionKind::Load &&
       producer->result == valueId && producer->info.type == value->info.type &&
       !producer->receiver && !producer->destination &&
@@ -39300,7 +39323,8 @@ private:
         emitStoragePlaceValue(facts, *directExtraction.receiverSource);
         if (directExtraction.returnBlock != nullptr)
           output << ", &__gti_mir_return_slot_" << instruction.id;
-        else if (directExtraction.unexpectedReturn)
+        else if (directExtraction.unexpectedReturn ||
+                 directExtraction.payloadReturnBlock != nullptr)
           output << ", &__gti_mir_v_" << *instruction.result;
         else
           output << ", &__gti_mir_p_"
@@ -42953,17 +42977,72 @@ bool passiveConstructorFailureCleanup(
   return dropped.empty() ? !boundarySeen : boundarySeen;
 }
 
+// Accounts for the complete failure route of an invoke whose exact callee is
+// proved unable to fail. Nothing in the route can execute, so its cleanup need
+// not be passive, but it must stay disjoint from the success path: it may
+// propagate or terminate and must never rejoin a success block or return.
+bool accountImpossibleFailureRoute(
+    const MirBody &body, const MirBlock &entry,
+    std::unordered_set<MirBlockId> &visited,
+    std::unordered_set<MirFailureRecordId> &failures,
+    std::unordered_set<std::size_t> &failureBoundaries) {
+  std::unordered_set<MirBlockId> route{entry.id};
+  std::vector<const MirBlock *> pending{&entry};
+  if (!visited.insert(entry.id).second)
+    return false;
+  while (!pending.empty()) {
+    const MirBlock *block = pending.back();
+    pending.pop_back();
+    const auto &term = block->terminator;
+    if (block->programInitializationStep != 0 ||
+        term.hostedStartupOperation != 0 ||
+        term.kind == MirTerminatorKind::None ||
+        term.kind == MirTerminatorKind::Return)
+      return false;
+    for (const auto &instruction : block->instructions) {
+      const auto id = instruction.cleanupBoundaryEnd;
+      if (id == 0)
+        continue;
+      if (id > body.cleanupBoundaries.size() ||
+          body.cleanupBoundaries[id - 1].id != id)
+        return false;
+      if (body.cleanupBoundaries[id - 1].kind ==
+          MirCleanupBoundaryKind::Failure)
+        failureBoundaries.insert(id);
+    }
+    std::vector<MirBlockId> successors{term.target, term.elseTarget};
+    for (const auto &target : term.switchTargets)
+      successors.push_back(target.target);
+    for (const MirBlockId successor : successors) {
+      if (successor == 0 || route.contains(successor))
+        continue;
+      const MirBlock *next = body.findBlock(successor);
+      if (next == nullptr || !visited.insert(successor).second)
+        return false;
+      route.insert(successor);
+      pending.push_back(next);
+    }
+  }
+  for (const auto &record : body.failureRecords)
+    if (route.contains(record.producerBlock) &&
+        !failures.insert(record.id).second)
+      return false;
+  return true;
+}
+
 // A constructor prologue may be split by conservative failure publication.
 // Read its original instructions in success order only when each alternate is
 // a passive propagation of an impossible failure. This is a representation
 // proof, not a MIR rewrite: failure records and cleanup remain authoritative.
+// A pure no-failure proof may instead account for an impossible failure's
+// non-passive cleanup route, which it never reads as part of the sequence.
 template <typename ProveConstructor>
 std::optional<std::vector<const MirInstruction *>> constructorSuccessSequence(
     const MirProgram &program, const MirConstructorInstance &constructor,
     const ProveConstructor &proveConstructor,
     std::unordered_set<std::size_t> *provedFailureBoundaries = nullptr,
-    bool proveSuccessResultActivation = false,
-    bool allowBorrowedShells = false) {
+    bool proveSuccessResultActivation = false, bool allowBorrowedShells = false,
+    bool accountImpossibleFailureRoutes = false) {
   const auto &body = constructor.body;
   std::vector<const MirInstruction *> sequence;
   std::unordered_set<MirBlockId> visited;
@@ -43046,11 +43125,18 @@ std::optional<std::vector<const MirInstruction *>> constructorSuccessSequence(
         alternate->failureParameter != failure->id ||
         alternate->activeFailure != failure->id ||
         alternate->programInitializationStep != 0 ||
-        !alternate->parameters.empty() ||
-        !passiveConstructorFailureCleanup(program, constructor, *alternate,
-                                          failureBoundaries,
-                                          allowBorrowedShells) ||
-        !visited.insert(alternate->id).second)
+        !alternate->parameters.empty())
+      return std::nullopt;
+    const bool passivePropagation =
+        alternate->terminator.kind == MirTerminatorKind::PropagateFailure &&
+        passiveConstructorFailureCleanup(program, constructor, *alternate,
+                                         failureBoundaries,
+                                         allowBorrowedShells);
+    if (passivePropagation
+            ? !visited.insert(alternate->id).second
+            : !accountImpossibleFailureRoutes ||
+                  !accountImpossibleFailureRoute(body, *alternate, visited,
+                                                 failures, failureBoundaries))
       return std::nullopt;
     if (proveSuccessResultActivation &&
         (invoke.successResultDrop || !term.successLifecycle.empty())) {
@@ -43100,14 +43186,15 @@ std::optional<std::vector<const MirInstruction *>> constructorSuccessSequence(
         return std::nullopt;
     }
     const auto &propagate = alternate->terminator;
-    if (propagate.kind != MirTerminatorKind::PropagateFailure ||
-        propagate.failureRecord != failure->id || propagate.value ||
-        propagate.returnLoan || propagate.invokeInstruction != 0 ||
-        propagate.target != 0 || propagate.elseTarget != 0 ||
-        propagate.hostedStartupOperation != 0 ||
-        !propagate.targetArguments.empty() ||
-        !propagate.elseArguments.empty() || !propagate.switchTargets.empty() ||
-        !propagate.successLifecycle.empty())
+    if (passivePropagation &&
+        (propagate.kind != MirTerminatorKind::PropagateFailure ||
+         propagate.failureRecord != failure->id || propagate.value ||
+         propagate.returnLoan || propagate.invokeInstruction != 0 ||
+         propagate.target != 0 || propagate.elseTarget != 0 ||
+         propagate.hostedStartupOperation != 0 ||
+         !propagate.targetArguments.empty() ||
+         !propagate.elseArguments.empty() || !propagate.switchTargets.empty() ||
+         !propagate.successLifecycle.empty()))
       return std::nullopt;
     block = body.findBlock(term.target);
   }
@@ -43133,7 +43220,7 @@ public:
     if (valid) {
       const auto sequence = constructorSuccessSequence(
           program_, *constructor, [&](auto target) { return prove(target); },
-          nullptr, true, true);
+          nullptr, true, true, true);
       valid = sequence.has_value();
       if (sequence) {
         for (const auto *instruction : *sequence) {
@@ -44488,9 +44575,16 @@ plainConstructedFieldTarget(const MirProgram &program,
       nativeMutexStorageConstructorTarget(program, target, *owner)) {
     return true;
   }
+  // Plain-body admission rejects a constructed field that still reports a
+  // failure status, so only an all-plain field schedule publishes the
+  // ordinary overload.
   probing.push_back(target.id);
+  const auto fields =
+      cppMirConstructedFieldInitializerBindings(program, target);
   bool published =
-      !cppMirConstructedFieldInitializerBindings(program, target).empty();
+      !fields.empty() &&
+      std::none_of(fields.begin(), fields.end(),
+                   [](const auto &binding) { return binding.failureStatus; });
   probing.pop_back();
   if (!published && owner != nullptr &&
       constructorBodyFailureEdgeFree(target.body) &&
