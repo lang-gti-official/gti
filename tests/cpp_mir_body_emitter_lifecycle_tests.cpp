@@ -5990,14 +5990,17 @@ class box<T> {
 public:
   box(T initial) : value(initial) {}
 
-  T& get() {
+  // The checked division keeps the getter failure-capable, so it returns its
+  // reference through the failure ABI's pointer carrier.
+  T& get(int32_t divisor) {
+    int32_t checked = int32_t(1) / divisor;
     return this.value;
   }
 };
 
 int main() {
   box<int> value{7};
-  return value.get() - 7;
+  return value.get(1) - 7;
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -7243,10 +7246,14 @@ struct Reading {
   Reading(int32_t initial) : value(initial) {}
 };
 
+// The checked division keeps the selection failure-capable, so its
+// conditional class return enters the transformed failure body.
 std::unique_ptr<Reading> choose_owner(
     bool use_left,
     std::unique_ptr<Reading> left,
-    std::unique_ptr<Reading> right) {
+    std::unique_ptr<Reading> right,
+    int32_t divisor) {
+  int32_t checked = int32_t(1) / divisor;
   return use_left ? std::move(left) : std::move(right);
 }
 
@@ -7254,7 +7261,8 @@ int32_t main() {
   auto reading = choose_owner(
       true,
       std::make_unique<Reading>(7),
-      std::make_unique<Reading>(11));
+      std::make_unique<Reading>(11),
+      int32_t(1));
   return reading->value - 7;
 }
 )");
@@ -7276,7 +7284,7 @@ int32_t main() {
         [](const lang::MirBlock &block) {
           return block.terminator.kind == lang::MirTerminatorKind::Branch;
         });
-    if (function.parameterTypes.size() == 3 &&
+    if (function.parameterTypes.size() == 4 &&
         function.parameterTypes.front().kind == lang::SemanticType::Bool &&
         function.returnType.kind == lang::SemanticType::Class && hasBranch) {
       conditional = &function;
@@ -9128,11 +9136,13 @@ struct Packet {
                              R"(
 };
 
-Packet make_packet() {
+// The checked division keeps the producer failure-capable.
+Packet make_packet(int32_t divisor) {
+  int32_t checked = int32_t(1) / divisor;
   return Packet(7);
 }
 
-int32_t main() { return make_packet().value - 7; }
+int32_t main() { return make_packet(int32_t(1)).value - 7; }
 )";
   const lang::FrontendResult frontend =
       analyze("cpp-mir-class-return-field-read.gti", source);
@@ -9250,7 +9260,7 @@ int32_t main() { return make_packet().value - 7; }
     const auto escaped =
         lang::Frontend().analyze("immovable-field-escape.gti",
                                  source + "\nint32_t& escape(Packet& owner) { "
-                                          "return make_packet().value; }\n");
+                                          "return make_packet(1).value; }\n");
     expect(!escaped.canGenerateCode() &&
                std::any_of(escaped.diagnostics.begin(),
                            escaped.diagnostics.end(),
@@ -10837,16 +10847,29 @@ void testPassiveExpectedMoveReturnHasNoSsaShell() {
         const lang::MirBodyAddress address{lang::MirBodyKind::Function,
                                            function.id};
         const lang::CppMirBodyEmitter emitter(frontend.mir, map);
-        expect(emitter.supportsFailureBodyText(address),
+        // The relay has no failure source of its own and is proved
+        // failure-free: its plain form stages the moved value and returns it
+        // from that slot, where a failure form publishes at the Move.
+        const bool failureForm = function.mayRaiseDefinedFailure;
+        const bool supported = failureForm
+                                   ? emitter.supportsFailureBodyText(address)
+                                   : emitter.supportsBodyText(address);
+        expect(supported,
                "passive expected uses its existing exact move-return proof");
-        if (!emitter.supportsFailureBodyText(address))
+        if (!supported)
           continue;
+        const std::string value =
+            "__gti_mir_v_" + std::to_string(*instruction.result);
         const auto text =
-            emitter.emitFailureBodyText(address, "expected-move", 1).text;
-        expect(text.find(" __gti_mir_v_" + std::to_string(*instruction.result) +
-                         "{};") == std::string::npos &&
-                   text.find("construct_representation_at(__gti_mir_out_result,"
-                             " std::move(") != std::string::npos,
+            failureForm
+                ? emitter.emitFailureBodyText(address, "expected-move", 1).text
+                : emitter.emitBodyText(address, "expected-move", 1).text;
+        expect(text.find(" " + value + "{};") == std::string::npos &&
+                   text.find(failureForm
+                                 ? std::string("construct_representation_at(__"
+                                               "gti_mir_out_result, std::move(")
+                                 : "return std::move(" + value + ".get());") !=
+                       std::string::npos,
                "return publication creates no extra default-constructed "
                "expected payload");
       }
@@ -10885,11 +10908,15 @@ void testProvenanceOnlyReceiverFields() {
         continue;
       const auto text =
           emitter.emitFailureBodyText(address, "provenance", 1).text;
+      // A checked accessor writes the loan through its `T **` out-argument;
+      // a failure-free one returns the reference the loan binds by address.
+      const std::string loanCarrier =
+          "__gti_mir_loan_" + std::to_string(loan.id);
       expect(text.find("auto &__gti_mir_p_" + std::to_string(place->id) +
                        " =") == std::string::npos &&
                  text.find("(*this).view.owner") == std::string::npos &&
-                 text.find("&__gti_mir_loan_" + std::to_string(loan.id)) !=
-                     std::string::npos &&
+                 (text.find("&" + loanCarrier) != std::string::npos ||
+                  text.find(loanCarrier + " = &(") != std::string::npos) &&
                  text.find("(*this).view;") != std::string::npos &&
                  text.find("(*this).reads;") != std::string::npos,
              "erase only provenance aliases while retaining call output and "

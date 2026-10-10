@@ -836,6 +836,136 @@ void testMutations(const std::filesystem::path &fixture) {
 
 } // namespace
 
+// A body whose live instructions carry no defined-failure source, other than
+// exact static calls to bodies proved the same way, is failure-free whatever
+// its signature or operations. Owning class results, moved parameters and
+// reference accessors are proved; checked operations, raising callees,
+// recursion, failing destructors and virtual dispatch stay conservative.
+void testStructuralFailureFreedom() {
+  const std::filesystem::path standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "structural-failure-freedom.gti", R"(
+#include <std/utility>
+
+mut int32_t destroyed = 0;
+
+class Owner {
+  int32_t value;
+public:
+  Owner(int32_t initial) : value(initial) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() {}
+  int32_t& sff_value_ref() { return this.value; }
+};
+
+class Loud {
+public:
+  Loud() {}
+  ~Loud() { destroyed = destroyed + 1; }
+};
+
+interface Shape {
+  int32_t sff_sides();
+};
+
+class Square : public Shape {
+public:
+  Square() {}
+  int32_t sff_sides() override { return 4; }
+};
+
+Owner sff_make_owner() { return Owner(1); }
+Owner sff_relay_owner(Owner value) { return std::move(value); }
+Owner sff_forward_owner(Owner value) { return sff_relay_owner(std::move(value)); }
+int32_t& sff_pick(Owner& owner) { return owner.sff_value_ref(); }
+
+int32_t sff_add_one(int32_t value) { return value + 1; }
+int32_t sff_calls_add(int32_t value) { return sff_add_one(value); }
+void sff_spin(bool again) {
+  if (again) { sff_spin(false); }
+}
+void sff_scoped_loud() { Loud loud{}; }
+
+int32_t main() {
+  Owner owner = sff_forward_owner(sff_make_owner());
+  int32_t& value = sff_pick(owner);
+  sff_spin(true);
+  sff_scoped_loud();
+  Square square{};
+  return sff_calls_add(value) + square.sff_sides() - 6;
+}
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "the structural failure-freedom fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirDefinedFailureEffects effects =
+      lang::deriveMirDefinedFailureEffects(frontend.mir);
+  expect(std::equal(effects.functions.begin(), effects.functions.end(),
+                    frontend.mir.functionInstances().begin(),
+                    frontend.mir.functionInstances().end(),
+                    [](bool mayRaise, const auto &function) {
+                      return mayRaise == function.mayRaiseDefinedFailure;
+                    }),
+         "lowering should publish the structurally derived failure vector");
+  constexpr std::string_view failureFree[] = {
+      "sff_make_owner", "sff_relay_owner", "sff_forward_owner", "sff_pick",
+      "sff_value_ref"};
+  for (const std::string_view name : failureFree) {
+    const lang::MirFunctionInstance *function =
+        findMirFunction(frontend.hir, frontend.mir, name);
+    expect(function != nullptr && !function->mayRaiseDefinedFailure,
+           std::string{"a body without failure sources is failure-free: "} +
+               std::string{name});
+    if (function == nullptr)
+      continue;
+    expect(function->body.failureRecords.empty() &&
+               std::none_of(function->body.blocks.begin(),
+                            function->body.blocks.end(),
+                            [](const auto &block) {
+                              return block.terminator.kind ==
+                                     lang::MirTerminatorKind::Invoke;
+                            }),
+           std::string{"a proved body keeps no failure routes: "} +
+               std::string{name});
+  }
+  constexpr std::string_view conservative[] = {"sff_add_one", "sff_calls_add",
+                                               "sff_spin",    "sff_scoped_loud",
+                                               "sff_sides",   "main"};
+  for (const std::string_view name : conservative) {
+    const lang::MirFunctionInstance *function =
+        findMirFunction(frontend.hir, frontend.mir, name);
+    expect(function != nullptr && function->mayRaiseDefinedFailure,
+           std::string{"a failure source, cycle or dynamic dispatch stays "
+                       "conservative: "} +
+               std::string{name});
+  }
+  // A proved callee is called plainly: no caller keeps an Invoke for it.
+  const lang::MirFunctionInstance *forward =
+      findMirFunction(frontend.hir, frontend.mir, "sff_forward_owner");
+  const lang::MirFunctionInstance *relay =
+      findMirFunction(frontend.hir, frontend.mir, "sff_relay_owner");
+  bool plainRelayCall = false;
+  if (forward != nullptr && relay != nullptr) {
+    for (const lang::MirBlock &block : forward->body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.functionTarget == relay->id)
+          plainRelayCall = instruction.definedFailure.empty();
+  }
+  expect(plainRelayCall,
+         "a call to a proved callee carries no failure propagation");
+}
+
 int main(int argc, char **argv) {
   if (argc != 2) {
     std::cerr << "usage: gti_mir_backend_scalar_direct_call_tests <fixture>\n";
@@ -844,6 +974,7 @@ int main(int argc, char **argv) {
   testFamilyAndSummary(argv[1]);
   testPassiveRecordDirectCallAndReturnSummary();
   testRuntimeDeclarationSummary();
+  testStructuralFailureFreedom();
   testMutations(argv[1]);
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

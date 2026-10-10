@@ -58,7 +58,7 @@ below retain their technical prerequisites under the revised admission policy:
 | RT-1 broader outlining/inline policy | Design from successful-path and failure-path representation costs; validate the resulting policy on representative clients. Keep managed-worker handoff exception-transparent; blanket `noexcept`, forced inlining and higher global thresholds are not justified by this revision. |
 | RT-2 contextual narrowing | Prepare a bounded post-fixpoint refinement, re-establishing conservative coverage of **every** reachable call context. Current closed-call contexts widen but do not narrow; simply replacing widened inputs with attractive return ranges is not a proof. Require independent replay, conflicting callers/recursion/budget negatives, and loop-carried performance validation at acceptance. |
 | RT-3 conversions/division/shifts | A general proof family, beginning with exact integral conversion domains. Each failure outcome needs its own rule and replay: zero and signed-minimum/-1 for division, and all GTI shift preconditions, not merely a bounded shift count. Require boundary negatives and representative byte/text performance validation; a prior measured gain is not required to broaden the family. |
-| RT-4 refreshed infallibility | Requires effect derivation on optimized MIR plus an independently replayed Invoke-to-Call edit, including CFG/identity repair. Native, recursive, synchronizing and cleanup boundaries remain conservative. No backend inference from apparently empty failure blocks. |
+| RT-4 refreshed infallibility | Structural failure-freedom of canonical MIR and the backend's plain-call vocabulary are implemented; measured neutral at run time. The remaining slice requires effect derivation on optimized MIR plus an independently replayed Invoke-to-Call edit, including CFG/identity repair. Native, recursive, synchronizing and cleanup boundaries remain conservative. No backend inference from apparently empty failure blocks. |
 | RT-5 relational index/length facts | Begin with a body-local relation whose origin, dominance and mutation/alias invalidation are proved. Crossing an accessor requires an admitted precondition/specialization or bounded inlining; a container's public name is not authority. Require opaque-call/mutation negatives and exact failure parity. |
 | RT-6 affine loop versioning | Requires a non-failing, side-effect-free preflight and an unchanged checked fallback. Hoisting may not change the first failure, partial stores, evaluation order or floating-point ordering. The fallback's presence alone does not prove the preflight safe. Validate representative clients and preflight costs as part of acceptance. |
 | RT-7 iterator counters/reductions | Prove length fits the **counter's** domain; allocation capacity alone does not prove a `ptrdiff_t` counter cannot overflow. Speculative reductions additionally require non-observable, exactly restorable state and ordered first-failure replay. Do not apply a wrapping accumulator to ordinary effectful loops. |
@@ -420,6 +420,22 @@ callee. It must be replayed independently, like other transformation records.
 **First slice.** An analysis plus one editor transform, `invoke-to-call`, with
 replay. It also feeds RT-1 and helps O-MIR-08's scalar-promotion prerequisite.
 
+**Status (2026-10-11).** The canonical derivation now proves structural
+failure-freedom ([MIR](../architecture/mir.md)): a body with no live failure
+source other than exact static calls to proved targets is failure-free
+whatever its types, so lowering already gives its callers plain calls. The C++
+backend's plain-call vocabulary was completed for every result family those
+calls produce. Measured at `-O2` against `01ce4297`, this step is neutral at
+run time: every runtime-audit probe, and the S-ALLOC-07 storage workload from
+#169 (process 37.3 ms against 37.3 ms, resource 64.1 ms against 64.3 ms), is
+within noise, and the probes' text sections are unchanged, because clang
+already deletes failure paths it can prove dead after inlining. The probes' hot
+callees (`step`'s checked multiply and remainder, the accessors' bounds checks)
+still carry failure sources in canonical MIR and become failure-free only after
+the optimizer discharges them. The runtime benefit therefore still depends on
+the refresh above: effect derivation on optimized MIR with an independently
+replayed Invoke-to-Call edit.
+
 #### RT-5: no relational facts between indices and lengths
 
 **Evidence.**
@@ -438,6 +454,13 @@ replay. It also feeds RT-1 and helps O-MIR-08's scalar-promotion prerequisite.
   against 17.4 ms for C++. The remaining gap is the accessor's
   failure-capable call shape: its calls stay Invokes after the check is gone,
   which defeats native inlining (RT-1, RT-4).
+  Revisited in October 2026: raising clang's inline threshold changes nothing
+  for this probe (54 ms against 23.5 ms for C++), so call shape is no longer
+  the gap. `raw_address<T>` is a union over `T*` whose reads go through
+  `memcpy`, so clang treats the vectors' data pointers as possibly aliased,
+  reloads them on every iteration and does not vectorize the inner loop. A
+  representation or alias fact for that address carrier is the next
+  prerequisite here.
   A runtime `n` would still need this relational domain.
 - `string::find(char)` iterates `index < this.count` and then indexes with
   `this[index]`, whose check is the same comparison.

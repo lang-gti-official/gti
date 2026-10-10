@@ -8481,7 +8481,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               *producer->result != source->id ||
               producer->hirValue != input.hirValue || !producer->loan ||
               producer->borrowOrigin == BorrowOriginKind::None ||
-              producer->successResultDrop == std::nullopt ||
               !sameCallInputTraits(producer->info.traits, input.info.traits)) {
             return false;
           }
@@ -8529,8 +8528,23 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                                       input.lifecycle.front().kind ==
                                           MirLifecycleEventKind::TransferOut &&
                                       input.lifecycle.front().target == 0;
-          return drop != nullptr && slot != nullptr &&
-                 producer->successResultDrop == drop->id &&
+          // A failure-capable producer arms the temporary's obligation on
+          // its Invoke success edge; a failure-free one initializes it with
+          // its own lifecycle event.
+          const bool activated =
+              drop != nullptr &&
+              (producer->successResultDrop
+                   ? *producer->successResultDrop == drop->id
+                   : std::any_of(
+                         producer->lifecycle.begin(), producer->lifecycle.end(),
+                         [&](const MirLifecycleEvent &event) {
+                           return event.kind ==
+                                      MirLifecycleEventKind::Initialize &&
+                                  event.source == 0 &&
+                                  event.target == drop->id &&
+                                  !event.conditional && !event.failureCleanup;
+                         }));
+          return drop != nullptr && slot != nullptr && activated &&
                  slot->root == MirPlaceRootKind::Value &&
                  slot->value == source->id && slot->projections.empty() &&
                  slot->type == input.info.type &&
