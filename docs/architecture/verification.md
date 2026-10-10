@@ -34,6 +34,12 @@
   predecessor that later became a loop header, and verification rejected the
   drop. The proof now follows only invoke edges, which lowering never adds
   later.
+- **Compile time.** Scanning every block for a predecessor at each drop made
+  failure-route drains quadratic: the `json` standard-library fixture took
+  over ten minutes. Lowering now records invoke continuations as each
+  terminator is set, and verification builds the same table once per body.
+  Compile time is back to the pre-change level (that fixture: 24.8 s before,
+  25.2 s after; five other large fixtures within 2%).
 - **Suites.** 160 targeted CTests pass: every MIR, emitter, census, snapshot,
   failure, lifecycle, cleanup, constructor, `expected`, resource, optimizer and
   issue-regression test, in Release with `-j8`. No census baseline changes;

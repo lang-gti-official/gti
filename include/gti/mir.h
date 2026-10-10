@@ -1898,4 +1898,25 @@ mirDropFollowsDefiniteMove(const MirBody &body, const MirBlock &block,
                            MirDropObligationId obligation,
                            MirInstructionId beforeInstruction = 0);
 
+// Each block's incoming edge count and, when its only incoming edge is an
+// invoke edge, the invoking block. Lowering records each terminator as it is
+// set; a complete body builds the same table at once.
+struct MirInvokeContinuations {
+  std::vector<std::uint32_t> incomingEdges;
+  std::vector<MirBlockId> invoker;
+  std::vector<bool> successEdge;
+
+  void record(const MirBlock &block);
+};
+
+[[nodiscard]] MirInvokeContinuations
+mirInvokeContinuations(const MirBody &body);
+
+// The same proof against a prepared continuation table, for callers that
+// query many drops of one body.
+[[nodiscard]] bool mirDropFollowsDefiniteMove(
+    const MirBody &body, const MirInvokeContinuations &continuations,
+    const MirBlock &block, MirDropObligationId obligation,
+    MirInstructionId beforeInstruction = 0);
+
 } // namespace lang
