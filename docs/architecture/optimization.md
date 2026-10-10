@@ -1120,6 +1120,21 @@ atomically. Destructive instruction removal leaves a canonical inert
 tombstone, so instruction/result identities and proof references remain
 stable. Unaffected identities are never compacted.
 
+Whole-program verification is a deterministic function of program content,
+so an operation verifies a given program once. The canonical dead-instruction
+rewrite verifies its input and then its result. The dead-computation pass,
+the editor's claim validation and atomic mutation, and coherence replay
+instead verify their unchanged program once and use the internal
+`rewriteVerifiedMirDeadInstruction`, which skips only that input check: a
+failed rewrite leaves its input unchanged, and a successful one verifies its
+result. Coherence replay does not re-verify an optimized program or replay
+snapshot identical to one it has already verified. The optimizer marks its
+verified input, and `LoweredProgramBuilder` marks the source and optimized
+programs it has just verified, so neither is checked twice. Every
+stage-boundary verification remains. A default build verifies the whole program
+10 times instead of 21; on the larger standard-library examples, GTI's own
+compile time drops by about 17% at `-O0` and `-O1`.
+
 Every accepted edit produces a sorted typed `MirTransformRecord` retaining
 pass, transform and proof kinds, affected MIR identities, HIR/source
 provenance, exact related identities, replacement payload where applicable,

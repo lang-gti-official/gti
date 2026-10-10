@@ -7,6 +7,7 @@
 #include "gti/lowered_program_printer.h"
 #include "gti/semantic_model.h"
 #include "lowered_program_closure.h"
+#include "mir_verification_support.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -1176,8 +1177,11 @@ LoweredProgramBuild LoweredProgramBuilder::build(
                  ? "source MIR is not marked valid"
                  : sourceVerification.errors.front().message);
   }
+  // Verification depends only on program content, and an unoptimized
+  // program is identical to its source.
   const MirVerificationResult optimizedVerification =
-      verifyMirProgram(optimizedMir);
+      optimizedMir == sourceMir ? sourceVerification
+                                : verifyMirProgram(optimizedMir);
   if (!optimizedMir.valid() || !optimizedVerification.valid()) {
     addIssue(build.issues, LoweredProgramIssueKind::InvalidOptimizedMir,
              optimizedVerification.errors.empty()
@@ -1193,7 +1197,9 @@ LoweredProgramBuild LoweredProgramBuilder::build(
                  : failureVerification.errors.front());
   }
   const MirVerificationResult optimization =
-      verifyMirOptimizationCoherence(sourceMir, optimizedMir, transformations);
+      mir_detail::verifyVerifiedMirOptimizationCoherence(
+          sourceMir, optimizedMir, transformations, sourceVerification.valid(),
+          optimizedVerification.valid());
   if (!optimization.valid()) {
     addIssue(build.issues, LoweredProgramIssueKind::InvalidOptimization,
              optimization.errors.empty()
