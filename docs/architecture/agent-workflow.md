@@ -22,17 +22,22 @@ shared across worktrees, never committed, and contain no credentials. HTTP
 redirects are refused. Canonical fetch and push URLs are both checked before
 credentials or code are sent.
 
-All shared operations hold an atomic directory lock with PID/time metadata;
-an interrupted lock must be inspected before its exact directory is removed.
-This serializes agents sharing the repository. Gitea's up-to-date protection
-also closes the race with other machines. It does not lock ordinary editing.
+Metadata operations hold a short atomic directory lock
+(`gti-agent-workflow/lock`, with PID/time in `owner.json`); a waiter polls for
+up to thirty seconds and then reports the owner. An interrupted lock must be
+inspected before its exact directory is removed; the helper never removes a
+live lock. `verify` holds the lock only while it records the attempt and the
+result. Its checks run inside a `suite` slot of the shared build window below,
+so a peer's `start`, `status`, `checkpoint` or `cleanup` never waits on a
+validation run. Gitea's up-to-date protection closes the race with other
+machines. Nothing locks ordinary editing.
 
 | Command | Result |
 | --- | --- |
 | `start <task> --title <text> --worktree <path> [--branch codex/<name>] [--adopt]` | Fetch main, create or register a clean worktree, publish its branch; rediscover a PR after the first meaningful commit. |
 | `checkpoint <task> [--message <text> --paths <files...>]` | Commit explicitly scoped paths or publish an existing clean commit; create a draft PR on the first meaningful checkpoint. |
 | `reconcile <task>` | Merge current main into the task branch, preserve conflicts for resolution, invalidate old validation and publish. |
-| `verify <task> --checks-file <json>` | Execute nonempty argv arrays without a shell; record passing checks against the published clean head and current remote main. |
+| `verify <task> --checks-file <json>` | Record the attempt, release the lock, execute nonempty argv arrays without a shell inside a build-window `suite` slot, then record passing checks against the published clean head and current remote main. |
 | `finish <task> --body-file <text> [--pr-only]` | Publish the final PR description, mark ready, verify identities/protection, merge the exact head without bypasses and synchronize local main. PR-only stops ready for review. |
 | `sync <task>` | Confirm merged-head/merge-commit reachability, fast-forward primary main, preserving unrelated local edits. |
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
@@ -50,6 +55,60 @@ uses a compare-and-create lease, so a concurrently created branch is preserved.
 come from `GTI_GITEA_TOKEN`, `GITEA_TOKEN`, or the primary checkout's ignored
 `.env`; the helper parses the token key without executing the file. A worktree
 never needs its own credential file.
+
+## Build window
+
+`scripts/build_window.py` is the shared, counted semaphore for heavy local
+work. Three concurrent full CTest runs on one machine have stretched a
+one-minute test to seventeen minutes and made timing-sensitive LSP tests
+flake, so every worktree and session of a repository shares one window:
+
+```sh
+python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 6
+python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8
+python3 scripts/build_window.py --status
+```
+
+A `suite` slot wraps a whole or broad CTest run or a standalone harness
+matrix; a `build` slot wraps a whole `cmake --build`. Focused checks (`ctest
+-R '^name$'`, one harness fixture, a single-file `gti` compile) run directly.
+The defaults are one concurrent `suite` slot and two concurrent `build` slots.
+
+| Setting | Flag | Environment | Default |
+| --- | --- | --- | --- |
+| suite slots | `--suite-slots N` | `GTI_BUILD_WINDOW_SUITE_SLOTS` | 1 |
+| build slots | `--build-slots N` | `GTI_BUILD_WINDOW_BUILD_SLOTS` | 2 |
+| poll interval | `--poll-seconds S` | `GTI_BUILD_WINDOW_POLL_SECONDS` | 5 (at most 60) |
+| wait limit | `--timeout-seconds S` | `GTI_BUILD_WINDOW_TIMEOUT_SECONDS` | wait indefinitely |
+| storage | `--dir <path>` | `GTI_BUILD_WINDOW_DIR` | `<git common dir>/gti-build-window` |
+
+Flags take precedence over the environment. The storage directory lives under
+the Git common directory (`--repo <checkout>` selects which one), so it is
+shared by every worktree, never committed, and holds no credentials. Each
+slot kind has its own subdirectory, `suite/` or `build/`, and each holder owns
+one JSON file there named `<pid>-<token>.json` recording `pid`, `time`, `kind`,
+`command` (argv), `cwd` and, for helper validation, the `worktree` and
+`checks`. The count-and-claim step is serialized by a short `lock` directory
+with its own `owner.json`; it is held for milliseconds and reclaimed when its
+owner has exited or it is older than a minute.
+
+Acquisition polls with a bounded sleep. While waiting it prints, on standard
+error, which processes hold the slots, with their pids, start times and
+commands, and repeats that line when the holders change or once a minute. A
+slot whose recorded pid no longer exists is reclaimed automatically before
+the count is taken. The wrapper forwards interrupt and terminate signals to
+the wrapped command, waits for it, releases the slot and exits with the
+command's status (128 plus the signal number when the command was killed), so
+Ctrl-C never leaks a slot. The window is advisory coordination between
+cooperating agents, not a security boundary. Owner liveness uses
+`os.kill(pid, 0)` on POSIX. Windows cannot test liveness without extra
+dependencies, so there a slot is never reclaimed automatically; `--status`
+reports the recorded owner and the file to delete by hand.
+
+`verify` acquires a `suite` slot around its checks and records them in the
+slot file, so helper validation and ad hoc suite runs queue behind each
+other. Builds that the checks need should be run beforehand through a `build`
+slot. The environment variables above apply to the helper too.
 
 ## Integration and validation
 

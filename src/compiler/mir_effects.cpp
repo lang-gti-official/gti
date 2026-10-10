@@ -1007,12 +1007,15 @@ namespace {
   if (!instruction.lifecycle.empty()) {
     result = merge(result, effects(MirInstructionKind::Lifecycle));
     if (std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
-                    [](const MirLifecycleEvent &event) {
-                      return event.kind == MirLifecycleEventKind::Replace;
+                    [&](const MirLifecycleEvent &event) {
+                      return event.kind == MirLifecycleEventKind::Replace ||
+                             (instruction.kind == MirInstructionKind::Assign &&
+                              event.kind == MirLifecycleEventKind::TransferOut);
                     })) {
       // Replacement destroys the prior active value before publishing its
-      // replacement. Until cleanup summaries exist, retain the same
-      // conservative user-code/runtime ordering barrier as an explicit drop.
+      // replacement, also when it converts the source into a distinct owning
+      // wrapper. Until cleanup summaries exist, retain the same conservative
+      // user-code/runtime ordering barrier as an explicit drop.
       result = merge(result, effects(MirInstructionKind::Drop));
     }
   }

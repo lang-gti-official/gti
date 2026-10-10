@@ -5370,6 +5370,7 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
       }
     }
   }
+  std::optional<MirInvokeContinuations> continuations;
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
       if (instruction.kind != MirInstructionKind::Drop ||
@@ -5379,12 +5380,15 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
       }
       const MirDropObligation *obligation =
           body.findDropObligation(instruction.lifecycle.front().source);
-      const FailurePropagationKind expected =
+      const bool mayRaise =
           obligation != nullptr &&
-                  mirDropMayRaiseDefinedFailure(program,
-                                                obligation->dropType) &&
-                  !mirDropFollowsDefiniteMove(block, obligation->id,
-                                              instruction.id)
+          mirDropMayRaiseDefinedFailure(program, obligation->dropType);
+      if (mayRaise && !continuations)
+        continuations = mirInvokeContinuations(body);
+      const FailurePropagationKind expected =
+          mayRaise &&
+                  !mirDropFollowsDefiniteMove(body, *continuations, block,
+                                              obligation->id, instruction.id)
               ? FailurePropagationKind::Destructor
               : FailurePropagationKind::None;
       if (obligation == nullptr ||
