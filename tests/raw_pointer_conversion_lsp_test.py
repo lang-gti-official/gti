@@ -6,7 +6,12 @@ import sys
 import tempfile
 
 from lsp_smoke_test import LspSession, lsp_position
-from lsp_project_facts_test import open_document, diagnostics_for
+from lsp_project_facts_test import (
+    AUDIT_TEST_ENVIRONMENT,
+    audited_diagnostics,
+    diagnostics_for,
+    open_document,
+)
 
 
 def source_result_policy(lsp, path):
@@ -26,14 +31,15 @@ int main() {
 """
     path.write_text(source)
     for mode, severity in (("off", None), ("warn", 2), ("strict", 1)):
-        session = LspSession(lsp, [f"--raw-pointer-audit={mode}"])
+        session = LspSession(lsp, [f"--raw-pointer-audit={mode}"],
+                             environment=AUDIT_TEST_ENVIRONMENT)
         try:
             session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
                 "capabilities": {"textDocument": {"publishDiagnostics": {"relatedInformation": True}}}}})
             assert "error" not in session.receive_until(lambda message: message.get("id") == 1)
             session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
             uri = open_document(session, path, source)
-            diagnostics = diagnostics_for(session, uri, 1)
+            diagnostics = audited_diagnostics(session, uri, 1, mode != "off")
             findings = [d for d in diagnostics
                         if d.get("code") == "GTI-S2102"
                         and "Raw pointer result may contradict" in d["message"]]
@@ -49,7 +55,7 @@ int main() {
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 2},
                 "contentChanges": [{"text": "int main() { return 0; }\n"}]}})
-            repaired = diagnostics_for(session, uri, 2)
+            repaired = audited_diagnostics(session, uri, 2, mode != "off")
             assert not [d for d in repaired if d.get("code", "").startswith("GTI-S210")], repaired
         finally:
             session.close()
@@ -68,13 +74,12 @@ unsafe { return *restored - 42; } }
         path = pathlib.Path(directory) / "main.gti"
         path.write_text(valid)
         uri = path.as_uri()
-        session = LspSession(sys.argv[1], ["--raw-pointer-audit=strict"])
+        session = LspSession(sys.argv[1], ["--raw-pointer-audit=strict"],
+                             environment=AUDIT_TEST_ENVIRONMENT)
         def published(version):
-            reply = session.receive_until(lambda message:
-                message.get("method") == "textDocument/publishDiagnostics"
-                and message["params"].get("uri") == uri
-                and message["params"].get("version") == version)
-            return [d for d in reply["params"]["diagnostics"] if d.get("severity") == 1]
+            # The edit-path publication, then the background audit's.
+            return [d for d in audited_diagnostics(session, uri, version)
+                    if d.get("severity") == 1]
         def change(version, source):
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": version}, "contentChanges": [{"text": source}]}})

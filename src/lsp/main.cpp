@@ -91,6 +91,24 @@ constexpr std::chrono::milliseconds minimumUpdateDebounce{50};
 constexpr std::chrono::milliseconds maximumUpdateDebounce{500};
 constexpr std::size_t analysisDurationHistory = 8;
 
+// A raw-pointer audit of a published generation starts only after the document
+// has been quiet for this long with nothing interactive pending, or at once on
+// save. `GTI_LSP_AUDIT_QUIET_MS` pins it for tests.
+constexpr std::chrono::milliseconds defaultAuditQuietPeriod{2000};
+
+std::chrono::milliseconds auditQuietPeriodFromEnvironment() {
+  if (const char *configured = std::getenv("GTI_LSP_AUDIT_QUIET_MS");
+      configured != nullptr && *configured != '\0') {
+    const char *end = configured + std::strlen(configured);
+    unsigned value = 0;
+    const auto [last, error] = std::from_chars(configured, end, value);
+    if (error == std::errc{} && last == end && value <= 600000) {
+      return std::chrono::milliseconds(value);
+    }
+  }
+  return defaultAuditQuietPeriod;
+}
+
 std::optional<std::chrono::microseconds> fixedUpdateDebounceFromEnvironment() {
   if (const char *configured = std::getenv("GTI_LSP_UPDATE_DEBOUNCE_MS");
       configured != nullptr && *configured != '\0') {
@@ -1616,6 +1634,10 @@ struct AnalysisRequest {
   AnalysisTrigger trigger = AnalysisTrigger::Opened;
   // Earliest start time; see `minimumUpdateDebounce`.
   SteadyClock::time_point readyAt{};
+  // A raw-pointer audit of an already published generation; see
+  // `runAuditWorker`. Ordinary analyses never run the audit.
+  bool audit = false;
+  SteadyClock::time_point scheduledAt{};
   std::uint64_t includeDiscoveryGeneration = 0;
   std::optional<std::string> projectProfile;
   std::unordered_map<std::string, std::string> sourceOverrides;
@@ -1668,6 +1690,9 @@ struct DocumentAnalysis {
   // Every loaded dependency's URI and the digest of the exact text read.
   std::unordered_map<std::string, std::uint64_t> dependencies;
   std::string rootPath;
+  // The selected profile (or process option) enables the raw-pointer audit,
+  // so a background audit of this generation should follow.
+  bool auditAvailable = false;
   std::shared_ptr<const lang::FrontendResult> frontend;
   lang::FrontendWorkMetrics workMetrics;
   std::uint64_t frontendElapsedMicroseconds = 0;
@@ -1706,6 +1731,7 @@ struct DiagnosticPublication {
 struct ProjectAnalysisInputs {
   bool configurationValid = true;
   lang::RawPointerAuditMode rawPointerAudit = lang::RawPointerAuditMode::Off;
+  bool rawPointerAuditLibraryFindings = false;
   lang::driver::AnalysisConfiguration configuration;
   std::vector<lang::PackageSourceRoot> packageSourceRoots;
   lang::WarningPolicy warnings;
@@ -1789,6 +1815,8 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
   result.packageSourceRoots = facts.packageSourceRoots();
   result.rawPointerAudit =
       rawPointerAuditOverride.value_or(profile->rawPointerAudit);
+  result.rawPointerAuditLibraryFindings =
+      profile->rawPointerAuditLibraryFindings;
   result.warnings = profile->warningPolicy;
   result.packageWarnings = facts.packageWarnings(profile->name);
   result.includeSearchRoots = lang::driver::projectIncludeSearchRoots(facts);
@@ -1827,12 +1855,31 @@ public:
     reclamationWorker =
         llvm::thread(std::optional<unsigned>{frontendWorkerStackSize},
                      [this] { runReclamationWorker(); });
+    auditWorker = llvm::thread(std::optional<unsigned>{frontendWorkerStackSize},
+                               [this] { runAuditWorker(); });
   }
 
   ~LanguageServer() {
     stopCompletionWorker();
     stopAnalysisWorker();
     stopReclamationWorker();
+    (void)stopAuditWorker();
+  }
+
+  // Stops the workers for process exit. An audit the compiler is still running
+  // cannot be interrupted and may take tens of seconds; the protocol's `exit`
+  // means terminate now, so in that case the process ends without running
+  // destructors rather than making the editor wait for the audit.
+  [[noreturn]] void exitProcess(int code) {
+    stopCompletionWorker();
+    stopAnalysisWorker();
+    stopReclamationWorker();
+    if (stopAuditWorker()) {
+      std::exit(code);
+    }
+    std::cout.flush();
+    std::cerr.flush();
+    std::_Exit(code);
   }
 
   int run() {
@@ -1851,7 +1898,7 @@ public:
 
       try {
         if (handle(&*message)) {
-          return shutdownRequested ? 0 : 1;
+          exitProcess(shutdownRequested ? 0 : 1);
         }
       } catch (const std::exception &error) {
         std::cerr << "LSP request failed: " << error.what() << '\n';
@@ -2100,10 +2147,26 @@ private:
     }
   }
 
-  void didSave(const JsonValue *) {
+  void didSave(const JsonValue *params) {
     // Full synchronization already schedules analysis for every changed
     // version. Repeating it here blocks later requests and republishes the
-    // same diagnostics during format-on-save.
+    // same diagnostics during format-on-save. Saving is a natural settling
+    // point, though, so a waiting raw-pointer audit of the saved document
+    // skips the rest of its quiet period.
+    const std::string uri =
+        documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
+    bool woken = false;
+    {
+      const std::lock_guard lock(stateMutex);
+      if (const auto pending = pendingAudits.find(uri);
+          pending != pendingAudits.end()) {
+        pending->second.readyAt = SteadyClock::now();
+        woken = true;
+      }
+    }
+    if (woken) {
+      auditCondition.notify_all();
+    }
   }
 
   void didClose(const JsonValue *params) {
@@ -2138,6 +2201,14 @@ private:
           affected.insert(diagnostic.uri);
         }
       }
+      if (const auto found = auditDiagnosticsByRoot.find(uri);
+          found != auditDiagnosticsByRoot.end()) {
+        for (const LspDiagnostic &diagnostic : found->second.diagnostics) {
+          affected.insert(diagnostic.uri);
+        }
+        auditDiagnosticsByRoot.erase(found);
+      }
+      pendingAudits.erase(uri);
       documents.erase(uri);
       if (const std::optional<std::filesystem::path> path =
               filePathFromUri(uri)) {
@@ -3048,13 +3119,27 @@ private:
     const std::string rootPath = canonicalPath(*filePath).string();
     result.rootPath = rootPath;
     lang::FrontendOptions frontendOptions;
-    frontendOptions.rawPointerAudit = project.rawPointerAudit;
+    // The raw-pointer audit multiplies analysis time by well over an order of
+    // magnitude (41 s against 0.6 s for an eight-include file), so the
+    // edit-path analysis never runs it. A separate background audit of the
+    // published generation carries the profile's mode; see `runAuditWorker`.
+    result.auditAvailable =
+        project.rawPointerAudit != lang::RawPointerAuditMode::Off;
+    frontendOptions.rawPointerAudit = request.audit
+                                          ? project.rawPointerAudit
+                                          : lang::RawPointerAuditMode::Off;
+    frontendOptions.reportLibraryAuditFindings =
+        project.rawPointerAuditLibraryFindings;
     frontendOptions.analyzeRecoveredProgram = true;
     frontendOptions.requireEntryPoint = project.requireEntryPoint;
     // HIR performs the compiler's concrete generic-instance reanalysis. The
-    // LSP retains it only so editor diagnostics agree with `gti check`; MIR
-    // remains code-generation work and is not built for editor snapshots.
+    // LSP retains it only so editor diagnostics agree with `gti check` for
+    // the open file's own code; MIR remains code-generation work and is not
+    // built for editor snapshots. Lowering is scoped to the program roots and
+    // the open file's declarations: library instances nothing in the file
+    // reaches are the library's own `gti check` concern.
     frontendOptions.stopAfter = lang::FrontendPhase::Hir;
+    frontendOptions.lowerEntryUnitOnly = true;
     frontendOptions.workMetrics = &result.workMetrics;
     frontendOptions.cache = request.frontendSources.cache;
     frontendOptions.sourceGenerations = request.frontendSources.generations;
@@ -3411,7 +3496,9 @@ private:
                      project.configuration.configurationFlags(),
                  .declaredConfigurationFlags =
                      project.configuration.declaredConfigurationFlags(),
-                 .rawPointerAudit = project.rawPointerAudit,
+                 // Completion is latency-critical and offers no diagnostics;
+                 // the audit is background work (see `runAuditWorker`).
+                 .rawPointerAudit = lang::RawPointerAuditMode::Off,
                  .preludePaths = {standardLibrary.prelude},
                  .sourceOverrides = request.sourceOverrides,
                  .standardLibraryRoots = {standardLibrary.root},
@@ -3455,6 +3542,8 @@ private:
         --activeCompletions;
       }
       completionCondition.notify_all();
+      // A waiting audit may start once nothing interactive is pending.
+      auditCondition.notify_all();
     }
   }
 
@@ -3665,6 +3754,8 @@ private:
       // Wakes idle workers for a newer request of this document and lets
       // `flushAnalyses` observe the pool becoming idle.
       analysisCondition.notify_all();
+      // A waiting audit may start once nothing interactive is pending.
+      auditCondition.notify_all();
     }
   }
 
@@ -3722,6 +3813,7 @@ private:
     std::deque<PendingSemanticRequest> semanticRequests;
     std::optional<std::vector<SemanticToken>> heldTokens;
     AnalysisSnapshot published;
+    bool auditScheduled = false;
     {
       const std::lock_guard lock(stateMutex);
       const auto generation = analysisGenerations.find(request.uri);
@@ -3780,6 +3872,14 @@ private:
         }
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         dependenciesByRoot[request.uri] = std::move(analysis.dependencies);
+        if (const auto audit = auditDiagnosticsByRoot.find(request.uri);
+            audit != auditDiagnosticsByRoot.end() &&
+            audit->second.generation != request.generation) {
+          for (const LspDiagnostic &diagnostic : audit->second.diagnostics) {
+            affected.insert(diagnostic.uri);
+          }
+          auditDiagnosticsByRoot.erase(audit);
+        }
         if (const auto previous = analysisSnapshots.find(request.uri);
             previous != analysisSnapshots.end() && previous->second.frontend) {
           retireFrontendLocked(std::move(previous->second.frontend));
@@ -3820,6 +3920,16 @@ private:
           semanticRequests.push_back(std::move(*pending));
           pending = pendingSemanticRequests.erase(pending);
         }
+        if (analysis.auditAvailable && !stoppingAudit) {
+          // The audit of this generation waits for the quiet period and an
+          // idle pool; a newer generation replaces it before it starts.
+          AnalysisRequest audit = request;
+          audit.audit = true;
+          audit.scheduledAt = SteadyClock::now();
+          audit.readyAt = audit.scheduledAt + auditQuietPeriod;
+          pendingAudits[request.uri] = std::move(audit);
+          auditScheduled = true;
+        }
       }
     }
     if (retry) {
@@ -3833,6 +3943,181 @@ private:
     if (heldTokens) {
       reconcileHeldSemanticTokens(request, published, std::move(*heldTokens));
     }
+    if (auditScheduled) {
+      auditCondition.notify_all();
+    }
+  }
+
+  // Takes the audit that may start now: the pool and completion worker are
+  // idle, its quiet period has passed, and its generation is still the
+  // document's current one. Stale audits are dropped here. Among several
+  // ready audits the most recently scheduled runs first, so the document the
+  // user is working in is audited before documents left behind.
+  [[nodiscard]] std::optional<AnalysisRequest>
+  takeNextAuditLocked(SteadyClock::time_point now,
+                      std::optional<SteadyClock::time_point> &wake) {
+    for (auto pending = pendingAudits.begin();
+         pending != pendingAudits.end();) {
+      const auto generation = analysisGenerations.find(pending->first);
+      if (generation == analysisGenerations.end() ||
+          generation->second != pending->second.generation ||
+          !documents.contains(pending->first)) {
+        pending = pendingAudits.erase(pending);
+        continue;
+      }
+      ++pending;
+    }
+    const bool idle = pendingAnalyses.empty() && activeAnalysisUris.empty() &&
+                      completionRequests.empty() && activeCompletions == 0;
+    auto selected = pendingAudits.end();
+    for (auto pending = pendingAudits.begin(); pending != pendingAudits.end();
+         ++pending) {
+      if (pending->second.readyAt > now) {
+        if (!wake || pending->second.readyAt < *wake) {
+          wake = pending->second.readyAt;
+        }
+        continue;
+      }
+      if (!idle) {
+        // Woken again when the pool drains.
+        continue;
+      }
+      if (selected == pendingAudits.end() ||
+          pending->second.scheduledAt > selected->second.scheduledAt) {
+        selected = pending;
+      }
+    }
+    if (selected == pendingAudits.end()) {
+      return std::nullopt;
+    }
+    AnalysisRequest request = std::move(selected->second);
+    pendingAudits.erase(selected);
+    return request;
+  }
+
+  // The raw-pointer audit is whole-program provenance analysis that the
+  // compiler cannot interrupt, so it runs on its own worker, only when nothing
+  // interactive is pending, and only on a generation the editor has settled
+  // on. Its findings are published as an addition to that generation's
+  // ordinary diagnostics and discarded if the document moved on meanwhile.
+  void runAuditWorker() {
+    while (true) {
+      AnalysisRequest request;
+      {
+        std::unique_lock lock(stateMutex);
+        std::optional<AnalysisRequest> next;
+        while (!stoppingAudit) {
+          std::optional<SteadyClock::time_point> wake;
+          next = takeNextAuditLocked(SteadyClock::now(), wake);
+          if (next) {
+            break;
+          }
+          if (wake) {
+            auditCondition.wait_until(lock, *wake);
+          } else {
+            auditCondition.wait(lock);
+          }
+        }
+        if (stoppingAudit) {
+          return;
+        }
+        request = std::move(*next);
+        auditRunning = true;
+      }
+
+      GuardedAnalysis guarded;
+      try {
+        ProjectAnalysisInputs project;
+        if (const std::optional<std::filesystem::path> path =
+                filePathFromUri(request.uri)) {
+          project = resolveProjectAnalysisInputs(*path, request.projectProfile,
+                                                 executionProfileOverride,
+                                                 rawPointerAuditOverride);
+        }
+        guarded = runIsolatedAnalysis(request, project);
+      } catch (const std::exception &error) {
+        guarded.status = GuardedAnalysisStatus::Failed;
+        guarded.failure = error.what();
+      } catch (...) {
+        guarded.status = GuardedAnalysisStatus::Failed;
+        guarded.failure = "unknown exception during project resolution";
+      }
+      if (guarded.status == GuardedAnalysisStatus::Completed) {
+        recordFrontendWork("audit", request.uri, request.generation,
+                           guarded.analysis->frontendElapsedMicroseconds,
+                           guarded.analysis->workMetrics);
+        try {
+          publishAudit(request, std::move(*guarded.analysis));
+        } catch (const std::exception &error) {
+          std::cerr << "LSP audit publication failed: " << error.what() << '\n';
+        } catch (...) {
+          std::cerr << "LSP audit publication failed with an unknown "
+                       "exception\n";
+        }
+      } else if (guarded.status == GuardedAnalysisStatus::Failed) {
+        std::cerr << "LSP audit failed: " << guarded.failure << '\n';
+      } else {
+        std::cerr << "LSP audit crashed; the document was skipped\n";
+      }
+      {
+        const std::lock_guard lock(stateMutex);
+        auditRunning = false;
+      }
+      auditCondition.notify_all();
+    }
+  }
+
+  static std::string diagnosticIdentity(const LspDiagnostic &diagnostic) {
+    const lang::SourceSpan &span = diagnostic.diagnostic.primary;
+    return diagnostic.diagnostic.code + '\n' + diagnostic.uri + '\n' +
+           std::to_string(span.start) + ':' + std::to_string(span.end) + '\n' +
+           diagnosticMessage(diagnostic.diagnostic);
+  }
+
+  // Publishes the audit findings of a generation that is still current. The
+  // audit analysis reports every diagnostic the ordinary one did; only the
+  // additions are retained, so nothing is published twice and no list of
+  // audit codes lives in the protocol layer.
+  void publishAudit(const AnalysisRequest &request, DocumentAnalysis analysis) {
+    std::vector<DiagnosticPublication> publications;
+    {
+      const std::lock_guard lock(stateMutex);
+      // The whole-program result is not retained; the ordinary snapshot
+      // already serves every query.
+      if (analysis.frontend) {
+        retireFrontendLocked(std::move(analysis.frontend));
+      }
+      const auto generation = analysisGenerations.find(request.uri);
+      const auto ordinary = diagnosticsByRoot.find(request.uri);
+      if (generation == analysisGenerations.end() ||
+          generation->second != request.generation ||
+          !documents.contains(request.uri) ||
+          ordinary == diagnosticsByRoot.end()) {
+        return;
+      }
+      std::unordered_set<std::string> known;
+      for (const LspDiagnostic &diagnostic : ordinary->second) {
+        known.insert(diagnosticIdentity(diagnostic));
+      }
+      std::unordered_set<std::string> affected{request.uri};
+      if (const auto previous = auditDiagnosticsByRoot.find(request.uri);
+          previous != auditDiagnosticsByRoot.end()) {
+        for (const LspDiagnostic &diagnostic : previous->second.diagnostics) {
+          affected.insert(diagnostic.uri);
+        }
+      }
+      AuditDiagnostics findings{.generation = request.generation};
+      for (LspDiagnostic &diagnostic : analysis.diagnostics) {
+        if (known.contains(diagnosticIdentity(diagnostic))) {
+          continue;
+        }
+        affected.insert(diagnostic.uri);
+        findings.diagnostics.push_back(std::move(diagnostic));
+      }
+      auditDiagnosticsByRoot[request.uri] = std::move(findings);
+      publications = publicationsForLocked(affected);
+    }
+    publish(std::move(publications));
   }
 
   // A dependency or project change re-analysed a document whose client
@@ -3965,10 +4250,24 @@ private:
       // awaiting re-analysis still contributes the diagnostics it placed in
       // files whose text has not changed since it read them.
       const auto openText = documents.find(uri);
+      // Audit findings follow their root's ordinary diagnostics; they are
+      // additions to the same generation and obey the same text rule.
+      std::vector<const std::vector<LspDiagnostic> *> sets;
       for (const std::string &root : roots) {
-        const std::vector<LspDiagnostic> &diagnostics =
-            diagnosticsByRoot.at(root);
-        for (const LspDiagnostic &diagnostic : diagnostics) {
+        sets.push_back(&diagnosticsByRoot.at(root));
+        // Findings belong to one analysis generation: a dependency or
+        // project change may alter them even when this file's text did not
+        // change, so they wait for the next audit rather than carrying over.
+        const auto audit = auditDiagnosticsByRoot.find(root);
+        const auto generation = analysisGenerations.find(root);
+        if (audit != auditDiagnosticsByRoot.end() &&
+            generation != analysisGenerations.end() &&
+            audit->second.generation == generation->second) {
+          sets.push_back(&audit->second.diagnostics);
+        }
+      }
+      for (const std::vector<LspDiagnostic> *diagnostics : sets) {
+        for (const LspDiagnostic &diagnostic : *diagnostics) {
           if (diagnostic.uri != uri) {
             continue;
           }
@@ -4172,6 +4471,26 @@ private:
     }
   }
 
+  // Returns false when an audit is still running inside the compiler; the
+  // caller then must not wait for it (see `exitProcess`).
+  [[nodiscard]] bool stopAuditWorker() {
+    bool running = false;
+    {
+      const std::lock_guard lock(stateMutex);
+      stoppingAudit = true;
+      pendingAudits.clear();
+      running = auditRunning;
+    }
+    auditCondition.notify_all();
+    if (running) {
+      return false;
+    }
+    if (auditWorker.joinable()) {
+      auditWorker.join();
+    }
+    return true;
+  }
+
   lang::StandardLibraryLayout standardLibrary;
   std::optional<lang::ExecutionProfile> executionProfileOverride;
   std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride;
@@ -4217,6 +4536,18 @@ private:
   // Set when a dependency or project re-analysis changed tokens a client
   // holds; cleared when the one refresh for that wave is sent.
   bool semanticTokenRefreshPending = false;
+  // Background raw-pointer audits; see `runAuditWorker`.
+  struct AuditDiagnostics {
+    std::uint64_t generation = 0;
+    std::vector<LspDiagnostic> diagnostics;
+  };
+  std::condition_variable auditCondition;
+  std::unordered_map<std::string, AnalysisRequest> pendingAudits;
+  std::unordered_map<std::string, AuditDiagnostics> auditDiagnosticsByRoot;
+  const std::chrono::milliseconds auditQuietPeriod =
+      auditQuietPeriodFromEnvironment();
+  bool stoppingAudit = false;
+  bool auditRunning = false;
   std::deque<CompletionRequest> completionRequests;
   std::deque<PendingSemanticRequest> pendingSemanticRequests;
   std::unordered_set<std::string> activeCompletionRequests;
@@ -4247,6 +4578,7 @@ private:
   llvm::thread completionWorker;
   std::vector<llvm::thread> analysisWorkers;
   llvm::thread reclamationWorker;
+  llvm::thread auditWorker;
 };
 
 } // namespace

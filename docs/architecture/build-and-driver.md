@@ -545,6 +545,16 @@ An explicit command-line choice overrides the selected profile, including an
 explicit `off`; duplicate or unknown choices are rejected. `build --all`
 forwards the override to every child. `run --no-build` rejects it because no
 analysis takes place. Direct mode remains manifest-independent.
+
+Findings located inside the standard library are not reported to an
+application by default: the audit still analyses library bodies, because
+application provenance flows through them, but a finding there describes the
+library's own implementation (see the raw-pointer language document). A
+profile opts in with `raw-pointer-audit-library-findings = true`, and
+`--raw-pointer-audit-library-findings` / `--no-raw-pointer-audit-library-findings`
+override the profile on the same commands. The choice is part of the project
+model identity and the build provenance, so a cached artifact is never reused
+across the two reporting policies.
 The selection governs the requested GTI target. Approved `build.gti` host
 tools retain their independent fixed compilation policy, including audit
 `off`; changing the target's audit mode does not reinterpret a build script.

@@ -243,14 +243,20 @@ change that `gti check` can also benefit from, measured with the same message
 flow before and after, and none adds a second semantic path in the protocol
 layer.
 
-1. **Editor-scoped HIR.** Add a frontend option that lowers only the entry
-   unit's definitions and the concrete generic instances they request,
-   instead of every function in the program. The editor needs HIR for the
-   instance diagnostics of the open file's own code; library bodies that the
-   open file does not reach are the library's own `gti check` concern. This
-   is the smallest change and removes most of the 250 ms. Diagnostics located
-   inside library bodies that the user's code instantiates are still produced
-   because those instances are reached.
+1. **Editor-scoped HIR — implemented in 0.397.4.**
+   `FrontendOptions::lowerEntryUnitOnly` seeds the program roots and the
+   entry unit's declarations and lowers only what they reach; the LSP sets
+   it. Measured: HIR 250 ms to 155 ms on the eight-include file (it reaches
+   much of what it includes) and 45 ms to 5 ms per transit-planner file.
+   Diagnostics inside library bodies that the open file instantiates are
+   still produced because those instances are reached.
+
+   The same measurement found a far larger cost next to it: with
+   `raw-pointer-audit = "warn"` in the project profile, one analysis of the
+   eight-include file took 41 s (trusted bodies 19 s, HIR 17 s). The audit is
+   now never part of edit-path analysis; it runs as a background audit of a
+   settled generation (see the architecture document), so the figures above
+   are the edit-path cost in every project.
 2. **Lazy trusted-body analysis.** Determine which facts a caller's analysis
    takes from a callee's body (borrow summaries and inferred borrow origins,
    failure and effect results, lifecycle facts) and analyse a compiler-trusted
@@ -258,6 +264,15 @@ layer.
    snapshot. Bodies no application code reaches are then never analysed in
    the editor. This removes most of the 247 ms and is a clean generalisation
    of the existing on-demand borrow-summary candidate inspection.
+   Precondition: body analysis publishes inferred facts onto callable
+   declarations that callers consume (`publishFunctionBorrowSummary`), so
+   first prove that those facts are independent of the order in which bodies
+   are analysed. If they are not, demand-driven analysis changes what is
+   inferred and is a language change, not a performance step; stop there and
+   take it through the language documents. The gate is mechanical: `gti
+   check` over the examples and standard-library tests must produce
+   byte-identical diagnostics with lazy analysis on and off. Keep it an
+   editor-only option; compilation keeps analysing every body.
 3. **Unit-local semantic reuse** (the true preamble analogue) only if 1 and 2
    leave the eight-include file above about 100 ms per edit. Trusted units'
    registration and body facts would be cached per unit, keyed by the unit's

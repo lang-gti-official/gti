@@ -9,6 +9,34 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.397.4 — Raw-pointer audit off the edit path; editor HIR scoped to the open file
+
+- `gti_lsp` no longer runs the raw-pointer audit while you type. With
+  `raw-pointer-audit = "warn"` or `"strict"` in a project profile, every edit
+  used to pay for a whole-program provenance analysis (41 s against 0.6 s for
+  an eight-include file). The edit-path analysis and completion now always
+  run with the audit off; the audit runs in the background once a document has
+  been quiet for two seconds, or as soon as it is saved, and its findings
+  appear as additions to the ordinary diagnostics. An edit before it finishes
+  discards it. `gti check` and `gti build` run the audit exactly as before.
+- Raw-pointer audit findings located inside the standard library are no longer
+  reported to an application by default, in any mode or tool. The analysis
+  still covers library bodies, because application provenance flows through
+  them, but a finding inside the library describes the library's own
+  implementation; one project showed 650 such warnings per build. Opt back in
+  with `raw-pointer-audit-library-findings = true` in a profile or
+  `--raw-pointer-audit-library-findings` on the command line. Checking a
+  standard-library file as the entry still reports its own findings, and
+  findings in application code, including call sites into the library, are
+  unchanged.
+- Editor analysis lowers HIR only for the open file's own declarations and
+  what they reach, instead of every declaration in every included unit.
+  Instance diagnostics for the open file's code, including library bodies it
+  instantiates, are unchanged; an instance that only unreached library code
+  requests is no longer reported in the editor. `gti check` still reports it.
+  HIR time per keystroke fell by about 40 % on a file with eight standard
+  library includes and by about 90 % on a small multi-file project.
+
 ## 0.397.3 — Smoother editing in the language server
 
 - `gti_lsp` no longer blanks and repaints the editor on every keystroke. An
