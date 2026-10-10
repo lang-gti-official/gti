@@ -7243,7 +7243,7 @@ int main() {
   expect(valid.canGenerateCode(),
          "dependent defaults should defer unresolved constraints and an "
          "explicit argument should bypass an unused default");
-  for (const std::string &suffix :
+  for (const std::string suffix :
        {"int main() { Holder<NotOrdered> value{}; return 0; }",
         "int main() { Nested<NotOrdered> value{}; return 0; }",
         "int main() { Constrained<double> value{}; return 0; }",
