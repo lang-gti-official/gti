@@ -1187,11 +1187,13 @@ evidence:
 - an exposure before the use;
 - a capture on an earlier loop iteration.
 
-Process allocation itself still reaches the opaque native allocator. Facts
-about memory the allocator could reach, such as the first container's element
-envelopes, are still erased. The declared runtime allocator contract (PR #210)
-supplies precise allocator effects, and its safety-interpreter integration is
-a separate goal.
+Process allocation itself still reaches an opaque native call in the safety
+interpreter. Facts about memory the allocator could reach, such as the first
+container's element envelopes, are still erased. The declared process-
+allocator runtime contract (see
+[standard-library-and-runtime.md](standard-library-and-runtime.md)) now gives
+those calls precise shared MIR effects. Consuming it in the interpreter, which
+needs an exact argument-pointee write, is a separate goal.
 
 ## Rewrite And Proof Authority
 
