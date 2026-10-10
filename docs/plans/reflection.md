@@ -1,6 +1,7 @@
 # Compile-Time Semantic Reflection Plan
 
-Status: proposal. Nothing in this document is implemented. Current language
+Status: phase 1 implemented (`constexpr for`, `<std/meta>` types, fields,
+queries and access); phases 2 and 3 are proposals. Current language
 behavior is documented in [`docs/language/`](../language/index.md); the
 authoritative compiler structures named below are described in
 [`docs/architecture/semantic-analysis.md`](../architecture/semantic-analysis.md)

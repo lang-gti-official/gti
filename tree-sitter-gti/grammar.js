@@ -375,6 +375,9 @@ module.exports = grammar({
         ")",
       ),
 
+    compiler_type_binding: ($) =>
+      seq("@", "compiler_type", "(", field("binding", $.string_literal), ")"),
+
     concept_declaration: ($) =>
       choice(
         seq(
@@ -437,6 +440,7 @@ module.exports = grammar({
 
     class_declaration: ($) =>
       seq(
+        optional(field("compiler_binding", $.compiler_type_binding)),
         optional(
           field("attributes", $.class_attribute_list),
         ),

@@ -2688,6 +2688,9 @@ private:
       for (const HirDirectInitialization &alias : body.directInitializations) {
         aliases[alias.source] = alias.value;
       }
+      for (const HirBody::SourceAlias &alias : body.sourceAliases) {
+        aliases[alias.source] = alias.value;
+      }
     }
 
     [[nodiscard]] HirValue *find(HirBody &body, HirValueId id) const {
@@ -4783,6 +4786,7 @@ private:
       const auto id = lowerExpression(*alias, model, classArguments,
                                       classValueArguments, body);
       if (id) {
+        body.sourceAliases.push_back({.source = &expression, .value = *id});
         output.program.sourceValueIds[&expression].push_back(*id);
       }
       return id;
