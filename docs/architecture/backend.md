@@ -1414,15 +1414,33 @@ it would still fail closed here.
 
 The same cleanup-free placement call result may instead replace one whole
 mutable binding of its type. MIR pairs that `Assign` with a
-`CleanupBeforeAssign`, which the cleanup-free alternatives make inactive and
-failure-free. The producer's success edge must reach that exact pair directly,
-as for a class result replacing a binding. The producer constructs the slot on
-success. The `Assign` move-assigns the staged wrapper into the binding, and the
-moved-from representation is retired immediately. A failing producer never
-constructs the slot and leaves the binding to MIR's failure cleanup. Native
-move assignment needs each class alternative's generated move constructor and
-move assignment. Replacing such a binding from any other source, or replacing a
-field, is outside this rule.
+`CleanupBeforeAssign`, whose recipe must be passive: no node has a destructor,
+owned pointee, closure, fixed array, polymorphic or recursive cleanup, or
+active cleanup. That cleanup executes nothing and cannot fail. The producer's
+success edge must reach that exact pair directly, as for a class result
+replacing a binding. The producer constructs the slot on success. The `Assign`
+move-assigns the staged wrapper into the binding, and the moved-from
+representation is retired immediately. A failing producer never constructs the
+slot and leaves the binding to MIR's failure cleanup. Native move assignment
+needs each class alternative's generated move constructor and move assignment.
+
+Other sources replace such a binding through the native wrapper's own
+assignment, after the same passive pair and with no value-initialized Expected
+local. A copy or move of another whole binding fuses into `destination =
+source` or `destination = std::move(source)`, extending the existing class copy
+and move assignment fusions. Each class alternative needs its generated copy or
+move constructor and assignment. A storage-free `Unexpected` constructs inline
+at the `Assign`, as it does at a binding initializer or a `Return`. A fresh
+cleanup-free construction of the success type fuses into the wrapper's
+converting assignment, extending the fresh class assignment fusion. An owning
+placement call result instead stays in its value-rooted slot. The `Assign` must
+carry MIR's `Replace` event from the result's value drop to the binding's drop.
+MIR's active `CleanupBeforeAssign` first retires the old value on its own
+success edge. The `Assign` then moves the slot's wrapper in, and the slot's
+`Drop` ends only the moved-from representation. On the cleanup's failure edge
+the result keeps its obligation and is cleaned there. Owning moves,
+`Unexpected` values and payload constructions, and an `Unexpected` wrapping a
+fresh class error, are not admitted yet.
 
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
