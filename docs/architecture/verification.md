@@ -5759,6 +5759,16 @@ timeouts, fixture sets, optimization/standard/elision/sanitizer modes, expected
 diagnostics and native observations are unchanged. Full CI and release commands
 continue to run every registered test without filtering.
 
+The largest compound suites (`stdlib_surface`, `returned_field_address_runtime`,
+`json_stdlib`, `generic_algorithm_breadth`, `complete_containers`) bound the
+suite's critical path, so they reserve `GTI_TEST_HEAVY_CASE_JOBS` workers
+(default `4`) instead of the per-suite default; CTest charges them that many
+processors. Long single-process gates carry a measured `COST` ordering hint
+(`gti_long_gate_costs` in `tests/TestThroughput.cmake`) for the same reason
+the parallel suites carry their timeout: a fresh tree knows no durations, and
+without a hint the ten-minute gates start last and run alone. Both are
+scheduling metadata only; cases, assertions and timeouts are unchanged.
+
 Compound suites also carry a conservative CTest `COST` hint based on their
 unchanged suite timeout, with a minimum of one. This is an
 ordering hint, not a measured duration: fresh trees otherwise assign unknown
