@@ -429,6 +429,13 @@ replay. It also feeds RT-1 and helps O-MIR-08's scalar-promotion prerequisite.
   The inner loop keeps two `cmp`/`csel`/`tst`/`b.ne` checks per element and is
   not vectorized. The bounds ceiling variant shows 85.8 to 24.5 ms against 22.7
   ms for C++: the retained bounds checks are the entire gap.
+  Revisited for 0.397.1: the probe's `n` is a constant, so `main`'s closed-call
+  contexts can prove these checks with intervals alone if each vector's live
+  length reaches `multiply`. 0.397.1 keeps that length through floating
+  element construction and stores. The remaining blocker is the opaque process
+  allocation behind the second and third vectors, which erases the first
+  vector's length (see [optimization.md](../architecture/optimization.md)).
+  A runtime `n` would still need this relational domain.
 - `string::find(char)` iterates `index < this.count` and then indexes with
   `this[index]`, whose check is the same comparison.
 - The heapsort's `root < end / 2` and `child + 1 < end` guarantee its index
