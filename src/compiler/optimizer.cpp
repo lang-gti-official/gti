@@ -6,6 +6,7 @@
 #include "gti/optimization/coverage.h"
 #include "gti/optimization/devirtualization.h"
 #include "gti/optimization/pass.h"
+#include "mir_verification_support.h"
 
 #include <algorithm>
 #include <map>
@@ -1118,6 +1119,10 @@ public:
     for (std::size_t round = 0; round < 8; ++round) {
       ++outcome.report.iterations;
       MirEditor editor(context.program, outcome.report.name);
+      // Every candidate below is proven against this round's unchanged
+      // program, which the canonical rewrite would otherwise verify again
+      // for each one.
+      std::optional<bool> programVerified;
       for (const MirBodyAddress address :
            enumerateMirBodyAddresses(context.program)) {
         const MirBody *body = findMirBody(context.program, address);
@@ -1183,8 +1188,13 @@ public:
                    .sourceStatement = instruction.hirStatement});
               continue;
             }
+            if (!programVerified) {
+              programVerified = verifyMirProgram(context.program).valid();
+            }
             MirProgram replay = context.program;
-            if (rewriteMirDeadInstruction(replay, address, instruction.id)) {
+            if (*programVerified &&
+                mir_detail::rewriteVerifiedMirDeadInstruction(replay, address,
+                                                              instruction.id)) {
               editor.queueDeadInstructionRemoval(
                   {.body = address, .instruction = instruction.id});
             } else {
@@ -1396,8 +1406,11 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
   }
 
   if (request.options.verifyMir) {
-    result.report.outputVerification = verifyMirOptimizationCoherence(
-        result.sourceMir, result.mir, result.report.transformations);
+    // The source snapshot is the input verified above.
+    result.report.outputVerification =
+        mir_detail::verifyVerifiedMirOptimizationCoherence(
+            result.sourceMir, result.mir, result.report.transformations, true,
+            false);
   }
   return result;
 }
