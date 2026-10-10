@@ -714,7 +714,9 @@ private:
            << ':' << value.virtualMethod << ':' << value.pureVirtual << ':'
            << value.overrideMethod << ':' << value.hasRequiresClause << ':'
            << value.compilerPrivate << ':' << value.requiresUnsafe
-           << ";cthread-operation=" << number(value.cThreadOperation) << ')';
+           << ";cthread-operation=" << number(value.cThreadOperation)
+           << ";process-memory-operation="
+           << number(value.processMemoryOperation) << ')';
   }
 
   void printValue(const LoweredConstructorDeclaration &value) {
@@ -824,7 +826,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v16\n";
+  output << "lowered-program-v17\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

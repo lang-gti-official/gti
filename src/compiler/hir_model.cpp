@@ -368,7 +368,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         instance.requiresUnsafe != declaration->requiresUnsafe ||
         instance.neverReturns != declaration->neverReturns ||
         instance.tracksCaller != declaration->tracksCaller ||
-        instance.cThreadOperation != declaration->cThreadOperation) {
+        instance.cThreadOperation != declaration->cThreadOperation ||
+        instance.processMemoryOperation !=
+            declaration->processMemoryOperation) {
       result.errors.emplace_back(
           "HIR function unsafe contract differs from its semantic declaration");
     }
