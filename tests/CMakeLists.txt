@@ -777,6 +777,9 @@ add_test(NAME raw_borrow_contract COMMAND gti_raw_borrow_tests)
 add_executable(gti_body_analysis_order_tests "${PROJECT_SOURCE_DIR}/tests/body_analysis_order_tests.cpp")
 target_link_libraries(gti_body_analysis_order_tests PRIVATE gti_compiler)
 add_test(NAME body_analysis_order COMMAND gti_body_analysis_order_tests)
+add_executable(gti_reflection_tests "${PROJECT_SOURCE_DIR}/tests/reflection_tests.cpp")
+target_link_libraries(gti_reflection_tests PRIVATE gti_compiler)
+add_test(NAME reflection_semantics COMMAND gti_reflection_tests)
 add_executable(gti_raw_access_tests "${PROJECT_SOURCE_DIR}/tests/raw_access_tests.cpp")
 target_link_libraries(gti_raw_access_tests PRIVATE gti_compiler)
 add_test(NAME raw_access_contract COMMAND gti_raw_access_tests)
@@ -1974,6 +1977,22 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_aggregate_positive.gti"
   )
+  add_test(
+    NAME reflection_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/reflection_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_basic.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_generic_encoder.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_field_names.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_type_bridge.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_mutation.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_empty_and_nested.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_generic_struct.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_sequences.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_binary_writer.gti"
+  )
+  set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
   add_test(
     NAME constexpr_text_runtime
     COMMAND "${Python3_EXECUTABLE}"

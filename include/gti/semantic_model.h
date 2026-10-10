@@ -333,6 +333,18 @@ enum class IntrinsicKind {
   SourceFunctionName,
   SourceLine,
   SourceColumn,
+  // Compile-time reflection queries (std/meta). Folded to program constants
+  // in semantics whenever their generic arguments are concrete; they never
+  // execute.
+  MetaFieldCount,
+  MetaFieldName,
+  MetaFieldIsPublic,
+  MetaTypeName,
+  MetaTypeKind,
+  // Reflected field access: semantics analyses the field projection it
+  // denotes and aliases the call to it.
+  MetaFieldGet,
+  MetaFieldGetMut,
   SimdAdd,
   SimdSubtract,
   SimdMultiply,
@@ -1308,6 +1320,8 @@ struct SymbolRecord {
   std::string name;
   std::string qualifiedName;
   SourceUnitId sourceUnit = 0;
+  // The expansion id of the declaring token (Token::expansion).
+  std::uint32_t expansion = 0;
   SourceSpan nameSpan;
   SourceSpan declarationSpan;
   std::optional<SourceSpan> definitionSpan;
@@ -1390,6 +1404,7 @@ private:
     std::size_t start = 0;
     std::size_t end = 0;
     std::string generatedName;
+    std::uint32_t expansion = 0;
 
     friend bool operator==(const DeclarationKey &,
                            const DeclarationKey &) = default;
@@ -1403,6 +1418,8 @@ private:
       result ^= std::hash<std::size_t>{}(key.end) + 0x9e3779b9U +
                 (result << 6U) + (result >> 2U);
       result ^= std::hash<std::string>{}(key.generatedName) + 0x9e3779b9U +
+                (result << 6U) + (result >> 2U);
+      result ^= std::hash<std::uint32_t>{}(key.expansion) + 0x9e3779b9U +
                 (result << 6U) + (result >> 2U);
       return result;
     }
@@ -1427,7 +1444,8 @@ private:
 
   [[nodiscard]] SymbolId
   symbolForDeclaration(SourceUnitId sourceUnit, const SourceSpan &span,
-                       std::string_view generatedName = {}) const;
+                       std::string_view generatedName = {},
+                       std::uint32_t expansion = 0) const;
 
   void record(SemanticOccurrence occurrence);
 
@@ -1463,6 +1481,17 @@ using ValueSubstitution =
 struct GenericSubstitution {
   TypeSubstitution types;
   ValueSubstitution values;
+};
+
+// One element of an expanded `constexpr for`: the element type the binding
+// was initialized with and the analysed copy of `{ binding; body }`.
+struct ConstexprForIteration {
+  SemanticType element;
+  StmtPtr block;
+};
+
+struct ConstexprForExpansion {
+  std::vector<ConstexprForIteration> iterations;
 };
 
 using SemanticDiagnostic = Diagnostic;
@@ -1712,6 +1741,17 @@ public:
 
   [[nodiscard]] std::optional<bool>
   findConstexprBranch(const IfStmt &statement) const;
+
+  // The expansion of a `constexpr for`; nullptr while the primary analysis
+  // deferred it to concrete instances or when it was never analysed.
+  [[nodiscard]] const ConstexprForExpansion *
+  findConstexprForExpansion(const ConstexprForStmt &statement) const;
+
+  // An expression that semantic analysis synthesized to stand for another
+  // (reflected field access analysed as the field projection it denotes).
+  // Lowering and classification follow the alias; the original keeps its
+  // own records for the passes that read the call shape.
+  [[nodiscard]] const Expr *findExpressionAlias(const Expr &expression) const;
 
   [[nodiscard]] std::optional<StaticAssertResult>
   findStaticAssertResult(const StaticAssertDecl &declaration) const;
@@ -1985,6 +2025,13 @@ private:
   void recordConstexprBranch(const IfStmt &statement,
                              std::optional<bool> thenBranch);
 
+  void
+  recordConstexprForExpansion(const ConstexprForStmt &statement,
+                              std::optional<ConstexprForExpansion> expansion);
+
+  const Expr &recordExpressionAlias(const Expr &expression,
+                                    std::shared_ptr<const Expr> alias);
+
   void recordStaticAssertResult(const StaticAssertDecl &declaration,
                                 StaticAssertResult result);
 
@@ -2107,7 +2154,15 @@ private:
 
   [[nodiscard]] SymbolId
   symbolForDeclaration(SourceUnitId sourceUnit, const SourceSpan &span,
-                       std::string_view generatedName = {}) const;
+                       std::string_view generatedName = {},
+                       std::uint32_t expansion = 0) const;
+
+  // AST copies made by compile-time expansion. They are referenced by HIR
+  // and by instance-analysis deltas, so the model that outlives both owns
+  // them.
+  void
+  adoptExpansionArena(std::vector<StmtPtr> statements,
+                      std::vector<std::shared_ptr<const Expr>> expressions);
 
   void recordOccurrence(SemanticOccurrence occurrence);
 
@@ -2163,6 +2218,13 @@ private:
       conditionalLoanEnds;
   // nullopt is an explicitly deferred primary selection, not a false branch.
   std::unordered_map<const IfStmt *, std::optional<bool>> constexprBranches;
+  std::unordered_map<const ConstexprForStmt *,
+                     std::optional<ConstexprForExpansion>>
+      constexprForExpansions;
+  std::unordered_map<const Expr *, std::shared_ptr<const Expr>>
+      expressionAliases;
+  std::vector<StmtPtr> expansionArena;
+  std::vector<std::shared_ptr<const Expr>> expressionArena;
   std::unordered_map<const StaticAssertDecl *, StaticAssertResult>
       staticAssertResults;
   std::unordered_map<const SwitchStmt *,

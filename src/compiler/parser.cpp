@@ -315,7 +315,8 @@ private:
     Token attribute =
         consume(TokenKind::IDENTIFIER, "Expect attribute name after '@'.");
     if (attribute.lexeme != "runtime" &&
-        attribute.lexeme != "compiler_constraint") {
+        attribute.lexeme != "compiler_constraint" &&
+        attribute.lexeme != "compiler_type") {
       throw error(attribute,
                   "Unknown declaration attribute '@" + attribute.lexeme + "'.");
     }
@@ -335,6 +336,14 @@ private:
       return conceptDeclaration(
           std::move(keyword),
           CompilerConstraintBinding{std::move(attribute), name});
+    }
+    if (attribute.lexeme == "compiler_type") {
+      if (!match({TokenKind::CLASS, TokenKind::STRUCT})) {
+        throw error(peek(),
+                    "Compiler type bindings must annotate a class or struct.");
+      }
+      return classDeclaration({}, previous(),
+                              CompilerTypeBinding{std::move(attribute), name});
     }
     if (!isTypedDeclaration()) {
       throw error(peek(), "Runtime binding must annotate a function.");
@@ -747,8 +756,9 @@ private:
     }
   }
 
-  StmtPtr classDeclaration(std::vector<ClassAttribute> attributes,
-                           Token keyword) {
+  StmtPtr classDeclaration(
+      std::vector<ClassAttribute> attributes, Token keyword,
+      std::optional<CompilerTypeBinding> compilerTypeBinding = std::nullopt) {
     const ClassKind kind =
         keyword.kind == TokenKind::STRUCT      ? ClassKind::Struct
         : keyword.kind == TokenKind::INTERFACE ? ClassKind::Interface
@@ -790,7 +800,7 @@ private:
           std::move(attributes), std::move(keyword), kind, std::move(name),
           std::move(exactSpecialization), std::move(genericParameters),
           std::move(bases), StmtList{}, true,
-          std::move(genericArgumentPatterns));
+          std::move(genericArgumentPatterns), std::move(compilerTypeBinding));
     }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before type body.");
 
@@ -822,7 +832,7 @@ private:
         std::move(attributes), std::move(keyword), kind, name,
         std::move(exactSpecialization), std::move(genericParameters),
         std::move(bases), std::move(members), false,
-        std::move(genericArgumentPatterns));
+        std::move(genericArgumentPatterns), std::move(compilerTypeBinding));
   }
 
   StmtPtr enumDeclaration(Token keyword) {
@@ -2045,6 +2055,9 @@ private:
       throw error(peek(), "Expect a class member declaration.");
     }
 
+    if (check(TokenKind::CONSTEXPR) && peekAt(1).kind == TokenKind::FOR) {
+      return constexprForStatement();
+    }
     if (isStructuredBindingPrefix()) {
       if (check(TokenKind::MUT)) {
         throw error(peek(), "Structured bindings are immutable; remove 'mut'.");
@@ -2315,6 +2328,9 @@ private:
     if (match({TokenKind::LEFT_BRACE})) {
       return std::make_unique<BlockStmt>(blockItems());
     }
+    if (check(TokenKind::CONSTEXPR) && peekAt(1).kind == TokenKind::FOR) {
+      return constexprForStatement();
+    }
     if (match({TokenKind::IF})) {
       return ifStatement();
     }
@@ -2394,6 +2410,45 @@ private:
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after do-while condition.");
     consume(TokenKind::SEMICOLON, "Expect ';' after do-while statement.");
     return std::make_shared<DoWhileStmt>(std::move(body), std::move(condition));
+  }
+
+  // constexpr for ( [mut] type IDENTIFIER : sequence ) statement
+  //
+  // The element binding is synthesized here as `auto name = <element>()`
+  // with a generated callee that only semantic analysis understands; it is
+  // cloned per element together with the body.
+  StmtPtr constexprForStatement() {
+    Token constexprKeyword = advance();
+    Token keyword = advance();
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after 'constexpr for'.");
+    const Mutability mutability =
+        match({TokenKind::MUT}) ? Mutability::Mutable : Mutability::Immutable;
+    TypeRef bindingType = parseType();
+    Token name = consume(TokenKind::IDENTIFIER,
+                         "Expect an element binding name in 'constexpr for'.");
+    Token colon = consume(TokenKind::COLON,
+                          "Expect ':' after the 'constexpr for' binding.");
+    ExprPtr sequence = expression();
+    consume(TokenKind::RIGHT_PAREN,
+            "Expect ')' after the 'constexpr for' sequence.");
+    StmtPtr body = statement();
+    auto initializer = std::make_unique<Call>(
+        generatedVariable(generatedToken(TokenKind::IDENTIFIER,
+                                         "__constexpr_for_element", name)),
+        std::vector<TypeRef>{},
+        generatedToken(TokenKind::RIGHT_PAREN, ")", name), ExprList{});
+    const Call *initializerPointer = initializer.get();
+    auto elementBinding = std::make_shared<VariableDecl>(
+        mutability, bindingType, name, std::move(initializer), std::nullopt,
+        false, std::nullopt, false, false,
+        mutability == Mutability::Mutable
+            ? std::optional<Token>{generatedToken(TokenKind::MUT, "mut", name)}
+            : std::nullopt);
+    return std::make_shared<ConstexprForStmt>(
+        std::move(constexprKeyword), std::move(keyword), mutability,
+        std::move(bindingType), std::move(name), std::move(colon),
+        std::move(sequence), std::move(body), std::move(elementBinding),
+        initializerPointer);
   }
 
   StmtPtr forStatement() {

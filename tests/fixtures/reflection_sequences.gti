@@ -1,0 +1,38 @@
+// `constexpr for` is general: any class whose generic arguments are one type
+// pack is a sequence, elements may be plain types, loops nest, zero elements
+// expand to nothing, and each copy's locals are its own.
+#include <std/meta>
+
+struct Pair<A, B> {
+  A first;
+  B second;
+};
+
+int main() {
+  mut uint64_t total = 0;
+  constexpr for (auto element : std::meta::list<int32_t, bool, double>()) {
+    auto local = uint64_t(1);
+    total = total + local;
+  }
+  constexpr for (auto outer : std::meta::list<std::meta::type<int32_t>, std::meta::type<bool>>()) {
+    constexpr for (auto inner : std::meta::list<std::meta::type<double>>()) {
+      if constexpr (outer.is_integral()) {
+        total = total + uint64_t(10);
+      } else {
+        total = total + uint64_t(100);
+      }
+    }
+  }
+  constexpr for (auto nothing : std::meta::list<>()) {
+    total = total + uint64_t(1000);
+  }
+  if (total != uint64_t(113)) { return 1; }
+  Pair<uint32_t, uint64_t> pair = {.first = uint32_t(3), .second = uint64_t(4)};
+  mut uint64_t sum = 0;
+  constexpr for (auto field : std::meta::fields_of<Pair<uint32_t, uint64_t>>()) {
+    sum = sum + uint64_t(field.get(pair));
+  }
+  if (sum != uint64_t(7)) { return 2; }
+  if (std::meta::type_of<Pair<uint32_t, uint64_t>>().field_count() != uint64_t(2)) { return 3; }
+  return 0;
+}

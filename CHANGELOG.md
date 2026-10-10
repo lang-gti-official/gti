@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.397.11 — Generic callees declared after their caller
+## 0.398.1 — Generic callees declared after their caller
 
 - A generic function that returns a moved by-value parameter, such as an
   iterator-returning `find`, can now be declared after the function that calls
@@ -18,6 +18,35 @@ for what minor and patch releases mean.
   callee first was accepted. The caller now asks for the callee's body
   analysis on demand; declaration-order rules are unchanged, so namespace
   globals and `constexpr` definitions must still precede their uses.
+
+## 0.398.0 — Compile-time reflection and `constexpr for`
+
+- `constexpr for (auto element : sequence) statement` iterates a finite
+  sequence of types at compile time: the sequence is a value of any class
+  whose generic arguments are one type pack, and the body is analyzed once per
+  element as its own copy with the binding initialized to a default
+  element. Immutable bindings of constant-constructible elements are
+  `constexpr`, so `if constexpr` can select elements. Dependent sequences in
+  generic functions expand per instance. No run-time loop exists.
+- New standard unit `<std/meta>`: `std::meta::fields_of<T>()` lists the
+  instance fields of a struct or class in declaration order as
+  `std::meta::field<T, I>` metaobjects with `name()`, `index()`,
+  `is_public()`, `type()`, `get(owner)` and `get_mut(owner)`;
+  `std::meta::type_of<T>()`, `name_of<T>()`, `field_type<T, I>` and the
+  `is_struct`, `is_class`, `is_enum`, `is_integral`, `is_floating_point`,
+  `is_bool` and `is_text` predicates describe types. Queries fold to
+  constants; reflected access is the field projection itself, under the
+  ordinary access, mutability and borrowing rules of the call site. A program
+  that consumes reflection at compile time carries no reflection data.
+## 0.397.11 — Optimized compiles of large bodies use far less memory
+
+- Compiling at `-O2` or `-O3` no longer needs gigabytes of memory for a large
+  function body. The sparse-constant solver kept a complete copy of every
+  value's fact for every basic block; it now shares facts that a block leaves
+  unchanged. Compiling `tests/fixtures/stdlib_surface_json.gti` at `-O3`
+  peaks near 3 GiB resident instead of 8 to 11 GiB and finishes about 20%
+  sooner, with byte-identical generated C++ and unchanged optimization
+  results. The `json_stdlib` test now fails if such a compile exceeds 6 GiB.
 
 ## 0.397.9 — Backend crashes fixed for `expected` values and resource owners
 
