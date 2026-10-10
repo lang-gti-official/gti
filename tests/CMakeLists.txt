@@ -3635,6 +3635,12 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/block_comment_lsp_test.py"
               "$<TARGET_FILE:gti_lsp>"
     )
+    add_test(
+      NAME comment_placement_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/comment_placement_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
     add_test(NAME discardable_result_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/discardable_result_lsp_test.py"

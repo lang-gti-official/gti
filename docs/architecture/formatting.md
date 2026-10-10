@@ -121,6 +121,13 @@ Line comments, block comments, and strings remain separate scanner concerns
 because the compiler lexer intentionally discards comments. The formatter
 preserves inline and multiline `/* ... */` contents, normalizes continuation
 indentation beneath the containing structure, and remains idempotent.
+Comment placement follows source lines. A comment that begins on the same
+line as the preceding code stays trailing, as in `int y = 2; // note`. A line
+comment that begins its own line, or a block comment alone on its line, keeps
+its own line even where formatting joins or reflows the surrounding code, so
+it continues to describe the code after it. A statement-ending `;` or closing
+`}` keeps its line open only for a comment on that same line, so a block
+comment leading the next line's code never joins two statements.
 Formatting does not consult emitted C++ or delegate GTI syntax decisions to a
 native C++ tool.
 

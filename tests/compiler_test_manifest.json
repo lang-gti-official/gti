@@ -18,6 +18,10 @@
       "suite": "frontend"
     },
     {
+      "name": "testOwnLineCommentPlacement",
+      "suite": "frontend"
+    },
+    {
       "name": "testSourceModuleResolution",
       "suite": "frontend"
     },
