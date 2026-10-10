@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.397.9 — Three backend crashes fixed
+## 0.397.9 — Backend crashes fixed for `expected` values and resource owners
 
 - Returning a named `expected` local now compiles, whatever its payload:
   `return granted;`, observing it before returning it,
@@ -27,33 +27,38 @@ for what minor and patch releases mean.
   destructor. The compiler now recognises this even when a call or
   construction sits between the move and the end of scope, so those
   constructors no longer carry an impossible failure path.
-
-## 0.397.10 — `expected` results passed straight to constructor parameters
-
-- Fix internal compiler error GTI-B0001 when a call's `expected<T, E>` result
-  is passed directly to a by-value `expected<T, E>` constructor parameter, as
-  in `holder h{make(true)}`, and `T` is a class that needs no cleanup. Binding
-  the result to a local first is no longer necessary. The fix covers class
-  error types, arguments before and after the `expected`, classes with a
-  destructor, loops, temporaries such as `holder(make(true)).get()`,
-  constructions inside another constructor's body, callers that propagate
-  failure, and both the value and the error state.
-- Assigning such a construction to an existing variable, returning it
-  directly, or using it as a member initializer still reports GTI-B0001, as
-  it already did for payloads that own resources.
-
-## 0.397.9 — `expected` results passed straight to by-value parameters
-
-- Fix internal compiler error GTI-B0001 when a call's `expected<T, E>` result
-  is passed directly to a by-value `expected<T, E>` parameter, as in
-  `check(make(true))`, and `T` is a class that needs no cleanup, such as a
-  struct of plain fields. Before, this only built when the result was first
-  bound to a local. The fix covers class error types, arguments before and
-  after the `expected`, member-function calls, callers that propagate failure,
-  and both the value and the error state. Payloads that own resources, such as
-  a `std::string` field, already built and are unchanged.
-- Passing such a result directly to a constructor parameter still reports
-  GTI-B0001; bind it to a local first.
+- Fix internal compiler error GTI-B0001 when an `expected<T, E>` value is
+  passed to a by-value `expected<T, E>` parameter of a function or
+  constructor and `T` is a class that needs no cleanup. This covers a call's
+  result passed directly, as in `check(make(true))` or `holder
+  h{make(true)}`, and a named local copied in, as in `check(local)` or
+  `holder h{local}`, which keeps its value. It also covers class error types,
+  arguments before and after the `expected`, member-function calls, classes
+  with a destructor as the constructed holder, loops, temporaries such as
+  `holder(make(true)).get()`, constructions inside another constructor's
+  body, callers that propagate failure, and both the value and the error
+  state.
+- Passing a by-value `expected<T, E>` parameter on to another call no longer
+  fails native compilation when `T` is such a class and declares its own
+  default constructor.
+- Replacing a mutable `expected<T, E>` local now builds from every source: a
+  call result (`result = make(false)`, #224), another local, `std::move(other)`,
+  `unexpected(error)` and a payload value (`result = value_type(...)`, #225).
+  This holds whether `T` needs no cleanup or owns resources, such as a class
+  with a destructor or a `std::string` field (#225, #227). Each replaced value
+  is destroyed exactly once, an error destroys nothing, and a moved-from source
+  is not destroyed again. Before, these reported GTI-B0001; the `std::move`
+  form with a cleanup-free payload failed native compilation, and the payload
+  form with an owning payload failed while building MIR. `result =
+  unexpected(error)` also builds now for an `expected` whose payload is not a
+  class.
+- `unexpected(error_type(...))`, where the error is a newly constructed class
+  that needs no cleanup, now builds when it initializes or replaces an
+  `expected` local, not only when it is returned directly (#227). The error is
+  constructed before a replaced value that owns resources is destroyed.
+- A construction from such an `expected` argument that is assigned to an
+  existing variable, returned directly, or used as a member initializer still
+  reports GTI-B0001.
 
 ## 0.397.8 — Moving a destructor-free borrowing class into a nested member
 
