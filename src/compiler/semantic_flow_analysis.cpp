@@ -7693,10 +7693,29 @@ auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
     return receiverStateSymbol();
   if (place.root == 0)
     return nullptr;
+  // A binding names this root exactly when its declaration token carries the
+  // key the identity was recorded under: the database maps each declaration
+  // key (source unit, name span, generated lexeme) to one identity and keeps
+  // that key on the identity's record. Comparing the record's fields costs an
+  // integer compare per candidate, where `symbolForDeclaration` hashed a key
+  // per candidate, and a miss visits every namespace symbol of every unit.
+  const SymbolRecord *record = semanticModel.database().findSymbol(place.root);
+  if (record == nullptr)
+    return nullptr;
+  const std::string_view generatedName =
+      record->generated ? std::string_view{record->name} : std::string_view{};
   const auto find = [&](auto &bindings) -> Symbol * {
-    for (auto &[_, symbol] : bindings)
-      if (symbolForDeclaration(symbol.declaration) == place.root)
+    for (auto &[_, symbol] : bindings) {
+      const Token &name = symbol.declaration;
+      if (name.position != record->nameSpan.start)
+        continue;
+      const std::string_view tokenGeneratedName =
+          name.generated ? std::string_view{name.lexeme} : std::string_view{};
+      if (tokenSpan(name).end == record->nameSpan.end &&
+          tokenGeneratedName == generatedName &&
+          sourceUnitFor(name) == record->sourceUnit)
         return &symbol;
+    }
     return nullptr;
   };
   for (auto &scope : scopes)
@@ -7968,7 +7987,15 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   // snapshot; only the normalized result facts leave this worker.
   auto worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
                                        sources, RawPointerAuditMode::Warn);
-  worker->catalog = catalog.snapshotForInstanceAnalysis();
+  // Every snapshot of the sealed catalog is identical, and the instance
+  // analysis below asserts the worker's catalog unchanged on exit, so a
+  // snapshot released by an earlier query is the same as a fresh one.
+  if (state->idleCatalogs.empty()) {
+    worker->catalog = catalog.snapshotForInstanceAnalysis();
+  } else {
+    worker->catalog = std::move(state->idleCatalogs.back());
+    state->idleCatalogs.pop_back();
+  }
   worker->semanticModel = semanticModel;
   worker->valueFlow = valueFlow;
   // Cached summaries must describe global pointer inputs, not freeze the
@@ -8026,6 +8053,7 @@ auto SemanticVisitor::Impl::runRawResultQuery(
           : worker->analyzeFunctionInstance(entry->function, entry->ownerTypes,
                                             entry->ownerValues, entry->types,
                                             entry->values);
+  state->idleCatalogs.push_back(std::move(worker->catalog));
   entry->valid = analysis.valid();
   if (!entry->valid)
     for (const auto &diagnostic : analysis.diagnostics)
