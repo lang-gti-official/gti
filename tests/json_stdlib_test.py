@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import pathlib
 import subprocess
 import sys
 import tempfile
+
+from case_jobs import configured_jobs, positive_jobs, run_cases
 
 # Peak resident memory one optimized compile of these fixtures may reach. This
 # is a regression guard, not a benchmark. Before the SCCP solver shared
@@ -65,48 +68,74 @@ def require_success(result: subprocess.CompletedProcess[str], label: str) -> Non
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: json_stdlib_test.py <gti> <fixture-directory>")
-
-    gti = str(pathlib.Path(sys.argv[1]).resolve())
-    fixtures = pathlib.Path(sys.argv[2]).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("gti")
+    parser.add_argument("fixtures")
+    parser.add_argument("--jobs", type=positive_jobs, default=configured_jobs(),
+                        help="bounded concurrent compile workers")
+    arguments = parser.parse_args()
+    gti = str(pathlib.Path(arguments.gti).resolve())
+    fixtures = pathlib.Path(arguments.fixtures).resolve()
     mir_cases = ("stdlib_surface_json.gti", "stdlib_json_codec.gti")
-
     with tempfile.TemporaryDirectory(prefix="gti-json-stdlib-") as temporary:
         output = pathlib.Path(temporary)
+        # Each MIR emission and each native build is an independent
+        # bounded-worker case. Workers only compile; the native runs, the
+        # memory guard and every check happen on this thread in plan order,
+        # with the same expectations and timeouts as the serial form.
+        plan = []
         for optimization in ("-O0", "-O3"):
             for source_name in mir_cases:
-                source = fixtures / source_name
-                mir = output / f"{source.stem}-{optimization[1:]}.mir"
-                command = [gti, str(source), "--emit-mir", optimization, "-o", str(mir)]
+                plan.append((f"mir:{source_name}:{optimization}",
+                             ("mir", source_name, None, optimization)))
+        for standard, optimization in (("c++23", "-O0"), ("c++20", "-O3")):
+            for source_name in (*mir_cases, "json_temporary_owner.gti"):
+                plan.append((f"native:{source_name}:{standard}:{optimization}",
+                             ("native", source_name, standard, optimization)))
+        plan.append(("regression:json_expected_value_backend_bug.gti",
+                     ("regression", "json_expected_value_backend_bug.gti", None, "-O0")))
+
+        def work(case):
+            kind, source_name, standard, optimization = case
+            source = fixtures / source_name
+            peak = None
+            if kind == "mir":
+                artifact = output / f"{source.stem}-{optimization[1:]}.mir"
+                command = [gti, str(source), "--emit-mir", optimization, "-o", str(artifact)]
                 if optimization == "-O3":
                     compiled, peak = run_measured(command)
-                    require_success(compiled, f"emit MIR {source_name} {optimization}")
-                    if peak > PEAK_RESIDENT_LIMIT_BYTES:
-                        raise AssertionError(
-                            f"emit MIR {source_name} {optimization} peaked at "
-                            f"{peak / 1024 ** 3:.2f} GiB resident, above the "
-                            f"{PEAK_RESIDENT_LIMIT_BYTES / 1024 ** 3:.0f} GiB "
-                            "compiler memory guard"
-                        )
                 else:
                     compiled = run(command)
-                    require_success(compiled, f"emit MIR {source_name} {optimization}")
-                if not mir.is_file():
+            elif kind == "native":
+                artifact = output / f"{source.stem}-{standard}-{optimization[1:]}"
+                compiled = run(
+                    [gti, str(source), "--std", standard, optimization,
+                     "-o", str(artifact)], timeout=600
+                )
+            else:
+                artifact = output / "json-expected-value-backend-bug"
+                compiled = run([gti, str(source), "-O0", "-o", str(artifact)], timeout=60)
+            return (case, compiled, artifact, peak)
+
+        def observe(value):
+            (kind, source_name, standard, optimization), compiled, artifact, peak = value
+            if kind == "mir":
+                require_success(compiled, f"emit MIR {source_name} {optimization}")
+                if peak is not None and peak > PEAK_RESIDENT_LIMIT_BYTES:
+                    raise AssertionError(
+                        f"emit MIR {source_name} {optimization} peaked at "
+                        f"{peak / 1024 ** 3:.2f} GiB resident, above the "
+                        f"{PEAK_RESIDENT_LIMIT_BYTES / 1024 ** 3:.0f} GiB "
+                        "compiler memory guard"
+                    )
+                if not artifact.is_file():
                     raise AssertionError(
                         f"emit MIR {source_name} {optimization} produced no artifact"
                     )
-
-        for standard, optimization in (("c++23", "-O0"), ("c++20", "-O3")):
-            for source_name in (*mir_cases, "json_temporary_owner.gti"):
-                source = fixtures / source_name
-                binary = output / f"{source.stem}-{standard}-{optimization[1:]}"
-                compiled = run(
-                    [gti, str(source), "--std", standard, optimization,
-                     "-o", str(binary)], timeout=600
-                )
+                return
+            if kind == "native":
                 require_success(compiled, f"native {source_name} {standard} {optimization}")
-                executed = run([str(binary)], timeout=30)
+                executed = run([str(artifact)], timeout=30)
                 require_success(executed, f"run {source_name} {standard} {optimization}")
                 expected = (
                     'demo\n{"name":"demo","private":true,"count":42,"items":["one",2]}\n'
@@ -114,13 +143,11 @@ def main() -> int:
                 )
                 if executed.stdout != expected or executed.stderr:
                     raise AssertionError(f"unexpected JSON output: {executed}")
+                return
+            require_success(compiled, "native owning-error expected regression")
+            require_success(run([str(artifact)]), "run owning-error expected regression")
 
-        regression = fixtures / "json_expected_value_backend_bug.gti"
-        binary = output / "json-expected-value-backend-bug"
-        compiled = run([gti, str(regression), "-O0", "-o", str(binary)], timeout=60)
-        require_success(compiled, "native owning-error expected regression")
-        require_success(run([str(binary)]), "run owning-error expected regression")
-
+        run_cases(plan, work, arguments.jobs, observe)
     return 0
 
 
