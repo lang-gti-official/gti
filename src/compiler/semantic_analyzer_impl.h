@@ -3,6 +3,7 @@
 #include "gti/semantic_analyzer.h"
 
 #include "diagnostic_registry.h"
+#include "gti/ast_clone.h"
 #include "gti/frontend_work.h"
 #include "gti/standard_library.h"
 #include "semantic_diagnostics.h"
@@ -247,6 +248,7 @@ public:
   void visitClassDecl(const ClassDecl &stmt) override;
 
   void visitConditionalStmt(const ConditionalStmt &stmt) override;
+  void visitConstexprForStmt(const ConstexprForStmt &stmt) override;
 
   void visitCompileErrorDirective(const CompileErrorDirective &stmt) override;
 
@@ -848,6 +850,8 @@ private:
     std::optional<Diagnostic> failure;
   };
 
+  struct SemanticCatalog;
+
   struct RawResultQueryState {
     // Interned diagnostic records only. Keeping evidence is independent of
     // admitting a complete root result to the bounded reuse cache.
@@ -857,6 +861,11 @@ private:
     std::size_t nextIdentity = 1;
     std::size_t depth = 0;
     std::optional<bool> hasRawGlobals;
+    // Sealed catalog snapshots released by completed query workers. The
+    // request catalog is sealed and asserted unchanged across every instance
+    // analysis, so each snapshot has the same content; a later worker takes a
+    // released one instead of re-registering every callable declaration.
+    std::vector<SemanticCatalog> idleCatalogs;
   };
 
   struct Symbol {
@@ -989,6 +998,19 @@ private:
     const VariableDecl *declaration = nullptr;
   };
 
+  // `@compiler_type` bindings of classes in the trusted std/meta unit.
+  // MetaList, MetaField and MetaType are ordinary classes the compiler must
+  // be able to name; MetaFieldList and MetaFieldType are computed types whose
+  // concrete instances canonicalization rewrites.
+  enum class CompilerTypeKind {
+    None,
+    MetaList,
+    MetaField,
+    MetaType,
+    MetaFieldList,
+    MetaFieldType,
+  };
+
   struct ClassInfo {
     enum class DefaultsState { Unresolved, Resolving, Resolved, Invalid };
     ClassId id = 0;
@@ -1040,6 +1062,7 @@ private:
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
     NativeCScalarKind nativeCScalar = NativeCScalarKind::None;
+    CompilerTypeKind compilerType = CompilerTypeKind::None;
   };
 
   struct ExactClassSpecialization {
@@ -3443,6 +3466,60 @@ private:
   [[nodiscard]] bool isPolymorphicLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool isSourceLocationLibraryUnit(SourceUnitId sourceUnit) const;
+  [[nodiscard]] bool isMetaLibraryUnit(SourceUnitId sourceUnit) const;
+
+  // ---- Compile-time reflection (std/meta) ----
+  // Classes bound by `@compiler_type`, by binding kind.
+  std::unordered_map<CompilerTypeKind, ClassId> compilerTypeClasses;
+  [[nodiscard]] static std::optional<CompilerTypeKind>
+  compilerTypeKind(std::string_view binding);
+  [[nodiscard]] ClassId compilerTypeClass(CompilerTypeKind kind) const;
+  // Rewrites a concrete instance of a computed compiler type to the type it
+  // denotes; every other type is returned unchanged.
+  [[nodiscard]] SemanticType rewriteCompilerType(SemanticType type) const;
+  struct MetaFieldFacts {
+    std::string name;
+    bool isPublic = false;
+    SemanticType type = SemanticType::Unknown;
+    const VariableDecl *declaration = nullptr;
+  };
+  [[nodiscard]] std::uint64_t metaFieldCount(const SemanticType &type) const;
+  [[nodiscard]] std::uint64_t metaTypeKind(const SemanticType &type) const;
+  [[nodiscard]] std::optional<MetaFieldFacts>
+  metaFieldFacts(const SemanticType &owner, std::uint64_t index) const;
+  // The element types of a `constexpr for` sequence value, or nullopt when
+  // the type is not a class whose generic arguments are one type pack.
+  [[nodiscard]] std::optional<std::vector<SemanticType>>
+  compileTimeSequenceElements(const SemanticType &type) const;
+  // Whether `T()` is a constant the bounded evaluator can produce, which
+  // decides whether a `constexpr for` element binding is constexpr.
+  [[nodiscard]] bool
+  isConstexprDefaultConstructible(const SemanticType &type) const;
+  void analyzeMetaIntrinsicCall(const Call &expr,
+                                const CallableCandidate &declaration);
+  [[nodiscard]] std::optional<ConstantValue>
+  metaIntrinsicConstant(const ResolvedCallInfo &call,
+                        const ConstexprInterpreter &context) const;
+  void analyzeMetaFieldAccess(const Call &expr, const Get &member,
+                              const SemanticType &fieldObject,
+                              bool mutableAccess);
+  // The element binding of the `constexpr for` copy being analysed and the
+  // element it is initialized with; visitCallExpr binds the generated
+  // initializer to a default construction of that element.
+  struct ConstexprForFrame {
+    const Call *initializer = nullptr;
+    SemanticType element = SemanticType::Unknown;
+  };
+  std::vector<ConstexprForFrame> constexprForFrames;
+  // Expansion ids stamped on the tokens of each expanded copy, and the
+  // copies themselves until the model adopts them.
+  std::uint32_t nextExpansion = 0;
+  std::vector<StmtPtr> expansionArena;
+  std::vector<std::shared_ptr<const Expr>> synthesizedExpressions;
+  static constexpr std::size_t kConstexprForElementLimit = 1024;
+  static constexpr std::size_t kConstexprForBodyLimit = 4096;
+  // Bodies expanded by `constexpr for` inside the declaration being analysed.
+  std::size_t constexprForExpandedBodies = 0;
 
   [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isSimdLibraryUnit(SourceUnitId sourceUnit) const;

@@ -13,6 +13,10 @@ const HirValue *HirBody::valueForSource(const Expr &source) const {
        alias != directInitializations.rend(); ++alias)
     if (alias->source == &source)
       return findValue(alias->value);
+  for (auto alias = sourceAliases.rbegin(); alias != sourceAliases.rend();
+       ++alias)
+    if (alias->source == &source)
+      return findValue(alias->value);
   return nullptr;
 }
 

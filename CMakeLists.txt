@@ -347,6 +347,7 @@ add_dependencies("gti_semantic_analysis" gti_diagnostic_registry)
 add_library(
   "gti_compiler" STATIC
   $<TARGET_OBJECTS:gti_semantic_analysis>
+  "src/compiler/ast_clone.cpp"
   "src/compiler/ast_printer.cpp"
   "src/compiler/binary_float.cpp"
   "src/compiler/checked_integer.cpp"

@@ -6,15 +6,38 @@
 #include "gti/optimization/coverage.h"
 
 #include <algorithm>
+#include <memory>
 #include <optional>
 #include <utility>
 
 namespace lang {
 namespace {
 
+// Facts are immutable once stored, so the dense per-block states share one
+// allocation for every fact a transfer or join leaves unchanged. A body with B
+// executable blocks and V values otherwise materializes B*V independent facts,
+// each carrying a SemanticType and three evidence vectors, which dominated
+// peak compiler memory for large bodies. Sharing changes only storage: every
+// fact a state exposes has exactly the contents the copying representation
+// produced, and the solver never mutates a stored fact in place.
+using SharedFact = std::shared_ptr<const MirSccpValueFact>;
+
 struct State {
-  std::vector<MirSccpValueFact> values;
+  std::vector<SharedFact> values;
 };
+
+[[nodiscard]] SharedFact share(MirSccpValueFact fact) {
+  return std::make_shared<const MirSccpValueFact>(std::move(fact));
+}
+
+// Stores `fact` into `slot` unless the slot already holds an equal fact, in
+// which case the existing allocation stays shared with every other state.
+void assign(SharedFact &slot, MirSccpValueFact fact) {
+  if (slot && *slot == fact) {
+    return;
+  }
+  slot = share(std::move(fact));
+}
 
 template <typename T> void appendUnique(std::vector<T> &target, T value) {
   optimization_detail::insertEvidenceId(target, value);
@@ -75,8 +98,9 @@ template <typename T> void appendUnique(std::vector<T> &target, T value) {
 
 [[nodiscard]] const MirSccpValueFact *fact(const State &state,
                                            MirValueId value) {
-  return value == 0 || value > state.values.size() ? nullptr
-                                                   : &state.values[value - 1];
+  return value == 0 || value > state.values.size()
+             ? nullptr
+             : state.values[value - 1].get();
 }
 
 [[nodiscard]] MirSccpValueFact operandFact(const MirBody &body,
@@ -179,8 +203,8 @@ void transferInstructions(const MirBody &body, const MirBlock &block,
         *instruction.result > state.values.size()) {
       continue;
     }
-    state.values[*instruction.result - 1] =
-        evaluateInstruction(body, block, instruction, state);
+    assign(state.values[*instruction.result - 1],
+           evaluateInstruction(body, block, instruction, state));
   }
 }
 
@@ -200,7 +224,7 @@ void bindArguments(const MirBody &body, MirBlockId target,
     bound.type = block->parameters[index].type;
     appendUnique(bound.evidence.blocks, target);
     appendUnique(bound.evidence.values, parameter);
-    state.values[parameter - 1] = std::move(bound);
+    assign(state.values[parameter - 1], std::move(bound));
   }
 }
 
@@ -268,16 +292,17 @@ outgoing(const MirBody &body, const MirBlock &block, State state) {
   }
   bool changed = false;
   for (std::size_t index = 0; index < target.values.size(); ++index) {
-    auto &current = target.values[index];
-    const auto &next = incoming.values[index];
+    SharedFact &current = target.values[index];
+    const SharedFact &next = incoming.values[index];
     // The meet is idempotent, including its canonical evidence. Avoid copying
     // every type and evidence vector just to rediscover an unchanged fact.
-    if (current == next) {
+    if (current == next || *current == *next) {
       continue;
     }
-    MirSccpValueFact joined = meet(current, next);
-    if (current != joined) {
-      current = std::move(joined);
+    MirSccpValueFact joined = meet(*current, *next);
+    if (*current != joined) {
+      // A join that adopts the incoming fact shares its allocation.
+      current = joined == *next ? next : share(std::move(joined));
       changed = true;
     }
   }
@@ -307,7 +332,7 @@ MirSccpAnalysis analyzeMirSccp(const MirProgram &program,
   State entry;
   entry.values.reserve(body->values.size());
   for (const MirValue &value : body->values) {
-    entry.values.push_back(unknown(value));
+    entry.values.push_back(share(unknown(value)));
   }
   const MirBlock *entryBlock = body->findBlock(body->entry);
   if (entryBlock == nullptr) {
@@ -315,9 +340,9 @@ MirSccpAnalysis analyzeMirSccp(const MirProgram &program,
   }
   for (const MirBlockParameter &parameter : entryBlock->parameters) {
     if (parameter.value != 0 && parameter.value <= entry.values.size()) {
-      entry.values[parameter.value - 1] =
+      entry.values[parameter.value - 1] = share(
           overdefined(body->values[parameter.value - 1],
-                      {.blocks = {body->entry}, .values = {parameter.value}});
+                      {.blocks = {body->entry}, .values = {parameter.value}}));
     }
   }
   const MirForwardDataflowResult<State> solved = runMirForwardDataflow(
@@ -348,7 +373,7 @@ MirSccpAnalysis analyzeMirSccp(const MirProgram &program,
       if (parameter.value != 0 && parameter.value <= state.values.size()) {
         result.values[parameter.value - 1] =
             meet(result.values[parameter.value - 1],
-                 state.values[parameter.value - 1]);
+                 *state.values[parameter.value - 1]);
       }
     }
     transferInstructions(*body, block, state);
@@ -356,7 +381,7 @@ MirSccpAnalysis analyzeMirSccp(const MirProgram &program,
       if (instruction.result && *instruction.result <= state.values.size()) {
         result.values[*instruction.result - 1] =
             meet(result.values[*instruction.result - 1],
-                 state.values[*instruction.result - 1]);
+                 *state.values[*instruction.result - 1]);
       }
     }
     if (block.terminator.kind == MirTerminatorKind::Branch &&

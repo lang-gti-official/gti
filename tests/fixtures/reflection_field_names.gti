@@ -1,0 +1,19 @@
+#include <std/meta>
+#include <std/string>
+#include <std/vector>
+
+struct Player {
+  uint32_t health = 100;
+  float speed = 1.5;
+};
+
+int main() {
+  mut std::vector<std::string> names{};
+  constexpr for (auto field : std::meta::fields_of<Player>()) {
+    names.push_back(std::string(field.name()));
+  }
+  if (names.size() != std::size_t(2)) { return 1; }
+  if (names[std::size_t(0)] != "health") { return 2; }
+  if (names[std::size_t(1)] != "speed") { return 3; }
+  return 0;
+}

@@ -1503,7 +1503,85 @@ instance calls, mutable or persistently stored references, allocation, payload e
 cleanup-owning aggregates, and runtime/intrinsic/C calls are rejected until
 they have compiler-owned evaluation rules.
 
-## 3.12 Static Assertions
+## 3.12 Compile-Time Iteration And Reflection
+
+### 3.12.1 `constexpr for`
+
+```gti
+constexpr for ( [ "mut" ] type IDENTIFIER ":" sequence ) statement
+```
+
+`constexpr for` iterates a finite sequence of types at compile time. The
+sequence expression's type must be a class whose generic arguments are exactly
+one type pack; the pack's elements, in order, are the elements of the
+sequence. The sequence expression is analyzed, and its type decides the
+expansion, but it is never evaluated at run time. Any such class is a
+sequence; `std::meta::list<Elements...>` is the library's spelling, and a
+value of a user class with a type-pack argument list iterates the same way.
+
+For every element `E`, the body is analyzed once more as a fresh copy inside a
+scope of its own, with the binding initialized to `E()`. Each copy is an
+ordinary block: its locals, loans, diagnostics and `if constexpr` selections
+are its own, and copies run in element order as consecutive statements. When
+`E()` is a constant the bounded evaluator can produce (a scalar, or a class
+with a public `constexpr` default constructor) and the binding is not `mut`,
+the binding is `constexpr`, so `if constexpr` and `static_assert` inside the
+body may read it; otherwise it is a plain value. `break` and `continue` do not
+apply to the expansion itself; they refer to an enclosing run-time loop as
+usual. `if constexpr` is the way to select elements.
+
+A sequence type that depends on an open generic parameter defers the
+expansion in primary analysis exactly like a dependent `if constexpr`
+condition: no copy is analyzed, and each concrete instance expands the
+statement with the substituted sequence. A declaration of a function, class,
+enum, concept, alias or namespace inside the body is rejected (`GTI-S2109`);
+a sequence that is not such a class is rejected (`GTI-S2107`). Expansion is
+bounded: at most 1024 elements per statement and 4096 expanded copies per
+declaration (`GTI-S2108`), counted separately from the constant-evaluation
+step budget. A diagnostic produced inside a copy carries related information
+naming the element; a diagnostic that every copy produces identically is
+reported once.
+
+Nothing of the loop survives semantic analysis except the expanded copies;
+there is no run-time loop and no run-time sequence value.
+
+### 3.12.2 Reflection Metaobjects
+
+`<std/meta>` describes GTI declarations with ordinary values. A metaobject is
+an empty value whose generic arguments carry the canonical identity of what it
+describes: `std::meta::type<T>` for a type and `std::meta::field<T, I>` for
+instance field `I` of `T` in declaration order. `std::meta::fields_of<T>()`
+is a `std::meta::list` of the field metaobjects of a struct or class, in
+declaration order, direct instance fields only; static fields and inherited
+fields are not listed. Queries (`name()`, `index()`, `is_public()`,
+`type()`, `type_of<T>()`, `name_of<T>()`, the `is_*` predicates and
+`field_count()`) are `constexpr` methods and functions whose results are
+constants of their generic arguments; a query reached with concrete arguments
+is a literal at run time and a constant in constant evaluation. `name()` is
+the declared identifier; `name_of<T>()` is the qualified spelling the
+compiler uses for `T`.
+
+`field.get(owner)` denotes the place `owner.<field>`, and `field.get_mut(owner)`
+the same place for writing. They are not calls at run time: semantics analyzes
+the projection the call denotes, at the call site, under the ordinary field
+access rules. Visibility follows the call site, so a private field is
+accessible through reflection exactly where `owner.<field>` is (`GTI-S2007`
+otherwise); a field that is not writable through the given owner rejects
+`get_mut` (`GTI-S2112`); borrowing, mutability, moves and loan conflicts are
+those of the direct access. `std::meta::field_type<T, I>` is the exact type of
+the field and may be spelled in any type position; `field.type()` yields a
+`std::meta::type` of it, which a generic parameter deduces from
+(`decode(field.type(), input)`). A field index that is out of range is
+rejected (`GTI-S2111`).
+
+Reflection consumed at compile time leaves no run-time representation:
+metaobjects are empty values, queries fold to constants, and reflected access
+lowers to ordinary projections. A name used at run time is an ordinary string
+literal. `@compiler_type("...")` and the `gti_internal::meta_*` operations
+that `<std/meta>` is built on are compiler-bound declarations of that trusted
+unit and are unavailable to application code (`GTI-S2049`, `GTI-S2058`).
+
+## 3.13 Static Assertions
 
 `static_assert(condition);` and `static_assert(condition, "message");` are
 compile-time declarations admitted at namespace, complete class-like, and block
@@ -1537,7 +1615,7 @@ backend contain no translated source assertion. Compiler-generated backend
 integrity guards remain separate representation checks and are not GTI
 language evaluation.
 
-## 3.13 Static-Semantic Gaps
+## 3.14 Static-Semantic Gaps
 
 The following require later normative sections rather than inference from the
 current implementation:
