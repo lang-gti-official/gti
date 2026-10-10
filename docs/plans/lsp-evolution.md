@@ -137,7 +137,9 @@ and did not reparse the prelude or 15 unrelated dependencies. Maximum observed
 cache occupancy was 51 rows and 4.7 MB estimated against the 256-row/64-MiB
 policy. The dominant remaining repeated-edit work is whole-program semantic
 analysis, followed by HIR; the evidence did not justify a project index,
-PCH/preamble, background shards, or per-file workers.
+PCH/preamble, background shards, or per-file workers. The benchmark's
+synthetic project loads no standard library, so it understates real editing
+cost by two orders of magnitude; see "Per-Keystroke Analysis Cost" below.
 
 ### 4. Extract document/snapshot service boundaries - frontend seam implemented
 
@@ -200,12 +202,89 @@ facts honestly. Do not use an AST with changed source offsets, and do not grow a
 second declaration parser in semantic-token or completion handlers. Bounded
 lexical fallbacks are acceptable only when clearly less authoritative.
 
+## Per-Keystroke Analysis Cost
+
+Status: measured 2026-10-10; recommendation recorded, implementation not
+started. This is the compiler-side half of editor responsiveness. The
+protocol-side half (edit-time publication, adaptive debounce, refresh policy)
+is implemented and described in the architecture document.
+
+### Measurement
+
+Release `gti_lsp` on arm64 macOS, driven by a client-like message flow (open,
+`didChange`, tokens and hover requests) with `GTI_LSP_FRONTEND_TRACE`. Every
+edit re-runs semantic analysis and HIR for every loaded unit; the parse cache
+removes parsing from the picture but nothing else.
+
+| Workload | Units analysed per edit | Per-edit frontend time |
+| --- | ---: | ---: |
+| `001-basics.gti`, no includes | 2 | 4 ms |
+| `transit-planner` file, one `<std/cstdio>` include | 11-14 | 190-290 ms |
+| `089-library-workflow.gti`, eight standard-library includes | 21 | 580 ms |
+
+Phase breakdown for the eight-include file (one edit, parse fully cached):
+
+| Phase | Time |
+| --- | ---: |
+| Compiler-trusted (standard-library) function bodies | 247 ms |
+| HIR lowering | 250 ms |
+| Declaration registration, all units | 37 ms |
+| Semantic finalization | 20 ms |
+| Application (user-file) function bodies | 9 ms |
+
+About ninety percent of each keystroke re-analyses and re-lowers library
+bodies whose text did not change. The reference benchmark did not show this
+because its synthetic project loads no standard library.
+
+### Recommendation
+
+Keep the LSP a consumer of `FrontendOptions`. Each step below is a compiler
+change that `gti check` can also benefit from, measured with the same message
+flow before and after, and none adds a second semantic path in the protocol
+layer.
+
+1. **Editor-scoped HIR.** Add a frontend option that lowers only the entry
+   unit's definitions and the concrete generic instances they request,
+   instead of every function in the program. The editor needs HIR for the
+   instance diagnostics of the open file's own code; library bodies that the
+   open file does not reach are the library's own `gti check` concern. This
+   is the smallest change and removes most of the 250 ms. Diagnostics located
+   inside library bodies that the user's code instantiates are still produced
+   because those instances are reached.
+2. **Lazy trusted-body analysis.** Determine which facts a caller's analysis
+   takes from a callee's body (borrow summaries and inferred borrow origins,
+   failure and effect results, lifecycle facts) and analyse a compiler-trusted
+   body only when a caller demands one of them, memoising the result for the
+   snapshot. Bodies no application code reaches are then never analysed in
+   the editor. This removes most of the 247 ms and is a clean generalisation
+   of the existing on-demand borrow-summary candidate inspection.
+3. **Unit-local semantic reuse** (the true preamble analogue) only if 1 and 2
+   leave the eight-include file above about 100 ms per edit. Trusted units'
+   registration and body facts would be cached per unit, keyed by the unit's
+   content digest and its dependency digests, with identities that survive
+   across snapshots. This is the largest change because `SemanticModel`
+   identities are snapshot-local today, and it should not be started until
+   the cheaper steps have been measured.
+4. **Completion scope.** Completion runs its own full frontend analysis per
+   request. Give it the same scope reductions, then consider answering from
+   the root's current snapshot when the completion marker does not change
+   the visible declarations.
+
+Exit measure: the eight-include file under 100 ms per edit with the probe,
+semantic diagnostics for the open file identical to `gti check` on its
+project, and the frontend trace showing no library bodies analysed that the
+open file does not reach. Record the campaign in `implementation-sequence.md`
+before starting; it touches semantic analysis and HIR ownership, so the
+compiler-architecture review applies.
+
 ## Deferred clangd Complexity
 
 Preambles/PCH, compile-command borrowing, macro expansion
-locations, per-file workers, AST LRUs, adaptive debounce, remote indexes, and
+locations, per-file workers, AST LRUs, remote indexes, and
 memory accounting solve C++/clang scale. Adopt none without a measured GTI
-problem.
+problem. clangd's update debounce was adopted in 0.397.3 after the
+measurement above showed per-keystroke whole-program re-analysis; it is
+described in the architecture document.
 
 ## Acceptance Checks For Every Feature
 

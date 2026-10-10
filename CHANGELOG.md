@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.397.3 — Smoother editing in the language server
+
+- `gti_lsp` no longer blanks and repaints the editor on every keystroke. An
+  edit publishes nothing until its new result is ready, so diagnostics and
+  highlighting stay in place while analysis runs; a short adaptive wait
+  (clangd's update debounce) analyses a typing burst once, from its final
+  text, and a hover or other request waiting on the document ends the wait at
+  once. `workspace/semanticTokens/refresh`, which Neovim answers by clearing
+  every buffer's highlighting, is now sent at most once per dependency
+  re-analysis wave and only when some open document's tokens actually
+  changed, instead of after every result.
+
 ## 0.397.2 — Fewer bounds checks on floating, bool, char and enum elements
 
 - The optimizer can now remove provable bounds checks on containers of
