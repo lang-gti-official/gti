@@ -2433,10 +2433,10 @@ private:
             "Expect ')' after the 'constexpr for' sequence.");
     StmtPtr body = statement();
     auto initializer = std::make_unique<Call>(
-        generatedVariable(generatedToken(
-            TokenKind::IDENTIFIER, "__constexpr_for_element", name)),
-        std::vector<TypeRef>{}, generatedToken(TokenKind::RIGHT_PAREN, ")", name),
-        ExprList{});
+        generatedVariable(generatedToken(TokenKind::IDENTIFIER,
+                                         "__constexpr_for_element", name)),
+        std::vector<TypeRef>{},
+        generatedToken(TokenKind::RIGHT_PAREN, ")", name), ExprList{});
     const Call *initializerPointer = initializer.get();
     auto elementBinding = std::make_shared<VariableDecl>(
         mutability, bindingType, name, std::move(initializer), std::nullopt,

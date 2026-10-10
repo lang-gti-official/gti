@@ -25,8 +25,8 @@ struct AstCloneResult {
   std::unordered_map<const Expr *, const Expr *> expressions;
 };
 
-// `expansion`, when nonzero, is stamped on every copied token (Token::expansion)
-// so the copy's declarations get identities of their own.
+// `expansion`, when nonzero, is stamped on every copied token
+// (Token::expansion) so the copy's declarations get identities of their own.
 [[nodiscard]] AstCloneResult cloneStmt(const Stmt &statement,
                                        std::uint32_t expansion = 0);
 [[nodiscard]] ExprPtr cloneExpr(const Expr &expression,

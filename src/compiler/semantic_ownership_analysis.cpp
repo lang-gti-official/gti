@@ -6800,12 +6800,12 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
   }
   const bool fieldQuery = intrinsic == IntrinsicKind::MetaFieldName ||
                           intrinsic == IntrinsicKind::MetaFieldIsPublic;
-  const SemanticType result =
-      intrinsic == IntrinsicKind::MetaFieldName ||
-              intrinsic == IntrinsicKind::MetaTypeName
-          ? SemanticType::StringView
-      : intrinsic == IntrinsicKind::MetaFieldIsPublic ? SemanticType::Bool
-                                                      : SemanticType::UInt64;
+  const SemanticType result = intrinsic == IntrinsicKind::MetaFieldName ||
+                                      intrinsic == IntrinsicKind::MetaTypeName
+                                  ? SemanticType::StringView
+                              : intrinsic == IntrinsicKind::MetaFieldIsPublic
+                                  ? SemanticType::Bool
+                                  : SemanticType::UInt64;
   const std::size_t expectedArguments = fieldQuery ? 2 : 1;
   std::optional<SemanticType> subject;
   std::optional<CompileTimeValue> index;
@@ -6817,8 +6817,8 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
       index = genericValueArgument(expr.typeArguments()[1]);
     }
   }
-  if (!subject || *subject == SemanticType::Unknown ||
-      (fieldQuery && !index) || declaration.returnType != result) {
+  if (!subject || *subject == SemanticType::Unknown || (fieldQuery && !index) ||
+      declaration.returnType != result) {
     report(expr.paren(),
            "A reflection capability takes its subject as generic arguments, "
            "no call arguments, and must retain its exact standard-library "
@@ -6900,7 +6900,8 @@ auto SemanticVisitor::Impl::metaIntrinsicConstant(
   if (call.typeArguments.size() != 1) {
     return std::nullopt;
   }
-  const SemanticType subject = constexprType(call.typeArguments.front(), context);
+  const SemanticType subject =
+      constexprType(call.typeArguments.front(), context);
   if (containsOpenTypeParameter(subject)) {
     return std::nullopt;
   }
@@ -6926,7 +6927,8 @@ auto SemanticVisitor::Impl::metaIntrinsicConstant(
   if (index.kind != CompileTimeValue::UInt64) {
     return std::nullopt;
   }
-  const std::optional<MetaFieldFacts> field = metaFieldFacts(subject, index.value);
+  const std::optional<MetaFieldFacts> field =
+      metaFieldFacts(subject, index.value);
   if (!field) {
     return std::nullopt;
   }

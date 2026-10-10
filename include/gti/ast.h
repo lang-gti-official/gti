@@ -1840,15 +1840,14 @@ private:
 
 class ClassDecl final : public StmtOfKind<StmtKind::ClassDecl> {
 public:
-  ClassDecl(std::vector<ClassAttribute> attributes, Token keyword,
-            ClassKind kind, Token name,
-            std::optional<TypeRef> exactSpecialization,
-            std::vector<GenericParameter> genericParameters,
-            std::vector<BaseSpecifier> bases, StmtList members,
-            bool forwardDeclaration = false,
-            std::vector<TypeRef> genericArgumentPatterns = {},
-            std::optional<CompilerTypeBinding> compilerTypeBinding =
-                std::nullopt)
+  ClassDecl(
+      std::vector<ClassAttribute> attributes, Token keyword, ClassKind kind,
+      Token name, std::optional<TypeRef> exactSpecialization,
+      std::vector<GenericParameter> genericParameters,
+      std::vector<BaseSpecifier> bases, StmtList members,
+      bool forwardDeclaration = false,
+      std::vector<TypeRef> genericArgumentPatterns = {},
+      std::optional<CompilerTypeBinding> compilerTypeBinding = std::nullopt)
       : attributes_(std::move(attributes)), keyword_(std::move(keyword)),
         kind_(kind), name_(std::move(name)),
         exactSpecialization_(std::move(exactSpecialization)),

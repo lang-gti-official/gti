@@ -28,7 +28,8 @@ public:
     return token ? std::optional<Token>{tok(*token)} : std::nullopt;
   }
 
-  [[nodiscard]] std::vector<Token> toks(const std::vector<Token> &tokens) const {
+  [[nodiscard]] std::vector<Token>
+  toks(const std::vector<Token> &tokens) const {
     std::vector<Token> copies;
     copies.reserve(tokens.size());
     for (const Token &token : tokens) {
@@ -133,7 +134,8 @@ private:
     if (!value) {
       return std::nullopt;
     }
-    return ParameterDefault(self.tok(value->equal), self.expr(value->expression));
+    return ParameterDefault(self.tok(value->equal),
+                            self.expr(value->expression));
   }
 
   [[nodiscard]] std::vector<Parameter>
@@ -186,24 +188,26 @@ private:
     }
     case ExprKind::Call: {
       const auto &node = static_cast<const Call &>(expression);
-      auto copy = std::make_unique<Call>(expr(node.callee()),
-                                         node.typeArguments(), tok(node.paren()),
-                                         exprs(node.arguments()));
+      auto copy =
+          std::make_unique<Call>(expr(node.callee()), node.typeArguments(),
+                                 tok(node.paren()), exprs(node.arguments()));
       if (tok(node.leftParen())) {
-        copy->setArgumentGeometry(*tok(node.leftParen()), toks(node.argumentCommas()));
+        copy->setArgumentGeometry(*tok(node.leftParen()),
+                                  toks(node.argumentCommas()));
       }
       return copy;
     }
     case ExprKind::ConditionalExpr: {
       const auto &node = static_cast<const ConditionalExpr &>(expression);
       return std::make_unique<ConditionalExpr>(
-          expr(node.condition()), tok(node.question()), expr(node.thenExpression()),
-          tok(node.colon()), expr(node.elseExpression()));
+          expr(node.condition()), tok(node.question()),
+          expr(node.thenExpression()), tok(node.colon()),
+          expr(node.elseExpression()));
     }
     case ExprKind::Conversion: {
       const auto &node = static_cast<const Conversion &>(expression);
-      return std::make_unique<Conversion>(type(node.targetType()), tok(node.paren()),
-                                          expr(node.value()));
+      return std::make_unique<Conversion>(
+          type(node.targetType()), tok(node.paren()), expr(node.value()));
     }
     case ExprKind::DirectInitializer: {
       const auto &node = static_cast<const DirectInitializer &>(expression);
@@ -213,9 +217,9 @@ private:
     }
     case ExprKind::DereferenceSet: {
       const auto &node = static_cast<const DereferenceSet &>(expression);
-      return std::make_unique<DereferenceSet>(tok(node.dereference()),
-                                              expr(node.object()), tok(node.oper()),
-                                              expr(node.value()));
+      return std::make_unique<DereferenceSet>(
+          tok(node.dereference()), expr(node.object()), tok(node.oper()),
+          expr(node.value()));
     }
     case ExprKind::PlaceSet: {
       const auto &node = static_cast<const PlaceSet &>(expression);
@@ -238,9 +242,9 @@ private:
     }
     case ExprKind::IndexSet: {
       const auto &node = static_cast<const IndexSet &>(expression);
-      return std::make_unique<IndexSet>(expr(node.object()), tok(node.bracket()),
-                                        expr(node.index()), tok(node.oper()),
-                                        expr(node.value()));
+      return std::make_unique<IndexSet>(expr(node.object()),
+                                        tok(node.bracket()), expr(node.index()),
+                                        tok(node.oper()), expr(node.value()));
     }
     case ExprKind::Lambda: {
       const auto &node = static_cast<const Lambda &>(expression);
@@ -256,20 +260,21 @@ private:
       }
       return std::make_unique<Lambda>(tok(node.bracket()), std::move(captures),
                                       parameters(node.parameters()),
-                                      tok(node.arrow()), type(node.returnType()),
-                                      std::move(body));
+                                      tok(node.arrow()),
+                                      type(node.returnType()), std::move(body));
     }
     case ExprKind::LayoutQuery: {
       const auto &node = static_cast<const LayoutQuery &>(expression);
-      return std::make_unique<LayoutQuery>(tok(node.keyword()), type(node.type()));
+      return std::make_unique<LayoutQuery>(tok(node.keyword()),
+                                           type(node.type()));
     }
     case ExprKind::MemberRequirement: {
       const auto &node = static_cast<const MemberRequirement &>(expression);
       return std::make_unique<MemberRequirement>(
-          tok(node.keyword()), type(node.receiver()), tok(node.binding()), tok(node.receiverUse()),
-          tok(node.member()), type(node.result()), types(node.parameters()),
-          toks(node.bindings()), toks(node.arguments()),
-          tok(node.unsafeKeyword()));
+          tok(node.keyword()), type(node.receiver()), tok(node.binding()),
+          tok(node.receiverUse()), tok(node.member()), type(node.result()),
+          types(node.parameters()), toks(node.bindings()),
+          toks(node.arguments()), tok(node.unsafeKeyword()));
     }
     case ExprKind::LiteralExpr: {
       const auto &node = static_cast<const LiteralExpr &>(expression);
@@ -282,21 +287,24 @@ private:
     }
     case ExprKind::PackFold: {
       const auto &node = static_cast<const PackFold &>(expression);
-      return std::make_unique<PackFold>(tok(node.leftParen()), expr(node.pattern()),
-                                        tok(node.comma()), tok(node.ellipsis()),
-                                        tok(node.rightParen()));
+      return std::make_unique<PackFold>(
+          tok(node.leftParen()), expr(node.pattern()), tok(node.comma()),
+          tok(node.ellipsis()), tok(node.rightParen()));
     }
     case ExprKind::PackExpansion: {
       const auto &node = static_cast<const PackExpansion &>(expression);
-      return std::make_unique<PackExpansion>(tok(node.name()), tok(node.ellipsis()));
+      return std::make_unique<PackExpansion>(tok(node.name()),
+                                             tok(node.ellipsis()));
     }
     case ExprKind::Postfix: {
       const auto &node = static_cast<const Postfix &>(expression);
-      return std::make_unique<Postfix>(expr(node.expression()), tok(node.oper()));
+      return std::make_unique<Postfix>(expr(node.expression()),
+                                       tok(node.oper()));
     }
     case ExprKind::QualifiedName: {
       const auto &node = static_cast<const QualifiedName &>(expression);
-      return std::make_unique<QualifiedName>(path(node.name()), type(node.ownerType()));
+      return std::make_unique<QualifiedName>(path(node.name()),
+                                             type(node.ownerType()));
     }
     case ExprKind::This: {
       const auto &node = static_cast<const This &>(expression);
@@ -315,14 +323,15 @@ private:
     }
     case ExprKind::Unexpected: {
       const auto &node = static_cast<const Unexpected &>(expression);
-      return std::make_unique<Unexpected>(tok(node.keyword()), expr(node.error()));
+      return std::make_unique<Unexpected>(tok(node.keyword()),
+                                          expr(node.error()));
     }
     case ExprKind::Variable: {
       const auto &node = static_cast<const Variable &>(expression);
       if (node.patternAuto() && node.patternReference()) {
-        return std::make_unique<Variable>(tok(node.name()), tok(*node.patternAuto()),
-                                          tok(*node.patternReference()),
-                                          tok(node.patternMutability()));
+        return std::make_unique<Variable>(
+            tok(node.name()), tok(*node.patternAuto()),
+            tok(*node.patternReference()), tok(node.patternMutability()));
       }
       return std::make_unique<Variable>(tok(node.name()));
     }
@@ -333,9 +342,10 @@ private:
   [[nodiscard]] std::shared_ptr<VariableDecl>
   variable(const VariableDecl &node) {
     auto copy = std::make_shared<VariableDecl>(
-        node.mutability(), node.type(), tok(node.name()), expr(node.initializer()),
-        node.staticKeyword(), node.isRangeBinding(), tok(node.constexprKeyword()),
-        node.isRangeOwner(), node.isRangeIterator(), node.mutKeyword());
+        node.mutability(), node.type(), tok(node.name()),
+        expr(node.initializer()), node.staticKeyword(), node.isRangeBinding(),
+        tok(node.constexprKeyword()), node.isRangeOwner(),
+        node.isRangeIterator(), node.mutKeyword());
     if (node.extent()) {
       copy->setExtent(*node.extent());
     }
@@ -406,15 +416,14 @@ private:
         return nullptr;
       }
       const auto found = result.expressions.find(node.elementInitializer());
-      const Call *initializer =
-          found == result.expressions.end()
-              ? nullptr
-              : exprAs<Call>(found->second);
+      const Call *initializer = found == result.expressions.end()
+                                    ? nullptr
+                                    : exprAs<Call>(found->second);
       return std::make_shared<ConstexprForStmt>(
-          tok(node.constexprKeyword()), tok(node.forKeyword()), node.bindingMutability(),
-          type(node.bindingType()), tok(node.bindingName()), tok(node.colon()),
-          expr(node.sequence()), std::move(body), std::move(binding),
-          initializer);
+          tok(node.constexprKeyword()), tok(node.forKeyword()),
+          node.bindingMutability(), type(node.bindingType()),
+          tok(node.bindingName()), tok(node.colon()), expr(node.sequence()),
+          std::move(body), std::move(binding), initializer);
     }
     case StmtKind::DoWhileStmt: {
       const auto &node = static_cast<const DoWhileStmt &>(statement);
@@ -459,10 +468,9 @@ private:
       if (node.elseBranch() && !elseBranch) {
         return nullptr;
       }
-      return std::make_shared<IfStmt>(expr(node.condition()),
-                                      std::move(thenBranch),
-                                      std::move(elseBranch),
-                                      tok(node.constexprKeyword()));
+      return std::make_shared<IfStmt>(
+          expr(node.condition()), std::move(thenBranch), std::move(elseBranch),
+          tok(node.constexprKeyword()));
     }
     case StmtKind::LoopControlStmt: {
       const auto &node = static_cast<const LoopControlStmt &>(statement);
@@ -475,22 +483,25 @@ private:
         return nullptr;
       }
       return std::make_shared<RangeForStmt>(
-          tok(node.keyword()), node.bindingMutability(), type(node.bindingType()),
-          tok(node.bindingName()), tok(node.colon()), std::move(lowered),
-          mapped(node.ownerBinding()), mapped(node.rangeBinding()),
-          mapped(node.iteratorBinding()), mapped(node.sentinelBinding()),
-          mapped(node.elementBinding()), mapped(node.coreLoop()));
+          tok(node.keyword()), node.bindingMutability(),
+          type(node.bindingType()), tok(node.bindingName()), tok(node.colon()),
+          std::move(lowered), mapped(node.ownerBinding()),
+          mapped(node.rangeBinding()), mapped(node.iteratorBinding()),
+          mapped(node.sentinelBinding()), mapped(node.elementBinding()),
+          mapped(node.coreLoop()));
     }
     case StmtKind::ReturnStmt: {
       const auto &node = static_cast<const ReturnStmt &>(statement);
-      return std::make_shared<ReturnStmt>(tok(node.keyword()), expr(node.value()));
+      return std::make_shared<ReturnStmt>(tok(node.keyword()),
+                                          expr(node.value()));
     }
     case StmtKind::StaticAssertDecl: {
       const auto &node = static_cast<const StaticAssertDecl &>(statement);
       return std::make_shared<StaticAssertDecl>(
-          tok(node.keyword()), tok(node.leftParen()), tok(node.conditionStart()),
-          expr(node.condition()), tok(node.comma()), tok(node.messageToken()),
-          tok(node.rightParen()), tok(node.semicolon()));
+          tok(node.keyword()), tok(node.leftParen()),
+          tok(node.conditionStart()), expr(node.condition()), tok(node.comma()),
+          tok(node.messageToken()), tok(node.rightParen()),
+          tok(node.semicolon()));
     }
     case StmtKind::SwitchStmt: {
       const auto &node = static_cast<const SwitchStmt &>(statement);
@@ -508,9 +519,8 @@ private:
         }
         arms.emplace_back(std::move(copy));
       }
-      return std::make_shared<SwitchStmt>(tok(node.keyword()),
-                                          expr(node.expression()),
-                                          std::move(arms));
+      return std::make_shared<SwitchStmt>(
+          tok(node.keyword()), expr(node.expression()), std::move(arms));
     }
     case StmtKind::StructuredBindingDecl: {
       const auto &node = static_cast<const StructuredBindingDecl &>(statement);
@@ -519,15 +529,15 @@ private:
       for (const VariableDecl &binding : node.bindings()) {
         bindings.emplace_back(binding.mutability(), binding.type(),
                               binding.name(), expr(binding.initializer()),
-                              binding.staticKeyword(),
-                              binding.isRangeBinding(),
+                              binding.staticKeyword(), binding.isRangeBinding(),
                               binding.constexprKeyword(),
-                              binding.isRangeOwner(),
-                              binding.isRangeIterator(), binding.mutKeyword());
+                              binding.isRangeOwner(), binding.isRangeIterator(),
+                              binding.mutKeyword());
       }
       auto copy = std::make_shared<StructuredBindingDecl>(
           tok(node.autoKeyword()), tok(node.leftBracket()), std::move(bindings),
-          tok(node.rightBracket()), tok(node.equal()), expr(node.initializer()));
+          tok(node.rightBracket()), tok(node.equal()),
+          expr(node.initializer()));
       for (std::size_t index = 0; index < node.bindings().size(); ++index) {
         result.statements.emplace(&node.bindings()[index],
                                   &copy->bindings()[index]);

@@ -2025,8 +2025,9 @@ private:
   void recordConstexprBranch(const IfStmt &statement,
                              std::optional<bool> thenBranch);
 
-  void recordConstexprForExpansion(const ConstexprForStmt &statement,
-                                   std::optional<ConstexprForExpansion> expansion);
+  void
+  recordConstexprForExpansion(const ConstexprForStmt &statement,
+                              std::optional<ConstexprForExpansion> expansion);
 
   const Expr &recordExpressionAlias(const Expr &expression,
                                     std::shared_ptr<const Expr> alias);
@@ -2159,8 +2160,9 @@ private:
   // AST copies made by compile-time expansion. They are referenced by HIR
   // and by instance-analysis deltas, so the model that outlives both owns
   // them.
-  void adoptExpansionArena(std::vector<StmtPtr> statements,
-                           std::vector<std::shared_ptr<const Expr>> expressions);
+  void
+  adoptExpansionArena(std::vector<StmtPtr> statements,
+                      std::vector<std::shared_ptr<const Expr>> expressions);
 
   void recordOccurrence(SemanticOccurrence occurrence);
 

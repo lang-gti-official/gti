@@ -807,8 +807,7 @@ auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
     return;
   }
   if (elements->size() > kConstexprForElementLimit ||
-      constexprForExpandedBodies + elements->size() >
-          kConstexprForBodyLimit) {
+      constexprForExpandedBodies + elements->size() > kConstexprForBodyLimit) {
     report(stmt.forKeyword(),
            "'constexpr for' expansion exceeds the compile-time budget (" +
                std::to_string(kConstexprForElementLimit) +
@@ -838,8 +837,9 @@ auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
     // `if constexpr` and `static_assert` may read it; a plain value otherwise.
     ExprPtr initializer = cloneExpr(*stmt.elementInitializer(), expansion);
     const Call *initializerCopy = exprAs<Call>(initializer.get());
-    const bool constantElement = stmt.bindingMutability() != Mutability::Mutable &&
-                                 isConstexprDefaultConstructible(element);
+    const bool constantElement =
+        stmt.bindingMutability() != Mutability::Mutable &&
+        isConstexprDefaultConstructible(element);
     const Token &anchor = stmt.constexprKeyword();
     Token bindingName = stmt.bindingName();
     bindingName.expansion = expansion;
@@ -848,16 +848,15 @@ auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
         stmt.bindingMutability(), stmt.bindingType(), bindingName,
         std::move(initializer), std::nullopt, false,
         constantElement
-            ? std::optional<Token>{Token(TokenKind::CONSTEXPR, "constexpr",
-                                         std::monostate{}, anchor.position,
-                                         anchor.line, anchor.source, false,
-                                         true)}
+            ? std::optional<Token>{Token(
+                  TokenKind::CONSTEXPR, "constexpr", std::monostate{},
+                  anchor.position, anchor.line, anchor.source, false, true)}
             : std::nullopt,
         false, false,
         stmt.bindingMutability() == Mutability::Mutable
-            ? std::optional<Token>{Token(TokenKind::MUT, "mut", std::monostate{},
-                                         anchor.position, anchor.line,
-                                         anchor.source, false, true)}
+            ? std::optional<Token>{Token(
+                  TokenKind::MUT, "mut", std::monostate{}, anchor.position,
+                  anchor.line, anchor.source, false, true)}
             : std::nullopt);
     AstCloneResult body = cloneStmt(*stmt.body(), expansion);
     if (!binding.statement || !body.statement || initializerCopy == nullptr) {
@@ -876,14 +875,15 @@ auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
       block->setExtent(*stmt.body()->extent());
     }
     const std::size_t diagnosticsBefore = diagnostics.size();
-    constexprForFrames.push_back({.initializer = initializerCopy, .element = element});
+    constexprForFrames.push_back(
+        {.initializer = initializerCopy, .element = element});
     analyze(block);
     constexprForFrames.pop_back();
     // Name the element in every diagnostic the copy produced, and drop the
     // ones an earlier element already produced word for word.
-    const std::string context =
-        "while expanding 'constexpr for' for element " +
-        std::to_string(index) + " of type '" + typeSpelling(element) + "'";
+    const std::string context = "while expanding 'constexpr for' for element " +
+                                std::to_string(index) + " of type '" +
+                                typeSpelling(element) + "'";
     for (std::size_t position = diagnosticsBefore;
          position < diagnostics.size();) {
       Diagnostic &diagnostic = diagnostics[position];
@@ -906,7 +906,8 @@ auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
       ++position;
     }
     expansionArena.push_back(block);
-    expanded.iterations.push_back({.element = element, .block = std::move(block)});
+    expanded.iterations.push_back(
+        {.element = element, .block = std::move(block)});
   }
   semanticModel.recordConstexprForExpansion(stmt, std::move(expanded));
 }
@@ -939,20 +940,21 @@ auto SemanticVisitor::Impl::analyzeMetaFieldAccess(
     // Symbolic: the exact field type is the computed compiler type, which
     // concrete reanalysis rewrites together with the access below.
     const ClassId computed = compilerTypeClass(CompilerTypeKind::MetaFieldType);
-    currentType = computed == 0 ? SemanticType::Unknown
-                                : SemanticType::classType(computed, {owner},
-                                                          {index});
-    semanticModel.record(expr, ResolvedCallInfo{
-                                   .returnType = currentType,
-                                   .typeArguments = {owner},
-                                   .valueArguments = {index},
-                                   .intrinsic = intrinsic,
-                                   .borrowOrigin = BorrowOriginKind::Argument,
-                                   .borrowArgument = 0,
-                                   .borrowAccess = access});
+    currentType = computed == 0
+                      ? SemanticType::Unknown
+                      : SemanticType::classType(computed, {owner}, {index});
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .typeArguments = {owner},
+                               .valueArguments = {index},
+                               .intrinsic = intrinsic,
+                               .borrowOrigin = BorrowOriginKind::Argument,
+                               .borrowArgument = 0,
+                               .borrowAccess = access});
     return;
   }
-  const std::optional<MetaFieldFacts> facts = metaFieldFacts(owner, index.value);
+  const std::optional<MetaFieldFacts> facts =
+      metaFieldFacts(owner, index.value);
   if (!facts) {
     report(expr.paren(),
            "Field index " + std::to_string(index.value) +
@@ -10118,22 +10120,26 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
       const std::uint8_t width =
           type.kind == SemanticType::Int8 || type.kind == SemanticType::UInt8
               ? 8
-          : type.kind == SemanticType::Int16 || type.kind == SemanticType::UInt16
+          : type.kind == SemanticType::Int16 ||
+                  type.kind == SemanticType::UInt16
               ? 16
-          : type.kind == SemanticType::Int32 || type.kind == SemanticType::UInt32
+          : type.kind == SemanticType::Int32 ||
+                  type.kind == SemanticType::UInt32
               ? 32
               : 64;
-      zero = ConstantValue{ConstantInteger{
-          .magnitude = 0,
-          .domain = CheckedIntegerDomain{.width = width,
-                                         .signedValue = signedValue}}};
+      zero = ConstantValue{
+          ConstantInteger{.magnitude = 0,
+                          .domain = CheckedIntegerDomain{
+                              .width = width, .signedValue = signedValue}}};
       break;
     }
     case SemanticType::Float:
-      zero = ConstantValue{BinaryFloat{.bits = 0, .format = BinaryFloatFormat::Binary32}};
+      zero = ConstantValue{
+          BinaryFloat{.bits = 0, .format = BinaryFloatFormat::Binary32}};
       break;
     case SemanticType::Double:
-      zero = ConstantValue{BinaryFloat{.bits = 0, .format = BinaryFloatFormat::Binary64}};
+      zero = ConstantValue{
+          BinaryFloat{.bits = 0, .format = BinaryFloatFormat::Binary64}};
       break;
     case SemanticType::Bool:
       zero = ConstantValue{false};
