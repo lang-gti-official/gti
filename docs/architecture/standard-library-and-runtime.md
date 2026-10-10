@@ -613,6 +613,25 @@ before calling the CRT, avoiding its invalid-parameter handler for rejected
 requests. Empty release performs no native call. No GTI object is constructed
 or destroyed by the byte provider.
 
+Those runtime declarations carry a declared contract. The ABI in
+`<gti/memory.h>` is GTI's own, so the compiler binds its meaning by trusted
+declaration identity: semantics classifies a `ProcessMemoryRuntimeOperation`
+only for an exact compiler-private C declaration in `std/memory`'s
+`gti_internal::runtime` block, matching both symbol and signature, and MIR
+verification re-checks that identity and the target-selected family. An
+application declaration of the same symbol stays an ordinary native boundary.
+The contract follows the execution rule that process allocations are not
+observable effects. No operation synchronizes, runs GTI code, traps, reads
+GTI-visible memory, or retains an argument. The size, pointer-size and errno
+queries are pure target facts; the alignment query inspects only its address
+value. Allocation returns fresh storage or null, and the POSIX form also writes
+its status pointee. Release retires a block that, by the lease contract, holds
+no live object. Effect summaries state both writes conservatively as unknown
+memory writes, and the native allocator's internal free-to-allocation ordering
+is not a GTI synchronization edge. The summaries let `process_resource` and
+its clients keep precise effects above the runtime; they do not authorize
+removing or reordering a call. [MIR](mir.md) records the representation.
+
 The old `gti_rt_memory_allocate_v1`/`gti_rt_memory_release_v1` pair has no remaining
 repository consumer and is retired rather than retaining a second validation
 policy. The replacement native ABI in `<gti/memory.h>` exposes only target facts
