@@ -811,6 +811,126 @@ int32_t borrowed(mut int32_t& target) {
          "references");
 }
 
+void testCaptureSummariesAndLocalFlow() {
+  // Capture classes separate an identity that reaches the caller only
+  // through the result from one stored, address-taken or handed to native
+  // code. Local capture is flow-sensitive: a binding is captured only after
+  // the instruction that exposes it.
+  const std::string source = R"(
+extern "C" {
+  void stash(int32_t* address);
+}
+class Holder {
+public:
+  mut int32_t value = 0;
+  Holder() {}
+  int32_t& get() { return this.value; }
+  void expose() mut { unsafe { stash(&this.value); } }
+  int32_t read() { return this.value; }
+};
+int32_t peek(int32_t& value) { return value; }
+int32_t& relay(int32_t& value) { return value; }
+void leak(mut int32_t& value) { unsafe { stash(&value); } }
+int32_t flow() {
+  mut int32_t local = 0;
+  int32_t seen = peek(local);
+  leak(local);
+  return seen + local;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("optimizer-capture-summaries.gti", source);
+  expect(frontend.canGenerateCode(),
+         "capture summary fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  const auto summaries = lang::deriveMirProgramCaptureSummaries(frontend.mir);
+  const auto summary = [&](std::string_view name) {
+    const lang::MirFunctionInstance *function = findMirFunction(frontend, name);
+    return function == nullptr
+               ? nullptr
+               : summaries.find({.kind = lang::MirBodyKind::Function,
+                                 .owner = function->id});
+  };
+  using Class = lang::MirCaptureClass;
+  const auto *get = summary("get");
+  const auto *expose = summary("expose");
+  const auto *read = summary("read");
+  expect(get && get->receiver == Class::ReturnOnly,
+         "a returned receiver borrow only reaches the caller's loan");
+  expect(expose && expose->receiver == Class::Captured,
+         "a raw receiver-field address handed to native code is captured");
+  expect(read && read->receiver == Class::None,
+         "reading a receiver field captures nothing");
+  const auto parameter = [](const lang::MirBodyCaptureSummary *candidate) {
+    return candidate && candidate->parameters.size() == 1
+               ? candidate->parameters.front()
+               : Class::Captured;
+  };
+  expect(parameter(summary("peek")) == Class::None,
+         "reading through a reference parameter captures nothing");
+  expect(parameter(summary("relay")) == Class::ReturnOnly,
+         "a returned reference parameter only reaches the caller");
+  expect(parameter(summary("leak")) == Class::Captured,
+         "a reference parameter's raw address handed to native code is "
+         "captured");
+
+  const lang::MirFunctionInstance *flow = findMirFunction(frontend, "flow");
+  const lang::MirFunctionInstance *peek = findMirFunction(frontend, "peek");
+  const lang::MirFunctionInstance *leak = findMirFunction(frontend, "leak");
+  expect(flow && peek && leak, "capture flow functions must be lowered");
+  if (!flow || !peek || !leak)
+    return;
+  const auto local = lang::analyzeMirLocalCaptures(
+      frontend.mir, {.kind = lang::MirBodyKind::Function, .owner = flow->id},
+      summaries);
+  const lang::MirInstruction *peekCall = nullptr;
+  const lang::MirInstruction *leakCall = nullptr;
+  const lang::MirBlock *leakBlock = nullptr;
+  for (const lang::MirBlock &block : flow->body.blocks)
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.functionTarget == peek->id)
+        peekCall = &instruction;
+      if (instruction.functionTarget == leak->id) {
+        leakCall = &instruction;
+        leakBlock = &block;
+      }
+    }
+  lang::HirBindingId binding = 0;
+  for (const lang::MirPlace &place : flow->body.places)
+    if (place.root == lang::MirPlaceRootKind::Binding &&
+        place.projections.empty() && place.type == lang::SemanticType::Int32 &&
+        local.involves(place.binding, leakCall ? leakCall->id : 0) &&
+        binding == 0)
+      binding = place.binding;
+  expect(local.valid && peekCall && leakCall && binding != 0,
+         "the capture flow fixture must expose its calls and local");
+  if (!local.valid || !peekCall || !leakCall || binding == 0)
+    return;
+  expect(!local.mayBeCapturedBefore(binding, peekCall->id) &&
+             !local.mayBeCapturedBefore(binding, leakCall->id),
+         "a local is not captured before the instruction that exposes it");
+  const lang::MirBlockId after =
+      leakBlock->terminator.kind == lang::MirTerminatorKind::Invoke
+          ? leakBlock->terminator.target
+          : leakBlock->id;
+  const lang::MirBlock *continuation = flow->body.findBlock(after);
+  const lang::MirInstruction *next = nullptr;
+  if (continuation)
+    for (const lang::MirInstruction &instruction : continuation->instructions)
+      if (continuation != leakBlock || &instruction > leakCall) {
+        next = &instruction;
+        break;
+      }
+  expect(next && local.mayBeCapturedBefore(binding, next->id),
+         "after native code received its address, the local is captured");
+  expect(local.mayBeCapturedBefore(binding, 0) && local.involves(binding, 0),
+         "an unknown instruction answers conservatively");
+}
+
 void testUnknownCallEscapeAnalysis() {
   const std::string source = R"(
 extern "C" {
@@ -1184,6 +1304,7 @@ int main() {
   testExactCallEscapeAnalysis();
   testUnknownCallEscapeAnalysis();
   testUnborrowedLocalReferenceDisjointness();
+  testCaptureSummariesAndLocalFlow();
   testAliasAwareSafetyInvalidation();
   testConservativeSafetyEdgesAndUnionOverlap();
   testSparseConditionalConstants();
