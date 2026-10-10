@@ -106,10 +106,14 @@ def main():
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose", "params": {
                 "textDocument": {"uri": dependency.as_uri()}}})
             clean(publication(7))
+            unformatted = (SOURCE.replace("auto& observed = owner", "auto&observed=owner")
+                           .replace("mut auto& writable", "mut auto &writable")
+                           .replace("  int snapshot = observed.count", "int snapshot=observed.count"))
+            clean(change(8, unformatted))
             edits = request("textDocument/formatting", {"textDocument": {"uri": uri},
                             "options": {"tabSize": 2, "insertSpaces": True}})
-            assert edits and "auto& observed" in edits[0]["newText"] and "mut auto& writable" in edits[0]["newText"], edits
-            clean(change(8, edits[0]["newText"]))
+            assert edits and edits[0]["newText"] == SOURCE, edits
+            clean(change(9, edits[0]["newText"]))
         finally:
             session.close()
     print("Inferred reference LSP checks passed")
