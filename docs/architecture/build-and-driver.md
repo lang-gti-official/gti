@@ -573,9 +573,12 @@ model and executable cache identity; an `off` artifact cannot satisfy a
 `strict` request. Unchanged-policy cache hits keep the existing no-warning-
 replay contract; use `check` or `--no-cache` for fresh diagnostics. Metadata
 schema 14 includes the additive `rawPointerAudit` field on profiles and plans.
-Build-report schema 2 includes `raw_pointer_audit` (older reports imply `off`);
-`verify` replays that policy unless explicitly overridden and compares it as a
-separate provenance fact.
+Build-report schema 2 includes `raw_pointer_audit` (older reports imply `off`)
+and the additive boolean `raw_pointer_audit_library_findings` (older reports
+imply `false`); `verify` replays that policy unless explicitly overridden and
+compares it as a separate provenance fact. The benchmark and compile-time
+harnesses decode build reports with an exact key set, so every additive report
+field must also be admitted in `scripts/benchmark_compare.py`.
 
 The implemented manifest path discovers `gti.toml`, parses schema version 1,
 resolves executable and test targets, profiles, declared cross-compilation
