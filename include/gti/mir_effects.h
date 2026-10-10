@@ -30,14 +30,20 @@ inline constexpr std::size_t atomicMemoryOrderCount =
 [[nodiscard]] MirEffectTraits effects(MirOperation operation);
 [[nodiscard]] MirEffectTraits effects(IntrinsicKind intrinsic);
 [[nodiscard]] MirEffectTraits effects(SynchronizationOperationKind kind);
-// Exact integer-scalar final-address construction has no selected constructor,
-// cleanup or adapter. It still writes raw storage and requires the ordinary
+// Integer, floating, bool, char, null and raw-pointer values, plus integral
+// enums when the program is supplied: the scalar leaves of generated records.
+[[nodiscard]] bool isMirScalarValueType(const MirProgram *program,
+                                        const SemanticType &type);
+// Exact scalar final-address construction (integer, floating, bool, char,
+// null or raw pointer pointee) has no selected constructor, cleanup or
+// adapter. It still writes raw storage and requires the ordinary
 // unsafe vacancy/extent/alignment contract; this is not a validity proof.
 [[nodiscard]] bool
 isMirScalarFinalAddressConstruction(const MirInstruction &instruction);
-// The same vacant-storage transfer for an exact generated scalar-record
-// copy/move. Uses the verifier's construction shape and the structural
-// transport classification below; no source constructor or replacement.
+// The same vacant-storage transfer for an integral-enum scalar or an exact
+// generated scalar-record copy/move. Uses the verifier's construction shape and
+// the structural transport classification below; no source constructor or
+// replacement.
 [[nodiscard]] bool
 isMirStructuralFinalAddressConstruction(const MirProgram &program,
                                         const MirInstruction &instruction);

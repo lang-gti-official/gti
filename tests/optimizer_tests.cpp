@@ -3278,6 +3278,37 @@ void testMirEffectClassification() {
   selectedConstruction.unsafeOperation = lang::UnsafeOperationKind::None;
   expect(!lang::isMirScalarFinalAddressConstruction(selectedConstruction),
          "a forged non-lifetime classification cannot select scalar effects");
+  // Every non-class scalar leaf shares the profile; the pointee type, not an
+  // integer domain, selects it. Zero-argument value initialization included.
+  for (const lang::SemanticType &leaf :
+       {lang::SemanticType(lang::SemanticType::Double),
+        lang::SemanticType(lang::SemanticType::Float),
+        lang::SemanticType(lang::SemanticType::Bool),
+        lang::SemanticType::rawPointerTo(lang::SemanticType::Int32,
+                                         lang::AccessMode::Mutable)}) {
+    auto leafConstruction = scalarConstruction;
+    leafConstruction.operands = {{.type = lang::SemanticType::rawPointerTo(
+                                      leaf, lang::AccessMode::Mutable)},
+                                 {.type = leaf}};
+    const auto leafEffect = lang::effects(leafConstruction);
+    expect(lang::isMirScalarFinalAddressConstruction(leafConstruction) &&
+               leafEffect.writesUnknownMemory && leafEffect.initializesValue &&
+               !leafEffect.invokesUserCode && !leafEffect.maySynchronize &&
+               !leafEffect.removableWhenUnused,
+           "a non-integer scalar construction shares the vacant raw-write "
+           "profile");
+    leafConstruction.operands.pop_back();
+    expect(lang::isMirScalarFinalAddressConstruction(leafConstruction) &&
+               !lang::effects(leafConstruction).maySynchronize,
+           "zero-argument value initialization of a scalar leaf shares it");
+  }
+  selectedConstruction = scalarConstruction;
+  selectedConstruction.operands = {
+      {.type = lang::SemanticType::rawPointerTo(lang::SemanticType::Double,
+                                                lang::AccessMode::Mutable)},
+      {.type = lang::SemanticType::Float}};
+  expect(!lang::isMirScalarFinalAddressConstruction(selectedConstruction),
+         "an unmatched floating argument type retains conservative effects");
   for (std::size_t index = 0; index < lang::synchronizationOperationKindCount;
        ++index) {
     const auto kind = static_cast<lang::SynchronizationOperationKind>(index);

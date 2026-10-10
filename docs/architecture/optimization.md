@@ -762,8 +762,22 @@ inside the loop are recomputed from the widened header state, and irreducible
 bodies keep widening at every block.
 
 Process allocation still reaches the opaque native allocator, so constructing
-a second sequence erases the first one's element facts. Modeling process
-allocation as fresh, non-observable memory remains a separate precision goal.
+a second sequence erases the first one's facts, including its live length.
+Modeling process allocation as fresh, non-observable memory remains a separate
+precision goal. The construction chain has several independent barrier
+sources:
+
+- the runtime allocator and target-query declarations, which have only the
+  conservative native summary;
+- the memory-free `object-size` intrinsic, which the safety interpreter treats
+  as an unknown call;
+- the conservative synchronization of the panic intrinsics on failure-only
+  paths, which the path-insensitive MIR summary still carries.
+
+The caller-side alternative needs a separate exposure summary. The MIR escape
+flag treats a returned receiver borrow and any unknown-memory write as escape,
+so it cannot show that a constructor never handed its receiver to unknown
+code.
 A lifetime witness is still never a pointee or an allocation identity.
 Different pointer fields never imply different allocations.
 
@@ -815,20 +829,25 @@ comparison and staged identities for independent replay. Exact later writes
 invalidate the place's earlier bound. This does not invent a relation between
 unknown container fields or initialize a raw region.
 
-An exact builtin-integer result-only `Move` copies the source's scalar envelope
-into an independent SSA result while invalidating the source's place and
-derived origins. It changes no ownership events: source reads after movement
-remain invalid, and reinitialization establishes a new envelope. A uniquely
-identified, unprojected by-value integer formal has independent parameter
+An exact scalar result-only `Move` retires the source's place and derived
+origins into an independent SSA result; an integer source also passes its
+envelope to that result. The scalar leaves are those of generated records:
+integers, floating values, `bool`, `char`, null and raw pointers, and integral
+enums. It changes no ownership events: source reads after movement remain
+invalid, and reinitialization establishes a new envelope. A uniquely
+identified, unprojected by-value scalar formal has independent parameter
 storage; moving it may preserve typed non-byte owned-field facts on an implicit
-receiver. A reference's projected integer type is not that proof. Stored
+receiver. A reference's projected scalar type is not that proof. Stored
 references, arrays, unions, capability carriers and unresolved paths receive
 no exemption. Moving a receiver field invalidates that field and overlapping
 paths, not safe siblings. Ordinary user records, nested relay methods and
 overflow after parameter/field reinitialization exercise this transfer without
 container names or changes to call-input admission.
 
-Exact integer-scalar final-address construction has a narrow transfer profile.
+Exact scalar final-address construction has a narrow transfer profile. The
+pointee may be any scalar leaf above. The shared predicate takes the pointee
+type rather than an integer domain, and integral enums need the program's
+enum table.
 Shared MIR effects retain its unknown-memory write and initialization, but do
 not invent a selected user constructor or synchronization. Construction still
 requires the unsafe caller to provide a vacant, nonconflicting complete extent;
@@ -838,7 +857,8 @@ may survive this operation. Byte fields, arrays/indexes, union overlap, stored
 reference traversal, compiler-capability backing carriers, unresolved roots
 and loaded-origin/element facts are discarded. No pointer validity, region
 extent or fresh allocation is inferred. The exact scalar construction rule
-above can independently publish the newly constructed object's value.
+above can independently publish the newly constructed object's value when the
+pointee is an integer; other leaves publish no value.
 
 That same profile admits exact generated copy/move construction of ordinary
 scalar-field records into vacant final storage. The shared MIR-effects query
@@ -853,11 +873,18 @@ but does not establish a larger initialized region. Source wrappers can relay th
 destroy/reconstruct still invalidates the old object's facts.
 
 The closed typed-store profile can combine vacant structural construction with
-checked non-byte scalar bookkeeping writes of one width. Independent scalar
-parameter moves affect only their own invocation storage. Existing non-byte
+checked non-byte scalar bookkeeping writes of one width and checked floating
+stores. Independent scalar parameter moves and independent local floating
+writes affect only their own invocation storage. Existing non-byte
 pointee facts of a different width survive that exact profile, just as live
 ordinary fields do; a construction-only profile preserves all such live scalar
-pointees. This follows the existing nonoverlapping-live-object contract, not an
+pointees. A checked floating store lands on a live floating object, so it
+changes no live integer object and no pointer or reference carrier. In the
+body it keeps every live non-byte integer fact, address identity and region,
+and the prefix envelopes of disjoint subobjects; it publishes no integer
+value. A callee whose profile has floating stores still writes caller memory,
+so it is never treated as frame-local. Pointer stores are not in this class:
+they can replace a live pointer carrier. This follows the existing nonoverlapping-live-object contract, not an
 assumption that different pointers name different allocations. Same-width live
 writes, unknown/native access, destructive lifetime changes and unsupported
 operations prevent preservation. The successive-publication regression includes

@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.397.1 — Fewer bounds checks on floating, bool, char and enum elements
+
+- The optimizer can now remove provable bounds checks on containers of
+  `double`, `float`, `bool`, `char` and enums, as it already could for integer
+  elements. Building such a container, filling it with a value, and storing a
+  `double` or `float` into an element or a record field no longer hide its
+  length. A loop that smooths one `std::vector<double>` in place runs about 2.3
+  times faster (905 to 396 ms). Stores of `bool`, `char` or enum elements still
+  hide the length. So does allocating another container, or calling native
+  code such as printing, before the loop. The `matrix` runtime probe, which
+  builds three vectors, is unchanged.
+
 ## 0.397.0 — Source-defined vector and string; allocation exhaustion aborts
 
 - **Allocation exhaustion now aborts, as in Rust.** When an infallible
