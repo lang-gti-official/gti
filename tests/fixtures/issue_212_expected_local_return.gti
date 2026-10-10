@@ -1,0 +1,77 @@
+#include <std/utility>
+
+// A named Expected reaches a placement Expected result by copy, after an
+// observation, or by moving or copying its payload out as the success value.
+struct pair_value {
+  int32_t a = 0;
+  int32_t b = 0;
+  pair_value(int32_t a) : a(a), b(a + 1) {}
+};
+
+expected<pair_value, int32_t> make(bool ok) {
+  if (ok) { return pair_value(5); }
+  return unexpected(4);
+}
+
+expected<pair_value, int32_t> copied(bool ok) {
+  auto granted = make(ok);
+  return granted;
+}
+
+expected<pair_value, int32_t> observed(bool ok) {
+  auto granted = make(ok);
+  if (granted && granted.value().a != 5) { return unexpected(9); }
+  return granted;
+}
+
+expected<pair_value, int32_t> unwrapped(bool ok) {
+  auto granted = make(ok);
+  if (!granted) { return unexpected(granted.error()); }
+  return std::move(granted).value();
+}
+
+expected<pair_value, int32_t> extracted(bool ok) {
+  auto granted = make(ok);
+  if (!granted) { return unexpected(granted.error()); }
+  return granted.value();
+}
+
+expected<int32_t, int32_t> scalar(bool ok) {
+  if (ok) { return 7; }
+  return unexpected(3);
+}
+
+expected<int32_t, int32_t> scalar_copied(bool ok) {
+  auto granted = scalar(ok);
+  return granted;
+}
+
+int32_t check(expected<pair_value, int32_t>& success,
+              expected<pair_value, int32_t>& failure) {
+  if (!success || success.value().a != 5 || success.value().b != 6) {
+    return 1;
+  }
+  if (failure || failure.error() != 4) { return 1; }
+  return 0;
+}
+
+int main() {
+  auto copiedSuccess = copied(true);
+  auto copiedFailure = copied(false);
+  auto observedSuccess = observed(true);
+  auto observedFailure = observed(false);
+  auto unwrappedSuccess = unwrapped(true);
+  auto unwrappedFailure = unwrapped(false);
+  auto extractedSuccess = extracted(true);
+  auto extractedFailure = extracted(false);
+  mut int32_t failures = check(copiedSuccess, copiedFailure);
+  failures += check(observedSuccess, observedFailure);
+  failures += check(unwrappedSuccess, unwrappedFailure);
+  failures += check(extractedSuccess, extractedFailure);
+  auto seven = scalar_copied(true);
+  auto three = scalar_copied(false);
+  if (!seven || seven.value() != 7 || three || three.error() != 3) {
+    failures += 1;
+  }
+  return failures;
+}
