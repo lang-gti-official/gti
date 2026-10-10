@@ -1068,8 +1068,34 @@ void testForwardListEmplacementPublication() {
            "the backend must reject missing in-place rollback publication");
   }
   expect(directFields == 1, "the node needs one in-place element publication");
+  // Emplacement moves its node before publishing the returned element, so
+  // the moved-from node shell has no fallible cleanup. A guard whose
+  // destructor can fail after the returned borrow forms still abandons it.
+  const auto returned =
+      analyzeWithStandardLibrary("unpublished-return-cleanup.gti", R"(
+#include <std/format>
+class Guard {
+  int32_t divisor;
+public:
+  Guard(int32_t divisor) : divisor(divisor) {}
+  Guard(Guard& other) = delete;
+  Guard(Guard&& other) = delete;
+  ~Guard() { std::println(100 / this.divisor); }
+};
+mut int32_t& pick(mut int32_t& value, int32_t divisor) {
+  Guard guard{divisor};
+  return value;
+}
+int main() {
+  mut int32_t value = 0;
+  pick(value, 1) = 3;
+  return value - 3;
+}
+)");
+  expect(returned.canGenerateCode(),
+         "a fallible guard after a returned borrow must verify");
   std::size_t abandonedReturns = 0;
-  for (const auto &function : frontend.mir.functionInstances()) {
+  for (const auto &function : returned.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
       if (block.activeFailure == 0)
         continue;
@@ -1084,7 +1110,7 @@ void testForwardListEmplacementPublication() {
             loan->kind != lang::MirLoanKind::Return)
           continue;
         ++abandonedReturns;
-        auto malformed = frontend.mir;
+        auto malformed = returned.mir;
         auto *body = lang::findMirBody(
             malformed, {lang::MirBodyKind::Function, function.id});
         for (auto &changed : body->blocks) {
@@ -1098,7 +1124,7 @@ void testForwardListEmplacementPublication() {
     }
   }
   expect(abandonedReturns != 0,
-         "emplacement must exercise unpublished-return cleanup");
+         "a fallible guard must exercise unpublished-return cleanup");
 }
 
 void testContainerSwapStorageAndMemberResults() {
@@ -3942,6 +3968,215 @@ int main() {
              !lang::cppMirOwnedParameterFieldBindings(malformed,
                                                       *changedConstructor),
          "a lexical parameter with no drop schedule should still fail closed");
+}
+
+// A move followed by an invoke leaves the moved shell's drop in the invoke's
+// continuation blocks. The body proof follows invoke edges back to the move;
+// other edges, merges, the entry, re-initialization on the success edge and
+// cycles stay conservative. Lowering and verification share this proof, so a
+// destructor that may fail never gains an edge for a moved-from shell.
+void testCrossBlockDefiniteMoveRetiresShell() {
+  const auto instruction = [](lang::MirInstructionId id,
+                              lang::MirInstructionKind kind,
+                              std::vector<lang::MirLifecycleEvent> events) {
+    lang::MirInstruction result;
+    result.id = id;
+    result.kind = kind;
+    result.lifecycle = std::move(events);
+    return result;
+  };
+  const auto block = [](lang::MirBlockId id,
+                        std::vector<lang::MirInstruction> instructions,
+                        lang::MirTerminator terminator) {
+    lang::MirBlock result;
+    result.id = id;
+    result.instructions = std::move(instructions);
+    result.terminator = std::move(terminator);
+    result.reachable = true;
+    return result;
+  };
+  lang::MirBody proof;
+  proof.entry = 1;
+  proof.blocks = {
+      block(1,
+            {instruction(1, lang::MirInstructionKind::Move,
+                         {{.kind = lang::MirLifecycleEventKind::Move,
+                           .source = 1,
+                           .target = 2}}),
+             instruction(2, lang::MirInstructionKind::Construct, {})},
+            {.kind = lang::MirTerminatorKind::Invoke,
+             .invokeInstruction = 2,
+             .failureRecord = 1,
+             .target = 2,
+             .elseTarget = 3}),
+      block(2,
+            {instruction(
+                3, lang::MirInstructionKind::Drop,
+                {{.kind = lang::MirLifecycleEventKind::Drop, .source = 1}})},
+            {.kind = lang::MirTerminatorKind::Return}),
+      block(3,
+            {instruction(4, lang::MirInstructionKind::Drop,
+                         {{.kind = lang::MirLifecycleEventKind::Drop,
+                           .source = 1,
+                           .failureCleanup = true}})},
+            {.kind = lang::MirTerminatorKind::PropagateFailure,
+             .failureRecord = 1})};
+  const auto moved = [](const lang::MirBody &body, lang::MirBlockId block,
+                        lang::MirDropObligationId obligation,
+                        lang::MirInstructionId before) {
+    return lang::mirDropFollowsDefiniteMove(body, *body.findBlock(block),
+                                            obligation, before);
+  };
+  expect(moved(proof, 2, 1, 3) && moved(proof, 3, 1, 4) &&
+             moved(proof, 1, 1, 2) &&
+             !lang::mirDropFollowsDefiniteMove(*proof.findBlock(2), 1, 3),
+         "both continuations of an invoke after a move must retire the "
+         "moved-from shell, which the same-block proof cannot see");
+  expect(!moved(proof, 1, 1, 1) && !moved(proof, 2, 0, 3) &&
+             !moved(proof, 2, 1, 99) && !moved(proof, 2, 2, 3),
+         "the entry state, a missing obligation, an unknown instruction and "
+         "an obligation that was the move's target are not moved shells");
+  for (int mutation = 0; mutation < 5; ++mutation) {
+    lang::MirBody changed = proof;
+    bool success = false;
+    bool failure = false;
+    switch (mutation) {
+    case 0:
+      // A successful invoke re-initializes the obligation on its success
+      // edge only; the failure continuation still sees the move.
+      changed.blocks[0].terminator.successLifecycle.push_back(
+          {.kind = lang::MirLifecycleEventKind::Initialize, .target = 1});
+      failure = true;
+      break;
+    case 1:
+      changed.blocks[0].instructions.front().lifecycle.front().conditional =
+          true;
+      break;
+    case 2:
+      // The failure route rejoining the success block makes it a merge.
+      changed.blocks[2].terminator = {.kind = lang::MirTerminatorKind::Goto,
+                                      .target = 2};
+      failure = true;
+      break;
+    case 3:
+      changed.blocks[0].instructions.front().tombstone = true;
+      break;
+    case 4:
+      // A block entered by a Goto may still gain a loop back edge after
+      // lowering appends its drop, so only invoke edges carry the proof.
+      changed.blocks[0].terminator = {.kind = lang::MirTerminatorKind::Goto,
+                                      .target = 2};
+      break;
+    }
+    expect(moved(changed, 2, 1, 3) == success &&
+               moved(changed, 3, 1, 4) == failure,
+           "re-initialization, conditional or tombstoned moves, merges and "
+           "non-invoke edges must keep the drop's destructor edge");
+  }
+  lang::MirBody cycle;
+  cycle.entry = 1;
+  cycle.blocks = {
+      block(1, {}, {.kind = lang::MirTerminatorKind::Return}),
+      block(2,
+            {instruction(
+                1, lang::MirInstructionKind::Drop,
+                {{.kind = lang::MirLifecycleEventKind::Drop, .source = 1}})},
+            {.kind = lang::MirTerminatorKind::Goto, .target = 3}),
+      block(3, {}, {.kind = lang::MirTerminatorKind::Goto, .target = 2})};
+  expect(!moved(cycle, 2, 1, 1),
+         "an untouched predecessor cycle must stop without a proof");
+
+  // End to end: the moved by-value parameter is retired after the field
+  // construction's invoke without a fallible destructor edge, even though
+  // its type's destructor can fail. Restoring that edge breaks verification.
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cross-block-moved-parameter.gti", R"(
+#include <std/utility>
+class Pool {
+  int32_t live;
+public:
+  Pool() : live(0) {}
+  void release(int32_t slot) { int32_t checked = this.live + slot; }
+};
+class Lease {
+  Pool& pool;
+  mut int32_t slot;
+public:
+  Lease(Pool& pool) : pool(pool), slot(0) {}
+  Lease(Lease&& other) = default;
+  ~Lease() {
+    if (this.slot != 0) { this.pool.release(this.slot); }
+  }
+};
+class Buffer {
+  Lease lease;
+public:
+  Buffer(Lease lease) : lease(std::move(lease)) {}
+};
+class Slots {
+  Buffer buffer;
+  mut int32_t length;
+public:
+  Slots(Lease lease) : buffer(Buffer(std::move(lease))), length(0) {}
+};
+int main() {
+  Pool pool{};
+  Slots slots{Lease(pool)};
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the moved-parameter constructor chain should reach MIR");
+  std::size_t crossBlockDrops = 0;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    for (const lang::MirBlock &home : constructor.body.blocks) {
+      for (const lang::MirInstruction &drop : home.instructions) {
+        if (drop.kind != lang::MirInstructionKind::Drop ||
+            drop.lifecycle.size() != 1)
+          continue;
+        const lang::MirDropObligation *obligation =
+            constructor.body.findDropObligation(drop.lifecycle.front().source);
+        if (obligation == nullptr ||
+            obligation->kind != lang::MirDropObligationKind::Binding ||
+            !lang::mirDropMayRaiseDefinedFailure(frontend.mir,
+                                                 obligation->dropType) ||
+            lang::mirDropFollowsDefiniteMove(home, obligation->id, drop.id) ||
+            !lang::mirDropFollowsDefiniteMove(constructor.body, home,
+                                              obligation->id, drop.id))
+          continue;
+        ++crossBlockDrops;
+        expect(drop.definedFailure.empty(),
+               "a moved-from parameter shell must not invoke its fallible "
+               "destructor");
+        lang::MirProgram malformed = frontend.mir;
+        auto &constructors =
+            const_cast<std::vector<lang::MirConstructorInstance> &>(
+                malformed.constructorInstances());
+        for (auto &candidate : constructors) {
+          if (candidate.id != constructor.id)
+            continue;
+          for (auto &changedBlock : candidate.body.blocks)
+            for (auto &changedDrop : changedBlock.instructions)
+              if (changedDrop.id == drop.id)
+                changedDrop.definedFailure.propagation =
+                    lang::FailurePropagationKind::Destructor;
+        }
+        const lang::MirVerificationResult verified =
+            lang::verifyMirProgram(malformed);
+        expect(std::any_of(verified.errors.begin(), verified.errors.end(),
+                           [](const lang::MirVerificationError &issue) {
+                             return issue.message.find("drop propagation") !=
+                                    std::string::npos;
+                           }),
+               "a destructor edge on a moved-from shell must fail the shared "
+               "propagation rule");
+      }
+    }
+  }
+  expect(crossBlockDrops >= 2,
+         "the moved parameter's success and failure retirements should both "
+         "follow the invoke that split their block");
 }
 
 void testMoveOnlyClassResultReceiverFieldTransfer() {
@@ -12213,6 +12448,8 @@ constexpr NamedTest kTests[] = {
      testPassiveOwnedParameterConstructorFields},
     {"testBodyOrderedPassivePolicyConstructor",
      testBodyOrderedPassivePolicyConstructor},
+    {"testCrossBlockDefiniteMoveRetiresShell",
+     testCrossBlockDefiniteMoveRetiresShell},
     {"testMoveOnlyClassResultReceiverFieldTransfer",
      testMoveOnlyClassResultReceiverFieldTransfer},
     {"testMoveOnlyReceiverFieldLifecycleSchedules",

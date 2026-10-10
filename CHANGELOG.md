@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.397.9 — Generic callees declared after their caller
+## 0.397.10 — Generic callees declared after their caller
 
 - A generic function that returns a moved by-value parameter, such as an
   iterator-returning `find`, can now be declared after the function that calls
@@ -18,6 +18,57 @@ for what minor and patch releases mean.
   callee first was accepted. The caller now asks for the callee's body
   analysis on demand; declaration-order rules are unchanged, so namespace
   globals and `constexpr` definitions must still precede their uses.
+
+## 0.397.9 — Backend crashes fixed for `expected` values and resource owners
+
+- Returning a named `expected` local now compiles, whatever its payload:
+  `return granted;`, observing it before returning it,
+  `return std::move(granted).value();` and `return granted.value();`. This is
+  the natural way to write a forwarding `std::memory_resource` provider
+  (#212).
+- Calling a method on a class-typed field reached through a raw pointer, such
+  as `this.state->items.push_back(value)` inside `unsafe`, no longer stops the
+  compiler (#213).
+- A class can hold several owners leasing from one resource binding, such as
+  two `std::resource_vector`s, or a `std::resource_storage` beside a
+  `std::resource_vector`, as `<std/resource>` documents (#214). A related
+  shape that compiled but failed to link is fixed too.
+- Destroying a by-value parameter after it has been moved never runs its
+  destructor. The compiler now recognises this even when a call or
+  construction sits between the move and the end of scope, so those
+  constructors no longer carry an impossible failure path.
+- Fix internal compiler error GTI-B0001 when an `expected<T, E>` value is
+  passed to a by-value `expected<T, E>` parameter of a function or
+  constructor and `T` is a class that needs no cleanup. This covers a call's
+  result passed directly, as in `check(make(true))` or `holder
+  h{make(true)}`, and a named local copied in, as in `check(local)` or
+  `holder h{local}`, which keeps its value. It also covers class error types,
+  arguments before and after the `expected`, member-function calls, classes
+  with a destructor as the constructed holder, loops, temporaries such as
+  `holder(make(true)).get()`, constructions inside another constructor's
+  body, callers that propagate failure, and both the value and the error
+  state.
+- Passing a by-value `expected<T, E>` parameter on to another call no longer
+  fails native compilation when `T` is such a class and declares its own
+  default constructor.
+- Replacing a mutable `expected<T, E>` local now builds from every source: a
+  call result (`result = make(false)`, #224), another local, `std::move(other)`,
+  `unexpected(error)` and a payload value (`result = value_type(...)`, #225).
+  This holds whether `T` needs no cleanup or owns resources, such as a class
+  with a destructor or a `std::string` field (#225, #227). Each replaced value
+  is destroyed exactly once, an error destroys nothing, and a moved-from source
+  is not destroyed again. Before, these reported GTI-B0001; the `std::move`
+  form with a cleanup-free payload failed native compilation, and the payload
+  form with an owning payload failed while building MIR. `result =
+  unexpected(error)` also builds now for an `expected` whose payload is not a
+  class.
+- `unexpected(error_type(...))`, where the error is a newly constructed class
+  that needs no cleanup, now builds when it initializes or replaces an
+  `expected` local, not only when it is returned directly (#227). The error is
+  constructed before a replaced value that owns resources is destroyed.
+- A construction from such an `expected` argument that is assigned to an
+  existing variable, returned directly, or used as a member initializer still
+  reports GTI-B0001.
 
 ## 0.397.8 — Moving a destructor-free borrowing class into a nested member
 

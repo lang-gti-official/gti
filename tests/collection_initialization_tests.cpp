@@ -71,6 +71,9 @@ public:
   Bag() : held(Item(9)) {}
   static Bag collection_init(uint64_t count) { return Bag(); }
   static Bag collection_insert(Bag bag, Item item) {
+    // The unmoved witness's fallible cleanup splits the return tail; the
+    // moved-from parameter shells retire after it without destructors.
+    Item witness{3};
     consume(std::move(item));
     return std::move(bag);
   }
@@ -94,8 +97,7 @@ int main() { Bag values = {Item(1), Item(2)}; return 0; }
       if (block.terminator.kind != lang::MirTerminatorKind::Invoke)
         continue;
       const auto *tail = function.body.findBlock(block.terminator.target);
-      if (tail == nullptr ||
-          tail->terminator.kind != lang::MirTerminatorKind::Invoke)
+      if (tail == nullptr)
         continue;
       for (const auto &move : block.instructions) {
         if (move.kind != lang::MirInstructionKind::Move ||
