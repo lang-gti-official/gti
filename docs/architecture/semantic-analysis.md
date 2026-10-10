@@ -499,7 +499,9 @@ example) borrows from. A consumer of such a fact asks for the body through
 
 - when the walk has not reached the callee, the caller's body-local state is
   set aside, the walk advances through every intervening declaration in order,
-  analyses the callee in its own position, and the caller resumes;
+  analyses the callee in its own position, and the caller resumes. That state
+  includes the caller's `constexpr for` expansion frames and budget, so a
+  demand from inside an expansion neither consumes nor resets it;
 - a compiler-trusted body the pass deferred (test mode, below) is analysed in
   its own declaration context;
 - a body already in progress (recursion), concrete-instance reanalysis, a
