@@ -49653,9 +49653,25 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                 ? body.findPlace(stage->operands.front().place)
                                 : nullptr;
     const auto uses = nonRootRecordUses(body, id);
+    // A binding-rooted place reached only through field selections and
+    // reference dereferences has one stable native address: references are
+    // never reseated and field offsets are constant, so re-spelling the place
+    // at the consuming call denotes the same object as at the stage. Index,
+    // raw-memory and pack projections stay outside this proof. Any other root
+    // must be the exact full-expression slot checked below.
+    const bool stablyAddressedPlace =
+        place != nullptr &&
+        (place->projections.empty() ||
+         (place->root == MirPlaceRootKind::Binding &&
+          std::all_of(place->projections.begin(), place->projections.end(),
+                      [](const MirPlaceProjection &projection) {
+                        return projection.kind == MirProjectionKind::Field ||
+                               projection.kind ==
+                                   MirProjectionKind::Dereference;
+                      })));
     if (value == nullptr || stage == nullptr ||
         stage->kind != MirInstructionKind::CallInput || place == nullptr ||
-        !place->projections.empty() ||
+        !stablyAddressedPlace ||
         (stage->operands.front().kind != MirOperandKind::BorrowRead &&
          stage->operands.front().kind != MirOperandKind::BorrowWrite) ||
         value->definitionBlock == targetBlock || uses.size() != 1 ||
@@ -49718,10 +49734,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (scalarInputs)
         conditionalArguments.push_back(std::move(conditional));
     }
-    // A bare local or exact full-expression slot has a stable native address.
-    // Erasing its borrowed input
-    // across an acyclic argument diamond is exact only when all normal paths
-    // reach the one call and cannot mutate or end that local's lifetime.
+    // A bare local, a binding-rooted field/reference path, or an exact
+    // full-expression slot has a stable native address. Erasing its borrowed
+    // input across an acyclic argument diamond is exact only when all normal
+    // paths reach the one call and cannot mutate or end that storage's
+    // lifetime.
     // Intervening scalar temporaries and exact nested read-call result
     // preparations do not change that address. Calls still execute where MIR
     // places them, with their own failure edges; nothing is inlined or moved
