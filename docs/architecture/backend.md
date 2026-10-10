@@ -653,6 +653,22 @@ about the time the same statements take when split into small functions;
 `single_body_compile_scaling` guards that growth by comparing the compiler's
 CPU time for one repeated statement block at two body lengths.
 
+Two recognizers whose complete proof is itself a body walk also remember their
+answers in the same per-body index, because admission, plan construction and
+text emission ask them about the same values and drops. `returnMoveDefinition`
+records, per queried value, the Move that may publish a class-valued return
+directly; its reachability and dominance walks look blocks up by position,
+which verified MIR makes exact (`verifyMirBody` requires `blocks[i].id == i +
+1`), and one walk from the Move's block serves both the same-block and the
+cross-block form. `failureDestructorTarget` records, per drop obligation,
+whether the drop's recipe equals `mirUniqueCleanupType` of its type, a
+derivation that walks the program's class instances. Both answers depend only
+on the immutable verified body and program, so each equals the computation it
+replaces; a body outside a representation scope still computes every query.
+On `tests/fixtures/stdlib_surface_json.gti`, whose single body emits about 34
+MB of C++, these two recognizers had been about three quarters of the whole
+`--emit-cpp` compile.
+
 Each body plan owns its readiness and issues, canonical plain and failure text
 templates, the deduced-callable variants where target family spelling differs,
 boundary-declaration decision, initializer schedule and field spellings, and
