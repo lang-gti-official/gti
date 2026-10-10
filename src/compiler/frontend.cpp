@@ -404,11 +404,13 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
           options.workMetrics->parsedUnits.push_back(unit->path.string());
         }
         std::size_t estimatedInputBytes = estimatedTokenBytes(unit->tokens);
-        if (const std::string *source =
-                result.sources.find(unit->path.string())) {
+        const std::string *source = result.sources.find(unit->path.string());
+        if (source != nullptr) {
           estimatedInputBytes += source->size();
         }
-        Parser parser(std::move(unit->tokens));
+        Parser parser(std::move(unit->tokens), source == nullptr
+                                                   ? std::string_view{}
+                                                   : std::string_view{*source});
         Program parsed = parser.parse();
         appendParserDiagnostics(result.diagnostics, parser.errors(),
                                 result.sourceGraph, unitId);

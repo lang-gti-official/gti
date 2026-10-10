@@ -89,6 +89,28 @@ silently reused from whichever domain loaded it first. Sharing is diagnosed
 when a replay selects different syntax. As of 0.393.0, different incoming
 flags alone are no longer diagnosed.
 
+## Revision: Export Placement (0.397.6)
+
+`export` is written first, as in `export [[track_caller]] void f()`. Attribute
+lists, `@` bindings and specifiers describe the declared entity. `export`
+instead publishes the whole declaration, including forms that take no
+attributes at all: `export namespace`, `export import` and `export #include`.
+One leading position therefore works for every exportable form. It also matches
+the C++20 grammar, where an export-declaration wraps a declaration and an
+attribute cannot precede `export`. The parser already accepted only this order;
+this revision states it and gives the other order its own diagnostic.
+
+Accepting both orders was considered. It would forgive habits from languages
+that put annotations before visibility, such as Rust's `#[inline] pub fn` or
+Java's `@Override public`. It would also give one declaration two spellings
+that the formatter, Tree-sitter and reviewers must treat as equivalent. An
+attribute written before `export namespace` or `export import` would still
+need its own rejection. The strict rule's cost is one syntax error for those
+habits. The parser reports it at the misplaced `export` with an edit that moves
+the keyword to the front, keeping the prefix text and any comments in it.
+Parsing recovers as though `export` came first, so tooling keeps the
+declaration's exported identity.
+
 ## Revision: Standard-Library Modules (0.393.0)
 
 The standard library is the first library that every program uses, and
