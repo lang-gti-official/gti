@@ -396,6 +396,11 @@ struct ClosedCallRound {
   const std::set<MirBodyAddress, MirBodyAddressLess> &rejected;
   std::vector<std::pair<MirBodyAddress, ClosedCallContext>> discovered;
   std::set<MirBodyAddress, MirBodyAddressLess> incompleteBodies;
+  const MirProgramCaptureSummaries *captures = nullptr;
+  std::map<MirBodyAddress, MirLocalCaptureAnalysis, MirBodyAddressLess>
+      *localCaptureCache = nullptr;
+  // Capture facts of the body this round analyzes.
+  const MirLocalCaptureAnalysis *localCaptures = nullptr;
 };
 
 using PlaceThresholds = std::map<MirPlaceId, IntegerFact>;
@@ -2977,6 +2982,43 @@ void restoreDifferentWidthFields(AbstractState &state,
   for (const auto &[pointer, fact] : saved.pointees)
     publishConstructedScalar(state, pointer, fact);
 }
+
+// An opaque effect reaches only storage whose identity reached it. A local
+// binding that no earlier instruction may have captured, and that this
+// instruction does not take as an input, keeps its own non-byte integer
+// fields and scalars. Facts about storage it points to, its prefixes and its
+// address identities are not retained.
+[[nodiscard]] DisjointScalarFields preserveUncapturedLocals(
+    const MirProgram *program, MirBodyAddress address, const MirBody &body,
+    const MirLocalCaptureAnalysis *captures, const MirInstruction &instruction,
+    const AbstractState &state) {
+  DisjointScalarFields saved;
+  if (program == nullptr || captures == nullptr || !captures->valid)
+    return saved;
+  const auto uncaptured = [&](const MirPlace &place) {
+    if (place.root != MirPlaceRootKind::Binding || place.binding == 0)
+      return false;
+    const MirPlace *root = body.findPlace(rootForBinding(body, place.binding));
+    return root != nullptr && root->type.kind != SemanticType::Reference &&
+           !captures->mayBeCapturedBefore(place.binding, instruction.id) &&
+           !captures->involves(place.binding, instruction.id);
+  };
+  for (const auto &[root, object] : state.objects) {
+    const MirPlace *place = body.findPlace(root);
+    if (place == nullptr || !place->projections.empty() || !uncaptured(*place))
+      continue;
+    for (const auto &[path, fact] : object.integers)
+      if (fact.domain.width > 8 &&
+          liveScalarPath(program, address, body, root, path))
+        saved.objects[root].emplace(path, fact);
+  }
+  for (const auto &[id, fact] : state.integerPlaces)
+    if (const MirPlace *place = body.findPlace(id);
+        place != nullptr && uncaptured(*place) && fact.domain.width > 8 &&
+        liveScalarPath(program, address, body, id, {}))
+      saved.places.emplace(id, fact);
+  return saved;
+}
 [[nodiscard]] std::optional<std::vector<MirPlaceId>>
 operandProtectedPlaces(const MirBody &body, const MirOperand &operand);
 [[nodiscard]] bool
@@ -3032,7 +3074,16 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                 MirBodyAddress address, MirBodyAddress target,
                                 bool opaqueEffects,
                                 LiveMemoryBarrier liveMemoryBarrier,
-                                bool pointerRelayOnly, AbstractState &state) {
+                                bool pointerRelayOnly,
+                                const MirLocalCaptureAnalysis *captures,
+                                AbstractState &state) {
+  const auto killUnknownMemory = [&](const MirBody &body,
+                                     AbstractState &state) {
+    const auto uncaptured = preserveUncapturedLocals(
+        &program, address, body, captures, instruction, state);
+    lang::killUnknownMemory(body, state);
+    restoreDifferentWidthFields(state, uncaptured);
+  };
   const auto summary = exactMirInvocationSummary(program, body, instruction);
   const bool structuralConstructionOnly =
       opaqueEffects &&
@@ -3073,7 +3124,8 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
   const auto invalidate = [&](const MirOperand &operand) {
     const auto sources = operandProtectedPlaces(body, operand);
     if (!sources) {
-      killUnknownMemory(body, state);
+      // An unknown staged identity may name any local; preserve nothing.
+      lang::killUnknownMemory(body, state);
       return;
     }
     // MayAlias is not transitive: invalidate from actual sources, never from
@@ -3694,7 +3746,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   invalidateClosedCallInputs(closedCalls->program, body, aliases, instruction,
                              address, *target, summary.hasOpaqueEffects,
                              summary.liveMemoryBarrier, pointerRelayOnly,
-                             state);
+                             closedCalls->localCaptures, state);
   if (summary.mayWriteGlobals) {
     // A checked reference or receiver can denote a callee-only global whose
     // Symbol is absent from this body. Current effect summaries do not carry
@@ -4470,7 +4522,12 @@ void applyInstruction(const MirBody &body,
     }
   }
   const auto unknownEffectBarrier = [&] {
+    const auto uncaptured = preserveUncapturedLocals(
+        program, address, body,
+        closedCalls == nullptr ? nullptr : closedCalls->localCaptures,
+        instruction, state);
     killUnknownMemory(body, state);
+    restoreDifferentWidthFields(state, uncaptured);
     state.hasOpaqueEffects = true;
   };
   const auto effect = effects(instruction);
@@ -7626,6 +7683,21 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
   }
   const MirPlaceAliasEscapeAnalysis aliases =
       analyzeMirPlaceAliasEscape(program, address);
+  // Capture facts depend only on the program, so one analysis per body
+  // serves every context.
+  if (round.captures != nullptr && round.localCaptureCache != nullptr) {
+    auto found = round.localCaptureCache->find(address);
+    if (found == round.localCaptureCache->end())
+      found = round.localCaptureCache
+                  ->emplace(address, analyzeMirLocalCaptures(program, address,
+                                                             *round.captures))
+                  .first;
+    round.localCaptures = &found->second;
+  }
+  struct ResetCaptures {
+    ClosedCallRound &round;
+    ~ResetCaptures() { round.localCaptures = nullptr; }
+  } resetCaptures{round};
   AbstractState entry =
       entryStateForContext(program, address, *body, aliases, context);
   std::optional<ObjectFact> initialFields;
@@ -8164,6 +8236,10 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
     enqueue(address);
   }
 
+  const MirProgramCaptureSummaries captureSummaries =
+      deriveMirProgramCaptureSummaries(program);
+  std::map<MirBodyAddress, MirLocalCaptureAnalysis, MirBodyAddressLess>
+      localCaptureCache;
   MirClosedCallSafetyAnalysis result;
   while (!work.empty()) {
     const auto address = work.front();
@@ -8187,8 +8263,11 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
       continue;
     }
     result.iterations = std::max(result.iterations, ++analyses[address]);
-    ClosedCallRound round{
-        .program = program, .summaries = summaries, .rejected = rejected};
+    ClosedCallRound round{.program = program,
+                          .summaries = summaries,
+                          .rejected = rejected,
+                          .captures = &captureSummaries,
+                          .localCaptureCache = &localCaptureCache};
     auto body =
         analyzeContextualBody(program, address, contexts.at(address), round);
     contextualSafety.insert_or_assign(address, std::move(body.safety));

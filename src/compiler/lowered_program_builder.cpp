@@ -778,6 +778,7 @@ private:
             .neverReturns = info->neverReturns,
             .tracksCaller = info->tracksCaller,
             .cThreadOperation = info->cThreadOperation,
+            .processMemoryOperation = info->processMemoryOperation,
             .virtualMethod = info->virtualMethod,
             .pureVirtual = info->pureVirtual,
             .overrideMethod = info->overrideMethod,
@@ -1041,6 +1042,9 @@ private:
         source.cThreadOperation != lowered.cThreadOperation ||
         (info != nullptr &&
          source.cThreadOperation != info->cThreadOperation) ||
+        source.processMemoryOperation != lowered.processMemoryOperation ||
+        (info != nullptr &&
+         source.processMemoryOperation != info->processMemoryOperation) ||
         (info != nullptr && source.requiresUnsafe != info->requiresUnsafe) ||
         (info != nullptr && source.neverReturns != info->neverReturns) ||
         (info != nullptr && source.tracksCaller != info->tracksCaller) ||

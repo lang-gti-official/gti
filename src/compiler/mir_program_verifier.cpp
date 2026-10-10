@@ -154,6 +154,30 @@ bool exactCThreadRuntimeFunction(const MirFunctionInstance &function) {
   return false;
 }
 
+// Re-establishes the declared process-allocator runtime contract from the
+// declaration itself, so a forged classification cannot lend its precise
+// effect summary to an unrelated native declaration.
+bool exactProcessMemoryRuntimeFunction(const MirProgram &program,
+                                       const MirFunctionInstance &function) {
+  const auto operation = function.processMemoryOperation;
+  if (operation == ProcessMemoryRuntimeOperation::None) {
+    return true;
+  }
+  return operation < ProcessMemoryRuntimeOperation::Count && !function.owner &&
+         !function.staticMember &&
+         function.cThreadOperation == CThreadRuntimeOperation::None &&
+         function.linkage == LanguageLinkage::C &&
+         function.definitionKind == MirDefinitionKind::Declaration &&
+         function.typeArguments.empty() && function.valueArguments.empty() &&
+         !function.cArrayCountParameter && !function.requiresUnsafe &&
+         !function.neverReturns && !function.tracksCaller &&
+         !function.virtualMethod && !function.pureVirtual &&
+         exactProcessMemoryRuntimeOperation(
+             function.externalSymbol, function.returnType,
+             function.parameterTypes) == operation &&
+         processMemoryRuntimeSelectedForTarget(operation, program.target().os);
+}
+
 SynchronizationOperationKind
 cThreadSynchronization(const MirProgram &program,
                        const MirInstruction &instruction) {
@@ -11060,6 +11084,13 @@ verifyMirProgramContracts(const MirProgram &program) {
           {.bodyKind = MirBodyKind::Function,
            .owner = function.id,
            .message = "C-thread runtime declaration contract is invalid"});
+    }
+    if (!exactProcessMemoryRuntimeFunction(program, function)) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = function.id,
+           .message =
+               "process-memory runtime declaration contract is invalid"});
     }
   }
 

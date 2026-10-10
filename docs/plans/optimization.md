@@ -429,12 +429,15 @@ replay. It also feeds RT-1 and helps O-MIR-08's scalar-promotion prerequisite.
   The inner loop keeps two `cmp`/`csel`/`tst`/`b.ne` checks per element and is
   not vectorized. The bounds ceiling variant shows 85.8 to 24.5 ms against 22.7
   ms for C++: the retained bounds checks are the entire gap.
-  Revisited for 0.397.2: the probe's `n` is a constant, so `main`'s closed-call
-  contexts can prove these checks with intervals alone if each vector's live
-  length reaches `multiply`. 0.397.2 keeps that length through floating
-  element construction and stores. The remaining blocker is the opaque process
-  allocation behind the second and third vectors, which erases the first
-  vector's length (see [optimization.md](../architecture/optimization.md)).
+  Revisited for 0.397.2 and 0.397.4. The probe's `n` is a constant, so
+  `main`'s closed-call contexts prove both accessor checks with intervals once
+  each vector's live length reaches `multiply`. 0.397.2 keeps the length
+  through floating construction and stores; 0.397.4's capture analysis keeps
+  it through the opaque allocation behind the later vectors. The inner loop
+  now has no bounds or overflow check, and the probe runs 82.0 to 40.1 ms
+  against 17.4 ms for C++. The remaining gap is the accessor's
+  failure-capable call shape: its calls stay Invokes after the check is gone,
+  which defeats native inlining (RT-1, RT-4).
   A runtime `n` would still need this relational domain.
 - `string::find(char)` iterates `index < this.count` and then indexes with
   `this[index]`, whose check is the same comparison.

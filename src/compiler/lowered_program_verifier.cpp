@@ -1074,6 +1074,10 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         declaration->cThreadOperation != mir.cThreadOperation ||
         (declaration->cThreadOperation != CThreadRuntimeOperation::None &&
          !declaration->compilerPrivate) ||
+        declaration->processMemoryOperation != mir.processMemoryOperation ||
+        (declaration->processMemoryOperation !=
+             ProcessMemoryRuntimeOperation::None &&
+         !declaration->compilerPrivate) ||
         instance.owner != mir.owner ||
         instance.typeArguments != mir.typeArguments ||
         instance.valueArguments != mir.valueArguments ||
