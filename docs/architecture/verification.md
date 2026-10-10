@@ -4867,7 +4867,7 @@ caps the detected compile default by the memory `/proc/meminfo` reports
 (`GTI_MEMINFO` names another file for tests), never below one job and never
 touching CTest workers or an explicit override; the release build states
 3072 MiB because its bundled LLVM/Clang units compile beside GTI's largest
-units, and the CI builds state 2048 MiB. Runner provisioning and timeouts
+units, the native CI build states 2048 MiB, and the ASan/UBSan build 3072 MiB. Runner provisioning and timeouts
 remain external policy; the helper prints the processors and memory it saw so
 a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution

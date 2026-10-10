@@ -217,7 +217,9 @@ jobs:
         env:
           GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
           GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
-          GTI_MEMORY_PER_JOB_MIB: 2048
+          # ASan/UBSan instrumentation at -O1 -g needs more memory per
+          # unit than the plain native build.
+          GTI_MEMORY_PER_JOB_MIB: 3072
         run: bash scripts/configure_ci_resources.sh
 
       - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang
