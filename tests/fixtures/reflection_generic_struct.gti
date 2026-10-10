@@ -1,0 +1,15 @@
+#include <std/meta>
+struct Pair<A, B> {
+  A first;
+  B second;
+};
+int main() {
+  Pair<uint32_t, float> pair = {.first = uint32_t(3), .second = 4.5};
+  mut double sum = 0.0;
+  constexpr for (auto field : std::meta::fields_of<Pair<uint32_t, float>>()) {
+    sum = sum + double(field.get(pair));
+  }
+  if (sum != 7.5) { return 1; }
+  if (std::meta::name_of<Pair<uint32_t, float>>().empty()) { return 2; }
+  return 0;
+}

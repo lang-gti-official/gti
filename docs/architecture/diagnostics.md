@@ -33,6 +33,17 @@ constexpr diagnostics retain priority; unresolved types do not receive a second
 speculative initializer error. CLI and LSP publish the same record, including
 the exact source range and clearing after an initializer is supplied.
 
+`GTI-S2107` rejects a `constexpr for` whose sequence is not a value of a class
+with one type-pack argument list; the colon is primary and the message names
+the actual type. `GTI-S2108` reports an expansion over the compile-time budget
+(1024 elements per statement, 4096 expanded copies per declaration) at the
+`for` keyword. `GTI-S2109` rejects a function, class, enum, concept, alias or
+namespace declaration inside a `constexpr for` body. `GTI-S2111` rejects a
+`std::meta::field<T, I>` whose index is out of range for `T`, naming the count.
+`GTI-S2112` rejects `get_mut` on a field that is not writable through the
+given owner. Diagnostics produced inside an expanded copy carry related
+information naming the element and are deduplicated across identical copies.
+
 `GTI-S2106` rejects a selected ordinary GTI call without a source definition
 in a closed executable/library or C++ representation request, before backend
 generation. The call token is primary and its bodyless declaration is related. Semantic
