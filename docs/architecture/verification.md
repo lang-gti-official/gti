@@ -1,5 +1,62 @@
 # Compiler Verification
 
+## Capture analysis (0.397.4)
+
+- **Analysis unit test.** `testCaptureSummariesAndLocalFlow` derives
+  summaries on real MIR:
+  - a returned receiver borrow and a returned reference parameter are
+    ReturnOnly;
+  - a receiver field's or reference parameter's raw address handed to native
+    code is Captured;
+  - reads capture nothing.
+
+  The local query reports a binding uncaptured before and at the native call
+  that receives its address, and captured after it. An unknown instruction
+  answers conservatively.
+- **Safety proofs.** `testUncapturedLocalsSurviveUnknownEffects` checks, at
+  O2 and O3:
+  - an uncaptured local keeps its value across a native call and through a
+    loop of them;
+  - five exposure routes keep the check: an address passed to native code, an
+    aggregate holding a borrow passed to a bodyless function, a constructor
+    registering its own field, an exposure before the use, and a capture on an
+    earlier loop iteration;
+  - a capture placed after the use does not affect it;
+  - a user container keeps its accessor check discharged across a second
+    container's allocation and a native call between loops, but not once
+    passed by reference to a bodyless function.
+
+  Every proof replays independently.
+- **Changed expectations.** Three earlier tests encoded the old blanket
+  invalidation:
+  - the mutable-input test's local before an unknown call is now provable,
+    and a new negative exposes the local first;
+  - the synchronization test now shows a reference parameter losing its fact
+    while the uncaptured loop counter keeps its bound (the accumulator stays
+    checked);
+  - the record-sequence negatives still keep every field check, and the
+    uncaptured loop counter is now proved.
+
+  The malformed staged-input test caught one real gap during development: an
+  empty or cyclic staging chain looked as if it carried no identity. Such
+  instructions now capture and involve every binding.
+- **Suites.** All optimizer, census, corpus and representation-snapshot CTests
+  pass. No baseline changes.
+- **Runtime.** Interleaved on an idle Apple M2 Max (3 warmups, 15 shuffled
+  rounds), the `matrix` probe runs 82.0 to 40.1 ms against 17.4 ms for C++,
+  and its inner loop now has no check. hashmap, vector-push, lambda and
+  strings are unchanged within noise. Most other probes lose a few counter
+  checks.
+- **Compile time.**
+  - Over 22 examples, `-O0` is unchanged and `-O2` takes about 5–8% longer.
+  - With preservation disabled the build matches the baseline, so the summaries
+    and flow add no measurable overhead.
+  - Preserving only object fields (which carry container lengths) costs about
+    0.3%. The rest comes from scalar locals, mostly loop counters, now kept
+    across opaque calls: the analysis iterates those loops to a fixpoint
+    instead of discarding the counter at each call. The owner accepted this
+    real-work cost.
+
 ## Scalar-leaf construction and floating stores (0.397.2)
 
 - **Effects.** The MIR effect test now requires the vacant-construction

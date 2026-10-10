@@ -1958,6 +1958,16 @@ MirEffectTraits effects(const MirProgram &program, const MirBody &body,
   return cleanupEffects(result, targets);
 }
 
+MirInvocationTargets mirInvocationTargets(const MirProgram &program,
+                                          const MirBody &body,
+                                          const MirInstruction &instruction) {
+  if (!isInvocation(instruction))
+    return {};
+  ExactTargets targets = exactTargets(program, body, instruction);
+  return {.boundary = targets.boundary,
+          .addresses = std::move(targets.addresses)};
+}
+
 std::optional<MirEffectSummary>
 exactMirInvocationSummary(const MirProgram &program, const MirBody &body,
                           const MirInstruction &instruction) {
