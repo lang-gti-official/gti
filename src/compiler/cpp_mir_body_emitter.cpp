@@ -570,7 +570,10 @@ resultProducersOf(const MirBody &body, MirValueId value) {
                        });
   }
   if (!index->dropSlots) {
-    IndexedMirBody::DropSlots &governed = index->dropSlots.emplace();
+    // Clang 18 does not consider this aggregate constructible from no
+    // arguments, so pass a braced value instead of calling emplace().
+    IndexedMirBody::DropSlots &governed =
+        index->dropSlots.emplace(IndexedMirBody::DropSlots{});
     for (const MirDropObligation &obligation : body.dropObligations) {
       const MirPlace *dropPlace = body.findPlace(obligation.place);
       if (dropPlace == nullptr) {
