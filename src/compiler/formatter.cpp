@@ -274,8 +274,11 @@ public:
         }
         break;
       case Kind::LeftBracket:
+        // Consecutive attribute lists stay adjacent: `[[a]][[b]]`.
         if (isLambdaCaptureStart(lexemes, index) ||
-            isStructuredBindingStart(lexemes, index)) {
+            isStructuredBindingStart(lexemes, index) ||
+            (isAttributeListStart(lexemes, index) &&
+             (previous == nullptr || previous->kind != Kind::RightBracket))) {
           state.space();
         } else {
           state.trimSpaces();
@@ -2363,6 +2366,30 @@ private:
       } else if (lexemes[current].kind == Kind::RightBracket && --depth == 0) {
         const Lexeme *next = nextSignificant(lexemes, current);
         return next != nullptr && next->kind == Kind::LeftParen;
+      }
+    }
+    return false;
+  }
+
+  // The outer '[' of a `[[...]]` declaration or statement attribute list,
+  // such as after `export` or `else`. A subscript whose operand begins with a
+  // lambda capture closes its inner '[' before '(' rather than ']'.
+  static bool isAttributeListStart(const std::vector<Lexeme> &lexemes,
+                                   std::size_t index) {
+    const Lexeme *previous = previousSignificant(lexemes, index);
+    const Lexeme *inner = nextSignificant(lexemes, index);
+    if (inner == nullptr || inner->kind != Kind::LeftBracket ||
+        (previous != nullptr && previous->kind == Kind::LeftBracket)) {
+      return false;
+    }
+    std::size_t depth = 0;
+    for (std::size_t current = static_cast<std::size_t>(inner - lexemes.data());
+         current < lexemes.size(); ++current) {
+      if (lexemes[current].kind == Kind::LeftBracket) {
+        ++depth;
+      } else if (lexemes[current].kind == Kind::RightBracket && --depth == 0) {
+        const Lexeme *next = nextSignificant(lexemes, current);
+        return next != nullptr && next->kind == Kind::RightBracket;
       }
     }
     return false;
