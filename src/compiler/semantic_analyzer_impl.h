@@ -446,6 +446,8 @@ private:
     bool tracksCaller = false;
     bool discardableResult = false;
     CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
+    ProcessMemoryRuntimeOperation processMemoryOperation =
+        ProcessMemoryRuntimeOperation::None;
     LanguageLinkage linkage = LanguageLinkage::Gti;
     std::string externalSymbol;
     std::optional<std::size_t> cArrayCountParameter;

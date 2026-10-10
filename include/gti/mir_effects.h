@@ -72,6 +72,17 @@ isMirStructuralValueTransfer(const MirProgram &program,
 exactMirInvocationSummary(const MirProgram &program, const MirBody &body,
                           const MirInstruction &instruction);
 
+// The exact source bodies an invocation, drop or cleanup instruction runs.
+// `boundary` marks dynamic dispatch, callbacks, native or unknown definitions
+// and polymorphic cleanup: code outside the program's exact source bodies.
+struct MirInvocationTargets {
+  bool boundary = false;
+  std::vector<MirBodyAddress> addresses;
+};
+[[nodiscard]] MirInvocationTargets
+mirInvocationTargets(const MirProgram &program, const MirBody &body,
+                     const MirInstruction &instruction);
+
 [[nodiscard]] MirProgramEffectSummaries
 deriveMirProgramEffectSummaries(const MirProgram &program);
 

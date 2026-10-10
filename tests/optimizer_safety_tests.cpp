@@ -137,6 +137,7 @@ void forward_set(mut int32_t& value) { set_max(value); }
 void set_global() { shared = 2147483647; }
 void observe(int32_t& value) { int32_t copy = value; }
 void opaque();
+void expose(mut int32_t& value);
 int32_t exact_leaf() { return 7; }
 int32_t exact_nested() { return exact_leaf(); }
 
@@ -209,6 +210,12 @@ int32_t unresolved() {
   opaque();
   return value + int32_t(1);
 }
+int32_t unresolved_exposed() {
+  mut int32_t value = 0;
+  expose(value);
+  opaque();
+  return value + int32_t(1);
+}
 int32_t unrelated() {
   mut int32_t value = 0;
   mut int32_t other = 0;
@@ -243,6 +250,7 @@ int32_t main() {
   if (shared == 9) { return readonly(); }
   if (shared == 10) { return nested_exact(); }
   if (shared == 11) { return object_postcondition(); }
+  if (shared == 12) { return unresolved_exposed(); }
   return unresolved();
 }
 )";
@@ -310,7 +318,7 @@ int32_t main() {
     expect(optimized.valid(), "mutable call invalidation must remain verified");
     for (const std::string_view name :
          {"direct", "forwarded", "projected", "carrier", "carrier_shell",
-          "local_reference", "global", "unresolved"}) {
+          "local_reference", "global", "unresolved_exposed"}) {
       expect(
           functionOperationDischarges(
               frontend, optimized, name,
@@ -320,8 +328,9 @@ int32_t main() {
     }
     if (level == lang::OptimizationLevel::O0)
       continue;
-    for (const std::string_view name :
-         {"unrelated", "readonly", "nested_exact", "object_postcondition"}) {
+    // An unknown callee that never received a local cannot reach it.
+    for (const std::string_view name : {"unrelated", "readonly", "nested_exact",
+                                        "object_postcondition", "unresolved"}) {
       const auto actual = functionOperationDischarges(
           frontend, optimized, name,
           lang::MirSafetyCheckFamily::ArithmeticOverflow,
@@ -414,8 +423,15 @@ int32_t synchronized_loop(std::atomic<int32_t>& signal) {
   }
   return total;
 }
+void synchronized_shared(std::atomic<int32_t>& signal, mut int32_t& total) {
+  total = 0;
+  synchronize(signal);
+  total += 1;
+}
 int main() {
-  return synchronized_loop(signal);
+  mut int32_t shared = 0;
+  synchronized_shared(signal, shared);
+  return synchronized_loop(signal) + shared;
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -447,9 +463,19 @@ int main() {
         {.hir = frontend.hir, .mir = frontend.mir, .level = level});
     expect(optimized.valid() &&
                functionDischarges(
-                   frontend, optimized, "synchronized_loop",
+                   frontend, optimized, "synchronized_shared",
                    lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
-           "synchronizing calls must retain the recurrence arithmetic checks");
+           "a synchronizing call must retain checks on storage another "
+           "thread may reach");
+    const auto local =
+        functionDischarges(frontend, optimized, "synchronized_loop",
+                           lang::MirSafetyCheckFamily::ArithmeticOverflow);
+    // The loop counter is a local no other thread can reach, so its bound
+    // survives. The accumulator still needs recurrence invariance, which
+    // the call's opaque effects block.
+    expect(local == 1, "an uncaptured loop counter keeps its bound across "
+                       "synchronization: " +
+                           std::to_string(local) + " actual, 1 expected");
   }
 }
 
@@ -1661,10 +1687,19 @@ int32_t main() {
            "constructor-built record envelopes must prove both counters and "
            "every field operation:" +
                counts);
-    expect(overflow("settle_with_barrier") == 1 &&
-               overflow("settle_noisy") == 2,
+    const auto multiply = [&](std::string_view name) {
+      return functionOperationDischarges(
+          frontend, optimized, name,
+          lang::MirSafetyCheckFamily::ArithmeticOverflow,
+          lang::MirOperation::Multiply);
+    };
+    expect(overflow("settle_with_barrier") == 2 &&
+               overflow("settle_noisy") == 2 &&
+               multiply("settle_with_barrier") == 0 &&
+               multiply("settle_noisy") == 0,
            "an opaque call before the write, or an opaque element "
-           "constructor, must retain the field checks:" +
+           "constructor, must retain the field checks while the uncaptured "
+           "loop counter keeps its bound:" +
                counts);
     expect(overflow("sum_past_end") == 0,
            "an index reaching the initialized length must not read the "
@@ -1869,6 +1904,227 @@ int32_t main() {
                  frontend.mir, optimized.mir, optimized.report.transformations)
                  .valid(),
              std::string(fixture.name) + " proofs must independently replay");
+    }
+  }
+}
+
+void testUncapturedLocalsSurviveUnknownEffects() {
+  // An unknown call, a synchronizing call or another allocation can only
+  // reach storage whose identity reached it. Locals that no earlier
+  // instruction exposed keep their facts; an address passed to native or
+  // bodyless code, an aggregate holding a borrow, a constructor registering
+  // its own field, or a capture on an earlier loop iteration keeps the check.
+  const std::string locals = R"(extern "C" {
+  void analysis_barrier();
+  void stash(int32_t* address);
+}
+
+
+int32_t uncaptured() {
+  mut int32_t value = 0;
+  analysis_barrier();
+  return value + int32_t(1);
+}
+
+int32_t address_passed() {
+  mut int32_t value = 0;
+  unsafe { stash(&value); }
+  analysis_barrier();
+  return value + int32_t(1);
+}
+
+int32_t captured_before_use() {
+  mut int32_t value = 0;
+  unsafe { stash(&value); }
+  value = 0;
+  analysis_barrier();
+  return value + int32_t(1);
+}
+
+int32_t captured_after_use() {
+  mut int32_t value = 0;
+  analysis_barrier();
+  int32_t result = value + int32_t(1);
+  unsafe { stash(&value); }
+  return result;
+}
+
+class View {
+  mut int32_t& value;
+public:
+  View(mut int32_t& source) : value(source) {}
+};
+
+void keep_view(View& view);
+
+int32_t aggregate_captured() {
+  mut int32_t value = 0;
+  View view{value};
+  keep_view(view);
+  analysis_barrier();
+  return value + int32_t(1);
+}
+
+class Registered {
+public:
+  mut int32_t count = 0;
+  Registered() { unsafe { stash(&this.count); } }
+};
+
+int32_t registered() {
+  mut Registered entry = Registered();
+  entry.count = 0;
+  analysis_barrier();
+  return entry.count + int32_t(1);
+}
+
+int32_t loop_carried() {
+  mut int32_t value = 0;
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 2; index++) {
+    analysis_barrier();
+    total = value * int32_t(3);
+    unsafe { stash(&value); }
+  }
+  return total;
+}
+
+int32_t loop_uncaptured() {
+  mut int32_t value = 0;
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 2; index++) {
+    analysis_barrier();
+    total = value * int32_t(3);
+  }
+  return total;
+}
+
+int32_t main() {
+  return uncaptured() + address_passed() + captured_before_use() +
+         captured_after_use() + aggregate_captured() + registered() +
+         loop_carried() + loop_uncaptured();
+}
+)";
+  const lang::FrontendResult frontend =
+      analyzeTrusted("optimizer-capture-locals.gti", locals);
+  expect(frontend.canGenerateCode(),
+         "the capture fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  const std::string containerHeader = R"(#include <std/memory>
+extern "C" {
+  void analysis_barrier();
+
+}
+
+class samples<std::storage_element T> {
+  mut std::detail::prefix_owner<T> data;
+
+public:
+  samples(uint64_t count) : data(std::detail::prefix_owner<T>(count)) {
+    while (this.data.length() < count) {
+      unsafe { this.data.append_unchecked(); }
+    }
+  }
+
+  uint64_t size() {
+    return this.data.length();
+  }
+
+  mut T& at(uint64_t index) mut {
+    uint64_t live = this.data.length();
+    gti_internal::index_bounds_check(index, live);
+    unsafe { return this.data.read_mut_unchecked(index); }
+  }
+};
+
+void keep_samples(samples<double>& values);
+
+int32_t main() {
+  mut samples<double> first = samples<double>(uint64_t(16));
+  mut samples<double> second = samples<double>(uint64_t(16));
+  for (mut uint64_t index = 0; index < uint64_t(16); index++) {
+    first.at(index) = double(index) * 0.5d;
+  }
+  analysis_barrier();
+  for (mut uint64_t index = 0; index < uint64_t(16); index++) {
+    second.at(index) = first.at(index);
+  }
+  return int32_t(second.at(uint64_t(3)));
+}
+)";
+  for (const auto level :
+       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const lang::OptimizedProgram optimized = lang::OptimizationPipeline().run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    const auto discharged = [&](std::string_view name,
+                                lang::MirOperation operation) {
+      return functionOperationDischarges(
+          frontend, optimized, name,
+          lang::MirSafetyCheckFamily::ArithmeticOverflow, operation);
+    };
+    expect(optimized.valid(), "capture fixtures must remain verified");
+    for (const std::string_view name : {"uncaptured", "captured_after_use"})
+      expect(discharged(name, lang::MirOperation::Add) == 1,
+             std::string(name) +
+                 ": a local not yet exposed keeps its value across an "
+                 "unknown call");
+    for (const std::string_view name : {"address_passed", "captured_before_use",
+                                        "aggregate_captured", "registered"})
+      expect(discharged(name, lang::MirOperation::Add) == 0,
+             std::string(name) +
+                 ": an exposed local must not keep facts across an unknown "
+                 "call");
+    expect(discharged("loop_carried", lang::MirOperation::Multiply) == 0,
+           "a capture on an earlier iteration must reach the next one");
+    expect(discharged("loop_uncaptured", lang::MirOperation::Multiply) == 1,
+           "an uncaptured local keeps its value through a loop of unknown "
+           "calls");
+    expect(lang::verifyMirOptimizationCoherence(
+               frontend.mir, optimized.mir, optimized.report.transformations)
+               .valid(),
+           "capture proofs must independently replay");
+  }
+
+  // Building a second container calls the opaque process allocator, and an
+  // unknown call separates the loops; neither can reach the first container.
+  // Passing it by reference to a bodyless function first exposes it.
+  for (const bool exposed : {false, true}) {
+    std::string source = containerHeader;
+    if (exposed) {
+      const std::string barrier = "  analysis_barrier();";
+      source.replace(source.find(barrier), barrier.size(),
+                     "  keep_samples(first);\n" + barrier);
+    }
+    const lang::FrontendResult containers =
+        analyzeTrusted(exposed ? "optimizer-capture-exposed.gti"
+                               : "optimizer-capture-containers.gti",
+                       source);
+    expect(containers.canGenerateCode(),
+           "the capture container fixture should pass the frontend");
+    if (!containers.canGenerateCode())
+      continue;
+    for (const auto level :
+         {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+      const lang::OptimizedProgram optimized = lang::OptimizationPipeline().run(
+          {.hir = containers.hir, .mir = containers.mir, .level = level});
+      const std::size_t bounds = functionDischarges(
+          containers, optimized, "at", lang::MirSafetyCheckFamily::Bounds);
+      expect(optimized.valid() && bounds == (exposed ? 0U : 1U),
+             std::string(exposed ? "an exposed container must keep its "
+                                   "accessor check"
+                                 : "a second allocation and an unknown call "
+                                   "must not hide an unexposed container's "
+                                   "length") +
+                 " (bounds=" + std::to_string(bounds) + ")");
+      expect(
+          lang::verifyMirOptimizationCoherence(containers.mir, optimized.mir,
+                                               optimized.report.transformations)
+              .valid(),
+          "capture container proofs must independently replay");
     }
   }
 }
@@ -2139,6 +2395,7 @@ int main() {
   testGuardedClosedCallContextWidening();
   testSourceRecordSequenceEnvelopes();
   testScalarLeafSequenceStores();
+  testUncapturedLocalsSurviveUnknownEffects();
   testChainedFixedArrayDimensionBounds();
   if (failures != 0) {
     std::cerr << failures << " optimizer safety test(s) failed\n";

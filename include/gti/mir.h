@@ -1306,6 +1306,8 @@ struct MirFunctionInstance {
   bool neverReturns = false;
   bool tracksCaller = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
+  ProcessMemoryRuntimeOperation processMemoryOperation =
+      ProcessMemoryRuntimeOperation::None;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;

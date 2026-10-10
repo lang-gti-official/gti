@@ -7157,6 +7157,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .tracksCaller = declaration.tracksCaller,
       .discardableResult = declaration.discardableResult,
       .cThreadOperation = declaration.cThreadOperation,
+      .processMemoryOperation = declaration.processMemoryOperation,
       .requiresCThreadRuntime =
           requiresCThreadConcurrency(declaration.cThreadOperation),
       .linkage = declaration.linkage,
@@ -7331,6 +7332,20 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
         declaration->cThreadOperation = CThreadRuntimeOperation::End;
       }
     }
+  }
+  // The process allocator's runtime ABI is GTI's own. Its declared contract
+  // binds only by trusted declaration identity, never by a public spelling.
+  if (unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+      unit->standardLibraryName == "std/memory" &&
+      declaration->namespaceScope ==
+          std::vector<std::string>{"gti_internal", "runtime"} &&
+      declaration->compilerPrivate && function.hasCLinkage() &&
+      function.body() == nullptr && !function.runtimeBinding() &&
+      declaration->genericParameters.empty() && !declaration->parameterPack &&
+      declaration->ownerClass == 0 && !declaration->requiresUnsafe) {
+    declaration->processMemoryOperation = exactProcessMemoryRuntimeOperation(
+        declaration->externalSymbol, declaration->returnType,
+        declaration->parameterTypes);
   }
   requestSession.hasCThreadRequirements |=
       requiresCThreadConcurrency(declaration->cThreadOperation);
