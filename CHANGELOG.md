@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.397.9 — `expected` results passed straight to by-value parameters
+
+- Fix internal compiler error GTI-B0001 when a call's `expected<T, E>` result
+  is passed directly to a by-value `expected<T, E>` parameter, as in
+  `check(make(true))`, and `T` is a class that needs no cleanup, such as a
+  struct of plain fields. Before, this only built when the result was first
+  bound to a local. The fix covers class error types, arguments before and
+  after the `expected`, member-function calls, callers that propagate failure,
+  and both the value and the error state. Payloads that own resources, such as
+  a `std::string` field, already built and are unchanged.
+- Passing such a result directly to a constructor parameter still reports
+  GTI-B0001; bind it to a local first.
+
 ## 0.397.8 — Moving a destructor-free borrowing class into a nested member
 
 - A constructor can now move a by-value parameter into a nested member

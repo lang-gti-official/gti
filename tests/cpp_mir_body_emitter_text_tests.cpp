@@ -2630,6 +2630,108 @@ int main() {
          "before entering the success block");
 }
 
+// A cleanup-free Expected<Class, E> call result consumed by one by-value
+// parameter has neither a MIR drop nor a value-rooted place. It shares the
+// cleanup-free class result's representation-only slot. A non-placement
+// Expected keeps its ordinary SSA local, and a cleanup-owning payload keeps
+// MIR's value-rooted transfer slot. (Regression: the passive shape raised
+// GTI-B0001 unless its payload was an indirectly transported C ABI record.)
+void testCleanupFreeExpectedClassArgumentSlot() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-expected-class-argument.gti", R"(
+struct pair_value {
+  int32_t first = 0;
+  pair_value(int32_t first) : first(first) {}
+};
+
+struct code_value {
+  int32_t code = 0;
+  code_value(int32_t code) : code(code) {}
+};
+
+class tracked {
+public:
+  int32_t value = 0;
+  tracked(int32_t value) : value(value) {}
+  ~tracked() {}
+};
+
+expected<pair_value, int32_t> make_pair(bool ok) {
+  if (ok) { return pair_value(5); }
+  return unexpected(4);
+}
+
+expected<int32_t, code_value> make_scalar(bool ok) {
+  if (ok) { return 5; }
+  return unexpected(code_value(4));
+}
+
+expected<tracked, int32_t> make_tracked(bool ok) {
+  if (ok) { return tracked(5); }
+  return unexpected(4);
+}
+
+int32_t read_pair(expected<pair_value, int32_t> result) {
+  return result ? result.value().first : 0;
+}
+
+int32_t read_scalar(expected<int32_t, code_value> result) {
+  return result ? result.value() : 0;
+}
+
+int32_t read_tracked(expected<tracked, int32_t> result) {
+  return result ? result.value().value : 0;
+}
+
+int main() {
+  return read_pair(make_pair(true)) + read_scalar(make_scalar(true)) +
+         read_tracked(make_tracked(true)) - 15;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the Expected class argument fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string passiveSlot =
+      "::gti_internal::backend::mir_lifetime_slot<std::expected<::__gti_"
+      "program::pair_value, std::int32_t>, true> __gti_mir_v_";
+  const std::size_t declared = text.find(passiveSlot);
+  expect(declared != std::string::npos,
+         "a cleanup-free Expected<Class, E> argument should declare one "
+         "representation-only slot");
+  if (declared == std::string::npos) {
+    return;
+  }
+  const std::size_t idStart = declared + passiveSlot.size();
+  const std::string slot =
+      "__gti_mir_v_" + text.substr(idStart, text.find(';', idStart) - idStart);
+  expect(text.find(slot + ".construction_address()") != std::string::npos &&
+             text.find("read_pair__gti_mir_failure(std::move(" + slot +
+                       ".get())") != std::string::npos &&
+             text.find(slot + ".destroy();") != std::string::npos,
+         "the producer should publish into the slot on success, the call "
+         "should move its wrapper, and the slot should retire afterwards");
+  expect(text.find("mir_lifetime_slot<std::expected<std::int32_t, "
+                   "::__gti_program::code_value>") == std::string::npos &&
+             text.find("std::expected<std::int32_t, ::__gti_program::code_"
+                       "value> __gti_mir_v_") != std::string::npos,
+         "a non-placement Expected argument should keep its ordinary SSA "
+         "local");
+  expect(text.find("mir_lifetime_slot<std::expected<::__gti_program::tracked, "
+                   "std::int32_t>, true> __gti_mir_v_") == std::string::npos &&
+             text.find("read_tracked__gti_mir_failure(__gti_mir_p_") !=
+                 std::string::npos,
+         "a cleanup-owning Expected argument should keep MIR's value-rooted "
+         "transfer slot");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -2799,6 +2901,8 @@ constexpr NamedTest kTests[] = {
     {"testOpaquePointerFailureResults", testOpaquePointerFailureResults},
     {"testInvokePublishesScalarEdgeArguments",
      testInvokePublishesScalarEdgeArguments},
+    {"testCleanupFreeExpectedClassArgumentSlot",
+     testCleanupFreeExpectedClassArgumentSlot},
 };
 
 } // namespace
