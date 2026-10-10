@@ -1,0 +1,65 @@
+// A binary writer written in ordinary GTI on top of <std/meta>: every integral
+// field is appended little-endian, nested structs recurse, and the result is
+// compared with the bytes a hand-written writer produces. Nothing about the
+// field names survives compilation.
+#include <std/meta>
+#include <std/vector>
+
+struct Vec2 {
+  uint16_t x = 0;
+  uint16_t y = 0;
+};
+
+struct Entity {
+  uint32_t id = 0;
+  bool alive = false;
+  Vec2 position;
+};
+
+struct binary_writer {
+  mut {
+    std::vector<uint8_t> bytes;
+  }
+};
+
+void write_integral<std::integral U>(mut binary_writer& out, U value, uint64_t width) {
+  mut uint64_t bits = uint64_t(value);
+  for (mut uint64_t index = 0; index < width; index++) {
+    out.bytes.push_back(uint8_t(bits % uint64_t(256)));
+    bits = bits / uint64_t(256);
+  }
+}
+
+void write<T>(mut binary_writer& out, T& value) {
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (field.type().is_integral()) {
+      write_integral(out, field.get(value), uint64_t(4));
+    } else if constexpr (field.type().is_bool()) {
+      out.bytes.push_back(field.get(value) ? uint8_t(1) : uint8_t(0));
+    } else if constexpr (field.type().is_struct()) {
+      write(out, field.get(value));
+    }
+  }
+}
+
+void write_by_hand(mut binary_writer& out, Entity& value) {
+  write_integral(out, value.id, uint64_t(4));
+  out.bytes.push_back(value.alive ? uint8_t(1) : uint8_t(0));
+  write_integral(out, value.position.x, uint64_t(4));
+  write_integral(out, value.position.y, uint64_t(4));
+}
+
+int main() {
+  Entity entity = {.id = uint32_t(258), .alive = true,
+                   .position = {.x = uint16_t(7), .y = uint16_t(513)}};
+  mut binary_writer reflected = {.bytes = std::vector<uint8_t>()};
+  mut binary_writer manual = {.bytes = std::vector<uint8_t>()};
+  write(reflected, entity);
+  write_by_hand(manual, entity);
+  if (reflected.bytes.size() != std::size_t(13)) { return 1; }
+  if (reflected.bytes.size() != manual.bytes.size()) { return 2; }
+  for (mut std::size_t index = std::size_t(0); index < reflected.bytes.size(); index++) {
+    if (reflected.bytes[index] != manual.bytes[index]) { return 3; }
+  }
+  return 0;
+}
