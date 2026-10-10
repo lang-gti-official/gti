@@ -17,6 +17,7 @@ struct ProjectBuildOverrides {
   std::optional<CppStandard> cppStandard;
   std::optional<ExecutionProfile> executionProfile;
   std::optional<RawPointerAuditMode> rawPointerAudit;
+  std::optional<bool> rawPointerAuditLibraryFindings;
   std::optional<bool> keepCpp;
   std::optional<bool> debugInfo;
   ConfigurationFlags configurationFlags;
@@ -163,7 +164,8 @@ public:
       RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
       ProjectTargetLinkage targetLinkage = ProjectTargetLinkage::None,
       std::vector<ProjectExport> exports = {},
-      ConfigurationFlags declaredConfigurationFlags = {});
+      ConfigurationFlags declaredConfigurationFlags = {},
+      bool rawPointerAuditLibraryFindings = false);
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -185,6 +187,7 @@ public:
   [[nodiscard]] bool keepCpp() const;
   [[nodiscard]] bool debugInfo() const;
   [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
+  [[nodiscard]] bool rawPointerAuditLibraryFindings() const;
   [[nodiscard]] const NativeInputs &nativeInputs() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
@@ -226,6 +229,7 @@ private:
   std::vector<ProjectExport> resolvedExports;
   bool sourceDebugInfo = false;
   RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
+  bool reportLibraryAuditFindings = false;
 };
 
 class ProjectMetadata final {

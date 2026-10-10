@@ -22,10 +22,12 @@ void expect(bool valid, const std::string &message) {
 }
 lang::FrontendResult
 analyze(const std::string &source,
-        lang::RawPointerAuditMode mode = lang::RawPointerAuditMode::Off) {
+        lang::RawPointerAuditMode mode = lang::RawPointerAuditMode::Off,
+        bool reportLibraryAuditFindings = false) {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   lang::FrontendOptions options;
   options.rawPointerAudit = mode;
+  options.reportLibraryAuditFindings = reportLibraryAuditFindings;
   return lang::Frontend(options).analyze(root / "raw-borrow-test.gti", source,
                                          {root / "stdlib/prelude.gti"}, {},
                                          {root / "stdlib"});
@@ -87,35 +89,58 @@ lang::FrontendResult auditAnalyze(const std::string &source) {
   return result;
 }
 void auditDependencySeverity() {
+  // The audit analyses standard-library bodies for the provenance that flows
+  // into application code, but a finding located inside those compiler-trusted
+  // units describes the library's own implementation. By default it is not
+  // reported to an application in any mode, so Strict has nothing to promote
+  // there. The opt-in restores the complete report, and Strict then promotes
+  // exactly the findings Warn shows.
   const std::string source =
       "#include <std/memory>\nint main() { return 0; }\n";
-  const auto warned = analyze(source, lang::RawPointerAuditMode::Warn);
-  const auto strict = analyze(source, lang::RawPointerAuditMode::Strict);
   const auto library =
       std::filesystem::path(__FILE__).parent_path().parent_path() /
       "stdlib/std/memory.gti";
-  std::size_t dependencyFindings = 0;
-  for (const auto &diagnostic : warned.diagnostics) {
-    if (diagnostic.primary.source != library.string() ||
-        (diagnostic.code != "GTI-S2102" && diagnostic.code != "GTI-S2103"))
-      continue;
-    ++dependencyFindings;
-    expect(
-        diagnostic.severity == lang::DiagnosticSeverity::Warning &&
-            std::any_of(strict.diagnostics.begin(), strict.diagnostics.end(),
-                        [&](const auto &promoted) {
-                          return promoted.primary == diagnostic.primary &&
-                                 promoted.code == diagnostic.code &&
-                                 promoted.message == diagnostic.message &&
-                                 promoted.severity ==
-                                     lang::DiagnosticSeverity::Error;
-                        }),
-        "Strict promotes the exact included-library finding without hiding it");
+  const auto libraryFindings = [&](const lang::FrontendResult &result) {
+    std::vector<const lang::Diagnostic *> findings;
+    for (const auto &diagnostic : result.diagnostics)
+      if (diagnostic.primary.source == library.string() &&
+          (diagnostic.code == "GTI-S2101" || diagnostic.code == "GTI-S2102" ||
+           diagnostic.code == "GTI-S2103"))
+        findings.push_back(&diagnostic);
+    return findings;
+  };
+  const auto warned = analyze(source, lang::RawPointerAuditMode::Warn);
+  const auto strict = analyze(source, lang::RawPointerAuditMode::Strict);
+  if (!libraryFindings(warned).empty() || !libraryFindings(strict).empty() ||
+      !warned.canGenerateCode() || !strict.canGenerateCode())
+    show(strict);
+  expect(libraryFindings(warned).empty() && libraryFindings(strict).empty() &&
+             warned.canGenerateCode() && strict.canGenerateCode(),
+         "audit findings inside compiler-trusted library units are not "
+         "reported to an application by default");
+
+  const auto warnedAll = analyze(source, lang::RawPointerAuditMode::Warn, true);
+  const auto strictAll =
+      analyze(source, lang::RawPointerAuditMode::Strict, true);
+  const auto warnedFindings = libraryFindings(warnedAll);
+  bool promoted = !warnedFindings.empty();
+  for (const auto *diagnostic : warnedFindings) {
+    promoted =
+        promoted && diagnostic->severity == lang::DiagnosticSeverity::Warning &&
+        std::any_of(strictAll.diagnostics.begin(), strictAll.diagnostics.end(),
+                    [&](const auto &other) {
+                      return other.primary == diagnostic->primary &&
+                             other.code == diagnostic->code &&
+                             other.message == diagnostic->message &&
+                             other.severity == lang::DiagnosticSeverity::Error;
+                    });
   }
-  expect(dependencyFindings != 0 && warned.canGenerateCode() &&
-             !strict.canGenerateCode(),
-         "bounded source-storage provenance remains advisory in Warn and an "
-         "error in Strict");
+  if (!promoted || !warnedAll.canGenerateCode() || strictAll.canGenerateCode())
+    show(strictAll);
+  expect(promoted && warnedAll.canGenerateCode() &&
+             !strictAll.canGenerateCode(),
+         "opting in reports library findings in Warn and Strict promotes "
+         "exactly those findings");
 }
 void auditOutputParity() {
   const std::pair<std::string, std::string> cases[] = {

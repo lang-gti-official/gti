@@ -646,6 +646,9 @@ ProjectBuildPlan makeBuildPlan(
       overrides.debugInfo.value_or(selectedProfile.debugInfo);
   const RawPointerAuditMode rawPointerAudit =
       overrides.rawPointerAudit.value_or(selectedProfile.rawPointerAudit);
+  const bool rawPointerAuditLibraryFindings =
+      overrides.rawPointerAuditLibraryFindings.value_or(
+          selectedProfile.rawPointerAuditLibraryFindings);
   ConfigurationFlags configurationFlags = composeProjectConfigurationFlags(
       workspace.configurationFlags(), selectedProfile.defines,
       selectedTarget.defines, overrides.configurationFlags);
@@ -707,6 +710,9 @@ ProjectBuildPlan makeBuildPlan(
   std::string modelIdentity = workspace.modelIdentity();
   modelIdentity += "\nraw-pointer-audit:" +
                    std::string(rawPointerAuditModeName(rawPointerAudit));
+  modelIdentity += rawPointerAuditLibraryFindings
+                       ? "\nraw-pointer-audit-library-findings:true"
+                       : "\nraw-pointer-audit-library-findings:false";
   modelIdentity += selectedProfile.dependencyWarnings
                        ? "\ndependency-warnings:true"
                        : "\ndependency-warnings:false";
@@ -843,7 +849,8 @@ ProjectBuildPlan makeBuildPlan(
       std::move(modelIdentity), std::move(bindgenImports),
       std::move(buildScripts), std::move(toolchain), debugInfo,
       std::move(packageWarningPolicy), rawPointerAudit, selectedTarget.linkage,
-      selectedTarget.exports, configuration.declaredConfigurationFlags());
+      selectedTarget.exports, configuration.declaredConfigurationFlags(),
+      rawPointerAuditLibraryFindings);
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -1026,7 +1033,8 @@ ProjectBuildPlan::ProjectBuildPlan(
     ResolvedProjectToolchain toolchain, bool debugInfo,
     PackageWarningPolicy packageWarnings, RawPointerAuditMode rawPointerAudit,
     ProjectTargetLinkage targetLinkage, std::vector<ProjectExport> exports,
-    ConfigurationFlags declaredConfigurationFlags)
+    ConfigurationFlags declaredConfigurationFlags,
+    bool rawPointerAuditLibraryFindings)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -1050,7 +1058,8 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedBuildScripts(std::move(buildScripts)),
       resolvedToolchain(std::move(toolchain)),
       resolvedExports(std::move(exports)), sourceDebugInfo(debugInfo),
-      rawPointerAuditMode(rawPointerAudit) {}
+      rawPointerAuditMode(rawPointerAudit),
+      reportLibraryAuditFindings(rawPointerAuditLibraryFindings) {}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
   return projectManifestPath;
@@ -1135,6 +1144,10 @@ bool ProjectBuildPlan::debugInfo() const { return sourceDebugInfo; }
 
 RawPointerAuditMode ProjectBuildPlan::rawPointerAudit() const {
   return rawPointerAuditMode;
+}
+
+bool ProjectBuildPlan::rawPointerAuditLibraryFindings() const {
+  return reportLibraryAuditFindings;
 }
 
 const NativeInputs &ProjectBuildPlan::nativeInputs() const {

@@ -222,6 +222,9 @@ struct ProjectProfile {
   CppStandard cppStandard = CppStandard::Cpp23;
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
+  // Report audit findings located inside the standard library; see
+  // FrontendOptions::reportLibraryAuditFindings.
+  bool rawPointerAuditLibraryFindings = false;
   WarningPolicy warningPolicy;
   bool dependencyWarnings = true;
   bool keepCpp = false;

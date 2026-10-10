@@ -871,12 +871,26 @@ struct HirLoweringResult {
   }
 };
 
+// Which declarations seed whole-program lowering. By default every
+// declaration is seeded and the result keeps every concrete instance. With
+// `reachablePrefix`, discovery starts from the program roots and the result
+// also carries the prefix reachable from them for executable lowering. With
+// `entryDeclarations`, a half-open index range into the program's top-level
+// declarations (one source unit's own declarations), only the program roots
+// and that range are seeded and nothing else is lowered: the result holds what
+// the unit's code reaches, and its diagnostics cover only those instances.
+struct HirLoweringScope {
+  bool reachablePrefix = false;
+  std::optional<std::pair<std::size_t, std::size_t>> entryDeclarations;
+};
+
 class HirLowerer {
 public:
-  // With `reachablePrefix`, discovery starts from the program roots and the
-  // result also carries the reachable prefix for executable lowering.
   explicit HirLowerer(TargetInfo target = TargetInfo::host(),
-                      bool reachablePrefix = false);
+                      HirLoweringScope scope = {});
+  HirLowerer(TargetInfo target, bool reachablePrefix)
+      : HirLowerer(std::move(target),
+                   HirLoweringScope{.reachablePrefix = reachablePrefix}) {}
   ~HirLowerer();
 
   HirLowerer(const HirLowerer &) = delete;

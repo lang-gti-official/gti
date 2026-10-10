@@ -84,10 +84,21 @@ hiding their diagnostics. `strict` runs the same analysis and promotes its
 findings to errors for CI. It is an audit policy, not a different runtime mode
 or a soundness certificate; warning suppression cannot hide strict errors.
 Project profiles may set `raw-pointer-audit` to `"off"`, `"warn"` or `"strict"`.
-Findings can originate in included generic library bodies as well as application
-source. In particular, source-defined allocation and relocation can exceed the
-bounded provenance summaries. Warn retains those advisory findings; Strict
-promotes them too, rather than silently exempting the standard library.
+In the editor the audit runs in the background after a document settles and
+its findings appear a little after the ordinary diagnostics; it never delays
+them.
+The analysis is whole-program, because application provenance flows through
+standard-library bodies, but by default findings are reported only where the
+application can act on them. A finding located inside a compiler-trusted unit
+(the prelude or the standard library) describes that library's own
+implementation, where source-defined allocation and relocation can exceed the
+bounded provenance summaries; it is not reported to an application unless the
+profile sets `raw-pointer-audit-library-findings = true` (or the command line
+passes `--raw-pointer-audit-library-findings`), and it is always reported when
+that library unit is itself the compilation's entry, which is how the library's
+maintainers check it. Findings in application code that calls into the
+library, including a call site whose argument the library would misuse, are
+unaffected, and Strict promotes exactly the findings Warn reports.
 
 Findings distinguish observed contradictions (`GTI-S2101`), possible lifetime
 or alias violations (`GTI-S2102`), and incomplete analysis (`GTI-S2103`). A

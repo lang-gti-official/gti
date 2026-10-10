@@ -95,7 +95,8 @@ public:
       PackageWarningPolicy packageWarnings = {},
       RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
       ProgramRequest program = {},
-      ConfigurationFlags declaredConfigurationFlags = {});
+      ConfigurationFlags declaredConfigurationFlags = {},
+      bool rawPointerAuditLibraryFindings = false);
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
@@ -104,6 +105,7 @@ public:
   [[nodiscard]] CppStandard cppStandard() const;
   [[nodiscard]] bool debugInfo() const;
   [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
+  [[nodiscard]] bool rawPointerAuditLibraryFindings() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const ConfigurationFlags &declaredConfigurationFlags() const;
@@ -133,6 +135,7 @@ private:
   bool functionDefinitionsRequired = false;
   bool sourceDebugInfo = false;
   RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
+  bool reportLibraryAuditFindings = false;
 };
 
 enum class CompilationStatus {
