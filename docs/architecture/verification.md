@@ -4862,8 +4862,14 @@ compilation and CTest. `scripts/configure_ci_resources.sh` uses `nproc` (not
 `nproc --all`), then host-appropriate `sysctl` or `getconf` when unavailable;
 failed/invalid detection falls back to one. Repository variables `GTI_JOBS`
 and `GTI_TEST_JOBS` independently override those defaults and must be positive
-integers. Runner CPU/memory provisioning and timeouts remain external policy;
-the helper does not infer a safe memory budget. A small ASan/UBSan preflight
+integers. A workflow step that states `GTI_MEMORY_PER_JOB_MIB` additionally
+caps the detected compile default by the memory `/proc/meminfo` reports
+(`GTI_MEMINFO` names another file for tests), never below one job and never
+touching CTest workers or an explicit override; the release build states
+3072 MiB because its bundled LLVM/Clang units compile beside GTI's largest
+units, and the CI builds state 2048 MiB. Runner provisioning and timeouts
+remain external policy; the helper prints the processors and memory it saw so
+a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution
 is an explicit host capability controlled by
 `GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled. The generic

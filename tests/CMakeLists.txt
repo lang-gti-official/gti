@@ -43,11 +43,13 @@ add_test(NAME prvalue_direct_initialization_runtime
                  "${PROJECT_SOURCE_DIR}/tests/prvalue_direct_initialization_runtime_test.py"
                  "$<TARGET_FILE:gti>")
 set_tests_properties(prvalue_direct_initialization_runtime PROPERTIES TIMEOUT 600)
-add_test(NAME prvalue_direct_initialization_lsp
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/prvalue_direct_initialization_lsp_test.py"
-                 "$<TARGET_FILE:gti_lsp>")
-set_tests_properties(prvalue_direct_initialization_lsp PROPERTIES TIMEOUT 90)
+if(TARGET gti_lsp)
+  add_test(NAME prvalue_direct_initialization_lsp
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/prvalue_direct_initialization_lsp_test.py"
+                   "$<TARGET_FILE:gti_lsp>")
+  set_tests_properties(prvalue_direct_initialization_lsp PROPERTIES TIMEOUT 90)
+endif()
 
 add_executable(gti_generic_enum_declaration_tests generic_enum_declaration_tests.cpp)
 target_link_libraries(gti_generic_enum_declaration_tests PRIVATE gti_compiler)
@@ -2471,11 +2473,13 @@ if(Python3_Interpreter_FOUND)
       "${PROJECT_SOURCE_DIR}/tests/operator_place_failure_runtime_test.py"
       "$<TARGET_FILE:gti>")
   set_tests_properties(operator_place_failure_runtime PROPERTIES TIMEOUT 180)
-  add_test(NAME operator_place_composition_lsp
-    COMMAND "${Python3_EXECUTABLE}"
-      "${PROJECT_SOURCE_DIR}/tests/operator_place_composition_lsp_test.py"
-      "$<TARGET_FILE:gti_lsp>")
-  set_tests_properties(operator_place_composition_lsp PROPERTIES TIMEOUT 60)
+  if(TARGET gti_lsp)
+    add_test(NAME operator_place_composition_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/operator_place_composition_lsp_test.py"
+        "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(operator_place_composition_lsp PROPERTIES TIMEOUT 60)
+  endif()
   add_test(
     NAME owner_tied_reference_argument_runtime
     COMMAND "${Python3_EXECUTABLE}"
