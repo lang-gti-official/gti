@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include "gti/ast_clone.h"
+
 namespace lang {
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
@@ -221,6 +223,10 @@ auto SemanticVisitor::Impl::model() const -> const SemanticModel & {
 }
 
 auto SemanticVisitor::Impl::takeModel() -> SemanticModel {
+  semanticModel.adoptExpansionArena(std::move(expansionArena),
+                                    std::move(synthesizedExpressions));
+  expansionArena.clear();
+  synthesizedExpressions.clear();
   return std::move(semanticModel);
 }
 
@@ -766,6 +772,230 @@ auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
   endTypeParameterScope();
   currentNamespace = enclosingNamespace;
   currentClass = enclosingClass;
+}
+
+// constexpr for ( [mut] type IDENTIFIER : sequence ) statement
+//
+// The sequence is a value whose class type carries exactly one type pack; its
+// elements are the pack's types. Each element gets its own copy of
+// `{ binding; body }`, analysed in order in a scope of its own with the
+// binding initialized to a default-constructed element. A sequence type that
+// depends on an open generic parameter defers the expansion to concrete
+// reanalysis, exactly like a dependent `if constexpr` condition.
+auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
+    -> void {
+  const SemanticType sequenceType = analyze(stmt.sequence());
+  if (sequenceType == SemanticType::Unknown) {
+    semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
+    return;
+  }
+  if (containsOpenTypeParameter(sequenceType)) {
+    semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
+    loanFlow.deferredConstexprSelection = true;
+    requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
+    return;
+  }
+  const std::optional<std::vector<SemanticType>> elements =
+      compileTimeSequenceElements(sequenceType);
+  if (!elements) {
+    report(stmt.colon(),
+           "A 'constexpr for' sequence must be a value of a class whose "
+           "generic arguments are one type pack; '" +
+               typeSpelling(sequenceType) + "' is not.",
+           "GTI-S2107");
+    semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
+    return;
+  }
+  if (elements->size() > kConstexprForElementLimit ||
+      constexprForExpandedBodies + elements->size() >
+          kConstexprForBodyLimit) {
+    report(stmt.forKeyword(),
+           "'constexpr for' expansion exceeds the compile-time budget (" +
+               std::to_string(kConstexprForElementLimit) +
+               " elements per statement, " +
+               std::to_string(kConstexprForBodyLimit) +
+               " expanded bodies per declaration).",
+           "GTI-S2108");
+    semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
+    return;
+  }
+  constexprForExpandedBodies += elements->size();
+
+  ConstexprForExpansion expanded;
+  struct EmittedDiagnostic {
+    std::string code;
+    SourceSpan span;
+    std::string message;
+  };
+  std::vector<EmittedDiagnostic> emitted;
+  for (std::size_t index = 0; index < elements->size(); ++index) {
+    const SemanticType &element = (*elements)[index];
+    // Every copy gets an expansion id stamped on its tokens, so declarations
+    // inside it have identities of their own (see Token::expansion).
+    const std::uint32_t expansion = ++nextExpansion;
+    // The element binding: `[constexpr] auto name = <element>()`. It is
+    // constexpr when the element is a constant the evaluator can produce, so
+    // `if constexpr` and `static_assert` may read it; a plain value otherwise.
+    ExprPtr initializer = cloneExpr(*stmt.elementInitializer(), expansion);
+    const Call *initializerCopy = exprAs<Call>(initializer.get());
+    const bool constantElement = stmt.bindingMutability() != Mutability::Mutable &&
+                                 isConstexprDefaultConstructible(element);
+    const Token &anchor = stmt.constexprKeyword();
+    Token bindingName = stmt.bindingName();
+    bindingName.expansion = expansion;
+    AstCloneResult binding;
+    binding.statement = std::make_shared<VariableDecl>(
+        stmt.bindingMutability(), stmt.bindingType(), bindingName,
+        std::move(initializer), std::nullopt, false,
+        constantElement
+            ? std::optional<Token>{Token(TokenKind::CONSTEXPR, "constexpr",
+                                         std::monostate{}, anchor.position,
+                                         anchor.line, anchor.source, false,
+                                         true)}
+            : std::nullopt,
+        false, false,
+        stmt.bindingMutability() == Mutability::Mutable
+            ? std::optional<Token>{Token(TokenKind::MUT, "mut", std::monostate{},
+                                         anchor.position, anchor.line,
+                                         anchor.source, false, true)}
+            : std::nullopt);
+    AstCloneResult body = cloneStmt(*stmt.body(), expansion);
+    if (!binding.statement || !body.statement || initializerCopy == nullptr) {
+      report(stmt.forKeyword(),
+             "Function, class, enum, concept, alias and namespace "
+             "declarations are not supported inside a 'constexpr for' body.",
+             "GTI-S2109");
+      semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
+      return;
+    }
+    StmtList statements;
+    statements.push_back(std::move(binding.statement));
+    statements.push_back(std::move(body.statement));
+    auto block = std::make_shared<BlockStmt>(std::move(statements));
+    if (stmt.body()->extent()) {
+      block->setExtent(*stmt.body()->extent());
+    }
+    const std::size_t diagnosticsBefore = diagnostics.size();
+    constexprForFrames.push_back({.initializer = initializerCopy, .element = element});
+    analyze(block);
+    constexprForFrames.pop_back();
+    // Name the element in every diagnostic the copy produced, and drop the
+    // ones an earlier element already produced word for word.
+    const std::string context =
+        "while expanding 'constexpr for' for element " +
+        std::to_string(index) + " of type '" + typeSpelling(element) + "'";
+    for (std::size_t position = diagnosticsBefore;
+         position < diagnostics.size();) {
+      Diagnostic &diagnostic = diagnostics[position];
+      const bool duplicate = std::any_of(
+          emitted.begin(), emitted.end(), [&](const EmittedDiagnostic &seen) {
+            return seen.code == diagnostic.code &&
+                   seen.span == diagnostic.primary &&
+                   seen.message == diagnostic.message;
+          });
+      if (duplicate) {
+        diagnostics.erase(diagnostics.begin() +
+                          static_cast<std::ptrdiff_t>(position));
+        continue;
+      }
+      emitted.push_back({.code = diagnostic.code,
+                         .span = diagnostic.primary,
+                         .message = diagnostic.message});
+      diagnostic.related.push_back(
+          {.span = tokenSpan(stmt.bindingName()), .message = context});
+      ++position;
+    }
+    expansionArena.push_back(block);
+    expanded.iterations.push_back({.element = element, .block = std::move(block)});
+  }
+  semanticModel.recordConstexprForExpansion(stmt, std::move(expanded));
+}
+
+// field.get(owner) / field.get_mut(owner) on a std::meta::field<T, I>
+// metaobject: the call denotes the projected place `owner.<field>` and is
+// analysed as exactly that expression, synthesized here and aliased from the
+// call, so access control, borrowing, mutability and lowering are the
+// ordinary field-access rules at this call site.
+auto SemanticVisitor::Impl::analyzeMetaFieldAccess(
+    const Call &expr, const Get &member, const SemanticType &fieldObject,
+    bool mutableAccess) -> void {
+  const IntrinsicKind intrinsic = mutableAccess ? IntrinsicKind::MetaFieldGetMut
+                                                : IntrinsicKind::MetaFieldGet;
+  if (expr.arguments().size() != 1 || !expr.typeArguments().empty() ||
+      fieldObject.arguments.size() != 1 ||
+      fieldObject.valueArguments.size() != 1) {
+    report(expr.paren(),
+           "Reflected field access takes exactly one owner argument.",
+           "GTI-S2019");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const SemanticType &owner = fieldObject.arguments.front();
+  const CompileTimeValue &index = fieldObject.valueArguments.front();
+  const AccessMode access =
+      mutableAccess ? AccessMode::Mutable : AccessMode::ReadOnly;
+  if (containsOpenTypeParameter(owner) ||
+      index.kind != CompileTimeValue::UInt64) {
+    // Symbolic: the exact field type is the computed compiler type, which
+    // concrete reanalysis rewrites together with the access below.
+    const ClassId computed = compilerTypeClass(CompilerTypeKind::MetaFieldType);
+    currentType = computed == 0 ? SemanticType::Unknown
+                                : SemanticType::classType(computed, {owner},
+                                                          {index});
+    semanticModel.record(expr, ResolvedCallInfo{
+                                   .returnType = currentType,
+                                   .typeArguments = {owner},
+                                   .valueArguments = {index},
+                                   .intrinsic = intrinsic,
+                                   .borrowOrigin = BorrowOriginKind::Argument,
+                                   .borrowArgument = 0,
+                                   .borrowAccess = access});
+    return;
+  }
+  const std::optional<MetaFieldFacts> facts = metaFieldFacts(owner, index.value);
+  if (!facts) {
+    report(expr.paren(),
+           "Field index " + std::to_string(index.value) +
+               " is out of range for '" + typeSpelling(owner) +
+               "', which has " + std::to_string(metaFieldCount(owner)) +
+               " instance field(s).",
+           "GTI-S2111");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const Token &anchor = member.name();
+  const auto generated = [&](TokenKind kind, std::string lexeme) {
+    return Token(kind, std::move(lexeme), std::monostate{}, anchor.position,
+                 anchor.line, anchor.source, false, true);
+  };
+  auto projection = std::make_shared<Get>(
+      cloneExpr(*expr.arguments().front()), generated(TokenKind::DOT, "."),
+      generated(TokenKind::IDENTIFIER, facts->name));
+  synthesizedExpressions.push_back(projection);
+  const Expr &alias = semanticModel.recordExpressionAlias(expr, projection);
+  const SemanticType result = analyze(alias);
+  const ExpressionInfo *info = semanticModel.findExpression(alias);
+  if (mutableAccess && result != SemanticType::Unknown &&
+      (info == nullptr || info->category != ValueCategory::Place ||
+       info->access != AccessMode::Mutable)) {
+    report(expr.paren(),
+           "'get_mut' requires a writable field place; '" + facts->name +
+               "' is not writable here (the field is immutable or the owner "
+               "is read-only).",
+           "GTI-S2112");
+  }
+  currentType = result;
+  // No borrow origin: the call *is* the place its alias denotes, and every
+  // place-aware pass reads it through the alias.
+  semanticModel.record(expr, ResolvedCallInfo{.returnType = result,
+                                              .typeArguments = {owner},
+                                              .valueArguments = {index},
+                                              .intrinsic = intrinsic,
+                                              .borrowAccess = access});
+  if (const PlaceKey *place = semanticModel.findPlace(alias)) {
+    semanticModel.recordPlace(expr, *place);
+  }
+  semanticModel.recordPlaceSelection(expr, nextPlaceSelectionId++);
 }
 
 auto SemanticVisitor::Impl::visitConditionalStmt(const ConditionalStmt &stmt)
@@ -1763,6 +1993,7 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
 auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     -> void {
   const std::size_t functionDiagnosticStart = diagnostics.size();
+  constexprForExpandedBodies = 0;
   const std::vector<GenericParameterInfo> &genericParameters =
       genericParametersFor(stmt);
   beginTypeParameterScope(genericParameters);
@@ -4199,6 +4430,13 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     ~RestoreCalleeContext() { flag = previous; }
   } restoreCalleeContext{analyzingCallCallee, analyzingCallCallee};
   analyzingCallCallee = false;
+  if (!constexprForFrames.empty() &&
+      constexprForFrames.back().initializer == &expr) {
+    // The generated `constexpr for` element initializer: default-construct
+    // the current element in place of the synthesized callee.
+    analyzeTypeParameterCall(expr, constexprForFrames.back().element);
+    return;
+  }
   if (designatedMoves.contains(&expr)) {
     analyzeMoveCall(expr, nullptr, immediateReceiver);
     return;
@@ -4288,6 +4526,20 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   ContextualCallArguments argumentAnalysis =
       analyzeContextualCallArguments(expr.arguments());
   std::vector<SemanticType> &argumentTypes = argumentAnalysis.types;
+
+  if (const auto *member = exprAs<Get>(expr.callee().get())) {
+    const SemanticType *objectType = semanticModel.findType(*member->object());
+    if (objectType != nullptr && objectType->kind == SemanticType::Class &&
+        objectType->classId != 0 && objectType->classId <= classes.size() &&
+        classInfo(objectType->classId).compilerType ==
+            CompilerTypeKind::MetaField &&
+        (member->name().lexeme == "get" ||
+         member->name().lexeme == "get_mut")) {
+      analyzeMetaFieldAccess(expr, *member, *objectType,
+                             member->name().lexeme == "get_mut");
+      return;
+    }
+  }
 
   if (calleeType.kind == SemanticType::NativeFunction) {
     if (argumentAnalysis.hasDeferred()) {
@@ -9841,6 +10093,61 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
     const std::vector<const Expr *> &explicitArguments, const Token &callSite,
     ConstexprInterpreter &context) -> ConstexprEvaluation {
   const ResolvedCallInfo *resolved = &call;
+  if (const std::optional<ConstantValue> reflected =
+          metaIntrinsicConstant(*resolved, context)) {
+    return constexprSuccess(source, *reflected, context);
+  }
+  if ((resolved->intrinsic == IntrinsicKind::DefaultTypeParameterConstruction ||
+       resolved->intrinsic == IntrinsicKind::ExactTypeParameterConstruction) &&
+      explicitArguments.empty()) {
+    // `T()` for a scalar: the zero value of the substituted type.
+    const SemanticType type = constexprType(resolved->returnType, context);
+    std::optional<ConstantValue> zero;
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64: {
+      const bool signedValue =
+          type.kind == SemanticType::Int8 || type.kind == SemanticType::Int16 ||
+          type.kind == SemanticType::Int32 || type.kind == SemanticType::Int64;
+      const std::uint8_t width =
+          type.kind == SemanticType::Int8 || type.kind == SemanticType::UInt8
+              ? 8
+          : type.kind == SemanticType::Int16 || type.kind == SemanticType::UInt16
+              ? 16
+          : type.kind == SemanticType::Int32 || type.kind == SemanticType::UInt32
+              ? 32
+              : 64;
+      zero = ConstantValue{ConstantInteger{
+          .magnitude = 0,
+          .domain = CheckedIntegerDomain{.width = width,
+                                         .signedValue = signedValue}}};
+      break;
+    }
+    case SemanticType::Float:
+      zero = ConstantValue{BinaryFloat{.bits = 0, .format = BinaryFloatFormat::Binary32}};
+      break;
+    case SemanticType::Double:
+      zero = ConstantValue{BinaryFloat{.bits = 0, .format = BinaryFloatFormat::Binary64}};
+      break;
+    case SemanticType::Bool:
+      zero = ConstantValue{false};
+      break;
+    case SemanticType::Char:
+      zero = ConstantValue{CharacterLiteral{}};
+      break;
+    default:
+      break;
+    }
+    if (zero) {
+      return constexprSuccess(source, *zero, context);
+    }
+  }
   const FunctionDecl *declaration = resolved->declaration;
   if (declaration == nullptr || !declaration->isConstexpr()) {
     return constexprFailure(
@@ -10720,6 +11027,21 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
   }
   if (const auto *rangeFor = stmtAs<RangeForStmt>(statement)) {
     return summarizeFlow(rangeFor->lowered().get());
+  }
+  if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
+    const ConstexprForExpansion *expansion =
+        semanticModel.findConstexprForExpansion(*loop);
+    if (expansion == nullptr) {
+      // Deferred to concrete instances; the symbolic primary is not a flow
+      // proof, like a deferred `if constexpr`.
+      return {};
+    }
+    StmtList blocks;
+    blocks.reserve(expansion->iterations.size());
+    for (const ConstexprForIteration &iteration : expansion->iterations) {
+      blocks.push_back(iteration.block);
+    }
+    return summarizeFlow(blocks);
   }
   if (const auto *doWhile = stmtAs<DoWhileStmt>(statement)) {
     const FlowSummary body = summarizeFlow(doWhile->body().get());

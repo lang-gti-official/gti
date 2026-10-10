@@ -1112,6 +1112,7 @@ statement              = block
                        | while-statement
                        | for-statement
                        | range-for-statement
+                       | constexpr-for-statement
                        | switch-statement
                        | loop-control-statement
                        | return-statement
@@ -1150,6 +1151,16 @@ range-for-statement    = "for" "(" range-for-declaration ":" expression ")"
                          statement ;
 
 range-for-declaration  = [ "mut" ] type IDENTIFIER { array-extent } ;
+
+constexpr-for-statement = "constexpr" "for" "(" [ "mut" ] type IDENTIFIER ":"
+                          expression ")" statement ;
+
+(* Compile-time iteration. The expression is a value whose class type has
+   exactly one type pack as its generic arguments; the body is analysed once
+   per pack element with the binding initialized to a default-constructed
+   element, each copy in its own scope and in order. A sequence type that
+   depends on an open generic parameter defers the expansion to each concrete
+   instance, like a dependent `if constexpr`. No runtime loop exists. *)
 
 (* Range-based for uses an ordinary structural protocol rather than a
    compiler-known stdlib type. The range must be a stable addressable value and

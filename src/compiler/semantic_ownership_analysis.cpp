@@ -2115,6 +2115,27 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     return IntrinsicKind::None;
   }
+  if (isMetaLibraryUnit(sourceUnit)) {
+    if (scope.front() != "gti_internal") {
+      return IntrinsicKind::None;
+    }
+    if (name == "meta_field_count") {
+      return IntrinsicKind::MetaFieldCount;
+    }
+    if (name == "meta_field_name") {
+      return IntrinsicKind::MetaFieldName;
+    }
+    if (name == "meta_field_is_public") {
+      return IntrinsicKind::MetaFieldIsPublic;
+    }
+    if (name == "meta_type_name") {
+      return IntrinsicKind::MetaTypeName;
+    }
+    if (name == "meta_type_kind") {
+      return IntrinsicKind::MetaTypeKind;
+    }
+    return IntrinsicKind::None;
+  }
   if (isSourceLocationLibraryUnit(sourceUnit)) {
     if (scope.front() != "gti_internal") {
       return IntrinsicKind::None;
@@ -6767,6 +6788,153 @@ auto SemanticVisitor::Impl::analyzeSourceLocationIntrinsicCall(
       expr, ResolvedCallInfo{.returnType = result, .intrinsic = intrinsic});
 }
 
+// Reflection queries are constants of their generic arguments. With concrete
+// arguments the answer is recorded as a program constant on the call, so the
+// call is a literal at run time and in constant evaluation; with symbolic
+// arguments the call stays a call until concrete reanalysis substitutes them.
+auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
+    const Call &expr, const CallableCandidate &declaration) -> void {
+  const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  for (const ExprPtr &argument : expr.arguments()) {
+    (void)analyze(argument);
+  }
+  const bool fieldQuery = intrinsic == IntrinsicKind::MetaFieldName ||
+                          intrinsic == IntrinsicKind::MetaFieldIsPublic;
+  const SemanticType result =
+      intrinsic == IntrinsicKind::MetaFieldName ||
+              intrinsic == IntrinsicKind::MetaTypeName
+          ? SemanticType::StringView
+      : intrinsic == IntrinsicKind::MetaFieldIsPublic ? SemanticType::Bool
+                                                      : SemanticType::UInt64;
+  const std::size_t expectedArguments = fieldQuery ? 2 : 1;
+  std::optional<SemanticType> subject;
+  std::optional<CompileTimeValue> index;
+  if (expr.typeArguments().size() == expectedArguments &&
+      expr.arguments().empty()) {
+    validateType(expr.typeArguments().front());
+    subject = typeOf(expr.typeArguments().front());
+    if (fieldQuery) {
+      index = genericValueArgument(expr.typeArguments()[1]);
+    }
+  }
+  if (!subject || *subject == SemanticType::Unknown ||
+      (fieldQuery && !index) || declaration.returnType != result) {
+    report(expr.paren(),
+           "A reflection capability takes its subject as generic arguments, "
+           "no call arguments, and must retain its exact standard-library "
+           "result type.",
+           "GTI-S2019");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  currentType = result;
+  ResolvedCallInfo resolved{.returnType = result,
+                            .typeArguments = {*subject},
+                            .intrinsic = intrinsic};
+  if (index) {
+    resolved.valueArguments = {*index};
+  }
+  semanticModel.record(expr, resolved);
+  if (containsOpenTypeParameter(*subject) ||
+      (index && index->kind != CompileTimeValue::UInt64)) {
+    return;
+  }
+  const auto unsignedConstant = [](std::uint64_t value) {
+    return ConstantValue{ConstantInteger{
+        .magnitude = value, .domain = CheckedIntegerDomain{.width = 64}}};
+  };
+  std::optional<ConstantValue> constant;
+  switch (intrinsic) {
+  case IntrinsicKind::MetaFieldCount:
+    constant = unsignedConstant(metaFieldCount(*subject));
+    break;
+  case IntrinsicKind::MetaTypeKind:
+    constant = unsignedConstant(metaTypeKind(*subject));
+    break;
+  case IntrinsicKind::MetaTypeName:
+    constant = ConstantValue{typeSpelling(*subject)};
+    break;
+  case IntrinsicKind::MetaFieldName:
+  case IntrinsicKind::MetaFieldIsPublic: {
+    const std::optional<MetaFieldFacts> field =
+        metaFieldFacts(*subject, index->value);
+    if (!field) {
+      report(expr.paren(),
+             "Field index " + std::to_string(index->value) +
+                 " is out of range for '" + typeSpelling(*subject) +
+                 "', which has " + std::to_string(metaFieldCount(*subject)) +
+                 " instance field(s).",
+             "GTI-S2111");
+      return;
+    }
+    constant = intrinsic == IntrinsicKind::MetaFieldName
+                   ? ConstantValue{field->name}
+                   : ConstantValue{field->isPublic};
+    break;
+  }
+  default:
+    break;
+  }
+  if (constant) {
+    semanticModel.recordConstant(expr, *constant);
+    semanticModel.recordProgramConstantSubstitution(expr);
+  }
+}
+
+// The constant a reflection query denotes under the interpreter's current
+// generic substitution, or nullopt when the call is not a reflection query or
+// its arguments are still symbolic.
+auto SemanticVisitor::Impl::metaIntrinsicConstant(
+    const ResolvedCallInfo &call, const ConstexprInterpreter &context) const
+    -> std::optional<ConstantValue> {
+  switch (call.intrinsic) {
+  case IntrinsicKind::MetaFieldCount:
+  case IntrinsicKind::MetaFieldName:
+  case IntrinsicKind::MetaFieldIsPublic:
+  case IntrinsicKind::MetaTypeName:
+  case IntrinsicKind::MetaTypeKind:
+    break;
+  default:
+    return std::nullopt;
+  }
+  if (call.typeArguments.size() != 1) {
+    return std::nullopt;
+  }
+  const SemanticType subject = constexprType(call.typeArguments.front(), context);
+  if (containsOpenTypeParameter(subject)) {
+    return std::nullopt;
+  }
+  const auto unsignedConstant = [](std::uint64_t value) {
+    return ConstantValue{ConstantInteger{
+        .magnitude = value, .domain = CheckedIntegerDomain{.width = 64}}};
+  };
+  switch (call.intrinsic) {
+  case IntrinsicKind::MetaFieldCount:
+    return unsignedConstant(metaFieldCount(subject));
+  case IntrinsicKind::MetaTypeKind:
+    return unsignedConstant(metaTypeKind(subject));
+  case IntrinsicKind::MetaTypeName:
+    return ConstantValue{typeSpelling(subject)};
+  default:
+    break;
+  }
+  if (call.valueArguments.size() != 1) {
+    return std::nullopt;
+  }
+  const CompileTimeValue index =
+      constexprValue(call.valueArguments.front(), context);
+  if (index.kind != CompileTimeValue::UInt64) {
+    return std::nullopt;
+  }
+  const std::optional<MetaFieldFacts> field = metaFieldFacts(subject, index.value);
+  if (!field) {
+    return std::nullopt;
+  }
+  return call.intrinsic == IntrinsicKind::MetaFieldName
+             ? ConstantValue{field->name}
+             : ConstantValue{field->isPublic};
+}
+
 auto SemanticVisitor::Impl::analyzeRestoringIntrinsicCall(
     const Call &expr, IntrinsicKind intrinsic) -> void {
   std::vector<SemanticType> arguments;
@@ -7223,6 +7391,15 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       intrinsic == IntrinsicKind::SourceLine ||
       intrinsic == IntrinsicKind::SourceColumn) {
     analyzeSourceLocationIntrinsicCall(expr, declaration);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::MetaFieldCount ||
+      intrinsic == IntrinsicKind::MetaFieldName ||
+      intrinsic == IntrinsicKind::MetaFieldIsPublic ||
+      intrinsic == IntrinsicKind::MetaTypeName ||
+      intrinsic == IntrinsicKind::MetaTypeKind) {
+    analyzeMetaIntrinsicCall(expr, declaration);
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

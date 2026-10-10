@@ -164,6 +164,10 @@ void collectActiveProgramStatement(const Stmt *statement,
     collectActiveProgramStatements(space->declarations(), target, result);
   } else if (const auto *loop = stmtAs<RangeForStmt>(statement)) {
     collectActiveProgramStatement(loop->lowered().get(), target, result);
+  } else if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
+    collectActiveProgramStatement(loop->elementBinding().get(), target,
+                                  result);
+    collectActiveProgramStatement(loop->body().get(), target, result);
   } else if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
     for (const SwitchArm &arm : selection->arms()) {
       collectActiveProgramStatements(arm.statements, target, result);
@@ -382,7 +386,8 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
   }
   const DeclarationKey key{symbol.sourceUnit, symbol.nameSpan.start,
                            symbol.nameSpan.end,
-                           symbol.generated ? symbol.name : std::string{}};
+                           symbol.generated ? symbol.name : std::string{},
+                           symbol.expansion};
   if (const auto found = symbolsByDeclaration.find(key);
       found != symbolsByDeclaration.end()) {
     SymbolRecord &existing = symbolRecords[found->second - baseSymbolCount - 1];
@@ -417,7 +422,8 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
 
   if (base != nullptr) {
     if (const auto inherited = base->symbolForDeclaration(
-            symbol.sourceUnit, symbol.nameSpan, key.generatedName)) {
+            symbol.sourceUnit, symbol.nameSpan, key.generatedName,
+            symbol.expansion)) {
       // The declaration already has a base identity; instance analysis
       // reuses it and skips base-record enrichment (the delta is
       // discarded after lowering, so enrichment would be invisible).
@@ -448,15 +454,17 @@ void SemanticDatabase::setSymbolDocumentation(
 [[nodiscard]] SymbolId
 SemanticDatabase::symbolForDeclaration(SourceUnitId sourceUnit,
                                        const SourceSpan &span,
-                                       std::string_view generatedName) const {
-  const auto found = symbolsByDeclaration.find(DeclarationKey{
-      sourceUnit, span.start, span.end, std::string(generatedName)});
+                                       std::string_view generatedName,
+                                       std::uint32_t expansion) const {
+  const auto found = symbolsByDeclaration.find(
+      DeclarationKey{sourceUnit, span.start, span.end,
+                     std::string(generatedName), expansion});
   if (found != symbolsByDeclaration.end()) {
     return found->second;
   }
-  return base == nullptr
-             ? 0
-             : base->symbolForDeclaration(sourceUnit, span, generatedName);
+  return base == nullptr ? 0
+                         : base->symbolForDeclaration(sourceUnit, span,
+                                                      generatedName, expansion);
 }
 
 void SemanticDatabase::record(SemanticOccurrence occurrence) {
@@ -886,6 +894,25 @@ SemanticModel::findConstexprBranch(const IfStmt &statement) const {
     return found->second;
   }
   return base == nullptr ? std::nullopt : base->findConstexprBranch(statement);
+}
+
+[[nodiscard]] const ConstexprForExpansion *
+SemanticModel::findConstexprForExpansion(
+    const ConstexprForStmt &statement) const {
+  const auto found = constexprForExpansions.find(&statement);
+  if (found != constexprForExpansions.end()) {
+    return found->second ? &*found->second : nullptr;
+  }
+  return base == nullptr ? nullptr : base->findConstexprForExpansion(statement);
+}
+
+[[nodiscard]] const Expr *
+SemanticModel::findExpressionAlias(const Expr &expression) const {
+  const auto found = expressionAliases.find(&expression);
+  if (found != expressionAliases.end()) {
+    return found->second.get();
+  }
+  return base == nullptr ? nullptr : base->findExpressionAlias(expression);
 }
 
 [[nodiscard]] std::optional<StaticAssertResult>
@@ -1576,6 +1603,8 @@ void SemanticModel::clear() {
   loanEnds.clear();
   conditionalLoanEnds.clear();
   constexprBranches.clear();
+  constexprForExpansions.clear();
+  expressionAliases.clear();
   staticAssertResults.clear();
   switchArmLoanEnds.clear();
   structuredBindings.clear();
@@ -1924,6 +1953,19 @@ void SemanticModel::recordLoanEndAtConditionalEntry(SemanticLoanId id,
 void SemanticModel::recordConstexprBranch(const IfStmt &statement,
                                           std::optional<bool> thenBranch) {
   constexprBranches.insert_or_assign(&statement, thenBranch);
+}
+
+void SemanticModel::recordConstexprForExpansion(
+    const ConstexprForStmt &statement,
+    std::optional<ConstexprForExpansion> expansion) {
+  constexprForExpansions.insert_or_assign(&statement, std::move(expansion));
+}
+
+const Expr &SemanticModel::recordExpressionAlias(
+    const Expr &expression, std::shared_ptr<const Expr> alias) {
+  const Expr &result = *alias;
+  expressionAliases.insert_or_assign(&expression, std::move(alias));
+  return result;
 }
 
 void SemanticModel::recordStaticAssertResult(
@@ -2302,8 +2344,21 @@ void SemanticModel::setSymbolDocumentation(SymbolId symbol,
 [[nodiscard]] SymbolId
 SemanticModel::symbolForDeclaration(SourceUnitId sourceUnit,
                                     const SourceSpan &span,
-                                    std::string_view generatedName) const {
-  return semanticDatabase.symbolForDeclaration(sourceUnit, span, generatedName);
+                                    std::string_view generatedName,
+                                    std::uint32_t expansion) const {
+  return semanticDatabase.symbolForDeclaration(sourceUnit, span, generatedName,
+                                               expansion);
+}
+
+void SemanticModel::adoptExpansionArena(
+    std::vector<StmtPtr> statements,
+    std::vector<std::shared_ptr<const Expr>> expressions) {
+  expansionArena.insert(expansionArena.end(),
+                        std::make_move_iterator(statements.begin()),
+                        std::make_move_iterator(statements.end()));
+  expressionArena.insert(expressionArena.end(),
+                         std::make_move_iterator(expressions.begin()),
+                         std::make_move_iterator(expressions.end()));
 }
 
 void SemanticModel::recordOccurrence(SemanticOccurrence occurrence) {
