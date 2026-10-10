@@ -322,6 +322,10 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeExpectedClassAssignmentSlot",
+      "suite": "text"
+    },
+    {
       "name": "testForwardListEmplacementPublication",
       "suite": "lifecycle"
     },

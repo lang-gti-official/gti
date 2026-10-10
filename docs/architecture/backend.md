@@ -1412,6 +1412,18 @@ the ones above. Semantics currently rejects copying an Expected whose payload
 needs cleanup, because that payload is move-only. If such a copy were admitted,
 it would still fail closed here.
 
+The same cleanup-free placement call result may instead replace one whole
+mutable binding of its type. MIR pairs that `Assign` with a
+`CleanupBeforeAssign`, which the cleanup-free alternatives make inactive and
+failure-free. The producer's success edge must reach that exact pair directly,
+as for a class result replacing a binding. The producer constructs the slot on
+success. The `Assign` move-assigns the staged wrapper into the binding, and the
+moved-from representation is retired immediately. A failing producer never
+constructs the slot and leaves the binding to MIR's failure cleanup. Native
+move assignment needs each class alternative's generated move constructor and
+move assignment. Replacing such a binding from any other source, or replacing a
+field, is outside this rule.
+
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
 effects come from the lowered MIR and generated-item contracts. A nameable

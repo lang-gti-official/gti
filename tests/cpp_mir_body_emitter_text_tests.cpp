@@ -2971,6 +2971,89 @@ int main() {
          "SSA local");
 }
 
+// A cleanup-free Expected<Class, E> call result that replaces a whole mutable
+// binding is staged in the same representation-only slot. After MIR's
+// inactive replacement cleanup, the Assign move-assigns the staged wrapper
+// into the binding and retires the moved-from representation. A
+// non-placement Expected keeps its ordinary SSA local. (Regression for issue
+// #224: the replacing call result raised GTI-B0001 in the caller.)
+void testCleanupFreeExpectedClassAssignmentSlot() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-expected-class-assignment.gti", R"(
+struct pair_value {
+  int32_t first = 0;
+  pair_value(int32_t first) : first(first) {}
+};
+
+struct code_value {
+  int32_t code = 0;
+  code_value(int32_t code) : code(code) {}
+};
+
+expected<pair_value, int32_t> make_pair(bool ok) {
+  if (ok) { return pair_value(5); }
+  return unexpected(4);
+}
+
+expected<int32_t, code_value> make_scalar(bool ok) {
+  if (ok) { return 5; }
+  return unexpected(code_value(4));
+}
+
+int main() {
+  mut expected<pair_value, int32_t> changing = make_pair(true);
+  changing = make_pair(false);
+  mut expected<int32_t, code_value> scalar = make_scalar(true);
+  scalar = make_scalar(false);
+  return changing ? 1 : changing.error() + (scalar ? 1 : 0) - 4;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the Expected class assignment fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string marker = ", std::move(__gti_mir_v_";
+  const std::size_t assigned =
+      text.find("::gti_internal::backend::assign_representation(__gti_mir_p_");
+  const std::size_t moved =
+      assigned == std::string::npos ? assigned : text.find(marker, assigned);
+  const std::size_t lineEnd =
+      assigned == std::string::npos ? assigned : text.find('\n', assigned);
+  expect(moved != std::string::npos && moved < lineEnd,
+         "the Assign should move a staged wrapper into the binding");
+  if (moved == std::string::npos || moved >= lineEnd) {
+    return;
+  }
+  const std::size_t idStart = moved + marker.size();
+  const std::string slot =
+      "__gti_mir_v_" +
+      text.substr(idStart, text.find(".get()", idStart) - idStart);
+  const std::size_t next = text.find_first_not_of(' ', lineEnd + 1);
+  const std::size_t published = text.find(slot + ".construction_address()");
+  const std::size_t cleanup =
+      text.rfind("__gti_mir_replacement_success_", assigned);
+  expect(text.find("::gti_internal::backend::mir_lifetime_slot<std::expected<"
+                   "::__gti_program::pair_value, std::int32_t>, true> " +
+                   slot + ";") != std::string::npos &&
+             published != std::string::npos && published < assigned &&
+             cleanup != std::string::npos && cleanup > published &&
+             text.compare(next, slot.size() + 11, slot + ".destroy();") == 0,
+         "the producer should publish into the slot, the inactive replacement "
+         "cleanup should precede the Assign, and the slot should retire right "
+         "after it");
+  expect(text.find("mir_lifetime_slot<std::expected<std::int32_t, "
+                   "::__gti_program::code_value>") == std::string::npos,
+         "a non-placement Expected replacing a binding should keep its "
+         "ordinary SSA local");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -3146,6 +3229,8 @@ constexpr NamedTest kTests[] = {
      testCleanupFreeExpectedClassConstructorArgumentSlot},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
+    {"testCleanupFreeExpectedClassAssignmentSlot",
+     testCleanupFreeExpectedClassAssignmentSlot},
 };
 
 } // namespace
