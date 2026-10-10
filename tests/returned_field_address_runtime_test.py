@@ -54,17 +54,16 @@ def run_fixture(compiler, filename, negatives, marker,
             built = subprocess.run([str(compiler), str(source), *flags, "-o", str(binary),
                                     "--", str(native), *extra], capture_output=True,
                                    text=True, timeout=120, env=environment)
-            if built.returncode != 0:
-                return (label, source, expected, built, None)
-            result = subprocess.run([str(binary)], capture_output=True, text=True,
-                                    timeout=30, env=environment)
-            return (label, source, expected, built, result)
+            return (label, source, expected, built, binary)
 
         completed = {}
 
-        def observe(key, outcome):
-            label, source, expected, built, result = outcome
+        # Workers only compile; each binary runs here, in plan order.
+        def observe(value):
+            label, source, expected, built, binary = value
             assert built.returncode == 0, (label, source, built.stdout, built.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True,
+                                    timeout=30, env=environment)
             assert (result.returncode, result.stdout, result.stderr) == expected, (
                 label, source, result)
             completed[label] = completed.get(label, 0) + 1
@@ -84,7 +83,7 @@ def main():
     jobs = arguments.jobs
 
     def run(filename, negatives, marker, *extra):
-        run(filename, negatives, marker, *extra, jobs=jobs)
+        run_fixture(compiler, filename, negatives, marker, *extra, jobs=jobs)
 
     run("optimizer_returned_field_address.gti", {
         "bad_different_field": "owner.bad_different_field()",
