@@ -301,7 +301,12 @@ public:
   Counter(int32_t initial) : value(initial) {}
   ~Counter() {}
   int32_t read() { return this.value; }
-  int32_t& borrow() { return this.value; }
+  // The checked addition keeps the borrow failure-capable, so a loop
+  // condition that calls it ends the loan on both Invoke edges.
+  int32_t& borrow() {
+    int32_t checked = this.value + 0;
+    return this.value;
+  }
 };
 
 class IntView {
@@ -5210,12 +5215,17 @@ void testCarrierShellDependencyMirFlow() {
 void testExclusiveReborrowMirFlow() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("exclusive-reborrow-mir.gti", R"(
+// Each accessor's checked addition keeps it failure-capable, so its
+// receiver-tied call result also has a failure route to clean up.
 class Pair {
 public:
   mut int left = 0;
   mut int right = 0;
 
-  mut int& get_left() mut { return this.left; }
+  mut int& get_left() mut {
+    int checked = this.right + 0;
+    return this.left;
+  }
 };
 
 class PairOwner {
@@ -5223,7 +5233,10 @@ public:
   mut Pair inner = Pair();
   mut int other = 0;
 
-  mut Pair& get_inner() mut { return this.inner; }
+  mut Pair& get_inner() mut {
+    int checked = this.other + 0;
+    return this.inner;
+  }
 };
 
 int nested(mut Pair& parent) {

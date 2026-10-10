@@ -1331,15 +1331,22 @@ int32_t main() {
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = forwarded->id};
-  expect(emitter.analyze(address).ready() &&
-             emitter.supportsFailureBodyText(address),
-         "a forwarded concrete pack should enter the general failure-body "
-         "path from its exact element layout");
-  if (!emitter.supportsFailureBodyText(address)) {
+  // A forwarder with no failure source is proved failure-free and emits only
+  // its plain body; the element layout is the same in either form.
+  const bool failureForm = forwarded->mayRaiseDefinedFailure;
+  const bool supported = failureForm ? emitter.supportsFailureBodyText(address)
+                                     : emitter.supportsBodyText(address);
+  expect(emitter.analyze(address).ready() && supported,
+         "a forwarded concrete pack should enter the general body path from "
+         "its exact element layout");
+  if (!supported) {
     return;
   }
-  const lang::CppMirBodyEmissionText text = emitter.emitFailureBodyText(
-      address, "forwarded-concrete-pack-test-v0", 1);
+  const lang::CppMirBodyEmissionText text =
+      failureForm
+          ? emitter.emitFailureBodyText(address,
+                                        "forwarded-concrete-pack-test-v0", 1)
+          : emitter.emitBodyText(address, "forwarded-concrete-pack-test-v0", 1);
   expect(text.text.find("__gti_mir_arg_0") != std::string::npos &&
              text.text.find("__gti_mir_arg_1") != std::string::npos,
          "forwarded pack elements should spell as their flattened native "
@@ -1462,20 +1469,33 @@ int32_t main() {
       buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
 
+  // A default construction has no failure source, so a body returning one is
+  // proved failure-free: its plain form returns the value-initialized class,
+  // and a failure form constructs it in the uninitialized result storage.
   const lang::MirBodyAddress defaultAddress{.kind = lang::MirBodyKind::Function,
                                             .owner = defaultReturn->id};
-  expect(emitter.analyze(defaultAddress).ready() &&
-             emitter.supportsFailureBodyText(defaultAddress),
-         "a concrete default construction should publish through the "
-         "transformed class-return boundary");
-  if (emitter.supportsFailureBodyText(defaultAddress)) {
-    const lang::CppMirBodyEmissionText text = emitter.emitFailureBodyText(
-        defaultAddress, "concrete-default-return-test-v0", 1);
-    expect(
-        text.text.find("construct_representation_at(__gti_mir_out_result);") !=
-            std::string::npos,
-        "the concrete default return should construct directly in its "
-        "uninitialized result storage");
+  const bool defaultFailure = defaultReturn->mayRaiseDefinedFailure;
+  const bool defaultSupported =
+      defaultFailure ? emitter.supportsFailureBodyText(defaultAddress)
+                     : emitter.supportsBodyText(defaultAddress);
+  expect(emitter.analyze(defaultAddress).ready() && defaultSupported,
+         "a concrete default construction should publish at its class-return "
+         "boundary");
+  if (defaultSupported) {
+    const lang::CppMirBodyEmissionText text =
+        defaultFailure
+            ? emitter.emitFailureBodyText(defaultAddress,
+                                          "concrete-default-return-test-v0", 1)
+            : emitter.emitBodyText(defaultAddress,
+                                   "concrete-default-return-test-v0", 1);
+    expect(defaultFailure
+               ? text.text.find(
+                     "construct_representation_at(__gti_mir_out_result);") !=
+                     std::string::npos
+               : text.text.find("return ::__gti_program::Sentinel{};") !=
+                     std::string::npos,
+           "the concrete default return should publish exactly once, directly "
+           "as its result");
   }
 
   const lang::MirBodyAddress entryAddress{.kind = lang::MirBodyKind::Function,
@@ -1795,15 +1815,27 @@ int32_t main() {
            "spelling at negation");
   }
 
+  // The fused comparison has no failure source, so MIR proves this body
+  // failure-free and it emits only its plain form; both forms fuse alike.
   const lang::MirBodyAddress parenthesizedAddress{
       .kind = lang::MirBodyKind::Function, .owner = parenthesized->id};
+  const bool parenthesizedFailure = parenthesized->mayRaiseDefinedFailure;
+  const bool parenthesizedSupported =
+      parenthesizedFailure
+          ? emitter.supportsFailureBodyText(parenthesizedAddress)
+          : emitter.supportsBodyText(parenthesizedAddress);
   expect(emitter.analyze(parenthesizedAddress).ready() &&
-             emitter.supportsFailureBodyText(parenthesizedAddress),
+             parenthesizedSupported,
          "an exact identity inserted by parentheses should remain inside the "
          "signed-minimum MIR fusion proof");
-  if (emitter.supportsFailureBodyText(parenthesizedAddress)) {
-    const lang::CppMirBodyEmissionText text = emitter.emitFailureBodyText(
-        parenthesizedAddress, "parenthesized-signed-minimum-test-v0", 1);
+  if (parenthesizedSupported) {
+    const lang::CppMirBodyEmissionText text =
+        parenthesizedFailure
+            ? emitter.emitFailureBodyText(
+                  parenthesizedAddress, "parenthesized-signed-minimum-test-v0",
+                  1)
+            : emitter.emitBodyText(parenthesizedAddress,
+                                   "parenthesized-signed-minimum-test-v0", 1);
     expect(
         text.text.find("static_cast<std::int64_t>(-9223372036854775807 - 1)") !=
             std::string::npos,
@@ -2712,7 +2744,10 @@ int main() {
   const std::size_t idStart = declared + passiveSlot.size();
   const std::string slot =
       "__gti_mir_v_" + text.substr(idStart, text.find(';', idStart) - idStart);
-  expect(text.find(slot + ".construction_address()") != std::string::npos &&
+  // A checked producer publishes through the slot's construction address; a
+  // failure-free one constructs the slot from its returned wrapper.
+  expect((text.find(slot + ".construction_address()") != std::string::npos ||
+          text.find(slot + ".construct_from(") != std::string::npos) &&
              text.find("read_pair__gti_mir_failure(std::move(" + slot +
                        ".get())") != std::string::npos &&
              text.find(slot + ".destroy();") != std::string::npos,
@@ -3036,7 +3071,12 @@ int main() {
       "__gti_mir_v_" +
       text.substr(idStart, text.find(".get()", idStart) - idStart);
   const std::size_t next = text.find_first_not_of(' ', lineEnd + 1);
-  const std::size_t published = text.find(slot + ".construction_address()");
+  // A checked producer publishes through the slot's construction address; a
+  // failure-free one constructs the slot from its returned wrapper.
+  const std::size_t addressed = text.find(slot + ".construction_address()");
+  const std::size_t published = addressed != std::string::npos
+                                    ? addressed
+                                    : text.find(slot + ".construct_from(");
   const std::size_t cleanup =
       text.rfind("__gti_mir_replacement_success_", assigned);
   expect(text.find("::gti_internal::backend::mir_lifetime_slot<std::expected<"
@@ -3337,8 +3377,12 @@ int main() {
   for (const auto &function : frontend.mir.functionInstances()) {
     if (function.returnType.kind != lang::SemanticType::Lambda)
       continue;
-    const auto marker = "deduced-callable-failure-v1 function-instance " +
-                        std::to_string(function.id);
+    // The relay has no failure source of its own, so MIR proves it
+    // failure-free and it emits only its plain form.
+    const auto marker = std::string(function.mayRaiseDefinedFailure
+                                        ? "deduced-callable-failure-v1"
+                                        : "deduced-callable-v1") +
+                        " function-instance " + std::to_string(function.id);
     expect(artifact.contents.find(marker) != std::string::npos,
            "verified copyable lambda relay has complete production text");
     expect(artifact.contents.find("auto __gti_mir_v_1 = __gti_mir_p_1;") !=
