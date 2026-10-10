@@ -220,6 +220,13 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::SourceFunctionName:
   case IntrinsicKind::SourceLine:
   case IntrinsicKind::SourceColumn:
+  case IntrinsicKind::MetaFieldCount:
+  case IntrinsicKind::MetaFieldName:
+  case IntrinsicKind::MetaFieldIsPublic:
+  case IntrinsicKind::MetaTypeName:
+  case IntrinsicKind::MetaTypeKind:
+  case IntrinsicKind::MetaFieldGet:
+  case IntrinsicKind::MetaFieldGetMut:
   case IntrinsicKind::SimdAdd:
   case IntrinsicKind::SimdSubtract:
   case IntrinsicKind::SimdMultiply:

@@ -134,6 +134,13 @@ its incomplete primary flow is not a return, movement, or borrow proof. Every
 discovered source callee must belong to that inventory; registration alone does
 not authorize lowering. Concrete reanalysis must select every compile-time
 branch and validate the resulting flow before HIR can publish its body.
+A `constexpr for` statement lowers to the same `CompileTimeBranch` as a
+selected `if constexpr` branch: one block per expanded element, taken from the
+semantic expansion record, and nothing for the sequence expression. A deferred
+expansion in a symbolic primary invalidates lowering like a deferred branch.
+A reflected field access (`field.get(owner)`) lowers as the field projection
+semantics aliased it to; the call's source is registered as a source alias of
+that value so statement-level lookups by source still resolve.
 The root carries exact semantic owner/function/constructor type/value
 substitutions; ordinary instance
 discovery and semantic reanalysis validate concrete generic bodies and callees.

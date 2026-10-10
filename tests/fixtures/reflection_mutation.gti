@@ -1,0 +1,17 @@
+#include <std/meta>
+
+struct Counter {
+  mut {
+    uint32_t hits = 0;
+    uint32_t misses = 0;
+  }
+};
+
+int main() {
+  mut Counter counter = {.hits = uint32_t(1), .misses = uint32_t(2)};
+  constexpr for (auto field : std::meta::fields_of<Counter>()) {
+    field.get_mut(counter) = field.get(counter) + uint32_t(10);
+  }
+  if (counter.hits != uint32_t(11) || counter.misses != uint32_t(12)) { return 1; }
+  return 0;
+}
