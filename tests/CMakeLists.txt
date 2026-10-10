@@ -2416,6 +2416,15 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(reference_receiver_compound_assign_runtime
                        PROPERTIES TIMEOUT 180)
   add_test(
+    NAME cleanup_free_moved_formal_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/cleanup_free_moved_formal_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/nested_cleanup_free_moved_formal.gti"
+  )
+  set_tests_properties(cleanup_free_moved_formal_runtime
+                       PROPERTIES TIMEOUT 240)
+  add_test(
     NAME subscript_store_read_order_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/subscript_store_read_order_runtime_test.py"
