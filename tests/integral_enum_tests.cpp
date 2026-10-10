@@ -29,9 +29,7 @@ int main() { return decode(Wire::high) == uint64_t(18446744073709551615) ? 0 : 1
         if (instruction.intrinsic != lang::IntrinsicKind::EnumUnderlyingValue)
           continue;
         ++extractions;
-        expect(lang::CppMirBodyEmitter(frontend.mir, rows)
-                   .supportsFailureBodyText(
-                       {lang::MirBodyKind::Function, function.id}),
+        expect(supportsSelectedBodyText(frontend.mir, rows, function.id),
                "enum extraction has a production verified-MIR emitter");
         for (unsigned mutation = 0; mutation != 4; ++mutation) {
           auto invalid = frontend.mir;
@@ -56,9 +54,7 @@ int main() { return decode(Wire::high) == uint64_t(18446744073709551615) ? 0 : 1
           }
           expect(!lang::verifyMirProgram(invalid).valid(),
                  "enum extraction rejects malformed exact-type facts");
-          expect(!lang::CppMirBodyEmitter(invalid, rows)
-                      .supportsFailureBodyText(
-                          {lang::MirBodyKind::Function, function.id}),
+          expect(!supportsSelectedBodyText(invalid, rows, function.id),
                  "enum extraction emission fails closed on malformed "
                  "exact-type facts");
         }

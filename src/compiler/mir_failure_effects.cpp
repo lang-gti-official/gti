@@ -578,6 +578,100 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                             State::Unvisited);
   std::vector<bool> mayRaise(program.functionInstances().size(), true);
 
+  // Verified MIR records every defined-failure source on the instruction that
+  // can raise it and routes it through an explicit failure edge. A body none
+  // of whose instructions carries such a source cannot raise, whatever its
+  // receiver, parameter or result types. The one admitted source is an exact
+  // static call to a callee this same derivation proves failure-free: its
+  // failure route cannot execute, and the next lowering round lowers the call
+  // without it. Recursion, virtual dispatch, entry points and every other
+  // failure source stay conservative.
+  const auto structurallyFailureFree =
+      [&](const auto &prove, const MirFunctionInstance &function) -> bool {
+    const MirBody &body = function.body;
+    if (function.definitionKind !=
+            MirFunctionInstance::DefinitionKind::Source ||
+        function.linkage != LanguageLinkage::Gti ||
+        !function.externalSymbol.empty() || function.virtualMethod ||
+        function.pureVirtual || function.overrideMethod ||
+        !function.virtualRoots.empty() ||
+        function.entryKind != ProgramEntryKind::None ||
+        body.kind != MirBodyKind::Function || body.blocks.empty() ||
+        body.entry == 0)
+      return false;
+    const auto provedCall = [&](const MirInstruction &instruction) {
+      if (instruction.kind != MirInstructionKind::Call ||
+          !instruction.functionTarget || instruction.callableInvocation ||
+          instruction.intrinsic != IntrinsicKind::None ||
+          instruction.dispatch != CallDispatch::Static ||
+          !instruction.localFailureSites.empty() ||
+          !instruction.definedFailure.localOrigins.empty() ||
+          instruction.definedFailure.propagation !=
+              FailurePropagationKind::DirectCall)
+        return false;
+      const MirFunctionInstance *target =
+          program.findFunctionInstance(*instruction.functionTarget);
+      return target != nullptr && target->id == *instruction.functionTarget &&
+             prove(prove, target->id);
+    };
+    // Only the success edge of a proved call can execute, so the live region
+    // is what the entry reaches through ordinary and invoke-success edges.
+    // Every live instruction and terminator must be failure-free or a proved
+    // call; the failure routes of proved calls are never inspected.
+    std::unordered_set<MirInstructionId> provedCalls;
+    std::unordered_set<MirBlockId> live;
+    std::vector<MirBlockId> pending{body.entry};
+    while (!pending.empty()) {
+      const MirBlockId current = pending.back();
+      pending.pop_back();
+      const MirBlock *block = body.findBlock(current);
+      if (block == nullptr)
+        return false;
+      if (!live.insert(current).second)
+        continue;
+      const MirTerminator &terminator = block->terminator;
+      if (block->failureParameter != 0 || block->activeFailure != 0)
+        return false;
+      for (const MirInstruction &instruction : block->instructions) {
+        if (instruction.tombstone || (instruction.definedFailure.empty() &&
+                                      instruction.localFailureSites.empty()))
+          continue;
+        if (!provedCall(instruction))
+          return false;
+        provedCalls.insert(instruction.id);
+      }
+      switch (terminator.kind) {
+      case MirTerminatorKind::Goto:
+        pending.push_back(terminator.target);
+        break;
+      case MirTerminatorKind::Branch:
+        pending.push_back(terminator.target);
+        pending.push_back(terminator.elseTarget);
+        break;
+      case MirTerminatorKind::Switch:
+        pending.push_back(terminator.target);
+        for (const MirSwitchTarget &target : terminator.switchTargets)
+          pending.push_back(target.target);
+        break;
+      case MirTerminatorKind::Invoke:
+        if (!provedCalls.contains(terminator.invokeInstruction))
+          return false;
+        pending.push_back(terminator.target);
+        break;
+      case MirTerminatorKind::Return:
+      case MirTerminatorKind::Unreachable:
+        break;
+      case MirTerminatorKind::None:
+      case MirTerminatorKind::PropagateFailure:
+      case MirTerminatorKind::Exit:
+      case MirTerminatorKind::ContainFailure:
+      case MirTerminatorKind::TerminateCleanupFailure:
+        return false;
+      }
+    }
+    return true;
+  };
+
   const auto canProveNoFailure = [&](const auto &self,
                                      HirFunctionInstanceId id) -> bool {
     if (id == 0 || id > program.functionInstances().size()) {
@@ -594,6 +688,11 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
 
     const MirFunctionInstance &function = program.functionInstances()[id - 1];
     if (classDefaultCleanupNoFailure(function)) {
+      state = State::Complete;
+      mayRaise[id - 1] = false;
+      return true;
+    }
+    if (structurallyFailureFree(self, function)) {
       state = State::Complete;
       mayRaise[id - 1] = false;
       return true;

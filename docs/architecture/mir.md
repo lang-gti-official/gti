@@ -1486,6 +1486,20 @@ runtime-binding call target by its
 `FailurePropagationKind::None` language contract instead of recursing into
 a body that does not exist, and accepts the six wrapping/saturating
 integer-arithmetic intrinsic calls, which carry no failure channel.
+Ahead of that operation-by-operation proof, a structural proof covers any
+source GTI function that is not virtual, external or a program entry.
+Verified MIR records every defined-failure source on the instruction that can
+raise it and routes it through an explicit failure edge, so a body is
+failure-free when nothing reachable from its entry over ordinary and
+Invoke-success edges carries a failure source, other than an exact static call
+to a target the same derivation proves failure-free. The body's parameter,
+receiver and result types and its other operations do not matter. A live block
+entered with a failure parameter or an active failure, and a terminator that
+propagates, contains, exits or terminates on failure, keep the body
+conservative. A call to a body still being proved is not admitted, so
+recursion stays conservative. A proved call's failure route cannot execute;
+the next lowering round lowers the call with `FailurePropagationKind::None`
+and no Invoke edge.
 Optimizer-produced literals remain classified by their retained source
 operation, so folding cannot silently strengthen this effect summary. Its
 destructor component can prove `false` for bounded source bodies
