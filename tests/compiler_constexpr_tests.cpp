@@ -2577,7 +2577,7 @@ void testConstexprLibrary() {
              lang::verifyMirProgram(chrono.mir).valid(),
          "chrono constants, signed boundary decomposition and exact distinct "
          "time-point observers execute staged MIR, not native constexpr");
-  for (const std::string &source :
+  for (const std::string source :
        {"constexpr auto value = std::chrono::system_clock::now();",
         "constexpr int budget() { mut int total = 0; "
         "for (mut int i = 0; i < 5000; i++) { "
@@ -2644,7 +2644,7 @@ int main() {
          "unrelated generic constructor and read-only method declarations "
          "admit runtime-only owning substitutions");
 
-  for (const std::string &body :
+  for (const std::string body :
        {"constexpr std::string invalid() { return std::string(\"asset\"); }",
         "constexpr int invalid(std::string value) { return 7; }",
         "struct Owner { std::string value; constexpr Owner() : "
@@ -2692,7 +2692,7 @@ int main() {
          "non-generic owning constexpr results retain their declaration-time "
          "diagnostic and exact return-type span");
 
-  for (const std::string &body :
+  for (const std::string body :
        {"std::string value = std::string(\"a\"); "
         "std::string copy = relay(value); return 0;",
         "std::string value = std::string(\"a\"); "

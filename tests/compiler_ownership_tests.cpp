@@ -6488,8 +6488,8 @@ int main() {
     for (const auto &function : valid.mir.functionInstances()) {
       if (function.entryKind == lang::ProgramEntryKind::None)
         continue;
-      for (const auto [consumed, result] : {std::pair{initial, intermediate},
-                                            std::pair{intermediate, active}}) {
+      for (const auto &[consumed, result] : {std::pair{initial, intermediate},
+                                             std::pair{intermediate, active}}) {
         const auto findLoan =
             [&](const auto *semantic) -> const lang::MirLoan * {
           if (semantic != nullptr)

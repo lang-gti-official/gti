@@ -334,7 +334,7 @@ void testManifestDiagnostics() {
          "vocabulary");
 
   std::string invalidWarning = validManifest();
-  for (const std::string &spelling : {"true", "3", "[]", "\"unknown\""}) {
+  for (const std::string spelling : {"true", "3", "[]", "\"unknown\""}) {
     std::string invalidAudit = validManifest();
     const auto valueOffset = invalidAudit.find("\"warn\"");
     invalidAudit.replace(valueOffset, 6, spelling);
@@ -364,7 +364,7 @@ void testManifestDiagnostics() {
          "manifest warning suppression should reject unknown groups at the "
          "array element");
 
-  for (const std::string &spelling : {"1", "0", "\"false\"", "[]"}) {
+  for (const std::string spelling : {"1", "0", "\"false\"", "[]"}) {
     std::string invalidDependencyWarnings = validManifest();
     const std::size_t valueOffset = invalidDependencyWarnings.find("false");
     invalidDependencyWarnings.replace(valueOffset, 5, spelling);
@@ -591,8 +591,8 @@ defines = ["DEBUG", "COMMON", "DEBUG"]
              unitTarget->name == "unit" &&
              resolved.targetForSource(root / "src/shared.gti") == nullptr,
          "editor target inference must not mix unrelated targets");
-  for (const std::string &profile : {"dev", "release"}) {
-    for (const std::string &target : {"game", "unit"}) {
+  for (const std::string profile : {"dev", "release"}) {
+    for (const std::string target : {"game", "unit"}) {
       const auto plan =
           lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
               root, target, profile, lang::TargetInfo::host()));
@@ -658,10 +658,9 @@ defines = ["DEBUG", "COMMON", "DEBUG"]
               "game",
       "a single-target package can supply its configuration to shared files");
 
-  for (const std::string &scope : {"target", "profile"}) {
-    for (const std::string &value :
-         {"\"DEBUG\"", "[3]", "[\"not-valid!\"]", "[\"DEBUG=1\"]",
-          "[\"class\"]", "[\"\"]"}) {
+  for (const std::string scope : {"target", "profile"}) {
+    for (const std::string value : {"\"DEBUG\"", "[3]", "[\"not-valid!\"]",
+                                    "[\"DEBUG=1\"]", "[\"class\"]", "[\"\"]"}) {
       const auto prefix = scope == "target"
                               ? "[targets.game]\nkind = \"executable\"\nroot = "
                                 "\"src/main.gti\"\n"

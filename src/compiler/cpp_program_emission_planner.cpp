@@ -3352,8 +3352,12 @@ public:
         referenceFields.insert(field->name);
       SemanticType element = type;
       while (element.kind == SemanticType::Array &&
-             element.arguments.size() == 1)
-        element = element.arguments.front();
+             element.arguments.size() == 1) {
+        // Copy the argument out before assigning: it lives inside the
+        // vector that the assignment destroys (ASan container-overflow).
+        SemanticType inner = element.arguments.front();
+        element = std::move(inner);
+      }
       const auto *native =
           element.kind == SemanticType::Class
               ? loweredProgram.findClassDeclaration(element.classId)
