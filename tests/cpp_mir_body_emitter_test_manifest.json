@@ -330,6 +330,10 @@
       "suite": "text"
     },
     {
+      "name": "testOwningExpectedReplacementSources",
+      "suite": "text"
+    },
+    {
       "name": "testForwardListEmplacementPublication",
       "suite": "lifecycle"
     },

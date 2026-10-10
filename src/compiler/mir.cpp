@@ -10397,17 +10397,25 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       // a borrowed referent and has no drop obligation in this body. Checking
       // only lifecycle events that are present misses a deleted Replace: the
       // source would otherwise remain live and be dropped after publication.
+      // A conversion into a distinct owning wrapper instead transfers the
+      // source out; the destination keeps owning the converted value.
       if (instruction.kind == MirInstructionKind::Assign) {
+        const MirPlace *assigned =
+            instruction.destination ? body.findPlace(*instruction.destination)
+                                    : nullptr;
         for (const MirDropObligation &source : body.dropObligations) {
           if (source.kind != MirDropObligationKind::Value ||
               !source.dropType.requiresActiveCleanup ||
               !instructionConsumesObligation(instruction, source))
             continue;
+          const MirLifecycleEventKind transfer =
+              assigned != nullptr && assigned->type != source.dropType.type
+                  ? MirLifecycleEventKind::TransferOut
+                  : MirLifecycleEventKind::Replace;
           if (std::count_if(
                   instruction.lifecycle.begin(), instruction.lifecycle.end(),
                   [&](const MirLifecycleEvent &event) {
-                    return event.kind == MirLifecycleEventKind::Replace &&
-                           event.source == source.id;
+                    return event.kind == transfer && event.source == source.id;
                   }) != 1)
             return failure(
                 body, owner,
@@ -10549,6 +10557,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  instruction.kind == MirInstructionKind::CallInput ||
                  instruction.kind == MirInstructionKind::Call ||
                  instruction.kind == MirInstructionKind::Construct) &&
+                instructionConsumesObligation(instruction, *source)) ||
+               // An Assign converting its owning source into a distinct
+               // wrapper type transfers the source out of its lifetime.
+               (instruction.kind == MirInstructionKind::Assign &&
+                instruction.destination &&
+                body.findPlace(*instruction.destination) != nullptr &&
+                body.findPlace(*instruction.destination)->type !=
+                    source->dropType.type &&
                 instructionConsumesObligation(instruction, *source)));
           if (boundToInstruction &&
               prematureReturnTransfer(block, instruction, *source)) {

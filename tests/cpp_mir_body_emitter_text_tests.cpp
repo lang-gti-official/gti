@@ -3180,6 +3180,113 @@ int main() {
          "local");
 }
 
+// An owning Expected<Class, E> binding replaced by a move, an Unexpected or a
+// payload keeps MIR's active replacement cleanup and retires each staged
+// shell exactly once: a moved binding and a converted payload each stage in
+// their value-rooted slot, and the converted payload, which MIR transfers out
+// at the Assign, has its shell ended there. An Unexpected wrapping a fresh
+// cleanup-free class error constructs inline when it initializes or replaces
+// a binding. (Regression for issue #227: these raised GTI-B0001, the payload
+// conversion while constructing MIR.)
+void testOwningExpectedReplacementSources() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-owning-expected-replacement-sources.gti", R"gti(
+#include <std/utility>
+
+struct pair_value {
+  int32_t first = 0;
+  pair_value(int32_t first) : first(first) {}
+};
+
+struct code_value {
+  int32_t code = 0;
+  code_value(int32_t code) : code(code) {}
+};
+
+class tracked {
+public:
+  int32_t value = 0;
+  tracked(int32_t value) : value(value) {}
+  ~tracked() {}
+};
+
+expected<tracked, int32_t> make_tracked(bool ok) {
+  if (ok) { return tracked(5); }
+  return unexpected(4);
+}
+
+int main() {
+  mut expected<tracked, int32_t> owned = make_tracked(true);
+  expected<tracked, int32_t> moved = make_tracked(true);
+  owned = std::move(moved);
+  owned = unexpected(3);
+  owned = tracked(9);
+  mut expected<pair_value, code_value> coded = unexpected(code_value(6));
+  coded = unexpected(code_value(7));
+  return (owned ? owned.value().value : 0) + (coded ? 0 : coded.error().code) -
+         16;
+}
+)gti");
+  expect(frontend.canGenerateCode(),
+         "the owning Expected replacement fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  std::vector<std::string> lines;
+  for (std::size_t start = 0; start < text.size();) {
+    const std::size_t end = std::min(text.find('\n', start), text.size());
+    const std::size_t first = text.find_first_not_of(' ', start);
+    lines.push_back(first < end ? text.substr(first, end - first) : "");
+    start = end + 1;
+  }
+  const auto contains = [](const std::string &line, std::string_view part) {
+    return line.find(part) != std::string::npos;
+  };
+  std::size_t movedShells = 0;
+  std::size_t transferredShells = 0;
+  for (std::size_t index = 0; index + 1 < lines.size(); ++index) {
+    const std::string &line = lines[index];
+    const std::size_t moved = line.find(".get() = std::move(__gti_mir_p_");
+    if (moved == std::string::npos || !contains(line, ".get());"))
+      continue;
+    const std::size_t idStart = moved + 19;
+    const std::string slot =
+        line.substr(idStart, line.find(".get())", idStart) - idStart);
+    if (lines[index + 1] ==
+        slot + ".destroy(); // end transferred-out payload shell")
+      ++transferredShells;
+    else if (lines[index + 1] == slot + ".destroy();" &&
+             text.find(slot + ".construct(std::move(__gti_mir_p_") !=
+                 std::string::npos)
+      ++movedShells;
+  }
+  expect(movedShells == 1,
+         "an owning move should stage in its slot, move into the binding and "
+         "retire the moved-from shell");
+  expect(transferredShells == 1,
+         "an owning payload should move into the binding and end its "
+         "transferred-out shell at the Assign");
+  expect(text.find(".get(), std::unexpected(__gti_mir_v_") != std::string::npos,
+         "an owning binding should accept an inline Unexpected replacement");
+  expect(
+      text.find(".construct(std::unexpected(::__gti_program::code_value(") !=
+              std::string::npos &&
+          text.find(".get(), std::unexpected(::__gti_program::code_value(") !=
+              std::string::npos,
+      "an Unexpected wrapping a fresh class error should construct inline "
+      "at a binding initializer and replacement");
+  expect(text.find("std::expected<::__gti_program::tracked, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no owning replacement should declare a value-initialized Expected "
+         "local");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -3359,6 +3466,8 @@ constexpr NamedTest kTests[] = {
      testCleanupFreeExpectedClassAssignmentSlot},
     {"testExpectedClassReplacementSources",
      testExpectedClassReplacementSources},
+    {"testOwningExpectedReplacementSources",
+     testOwningExpectedReplacementSources},
 };
 
 } // namespace
