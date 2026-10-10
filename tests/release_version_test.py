@@ -152,6 +152,22 @@ def main():
         run(["git", "merge", "--no-ff", "undeclared-merge", "-m", "reconcile main"], root)
         reconciled = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
         run([sys.executable, checker, undeclared_merge, reconciled], root)
+        # Both sides touching the same shipped file in different places still
+        # merges automatically and introduces nothing of the merge's own.
+        shared = header.parent / "shared.h"
+        body = [f"// line {index}\n" for index in range(8)]
+        run(["git", "checkout", "-b", "same-file-base", final], root)
+        shared.write_text("".join(body), encoding="utf-8")
+        commit(root, internal_message)
+        run(["git", "checkout", "-b", "same-file-left", "same-file-base"], root)
+        shared.write_text("// top\n" + "".join(body[1:]), encoding="utf-8")
+        commit(root, internal_message)
+        run(["git", "checkout", "-b", "same-file-right", "same-file-base"], root)
+        shared.write_text("".join(body[:-1]) + "// bottom\n", encoding="utf-8")
+        commit(root, internal_message)
+        run(["git", "merge", "--no-ff", "same-file-left", "-m", "merge same file"], root)
+        same_file = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
+        run([sys.executable, checker, final, same_file], root)
         # Conflict resolution is the merge commit's own shipped content and
         # needs its own declaration.
         run(["git", "checkout", "-b", "conflict-left", final], root)
