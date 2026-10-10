@@ -1353,6 +1353,12 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/agent_workflow_test.py"
   )
   add_test(
+    NAME build_window
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/build_window_test.py"
+  )
+  set_tests_properties(build_window PROPERTIES TIMEOUT 120)
+  add_test(
     NAME cmake_test_ownership
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/cmake_test_ownership_test.py"
