@@ -2059,11 +2059,20 @@ preserving the assignment operation and the exact call-result loan. Reading an
 owner handle does not read its pointee's moved fields; accessing those fields
 or moving the whole owner still requires their availability.
 
-Same-block lifecycle events can prove a drop obligation definitely moved.
-Retiring that shell cannot invoke the source destructor, so lowering omits its
-otherwise conservative destructor-failure edge. Program verification replays
-that proof before accepting the non-failing drop. Cross-block or ambiguous
-state stays conservative; this does not eliminate the shell's explicit drop.
+Lifecycle events can prove a drop obligation definitely moved. Retiring that
+shell cannot invoke the source destructor, so lowering omits its otherwise
+conservative destructor-failure edge. When the drop's own block leaves the
+obligation untouched, the proof follows invoke edges back to the obligation's
+last event: from an invoke's success or failure continuation to the invoking
+block. That covers a by-value parameter moved into a construction and retired
+after it. Lowering creates each continuation with that single edge, so the
+proof gives the same answer while the body is still being built. A block
+entered any other way may later become a merge or loop header, so the proof
+stops there, as it does at the entry, a cycle, or a conditional, tombstoned or
+re-initialized move. An invoke's success lifecycle applies only on its success
+edge, as in lifecycle verification. Lowering, program verification and the
+backend share this one query, and verification replays it before accepting a
+non-failing drop. The proof does not eliminate the shell's explicit drop.
 
 The private unique-owner borrow intrinsics are local failure detectors, just
 like checked storage reads. Both read-only and mutable access require one
@@ -2301,12 +2310,18 @@ available/moved/uninitialized fixed point over lifecycle events. Parameters
 begin active; value and lexical initialization activate obligations; move,
 reparent, replacement, and transfer-out preserve exactly one owner; and normal
 return/exit edges must retain no active obligation. Each assignment must carry
-exactly one `Replace` event for every active-cleanup value obligation it consumes.
-Verification checks this requirement independently of
-the events present in the instruction, so deleting the whole event list cannot
-leave an owning RHS scheduled for destruction after publication. The rule applies
-equally to owned bindings, aggregate elements and checked borrowed referents;
-the latter two do not acquire an independent destination obligation.
+exactly one `Replace` event for every active-cleanup value obligation it
+consumes. Verification checks this requirement independently of the events
+present in the instruction, so deleting the whole event list cannot leave an
+owning RHS scheduled for destruction after publication. The rule applies equally
+to owned bindings, aggregate elements and checked borrowed referents; the latter
+two do not acquire an independent destination obligation. An assignment that
+converts its owning source into a distinct wrapper type, such as a payload
+replacing an `Expected` binding, instead carries exactly one `TransferOut` of
+that obligation, as a converting initialization does. The destination keeps its
+own obligation, which now owns the converted value, and no later Drop names the
+transferred source. A same-typed `Replace` across the conversion fails
+verification.
 Full-expression cleanup is LIFO, lexical cleanup is reverse construction order,
 and a temporary created
 only by a logical or conditional branch retains a path-conditional obligation

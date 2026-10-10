@@ -1,0 +1,84 @@
+#include <std/utility>
+
+// The issue #214 shape with user-defined types: two fields each built from
+// the same borrowed binding through a chain that moves a lease into nested
+// construction. The lease's destructor may fail, but its moved-from shells
+// never run it, so every child construction is provably failure-free.
+class Pool {
+  int32_t live;
+public:
+  Pool() : live(0) {}
+  void release(int32_t slot) { int32_t checked = this.live + slot; }
+  int32_t count() { return this.live + 1; }
+};
+
+class Lease {
+  Pool& pool;
+  mut int32_t slot;
+public:
+  Lease(Pool& pool) : pool(pool), slot(0) {}
+  Lease(Lease&& other) = default;
+  ~Lease() {
+    if (this.slot != 0) { this.pool.release(this.slot); }
+  }
+  int32_t seen() { return this.pool.count(); }
+};
+
+class Buffer {
+  Lease lease;
+public:
+  Buffer(Lease lease) : lease(std::move(lease)) {}
+  int32_t seen() { return this.lease.seen(); }
+};
+
+class Slots {
+  Buffer buffer;
+  mut int32_t length;
+public:
+  Slots(Lease lease) : buffer(Buffer(std::move(lease))), length(0) {}
+  int32_t seen() { return this.buffer.seen() + this.length; }
+};
+
+class Column {
+  Slots slots;
+public:
+  Column(Pool& pool) : slots(Slots(Lease(pool))) {}
+  int32_t seen() { return this.slots.seen(); }
+};
+
+class Table {
+  Column counts;
+  Column prices;
+public:
+  Table(Pool& pool) : counts(Column(pool)), prices(Column(pool)) {}
+  int32_t seen() { return this.counts.seen() + this.prices.seen(); }
+};
+
+// A field whose own constructor still reports a status must be called through
+// its status overload, never through an ordinary overload with no definition.
+class DirectColumn {
+  Buffer buffer;
+public:
+  DirectColumn(Pool& pool) : buffer(Buffer(Lease(pool))) {}
+  int32_t seen() { return this.buffer.seen(); }
+};
+
+class DirectTable {
+  DirectColumn counts;
+  DirectColumn prices;
+public:
+  DirectTable(Pool& pool)
+      : counts(DirectColumn(pool)), prices(DirectColumn(pool)) {}
+  int32_t seen() { return this.counts.seen() + this.prices.seen(); }
+};
+
+int32_t run(Pool& pool) {
+  Table table{pool};
+  DirectTable direct{pool};
+  return table.seen() + direct.seen();
+}
+
+int main() {
+  Pool pool{};
+  return run(pool) - 4;
+}
