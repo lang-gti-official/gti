@@ -58,42 +58,39 @@ def main() -> int:
         plan.append(("regression:json_expected_value_backend_bug.gti",
                      ("regression", "json_expected_value_backend_bug.gti", None, "-O0")))
 
+        # Workers only compile; the native runs and every check happen on this
+        # thread in plan order, as the shared matrix clients do.
         def work(case):
             kind, source_name, standard, optimization = case
             source = fixtures / source_name
             if kind == "mir":
-                mir = output / f"{source.stem}-{optimization[1:]}.mir"
+                artifact = output / f"{source.stem}-{optimization[1:]}.mir"
                 compiled = run(
-                    [gti, str(source), "--emit-mir", optimization, "-o", str(mir)]
+                    [gti, str(source), "--emit-mir", optimization, "-o", str(artifact)]
                 )
-                return (compiled, mir.is_file(), None)
-            if kind == "native":
-                binary = output / f"{source.stem}-{standard}-{optimization[1:]}"
+            elif kind == "native":
+                artifact = output / f"{source.stem}-{standard}-{optimization[1:]}"
                 compiled = run(
                     [gti, str(source), "--std", standard, optimization,
-                     "-o", str(binary)], timeout=600
+                     "-o", str(artifact)], timeout=600
                 )
-                if compiled.returncode != 0:
-                    return (compiled, False, None)
-                return (compiled, True, run([str(binary)], timeout=30))
-            binary = output / "json-expected-value-backend-bug"
-            compiled = run([gti, str(source), "-O0", "-o", str(binary)], timeout=60)
-            if compiled.returncode != 0:
-                return (compiled, False, None)
-            return (compiled, True, run([str(binary)]))
+            else:
+                artifact = output / "json-expected-value-backend-bug"
+                compiled = run([gti, str(source), "-O0", "-o", str(artifact)], timeout=60)
+            return (case, compiled, artifact)
 
-        def observe(key, outcome):
-            kind, source_name, standard, optimization = dict(plan)[key]
-            compiled, produced, executed = outcome
+        def observe(value):
+            (kind, source_name, standard, optimization), compiled, artifact = value
             if kind == "mir":
                 require_success(compiled, f"emit MIR {source_name} {optimization}")
-                if not produced:
+                if not artifact.is_file():
                     raise AssertionError(
                         f"emit MIR {source_name} {optimization} produced no artifact"
                     )
                 return
             if kind == "native":
                 require_success(compiled, f"native {source_name} {standard} {optimization}")
+                executed = run([str(artifact)], timeout=30)
                 require_success(executed, f"run {source_name} {standard} {optimization}")
                 expected = (
                     'demo\n{"name":"demo","private":true,"count":42,"items":["one",2]}\n'
@@ -103,7 +100,7 @@ def main() -> int:
                     raise AssertionError(f"unexpected JSON output: {executed}")
                 return
             require_success(compiled, "native owning-error expected regression")
-            require_success(executed, "run owning-error expected regression")
+            require_success(run([str(artifact)]), "run owning-error expected regression")
 
         run_cases(plan, work, arguments.jobs, observe)
     return 0
