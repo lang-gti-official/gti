@@ -271,6 +271,12 @@ struct IndexedMirBody {
   // `passiveArrayProgram`, in body order.
   const MirProgram *passiveArrayProgram = nullptr;
   std::optional<std::vector<const MirInstruction *>> passiveArrayAggregates;
+  // Answers of returnMoveDefinition, keyed by the queried value.
+  std::unordered_map<MirValueId, const MirInstruction *> returnMoveDefinitions;
+  // Whether each drop names the unique cleanup of its type under
+  // `uniqueCleanupProgram`, as failureDestructorTarget asks.
+  const MirProgram *uniqueCleanupProgram = nullptr;
+  std::unordered_map<const MirDropObligation *, bool> uniqueCleanupDrops;
 };
 
 // Each emitter operation remembers which index belongs to each body it has
@@ -15033,14 +15039,37 @@ failureDestructorDrop(const MirBody &body, const MirInstruction &instruction) {
              : nullptr;
 }
 
+// Whether `drop` names exactly the unique cleanup recipe of its type. Deriving
+// the recipe walks the program's class instances, and admission and emission
+// ask about the same drops, so an indexed body remembers each answer.
+[[nodiscard]] bool dropIsUniqueCleanup(const MirProgram &program,
+                                       const MirBody &body,
+                                       const MirDropObligation &drop) {
+  IndexedMirBody *index = indexedMirBody(body);
+  if (index == nullptr) {
+    return mirUniqueCleanupType(program, drop.dropType.type) == drop.dropType;
+  }
+  if (index->uniqueCleanupProgram != &program) {
+    index->uniqueCleanupProgram = &program;
+    index->uniqueCleanupDrops.clear();
+  }
+  const auto found = index->uniqueCleanupDrops.find(&drop);
+  if (found != index->uniqueCleanupDrops.end()) {
+    return found->second;
+  }
+  const bool unique =
+      mirUniqueCleanupType(program, drop.dropType.type) == drop.dropType;
+  index->uniqueCleanupDrops.emplace(&drop, unique);
+  return unique;
+}
+
 [[nodiscard]] const MirDropObligation *
 failureDestructorTarget(const MirProgram &program, const MirBody &body,
                         const MirInstruction &instruction) {
   const MirDropObligation *drop = failureDestructorDrop(body, instruction);
   // This is an admission witness, never the execution target of an aggregate.
   // The emitted schedule and effect analysis consume every exact child.
-  if (drop != nullptr &&
-      mirUniqueCleanupType(program, drop->dropType.type) == drop->dropType) {
+  if (drop != nullptr && dropIsUniqueCleanup(program, body, *drop)) {
     if (mirDropHasPolymorphicCleanup(drop->dropType))
       return drop;
     for (const auto id : mirDropDestructorTargets(drop->dropType)) {
@@ -15059,10 +15088,9 @@ failureDestructorTarget(const MirProgram &program, const MirBody &body,
                            drop->dropType.type == owner->type &&
                            drop->dropType.classInstance == owner->id &&
                            !drop->dropType.fixedArray;
-  const bool uniquePointee =
-      drop != nullptr && owner != nullptr &&
-      drop->dropType.uniquePointeeClass == owner->id &&
-      mirUniqueCleanupType(program, drop->dropType.type) == drop->dropType;
+  const bool uniquePointee = drop != nullptr && owner != nullptr &&
+                             drop->dropType.uniquePointeeClass == owner->id &&
+                             dropIsUniqueCleanup(program, body, *drop);
   // Interface bases carry no state, so the leaf destructor protocol still
   // owns the element's complete cleanup; a state-bearing base keeps the
   // schedule outside this arm.
@@ -25431,8 +25459,8 @@ passiveCAbiCallValueResult(const MirProgram &program, const MirBody &body,
 // terminator anywhere else references the source place after the Move.
 // The out-parameter's move-assignment then consumes the source directly
 // at the point the Move proved it live.
-[[nodiscard]] const MirInstruction *returnMoveDefinition(const MirBody &body,
-                                                         MirValueId value) {
+[[nodiscard]] const MirInstruction *
+returnMoveDefinitionByScan(const MirBody &body, MirValueId value) {
   const MirValue *record = body.findValue(value);
   const MirInstruction *definition =
       record == nullptr ? nullptr : findInstruction(body, record->definition);
@@ -25496,51 +25524,51 @@ passiveCAbiCallValueResult(const MirProgram &program, const MirBody &body,
     return false;
   };
   const MirBlock *returnBlock = nullptr;
+  // Verified block identities are positional, so `findBlock` names the one
+  // block a scan for an id would find.
+  const auto successorsOf = [&](MirBlockId id, std::vector<MirBlockId> &out) {
+    const MirBlock *candidate = body.findBlock(id);
+    if (candidate == nullptr) {
+      return;
+    }
+    const MirTerminator &edge = candidate->terminator;
+    if (edge.kind == MirTerminatorKind::Goto ||
+        edge.kind == MirTerminatorKind::Branch ||
+        edge.kind == MirTerminatorKind::Invoke) {
+      out.push_back(edge.target);
+    }
+    if (edge.kind == MirTerminatorKind::Branch ||
+        edge.kind == MirTerminatorKind::Invoke) {
+      out.push_back(edge.elseTarget);
+    }
+  };
   // Every path leaving the Move's block may touch the source only via
   // drops — this single scan vets same-block secondary Returns and the
   // cross-block form alike, because def-dominance routes every
   // value-consuming Return through blocks reachable from here.
-  {
-    const auto successorsOf = [&](MirBlockId id, std::vector<MirBlockId> &out) {
-      for (const MirBlock &candidate : body.blocks) {
-        if (candidate.id != id) {
-          continue;
-        }
-        const MirTerminator &edge = candidate.terminator;
-        if (edge.kind == MirTerminatorKind::Goto ||
-            edge.kind == MirTerminatorKind::Branch ||
-            edge.kind == MirTerminatorKind::Invoke) {
-          out.push_back(edge.target);
-        }
-        if (edge.kind == MirTerminatorKind::Branch ||
-            edge.kind == MirTerminatorKind::Invoke) {
-          out.push_back(edge.elseTarget);
-        }
-      }
-    };
+  const auto reachableBlockTouchesSource = [&] {
     std::vector<MirBlockId> stack;
-    std::vector<MirBlockId> seen;
+    std::unordered_set<MirBlockId> seen;
     successorsOf(home->id, stack);
     while (!stack.empty()) {
       const MirBlockId id = stack.back();
       stack.pop_back();
-      if (id == 0 || id == home->id ||
-          std::find(seen.begin(), seen.end(), id) != seen.end()) {
+      if (id == 0 || id == home->id || !seen.insert(id).second) {
         continue;
       }
-      seen.push_back(id);
-      for (const MirBlock &candidate : body.blocks) {
-        if (candidate.id != id) {
-          continue;
-        }
-        for (const MirInstruction &member : candidate.instructions) {
+      if (const MirBlock *candidate = body.findBlock(id)) {
+        for (const MirInstruction &member : candidate->instructions) {
           if (touchesSource(member)) {
-            return nullptr;
+            return true;
           }
         }
       }
       successorsOf(id, stack);
     }
+    return false;
+  };
+  if (reachableBlockTouchesSource()) {
+    return nullptr;
   }
   if (returnsValue(*home)) {
     returnBlock = home;
@@ -25595,73 +25623,29 @@ passiveCAbiCallValueResult(const MirProgram &program, const MirBody &body,
     // Return without executing the Move — and every block reachable
     // after the Move touches the source only through drops (a drop of
     // the moved-from local is a no-op by representation).
-    const auto successors = [&](MirBlockId id, std::vector<MirBlockId> &out) {
-      for (const MirBlock &candidate : body.blocks) {
-        if (candidate.id != id) {
-          continue;
-        }
-        const MirTerminator &edge = candidate.terminator;
-        if (edge.kind == MirTerminatorKind::Goto ||
-            edge.kind == MirTerminatorKind::Branch ||
-            edge.kind == MirTerminatorKind::Invoke) {
-          out.push_back(edge.target);
-        }
-        if (edge.kind == MirTerminatorKind::Branch ||
-            edge.kind == MirTerminatorKind::Invoke) {
-          out.push_back(edge.elseTarget);
-        }
-      }
-    };
     // Dominance by removal: the target is dominated by `home` when the
     // entry cannot reach it without passing through `home`.
     bool dominated = true;
     {
       std::vector<MirBlockId> stack{body.entry};
-      std::vector<MirBlockId> seen;
+      std::unordered_set<MirBlockId> seen;
       while (!stack.empty()) {
         const MirBlockId id = stack.back();
         stack.pop_back();
-        if (id == 0 || id == home->id ||
-            std::find(seen.begin(), seen.end(), id) != seen.end()) {
+        if (id == 0 || id == home->id || !seen.insert(id).second) {
           continue;
         }
-        seen.push_back(id);
         if (id == target->id) {
           dominated = false;
           break;
         }
-        successors(id, stack);
+        successorsOf(id, stack);
       }
     }
-    bool clean = dominated && target != nullptr && returnsValue(*target);
-    if (clean) {
-      // Every block reachable from the Move's block may only drop the
-      // source.
-      std::vector<MirBlockId> stack;
-      std::vector<MirBlockId> seen;
-      successors(home->id, stack);
-      while (!stack.empty() && clean) {
-        const MirBlockId id = stack.back();
-        stack.pop_back();
-        if (id == 0 || id == home->id ||
-            std::find(seen.begin(), seen.end(), id) != seen.end()) {
-          continue;
-        }
-        seen.push_back(id);
-        for (const MirBlock &candidate : body.blocks) {
-          if (candidate.id != id) {
-            continue;
-          }
-          for (const MirInstruction &member : candidate.instructions) {
-            if (touchesSource(member)) {
-              clean = false;
-            }
-          }
-        }
-        successors(id, stack);
-      }
-    }
-    if (clean) {
+    // Every block reachable from the Move's block may only drop the
+    // source.
+    if (dominated && target != nullptr && returnsValue(*target) &&
+        !reachableBlockTouchesSource()) {
       returnBlock = target;
     }
   }
@@ -25734,6 +25718,24 @@ passiveCAbiCallValueResult(const MirProgram &program, const MirBody &body,
       }
     }
   }
+  return definition;
+}
+
+// Admission, planning and text emission ask this of the same values, and the
+// answer depends only on the immutable body. An indexed body remembers each
+// answer; a body outside a representation scope scans every time.
+[[nodiscard]] const MirInstruction *returnMoveDefinition(const MirBody &body,
+                                                         MirValueId value) {
+  IndexedMirBody *index = indexedMirBody(body);
+  if (index == nullptr) {
+    return returnMoveDefinitionByScan(body, value);
+  }
+  const auto found = index->returnMoveDefinitions.find(value);
+  if (found != index->returnMoveDefinitions.end()) {
+    return found->second;
+  }
+  const MirInstruction *definition = returnMoveDefinitionByScan(body, value);
+  index->returnMoveDefinitions.emplace(value, definition);
   return definition;
 }
 
