@@ -91,24 +91,47 @@ def internal_change_reason(revision: str) -> str | None:
     return reasons[0].strip()
 
 
+def merge_introduced_paths(revision: str, parents: list[str]) -> list[str]:
+    # A merge commit's own content is what differs from the automatic merge
+    # of its parents: its conflict resolution. A clean automatic merge, as a
+    # hosted pull-request merge or an upstream reconciliation produces, adds
+    # nothing even when both sides touched the same files. Git's merge-tree
+    # replays that automatic merge without touching the worktree; where it
+    # reports conflicts, its tree carries markers that the resolution then
+    # replaces, so the diff names exactly the resolved paths.
+    if len(parents) == 2:
+        result = subprocess.run(
+            ["git", "merge-tree", "--write-tree", parents[0], parents[1]],
+            check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if result.returncode in (0, 1) and result.stdout.strip():
+            automatic = result.stdout.splitlines()[0].strip()
+            return changed_paths(automatic, revision)
+    # Octopus merges, or a Git without merge-tree --write-tree: judge the
+    # paths the merge changed relative to every parent.
+    paths = set(changed_paths(parents[0], revision))
+    for parent in parents[1:]:
+        paths &= set(changed_paths(parent, revision))
+    return sorted(paths)
+
+
 def unclassified_changes(base: str, head: str) -> list[str]:
     # Check every delivered commit, not only the final message or the
     # first-parent line: a later documentation commit cannot excuse an earlier
     # shipped change, and a pull-request merge delivers its branch commits
     # through the second parent, each declared or versioned on its own.
-    # A merge commit itself is judged by what it introduces beyond every
-    # parent, which is its conflict resolution. An automatic merge, as a
-    # hosted pull-request merge or an upstream reconciliation produces,
-    # introduces nothing and so needs no declaration of its own.
+    # A merge commit itself is judged only by the content it introduces
+    # beyond the automatic merge of its parents.
     revisions = git("rev-list", "--reverse", f"{base}..{head}")
     missing = []
     for revision in revisions.splitlines():
         parents = git("rev-list", "--parents", "-n", "1", revision).split()[1:]
         if not parents:
             raise ValueError("the checked range unexpectedly includes a root commit")
-        paths = set(changed_paths(parents[0], revision))
-        for parent in parents[1:]:
-            paths &= set(changed_paths(parent, revision))
+        if len(parents) > 1:
+            paths = merge_introduced_paths(revision, parents)
+        else:
+            paths = changed_paths(parents[0], revision)
         if not any(is_release_file(path) for path in paths):
             continue
         # An internal-only assertion cannot authorize version churn or undo a
