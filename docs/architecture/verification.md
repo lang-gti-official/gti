@@ -4865,9 +4865,17 @@ and `GTI_TEST_JOBS` independently override those defaults and must be positive
 integers. A workflow step that states `GTI_MEMORY_PER_JOB_MIB` additionally
 caps the detected compile default by the memory `/proc/meminfo` reports
 (`GTI_MEMINFO` names another file for tests), never below one job and never
-touching CTest workers or an explicit override; the release build states
-3072 MiB because its bundled LLVM/Clang units compile beside GTI's largest
-units, the native CI build states 2048 MiB, and the ASan/UBSan build 3072 MiB. Runner provisioning and timeouts
+touching an explicit override; `GTI_MEMORY_PER_TEST_MIB` bounds the detected
+CTest worker default the same way. The release build states 3072 MiB per
+compile job because its bundled LLVM/Clang units compile beside GTI's largest
+units, the native CI build 2048 MiB, and the ASan/UBSan build 3072 MiB per
+compile job and 4096 MiB per test worker, since an instrumented compiler
+suite grows several times larger than its plain run (six workers on a 12 GiB
+runner had the ownership suite OOM-killed). The sanitizer job also gives
+tests without their own `TIMEOUT` an hour (`ctest --timeout 3600`) and runs
+the emitter's preflight, text, lifecycle, census and corpus-protocol checks
+rather than the whole generated-C++ corpus, which exceeded CTest's default
+timeout under ASan and remains the plain native job's gate. Runner provisioning and timeouts
 remain external policy; the helper prints the processors and memory it saw so
 a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution

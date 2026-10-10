@@ -108,6 +108,24 @@ def main():
             result = subprocess.run([bash, str(script)], env=environment,
                                     capture_output=True, text=True, timeout=10)
             assert result.returncode != 0 and not output.exists(), per_job
+        # CTest workers have their own budget, independent of compile jobs.
+        for index, (per_job, per_test, test_jobs, expected) in enumerate((
+            ("", "4096", "", ("12", "1")),      # 7812 / 4096 -> 1 worker
+            ("2048", "2048", "", ("3", "3")),
+            ("", "1024", "", ("12", "7")),
+            ("", "4096", "5", ("12", "5")),     # explicit workers are not capped
+        )):
+            output = root / f"memory-test-{index}"
+            environment.update(GTI_MEMORY_PER_JOB_MIB=per_job, GTI_MEMORY_PER_TEST_MIB=per_test,
+                               GTI_CONFIGURED_TEST_JOBS=test_jobs, GITEA_ENV=str(output))
+            result = subprocess.run([bash, str(script)], env=environment, check=True,
+                                    capture_output=True, text=True, timeout=10)
+            assert output.read_text() == f"GTI_JOBS={expected[0]}\nGTI_TEST_JOBS={expected[1]}\n", result
+        environment.update(GTI_MEMORY_PER_TEST_MIB="many", GITEA_ENV=str(root / "memory-test-invalid"))
+        result = subprocess.run([bash, str(script)], env=environment,
+                                capture_output=True, text=True, timeout=10)
+        assert result.returncode != 0 and "GTI_MEMORY_PER_TEST_MIB" in result.stderr
+        environment.update(GTI_MEMORY_PER_TEST_MIB="", GTI_CONFIGURED_TEST_JOBS="")
         output = root / "memory-unreadable"
         environment.update(GTI_MEMORY_PER_JOB_MIB="2048", GTI_MEMINFO=str(root / "absent"),
                            GITEA_ENV=str(output))
