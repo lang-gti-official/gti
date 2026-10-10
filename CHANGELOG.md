@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.397.11 — Faster raw-pointer audit
+## 0.397.12 — Faster raw-pointer audit
 
 - `--raw-pointer-audit=warn` and `strict` (and the profile setting) run
   several times faster on programs that include much of the standard library,
@@ -24,6 +24,16 @@ for what minor and patch releases mean.
   catalog snapshots, and root lookups compare declaration keys directly. The
   audit still copies the caller's semantic model and value flow per query, so
   it remains far more expensive than compiling with the audit off.
+
+## 0.397.11 — Optimized compiles of large bodies use far less memory
+
+- Compiling at `-O2` or `-O3` no longer needs gigabytes of memory for a large
+  function body. The sparse-constant solver kept a complete copy of every
+  value's fact for every basic block; it now shares facts that a block leaves
+  unchanged. Compiling `tests/fixtures/stdlib_surface_json.gti` at `-O3`
+  peaks near 3 GiB resident instead of 8 to 11 GiB and finishes about 20%
+  sooner, with byte-identical generated C++ and unchanged optimization
+  results. The `json_stdlib` test now fails if such a compile exceeds 6 GiB.
 
 ## 0.397.9 — Backend crashes fixed for `expected` values and resource owners
 

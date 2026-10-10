@@ -40,6 +40,22 @@ their evidence and schedule propagation. Unknown/constant/overdefined rules,
 fixed-point budgets and failure edges are unchanged. These are compiler-cost
 changes, not new transformations or permission to skip independent replay.
 
+The SCCP solver's dense per-block states hold shared immutable facts rather
+than one fact copy per block. A transfer or join that leaves a value's fact
+unchanged keeps the existing allocation, and a join that adopts the incoming
+fact shares it; the stored facts are never mutated in place, so every state
+exposes exactly the contents the copying representation produced, and the
+public `MirSccpAnalysis` is unchanged. This bounds the solver near the number
+of distinct facts plus one pointer per block and value instead of B*V complete
+facts, each carrying a semantic type and three evidence vectors. Measured on
+the `stdlib_surface_json.gti` fixture, whose `main` body has about 63,000
+blocks and 600 values, the pass fell from about 18.5 GiB of transient footprint
+and 36 s to about 0.7 GiB and 2 s, and the whole `-O3 --emit-cpp` compile from
+roughly 11 GiB peak resident memory to roughly 3 GiB with byte-identical C++.
+The remaining peak is the safety discharge analyses' per-block abstract states
+on the same body; `json_stdlib` guards the optimized compile's peak resident
+size with generous headroom.
+
 ## Language-Growth Conformance Gate
 
 `optimization/coverage.h` and `optimization/coverage.cpp` own one exhaustive
