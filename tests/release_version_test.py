@@ -127,22 +127,52 @@ def main():
         final = commit(root, "release accumulated user-visible changes")
         run([sys.executable, checker, documented, final], root)
 
-        # A merge needs a declaration for its destination-parent delta; a
-        # declaration on only the last branch commit cannot cover the merge.
+        # A merge delivers its branch commits, each judged on its own; the
+        # merge commit itself needs a declaration only for what it introduces
+        # beyond every parent. A hosted pull-request merge or an upstream
+        # reconciliation merge introduces nothing and carries no trailers.
         run(["git", "checkout", "-b", "internal-side", final], root)
         header.write_text("// side branch internal refactor\n", encoding="utf-8")
         commit(root, internal_message)
         run(["git", "checkout", "-b", "merge-check", final], root)
         run(["git", "merge", "--no-ff", "internal-side", "-m", "merge internal work"], root)
         merged = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
-        run([sys.executable, checker, final, merged], root, expected=1)
+        run([sys.executable, checker, final, merged], root)
+        # The merge cannot launder an undeclared branch commit.
+        run(["git", "checkout", "-b", "undeclared-side", final], root)
+        (header.parent / "other.h").write_text("// undeclared\n", encoding="utf-8")
+        commit(root, "undeclared side change")
+        run(["git", "checkout", "-b", "undeclared-merge", final], root)
+        run(["git", "merge", "--no-ff", "undeclared-side", "-m", "merge undeclared work"], root)
+        undeclared_merge = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
+        run([sys.executable, checker, final, undeclared_merge], root, expected=1)
+        # Reconciling main into a branch, as the task workflow does, is judged
+        # the same way whichever side is the first parent.
+        run(["git", "checkout", "internal-side"], root)
+        run(["git", "merge", "--no-ff", "undeclared-merge", "-m", "reconcile main"], root)
+        reconciled = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
+        run([sys.executable, checker, undeclared_merge, reconciled], root)
+        # Conflict resolution is the merge commit's own shipped content and
+        # needs its own declaration.
+        run(["git", "checkout", "-b", "conflict-left", final], root)
+        header.write_text("// left resolution\n", encoding="utf-8")
+        commit(root, internal_message)
+        run(["git", "checkout", "-b", "conflict-right", final], root)
+        header.write_text("// right resolution\n", encoding="utf-8")
+        commit(root, internal_message)
+        run(["git", "merge", "--no-ff", "conflict-left", "-m", "resolve"], root, expected=1)
+        header.write_text("// resolved by hand\n", encoding="utf-8")
+        run(["git", "add", "."], root)
+        run(["git", "commit", "-m", "merge with hand resolution"], root)
+        resolved = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
+        run([sys.executable, checker, final, resolved], root, expected=1)
         run(["git", "commit", "--amend", "-m", internal_message], root)
         annotated_merge = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
         run([sys.executable, checker, final, annotated_merge], root)
 
         # Reject unrelated revision comparisons rather than silently omitting
-        # changes through a first-parent range that never reaches the base.
-        run([sys.executable, checker, merged, annotated_merge], root, expected=2)
+        # changes through a range that never reaches the base.
+        run([sys.executable, checker, resolved, annotated_merge], root, expected=2)
 
 
 if __name__ == "__main__":

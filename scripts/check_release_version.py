@@ -92,16 +92,23 @@ def internal_change_reason(revision: str) -> str | None:
 
 
 def unclassified_changes(base: str, head: str) -> list[str]:
-    # Check each delivered first-parent change, not only the final message:
-    # a later documentation commit cannot excuse an earlier shipped change.
-    # A merge is judged by its full delta from the destination parent.
-    revisions = git("rev-list", "--reverse", "--first-parent", f"{base}..{head}")
+    # Check every delivered commit, not only the final message or the
+    # first-parent line: a later documentation commit cannot excuse an earlier
+    # shipped change, and a pull-request merge delivers its branch commits
+    # through the second parent, each declared or versioned on its own.
+    # A merge commit itself is judged by what it introduces beyond every
+    # parent, which is its conflict resolution. An automatic merge, as a
+    # hosted pull-request merge or an upstream reconciliation produces,
+    # introduces nothing and so needs no declaration of its own.
+    revisions = git("rev-list", "--reverse", f"{base}..{head}")
     missing = []
     for revision in revisions.splitlines():
         parents = git("rev-list", "--parents", "-n", "1", revision).split()[1:]
         if not parents:
             raise ValueError("the checked range unexpectedly includes a root commit")
-        paths = changed_paths(parents[0], revision)
+        paths = set(changed_paths(parents[0], revision))
+        for parent in parents[1:]:
+            paths &= set(changed_paths(parent, revision))
         if not any(is_release_file(path) for path in paths):
             continue
         # An internal-only assertion cannot authorize version churn or undo a
