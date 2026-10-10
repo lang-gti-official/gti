@@ -317,6 +317,8 @@ struct LoweredFunctionDeclaration {
   bool neverReturns = false;
   bool tracksCaller = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
+  ProcessMemoryRuntimeOperation processMemoryOperation =
+      ProcessMemoryRuntimeOperation::None;
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;

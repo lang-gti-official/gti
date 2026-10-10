@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/concurrency.h"
+#include "gti/process_memory_runtime.h"
 #include "gti/program_request.h"
 #include "gti/semantic_core.h"
 
@@ -615,6 +616,8 @@ struct FunctionInfo {
   bool tracksCaller = false;
   bool discardableResult = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
+  ProcessMemoryRuntimeOperation processMemoryOperation =
+      ProcessMemoryRuntimeOperation::None;
   // Derived from resolved calls, after all source bodies have been analyzed.
   bool requiresCThreadRuntime = false;
   std::vector<RawBorrowContract> rawBorrowContracts;

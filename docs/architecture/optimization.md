@@ -761,23 +761,8 @@ access and loan referent. Reducible bodies widen only at loop headers; values
 inside the loop are recomputed from the widened header state, and irreducible
 bodies keep widening at every block.
 
-Process allocation still reaches the opaque native allocator, so constructing
-a second sequence erases the first one's facts, including its live length.
-Modeling process allocation as fresh, non-observable memory remains a separate
-precision goal. The construction chain has several independent barrier
-sources:
-
-- the runtime allocator and target-query declarations, which have only the
-  conservative native summary;
-- the memory-free `object-size` intrinsic, which the safety interpreter treats
-  as an unknown call;
-- the conservative synchronization of the panic intrinsics on failure-only
-  paths, which the path-insensitive MIR summary still carries.
-
-The caller-side alternative needs a separate exposure summary. The MIR escape
-flag treats a returned receiver borrow and any unknown-memory write as escape,
-so it cannot show that a constructor never handed its receiver to unknown
-code.
+Opaque effects, including process allocation, keep facts about uncaptured
+locals; see [Capture Analysis](#capture-analysis).
 A lifetime witness is still never a pointee or an allocation identity.
 Different pointer fields never imply different allocations.
 
@@ -1132,6 +1117,83 @@ only after `LoweredProgramBuilder` has independently replayed and sealed the
 transformation. For prefix reads, the C++ backend's unchecked helper is private
 representation vocabulary: it has no GTI declaration, intrinsic identity, or
 trusted-source spelling and is selected only from the verified discharge.
+
+### Capture Analysis
+
+An unknown effect can reach only storage whose identity reached it. The
+closed-call interpreter therefore keeps facts about a local binding across an
+opaque call, synchronization, native call, unknown destructor or raw write,
+provided no earlier instruction captured the binding and the instruction does
+not take it as an input. It keeps the binding's own non-byte integer fields
+and scalar values. It does not keep facts about storage the binding points to,
+its prefix envelopes or its address identities, and a reference binding
+designates other storage, so it keeps nothing. The interpreter still marks the
+effect opaque. A constructed container's live length therefore survives
+building a second container through the opaque process allocator, and a loop
+counter survives printing.
+
+The capture analysis extends the place alias and escape analysis in
+`alias.cpp`. It has two layers.
+
+- **Callee summaries.** Each exact function, constructor, destructor and
+  field-initializer body classifies its receiver and each reference or
+  borrow-carrying parameter:
+  - *None*: the body does not expose the input's identity.
+  - *ReturnOnly*: the identity reaches the caller only through the result,
+    which the caller tracks as its own value or loan. A returned borrow of the
+    receiver is the common case.
+  - *Captured*: any other route. That includes a raw address, a store into any
+    place, a closure or synchronization operation, and an intrinsic that
+    writes memory or runs code. It also includes a dynamic, native, polymorphic
+    or otherwise unknown callee.
+
+  Summaries are a least fixpoint over a caller worklist. Each records the
+  classes on paths that return normally separately from the classes on any
+  path. The caller applies the first on an invoke's success edge and the
+  second on its failure edge, so cleanup on a constructor's failure paths does
+  not make its successful result captured. A constructor whose receiver is
+  captured, or a function returning such an object by value, marks its result
+  captured, and a caller adopting that object as a local captures the local.
+  A body without an exact summary captures every input.
+- **Local flow.** A forward may-capture dataflow over the caller's control
+  flow finds, for each local binding, the instructions it may already be
+  captured before. Loop back edges carry a capture from one iteration into the
+  next. A loan that escapes the body captures its source from entry.
+
+A value carries a binding's identity when it comes from an address-forming
+operand, a receiver, a reference, or a borrow-carrying aggregate, including
+through recorded loan carriers. A scalar or raw pointer loaded from storage
+carries none, because storing an address into any place is itself a capture.
+The one exception is a binding that MIR records as the carrier of a loan of
+the same storage, whose every later use still names the loan.
+
+An intrinsic whose shared MIR effects write no memory, run no code and do not
+synchronize only inspects or reborrows its operands; its result may carry
+them. GTI lambdas capture only value snapshots and never references, so a
+closure cannot carry a local's reference into unknown code. Malformed MIR
+fails closed: an instruction whose operand provenance the scan cannot follow
+(an undefined value, or an empty or cyclic staging chain) captures and
+involves every binding. An unknown staged call input preserves nothing.
+
+The rule names no library type. Its tests use unrelated user records and
+containers, functions declared without a body, and native calls. Removed
+checks still replay through the ordinary proof verification. That replay
+re-runs the same analysis, so the negative fixtures carry the soundness
+evidence:
+
+- an address passed to native code;
+- an aggregate holding a borrow;
+- a constructor that registers its own field;
+- an exposure before the use;
+- a capture on an earlier loop iteration.
+
+Process allocation itself still reaches an opaque native call in the safety
+interpreter. Facts about memory the allocator could reach, such as the first
+container's element envelopes, are still erased. The declared process-
+allocator runtime contract (see
+[standard-library-and-runtime.md](standard-library-and-runtime.md)) now gives
+those calls precise shared MIR effects. Consuming it in the interpreter, which
+needs an exact argument-pointee write, is a separate goal.
 
 ## Rewrite And Proof Authority
 

@@ -4,8 +4,14 @@
 #include "gti/optimization/coverage.h"
 
 #include <algorithm>
+#include <array>
+#include <bit>
+#include <deque>
+#include <map>
 #include <optional>
 #include <set>
+#include <unordered_map>
+#include <utility>
 
 namespace lang {
 namespace {
@@ -467,6 +473,988 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
         result.relations[left * result.placeCount + right] =
             MirAliasRelation::NoAlias;
     }
+  return result;
+}
+
+namespace {
+
+// Capture keys name tracked storage: the receiver's own storage, or one
+// binding (a local, or the referents of a reference or borrow-carrying
+// parameter). Each body numbers its keys densely and works with bit sets.
+using CaptureKey = std::size_t;
+constexpr CaptureKey kReceiverKey = 0;
+
+[[nodiscard]] std::optional<CaptureKey> captureKey(const MirPlace &place) {
+  if (place.root == MirPlaceRootKind::This)
+    return kReceiverKey;
+  if (place.root == MirPlaceRootKind::Binding && place.binding != 0)
+    return static_cast<CaptureKey>(place.binding);
+  return std::nullopt;
+}
+
+class KeySet {
+public:
+  KeySet() = default;
+  explicit KeySet(std::size_t size) : words((size + 63) / 64, 0) {}
+
+  void insert(std::size_t index) {
+    words[index / 64] |= std::uint64_t{1} << (index % 64);
+  }
+  [[nodiscard]] bool contains(std::size_t index) const {
+    return index / 64 < words.size() &&
+           ((words[index / 64] >> (index % 64)) & 1U) != 0;
+  }
+  // Returns whether any bit was added.
+  bool merge(const KeySet &other) {
+    bool changed = false;
+    for (std::size_t word = 0; word < words.size() && word < other.words.size();
+         ++word) {
+      const std::uint64_t before = words[word];
+      words[word] |= other.words[word];
+      changed = changed || words[word] != before;
+    }
+    return changed;
+  }
+  void fill() {
+    for (auto &word : words)
+      word = ~std::uint64_t{0};
+  }
+  template <typename Visit> void forEach(Visit visit) const {
+    for (std::size_t word = 0; word < words.size(); ++word)
+      for (std::uint64_t bits = words[word]; bits != 0; bits &= bits - 1)
+        visit(word * 64 + static_cast<std::size_t>(std::countr_zero(bits)));
+  }
+
+private:
+  std::vector<std::uint64_t> words;
+};
+
+[[nodiscard]] bool addressOperand(const MirOperand &operand) {
+  return operand.kind == MirOperandKind::Address ||
+         operand.kind == MirOperandKind::BorrowRead ||
+         operand.kind == MirOperandKind::BorrowWrite ||
+         operand.kind == MirOperandKind::Loan;
+}
+
+[[nodiscard]] MirCaptureClass widest(MirCaptureClass left,
+                                     MirCaptureClass right) {
+  return static_cast<std::uint8_t>(left) >= static_cast<std::uint8_t>(right)
+             ? left
+             : right;
+}
+
+[[nodiscard]] bool bodyLess(MirBodyAddress left, MirBodyAddress right) {
+  return std::pair{static_cast<int>(left.kind), left.owner} <
+         std::pair{static_cast<int>(right.kind), right.owner};
+}
+
+[[nodiscard]] bool invocationKind(MirInstructionKind kind) {
+  return kind == MirInstructionKind::Call ||
+         kind == MirInstructionKind::Construct ||
+         kind == MirInstructionKind::CallBody ||
+         kind == MirInstructionKind::InitializeBase ||
+         kind == MirInstructionKind::Drop ||
+         kind == MirInstructionKind::CleanupBeforeAssign ||
+         kind == MirInstructionKind::AllocateObject;
+}
+
+[[nodiscard]] bool intrinsicCall(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Call &&
+         instruction.intrinsic != IntrinsicKind::None &&
+         !(instruction.intrinsic == IntrinsicKind::ObjectConstruct &&
+           instruction.constructorTarget) &&
+         !instruction.elementCleanup;
+}
+
+// Destruction and cleanup run their destructors with the destination (or a
+// cleaned element) as the receiver.
+[[nodiscard]] bool cleanupInvocation(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Drop ||
+         instruction.kind == MirInstructionKind::CleanupBeforeAssign ||
+         instruction.elementCleanup.has_value();
+}
+
+struct InputClasses {
+  bool unknown = false;
+  MirCaptureClass receiver = MirCaptureClass::None;
+  MirCaptureClass destination = MirCaptureClass::None;
+  std::vector<MirCaptureClass> operands;
+  bool capturesResult = false;
+};
+
+// Which edge of an instruction a capture applies to. An invocation's
+// failure edge also sees what its callee captured while failing.
+enum class CaptureEdge : std::uint8_t { Success, Failure };
+
+class CaptureScan {
+public:
+  CaptureScan(const MirProgram &program, const MirBody &body,
+              const MirProgramCaptureSummaries &summaries)
+      : program(program), body(body), summaries(summaries),
+        producers(body.values.size(), nullptr),
+        parameterValues(body.values.size(), false) {
+    for (const MirPlace &place : body.places)
+      if (const auto key = captureKey(place);
+          key && keyIndex.emplace(*key, keys.size()).second)
+        keys.push_back(*key);
+    loanKeys.reserve(body.loans.size());
+    for (const MirLoan &loan : body.loans) {
+      KeySet sources = empty();
+      for (const MirPlaceId source : mirLoanProtectedSources(body, loan.id))
+        if (const MirPlace *place = body.findPlace(source))
+          if (const auto key = captureKey(*place))
+            sources.insert(keyIndex.at(*key));
+      loanKeys.push_back(sources);
+      for (const HirBindingId carrier : loan.carriers)
+        carrierKeys.try_emplace(carrier, empty()).first->second.merge(sources);
+    }
+    for (const MirBlock &block : body.blocks) {
+      for (const MirBlockParameter &parameter : block.parameters)
+        if (parameter.value != 0 && parameter.value <= parameterValues.size())
+          parameterValues[parameter.value - 1] = true;
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.tombstone)
+          continue;
+        if (instruction.result && *instruction.result != 0 &&
+            *instruction.result <= producers.size())
+          producers[*instruction.result - 1] = &instruction;
+        if (invocationKind(instruction.kind)) {
+          targets.emplace(&instruction,
+                          mirInvocationTargets(program, body, instruction));
+          kinds.emplace(&instruction, classify(instruction));
+        }
+      }
+    }
+    everyKey = empty();
+    everyKey.fill();
+    origins.assign(body.values.size(), empty());
+    computeOrigins();
+  }
+
+  [[nodiscard]] KeySet empty() const { return KeySet(keys.size()); }
+  [[nodiscard]] std::optional<std::size_t> indexOf(CaptureKey key) const {
+    const auto found = keyIndex.find(key);
+    return found == keyIndex.end() ? std::nullopt
+                                   : std::optional<std::size_t>{found->second};
+  }
+  [[nodiscard]] CaptureKey keyAt(std::size_t index) const {
+    return keys[index];
+  }
+  [[nodiscard]] std::size_t keyCount() const { return keys.size(); }
+
+  [[nodiscard]] const KeySet &keysOfLoan(MirLoanId loan) const {
+    return loan != 0 && loan <= loanKeys.size() ? loanKeys[loan - 1] : noKeys();
+  }
+
+  // The tracked identities an operand may carry. An address-forming operand
+  // or a receiver carries its place's storage; a reference or borrow-carrying
+  // value carries the referents its place stands for. A scalar or raw pointer
+  // read from storage carries none: storing an address into any place is a
+  // capture, so a loaded value never names uncaptured storage.
+  [[nodiscard]] KeySet carried(const MirOperand &operand, bool receiver) const {
+    KeySet keys = empty();
+    if (const MirPlace *place = body.findPlace(operand.place)) {
+      if (const auto key = captureKey(*place);
+          key && (receiver || addressOperand(operand) ||
+                  place->type.kind == SemanticType::Reference ||
+                  place->traits.containsBorrowedState))
+        keys.insert(keyIndex.at(*key));
+      if (place->root == MirPlaceRootKind::Loan)
+        keys.merge(keysOfLoan(place->loan));
+      else if (place->root == MirPlaceRootKind::Binding)
+        if (const auto found = carrierKeys.find(place->binding);
+            found != carrierKeys.end())
+          keys.merge(found->second);
+    }
+    keys.merge(keysOfLoan(operand.loan));
+    if (operand.value != 0 && operand.value <= origins.size())
+      keys.merge(origins[operand.value - 1]);
+    return keys;
+  }
+
+  // Intrinsics with no exact body. One that writes no memory, runs no code
+  // and does not synchronize only inspects or reborrows its operands: their
+  // identities reach at most its result. Any other intrinsic, and every
+  // synchronization operation, captures what it receives.
+  [[nodiscard]] bool
+  inspectingIntrinsic(const MirInstruction &instruction) const {
+    const auto found = kinds.find(&instruction);
+    return found != kinds.end() && found->second == InvocationKind::Inspecting;
+  }
+
+  [[nodiscard]] bool opaqueOperation(const MirInstruction &instruction) const {
+    const auto found = kinds.find(&instruction);
+    return found != kinds.end() && found->second == InvocationKind::Opaque;
+  }
+
+  [[nodiscard]] const InputClasses &
+  inputClasses(const MirInstruction &instruction, CaptureEdge edge) const {
+    auto &slot = classCache[&instruction][static_cast<std::size_t>(edge)];
+    if (!slot)
+      slot = computeInputClasses(instruction, edge);
+    return *slot;
+  }
+
+  [[nodiscard]] InputClasses
+  computeInputClasses(const MirInstruction &instruction,
+                      CaptureEdge edge) const {
+    InputClasses result;
+    result.operands.assign(instruction.operands.size(), MirCaptureClass::None);
+    const auto cached = targets.find(&instruction);
+    if (cached == targets.end() || cached->second.boundary ||
+        cached->second.addresses.empty()) {
+      result.unknown = true;
+      return result;
+    }
+    // Final-address construction passes the vacant pointee first. Forming a
+    // raw address of tracked storage is itself a capture, so it is untracked.
+    const std::size_t offset =
+        instruction.kind == MirInstructionKind::Call &&
+                instruction.intrinsic == IntrinsicKind::ObjectConstruct
+            ? 1
+            : 0;
+    for (const MirBodyAddress target : cached->second.addresses) {
+      const MirBodyCaptureSummary *summary = summaries.find(target);
+      if (summary == nullptr) {
+        result.unknown = true;
+        return result;
+      }
+      const bool failure = edge == CaptureEdge::Failure;
+      const MirCaptureClass receiver =
+          failure ? summary->failureReceiver : summary->receiver;
+      const auto &parameters =
+          failure ? summary->failureParameters : summary->parameters;
+      result.capturesResult = result.capturesResult || summary->capturesResult;
+      if (cleanupInvocation(instruction)) {
+        result.destination = widest(result.destination, receiver);
+        result.receiver = widest(result.receiver, receiver);
+        for (auto &operand : result.operands)
+          operand = widest(operand, receiver);
+        continue;
+      }
+      if (instruction.kind == MirInstructionKind::InitializeBase)
+        result.destination = widest(result.destination, receiver);
+      if (instruction.receiver)
+        result.receiver = widest(result.receiver, receiver);
+      for (std::size_t index = offset; index < instruction.operands.size();
+           ++index) {
+        const std::size_t parameter = index - offset;
+        result.operands[index] =
+            widest(result.operands[index], parameter < parameters.size()
+                                               ? parameters[parameter]
+                                               : MirCaptureClass::Captured);
+      }
+    }
+    return result;
+  }
+
+  // Whether an instruction receives a value whose provenance this scan
+  // cannot follow: an undefined value, or a staging or transfer chain that
+  // is empty or cyclic. Verified MIR has none; malformed MIR fails closed.
+  [[nodiscard]] bool unresolvedInputs(const MirInstruction &instruction) const {
+    const auto unresolved = [&](MirValueId value) {
+      std::set<MirValueId> seen;
+      while (value != 0) {
+        if (value > producers.size() || !seen.insert(value).second)
+          return true;
+        const MirInstruction *producer = producers[value - 1];
+        if (producer == nullptr)
+          return !parameterValues[value - 1];
+        if (producer->kind != MirInstructionKind::CallInput &&
+            producer->kind != MirInstructionKind::Move)
+          return false;
+        if (producer->operands.size() != 1)
+          return true;
+        value = producer->operands.front().value;
+      }
+      return false;
+    };
+    if (instruction.receiver && unresolved(instruction.receiver->value))
+      return true;
+    return std::any_of(
+        instruction.operands.begin(), instruction.operands.end(),
+        [&](const MirOperand &operand) { return unresolved(operand.value); });
+  }
+
+  // Every tracked identity an instruction receives, by any operand kind.
+  [[nodiscard]] KeySet involved(const MirInstruction &instruction) const {
+    if (unresolvedInputs(instruction))
+      return everyKey;
+    KeySet keys = inputs(instruction);
+    const auto own = [&](MirPlaceId id) {
+      if (const MirPlace *place = body.findPlace(id))
+        if (const auto key = captureKey(*place))
+          keys.insert(keyIndex.at(*key));
+    };
+    if (instruction.receiver)
+      own(instruction.receiver->place);
+    for (const MirOperand &operand : instruction.operands)
+      own(operand.place);
+    if (instruction.destination)
+      own(*instruction.destination);
+    if (instruction.loan)
+      keys.merge(keysOfLoan(*instruction.loan));
+    return keys;
+  }
+
+  // The tracked identities this instruction may make reachable from code or
+  // storage outside the body's view, on the given edge.
+  [[nodiscard]] const KeySet &captures(const MirInstruction &instruction,
+                                       CaptureEdge edge) const {
+    auto &slot = captureCache[&instruction][static_cast<std::size_t>(edge)];
+    if (!slot)
+      slot = computeCaptures(instruction, edge);
+    return *slot;
+  }
+
+  [[nodiscard]] KeySet computeCaptures(const MirInstruction &instruction,
+                                       CaptureEdge edge) const {
+    KeySet result = empty();
+    if (instruction.tombstone)
+      return result;
+    if (unresolvedInputs(instruction))
+      return everyKey;
+    const KeySet all = inputs(instruction);
+    KeySet destinationKeys = empty();
+    const MirPlace *destination = instruction.destination
+                                      ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+    if (destination)
+      if (const auto key = captureKey(*destination))
+        destinationKeys.insert(keyIndex.at(*key));
+
+    if (!instruction.closureCaptureTypes.empty())
+      result.merge(all);
+    if (instruction.operation == MirOperation::AddressOf)
+      for (const MirOperand &operand : instruction.operands) {
+        if (const MirPlace *place = body.findPlace(operand.place))
+          if (const auto key = captureKey(*place))
+            result.insert(keyIndex.at(*key));
+        result.merge(carried(operand, false));
+      }
+
+    KeySet stored = empty();
+    bool adoptsCapturedResult = false;
+    if (invocationKind(instruction.kind)) {
+      const bool objectResult = carriesPlaceIdentity(instruction.info.type);
+      if (inspectingIntrinsic(instruction)) {
+        stored = all;
+      } else if (opaqueOperation(instruction)) {
+        result.merge(all);
+        result.merge(destinationKeys);
+      } else if (kinds.at(&instruction) != InvocationKind::StructuralDrop) {
+        const InputClasses &classes = inputClasses(instruction, edge);
+        if (classes.unknown) {
+          result.merge(all);
+          result.merge(destinationKeys);
+          stored = all;
+          adoptsCapturedResult = objectResult;
+        } else {
+          if (instruction.receiver) {
+            const KeySet keys = carried(*instruction.receiver, true);
+            if (classes.receiver == MirCaptureClass::Captured)
+              result.merge(keys);
+            if (classes.receiver != MirCaptureClass::None)
+              stored.merge(keys);
+          }
+          for (std::size_t index = 0; index < instruction.operands.size();
+               ++index) {
+            if (classes.operands[index] == MirCaptureClass::None)
+              continue;
+            const KeySet keys = carried(instruction.operands[index], false);
+            if (classes.operands[index] == MirCaptureClass::Captured)
+              result.merge(keys);
+            stored.merge(keys);
+          }
+          if (classes.destination == MirCaptureClass::Captured)
+            result.merge(destinationKeys);
+          adoptsCapturedResult = objectResult && classes.capturesResult;
+        }
+      }
+      if (cleanupInvocation(instruction) ||
+          instruction.kind == MirInstructionKind::InitializeBase)
+        stored = empty();
+    } else if (instruction.kind == MirInstructionKind::Initialize ||
+               instruction.kind == MirInstructionKind::Assign ||
+               instruction.kind == MirInstructionKind::Modify ||
+               instruction.kind == MirInstructionKind::Move ||
+               instruction.kind == MirInstructionKind::CallInput) {
+      if (destination)
+        for (const MirOperand &operand : instruction.operands) {
+          stored.merge(carried(operand, false));
+          adoptsCapturedResult =
+              adoptsCapturedResult || producedCapturedResult(operand.value);
+        }
+    } else if (instruction.kind != MirInstructionKind::Load &&
+               instruction.kind != MirInstructionKind::Compute &&
+               instruction.kind != MirInstructionKind::Borrow &&
+               instruction.kind != MirInstructionKind::ActivateBorrow &&
+               instruction.kind != MirInstructionKind::EndBorrow &&
+               instruction.kind != MirInstructionKind::Lifecycle) {
+      result.merge(all);
+    }
+
+    // Storing an identity into any place makes it reachable through that
+    // place, except a binding that MIR records as the carrier of a loan of
+    // the same storage: every use of a carrier still names the loan.
+    if (destination) {
+      const KeySet *carriedLoans = nullptr;
+      if (destination->root == MirPlaceRootKind::Binding &&
+          destination->binding != 0 && destination->projections.empty())
+        if (const auto found = carrierKeys.find(destination->binding);
+            found != carrierKeys.end())
+          carriedLoans = &found->second;
+      stored.forEach([&](std::size_t index) {
+        if (carriedLoans == nullptr || !carriedLoans->contains(index))
+          result.insert(index);
+      });
+      if (adoptsCapturedResult)
+        result.merge(destinationKeys);
+    }
+    return result;
+  }
+
+  [[nodiscard]] KeySet returned(const MirTerminator &terminator) const {
+    KeySet keys = empty();
+    if (terminator.kind != MirTerminatorKind::Return)
+      return keys;
+    if (terminator.value)
+      keys = carried(*terminator.value, false);
+    if (terminator.returnLoan)
+      keys.merge(keysOfLoan(*terminator.returnLoan));
+    return keys;
+  }
+
+  [[nodiscard]] KeySet escapingLoanSources() const {
+    KeySet keys = empty();
+    for (const MirLoan &loan : body.loans)
+      if (loan.escapes)
+        keys.merge(keysOfLoan(loan.id));
+    return keys;
+  }
+
+  // Whether a value was built by an invocation whose constructed or returned
+  // object may already have its own address captured.
+  [[nodiscard]] bool producedCapturedResult(MirValueId value) const {
+    std::set<MirValueId> seen;
+    while (value != 0 && value <= producers.size() &&
+           seen.insert(value).second) {
+      const MirInstruction *producer = producers[value - 1];
+      if (producer == nullptr)
+        return false;
+      if (invocationKind(producer->kind) && !intrinsicCall(*producer) &&
+          producer->synchronization.kind ==
+              SynchronizationOperationKind::None) {
+        if (!carriesPlaceIdentity(producer->info.type))
+          return false;
+        const InputClasses &classes =
+            inputClasses(*producer, CaptureEdge::Success);
+        return classes.unknown || classes.capturesResult;
+      }
+      if ((producer->kind != MirInstructionKind::CallInput &&
+           producer->kind != MirInstructionKind::Move) ||
+          producer->operands.size() != 1)
+        return false;
+      value = producer->operands.front().value;
+    }
+    return false;
+  }
+
+private:
+  // How an invocation instruction is treated, fixed for one scan.
+  enum class InvocationKind : std::uint8_t {
+    Exact,
+    StructuralDrop,
+    Inspecting,
+    Opaque,
+  };
+
+  [[nodiscard]] InvocationKind
+  classify(const MirInstruction &instruction) const {
+    if (instruction.synchronization.kind !=
+            SynchronizationOperationKind::None ||
+        instruction.kind == MirInstructionKind::AllocateObject)
+      return InvocationKind::Opaque;
+    if (instruction.kind == MirInstructionKind::Drop &&
+        isMirStructuralValueDrop(program, instruction))
+      return InvocationKind::StructuralDrop;
+    if (!intrinsicCall(instruction))
+      return InvocationKind::Exact;
+    const MirEffectTraits effect = effects(program, body, instruction);
+    const bool inspecting =
+        !effect.writesPlace && !effect.writesUnknownMemory &&
+        !effect.invokesUserCode && !effect.invokesRuntime &&
+        !effect.maySynchronize && !effect.allocates && !effect.movesValue &&
+        !effect.dropsValue && !effect.initializesValue;
+    return inspecting ? InvocationKind::Inspecting : InvocationKind::Opaque;
+  }
+
+  [[nodiscard]] const KeySet &noKeys() const { return noKeySet; }
+
+  [[nodiscard]] KeySet inputs(const MirInstruction &instruction) const {
+    KeySet keys = empty();
+    if (instruction.receiver)
+      keys.merge(carried(*instruction.receiver, true));
+    for (const MirOperand &operand : instruction.operands)
+      keys.merge(carried(operand, false));
+    return keys;
+  }
+
+  void computeOrigins() {
+    const auto flow = [&](MirBlockId target,
+                          const std::vector<MirOperand> &arguments,
+                          bool &changed) {
+      const MirBlock *successor = body.findBlock(target);
+      if (successor == nullptr)
+        return;
+      for (std::size_t index = 0;
+           index < arguments.size() && index < successor->parameters.size();
+           ++index) {
+        const MirValueId value = successor->parameters[index].value;
+        if (value != 0 && value <= origins.size())
+          changed =
+              origins[value - 1].merge(carried(arguments[index], false)) ||
+              changed;
+      }
+    };
+    for (std::size_t round = 0; round <= origins.size(); ++round) {
+      bool changed = false;
+      for (const MirBlock &block : body.blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          if (instruction.tombstone || !instruction.result ||
+              *instruction.result == 0 ||
+              *instruction.result > origins.size() ||
+              !carriesPlaceIdentity(instruction.info.type))
+            continue;
+          KeySet next = empty();
+          if (instruction.loan)
+            next.merge(keysOfLoan(*instruction.loan));
+          if (invocationKind(instruction.kind) &&
+              !opaqueOperation(instruction) &&
+              !inspectingIntrinsic(instruction)) {
+            const InputClasses &classes =
+                inputClasses(instruction, CaptureEdge::Success);
+            if (instruction.receiver &&
+                (classes.unknown || classes.receiver != MirCaptureClass::None))
+              next.merge(carried(*instruction.receiver, true));
+            for (std::size_t index = 0; index < instruction.operands.size();
+                 ++index)
+              if (classes.unknown ||
+                  classes.operands[index] != MirCaptureClass::None)
+                next.merge(carried(instruction.operands[index], false));
+          } else {
+            next.merge(inputs(instruction));
+          }
+          changed = origins[*instruction.result - 1].merge(next) || changed;
+        }
+        const MirTerminator &terminator = block.terminator;
+        flow(terminator.target, terminator.targetArguments, changed);
+        flow(terminator.elseTarget, terminator.elseArguments, changed);
+        for (const MirSwitchTarget &target : terminator.switchTargets)
+          flow(target.target, target.arguments, changed);
+      }
+      if (!changed)
+        break;
+    }
+  }
+
+  const MirProgram &program;
+  const MirBody &body;
+  const MirProgramCaptureSummaries &summaries;
+  std::unordered_map<CaptureKey, std::size_t> keyIndex;
+  std::vector<CaptureKey> keys;
+  std::vector<KeySet> loanKeys;
+  std::unordered_map<HirBindingId, KeySet> carrierKeys;
+  std::vector<KeySet> origins;
+  std::vector<const MirInstruction *> producers;
+  std::vector<bool> parameterValues;
+  KeySet everyKey;
+  KeySet noKeySet;
+  std::unordered_map<const MirInstruction *, MirInvocationTargets> targets;
+  std::unordered_map<const MirInstruction *, InvocationKind> kinds;
+  // Origins are complete once constructed, so captures and classes are
+  // fixed for the scan's lifetime.
+  mutable std::unordered_map<const MirInstruction *,
+                             std::array<std::optional<InputClasses>, 2>>
+      classCache;
+  mutable std::unordered_map<const MirInstruction *,
+                             std::array<std::optional<KeySet>, 2>>
+      captureCache;
+};
+
+// Forward may-capture dataflow over one body. A block ending in Invoke
+// passes its call's success-path captures to the success target and its
+// any-path captures to the failure target; every other edge sees both.
+struct CaptureFlow {
+  std::vector<std::pair<MirInstructionId, KeySet>> before;
+  KeySet atReturn;
+  KeySet anywhere;
+};
+
+[[nodiscard]] CaptureFlow flowCaptures(const CaptureScan &scan,
+                                       const MirBody &body,
+                                       const KeySet &initial) {
+  CaptureFlow result{
+      .before = {}, .atReturn = scan.empty(), .anywhere = initial};
+  if (body.findBlock(body.entry) == nullptr)
+    return result;
+  std::vector<std::optional<KeySet>> entering(body.blocks.size());
+  entering[body.entry - 1] = initial;
+  std::deque<MirBlockId> work{body.entry};
+  std::map<MirInstructionId, KeySet> before;
+  const auto propagate = [&](MirBlockId successor, const KeySet &state) {
+    if (successor == 0 || successor > entering.size())
+      return;
+    auto &next = entering[successor - 1];
+    bool changed = false;
+    if (!next) {
+      next = state;
+      changed = true;
+    } else {
+      changed = next->merge(state);
+    }
+    if (changed)
+      work.push_back(successor);
+  };
+  while (!work.empty()) {
+    const MirBlockId id = work.front();
+    work.pop_front();
+    const MirBlock *block = body.findBlock(id);
+    if (block == nullptr || !entering[id - 1])
+      continue;
+    KeySet state = *entering[id - 1];
+    KeySet failureState = state;
+    const MirTerminator &terminator = block->terminator;
+    const bool invoke = terminator.kind == MirTerminatorKind::Invoke;
+    for (const MirInstruction &instruction : block->instructions) {
+      before.insert_or_assign(instruction.id, state);
+      if (invoke && instruction.id == terminator.invokeInstruction) {
+        failureState = state;
+        failureState.merge(scan.captures(instruction, CaptureEdge::Failure));
+        state.merge(scan.captures(instruction, CaptureEdge::Success));
+      } else {
+        // Without an Invoke edge the callee cannot fail out of this block.
+        state.merge(scan.captures(instruction, CaptureEdge::Failure));
+        failureState = state;
+      }
+    }
+    result.anywhere.merge(state);
+    result.anywhere.merge(failureState);
+    if (terminator.kind == MirTerminatorKind::Return)
+      result.atReturn.merge(state);
+    if (invoke) {
+      propagate(terminator.target, state);
+      propagate(terminator.elseTarget, failureState);
+      continue;
+    }
+    if (terminator.target != 0)
+      propagate(terminator.target, state);
+    if (terminator.elseTarget != 0)
+      propagate(terminator.elseTarget, state);
+    for (const MirSwitchTarget &target : terminator.switchTargets)
+      propagate(target.target, state);
+  }
+  result.before.assign(before.begin(), before.end());
+  return result;
+}
+
+struct BodyInputs {
+  bool receiver = false;
+  // Parameter binding, or zero when the parameter carries no caller
+  // identity (a scalar, raw address or self-contained value).
+  std::vector<HirBindingId> parameters;
+};
+
+[[nodiscard]] BodyInputs bodyInputs(const MirProgram &program,
+                                    MirBodyAddress address,
+                                    const MirBody &body) {
+  BodyInputs inputs;
+  const std::vector<HirBindingId> *bindings = nullptr;
+  switch (address.kind) {
+  case MirBodyKind::Function:
+    if (const auto *function = program.findFunctionInstance(address.owner)) {
+      inputs.receiver = function->owner.has_value() && !function->staticMember;
+      bindings = &function->parameterBindings;
+    }
+    break;
+  case MirBodyKind::Constructor:
+    if (const auto *constructor =
+            program.findConstructorInstance(address.owner)) {
+      inputs.receiver = true;
+      bindings = &constructor->parameterBindings;
+    }
+    break;
+  case MirBodyKind::Destructor:
+  case MirBodyKind::FieldInitializers:
+    inputs.receiver = true;
+    break;
+  default:
+    break;
+  }
+  if (bindings == nullptr)
+    return inputs;
+  for (const HirBindingId binding : *bindings) {
+    const auto place = std::find_if(
+        body.places.begin(), body.places.end(), [&](const MirPlace &candidate) {
+          return candidate.root == MirPlaceRootKind::Binding &&
+                 candidate.binding == binding && candidate.projections.empty();
+        });
+    const bool tracked = place == body.places.end() ||
+                         place->type.kind == SemanticType::Reference ||
+                         place->traits.containsBorrowedState;
+    inputs.parameters.push_back(tracked ? binding : 0);
+  }
+  return inputs;
+}
+
+[[nodiscard]] bool summarizedBody(const MirProgram &program,
+                                  MirBodyAddress address) {
+  switch (address.kind) {
+  case MirBodyKind::Function: {
+    const auto *function = program.findFunctionInstance(address.owner);
+    return function != nullptr &&
+           function->definitionKind == MirDefinitionKind::Source;
+  }
+  case MirBodyKind::Constructor: {
+    const auto *constructor = program.findConstructorInstance(address.owner);
+    return constructor != nullptr &&
+           constructor->definitionKind == MirDefinitionKind::Source;
+  }
+  case MirBodyKind::Destructor: {
+    const auto *destructor = program.findDestructorInstance(address.owner);
+    return destructor != nullptr &&
+           destructor->definitionKind == MirDefinitionKind::Source;
+  }
+  case MirBodyKind::FieldInitializers:
+    return true;
+  default:
+    return false;
+  }
+}
+
+[[nodiscard]] MirBodyCaptureSummary
+summarizeCaptures(const MirProgram &program, MirBodyAddress address,
+                  const MirBody &body,
+                  const MirProgramCaptureSummaries &summaries) {
+  const BodyInputs inputs = bodyInputs(program, address, body);
+  const CaptureScan scan(program, body, summaries);
+  const CaptureFlow flow = flowCaptures(scan, body, scan.empty());
+  KeySet returned = scan.escapingLoanSources();
+  bool capturesResult = false;
+  for (const MirBlock &block : body.blocks) {
+    returned.merge(scan.returned(block.terminator));
+    if (block.terminator.kind == MirTerminatorKind::Return &&
+        block.terminator.value)
+      capturesResult = capturesResult || scan.producedCapturedResult(
+                                             block.terminator.value->value);
+  }
+  const auto classify = [&](CaptureKey key, const KeySet &captured) {
+    const auto index = scan.indexOf(key);
+    if (!index)
+      return MirCaptureClass::None;
+    return captured.contains(*index)   ? MirCaptureClass::Captured
+           : returned.contains(*index) ? MirCaptureClass::ReturnOnly
+                                       : MirCaptureClass::None;
+  };
+  MirBodyCaptureSummary summary;
+  if (inputs.receiver) {
+    summary.receiver = classify(kReceiverKey, flow.atReturn);
+    summary.failureReceiver = classify(kReceiverKey, flow.anywhere);
+  }
+  for (const HirBindingId binding : inputs.parameters) {
+    summary.parameters.push_back(binding == 0
+                                     ? MirCaptureClass::None
+                                     : classify(binding, flow.atReturn));
+    summary.failureParameters.push_back(binding == 0
+                                            ? MirCaptureClass::None
+                                            : classify(binding, flow.anywhere));
+  }
+  if (address.kind == MirBodyKind::Constructor) {
+    // Field initializers run first on the same receiver.
+    if (const auto *constructor =
+            program.findConstructorInstance(address.owner))
+      if (const MirBodyCaptureSummary *initializers = summaries.find(
+              {.kind = MirBodyKind::FieldInitializers,
+               .owner = static_cast<std::size_t>(constructor->owner)})) {
+        summary.receiver = widest(summary.receiver, initializers->receiver);
+        summary.failureReceiver =
+            widest(summary.failureReceiver, initializers->failureReceiver);
+      }
+    capturesResult = summary.receiver == MirCaptureClass::Captured;
+  } else if (address.kind == MirBodyKind::FieldInitializers) {
+    capturesResult = summary.receiver == MirCaptureClass::Captured;
+  } else if (address.kind != MirBodyKind::Function) {
+    capturesResult = false;
+  }
+  summary.capturesResult = capturesResult;
+  return summary;
+}
+
+template <typename Entries>
+[[nodiscard]] const std::vector<HirBindingId> *
+findBindings(const Entries &entries, MirInstructionId instruction) {
+  const auto found = std::lower_bound(
+      entries.begin(), entries.end(), instruction,
+      [](const auto &entry, MirInstructionId id) { return entry.first < id; });
+  return found == entries.end() || found->first != instruction ? nullptr
+                                                               : &found->second;
+}
+
+} // namespace
+
+const MirBodyCaptureSummary *
+MirProgramCaptureSummaries::find(MirBodyAddress body) const {
+  const auto found = std::lower_bound(bodies.begin(), bodies.end(), body,
+                                      [](const auto &entry, auto address) {
+                                        return bodyLess(entry.first, address);
+                                      });
+  return found == bodies.end() || !(found->first == body) ? nullptr
+                                                          : &found->second;
+}
+
+MirProgramCaptureSummaries
+deriveMirProgramCaptureSummaries(const MirProgram &program) {
+  MirProgramCaptureSummaries result;
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
+    const MirBody *body = findMirBody(program, address);
+    if (body == nullptr || !summarizedBody(program, address))
+      continue;
+    MirBodyCaptureSummary initial;
+    const std::size_t parameters =
+        bodyInputs(program, address, *body).parameters.size();
+    initial.parameters.assign(parameters, MirCaptureClass::None);
+    initial.failureParameters.assign(parameters, MirCaptureClass::None);
+    result.bodies.emplace_back(address, std::move(initial));
+  }
+  std::sort(result.bodies.begin(), result.bodies.end(),
+            [](const auto &left, const auto &right) {
+              return bodyLess(left.first, right.first);
+            });
+  // Classes only grow, so a caller is revisited only when a callee's
+  // summary changes. The least fixpoint is reached within a bounded number
+  // of visits; exhausting the bound falls back to capturing every input
+  // rather than trusting a partial summary.
+  const auto indexOf =
+      [&](MirBodyAddress address) -> std::optional<std::size_t> {
+    const auto found = std::lower_bound(
+        result.bodies.begin(), result.bodies.end(), address,
+        [](const auto &entry, auto key) { return bodyLess(entry.first, key); });
+    if (found == result.bodies.end() || !(found->first == address))
+      return std::nullopt;
+    return static_cast<std::size_t>(found - result.bodies.begin());
+  };
+  std::vector<std::vector<std::size_t>> callers(result.bodies.size());
+  for (std::size_t index = 0; index < result.bodies.size(); ++index) {
+    const MirBodyAddress address = result.bodies[index].first;
+    const MirBody &body = *findMirBody(program, address);
+    for (const MirBlock &block : body.blocks)
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.tombstone || !invocationKind(instruction.kind))
+          continue;
+        for (const MirBodyAddress target :
+             mirInvocationTargets(program, body, instruction).addresses)
+          if (const auto callee = indexOf(target))
+            callers[*callee].push_back(index);
+      }
+    if (address.kind == MirBodyKind::Constructor)
+      if (const auto *constructor =
+              program.findConstructorInstance(address.owner))
+        if (const auto initializers = indexOf(
+                {.kind = MirBodyKind::FieldInitializers,
+                 .owner = static_cast<std::size_t>(constructor->owner)}))
+          callers[*initializers].push_back(index);
+  }
+  for (auto &list : callers) {
+    std::sort(list.begin(), list.end());
+    list.erase(std::unique(list.begin(), list.end()), list.end());
+  }
+  std::deque<std::size_t> work;
+  std::vector<bool> queued(result.bodies.size(), true);
+  for (std::size_t index = 0; index < result.bodies.size(); ++index)
+    work.push_back(index);
+  std::size_t visits = 0;
+  const std::size_t budget = 16 * result.bodies.size() + 16;
+  bool converged = true;
+  while (!work.empty()) {
+    if (++visits > budget) {
+      converged = false;
+      break;
+    }
+    const std::size_t index = work.front();
+    work.pop_front();
+    queued[index] = false;
+    auto &[address, summary] = result.bodies[index];
+    MirBodyCaptureSummary next = summarizeCaptures(
+        program, address, *findMirBody(program, address), result);
+    if (next == summary)
+      continue;
+    summary = std::move(next);
+    for (const std::size_t caller : callers[index])
+      if (!queued[caller]) {
+        queued[caller] = true;
+        work.push_back(caller);
+      }
+  }
+  if (!converged)
+    for (auto &[address, summary] : result.bodies) {
+      (void)address;
+      summary.receiver = summary.failureReceiver = MirCaptureClass::Captured;
+      std::fill(summary.parameters.begin(), summary.parameters.end(),
+                MirCaptureClass::Captured);
+      std::fill(summary.failureParameters.begin(),
+                summary.failureParameters.end(), MirCaptureClass::Captured);
+      summary.capturesResult = true;
+    }
+  return result;
+}
+
+bool MirLocalCaptureAnalysis::mayBeCapturedBefore(
+    HirBindingId binding, MirInstructionId instruction) const {
+  if (!valid)
+    return true;
+  const auto *bindings = findBindings(capturedBefore, instruction);
+  return bindings == nullptr ||
+         std::binary_search(bindings->begin(), bindings->end(), binding);
+}
+
+bool MirLocalCaptureAnalysis::involves(HirBindingId binding,
+                                       MirInstructionId instruction) const {
+  if (!valid)
+    return true;
+  const auto *bindings = findBindings(involved, instruction);
+  return bindings == nullptr ||
+         std::binary_search(bindings->begin(), bindings->end(), binding);
+}
+
+MirLocalCaptureAnalysis
+analyzeMirLocalCaptures(const MirProgram &program, MirBodyAddress address,
+                        const MirProgramCaptureSummaries &summaries) {
+  MirLocalCaptureAnalysis result;
+  const MirBody *body = findMirBody(program, address);
+  if (body == nullptr || body->findBlock(body->entry) == nullptr)
+    return result;
+  const CaptureScan scan(program, *body, summaries);
+  // An escaping loan makes its source reachable after the body returns; treat
+  // it as captured from entry.
+  const CaptureFlow flow =
+      flowCaptures(scan, *body, scan.escapingLoanSources());
+  const auto bindingsOf = [&](const KeySet &keys) {
+    std::vector<HirBindingId> bindings;
+    keys.forEach([&](std::size_t index) {
+      if (index < scan.keyCount() && scan.keyAt(index) != kReceiverKey)
+        bindings.push_back(static_cast<HirBindingId>(scan.keyAt(index)));
+    });
+    std::sort(bindings.begin(), bindings.end());
+    return bindings;
+  };
+  for (const auto &[instruction, keys] : flow.before)
+    result.capturedBefore.emplace_back(instruction, bindingsOf(keys));
+  for (const MirBlock &block : body->blocks)
+    for (const MirInstruction &instruction : block.instructions)
+      result.involved.emplace_back(instruction.id,
+                                   bindingsOf(scan.involved(instruction)));
+  std::sort(result.involved.begin(), result.involved.end());
+  result.valid = true;
   return result;
 }
 

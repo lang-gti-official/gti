@@ -614,6 +614,7 @@ private:
          .neverReturns = declaration.neverReturns,
          .tracksCaller = declaration.tracksCaller,
          .cThreadOperation = declaration.cThreadOperation,
+         .processMemoryOperation = declaration.processMemoryOperation,
          .linkage = declaration.linkage,
          .externalSymbol = declaration.externalSymbol,
          .cArrayCountParameter = declaration.cArrayCountParameter,
