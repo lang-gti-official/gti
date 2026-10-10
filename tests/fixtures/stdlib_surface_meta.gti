@@ -1,0 +1,27 @@
+#include <std/meta>
+
+struct Player {
+  uint32_t health = 100;
+  bool alive = true;
+};
+
+int main() {
+  Player player = {.health = uint32_t(7), .alive = false};
+  mut uint64_t checksum = 0;
+  constexpr for (auto field : std::meta::fields_of<Player>()) {
+    checksum = checksum + field.index() + field.name().size();
+    if constexpr (field.type().is_integral()) {
+      checksum = checksum + uint64_t(field.get(player));
+    }
+    if (!field.is_public()) { return 1; }
+  }
+  if (checksum != uint64_t(19)) { return 2; }
+  if (std::meta::name_of<Player>() != "Player") { return 3; }
+  if (!std::meta::is_struct<Player>() || std::meta::is_class<Player>()) { return 4; }
+  if (!std::meta::is_integral<uint32_t>() || !std::meta::is_bool<bool>() ||
+      !std::meta::is_floating_point<double>() || !std::meta::is_text<std::string_view>()) {
+    return 5;
+  }
+  if (std::meta::type_of<Player>().field_count() != uint64_t(2)) { return 6; }
+  return 0;
+}

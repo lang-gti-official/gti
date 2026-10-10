@@ -257,6 +257,10 @@ struct Token {
   std::string source;
   bool completion = false;
   bool generated = false;
+  // Nonzero on tokens of an AST copy made by compile-time expansion
+  // (`constexpr for`); together with the source span it distinguishes the
+  // declarations of one copy from those of another and of the original.
+  std::uint32_t expansion = 0;
   // A contiguous `///` block immediately preceding this token. The lexer
   // keeps documentation as leading trivia instead of emitting comment tokens
   // into the grammar; the parser transfers it to the declaration whose first

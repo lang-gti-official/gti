@@ -2688,6 +2688,9 @@ private:
       for (const HirDirectInitialization &alias : body.directInitializations) {
         aliases[alias.source] = alias.value;
       }
+      for (const HirBody::SourceAlias &alias : body.sourceAliases) {
+        aliases[alias.source] = alias.value;
+      }
     }
 
     [[nodiscard]] HirValue *find(HirBody &body, HirValueId id) const {
@@ -3219,6 +3222,28 @@ private:
                               .source = statement,
                               .body = loweredBody,
                               .rangeIteration = std::move(range)},
+                             body);
+    }
+    if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
+      // Each expanded element is an ordinary block; the sequence expression
+      // itself is compile-time only and never executes.
+      std::vector<HirStatementId> statements;
+      if (const ConstexprForExpansion *expansion =
+              model.findConstexprForExpansion(*loop)) {
+        for (const ConstexprForIteration &iteration : expansion->iterations) {
+          if (const std::optional<HirStatementId> lowered =
+                  lowerStatement(iteration.block.get(), model, classArguments,
+                                 classValueArguments, body)) {
+            statements.push_back(*lowered);
+          }
+        }
+      } else {
+        // Deferred in the symbolic primary; concrete reanalysis expands it.
+        lifecycleValid = false;
+      }
+      return appendStatement({.kind = HirStatementKind::CompileTimeBranch,
+                              .source = statement,
+                              .statements = std::move(statements)},
                              body);
     }
     if (const auto *ifStatement = stmtAs<IfStmt>(statement)) {
@@ -4756,6 +4781,16 @@ private:
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     ensurePlaceDomain(body);
+    if (const Expr *alias = model.findExpressionAlias(expression)) {
+      // A reflected field access lowers as the field projection it denotes.
+      const auto id = lowerExpression(*alias, model, classArguments,
+                                      classValueArguments, body);
+      if (id) {
+        body.sourceAliases.push_back({.source = &expression, .value = *id});
+        output.program.sourceValueIds[&expression].push_back(*id);
+      }
+      return id;
+    }
     if (const Expr *producer = model.directInitializationSource(expression)) {
       const ExpressionInfo *info = model.findExpression(expression);
       const ExpressionInfo *input = model.findExpression(*producer);

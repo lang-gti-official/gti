@@ -183,6 +183,12 @@ The current implemented foundation includes:
   explicit owner witness and unsafe caller assertion to produce a checked
   reference; see [raw pointers](raw-pointers.md#void); and
 
+- `<std/meta>` compile-time reflection: `std::meta::fields_of<T>()`,
+  `std::meta::type_of<T>()`, `std::meta::name_of<T>()`, type predicates, and
+  the `field` and `type` metaobjects with `name()`, `index()`, `is_public()`,
+  `type()`, `get()` and `get_mut()`, consumed by `constexpr for`; see
+  [compile-time iteration and reflection](static-semantics.md#312-compile-time-iteration-and-reflection); and
+
 - `<std/panic>` source-defined raw and formatted terminal reporting through
   `std::panic`, with caller attribution and bounded message capture before
   deterministic cleanup. Formatting and stdout convenience APIs use the same

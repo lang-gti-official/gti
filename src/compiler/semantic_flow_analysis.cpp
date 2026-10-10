@@ -1492,6 +1492,22 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                                SemanticType type) const
     -> ExpressionInfo {
   const ExprKind kind = expr.exprKind();
+  if (const Expr *alias = semanticModel.findExpressionAlias(expr)) {
+    // A reflected field access is the place its alias denotes; the call's
+    // own borrow access decides whether that place is writable through it.
+    if (const ExpressionInfo *info = semanticModel.findExpression(*alias)) {
+      ExpressionInfo result = *info;
+      result.type = std::move(type);
+      if (const auto *call = exprAs<Call>(&expr)) {
+        const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+        if (resolved != nullptr &&
+            resolved->borrowAccess != AccessMode::Mutable) {
+          result.access = AccessMode::ReadOnly;
+        }
+      }
+      return result;
+    }
+  }
   const auto borrowedTextType = [](const SemanticType &candidate) {
     return candidate.kind == SemanticType::StringView ||
            candidate.kind == SemanticType::CString;
@@ -2180,6 +2196,13 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::SourceFunctionName:
         case IntrinsicKind::SourceLine:
         case IntrinsicKind::SourceColumn:
+        case IntrinsicKind::MetaFieldCount:
+        case IntrinsicKind::MetaFieldName:
+        case IntrinsicKind::MetaFieldIsPublic:
+        case IntrinsicKind::MetaTypeName:
+        case IntrinsicKind::MetaTypeKind:
+        case IntrinsicKind::MetaFieldGet:
+        case IntrinsicKind::MetaFieldGetMut:
         case IntrinsicKind::SimdAdd:
         case IntrinsicKind::SimdSubtract:
         case IntrinsicKind::SimdMultiply:
@@ -2869,6 +2892,16 @@ auto SemanticVisitor::Impl::isPolymorphicLibraryUnit(
          unit->standardLibraryName == "std/polymorphic";
 }
 
+auto SemanticVisitor::Impl::isMetaLibraryUnit(SourceUnitId sourceUnit) const
+    -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/meta";
+}
+
 auto SemanticVisitor::Impl::isSourceLocationLibraryUnit(
     SourceUnitId sourceUnit) const -> bool {
   if (sourceGraph == nullptr) {
@@ -3040,6 +3073,7 @@ auto SemanticVisitor::Impl::recordToolingSymbol(
        .name = name.lexeme,
        .qualifiedName = std::move(qualified),
        .sourceUnit = sourceUnit,
+       .expansion = name.expansion,
        .nameSpan = span,
        .declarationSpan = span,
        .definitionSpan =
@@ -3062,7 +3096,8 @@ auto SemanticVisitor::Impl::symbolForDeclaration(const Token &name) const
     -> SymbolId {
   return semanticModel.symbolForDeclaration(
       sourceUnitFor(name), tokenSpan(name),
-      name.generated ? std::string_view{name.lexeme} : std::string_view{});
+      name.generated ? std::string_view{name.lexeme} : std::string_view{},
+      name.expansion);
 }
 
 auto SemanticVisitor::Impl::bindingSymbolKind(SemanticBindingKind bindingKind)
@@ -6422,6 +6457,9 @@ auto SemanticVisitor::Impl::semanticPlace(const Expr *expression)
     -> SemanticPlace {
   if (expression == nullptr) {
     return {};
+  }
+  if (const Expr *alias = semanticModel.findExpressionAlias(*expression)) {
+    return semanticPlace(alias);
   }
   const ExprKind kind = expression->exprKind();
   if (kind == ExprKind::Grouping) {
