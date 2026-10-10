@@ -2100,13 +2100,17 @@ this bounded route alone is not complete allocator/container validation.
 Several borrowed fields may form one native prefix, such as two owners leasing
 from one binding, only when every child is proved genuinely non-failing. A
 member-initializer list cannot stop after a failed child. The no-failure proof
-reads each constructor's success sequence. An Invoke whose exact callee is
-itself proved non-failing has a failure route that cannot execute, so the
-proof accounts for that route's blocks, failure records and failure boundaries
-without requiring its cleanup to be passive. A field rollback there may destroy
-an earlier field whose destructor can fail. The route must stay disjoint from
-the success path and never return. The emitted constructor keeps its complete
-verified failure graph; only the proof treats the route as dead. A child uses
+reads each constructor's success sequence, and the failure route of an Invoke
+whose exact callee is itself proved non-failing must stay a passive, exact
+schedule. One extension applies because that route cannot execute. It may roll
+back fields this constructor already published, each through the exact
+construction-rollback obligation armed on the success path, before the
+parameter shells. A rollback whose destructor can fail is its block's Invoke,
+whose failure edge reaches an empty block that only terminates cleanup failure.
+A parameter shell MIR proves definitely moved out need not be passive, because
+it is retired without its destructor. Every other drop, a malformed boundary,
+an unknown failure or an unarmed rollback still fails closed. The emitted
+constructor keeps its complete verified failure graph. A child uses
 its ordinary native overload only when that overload is published, which for a
 constructed-field schedule means no field still reports a status. Otherwise the
 call site uses the child's status-tag overload, so it never names an ordinary

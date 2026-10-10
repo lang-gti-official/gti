@@ -42977,84 +42977,198 @@ bool passiveConstructorFailureCleanup(
   return dropped.empty() ? !boundarySeen : boundarySeen;
 }
 
-// Accounts for the complete failure route of an invoke whose exact callee is
-// proved unable to fail. Nothing in the route can execute, so its cleanup need
-// not be passive, but it must stay disjoint from the success path: it may
-// propagate or terminate and must never rejoin a success block or return.
-bool accountImpossibleFailureRoute(
-    const MirBody &body, const MirBlock &entry,
+// An impossible failure may also retire fields this constructor already
+// published. Each construction-rollback obligation armed on the success path
+// is dropped once, before the parameter shells. One whose destructor can fail
+// is its block's Invoke, whose failure edge reaches an empty block that only
+// terminates cleanup failure. These destructors run only after the impossible
+// failure, so they never join the proved success sequence. Parameter shells,
+// dependency ends and the failure boundary keep the exact passive schedule,
+// except that a shell MIR proves moved out need not be passive. Anything else
+// fails closed. Returns the block that propagates the original failure.
+const MirBlock *impossibleFailureRollbackRoute(
+    const MirProgram &program, const MirConstructorInstance &constructor,
+    const MirBlock &alternate, MirFailureRecordId failure,
+    const std::unordered_set<MirDropObligationId> &armedRollbacks,
     std::unordered_set<MirBlockId> &visited,
     std::unordered_set<MirFailureRecordId> &failures,
-    std::unordered_set<std::size_t> &failureBoundaries) {
-  std::unordered_set<MirBlockId> route{entry.id};
-  std::vector<const MirBlock *> pending{&entry};
-  if (!visited.insert(entry.id).second)
-    return false;
-  while (!pending.empty()) {
-    const MirBlock *block = pending.back();
-    pending.pop_back();
+    std::unordered_set<std::size_t> &boundaries) {
+  const auto &body = constructor.body;
+  std::vector<MirDropObligationId> dropped;
+  std::unordered_set<MirLoanId> ended;
+  bool boundarySeen = false;
+  bool shellSeen = false;
+  const MirBlock *block = &alternate;
+  if (!visited.insert(block->id).second)
+    return nullptr;
+  while (true) {
     const auto &term = block->terminator;
-    if (block->programInitializationStep != 0 ||
-        term.hostedStartupOperation != 0 ||
-        term.kind == MirTerminatorKind::None ||
-        term.kind == MirTerminatorKind::Return)
-      return false;
-    for (const auto &instruction : block->instructions) {
-      const auto id = instruction.cleanupBoundaryEnd;
-      if (id == 0)
+    for (std::size_t index = 0; index < block->instructions.size(); ++index) {
+      const auto &instruction = block->instructions[index];
+      const bool invoking = index + 1 == block->instructions.size() &&
+                            term.kind == MirTerminatorKind::Invoke &&
+                            term.invokeInstruction == instruction.id;
+      if (instruction.result || instruction.receiver ||
+          !instruction.operands.empty() ||
+          !instruction.localFailureSites.empty() || instruction.ownership ||
+          instruction.fullExpressionEnd != 0 ||
+          instruction.earlyExitFullExpressionEnd ||
+          !instruction.definedFailure.localOrigins.empty() ||
+          (!instruction.definedFailure.empty() &&
+           (!invoking || instruction.definedFailure.propagation !=
+                             FailurePropagationKind::Destructor)))
+        return nullptr;
+      if (instruction.kind == MirInstructionKind::EndBorrow) {
+        const auto *loan =
+            instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+        if (invoking || loan == nullptr || loan->kind != MirLoanKind::Stored ||
+            loan->access != AccessMode::ReadOnly ||
+            body.findPlace(loan->source) == nullptr ||
+            instruction.destination || !instruction.lifecycle.empty() ||
+            instruction.cleanupBoundaryEnd != 0 ||
+            !ended.insert(loan->id).second)
+          return nullptr;
         continue;
-      if (id > body.cleanupBoundaries.size() ||
-          body.cleanupBoundaries[id - 1].id != id)
-        return false;
-      if (body.cleanupBoundaries[id - 1].kind ==
-          MirCleanupBoundaryKind::Failure)
-        failureBoundaries.insert(id);
-    }
-    std::vector<MirBlockId> successors{term.target, term.elseTarget};
-    for (const auto &target : term.switchTargets)
-      successors.push_back(target.target);
-    for (const MirBlockId successor : successors) {
-      if (successor == 0 || route.contains(successor))
+      }
+      if (instruction.kind == MirInstructionKind::Lifecycle) {
+        const auto id = instruction.cleanupBoundaryEnd;
+        if (invoking || instruction.destination || instruction.loan ||
+            !instruction.lifecycle.empty() || boundarySeen || id == 0 ||
+            id > body.cleanupBoundaries.size() || dropped.empty())
+          return nullptr;
+        const auto &boundary = body.cleanupBoundaries[id - 1];
+        if (boundary.id != id || boundary.hostedStartupOperation != 0 ||
+            boundary.kind != MirCleanupBoundaryKind::Failure ||
+            boundary.obligations != dropped || !boundaries.insert(id).second)
+          return nullptr;
+        boundarySeen = true;
         continue;
-      const MirBlock *next = body.findBlock(successor);
-      if (next == nullptr || !visited.insert(successor).second)
-        return false;
-      route.insert(successor);
-      pending.push_back(next);
+      }
+      if (instruction.kind != MirInstructionKind::Drop || boundarySeen ||
+          instruction.loan || !instruction.destination ||
+          instruction.cleanupBoundaryEnd != 0 ||
+          instruction.lifecycle.size() != 1)
+        return nullptr;
+      const auto &event = instruction.lifecycle.front();
+      const auto *drop = body.findDropObligation(event.source);
+      const auto *place = body.findPlace(*instruction.destination);
+      if (event.kind != MirLifecycleEventKind::Drop || event.target != 0 ||
+          event.conditional || !event.failureCleanup || drop == nullptr ||
+          place == nullptr || drop->place != place->id ||
+          drop->dropType.type != place->type ||
+          instruction.info.type != place->type ||
+          std::find(dropped.begin(), dropped.end(), drop->id) != dropped.end())
+        return nullptr;
+      if (drop->kind == MirDropObligationKind::ConstructionRollback) {
+        if (shellSeen || !armedRollbacks.contains(drop->id) ||
+            drop->initiallyActive || place->root != MirPlaceRootKind::This ||
+            place->projections.size() != 1 ||
+            place->projections.front().kind != MirProjectionKind::Field)
+          return nullptr;
+        dropped.push_back(drop->id);
+        continue;
+      }
+      // A parameter MIR proves definitely moved out is retired without its
+      // destructor, so its own cleanup need not be passive.
+      const auto *owner = uniqueClassInstanceForType(program, place->type);
+      std::unordered_set<HirClassInstanceId> visiting;
+      const bool movedShell =
+          mirDropFollowsDefiniteMove(body, *block, drop->id, instruction.id);
+      if (invoking || drop->kind != MirDropObligationKind::Binding ||
+          !drop->initiallyActive ||
+          (!movedShell &&
+           (drop->dropType.requiresActiveCleanup ||
+            !(passiveGeneratedDestructorClass(program, place->type) ||
+              failureConstructorPassiveBoundShell(program, place->type,
+                                                  visiting)) ||
+            drop->dropType.destructor)) ||
+          owner == nullptr || drop->dropType.classInstance != owner->id ||
+          place->root != MirPlaceRootKind::Binding ||
+          !place->projections.empty() || !place->initiallyAvailable ||
+          drop->binding != place->binding ||
+          std::find(constructor.parameterBindings.begin(),
+                    constructor.parameterBindings.end(),
+                    place->binding) == constructor.parameterBindings.end())
+        return nullptr;
+      shellSeen = true;
+      dropped.push_back(drop->id);
     }
+    if (term.kind == MirTerminatorKind::PropagateFailure)
+      break;
+    // A fallible rollback continues on its success edge; its failure edge
+    // only terminates cleanup failure.
+    const auto *record = body.findFailureRecord(term.failureRecord);
+    const auto *terminal = body.findBlock(term.elseTarget);
+    const auto *next = body.findBlock(term.target);
+    if (term.kind != MirTerminatorKind::Invoke || block->instructions.empty() ||
+        term.invokeInstruction != block->instructions.back().id || term.value ||
+        term.returnLoan || term.hostedStartupOperation != 0 ||
+        !term.targetArguments.empty() || !term.elseArguments.empty() ||
+        !term.switchTargets.empty() || !term.successLifecycle.empty() ||
+        record == nullptr || terminal == nullptr || next == nullptr ||
+        record->hostedStartupOperation != 0 ||
+        record->producerBlock != block->id ||
+        record->producerInstruction != term.invokeInstruction ||
+        record->parameterBlock != terminal->id ||
+        !terminal->instructions.empty() || !terminal->parameters.empty() ||
+        terminal->failureParameter != record->id ||
+        terminal->activeFailure != failure ||
+        terminal->programInitializationStep != 0 ||
+        terminal->terminator.kind !=
+            MirTerminatorKind::TerminateCleanupFailure ||
+        terminal->terminator.failureRecord != record->id ||
+        terminal->terminator.target != 0 ||
+        terminal->terminator.elseTarget != 0 || next->failureParameter != 0 ||
+        next->activeFailure != failure || !next->parameters.empty() ||
+        next->programInitializationStep != 0 ||
+        !failures.insert(record->id).second ||
+        !visited.insert(terminal->id).second ||
+        !visited.insert(next->id).second)
+      return nullptr;
+    block = next;
   }
-  for (const auto &record : body.failureRecords)
-    if (route.contains(record.producerBlock) &&
-        !failures.insert(record.id).second)
-      return false;
-  return true;
+  return dropped.empty() || !boundarySeen ? nullptr : block;
 }
 
 // A constructor prologue may be split by conservative failure publication.
 // Read its original instructions in success order only when each alternate is
 // a passive propagation of an impossible failure. This is a representation
 // proof, not a MIR rewrite: failure records and cleanup remain authoritative.
-// A pure no-failure proof may instead account for an impossible failure's
-// non-passive cleanup route, which it never reads as part of the sequence.
+// A pure no-failure proof may also accept an impossible failure's exact
+// rollback of fields published earlier, which it never reads as part of the
+// sequence.
 template <typename ProveConstructor>
 std::optional<std::vector<const MirInstruction *>> constructorSuccessSequence(
     const MirProgram &program, const MirConstructorInstance &constructor,
     const ProveConstructor &proveConstructor,
     std::unordered_set<std::size_t> *provedFailureBoundaries = nullptr,
     bool proveSuccessResultActivation = false, bool allowBorrowedShells = false,
-    bool accountImpossibleFailureRoutes = false) {
+    bool rollbackImpossibleFailures = false) {
   const auto &body = constructor.body;
   std::vector<const MirInstruction *> sequence;
   std::unordered_set<MirBlockId> visited;
   std::unordered_set<MirFailureRecordId> failures;
   std::unordered_set<std::size_t> failureBoundaries;
+  // Construction-rollback obligations armed so far on the success path.
+  std::unordered_set<MirDropObligationId> armedRollbacks;
+  const auto track = [&](const MirLifecycleEvent &event) {
+    if (event.source != 0)
+      armedRollbacks.erase(event.source);
+    const auto *drop = body.findDropObligation(event.target);
+    if (drop != nullptr &&
+        drop->kind == MirDropObligationKind::ConstructionRollback)
+      armedRollbacks.insert(drop->id);
+  };
   const MirBlock *block = body.findBlock(body.entry);
   while (block != nullptr && visited.insert(block->id).second) {
     if (!block->parameters.empty() || block->failureParameter != 0 ||
         block->activeFailure != 0 || block->programInitializationStep != 0)
       return std::nullopt;
-    for (const auto &instruction : block->instructions)
+    for (const auto &instruction : block->instructions) {
       sequence.push_back(&instruction);
+      for (const auto &event : instruction.lifecycle)
+        track(event);
+    }
     const auto &term = block->terminator;
     if (term.value || term.returnLoan || !term.targetArguments.empty() ||
         !term.elseArguments.empty() || !term.switchTargets.empty() ||
@@ -43127,17 +43241,22 @@ std::optional<std::vector<const MirInstruction *>> constructorSuccessSequence(
         alternate->programInitializationStep != 0 ||
         !alternate->parameters.empty())
       return std::nullopt;
-    const bool passivePropagation =
-        alternate->terminator.kind == MirTerminatorKind::PropagateFailure &&
+    std::unordered_set<std::size_t> passiveBoundaries = failureBoundaries;
+    const MirBlock *propagation = alternate;
+    if (alternate->terminator.kind == MirTerminatorKind::PropagateFailure &&
         passiveConstructorFailureCleanup(program, constructor, *alternate,
-                                         failureBoundaries,
-                                         allowBorrowedShells);
-    if (passivePropagation
-            ? !visited.insert(alternate->id).second
-            : !accountImpossibleFailureRoutes ||
-                  !accountImpossibleFailureRoute(body, *alternate, visited,
-                                                 failures, failureBoundaries))
+                                         passiveBoundaries,
+                                         allowBorrowedShells)) {
+      failureBoundaries = std::move(passiveBoundaries);
+      if (!visited.insert(alternate->id).second)
+        return std::nullopt;
+    } else if (!rollbackImpossibleFailures ||
+               (propagation = impossibleFailureRollbackRoute(
+                    program, constructor, *alternate, failure->id,
+                    armedRollbacks, visited, failures, failureBoundaries)) ==
+                   nullptr) {
       return std::nullopt;
+    }
     if (proveSuccessResultActivation &&
         (invoke.successResultDrop || !term.successLifecycle.empty())) {
       const auto *drop =
@@ -43185,17 +43304,18 @@ std::optional<std::vector<const MirInstruction *>> constructorSuccessSequence(
           event.failureCleanup)
         return std::nullopt;
     }
-    const auto &propagate = alternate->terminator;
-    if (passivePropagation &&
-        (propagate.kind != MirTerminatorKind::PropagateFailure ||
-         propagate.failureRecord != failure->id || propagate.value ||
-         propagate.returnLoan || propagate.invokeInstruction != 0 ||
-         propagate.target != 0 || propagate.elseTarget != 0 ||
-         propagate.hostedStartupOperation != 0 ||
-         !propagate.targetArguments.empty() ||
-         !propagate.elseArguments.empty() || !propagate.switchTargets.empty() ||
-         !propagate.successLifecycle.empty()))
+    const auto &propagate = propagation->terminator;
+    if (propagate.kind != MirTerminatorKind::PropagateFailure ||
+        propagate.failureRecord != failure->id || propagate.value ||
+        propagate.returnLoan || propagate.invokeInstruction != 0 ||
+        propagate.target != 0 || propagate.elseTarget != 0 ||
+        propagate.hostedStartupOperation != 0 ||
+        !propagate.targetArguments.empty() ||
+        !propagate.elseArguments.empty() || !propagate.switchTargets.empty() ||
+        !propagate.successLifecycle.empty())
       return std::nullopt;
+    for (const auto &event : term.successLifecycle)
+      track(event);
     block = body.findBlock(term.target);
   }
   return std::nullopt;
