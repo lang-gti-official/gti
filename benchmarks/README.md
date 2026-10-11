@@ -233,17 +233,18 @@ the default workload remains unchanged.
 ## `managed-thread-parallelism`
 
 This schema-2 workload compares four deterministic, row-interleaved
-Mandelbrot partitions, each rendered four times, in two GTI binaries. Both are
+Mandelbrot partitions, each rendered four times, in three GTI binaries. All are
 built with the same
 compiler, optimization level, C++ standard, native flags, and explicit
 `concurrent` execution profile.
 `gti-sequential` runs the four partitions in series;
 `gti-four-threads` starts all four as owned `std::thread` tasks and joins
-them.
+them; `gti-four-scoped` uses synchronous scoped tasks that borrow four distinct
+result locals. Both parallel variants create native threads, not pooled jobs.
 
 One work unit is one computed pixel in one pass, for 2,800,000 work units.
 Every repeated partition validates its own checksum, and the parent publishes
-a partition only after ordinary return or a successful join. Both variants
+a partition only after ordinary return or a successful join. All variants
 must produce:
 
 ```text
@@ -251,7 +252,7 @@ GTI-BENCH-1 digest:000000097bfbb42c work-units:2800000
 ```
 
 The sequential variant is the reference. The reciprocal of
-`gti-four-threads`'s `median_ratio_to_reference` is the observed speedup.
+each parallel variant's `median_ratio_to_reference` is the observed speedup.
 The number is machine-specific and should be interpreted with the report's
 CPU identity, raw samples, and variance; the benchmark demonstrates real
 parallel execution, not a universal speedup guarantee. See the workload's

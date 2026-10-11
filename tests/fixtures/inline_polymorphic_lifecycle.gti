@@ -176,6 +176,27 @@ void callbacks() {
       [owned = std::move(owned)]() -> int { return *owned; }};
   allocations("move-only owning", start);
   std::println(std::format("move-only {}", boxed()));
+
+  // Transfer qualification changes the admitted targets, not their storage
+  // cost: repeatable small jobs remain inline, wide and consuming jobs box.
+  start = counted();
+  std::transfer_function<int(int)> transferable{
+      [offset](int value) -> int { return value + offset; }};
+  allocations("transfer small", start);
+  start = counted();
+  auto transferred = std::move(transferable);
+  allocations("transfer move", start);
+  std::println(std::format("transfer call {}", transferred(3)));
+  start = counted();
+  std::transfer_function<int(int)> wide_transfer{
+      [a, b, c, d](int value) -> int { return value + int(a + b + c + d); }};
+  allocations("transfer large", start);
+  std::println(std::format("transfer wide {}", wide_transfer(0)));
+  start = counted();
+  std::transfer_function<int(int) &&> once{
+      [offset](int value) -> int { return value + offset; }};
+  allocations("transfer once", start);
+  std::println(std::format("transfer consumed {}", std::move(once)(38)));
 }
 
 int main(int argc, std::vector<std::string> argv) {

@@ -1561,7 +1561,7 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         entry["name"]: entry for entry in thread_workload["variants"]
     }
     require(
-        set(thread_variants) == {"gti-sequential", "gti-four-threads"},
+        set(thread_variants) == {"gti-sequential", "gti-four-threads", "gti-four-scoped"},
         "managed-thread smoke variant set changed",
     )
     require(
@@ -1662,6 +1662,12 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
                 and "stdlib:std/thread" in source_paths,
                 "threaded provenance omitted its entry or thread library closure",
             )
+        elif name == "gti-four-scoped":
+            require(
+                "package:scoped.gti" in source_paths
+                and "stdlib:std/thread" in source_paths,
+                "scoped provenance omitted its entry or thread library closure",
+            )
         else:
             require(
                 "package:sequential.gti" in source_paths,
@@ -1693,7 +1699,7 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         for variant in thread_variants.values()
     }
     require(
-        len(source_hashes) == 2,
+        len(source_hashes) == len(thread_variants),
         "different loaded source graphs did not alter source provenance",
     )
     tampered_path = root / "tampered-build-report.json"

@@ -604,6 +604,18 @@ not a template, so a retained thread-handle declaration selects its complete
 support. `dormant_capability_runtime` builds and runs each family's
 include-only program natively.
 
+Scoped groups select the same managed-thread support from the verified
+`ThreadScope` operation. The body plan retains its ordered adapter identities,
+consumed task operands and task-join failure channel. Generated closure roots
+and detached-program verification match each adapter to its exact group and
+operand, not merely the enclosing function. This permits several heterogeneous
+lambda tasks in one concrete generic body without reusing the owned-spawn
+single-task template path. The preamble implements stack task slots, join-all
+and ordinary verified cleanup as described in the
+[runtime contract](standard-library-and-runtime.md#scoped-worker-execution).
+Provenance-only projected pack places retain exact type/field rows in admission
+but do not form unused C++ accesses to private carrier fields.
+
 ### Executable Bodies
 
 `CppMirBodyEmitter` is the admission and plan-building authority for source
@@ -1451,6 +1463,14 @@ through field views, that temporary is its storage: the views spell
 `temporary.get().field`, the result declares no local, and MIR's conditional
 Drop destroys the temporary exactly once if its operand ran, on the normal path
 or on a failure-cleanup edge.
+An owning Expected call result in such a position is held by its own
+conditional temporary. A checked extraction of a class alternative whose
+result is read only through field views moves that alternative into the
+extraction's conditional temporary on its Invoke success edge, as in
+`ok || make_named(true).value().text.size() == 7`. The extraction is the
+Expected's sole use. MIR's conditional Drops destroy the payload and the
+moved-from Expected, and a wrong-state failure edge destroys the Expected
+alone. This route is admitted only in the failure body form.
 Reading a trivial scalar does not transfer its owner: fresh passive immovable
 results use this same proof and storage without requiring a copy or move
 constructor. They cannot carry borrowed state or active drop state through
@@ -1530,6 +1550,16 @@ publishes into it. A transformed invocation passes the slot's construction
 address and marks it constructed on its success edge; a plain invocation
 constructs it from the returned value. A raising callable leaves the slot
 unconstructed, and a discarded result retires as soon as it is published.
+
+An owning Expected result of a callable value invocation likewise shares the
+source call's value-rooted placement slot. Its exact lambda instance supplies
+the signature, and its Invoke success edge activates the result's value drop
+under callable propagation. The invocation constructs the slot whichever ABI
+the enclosing body selects. Every slot consumer then applies unchanged: a
+discard, one consuming call or constructor, a state test, a checked `value()`
+or `error()` extraction, a constructor field, or a whole binding it replaces.
+A binding the result initializes directly keeps the direct construction into
+that binding.
 
 The same slot may instead feed one by-value parameter of an exact ordinary
 source constructor, mirroring the owning route's constructor consumer. The
@@ -1656,7 +1686,8 @@ The same cleanup-free placement call result may instead replace one whole
 mutable binding of its type. MIR pairs that `Assign` with a
 `CleanupBeforeAssign`, whose recipe must be passive: no node has a destructor,
 owned pointee, closure, fixed array, polymorphic or recursive cleanup, or
-active cleanup. That cleanup executes nothing and cannot fail. The producer's
+active cleanup. An integral enum alternative is such a node, as it is for the
+cleanup-free alternative rule. That cleanup executes nothing and cannot fail. The producer's
 success edge must reach that exact pair directly, as for a class result
 replacing a binding. The producer constructs the slot on success. The `Assign`
 move-assigns the staged wrapper into the binding, and the moved-from
@@ -2173,8 +2204,11 @@ definition scheduler emits every payload class before its enum
 and that enum before a class embedding it, rejecting a recursive by-value
 cycle. Concrete generic owners/callables use the same exact lifecycle proofs;
 generic arguments are not a reason to bypass or reject those proofs. The
-declaration-bound inline optional capability contributes its payload as a
-native layout dependency, while pointer-backed storage does not. Exact static
+declaration-bound inline optional, uninitialized and mutex storage capabilities
+contribute their payload as a native layout dependency, while pointer-backed
+storage does not. This also orders retained generic-owner member specializations:
+a mutex embedding a vector needs the complete vector representation before a
+concrete mutex constructor declaration can instantiate that owner. Exact static
 consuming methods retain their receiver capability alongside enum result
 placement. If a later argument fails, a prepared enum obligation still drops
 at its verified MIR point even when direct native parameter construction
@@ -3301,8 +3335,13 @@ the complete program declaration/definition region so the direct target is
 declared before adapter text.
 For an overloaded nominal callable the adapter invokes the already selected
 generated member spelling with its verified read, mutable, or consuming
-receiver; C++ overload resolution is not authority. The backend boxes the
-concrete task only at that boundary and passes an opaque context plus
+receiver; C++ overload resolution is not authority. Its failure call uses the same
+`cppFunctionHasFailureResultChannel` query as ordinary source calls: a
+class-bound generic return keeps its uniform output parameter even when the
+selected instance returns `void`, so that adapter passes a null result slot.
+Concrete non-generic `void` targets retain their no-result-channel signature.
+This is backend ABI agreement, not a different GTI result or task contract.
+The backend boxes the concrete task only at that boundary and passes an opaque context plus
 entry/destroy callbacks to the version-one runtime thread ABI. Creation
 failure destroys the box on the spawning thread exactly once; success invokes
 it once and destroys it on the worker. A typed adapter additionally constructs

@@ -3808,7 +3808,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v83\n") &&
+  expect(dump.starts_with("mir-body-v84\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -5482,10 +5482,9 @@ int switch_reactivation(mut int& parent) {
     lang::MirBody overlappingReadonlyLocals = *readonlySiblings;
     overlappingReadonlyLocals.loans[readonlySiblingChildren[1]->id - 1].source =
         readonlySiblingChildren[0]->source;
-    expect(hasError(lang::verifyMirBody(overlappingReadonlyLocals),
-                    "active sibling loan"),
-           "distinct overlapping read-only Local child loans should be "
-           "rejected because shared aliases must reuse one loan identity");
+    expect(lang::verifyMirBody(overlappingReadonlyLocals).valid(),
+           "distinct read-only reborrows of an ordinary reference may "
+           "overlap while retaining their independent endpoints");
   }
 
   const auto disjointChild =
@@ -5605,10 +5604,9 @@ int switch_reactivation(mut int& parent) {
   if (readonlyChildField != 0) {
     lang::MirBody overlappingCopy = *readonlyDisjointParent;
     expect(overlapParentRead(overlappingCopy, lang::MirOperandKind::Copy) &&
-               hasError(lang::verifyMirBody(overlappingCopy),
-                        "active child reborrow"),
+               lang::verifyMirBody(overlappingCopy).valid(),
            "an overlapping Copy through a suspended mutable parent should be "
-           "rejected even when its active child is read-only");
+           "allowed when every overlapping child is read-only");
 
     lang::MirBody overlappingBorrowRead = *readonlyDisjointParent;
     bool insertedBorrowRead = false;
@@ -5686,10 +5684,20 @@ int switch_reactivation(mut int& parent) {
     }
     expect(insertedBorrowRead &&
                lang::rebuildMirValueUses(overlappingBorrowRead) &&
-               hasError(lang::verifyMirBody(overlappingBorrowRead),
-                        "active child reborrow"),
+               lang::verifyMirBody(overlappingBorrowRead).valid(),
            "an overlapping BorrowRead through a suspended mutable parent "
-           "should be rejected even when its active child is read-only");
+           "should be allowed when every overlapping child is read-only");
+    auto overlappingBorrowWrite = overlappingBorrowRead;
+    for (auto &block : overlappingBorrowWrite.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == nextInstruction)
+          for (auto &operand : instruction.operands) {
+            operand.kind = lang::MirOperandKind::BorrowWrite;
+            operand.type.referenceAccess = lang::AccessMode::Mutable;
+          }
+    expect(hasError(lang::verifyMirBody(overlappingBorrowWrite),
+                    "active child reborrow"),
+           "shared child access still rejects an overlapping mutable borrow");
   }
 
   const lang::MirLoan *callEntry = nullptr;
@@ -6160,18 +6168,16 @@ int switch_reactivation(mut int& parent) {
   lang::MirBody ephemeralThenLocal = sharedCallResults;
   replaceCallWithLocalBorrow(ephemeralThenLocal, 1, 3);
   expect(lang::rebuildMirValueUses(ephemeralThenLocal) &&
-             hasError(lang::verifyMirBody(ephemeralThenLocal),
-                      "active sibling loan"),
-         "a read-only Local child should not be created over an active "
-         "overlapping read-only CallResult sibling");
+             lang::verifyMirBody(ephemeralThenLocal).valid(),
+         "a shared Local child may follow a shared CallResult under an "
+         "ordinary reference parent");
 
   lang::MirBody localThenEphemeral = sharedCallResults;
   replaceCallWithLocalBorrow(localThenEphemeral, 0, 2);
   expect(lang::rebuildMirValueUses(localThenEphemeral) &&
-             hasError(lang::verifyMirBody(localThenEphemeral),
-                      "active child reborrow"),
-         "a read-only CallResult should not bypass an active overlapping "
-         "read-only Local child through their suspended parent");
+             lang::verifyMirBody(localThenEphemeral).valid(),
+         "a shared CallResult may follow a shared Local child under an "
+         "ordinary reference parent without order-dependent acceptance");
 
   lang::MirBody inconsistentJoin = branchState;
   inconsistentJoin.blocks[2].instructions.clear();

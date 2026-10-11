@@ -5,4 +5,5 @@ from lambda_pack_invocation_runtime_test import main
 
 
 if __name__ == "__main__":
-    main(("shared_ownership_threads",), execution_profile="concurrent")
+    main(("shared_ownership_threads", "shared_mutex_threads", "transfer_function_threads"),
+         execution_profile="concurrent")

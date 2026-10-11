@@ -1,0 +1,35 @@
+#include <std/thread>
+
+extern "C" {
+  void gti_scoped_alloc_reset();
+  uint64_t gti_scoped_allocations();
+}
+
+struct Work { void operator()() {} };
+
+int main() {
+  // Startup and one initial group are outside both observation windows.
+  if (!std::parallel_invoke(Work(), Work())) return 1;
+  unsafe { gti_scoped_alloc_reset(); }
+  {
+    auto first = std::thread::start(Work());
+    auto second = std::thread::start(Work());
+    if (!first || !second) return 2;
+    mut auto a = std::move(first).value();
+    mut auto b = std::move(second).value();
+    if (!a.join() || !b.join()) return 3;
+  }
+  mut uint64_t owned = uint64_t(0);
+  unsafe { owned = gti_scoped_allocations(); gti_scoped_alloc_reset(); }
+  if (!std::parallel_invoke(Work(), Work())) return 4;
+  mut uint64_t scoped = uint64_t(0);
+  unsafe { scoped = gti_scoped_allocations(); gti_scoped_alloc_reset(); }
+  if (!std::parallel_invoke()) return 5;
+  mut uint64_t empty = uint64_t(0);
+  unsafe { empty = gti_scoped_allocations(); }
+  if (owned != uint64_t(4) || scoped != uint64_t(2) || empty != uint64_t(0)) return 6;
+  std::println(owned);
+  std::println(scoped);
+  std::println(empty);
+  return 0;
+}

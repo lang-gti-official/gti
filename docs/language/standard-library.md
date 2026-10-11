@@ -370,6 +370,12 @@ The current implemented foundation includes:
   Borrowed captures/results, inferred fresh-lambda return types, global closure
   storage, and native callback conversion are outside this wrapper contract.
   Combined validation and local-delivery evidence is recorded under L-CALL-02; and
+- `<std/functional>` also provides move-only
+  `std::transfer_function<R(Args...)>`, `R(Args...) mut`, and `R(Args...) &&`
+  owners whose target must be transferable at construction and replacement.
+  Ordinary capability-qualified interfaces retain that proof through erasure;
+  no concurrent invocation or sharing is granted. The repeatable forms use
+  the existing inline/boxed policy, while consuming targets remain boxed; and
 - `<std/numeric>` public `std::accumulates_into<I, T>` and an ordinary
   source-defined default and operation-based `std::accumulate`, homogeneous
   default and operation-based `std::inner_product`, and unary
@@ -527,7 +533,12 @@ The current implemented foundation includes:
   `std::thread_result<Result>` accepts an exact transfer-safe `Result()` task,
   returns the owned value from explicit `join()`, and joins then abandons an
   unobserved value during destruction. This first surface has no detach, stop
-  token, separate argument pack, or cross-thread borrow; and
+  token, separate argument pack, or cross-thread borrow.
+  The separate `std::parallel_invoke(tasks...)` operation consumes a synchronous
+  group of `void()` tasks, including checked shared/exclusive borrowed carriers,
+  and joins every started child before return, task cleanup or failure
+  propagation. It returns recoverable creation status, not task values. See
+  [scoped parallel invocation](concurrency.md#scoped-parallel-invocation); and
 - `<std/atomic>` source-defined move-only `std::atomic<T>` for `bool` and every
   fixed-width signed and unsigned integer. Construction, load, store, exchange,
   strong compare/exchange, and integer `fetch_add`, `fetch_sub`, `fetch_and`,
@@ -1398,7 +1409,8 @@ The following component families remain planned or incomplete:
 - recursive filesystem copy/iteration and permission editing, calendar/time-zone breadth, random distributions and engine
   breadth, connected networking, traffic buffers, atomic wait/notify, pointer
   atomics and fences, safe scoped condition variables, safe recursive mutexes,
-  read/write mutexes, stop tokens, detached/scoped tasks, typed argument packs,
+  read/write mutexes, stop tokens, detached tasks, persistent worker pools,
+  typed thread-entry argument packs,
   and broader threading;
 - allocator-aware variants of containers other than `resource_vector`,
   runtime-polymorphic or concurrent resources, returning resource owners from
