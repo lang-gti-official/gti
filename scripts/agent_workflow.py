@@ -558,8 +558,11 @@ class Workflow:
         remote = self.mirror_remote()
         if not remote:
             return {"remote": None, "pushed": False, "at": self.now(), "error": f"no {MIRROR_REMOTE} remote"}
-        result = git(self.primary, "push", "--force", remote, "refs/heads/main:refs/heads/main",
-                     "refs/tags/*:refs/tags/*", check=False)
+        # main is never forced: a merge that landed only on the mirror must surface
+        # as a rejected push, not vanish. Tags are forced so a moved `nightly` follows.
+        result = git(self.primary, "push", remote, "refs/heads/main:refs/heads/main", check=False)
+        if result.returncode == 0:
+            result = git(self.primary, "push", "--force", remote, "refs/tags/*:refs/tags/*", check=False)
         error = None if result.returncode == 0 else (result.stderr.strip() or "push failed")
         if error:
             print(f"agent-workflow: mirror to {remote} failed: {error}", file=sys.stderr)

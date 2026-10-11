@@ -64,8 +64,9 @@ both fetch and push URLs are checked before anything is sent.
 
 GitHub (`gti-lang-official/gti`) owns branches, pull requests, issues, CI and
 releases. The self-hosted Gitea repository is a backup mirror of `main` and
-the tags: `sync` pushes both there (`--force` so a moved `nightly` tag
-follows) after the primary fast-forward and records `mirror` (remote, pushed,
+the tags: `sync` pushes both there after the primary fast-forward (`main`
+without force, so a merge that landed only on the mirror surfaces as a
+rejected push; tags with force so a moved `nightly` follows) and records `mirror` (remote, pushed,
 time, error) in the task state. A failing or missing mirror remote is reported
 and does not undo the sync; the GitHub `mirror.yml` workflow is a second path
 when its secret is configured. Task records created before the move carry no
