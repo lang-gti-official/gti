@@ -364,6 +364,7 @@ exclusive cursors move rather than duplicate their owner permission.
 | storage, pool, resource_storage | forward/backward live-slot and reverse traversal | skip vacant slots; retain provider/owner lifetime |
 | string_view | forward/backward, checked signed positions and reverse endpoints | independent readonly character values |
 | paired_span | checked positioned and reverse proxy traversal | shared references retaining both external owners and physical cursor storage |
+| JSON object projections | spans of keys/values and paired member traversal | immutable keys/extent; exclusive value replacement through `values_mut()` |
 
 Random-access movement does not imply contiguous storage: deque positions are
 not a contiguous-memory guarantee. Forward-only containers do not acquire fake

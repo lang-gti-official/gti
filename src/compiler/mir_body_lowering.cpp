@@ -6399,11 +6399,18 @@ private:
       originCall.operands = sourceArguments;
     }
     MirPlaceId origin = borrowOriginPlace(value, originCall);
+    const bool exactCarrierRelay =
+        value.info.type.kind == SemanticType::Class &&
+        value.info.traits.containsBorrowedState &&
+        !value.info.traits.copyable &&
+        value.borrowOrigin == BorrowOriginKind::Argument &&
+        value.borrowArgument < value.parameterTypes.size() &&
+        value.parameterTypes[value.borrowArgument] == value.info.type;
     std::vector<MirLoanId> movedArgumentLoans;
     for (std::size_t index = 0;
          !construction && !value.constructorTarget &&
-         !value.borrowFields.empty() && index < arguments.size() &&
-         index < value.parameterTypes.size();
+         (!value.borrowFields.empty() || exactCarrierRelay) &&
+         index < arguments.size() && index < value.parameterTypes.size();
          ++index) {
       if (value.parameterTypes[index].kind == SemanticType::Reference)
         continue;
@@ -6480,13 +6487,14 @@ private:
       if (kind == MirLoanKind::Stored && originLoan != 0 &&
           originLoan <= output.loans.size() &&
           output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
-          output.loans[originLoan - 1].lifecycleBound &&
-          isLifecycleBoundBorrowCarrier(value.info.type) &&
           value.borrowOrigin == BorrowOriginKind::Argument &&
           value.borrowArgument < arguments.size() &&
           value.borrowArgument < value.parameterTypes.size() &&
           value.parameterTypes[value.borrowArgument].kind !=
               SemanticType::Reference &&
+          ((output.loans[originLoan - 1].lifecycleBound &&
+            isLifecycleBoundBorrowCarrier(value.info.type)) ||
+           exactCarrierRelay) &&
           movedBorrowCarrierBinding(arguments[value.borrowArgument]) != 0) {
         parent = output.loans[originLoan - 1].parent;
       }
@@ -6741,11 +6749,34 @@ private:
         call.operands.empty()) {
       call.callSite = 0;
     }
+    const MirLoanId publishedLoan = call.loan.value_or(0);
     (void)appendInstruction(std::move(call));
     // A by-value move transfers the shell and every dependency to the callee.
     // A returned carrier publishes its own checked dependency set; it is not
     // a child reborrow of the now-consumed caller shell.
     for (const auto loan : movedArgumentLoans) {
+      const auto *previous = output.findLoan(loan);
+      const auto *published = output.findLoan(publishedLoan);
+      if (exactCarrierRelay && loan == originLoan && previous != nullptr &&
+          published != nullptr && published->kind == MirLoanKind::Stored &&
+          previous->access == published->access &&
+          previous->parent == published->parent &&
+          previous->lifecycleBound == published->lifecycleBound &&
+          previous->storedDependency == published->storedDependency &&
+          previous->additionalDependencies ==
+              published->additionalDependencies &&
+          sameBorrowSource(previous->source, published->source)) {
+        // Semantic carrier membership describes the completed source flow;
+        // intermediate moved locals can have no retained-loan annotation.
+        // Transport its identity at the exact consuming call, not by later
+        // resurrecting an already retired formal's runtime capability.
+        for (auto &[semantic, currentLoan] : semanticLoans) {
+          (void)semantic;
+          if (currentLoan == loan)
+            currentLoan = publishedLoan;
+        }
+        output.loans[loan - 1].semanticLoan = 0;
+      }
       (void)appendInstruction(
           {.kind = MirInstructionKind::EndBorrow, .loan = loan});
       removeLoanFromState(loan, scopes, bindingLoans);
@@ -9741,17 +9772,15 @@ private:
       output.loans[lowered - 1].entry = true;
       recordLoanIdentity(lowered, loan);
       const MirPlace *place = output.findPlace(sourcePlace);
-      if (loan.lifecycleBound && place &&
+      if (kind == MirLoanKind::Stored && place &&
           place->root == MirPlaceRootKind::Binding &&
           place->projections.empty() && place->initiallyAvailable &&
           place->type.kind == SemanticType::Class) {
         // Semantic carrier membership describes the completed flow and may
-        // already omit a moved formal. MIR entry provenance must still name
-        // the formal that supplied the initial ownership obligation.
-        auto &carriers = output.loans[lowered - 1].carriers;
-        if (std::find(carriers.begin(), carriers.end(), place->binding) ==
-            carriers.end())
-          carriers.push_back(place->binding);
+        // name only a later local. At entry the formal is the sole physical
+        // carrier; lowering each subsequent transfer records its recipient.
+        // Do not preseed a future local with the formal's retired authority.
+        output.loans[lowered - 1].carriers = {place->binding};
       }
       if (place && place->projections.size() == 1 &&
           place->projections.front().kind == MirProjectionKind::PackElement) {

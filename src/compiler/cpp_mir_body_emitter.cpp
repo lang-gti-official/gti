@@ -27979,7 +27979,6 @@ producedCallResultLoan(const MirBody &body, const MirInstruction &producer) {
                             ? body.findLoan(place.loan)
                             : nullptr;
   if (loan == nullptr || !place.projections.empty() ||
-      place.access != AccessMode::Mutable ||
       loan->kind != MirLoanKind::CallResult ||
       loan->access != AccessMode::Mutable || loan->entry || loan->escapes ||
       loan->producedBy == 0 || !loan->carriers.empty() ||
@@ -28021,8 +28020,9 @@ producedCallResultLoan(const MirBody &body, const MirInstruction &producer) {
          producer->intrinsic == IntrinsicKind::None &&
          producer->borrowAccess == AccessMode::Mutable &&
          producer->info.type == place.type &&
-         producer->info.category == ValueCategory::Place &&
-         producer->info.access == AccessMode::Mutable &&
+         // A synthesized operator destination can carry the enclosing
+         // assignment's category/access. The selected mutable reference and
+         // its verified loan, not that contextual value info, own permission.
          result->definition == producer->id && result->info == producer->info;
 }
 

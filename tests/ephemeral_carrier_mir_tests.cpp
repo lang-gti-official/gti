@@ -1967,6 +1967,135 @@ int main() {
     }
 }
 
+void checkMovedExclusiveParameterEntry() {
+  const auto frontend = lang::Frontend().analyze(
+      "exclusive-parameter-entry.gti", R"gti(
+#include <std/iterator>
+class UserPosition {
+  mut int& number;
+public:
+  UserPosition(mut int& number) : number(number) {}
+  UserPosition(UserPosition& other) = delete;
+  UserPosition(UserPosition&& other) = default;
+  int& operator*() { return this.number; }
+  mut int& operator*() mut { return this.number; }
+  void operator++() mut { this.number++; }
+  void operator--() mut { this.number--; }
+  void operator+=(std::ptrdiff_t amount) mut { this.number += int(amount); }
+  void operator-=(std::ptrdiff_t amount) mut { this.number -= int(amount); }
+};
+int transport<Position>(mut Position initial)
+    requires std::random_access_cursor<Position> && std::writes_to<Position, int> {
+  std::advance(initial, std::ptrdiff_t(1));
+  mut auto later = std::next(std::move(initial), std::ptrdiff_t(1));
+  mut auto final = std::prev(std::move(later));
+  *final = 42;
+  return *final;
+}
+int main() {
+  mut int number = 0;
+  int result = transport(UserPosition(number));
+  return number + result - 84;
+}
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "noncopyable exclusive parameters retain their entry origin across "
+         "generic movement and local transport without lexical cleanup");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "unrelated exclusive position transport verifies independently");
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    if (hir == nullptr || hir->source == nullptr ||
+        hir->source->name().lexeme != "transport")
+      continue;
+    for (const auto &loan : function.body.loans) {
+      if (!loan.entry || loan.kind != lang::MirLoanKind::Stored ||
+          loan.lifecycleBound)
+        continue;
+      const auto *origin = function.body.findPlace(loan.source);
+      expect(origin != nullptr &&
+                 origin->root == lang::MirPlaceRootKind::Binding &&
+                 origin->projections.empty() &&
+                 origin->type.kind == lang::SemanticType::Class &&
+                 std::find(function.parameterBindings.begin(),
+                           function.parameterBindings.end(), origin->binding) !=
+                     function.parameterBindings.end() &&
+                 loan.carriers ==
+                     std::vector<lang::HirBindingId>{origin->binding},
+             "the moved formal remains immutable entry provenance, not a "
+             "second live exclusive value");
+      if (origin == nullptr)
+        continue;
+      ++checked;
+      for (int mutation = 0; mutation < 5; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &changed = instance->body;
+        auto &entry = changed.loans[loan.id - 1];
+        if (mutation == 0) {
+          std::erase(entry.carriers, origin->binding);
+        } else if (mutation == 1) {
+          entry.designatedFields.clear();
+        } else if (mutation == 2) {
+          entry.access = lang::AccessMode::ReadOnly;
+        } else if (mutation == 3) {
+          bool found = false;
+          for (auto &result : changed.loans) {
+            if (result.entry || result.kind != lang::MirLoanKind::Stored)
+              continue;
+            result.parent = entry.id;
+            found = true;
+            break;
+          }
+          expect(found, "exclusive relay publishes a concrete Stored result");
+        } else {
+          bool found = false;
+          for (auto &block : changed.blocks) {
+            if (block.activeFailure != 0 || block.failureParameter != 0)
+              continue;
+            const auto retirement = std::find_if(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind ==
+                             lang::MirInstructionKind::EndBorrow &&
+                         instruction.loan == entry.id;
+                });
+            if (retirement == block.instructions.end())
+              continue;
+            block.instructions.erase(retirement);
+            found = true;
+            break;
+          }
+          expect(found,
+                 "consuming relay retires the former exclusive authority");
+        }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "exclusive formal provenance, field path, access, ancestry and "
+               "retirement cannot be forged after a consuming call");
+        bool backendRejected = false;
+        try {
+          (void)gti_test::lowerProgram(frontend, malformed, malformed);
+        } catch (const std::exception &) {
+          backendRejected = true;
+        }
+        expect(backendRejected,
+               "lowered backend input rejects forged exclusive parameter "
+               "entry");
+      }
+    }
+  }
+  expect(checked == 1,
+         "exclusive transport exercises one non-lifecycle Stored entry loan");
+}
+
 } // namespace
 
 int main() {
@@ -1983,5 +2112,6 @@ int main() {
   checkInlineProxyCannotBecomeAbstractStoredRange();
   checkRangeEndpointSemanticContracts();
   checkReadonlyLocalCleanupGuard();
+  checkMovedExclusiveParameterEntry();
   return failures == 0 ? 0 : 1;
 }

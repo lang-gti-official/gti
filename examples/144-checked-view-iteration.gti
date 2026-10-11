@@ -61,6 +61,9 @@ int main() {
     if ((*backwards).first() != 20 || (*backwards).second() != "beta") { return 8; }
     auto selected = backwards[std::ptrdiff_t(1)];
     if (selected.first() != 10 || selected.second() != "alpha") { return 11; }
+    mut auto reverse_end = rows.rend_iterator();
+    --reverse_end;
+    if (reverse_end->first() != 10 || reverse_end->second() != "alpha") { return 12; }
   }
 
   std::process_resource process{};

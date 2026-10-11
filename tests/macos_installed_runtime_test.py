@@ -91,11 +91,11 @@ def main():
         # all their standard-library units must resolve from this toolchain.
         examples = pathlib.Path(__file__).resolve().parent.parent / "examples"
         iterator_examples = (
-            ("142-checked-container-iteration.gti",
+            ("143-checked-container-iteration.gti",
              "Checked forward, reverse and mutable iteration\n"),
-            ("143-checked-view-iteration.gti", "Checked view iteration passed\n"),
-            ("144-live-slot-and-lane-iteration.gti", "sparse reverse: 31; total: 79\n"),
-            ("145-counted-text-view-iteration.gti", ""),
+            ("144-checked-view-iteration.gti", "Checked view iteration passed\n"),
+            ("145-live-slot-and-lane-iteration.gti", "sparse reverse: 31; total: 79\n"),
+            ("146-counted-text-view-iteration.gti", ""),
         )
         for filename, _ in iterator_examples:
             (root / filename).write_text((examples / filename).read_text())

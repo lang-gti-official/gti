@@ -42,6 +42,20 @@ int main() {
   auto changed = edited.set("open", false);
   auto original_open = issue.get_boolean("open");
   if (!changed || !original_open || !original_open.value()) { return 6; }
+  // Member proxies borrow both sequences without cloning keys or descendants.
+  // Key names and the object's extent remain immutable during traversal.
+  mut std::size_t members = 0;
+  for (auto& member : edited.members()) {
+    if (member.first().empty()) { return 8; }
+    members++;
+  }
+  if (members != edited.object_size()) { return 9; }
+  // Exclusive value traversal may replace descendants, but cannot resize the
+  // object or rewrite its keys. The document is usable again when it finishes.
+  for (mut auto& member : edited.values_mut()) {
+    member = std::json::value::boolean(false);
+  }
+  if (!edited.contains("title") || !edited.contains("labels")) { return 10; }
   auto invalid = std::json::parse("{\"x\":1,\"x\":2}");
   if (invalid || !invalid.error().has_source_location()) { return 7; }
   return 0;

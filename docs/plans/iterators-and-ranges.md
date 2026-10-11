@@ -28,6 +28,7 @@ facts rather than introduce public container-name exceptions.
 | storage, pool, resource_storage | forward/backward live-slot traversal and reverse endpoints | shared reading; exclusive live-element writing; skip vacant slots |
 | string_view | read-only text traversal and positional/reverse access | preserve literal or dynamic owner witnesses |
 | paired_span | checked reference-proxy traversal and reverse endpoints | retain both owners without copying owning elements |
+| JSON object projections | checked key/value spans and paired member traversal | immutable keys and member extent; exclusive descendant replacement |
 
 Movement and duplication are separate capabilities: an exclusive cursor can
 move backward or jump without becoming copyable. End sentinels need not retain

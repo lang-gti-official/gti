@@ -3,7 +3,7 @@
   "source_fingerprints": {
     "stdlib/prelude.gti": "a33aa3f09d625f30f05d937483d0db075649a2037e45e990ae628ce07f28e448",
     "stdlib/std/algorithm.gti": "c46dc1e269933a154b029b3dd3254aa6335e92cc270cdd17565dc5d369e6a655",
-    "stdlib/std/array.gti": "4da29370213fdd4910ea0b7d85ae5ba63dff767606f261207a6a526bbbbfc22f",
+    "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
@@ -24,7 +24,7 @@
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
     "stdlib/std/iterator.gti": "89bca11053f5e8fa115c3625047bb3b6708c34b6c18f350e74cf4a8c9b96f286",
-    "stdlib/std/json.gti": "b54226945bf9be04ba527264601234078911dd0dfdde70780ad2f44c048c3fa7",
+    "stdlib/std/json.gti": "822408f7becd7819ee9dab464fc6f0d0f2f2fe6af30cdcf967f9613d6ae1b07e",
     "stdlib/std/list.gti": "b670d0cf766d8bfae1cc32c51517510bcd434dc834ed31d8f8a46ff59da800e0",
     "stdlib/std/map.gti": "24bf0e1e969a92e4d6df567d6b13e1e5e2519e3bf2f80c225ca5937dcfeba3cf",
     "stdlib/std/memory.gti": "479b7a52d38437db574b236e7addc02ca866745c704ca5299748ffaa4f1aef75",
@@ -32,7 +32,7 @@
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
-    "stdlib/std/paired_span.gti": "8be5f2ad71d8a36e05203f7899d550fd91b47160f3b2864f060e010a03777e4e",
+    "stdlib/std/paired_span.gti": "cc4ebd074bb8149a2accc863df73d845ca16451e6f23fdc0e64249da566b72f1",
     "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
     "stdlib/std/polymorphic.gti": "a2194db76d6e36b30e813e6fa46baf4a31937b8362c49764f20ed7f9589a8a77",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
@@ -853,6 +853,14 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "json-object-iteration",
+      "mode": "run",
+      "source": "tests/fixtures/json_object_iteration.gti",
+      "native_sources": ["tests/fixtures/stdlib_adoption_allocation_counts.cpp"],
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "json-owning-error-backend",
       "mode": "run",
       "source": "tests/fixtures/json_expected_value_backend_bug.gti",
@@ -1608,7 +1616,7 @@
         "tests/fixtures/container_iterator_movement.gti",
         "tests/container_iterator_movement_test.py",
         "tests/contiguous_iterator_completion_test.py",
-        "examples/142-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti"
       ]
     },
     {
@@ -1875,7 +1883,7 @@
         "tests/fixtures/container_iterator_movement.gti",
         "tests/container_iterator_movement_test.py",
         "tests/contiguous_iterator_completion_test.py",
-        "examples/142-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti"
       ]
     },
     {
@@ -2194,7 +2202,7 @@
       "evidence": [
         "tests/fixtures/forward_list_iterator_completion.gti",
         "tests/forward_list_iterator_runtime_test.py",
-        "examples/142-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti"
       ]
     },
     {
@@ -2413,11 +2421,20 @@
       "evidence": ["stdlib/std/iterator.gti", "tests/fixtures/stdlib_surface_iterator.gti", "tests/container_iterator_movement_test.py"]
     },
     {
+      "id": "json.checked-object-projections",
+      "source": "stdlib/std/json.gti",
+      "status": "executable",
+      "operations": ["std::json::value::keys", "std::json::value::members", "std::json::value::values", "std::json::value::values_mut"],
+      "case_ids": ["json-object-iteration"],
+      "required_instantiations": ["immutable insertion-ordered keys", "owning descendant proxies without cloning", "exclusive value replacement without extent changes", "zero-allocation traversal"],
+      "evidence": ["examples/091-json-documents.gti", "tests/fixtures/json_object_iteration.gti", "tests/fixtures/json_object_iteration_failure.gti", "tests/json_object_iterator_runtime_test.py", "docs/language/json.md"]
+    },
+    {
       "id": "json.executable",
       "source": "stdlib/std/json.gti",
       "status": "executable",
       "operations": ["std::json public surface"],
-      "case_ids": ["json", "json-codec", "json-owning-error-backend", "owned-error-pipelines"],
+      "case_ids": ["json", "json-codec", "json-owning-error-backend", "owned-error-pipelines", "json-object-iteration"],
       "required_instantiations": [],
       "evidence": [
         "docs/language/json.md",
@@ -2459,7 +2476,7 @@
         "tests/fixtures/container_iterator_movement.gti",
         "tests/container_iterator_movement_test.py",
         "tests/contiguous_iterator_completion_test.py",
-        "examples/142-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti"
       ]
     },
     {
@@ -2720,7 +2737,7 @@
       "evidence": [
         "tests/fixtures/storage_lane_iterator_completion.gti",
         "tests/storage_lane_iterator_runtime_test.py",
-        "examples/144-live-slot-and-lane-iteration.gti"
+        "examples/145-live-slot-and-lane-iteration.gti"
       ]
     },
     {
@@ -3056,7 +3073,7 @@
         "tests/fixtures/paired_span_iterator_completion.gti",
         "tests/paired_span_iterator_completion_test.py",
         "tests/user_dual_range_lifetime_test.py",
-        "examples/143-checked-view-iteration.gti"
+        "examples/144-checked-view-iteration.gti"
       ]
     },
     {
@@ -3244,7 +3261,7 @@
         "tests/fixtures/contiguous_iterator_completion.gti",
         "tests/container_iterator_movement_test.py",
         "tests/contiguous_iterator_completion_test.py",
-        "examples/142-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti"
       ]
     },
     {
@@ -3435,7 +3452,7 @@
       "evidence": [
         "tests/fixtures/storage_lane_iterator_completion.gti",
         "tests/storage_lane_iterator_runtime_test.py",
-        "examples/144-live-slot-and-lane-iteration.gti"
+        "examples/145-live-slot-and-lane-iteration.gti"
       ]
     },
     {
@@ -3504,7 +3521,7 @@
         "tests/fixtures/contiguous_iterator_completion.gti",
         "tests/container_iterator_movement_test.py",
         "tests/contiguous_iterator_completion_test.py",
-        "examples/142-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti"
       ]
     },
     {
@@ -3567,7 +3584,7 @@
         "stdlib/modules/string_view.gti",
         "tests/text_view_iterator_runtime_test.py",
         "tests/text_view_iterator_compiler_tests.cpp",
-        "examples/145-counted-text-view-iteration.gti"
+        "examples/146-counted-text-view-iteration.gti"
       ]
     },
     {
@@ -3600,7 +3617,7 @@
         "tests/fixtures/contiguous_iterator_completion.gti",
         "tests/container_iterator_movement_test.py",
         "tests/contiguous_iterator_completion_test.py",
-        "examples/142-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti"
       ]
     },
     {
@@ -3925,7 +3942,7 @@
         "tests/fixtures/container_iterator_movement.gti",
         "tests/container_iterator_movement_test.py",
         "tests/contiguous_iterator_completion_test.py",
-        "examples/142-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti"
       ]
     },
     {

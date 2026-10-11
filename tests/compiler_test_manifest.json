@@ -626,6 +626,10 @@
       "suite": "constexpr"
     },
     {
+      "name": "testConstexprMutation",
+      "suite": "constexpr"
+    },
+    {
       "name": "testStaticAssertions",
       "suite": "constexpr"
     },

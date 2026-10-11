@@ -68,6 +68,14 @@ int main() {
   if ((*reverse).first() != 10 || (*reverse_copy).first() != 20) { return 11; }
   reverse -= std::ptrdiff_t(1);
   if ((*reverse).first() != 20) { return 12; }
+  {
+    mut auto reverse_end = pairs.rend_iterator();
+    if (reverse_end != pairs.rend()) { return 17; }
+    --reverse_end;
+    if (reverse_end->first() != 10 || reverse_end->second() != "one") { return 18; }
+    reverse_end -= std::ptrdiff_t(1);
+    if (reverse_end->first() != 20 || reverse_end->second() != "two") { return 19; }
+  }
   mut int movement_sum = 0;
   for (mut std::size_t repeat = 0; repeat < std::size_t(128); ++repeat) {
     mut auto forward_cost = pairs.begin();
@@ -87,6 +95,7 @@ int main() {
   std::vector<int> empty_keys{};
   auto empty = std::paired_span<int, std::string>(empty_keys.as_span(), labels.as_span());
   if (empty.begin() != empty.end()) { return 7; }
+  if (empty.rend_iterator() != empty.rend()) { return 20; }
   for (auto& entry : empty) { return 8; }
   adoption_count_end();
   if (adoption_allocations() != uint64_t(0)) { return 9; }

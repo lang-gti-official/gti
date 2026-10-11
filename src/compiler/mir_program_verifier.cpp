@@ -4012,9 +4012,9 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
             "abstract stored dependency has no exact reference fields");
       continue;
     }
-    if (abstractEntry && loan.access != paths.front().reference.referenceAccess)
+    if (loan.access != paths.front().reference.referenceAccess)
       return verificationFailure(body, owner,
-                                 "abstract stored dependency access does not "
+                                 "stored entry dependency access does not "
                                  "match its exact reference field");
     std::vector<MirLoanDependency> additional;
     for (std::size_t index = 1; index < paths.size(); ++index) {

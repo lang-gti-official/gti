@@ -2800,6 +2800,15 @@ consuming the enclosing object's obligation. These are representation choices
 over MIR's verified ownership events, not permissions to consume arbitrary
 borrowed referents.
 
+For a source-defined writable dereference operator, synthesized destination
+value information may inherit the surrounding assignment's read-only category.
+That contextual information is not access authority. Admission consumes the
+exact selected mutable-reference declaration, its matching mutable `CallResult`
+loan and referent type, and the existing replacement/cleanup proof. It does not
+create another owning drop for the referent or widen a read-only returned
+reference. Unrelated cursor fixtures exercise repeated owning replacement and
+reject independently forged declarations, access, origins and cleanup pairs.
+
 Move-assignment from an existing class binding into a mutable class binding has
 its own exact representation. The source may be immutable because GTI
 immutability prevents restoration rather than consumption; the backend does
