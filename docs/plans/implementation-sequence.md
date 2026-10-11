@@ -94,9 +94,10 @@ clients) and phase 3 (`std::meta::construct`, method/constructor/parameter
 metaobjects, source locations, budget hardening). Reflection is no longer
 "later breadth" in the roadmap; what remains restricted (invocation through
 metaobjects, static-field metaobjects, runtime reflection, source generation,
-layout) is recorded in the alignment ledger. Next: `std::experimental::json`
-as the verification gate, after which `std::json` is deprecated, then the
-parked `lsp-lazy-bodies` task. The campaign touches the parser,
+layout) is recorded in the alignment ledger. The verification gate,
+`std::experimental::json`, is built (see the acceptance note in
+`reflection.md`); next it grows to cover `std::json`'s codec use cases, after
+which `std::json` is deprecated, then the parked `lsp-lazy-bodies` task. The campaign touches the parser,
 semantic analysis (declaration-stage attribute evaluation, folded queries,
 aliases), HIR lowering and the trusted standard library; its one MIR change
 materialises direct-initialized temporaries before projection and its one
@@ -7725,7 +7726,7 @@ consumer, and release refreshes remain outstanding for the full campaign.
 - **Implemented ordered-query composition:** the source-defined slice adds
   `partition_point` and comparator `lower_bound`/`upper_bound`/`binary_search`
   over exact homogeneous keys, preserving checked cursor loans and one owned
-  repeatable callback in ordinary GTI. Example 139 demonstrates custom-record
+  repeatable callback in ordinary GTI. Example 141 demonstrates custom-record
   ordering. Callback failure, exact returned-owner rejection, and allocation/
   traversal-cost fixtures cover the same rules with unrelated cursors.
 - **Remaining scope:** structural complete-range
@@ -8323,7 +8324,7 @@ consumer, and release refreshes remain outstanding for the full campaign.
   expansion and `get_mut` compose with these builders without a new reflection
   evaluator or metadata surface. Mutation-capable closures cannot fall back to
   AST execution after an unsupported MIR operation. Example
-  `141-constexpr-builders.gti` demonstrates engine budget/curve preparation and
+  `142-constexpr-builders.gti` demonstrates engine budget/curve preparation and
   runtime parity. Focused positive, negative, malformed-MIR, shared-budget and
   tooling evidence is tracked in the verification document; this does not claim
   allocation, stored borrows, every constructor schedule or complete constexpr

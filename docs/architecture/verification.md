@@ -3928,6 +3928,11 @@ mutable/void signatures, hover, successful staged evaluation, and an overflow
 diagnostic at the executed helper operator. The existing reflection gates
 remain separate regression controls, not newly implemented reflection.
 
+Exact diagnostic source assertions use `SourceLoader::canonicalPath`, including
+nonexistent virtual fixture paths, so they follow the production absolute-path
+contract on both libc++ and libstdc++. Code, phase, message, byte offsets and
+related-span requirements are unchanged.
+
 The 2026-10-11 local performance control uses a Release compiler built with
 Clang/LLVM 23.1.2 on macOS arm64 (M2 Max), C++23/O3. One program builds the
 four-element integer curve `{1, 4, 9, 16}` with a mutable-reference square
