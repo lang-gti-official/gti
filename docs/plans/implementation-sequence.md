@@ -2722,7 +2722,7 @@ analysis, HIR, MIR, and the backend.
   A terminal wrapper is not completion. This remains M-FAIL-01/M-BACK-02 work,
   not a change to source-language validity.
 
-- **Shared failure cleanup (Gitea #222), delivered in 0.401.7:**
+- **Shared failure cleanup (Gitea #222), delivered in 0.402.1:**
   - Function and lambda bodies emit each distinct failure-cleanup suffix once,
     as a continuation record entered by `ContinueFailure`; see
     [MIR](../architecture/mir.md#shared-failure-cleanup).
@@ -2730,7 +2730,7 @@ analysis, HIR, MIR, and the backend.
     owners before.
   - The `stdlib_surface_json` fixture's generated C++ fell from 33.5 MB to
     4.3 MB, and its native `-O3` build from 153 s to 7.7 s; see
-    [verification](../architecture/verification.md#shared-failure-cleanup-0401-7).
+    [verification](../architecture/verification.md#shared-failure-cleanup-0402-1).
 
   **Remaining:**
   - Constructor, field-initializer, destructor, module and hosted-startup
@@ -8161,10 +8161,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
   seek/tell, standard-stream flush, and exact synchronous child-process
   execution are implemented through ordinary GTI wrappers over versioned
   runtime ABIs. Exact signed-nanosecond monotonic and wall-clock observation is
-  also implemented. The remaining independent minimum service is process
-  environment access.
-- **Scope:** The remaining systems-ready minimum covers process environment
-  access.
+  also implemented. Read-only process environment access now completes the
+  listed minimum hosted-service families: `<std/environment>` returns an owned
+  optional string, preserving missing versus empty values and native bytes.
+- **Scope:** Environment mutation/enumeration and child-local environment
+  overrides remain distinct follow-ons with explicit process-wide concurrency
+  or child ownership contracts; read-only lookup does not authorize them.
   Deterministic PRNG plus nondeterministic seed, process arguments, and the
   bounded I/O family are implemented. The first public process slice owns exact
   argv without shell expansion, recoverable create/execute/wait errors, and

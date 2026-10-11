@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Shared failure cleanup (0.401.7)
+## Shared failure cleanup (0.402.1)
 
 Function and lambda bodies now emit each distinct failure-cleanup suffix once,
 as a continuation record entered by `ContinueFailure`; see
@@ -55,6 +55,41 @@ cleanup; `mir_shared_failure_cleanup` bounds both.
 - **New tests.** `mir_shared_failure_cleanup` covers structure and verifier
   mutations. `shared_failure_cleanup_runtime` is a differential runtime matrix
   over 33 phases in 9 modes, including ASan/UBSan.
+
+## Owned environment observation
+
+`environment_runtime_boundary` covers native counted-name validation, missing
+versus present empty values, arbitrary native bytes, independent snapshots
+surviving serial replacement/removal, concurrent read-only lookup, and
+deterministic name/snapshot allocation failure. Allocation instrumentation
+requires zero native allocations for a short missing name and exactly one
+combined metadata/byte allocation for a present value. `environment_c_header`
+independently compiles and links the header as C17.
+
+`environment_runtime` builds the public source API, its `std.environment`
+module and runnable configuration example at O0/O3 under C++20/C++23. It checks
+controlled empty, spaced, Unicode and 16-KiB values, movement of returned
+owners, verified-MIR/native cleanup witnesses, sanitizer execution,
+and a rejected view escaping a local returned string owner.
+It also reports runtime and executable/build costs for 100,000 successful
+owned lookups at O3. This is a new-service cost measurement, not a speedup
+comparison to a borrowed libc pointer. `macos_installed_runtime` checks the
+new module and runtime symbols from a relocated install without repository
+overrides. Existing process, filesystem and I/O boundaries remain separate
+regression gates.
+
+`environment_target_capability` selects Linux, macOS, Windows and unknown
+targets through the frontend, requiring availability on POSIX, an explicit
+Windows import diagnostic and the compiler's early unsupported-target-model
+diagnostic for an unknown OS. Direct compilation has no `--target` switch;
+target-selection testing belongs to this frontend gate instead.
+
+A local M2 Max O3/C++23 observation of the 100,000-lookup workload had a
+five-run median of 0.0368 seconds (including process startup), a 125,864-byte
+executable, and a separate maximum-RSS observation of 1,785,856 bytes. The
+direct build took about one second. These are informational costs on a shared
+development host, not a quiet-machine speedup claim or a universal latency
+budget. The native allocation assertions above remain deterministic gates.
 
 ## Record-published field initializers under optimization (0.399.1)
 

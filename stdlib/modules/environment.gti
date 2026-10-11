@@ -1,0 +1,3 @@
+// Module std.environment: the public surface of <std/environment>.
+export module environment;
+export #include <std/environment>

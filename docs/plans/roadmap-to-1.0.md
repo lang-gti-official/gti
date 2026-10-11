@@ -790,8 +790,10 @@ Add narrow, versioned runtime operations and source-defined wrappers for:
 - deterministic pseudo-random engines plus an explicitly nondeterministic seed
   source are implemented in `<std/random>`; distribution APIs remain;
 - process arguments are implemented through the owned
-  `int main(int, std::vector<std::string>)` entry form; environment access and
-  any owner-tied process views remain;
+  `int main(int, std::vector<std::string>)` entry form; read-only environment
+  lookup returns independent optional strings through `<std/environment>`;
+  environment mutation/enumeration, child-local overrides and any owner-tied
+  process views remain;
 
 Recoverable host failures return `expected`; programmer contract failures such
 as out-of-bounds access retain stable terminating diagnostics. The public

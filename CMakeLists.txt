@@ -469,6 +469,7 @@ add_library(
   "runtime/src/cthread_sleep.cpp"
   "runtime/src/cthread_mutex.cpp"
   "runtime/src/cthread_state.cpp"
+  "runtime/src/environment.cpp"
   "runtime/src/failure.cpp"
   "runtime/src/filesystem.cpp"
   "runtime/src/http.cpp"
