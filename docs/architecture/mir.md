@@ -3070,10 +3070,12 @@ whose callers keep the precise summary.
 M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
 reparenting, active drop, and LIFO full-expression obligations. MIR v18 added
 caller-owned ordinary-call parameter stages and an edge-initialized cleanup-
-owning call-result shape. Later M-EXEC-01 slices should make that ordered input
-representation uniform across borrowed-state class values, remaining call
-forms, result and target places, operators, and branches. Program
-initialization already has a dedicated plan, per-block
+owning call-result shape. Subsequent slices cover the currently admitted
+borrowed-state inputs, result and target places, operators, branches and
+constructor publication through their exact verified contracts. A new input,
+inline-publication or immovable-transport profile must extend those facts; the
+original v18 scope is not a current list of missing whole operation families.
+Program initialization already has a dedicated plan, per-block
 `ProgramInitializationStepId`, production body route, and hosted containment
 adapter.
 The verifier must reject use before materialization, duplicate target
