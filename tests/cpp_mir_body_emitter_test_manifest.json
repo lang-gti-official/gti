@@ -350,11 +350,23 @@
       "suite": "text"
     },
     {
+      "name": "testPlainCallMemberInitializer",
+      "suite": "text"
+    },
+    {
+      "name": "testClassConditionalJoinConsumers",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },
     {
       "name": "testCleanupFreeExpectedClassAssignmentSlot",
+      "suite": "text"
+    },
+    {
+      "name": "testCleanupFreeExpectedClassMoveSlot",
       "suite": "text"
     },
     {
