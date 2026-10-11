@@ -45,6 +45,13 @@ function large 10
 counter 2
 move-only owning allocations 1
 move-only 5
+transfer small allocations 0
+transfer move allocations 0
+transfer call 7
+transfer large allocations 1
+transfer wide 10
+transfer once allocations 1
+transfer consumed 42
 live 0
 """
 

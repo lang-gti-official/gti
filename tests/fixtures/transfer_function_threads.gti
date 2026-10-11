@@ -1,6 +1,9 @@
 #include <std/functional>
 #include <std/thread>
 #include <std/mutex>
+#include <std/memory>
+#include <std/vector>
+#include <std/utility>
 
 class Once {
   std::unique_ptr<int> value;
@@ -61,8 +64,10 @@ int main() {
   auto started = worker.start([state = std::move(worker_state)]() -> int {
     mut auto guard = state->lock();
     mut auto& pending = guard.get();
-    int a = std::move(pending[0])();
-    int b = std::move(pending[1])();
+    auto first = std::exchange(pending[std::size_t(0)], std::transfer_function<int() &&>());
+    auto second = std::exchange(pending[std::size_t(1)], std::transfer_function<int() &&>());
+    int a = std::move(first)();
+    int b = std::move(second)();
     return a + b;
   });
   if (!started) return 8;

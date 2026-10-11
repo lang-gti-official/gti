@@ -2059,8 +2059,11 @@ definition scheduler emits every payload class before its enum
 and that enum before a class embedding it, rejecting a recursive by-value
 cycle. Concrete generic owners/callables use the same exact lifecycle proofs;
 generic arguments are not a reason to bypass or reject those proofs. The
-declaration-bound inline optional capability contributes its payload as a
-native layout dependency, while pointer-backed storage does not. Exact static
+declaration-bound inline optional, uninitialized and mutex storage capabilities
+contribute their payload as a native layout dependency, while pointer-backed
+storage does not. This also orders retained generic-owner member specializations:
+a mutex embedding a vector needs the complete vector representation before a
+concrete mutex constructor declaration can instantiate that owner. Exact static
 consuming methods retain their receiver capability alongside enum result
 placement. If a later argument fails, a prepared enum obligation still drops
 at its verified MIR point even when direct native parameter construction

@@ -1464,6 +1464,9 @@ Concrete callable-entry matching expands substituted parameter packs before
 testing the exact zero-argument signature. An empty pack is eligible; a
 nonempty or unresolved pack is not. The rule applies equally to user-defined
 callable classes and capability-qualified library erasure.
+The compiler-owned inline polymorphic slot derives its concurrency facts from
+the erased interface's required capabilities, not its empty source shell.
+MIR verifies those facts against the concrete interface independently.
 
 Selection of the trusted private thread-spawn declaration extends the existing
 `Owned` callable boundary with

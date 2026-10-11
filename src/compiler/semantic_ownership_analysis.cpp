@@ -456,6 +456,16 @@ auto SemanticVisitor::Impl::typeCapabilities(
   visiting.push_back(type);
 
   const ClassInfo &owner = classInfo(type.classId);
+  if (owner.compilerCapability ==
+      CompilerCapabilityTypeKind::PolymorphicStorage) {
+    const auto erased = type.arguments.size() == 1
+                            ? typeCapabilities(type.arguments.front(), visiting)
+                            : ConcurrencyCapabilities{};
+    visiting.pop_back();
+    // The hidden dynamic payload is constrained by its interface, not by the
+    // empty source shell of the compiler-owned slot.
+    return erased;
+  }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
     const auto element =
         type.arguments.size() == 1
@@ -769,7 +779,7 @@ auto SemanticVisitor::Impl::typeTraits(
     // interface's concurrency policy, exactly like a unique owner of it.
     const SemanticTypeTraits erased =
         type.arguments.size() == 1
-            ? semanticTraits(type.arguments.front())
+            ? typeTraits(type.arguments.front(), visiting)
             : SemanticTypeTraits{.transferCapable = false,
                                  .shareCapable = false};
     visiting.pop_back();
