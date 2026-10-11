@@ -45,6 +45,20 @@ for what minor and patch releases mean.
   Such invalid fields are reported in source and the editor rather than as a
   backend internal error.
 
+## 0.405.3 — Closure, copy and move arms in `expected` conditionals
+
+- A conditional whose arms are `expected<T, E>` values can now use a
+  closure, capturing closure or callable parameter invocation as an arm, as
+  in `auto r = ok ? closure(1) : make(2);`. An arm can also copy or move a
+  named `expected` binding, as in `r = ok ? a : std::move(b);`. This works
+  whether the conditional initializes a new binding or replaces an existing
+  one, for an `enum` or a scalar `E`, and when `T` has no default
+  constructor. These programs previously stopped with internal compiler
+  error `GTI-B0001`; only arms that call a source function built.
+- When `T` has a destructor, moving a named binding into such a conditional
+  also builds. Each replaced value and each moved-from binding is destroyed
+  exactly once.
+
 ## 0.405.2 — Replacing `expected` bindings with conditionals
 
 - Assigning a conditional whose arms are `expected<T, E>` call results to an
