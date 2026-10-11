@@ -3958,6 +3958,14 @@ private:
               .value = mirValueFor(*value),
               .type = value->info.type};
     }
+    // Sequenced evaluations, such as a comma's left operand, complete before
+    // the value they precede on every path that reads it.
+    for (const HirValueId input : value->sequencedInputs) {
+      emitValue(input);
+      if (terminated()) {
+        return {};
+      }
+    }
     if (value->kind == HirValueKind::Move && !value->operands.empty()) {
       emitPlaceDependencies(value->operands.front());
       MirPlaceId sourcePlace = placeForValue(value->operands.front());
@@ -4128,6 +4136,12 @@ private:
     if (value == nullptr) {
       valid = false;
       return;
+    }
+    for (const HirValueId input : value->sequencedInputs) {
+      emitValue(input);
+      if (terminated()) {
+        return;
+      }
     }
     // A direct-initialized class temporary is a fresh SSA value like a call
     // result: materialize it before a projection roots a place at it.
@@ -8828,6 +8842,40 @@ private:
         isPlaceExpression(value->kind)) {
       (void)valueOperand(id);
       return;
+    }
+    // A comma's object-valued left operand (a class or Expected value) is a
+    // discarded evaluation, not an input of the comma: it completes, keeping
+    // its temporaries' full-expression lifetime, and the comma forwards its
+    // right operand. A place operand evaluates only its place.
+    if (value->kind == HirValueKind::Binary &&
+        value->operation == TokenKind::COMMA && value->operands.size() == 2) {
+      const HirValue *left = findValue(value->operands.front());
+      if (left != nullptr && (left->info.type.kind == SemanticType::Class ||
+                              left->info.type.kind == SemanticType::Expected)) {
+        if (left->info.category == ValueCategory::Place &&
+            isPlaceExpression(left->kind))
+          emitPlaceDependencies(left->id);
+        else
+          emitValue(left->id);
+        if (terminated()) {
+          return;
+        }
+        MirInstruction forward{
+            .kind = MirInstructionKind::Compute,
+            .hirValue = value->id,
+            .operands = {valueOperand(value->operands.back())},
+            .operation = MirOperation::Identity,
+            .info = value->info};
+        if (terminated()) {
+          return;
+        }
+        forward.result = resultFor(*value);
+        (void)initializeValueLifecycle(forward, *value);
+        (void)appendInstruction(std::move(forward));
+        endConsumedCallResultLoans({value->operands.back()}, *value);
+        emittedValues.insert(id);
+        return;
+      }
     }
 
     MirInstruction instruction{.kind = MirInstructionKind::Compute,
