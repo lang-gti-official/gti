@@ -43,6 +43,7 @@ if(Python3_Interpreter_FOUND)
     expected_class_argument_runtime expected_class_assignment_runtime
     expected_cleanup_free_copy_runtime expected_cleanup_free_move_runtime
     expected_call_reassignment_runtime expected_lambda_class_argument_runtime
+    expected_conditional_assignment_runtime
     expected_class_return_runtime expected_constructor_return_runtime
     expected_field_and_join_runtime expected_scoped_return_runtime
     expected_temporary_observation_runtime
