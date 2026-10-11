@@ -133,7 +133,8 @@
     "134-standard-library-modules.gti": 227,
     "135-inline-polymorphic-values.gti": 256,
     "136-inline-closure-cells.gti": 116,
-    "137-declared-attributes.gti": 188
+    "137-declared-attributes.gti": 188,
+    "138-ordered-search.gti": 137
   },
-  "total": 12065
+  "total": 12202
 }

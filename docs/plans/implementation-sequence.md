@@ -7522,10 +7522,18 @@ consumer, and release refreshes remain outstanding for the full campaign.
   `all_of`, `any_of`, `none_of`, `count_if`, and `for_each`; `fill` uses the
   mutable exact-element relation. Symbolic range carriers are replaced by
   concrete protocol identities or fixed-array plans before HIR/MIR.
+- **Implemented ordered-query composition:** the source-defined slice adds
+  `partition_point` and comparator `lower_bound`/`upper_bound`/`binary_search`
+  over exact homogeneous keys, preserving checked cursor loans and one owned
+  repeatable callback in ordinary GTI. Example 138 demonstrates custom-record
+  ordering. Callback failure, exact returned-owner rejection, and allocation/
+  traversal-cost fixtures cover the same rules with unrelated cursors.
 - **Remaining scope:** indexed element move-out; structural complete-range
   relations for `transform`, `reverse`, and `sort`; and further
-  iterator/sentinel overloads behind a
-  demonstrated subrange client. Iterator-pair in-place spellings remain
+  iterator/sentinel overloads behind a demonstrated subrange client.
+  Forward-list traversal, heterogeneous search keys/projections and indirect
+  binary callable relations remain separate prerequisites, not compiler
+  exceptions for these APIs. Iterator-pair in-place spellings remain
   excluded because `begin_mut()` and `end()` from one container overlap by
   design; semantics now diagnoses that conflict before MIR, while read-only
   methods on a parameter-held mutable cursor are supported. Iterator

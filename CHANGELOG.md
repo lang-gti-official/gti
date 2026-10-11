@@ -9,6 +9,15 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.400.0 — Comparator-ordered search and partition points
+
+- `<std/algorithm>` adds `partition_point` and comparator overloads of
+  `lower_bound`, `upper_bound` and `binary_search`. Applications can discover
+  predicate boundaries or search records without defining `operator<`,
+  including descending orders and move-only records/callbacks. Returned
+  cursors retain checked owner loans; the queries allocate no element storage.
+- Example 138 demonstrates sorting and searching with the same custom order.
+
 ## 0.399.3 — Faster builds that include standard-library units
 
 - `gti build`, `gti run` and C++ emission no longer lower standard-library
