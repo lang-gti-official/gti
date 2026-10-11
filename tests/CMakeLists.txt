@@ -1006,7 +1006,7 @@ target_link_libraries("gti_managed_thread_tests" PRIVATE gti_cpp_backend)
 add_test(NAME managed_thread_semantic_ir COMMAND gti_managed_thread_tests)
 
 add_executable(gti_scoped_thread_semantic_tests scoped_thread_semantic_tests.cpp)
-target_link_libraries(gti_scoped_thread_semantic_tests PRIVATE gti_compiler)
+target_link_libraries(gti_scoped_thread_semantic_tests PRIVATE gti_cpp_backend)
 add_test(NAME scoped_thread_semantic_shapes COMMAND gti_scoped_thread_semantic_tests)
 
 add_executable("gti_function_item_tests"
@@ -2947,6 +2947,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(shared_ownership_threads PROPERTIES TIMEOUT 480)
   add_test(
+    NAME scoped_parallel_threads
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/scoped_parallel_threads_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(scoped_parallel_threads PROPERTIES TIMEOUT 480)
+  add_test(
     NAME http_url_operators
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/http_url_operators_test.py"
@@ -3672,7 +3679,8 @@ if(Python3_Interpreter_FOUND)
               "${CMAKE_CXX_COMPILER}"
     )
     set_tests_properties(managed_thread_tsan PROPERTIES TIMEOUT 300)
-    foreach(fixture shared_mutex_threads transfer_function_threads)
+    foreach(fixture shared_mutex_threads transfer_function_threads
+                    scoped_parallel_threads scoped_parallel_cleanup)
       add_test(
         NAME ${fixture}_tsan
         COMMAND "${Python3_EXECUTABLE}"
@@ -3747,12 +3755,15 @@ if(Python3_Interpreter_FOUND)
       managed_thread_tsan
       shared_mutex_threads_tsan
       transfer_function_threads_tsan
+      scoped_parallel_threads_tsan
+      scoped_parallel_cleanup_tsan
       atomic_tsan
       mutex_tsan
       PROPERTIES ENVIRONMENT "GTI_TSAN_SUPPORTED=${gti_tsan_supported}"
     )
     set_tests_properties(
       managed_thread_tsan shared_mutex_threads_tsan transfer_function_threads_tsan
+      scoped_parallel_threads_tsan scoped_parallel_cleanup_tsan
       atomic_tsan mutex_tsan
       PROPERTIES SKIP_RETURN_CODE 77
     )

@@ -167,11 +167,13 @@ threadTaskRequirements(const MirBody &body) {
   std::vector<CppMirThunkIdentity> result;
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
-      if (instruction.intrinsic != IntrinsicKind::ThreadSpawn ||
-          !instruction.threadTaskAdapter) {
-        continue;
-      }
-      result.push_back(threadTaskThunkIdentity(*instruction.threadTaskAdapter));
+      if (instruction.intrinsic == IntrinsicKind::ThreadSpawn &&
+          instruction.threadTaskAdapter)
+        result.push_back(
+            threadTaskThunkIdentity(*instruction.threadTaskAdapter));
+      if (instruction.intrinsic == IntrinsicKind::ThreadScope)
+        for (const auto &task : instruction.scopedThreadTasks)
+          result.push_back(threadTaskThunkIdentity(task.adapter));
     }
   }
   std::sort(result.begin(), result.end(), thunkLess);

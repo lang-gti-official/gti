@@ -5,7 +5,7 @@ profile and the separate unsafe C-style threading surface.
 
 Rationale is recorded in
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). Remaining safe
-condition-variable, scoped-thread, and arbitrary foreign-entry work is tracked
+condition-variable, worker-pool, and arbitrary foreign-entry work is tracked
 in the [concurrency plan](../plans/concurrency-memory-model.md).
 
 ## Profiles And Availability
@@ -22,7 +22,7 @@ before semantic analysis and is preserved through HIR and MIR. Source imports,
 native flags, incidental host threads, and emitted C++ never infer it.
 
 `std::thread`, `std::thread_result<Result>`, `std::atomic<T>`, and
-`std::mutex<T>` require the concurrent profile and a target advertising
+`std::mutex<T>`, and `std::parallel_invoke` require the concurrent profile and a target advertising
 thread-capable concurrency support. Merely importing `<std/thread>`,
 `<std/atomic>`, or `<std/mutex>` without constructing or calling their public
 values remains valid in the default profile and does not select native
@@ -356,6 +356,68 @@ results are armed exactly once when join succeeds; extraction transfers that
 obligation to the destination, while an unobserved result is destroyed during
 automatic handle cleanup.
 
+## Scoped Parallel Invocation
+
+`<std/thread>` provides the synchronous operation
+`expected<void, std::thread_errc> std::parallel_invoke<Tasks...>(Tasks... tasks)`.
+It consumes an ordered group of exact `void()` callable values and completes
+every started worker before returning or propagating a defined failure. The
+empty group succeeds. Read, mutable and consuming call operators are supported;
+the existing exact callable selection rules choose each entry. Lambdas with
+owned captures, function items and ordinary user-defined callable classes use
+the same operation.
+
+Unlike the unscoped `std::thread::start` ownership boundary, a scoped task can
+retain checked reference fields, including nested carriers and multiple
+dependencies. Shared references require share-capable referents. Exclusive
+references require transfer-capable referents and exclude overlapping parent
+or sibling access until completion. Two shared readers can overlap; two writes
+or a read and write cannot. Existing place disjointness admits independent
+fields without a special rule for any library container. Generic by-value and
+parameter-pack forwarding preserve each task's exact dependency identity.
+Moving a carrier into a scope does not make it eligible for an unscoped thread
+or permit its dependencies to disappear through erasure. Raw pointers and
+thread-affine state retain their existing unsafe and capability boundaries.
+
+```gti
+class Advance {
+  mut int& position;
+public:
+  Advance(mut int& position) : position(position) {}
+  void operator()() mut { this.position += 1; }
+};
+
+// Within a concurrent-profile function:
+mut int left = 0;
+mut int right = 0;
+auto finished = std::parallel_invoke(Advance(left), Advance(right));
+// Both workers and task cleanup have finished before parent access resumes.
+```
+
+The scope owns its task values, not their external referents. All started
+workers join before remaining task values are cleaned in reverse argument
+order, including tasks whose native creation failed or was never attempted.
+A consuming callable follows ordinary consuming-receiver cleanup during its
+invocation; the scope does not run that cleanup twice. Borrow dependencies stay
+live through whichever cleanup route applies. A user destructor retains the
+ordinary requirement for an audited transfer assertion; a scope is not an
+exception to native-resource or cleanup-thread affinity.
+
+Creation failure returns `resource_unavailable` or `operation_not_permitted`
+only after earlier workers have joined and all task values have been cleaned.
+A worker defined failure takes precedence over a later creation error. If
+several workers fail, the first in argument order supplies the propagated
+record, independent of completion order. Task-cleanup failure follows the
+ordinary defined-failure rule, including `GTI-R0014` when another failure is
+already being cleaned. An indeterminate native join terminates without
+unwinding storage beneath a live child.
+
+This first implementation creates one native worker per task. Task contexts
+and group descriptors are stack-resident, but native creation and runtime
+worker state still have costs. This is not a persistent pool, scheduler,
+asynchronous task API or a promise of cheap fine-grained dispatch. The runnable
+example is [066-managed-threads.gti](../../examples/066-managed-threads.gti).
+
 ## Atomic Scalar Domain
 
 `<std/atomic>` provides `std::atomic<T>` when `T` satisfies
@@ -621,9 +683,11 @@ failure, wait/notify, atomic references, pointer atomics, and fences. It also
 has no safe scoped condition-variable wrapper, safe public manual-unlock API,
 or safe recursive/read-write mutex family. The unsafe `<std/cthread>` surface
 does provide manual unlock, recursive mutexes, and manual condition variables.
-Across both surfaces, scoped cross-thread borrows, detach, C-style thread exit,
+Across both surfaces, detach, C-style thread exit,
 thread-specific storage, read/write mutexes, and arbitrary
 foreign-created-thread entry are not implemented.
+Persistent worker pools, dependency scheduling and asynchronous suspension are
+also separate facilities; synchronous scoped invocation does not provide them.
 
 The absence of these APIs is not permission to call similarly named native
 facilities and treat their behavior as GTI synchronization.

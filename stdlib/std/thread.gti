@@ -32,12 +32,24 @@ bool thread_result_joinable<Result>(gti_internal::thread_result_handle<Result>& 
 int32_t thread_result_spawn<Result, Task>(mut gti_internal::thread_result_handle<Result>& handle, Task task);
 expected<Result, std::thread_errc> thread_result_join<Result>(mut gti_internal::thread_result_handle<Result>& handle);
 void thread_result_auto_join<Result>(mut gti_internal::thread_result_handle<Result>& handle);
-// Internal join-all operation. Public scoped invocation is not exposed until
-// its complete HIR/MIR ownership and failure contract is verified.
+// Identity-bound operation with verified task ownership and dependency loans.
 int32_t thread_scope<Tasks...>(Tasks... tasks);
 }
 
 namespace std {
+/// Runs consumed void tasks concurrently and joins every started task before
+/// returning or propagating failure. Checked references may cross this bounded
+/// call: shared referents must be share-safe; exclusive referents transfer-safe.
+/// Remaining task storage is cleaned up in reverse order on the caller after
+/// join-all. A consuming invocation retains ordinary receiver cleanup semantics.
+/// Native creation failure stops submission, but still joins earlier tasks.
+expected<void, thread_errc> parallel_invoke<Tasks...>(Tasks... tasks) {
+  int32_t status = gti_internal::thread_scope(tasks...);
+  if (status == 1) return unexpected(thread_errc::resource_unavailable);
+  if (status != 0) return unexpected(thread_errc::operation_not_permitted);
+  return;
+}
+
 /// A move-only managed thread. Destruction joins an outstanding worker.
 ///
 /// The worker owns its task and all transfer-safe captures. A worker defined

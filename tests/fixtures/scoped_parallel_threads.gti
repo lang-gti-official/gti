@@ -1,0 +1,60 @@
+#include <std/thread>
+#include <std/panic>
+#include <std/memory>
+#include <std/functional>
+
+class Write {
+  mut int& target;
+public:
+  Write(mut int& target) : target(target) {}
+  void operator()() mut { this.target = 21; }
+};
+
+class Pair {
+  int& input;
+  mut int& output;
+public:
+  Pair(int& input, mut int& output) : input(input), output(output) {}
+  void operator()() mut { this.output = this.input; }
+};
+
+class Read {
+  int& input;
+public:
+  Read(int& input) : input(input) {}
+  void operator()() { if (this.input != 21) std::panic("incorrect shared input"); }
+};
+
+struct Once { void operator()() && {} };
+struct Data { mut int left = 0; mut int right = 0; };
+
+expected<void, std::thread_errc> forward<Tasks...>(Tasks... tasks) {
+  return std::parallel_invoke(tasks...);
+}
+
+int main() {
+  mut Data data{};
+  if (!std::parallel_invoke(Write(data.left), Write(data.right))) return 1;
+  if (data.left != 21 || data.right != 21) return 2;
+  mut int result = 0;
+  if (!forward(Pair(data.left, result), Read(data.left), Once())) return 3;
+  if (result != 21) return 4;
+  if (!std::parallel_invoke(Read(data.left), Read(data.left))) return 5;
+  if (!std::parallel_invoke()) return 6;
+  if (!std::parallel_invoke([]() -> void {}, []() -> void {})) return 8;
+  auto answer = 42;
+  if (!forward([answer]() -> void { if (answer != 42) std::panic("capture lost"); },
+               []() -> void {})) return 9;
+  auto owned = std::make_unique<int>(42);
+  if (!std::parallel_invoke([value = std::move(owned)]() -> void {
+        if (*value != 42) std::panic("owned capture lost");
+      })) return 10;
+  auto erased = std::transfer_function<void()>([]() -> void {});
+  auto erased_once = std::transfer_function<void() &&>(Once());
+  if (!std::parallel_invoke(std::move(erased), std::move(erased_once))) return 11;
+  // Both exclusive and shared loans ended before these parent mutations.
+  data.left = 1;
+  data.right = 2;
+  result = 3;
+  return data.left + data.right + result == 6 ? 0 : 7;
+}

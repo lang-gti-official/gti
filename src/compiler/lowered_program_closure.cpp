@@ -391,6 +391,11 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
                    {.kind = LoweredGeneratedItemKind::ThreadTaskAdapter,
                     .owner = *instruction.threadTaskAdapter});
         }
+        if (instruction.intrinsic == IntrinsicKind::ThreadScope)
+          for (const auto &task : instruction.scopedThreadTasks)
+            rootBody(address,
+                     {.kind = LoweredGeneratedItemKind::ThreadTaskAdapter,
+                      .owner = task.adapter});
         if (instruction.operation != MirOperation::NativeCallback ||
             !instruction.nativeCallbackAdapter) {
           continue;

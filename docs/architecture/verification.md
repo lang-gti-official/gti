@@ -1,5 +1,41 @@
 # Compiler Verification
 
+## Scoped-concurrency candidate (2026-10-11)
+
+The scoped-concurrency branch now connects public `std::parallel_invoke` to
+semantic admission, concrete HIR, verified MIR scope/loan contracts, generated
+task adapters and the native join-all boundary. These are candidate results,
+not evidence of final integration or full release acceptance:
+
+- Release run `run-9cb27359761043d49c86a303d4a1b7b7`, source snapshot
+  `42b905af00348941423934e82490649f342fe0f3f70f126dcce458c83c46b552`, passes
+  `scoped_thread_semantic_shapes`, `managed_thread_semantic_ir` and
+  `mutex_semantic_ir`, plus all four scoped fixtures under C++23 O3.
+  Runtime observations cover shared readers, disjoint mutable fields,
+  heterogeneous generic forwarding, owned-capture lambdas, erased read/once
+  jobs, consuming and nonconsuming task cleanup, empty groups, worker failure,
+  cleanup failure, their emergency combination, and creation failure before
+  any worker or after one starts. The latter is a one-shot calling-thread test
+  seam; no timing race decides which prefix starts.
+- Release run `run-c7104bc26b4e4535bfb697a000a57bed`, source snapshot
+  `68d88f15f065507e58e9ae1b94d3f41ba23c6177782b47aa41266adc019bf8cf`, passes
+  `concurrency_composition_lsp`, `scoped_parallel_threads_tsan` and
+  `scoped_parallel_cleanup_tsan` on macOS arm64. Both sanitizer tests executed
+  (neither skipped); the harness runs each binary three times. Editor evidence
+  includes overlap rejection, source navigation and versioned recovery.
+  `066-managed-threads.gti` builds at O3 and retains its expected output. Its
+  measured inventory is 122 emitted MIR bodies; LoweredProgram contains 751
+  declarations, 124 bodies and 64 generated items, including six task adapters.
+- The older `run-e7f4050d2b064973bae6874092cc885c` passed the borrowing,
+  cleanup-bound-borrow/mutation and complete compiler-ownership checks on its
+  earlier snapshot. It does not certify the current backend/public-API work.
+
+The remaining acceptance includes the full native mode matrix, current-head
+ownership/backend/corpus controls, installed consumption, runtime/allocation/
+code-size measurements and final reconciled-head validation. The native group
+still creates OS threads; these results do not establish cheap job dispatch
+or imply a persistent worker pool.
+
 ## Expected returns across scope cleanup (0.402.4)
 
 - **Defects.** Three verified programs stopped at the C++ backend with
