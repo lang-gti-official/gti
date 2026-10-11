@@ -1063,6 +1063,13 @@ constructor, or on the success edge of a fallible call. Both forms keep the
 payload in its local slot while later parameter cleanup runs; a failure-free
 constructor does not justify publishing early across a fallible destructor.
 
+A failure-free source call returning a complete owning Expected likewise uses
+the existing exact returned-call-result slot proof. Its value activation and
+optional reparent into an unpublished ReturnResult retain the local envelope
+through fallible cleanup. Failure destroys that envelope; only the final Return
+transfers it to the caller. Value admission consumes this proof rather than
+falling back to an observable default construction of the success alternative.
+
 Owning error alternatives use the same placement-result boundary as owning
 success alternatives, including `expected<int, Error>` and
 `expected<void, Error>`. Scalar/void success with a cleanup-free class error

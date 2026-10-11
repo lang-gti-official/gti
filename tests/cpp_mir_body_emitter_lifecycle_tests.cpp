@@ -9118,6 +9118,229 @@ int main() {
          "the unchanged Expected forwarder should pass its caller's result "
          "storage directly to the transformed callee");
 
+  // A plain source call must instead retain its owning result locally when
+  // fallible cleanup intervenes before return publication. The runtime fixture
+  // exercises successful cleanup, primary failure, and double failure with
+  // unrelated user-defined owners rather than a standard-library policy.
+  {
+    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures/source_prefix_forwarded_result_cleanup.gti";
+    std::ifstream input(fixture);
+    expect(input.good(),
+           "the unpublished plain-call result fixture must exist");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto retained = analyzeWithStandardLibrary(fixture.string(), source);
+    expect(retained.canGenerateCode(),
+           "plain owning Expected forwarding across fallible cleanup verifies");
+    if (!retained.canGenerateCode())
+      return;
+
+    const lang::MirFunctionInstance *retainedForwarder = nullptr;
+    const lang::MirInstruction *plainCall = nullptr;
+    const lang::MirPlace *resultSlot = nullptr;
+    const lang::MirDropObligation *valueDrop = nullptr;
+    const lang::MirDropObligation *pendingDrop = nullptr;
+    const lang::MirInstruction *localCleanup = nullptr;
+    const lang::MirInstruction *resultRollback = nullptr;
+    for (const auto &function : retained.mir.functionInstances()) {
+      if (!function.mayRaiseDefinedFailure ||
+          function.returnType.kind != lang::SemanticType::Expected)
+        continue;
+      for (const auto &block : function.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          const auto *target = instruction.functionTarget
+                                   ? retained.mir.findFunctionInstance(
+                                         *instruction.functionTarget)
+                                   : nullptr;
+          if (instruction.kind != lang::MirInstructionKind::Call ||
+              !instruction.result || !target ||
+              target->mayRaiseDefinedFailure ||
+              instruction.info.type != function.returnType ||
+              instruction.receiver || instruction.successResultDrop)
+            continue;
+          for (const auto &drop : function.body.dropObligations) {
+            const auto *place = function.body.findPlace(drop.place);
+            if (drop.kind != lang::MirDropObligationKind::Value || !place ||
+                place->root != lang::MirPlaceRootKind::Value ||
+                place->value != *instruction.result ||
+                place->type != function.returnType)
+              continue;
+            for (const auto &pending : function.body.dropObligations) {
+              if (pending.kind == lang::MirDropObligationKind::ReturnResult &&
+                  pending.place == place->id) {
+                retainedForwarder = &function;
+                plainCall = &instruction;
+                resultSlot = place;
+                valueDrop = &drop;
+                pendingDrop = &pending;
+              }
+            }
+          }
+        }
+      }
+    }
+    if (retainedForwarder && resultSlot && pendingDrop) {
+      for (const auto &block : retainedForwarder->body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Drop ||
+              !instruction.destination ||
+              instruction.definedFailure.propagation !=
+                  lang::FailurePropagationKind::Destructor)
+            continue;
+          if (block.activeFailure == 0 &&
+              *instruction.destination != resultSlot->id)
+            localCleanup = &instruction;
+          if (block.activeFailure != 0 &&
+              *instruction.destination == resultSlot->id &&
+              instruction.lifecycle.size() == 1 &&
+              instruction.lifecycle.front().source == pendingDrop->id &&
+              instruction.lifecycle.front().failureCleanup)
+            resultRollback = &instruction;
+        }
+      }
+    }
+    expect(
+        retainedForwarder && plainCall && resultSlot && valueDrop &&
+            pendingDrop && localCleanup && resultRollback,
+        "the plain call owns one result slot and one pending-return identity "
+        "with independent fallible local cleanup and result rollback");
+    if (!retainedForwarder || !plainCall || !resultSlot || !valueDrop ||
+        !pendingDrop || !localCleanup || !resultRollback)
+      return;
+
+    const lang::MirBodyAddress retainedAddress{lang::MirBodyKind::Function,
+                                               retainedForwarder->id};
+    for (const auto standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      const lang::CppMirBodyEmissionMap retainedRows(
+          buildRows(retained, retained.mir, standard));
+      const lang::CppMirBodyEmitter retainedEmitter(retained.mir, retainedRows);
+      const auto emitted = retainedEmitter.emitFailureBodyText(
+          retainedAddress, "plain-expected-return-cleanup", 1);
+      expect(retainedEmitter.analyze(retainedAddress).ready() &&
+                 retainedEmitter.supportsFailureBodyText(retainedAddress) &&
+                 emitted.emitted(),
+             "C++20/23 admit exact plain Expected publication through cleanup");
+      const std::string slot = "__gti_mir_p_" + std::to_string(resultSlot->id);
+      const auto construction = emitted.text.find(slot + ".construct_from(");
+      const auto cleanup = emitted.text.find(
+          "__gti_mir_drop_success_" + std::to_string(localCleanup->id) + " = ",
+          construction);
+      const auto publication = emitted.text.find(
+          "construct_representation_at(__gti_mir_out_result, " + slot +
+          ".take())");
+      expect(construction != std::string::npos &&
+                 cleanup != std::string::npos &&
+                 publication != std::string::npos && construction < cleanup &&
+                 cleanup < publication,
+             "the producer constructs locally before cleanup and publishes "
+             "only after its successful return edge");
+      expect(emitted.text.find(slot + ".destroy_cleanup_with_failure(") !=
+                     std::string::npos &&
+                 emitted.text.find(
+                     "GTI MIR unpublished returned result cleanup") !=
+                     std::string::npos &&
+                 emitted.text.find("__gti_mir_v_" +
+                                   std::to_string(*plainCall->result) + "{}") ==
+                     std::string::npos,
+             "rollback destroys the retained result without inventing a "
+             "default-constructed success alternative");
+    }
+
+    const lang::CppMirBodyEmissionMap retainedRows(
+        buildRows(retained, retained.mir));
+    const std::array<std::string_view, 11> mutations{
+        "missing plain-call activation",
+        "activation of the wrong identity",
+        "prematurely active value identity",
+        "missing pending-return reparent",
+        "wrong pending-return reparent",
+        "missing return transfer",
+        "rollback of a different destination",
+        "rollback of an unowned identity",
+        "rollback without failure-cleanup authority",
+        "mismatched pending slot",
+        "additional result-place consumer"};
+    for (std::size_t mutation = 0; mutation < mutations.size(); ++mutation) {
+      auto malformed = retained.mir;
+      auto *body = lang::findMirBody(malformed, retainedAddress);
+      bool changed = false;
+      for (auto &block : body->blocks) {
+        for (auto &instruction : block.instructions) {
+          if (instruction.id == plainCall->id && mutation < 2) {
+            if (mutation == 0)
+              instruction.lifecycle.clear();
+            else
+              instruction.lifecycle.front().target = pendingDrop->id;
+            changed = true;
+          }
+          for (auto event = instruction.lifecycle.begin();
+               event != instruction.lifecycle.end();) {
+            if (event->kind == lang::MirLifecycleEventKind::Reparent &&
+                event->source == valueDrop->id &&
+                event->target == pendingDrop->id &&
+                (mutation == 3 || mutation == 4)) {
+              if (mutation == 3)
+                event = instruction.lifecycle.erase(event);
+              else {
+                event->target = 0;
+                ++event;
+              }
+              changed = true;
+            } else if (event->kind ==
+                           lang::MirLifecycleEventKind::TransferOut &&
+                       event->source == pendingDrop->id && mutation == 5) {
+              event = instruction.lifecycle.erase(event);
+              changed = true;
+            } else {
+              ++event;
+            }
+          }
+          if (instruction.id == resultRollback->id && mutation >= 6 &&
+              mutation <= 8) {
+            if (mutation == 6)
+              instruction.destination = localCleanup->destination;
+            else if (mutation == 7)
+              instruction.lifecycle.front().source = 0;
+            else
+              instruction.lifecycle.front().failureCleanup = false;
+            changed = true;
+          }
+        }
+      }
+      for (auto &drop : body->dropObligations) {
+        if (mutation == 2 && drop.id == valueDrop->id) {
+          drop.initiallyActive = true;
+          changed = true;
+        } else if (mutation == 9 && drop.id == pendingDrop->id) {
+          drop.place = *localCleanup->destination;
+          changed = true;
+        }
+      }
+      if (mutation == 10) {
+        auto alias = *resultSlot;
+        for (const auto &place : body->places)
+          alias.id = std::max(alias.id, place.id);
+        ++alias.id;
+        body->places.push_back(alias);
+        changed = lang::rebuildMirValueUses(*body);
+      }
+      const std::string reason = "plain owning Expected forwarding rejects " +
+                                 std::string(mutations[mutation]);
+      expect(changed, reason + " (mutation applied)");
+      // Ownership corruptions are verifier errors; the extra exact place is
+      // also independently outside the backend's single-consumer proof.
+      const auto verification = lang::verifyMirProgram(malformed);
+      if (mutation == 10)
+        expect(verification.valid(), reason + " preserves otherwise valid MIR");
+      else
+        expect(!verification.valid(), reason + " in MIR lifetime verification");
+      expect(!lang::CppMirBodyEmitter(malformed, retainedRows)
+                  .supportsFailureBodyText(retainedAddress),
+             reason + " in backend publication admission");
+    }
+  }
+
   // Nominal call operators use the same owned Expected publication schedule
   // as named methods. This proof is independent of the standard wrappers.
   const auto callable =
