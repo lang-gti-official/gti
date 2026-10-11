@@ -1,5 +1,13 @@
 # C Interop Target Surface
 
+Historical delivery/design record, not the current C-interoperation contract.
+The GLFW surface fixture and its independent oracles remain evidence for the
+original acceptance. The design snippets below are not a current runnable
+library wrapper: subsequent releases delivered owner-tied `c_string` access,
+recursive raw pointers independent of `[[c_array]]`, and bounded C header
+import. Consult [current native interoperation](../../language/native-c-interop.md)
+and [raw pointers](../../language/raw-pointers.md) for those rules and examples.
+
 > **Plan status:** completed acceptance artifact. F1 fixed-array native fields,
 > the bounded F2 `c_string` boundary, F3 pointer-plus-count returns, and the
 > same-thread `S-CALL-01` callback boundary compile and pass independent C and

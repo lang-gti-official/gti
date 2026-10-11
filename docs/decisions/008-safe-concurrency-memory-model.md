@@ -5,7 +5,7 @@ Status: Accepted
 > **Scheduling note:** ADR 012 supersedes this record's former pre/post-1.0
 > release-horizon split. The memory-model decision remains accepted. Its
 > bounded owned-thread/task, ordered-scalar-atomic, mutex-guard, and conformance
-> profile is now systems-readiness work. Explicit accepted atomic orders and
+> profile is implemented systems-readiness support. Explicit accepted atomic orders and
 > fixed-width integer fetch operations have since landed; detach and advanced
 > reclamation remain later breadth.
 
@@ -68,9 +68,11 @@ implementation rows.
 The semantic boundary, transfer/share type facts, and concurrent-global policy
 must precede public execution. The first useful public profile—owned joined
 tasks/threads, sequentially consistent atomics, mutex-guard access, contained
-failure, and its conformance gate—is systems-readiness work. Weaker memory
-orders, detach, and advanced native-thread/reclamation forms remain later
-breadth. Adopting the model is not authorization to expose an incomplete API.
+failure, and its conformance gate—is implemented. The accepted explicit
+relaxed/acquire/release/acq_rel orders and integer fetch operations are also
+implemented. Detach, scoped cross-thread borrows and further native-thread/
+reclamation forms remain separate work. Adopting the model is not authorization
+to expose an incomplete API.
 
 ### Safe Data-Race Freedom
 
@@ -274,8 +276,9 @@ thread-safe merely because its signature contains no pointers.
 
 ## Required Implementation Order
 
-This decision unlocks representation and policy work, not public concurrency.
-The implementation sequence remains:
+The original foundation order below has been completed for the admitted public
+profile; it remains the dependency rationale, not a queue to repeat. Broader
+profiles extend the current semantic and runtime contracts:
 
 1. secure compiler-private capability identity;
 2. compute and preserve structural transfer/share facts;
@@ -336,7 +339,7 @@ supported. No timing-only test is a correctness oracle.
   interfaces, globals, and later library constraints.
 - Automatic join preserves structured lifetime at the cost of potentially
   blocking cleanup and participating in deadlock.
-- Stored and scoped cross-thread borrows, detach, condition variables, pointer
+- Stored and scoped cross-thread borrows, detach, safe scoped condition variables, pointer
   atomics, shared ownership across threads, and native callbacks retain their
   explicit prerequisite rows.
 

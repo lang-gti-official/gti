@@ -74,9 +74,10 @@ That representation does not introduce additional GTI source selection rules.
 - Libraries can expose a generic customization surface and applications can
   provide exact implementations for their own nominal types without a new
   keyword.
-- The feature does not supply primitive hash implementations, hashability
-  concepts, partial specialization, or associative containers; those remain
-  separate standard-library work.
+- The feature itself does not supply primitive hash implementations, hashability
+  concepts or associative containers. Those separate source-library facilities
+  are now implemented; general partial specialization remains outside this
+  decision.
 - Moving a specialization between packages or replacing a top-level nominal
   argument can change coherence, so `GTI-S2078` reports the ownership rule
   without a mechanical fix-it.

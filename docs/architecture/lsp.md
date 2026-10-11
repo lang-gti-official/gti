@@ -234,8 +234,9 @@ exact function declaration symbol as an ordinary `Function` semantic
 occurrence. Hover therefore shows the canonical selected function signature,
 definition jumps to that declaration even when it appears later in source, and
 semantic tokens classify the name as a function. Ambiguous or inexact item
-formation publishes the shared `GTI-S2090` diagnostic; a bare name without an
-eligible callable context retains `GTI-S2076`. The query and protocol layers do
+formation publishes the shared `GTI-S2090` diagnostic. A unique eligible bare
+name may also form a retained item without a required signature; an ineligible
+function-value use retains `GTI-S2076`. The query and protocol layers do
 not infer a function-item type, choose among overloads, or expose the backend's
 private nominal tag.
 
@@ -542,9 +543,10 @@ reanalyzes its open dependants, whose affected parsed rows miss through the
 dependency digest, without advancing or invalidating unrelated source
 identities.
 
-This is deliberately not a semantic snapshot cache. Semantic analysis and HIR
-still run over the complete compatible parsed program, producing new
-snapshot-local identities and records. The benchmark exposes exact loaded,
+This is deliberately not a semantic snapshot cache. Semantic analysis runs over
+the compatible loaded declarations; HIR performs the root/entry-scoped concrete
+discovery described below. Both produce fresh snapshot-local identities and
+records. The benchmark exposes exact loaded,
 lexed, parsed, semantically analysed, and cache-hit unit lists plus phase times
 through the opt-in `GTI_LSP_FRONTEND_TRACE` stream. Each record also carries a
 monotonic `finishedMicroseconds` time since server start, so concurrent work
@@ -568,9 +570,10 @@ keystroke with the newest edit queued behind an obsolete analysis. A semantic
 request waiting on the document, shutdown, opening a document, and project
 invalidation (manifest, lockfile, profile) run immediately. This is clangd's
 update-debounce policy; it was adopted after measuring that every keystroke
-re-runs whole-program semantic analysis and HIR over all loaded standard-
-library units (about 600 ms for a 73-line file with eight includes), which no
-parse cache reduces. `GTI_LSP_UPDATE_DEBOUNCE_MS` pins a fixed wait, and `0`
+re-runs semantic analysis and concrete HIR discovery (the recorded baseline was
+about 600 ms for a 73-line file with eight includes). Later entry-scoped HIR
+reduces that work; the old timing is not a current performance guarantee.
+`GTI_LSP_UPDATE_DEBOUNCE_MS` pins a fixed wait, and `0`
 disables it, for benchmarks and tests.
 
 `workspace/semanticTokens/refresh` is not sent per publication. A client
@@ -739,17 +742,28 @@ narrow. Only compiler work runs under the guard: `runIsolatedAnalysis` builds
 an isolated `DocumentAnalysis` and its immutable frontend snapshot, and
 `publishAnalysis` writes to shared LSP state afterwards, on the normal path.
 
-Two properties make the boundary sound:
+The boundary isolates protocol publication and exception unwinding:
 
 - **No exception crosses LLVM.** LLVM's `CrashRecoveryContext` is built
   without C++ exception support, so the guarded callback catches its own
   exceptions and returns the outcome as data (`GuardedAnalysis`). The worker
   inspects that status instead of relying on an exception unwinding through
   an LLVM frame.
-- **No lock is held under the guard.** The guarded callback touches no shared
-  state and acquires no mutex, so a signal-recovery stack restore that skips
-  destructors cannot leave `stateMutex` owned. Publication acquires the lock
-  on a normally unwound path, where `lock_guard` behaves normally.
+- **The protocol-state lock is outside the guard.** `stateMutex` protects
+  publication on the normally unwound path, not the guarded compiler callback.
+  This prevents a skipped publication destructor from stranding that mutex;
+  it does not mean the entire frontend operation is lock-free.
+
+**Remaining fault-state gap (2026-10-11 audit):** `analyzeDocument` supplies the
+shared `FrontendCache` inside `runIsolatedAnalysis`, and its lookup/store methods
+acquire their own mutex. A fatal signal during one of those critical sections
+can skip the lock destructor or interrupt a cache update. In-process recovery
+therefore cannot guarantee that the cache or future workers remain usable.
+`test_worker_survives_failed_analysis` covers missing-include failures followed
+by healthy analysis/hover; it does not inject a crash under a cache lock. The
+parser-depth regression proves bounded diagnostic recovery, not arbitrary fault
+recovery. A stronger promise needs a state/lock-safe recovery design and
+dedicated fault-injection evidence, or process isolation.
 
 After a contained crash the partially built analysis is deliberately leaked
 rather than destroyed, because running destructors over an abandoned frame
@@ -769,7 +783,7 @@ required; it is tracked in
 position conversion, request/result serialization, diagnostic publication,
 workspace edits, cancellation, and semantic-token wire encoding. It advertises
 full document sync, formatting, semantic tokens, hover, completion,
-definition, references, document highlights, document symbols, and rename
+definition, signature help, references, document highlights, document symbols, and rename
 with prepare support. It advertises quick-fix code actions when the client
 supports code action literals. Document symbols are hierarchical when the
 client negotiates `hierarchicalDocumentSymbolSupport` and flatten to
@@ -801,8 +815,8 @@ next document generation; a diagnostic from the prior version cannot authorize
 an action on the replacement source. Terminal display-cell expansion never
 enters LSP messages or UTF-16 ranges.
 Compiler diagnostic tags are published only when the client's negotiated
-`tagSupport.valueSet` admits that exact LSP tag; the current unreachable-code
-and unnecessary-`mut` warnings use `Unnecessary`. Quick-fix preference is
+`tagSupport.valueSet` admits that exact LSP tag; the current unreachable-code,
+unnecessary-`mut` and unused-unsafe warnings use `Unnecessary`. Quick-fix preference is
 compiler-owned per fix. Removing an unnecessary local `mut` is preferred,
 whereas inserting `[[discard]]` for an ignored result is deliberately
 non-preferred because using the value may be the intended repair.
@@ -883,9 +897,9 @@ punctuation.
 
 ## Current Limits
 
-- Retained documentation is consumed by hover, completion, and signature
-  help. Generated API reference output does not yet publish the same
-  compiler-owned Markdown.
+- Retained documentation is consumed by hover, completion, signature help and
+  the compiler-owned documentation index used by the separate reference site.
+  Website projection/publishing has its own [reference-documentation contract](reference-documentation.md).
 - Definition, references, document highlights, and rename are implemented
   from exact resolved symbols. Rename is deliberately limited to
 function-local names: identities visible outside the entry document's
@@ -897,9 +911,10 @@ function-local names: identities visible outside the entry document's
   request freshness rules remain in the protocol class. The exact reusable
   frontend-input identity/cache seam is extracted; broader state extraction
   should follow a concrete testability or feature need.
-- Semantic analysis and HIR remain whole-program work on every accepted edit.
-  They are the largest remaining repeated-edit cost; no semantic checkpoint or
-  durable symbol identity is implemented.
+- Semantic analysis of loaded declarations and root/entry-scoped HIR discovery
+  repeat on every accepted edit. Neither is a reusable semantic checkpoint;
+  durable symbol identity is not implemented. Trace evidence, not the old
+  complete-HIR baseline, should select the next repeated-edit optimization.
 - Project analysis follows the package containing the opened document and the
   driver's default or explicitly selected profile on the host platform. Unique entry roots and
   single-target packages infer their target defines; shared/ambiguous sources
@@ -907,9 +922,9 @@ function-local names: identities visible outside the entry document's
   workspace-package, target, or cross-target selection
   request yet; adding one requires a client-facing configuration contract,
   not another manifest parser.
-- Crash containment is in-process. It keeps the worker and shared state
-  usable after a contained fault, but it is not a process-isolation
-  guarantee: heap damage done before a fault is not undone.
+- Crash containment is best-effort and in-process. Protocol publication stays
+  outside the guard, but the shared cache's lock/update recovery gap and heap
+  damage prevent a general post-fault worker/state usability guarantee.
 
 Those items are tracked in [`docs/plans/lsp-evolution.md`](../plans/lsp-evolution.md).
 [ADR 005](../decisions/005-lsp-compiler-semantics.md) records why language

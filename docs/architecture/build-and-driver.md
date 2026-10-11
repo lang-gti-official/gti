@@ -1091,9 +1091,10 @@ whole-program translation unit. Group library directories and link operands
 append after the root package's own, in deterministic
 dependents-before-dependencies order (reverse postorder over the dependency
 graph). Target-scope native tables on a dependency do not compose; they apply
-only when that package is built directly. Plans that carry dependency native
-groups bypass the whole-program cache with an explicit reason until dependency
-discovery covers group sources.
+only when that package is built directly. Dependency native groups now use the
+same scoped dependency-discovery and exact-input cache contract as root native
+inputs; a group is not by itself a cache bypass. Unmodeled inputs retain the
+conservative bypass rules in [Whole-Program Project Cache](#whole-program-project-cache).
 
 ### Approved Package Build Scripts
 
@@ -1237,8 +1238,9 @@ acquisition and metadata inspection do not execute those programs.
 
 The composition rules above and the bindgen imports below combine into one
 workflow worth naming, because it is what makes a GTI project portable: a
-dependency may **vendor a C library** and a consumer needs no system
-prerequisite at all.
+dependency may **vendor a C library** so its consumer needs no separately
+installed copy of that library. The native toolchain and any declared platform
+dependencies remain prerequisites.
 
 ```toml
 # In the dependency package.
@@ -1253,10 +1255,11 @@ header = "native/checksum.h"
 The dependency carries the C source and header in its own tree, generates its
 own GTI declarations for them, and exposes the library through ordinary GTI
 functions. The consumer declares only the package dependency — path or pinned
-git — and `gti build` acquires it, generates the dependency's bindings inside
-its checkout, compiles the vendored C into the dependent build as an isolated
-native group, and links it. Nothing is installed on the machine, and nothing
-is found by search.
+git — and, with its lock/acquisition requirements satisfied, `gti build`
+generates the dependency's bindings in the managed build tree, compiles the
+vendored C into the dependent build as an isolated
+native group, and links it. No separately installed checksum library is
+searched for or installed on the machine by this workflow.
 
 Two existing rules do the load-bearing work and are worth restating here.
 Bindgen aliases are per-package, so a consumer cannot reach
@@ -1302,7 +1305,7 @@ refuse the build with `GTI-B17xx` diagnostics. A plain build may materialize
 a lock-covered missing checkout; `--offline` and `--locked` never run git,
 so `gti fetch && gti build --locked` is the reproducible-pipeline shape.
 `gti metadata` and `gti clean` never acquire dependencies, and metadata
-schema 10 publishes each package's source as `path` or
+schema 10 introduced each package's source as `path` or
 `git+<url>#<rev>#<checksum>`. A fetched package's own path dependencies must
 stay inside its checkout; its git dependencies join the same locked closure
 transitively. The workspace model identity carries the git source identity,
@@ -1310,8 +1313,8 @@ so two revisions of one `name@version` never share cache state. Because the
 store lives under `build/gti`, `gti clean` removes it; rebuilding then
 requires either re-acquisition or a fresh `gti fetch`.
 
-Direct mode also exposes `--emit-native-header`. It runs the same complete
-frontend, optimization compatibility check, and MIR verification as C++
+Direct mode also exposes `--emit-native-header`. It runs the same semantic
+analysis, optimization compatibility check, and MIR verification as C++
 emission, then selects `NativeHeaderBackend` instead of `CppBackend`. The mode
 writes one `.h` artifact, defaults to `<entry>.native.h`, applies the loaded
 source overwrite guard, and performs no native compilation or linking. It is
@@ -1321,7 +1324,7 @@ include paths is a later build-system convenience; current projects may check
 in or explicitly regenerate the header and list its directory under the
 existing native include settings.
 
-Direct mode also exposes `--emit-mir`. It runs the same complete frontend,
+Direct mode also exposes `--emit-mir`. It runs the shared semantic analysis,
 optimization compatibility check, and MIR verification, then selects
 `MirBackend`, which serializes the verified optimized MIR snapshot that
 executable backends consume in the deterministic versioned `mir-v*` text
@@ -1958,8 +1961,10 @@ development escape hatch for running possibly stale output.
 
 ## Current Limits
 
-The cache is whole-program and workspace-local. It does not yet cache individual
-parsed units, HIR/MIR bodies, native objects, or remote/shared artifacts.
+The executable cache is whole-program and workspace-local. It does not yet
+persist individual parsed units, HIR/MIR bodies, native objects, or remote/shared
+artifacts. The separate in-process frontend cache used by editor analysis is
+not a project executable-cache entry.
 Git dependencies support pinned full revisions only; mutable branch/tag
 selectors and replacement/override authority are not implemented. Registry
 bootstrap limits are recorded above; package signing, yanking, search and
@@ -1975,6 +1980,7 @@ installs from a local project (not a registry or Git source), and installs one
 target per invocation.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
-The LSP consumes the driver-published project facts for its default host-target
-analysis. Explicit editor selection of another workspace package, target,
-profile, or cross target is not implemented.
+The LSP consumes the driver-published project facts for host-target analysis and
+supports a named editor profile, with source-based target inference. Explicit
+editor selection of another workspace package, target, or cross target is not
+implemented.

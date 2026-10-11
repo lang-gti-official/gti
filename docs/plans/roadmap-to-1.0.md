@@ -1,755 +1,171 @@
 # GTI Systems-Readiness Roadmap And Soft 1.0 Goal
 
-> **Plan status:** Non-canonical release and implementation roadmap. Current
-> language and architecture are documented elsewhere in `docs/`.
+> **Role:** durable capability and readiness goals, not a second work queue or
+> specification. The [implementation sequence](implementation-sequence.md)
+> owns prompt-sized work. Source and tests are authoritative when a document
+> disagrees with them; current semantics belong in `docs/language/` and
+> implemented architecture in `docs/architecture/`.
 
-Status: planning roadmap
+## Direction And Reconciliation
 
-The language direction is a fully usable, independent systems language with
-excellent safety, strong C++ syntax familiarity and sound architecture. GTI's
-public libraries should use ordinary source over general facilities; necessary
-compiler/runtime mechanisms remain part of that architecture. C++ generation
-does not make GTI a wrapper or set the limits of its future source language.
+GTI is an independent systems language with strong C++ syntax familiarity,
+explicit ownership, deterministic cleanup and excellent safety as a goal. Its
+current C++ backend implements GTI semantics; neither generated C++ nor an LLVM
+representation defines the language.
 
-This roadmap records goals, prerequisites and evidence. Historical assumptions
-and earlier bounded slices are revisable as the language grows. An unmet
-prerequisite defines further work and its order, not a permanent exclusion from
-the systems-language goal. Current support and intentional safety requirements
-must still be described accurately.
+Public policy belongs in ordinary GTI wherever its invariants can be expressed.
+The compiler and runtime still own irreducible facts such as layout, object
+lifetime, checked borrowing, target operations and verified failure control
+flow. Each private/source boundary needs its own rationale. Removing a private
+handle is not success if safety, supported programs or execution cost regress.
 
-This document maps the durable capability and readiness gates between the
-implemented GTI language and a future 1.0.0 release. Under
-[ADR 012](../decisions/012-outcome-first-systems-readiness.md), 1.0 is a soft,
-revisable goal rather than a feature cutoff: its scope and order may change as
-real systems programs expose missing capabilities. It is not the live
-prompt-sized work queue and is not a promise that GTI will reproduce every C++
-feature or every C++ standard-library header.
+This roadmap was reconciled against the 0.399.1 source checkpoint on
+2026-10-11 and incorporates merged 0.400.0 reflection phase 3 and 0.401.0
+ordered-query composition, plus 0.402.0 owned environment observation. These
+updates record implementation status, not a
+newly executed whole-toolchain acceptance run. The earlier chronological milestones are preserved in the
+[historical roadmap](archive/systems-readiness-roadmap-2026-10-11.md), not
+silently discarded or presented as unfinished foundations. Their restrictions
+and version horizons must not override newer implemented contracts.
 
-GTI should remain immediately readable to a C++ programmer while making
-ownership, lifetime, conversion, failure, and evaluation rules simpler to
-state. A familiar spelling is worth adopting when GTI can give it complete,
-backend-independent semantics. Familiarity alone is not a reason to inherit
-undefined behavior, implicit conversions, preprocessor state, overload
-ranking, or lifetime traps.
-
-The authoritative implemented surface remains
-[`docs/language/grammar.ebnf`](../language/grammar.ebnf). Existing detailed
-plans remain
-authoritative for their domains:
-
-- [`docs/language/ownership-and-lifetimes.md`](../language/ownership-and-lifetimes.md)
-  for ownership, references, storage, and
-  destruction;
-- [`iterators-and-ranges.md`](iterators-and-ranges.md) and
-  [`docs/language/ranges.md`](../language/ranges.md) for iteration and
-  owner-tied range lifetimes;
-- [`optimization.md`](optimization.md)
-  for the MIR optimizer and backend migration;
-- [`build-system.md`](build-system.md) for direct and project
-  build workflows;
-- [`docs/language/native-c-interop.md`](../language/native-c-interop.md) for the implemented bounded C
-  call ABI and current linking boundary;
-- [`docs/language/raw-pointers.md`](../language/raw-pointers.md) for one-level raw pointers, lexical
-  unsafe, and audited wrapper obligations;
-- [`performance-tooling.md`](performance-tooling.md) for
-  measurement and optimization diagnostics.
-
-The archived
-[`compiler-roadmap-status.md`](archive/compiler-roadmap-status.md) preserves an
-older implementation checkpoint against this dependency plan. It is not a live
-ledger; current evidence belongs in architecture documents, tests, and the
-operational sequence rather than being inferred from the number of accepted
-syntax features.
-
-The prompt-sized, prerequisite-ordered work queue is
-[`implementation-sequence.md`](implementation-sequence.md). It is the sole
-operational sequencing authority; this roadmap continues to own durable
-capability and release gates.
+Current evidence is capability-specific. A source declaration, emission-only
+test, focused runtime probe and complete installed-toolchain matrix establish
+different things. Nothing in this roadmap is a blanket certification of every
+composition, target or release configuration. An unmerged PR is not part of
+the implemented baseline.
 
 ## What 1.0.0 Means
 
-GTI should use the 1.0.0 label only when it is a full-featured language ready
-for serious systems programming. This is a readiness claim, not a deadline, a
-fixed feature list, or permission to stabilize an intentionally incomplete
-subset. The goal is a credible language that can stand alongside C++ and Rust
-for its supported systems domains, not checklist parity or market competition.
-In particular:
+Under [ADR 012](../decisions/012-outcome-first-systems-readiness.md), 1.0 is a
+soft, revisable goal: a full-featured language usable for serious systems
+programming on its declared platforms. It is not a deadline, frozen checklist,
+C++ feature-parity target or permission to stabilize an intentionally
+incomplete subset. Publishing it activates the compatibility boundary in
+[ADR 011](../decisions/011-language-compatibility-and-editions.md).
 
-1. representative systems programs can be written through public GTI APIs;
-2. the documented language has an explicit compatibility contract;
-3. safe application code can be written without depending on generated C++
-   behavior or compiler-private capabilities;
-4. the standard library covers ownership, dynamic storage, text, containers,
-   traversal, foundational algorithms, formatting, I/O, time, and randomness;
-5. direct compiler commands remain supported while normal projects can use a
-   deterministic manifest, tests, dependencies, and a lockfile;
-6. diagnostics, formatting, highlighting, navigation, and package-aware editor
-   analysis are reliable enough for daily work;
-7. every shipped platform tests the installed compiler, LSP, parser, runtime,
-   and standard library as one versioned toolchain;
-8. the C++ backend is an implementation of GTI semantics rather than an
-   undocumented second semantic checker; and
-9. representative systems workloads have published, reproducible runtime
-   comparisons that show GTI is practically usable for its supported domains,
-   not merely semantically complete.
+The readiness claim requires:
 
-1.0.0 does **not** require self-hosting, an LLVM backend, a central package
-registry, binary GTI modules, separate compilation, a stable native ABI,
-exceptions, macros, coroutines, or a complete clone of the C++ standard
-library. The implemented one-level raw-pointer surface is a supported tool for
-native wrappers, not a requirement that systems readiness expand into C++'s
-complete pointer, cast, allocation, or manual-lifetime model.
+1. representative systems programs through documented public GTI facilities;
+2. backend-independent evaluation, ownership, numeric, unsafe and failure rules;
+3. a useful standard library whose public policy is ordinary source;
+4. deterministic direct and manifest-based compilation, tests and dependencies;
+5. reliable diagnostics, formatting, highlighting and package-aware editing;
+6. matching installed compiler, runtime, libraries and tools on shipped platforms;
+7. reproducible execution-cost evidence, not merely successful compilation; and
+8. an explicit compatibility, omission and support contract.
 
-### Systems-readiness workloads
-
-Readiness is demonstrated by programs rather than a count of syntax features.
-Before 1.0, public GTI must be able to support these representative workloads:
-
-1. a safe wrapper for a real C library using layout-stable records, opaque
-   handles, and callbacks;
-2. an arena or pool allocator implemented by an application or library;
-3. a multithreaded work queue using owned tasks, ordered scalar atomics with
-   integer fetch operations, mutex/guard access, join, and contained failure;
-4. a renderer or game-style update loop using mutable containers, iteration,
-   domain arithmetic, files, time, and allocation;
-5. a compiler-style AST or protocol modeled with payload enums and exhaustive
-   matching;
-6. a nontrivial fallible pipeline using ergonomic, cleanup-correct `expected`
-   propagation; and
-7. a trusted native gameplay module that a C or C++ engine host can load,
-   invoke repeatedly through generated versioned C wrappers, receive a
-   contained GTI failure from, destroy, unload, and reload without depending
-   on ordinary GTI or generated C++ ABI.
-
-Each workload may land as several bounded vertical slices. It is not a reason
-to hard-code a public library name or to bypass the accepted ownership,
-semantic, IR, and backend contracts. The dependency-ordered delivery and exact
-engine handoff gate for item 7 live in the
-[engine embedding campaign](implementation-sequence.md#engine-embedding-delivery-campaign).
-That bounded C wrapper does not contradict the explicit non-requirement for a
-stable native ABI for ordinary GTI values.
-
-### Outcome-first scheduling
-
-- Every substantial row names the user capability it unlocks.
-- Prefer a complete narrow path from source to executable behavior over a
-  general analysis framework with no immediate client.
-- Infrastructure-only work is scheduled when it fixes correctness or is the
-  nearest prerequisite of a named workload.
-- A safe bounded implementation may establish an extension seam; it need not
-  solve every future form before users receive the first useful form.
-- Existing safety restrictions remain durable when they improve the language.
-  The pivot is away from restriction machinery as the product, not away from
-  safety.
-
-### Runtime-performance priority
-
-Runtime performance is the current priority before unrelated language-surface
-breadth. The 2026-08-26 exact-main audit showed that this is a targeted
-delivery problem rather than evidence that the architecture requires a new
-backend: a fixed-array loop was within 0.33% of semantic and idiomatic C++,
-while the checked-vector workload measured 109.517 ms for GTI and 50.281 ms
-for semantic-equivalent C++. Managed owned threads also reduced the reference
-workload from 707.012 ms sequential to 200.902 ms with four joined workers.
-
-An independent audit then identified arithmetic failure side exits as the
-dominant candidate. A controlled reproduction held native optimization fixed:
-the checked vector measured 117.285 ms versus a 9.519 ms semantic-invalid
-overflow-branch ceiling, and a fixed-array overflow client measured 73.684 ms
-versus 15.882 ms. These results select the problem; they do not authorize
-removing defined failure or importing an unproved speculative transform.
-
-The sole operational order was `O-PERF-00` through `O-PERF-05`, followed by
-`O-GAME-01`, in
-[`implementation-sequence.md`](implementation-sequence.md). That exclusive
-compiler gate closed on 2026-08-27 after every row reached its implementation
-or measured-defer exit condition. Unrelated compiler, language, MIR, backend,
-runtime-representation, and standard-library work may resume under the normal
-queue; this roadmap intentionally does not duplicate the row details.
-
-On the published reference configuration, the fixed-array overflow client
-targets at most 1.2x idiomatic C++, core checked kernels target at most 1.5x
-idiomatic C++, and the game-style update targets at most 1.5x semantic C++ and
-2x idiomatic C++. Controls may not regress conclusively above 5%. Idiomatic
-C++ remains visible so semantic parity cannot conceal an avoidable safety cost.
-These gates run on stable hardware with raw reports; shared CI remains
-threshold-free.
+Self-hosting, an LLVM code-generation backend, separate compilation and a stable
+ABI for ordinary GTI objects are not automatic prerequisites of that claim.
+They can become scheduled goals when a supported outcome needs them. A source
+package registry already exists; its historical non-requirement is not evidence
+that it remains unimplemented. General allocation, casts and manual lifetime
+facilities likewise already exist within their current safe/unsafe contracts.
 
 ## Implemented Baseline
 
-The current language already has more than parser-level syntax. The following
-capabilities are checked by the frontend and represented through semantic
-metadata, typed HIR, and structural MIR:
+The table names delivered families and their owning contracts, not exhaustive
+API or performance parity. Remaining breadth is described in the next section.
 
-| Area | Implemented foundation |
+| Area | Implemented capability and authority |
 | --- | --- |
-| Values | fixed-width integers, `int`/`uint`, exact binary32 `float` and binary64 `double`, `bool`, `char`, checked operators and conversions, explicit wrapping/saturating/checked-result add/subtract/multiply, bounded scalar and structural-aggregate constexpr bindings/functions/constructors, target-owned `sizeof(type)`/`alignof(type)` constants including passive native records, defined modulo/shift edges, immutable-by-default bindings |
-| Control flow | `if`, frontend-selected `if constexpr`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target/configuration conditionals, active `#error` guards |
-| Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto`, one-level `T*`/`const T*` raw pointers, and declaration-identity-bound compiler-private capability types |
-| Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
-| Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
-| Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
-| Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, explicit polymorphic unique-owner upcast, checked private storage, receiver-tied reference returns, exact global/static free-function and static-method borrow returns in the single-threaded profile, single-origin read-only owner dependencies through parameters and concrete generic carrier relays, shared read-only alias endpoints, bounded exclusive reborrows over stable places, MIR loans and drops |
-| Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, counted standard streams and unbuffered file I/O, `std::unique_ptr`, trusted-only private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
-| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, passive layout-stable `[[c_abi]]` records by value or one-level pointer, recursively pointer-gated unsafe calls, non-retained counted text inputs, a generated C17/C++20/C++23 bridge header, direct-mode linker arguments, target-selected project native inputs, and manifest-declared C/C++ source compilation |
-| Tooling | source graphs with application/prelude/physical-standard-library roles, stable diagnostics including private-access `GTI-S2058`, formatter, Tree-sitter, compiler-filtered semantic tokens/hover/completion/definition, conservative synchronization effects, release packaging |
-
-The main gap is no longer “add classes” or “add generics.” One deliberately
-confined read-only owner relationship is now preserved through calls, concrete
-generic carrier instances, moves, returns, and drops. It is sufficient for the
-current read-only string/vector iterators and small factory-built cursors or
-views. Multiple aliases can now share one read-only loan and end after their
-aggregate path-aware final use. A mutable local loan can also create a bounded
-mutable or read-only child over stable root, field, and checked-dereference
-places; its parent is suspended and then reactivated after the child's final
-use only when no other active child remains. Known-disjoint named-field
-children may coexist, and disjoint projected access through the parent remains
-available. The critical remaining gap is extending precise place and
-dependency tracking to indexed elements, stored or escaping local child-
-reborrow graphs, multiple owners, and dedicated range/element loans. Those
-broader relationships are required by mutable container iterators, composable
-dynamic views, and much of a robust standard library.
-
-## Critical Path
-
-```mermaid
-flowchart TD
-  A["Implemented ownership, generics, lifecycle, HIR, and MIR"] --> B["Milestone 1: lifetimes, places, and temporaries"]
-  B --> C["Milestone 2: owner-tied iterators, views, and containers"]
-  B --> D["Milestone 3: callable parameters and generic capabilities"]
-  C --> E["Standard-library foundation"]
-  D --> E
-
-  A --> S["Layout, native records/callbacks, and public allocation"]
-  B --> S
-  D --> S
-  B --> L["Payload sums, error propagation, and domain operators"]
-  B --> Q["Bounded public concurrency profile"]
-  D --> Q
-
-  E --> F["Systems-readiness workloads pass"]
-  S --> F
-  L --> F
-  Q --> F
-
-  A --> G["Parallel track: MIR optimizer and C++ backend authority"]
-  A --> H["Parallel track: project builds, packages, and lockfiles"]
-  A --> I["Parallel track: specification, diagnostics, LSP, and testing"]
-  G --> Q
-
-  F --> J["1.0 release candidate"]
-  G --> J
-  H --> J
-  I --> J
-  J --> K["1.0.0 readiness declaration"]
-```
-
-The order matters. The initial `std::vector` uses a checked source-defined
-read-only iterator instead of relying on a raw pointer. Extending
-it to mutable traversal or views must still wait for the matching lifetime
-facts, and algorithms should not force lambdas to escape before callable
-lifetimes exist.
-
-## Milestone 0: Establish Durable Design Boundaries
-
-Before adding another broad feature family, document the remaining semantic
-choices that affect every backend and optimization level.
-
-### Completed evidence
-
-- `float` and `double` are defined as IEEE-754 binary32 and binary64. Literal
-  ingestion, NaN and signed-zero behavior, width promotion and conversion,
-  one-step round-to-nearest-ties-to-even, no-contraction execution, and the
-  supported rounding environment are stated in the language contract and
-  checked across frontend folding and the native O3 path.
-- The maintained
-  [language restriction ledger](language-alignment.md) classifies every
-  audited/current specification gap as safety/simplicity, proof, lowering,
-  library, or choice work and gives it a readiness role, owner, and evidence
-  gate. ADR 012 supersedes its former version-horizon split: bounded public
-  concurrency, native records/callbacks, allocator capability, sums,
-  propagation syntax, domain operators, and one associative container now
-  contribute directly to systems readiness.
-- [Execution §4.10](../language/execution.md#410-defined-runtime-failure), with
-  rationale in [ADR 007](../decisions/007-defined-runtime-failure.md), defines
-  stable runtime-failure categories and artifact-qualified sites,
-  cleanup-preserving non-resumable propagation, the hosted report/status and
-  observer, program/embedding/task/callback containment, allocation, and the
-  boundary with recoverable `expected` APIs. The emitter/runtime migration
-  remains systems-readiness implementation work.
-- [Execution §4.9](../language/execution.md#49-concurrency-boundary),
-  [ownership semantics](../language/ownership-and-lifetimes.md#concurrency-transfer-and-sharing),
-  and [ADR 008](../decisions/008-safe-concurrency-memory-model.md) adopt the
-  concurrency boundary. Safe GTI is data-race-free; transfer/share are
-  structural semantic facts; the implemented bounded profile is owned-only,
-  ordered-scalar-atomic, automatic-join, and detach-free; worker failure is
-  contained and re-raised at join. C-TYPE-01 and C-GLOBAL-01 implement
-  transfer/share facts, explicit pre-semantics profile selection, and the
-  concurrent global/static policy. The default remains single-threaded. A
-  public concurrent profile now includes all accepted scalar orders, integer
-  fetch operations, and scoped mutex guards. Detach, scoped cross-thread
-  borrows, pointer atomics, condition variables, and advanced reclamation
-  remain later breadth.
-- [Execution Section 4.2](../language/execution.md#42-evaluation-order), with
-  rationale in
-  [ADR 010](../decisions/010-deterministic-evaluation-and-full-expressions.md),
-  defines strict left-to-right evaluation, target-first assignment, direct
-  destination materialization, LIFO full-expression obligations, reverse
-  partial cleanup, and dependency/source-ordered program initialization. The
-  temporary/MIR/backend migration remains systems-readiness implementation
-  work.
-- [Scope Section 1.6](../language/scope-and-conformance.md#16-compatibility) and
-  [ADR 011](../decisions/011-language-compatibility-and-editions.md) publish the
-  compatibility boundary. Documented 0.x minor releases may change draft
-  meaning while patches do not intentionally break source; 1.0 freezes Edition
-  1; omission permanently selects Edition 1 once selection exists; unknown
-  selectors fail; deprecation does not alter meaning; and Edition 1
-  `#include` remains non-textual and direct-visibility. The readiness scope may
-  be revised before publication; publishing 1.0 activates this contract.
-- [Programs Section 6.2](../language/programs-and-targets.md#62-target-and-configuration-selection)
-  fixes the exact target-property/triple vocabulary and the first GTI-owned
-  scalar data layout. Supported arm64/x86_64 macOS, Linux, and Windows triples
-  share deterministic 64-bit little-endian facts checked by installed native
-  probes; unsupported configurations fail before lowering. This establishes
-  layout facts without promising cross-toolchain selection or ordinary
-  class/native-record ABI.
-- Bounded type-only `sizeof(type)` and `alignof(type)` now expose those facts
-  as exact `uint64_t` frontend constants for primitives, one-level raw
-  pointers, transparent aliases, and recursive positive concrete fixed arrays.
-  Unsupported, symbolic, zero-sized, overflowing, nominal, and backend-defined
-  operands diagnose before lowering; HIR/MIR preserve the numeric result and
-  the backend never asks native C++ to decide it.
-
-### Required work
-
-- Implement the adopted evaluation/full-expression contract through explicit
-  temporary/drop obligations, ordered MIR, and closed production-backend
-  families. Do not inherit whichever order the selected C++ mode happens to
-  provide.
-- Keep the delivered bounded public concurrency profile gated by its
-  capability/global policy, lifetime, ordered-execution, failure, runtime,
-  MIR-effect, and conformance prerequisites as later families are added.
-- Extend the implemented exhaustive MIR effect tables with conservative
-  per-function call and synchronization summaries when their first client
-  lands.
-- Keep the completed compatibility policy independent from capability
-  scheduling: revise the soft readiness scope before release rather than
-  automatically pushing an essential capability beyond 1.0.
-
-The bounded raw-pointer slice has completed one part of this design work: its
-lexical unsafe gates, non-owning/no-loan model, C ABI leaves, and programmer
-proof obligations are stated independently of C++. It does not settle manual
-allocation, casts, native layouts, callbacks, or a general provenance model.
-
-### Exit gate
-
-Every later milestone can point to a GTI rule for its evaluation, lifetime,
-failure, and cleanup behavior without citing emitted C++.
-
-## Milestone 1: Complete Lifetimes, Places, And Ownership Flow
-
-This is the highest-priority language milestone because it unlocks safe
-containers, views, iterators, and more expressive ordinary code without making
-their users prove raw-pointer invariants.
-
-### 1. Precise lexical loans
-
-- The first layer is implemented: retained borrows have stable semantic loan
-  identities, moves transfer those identities, and read-only aliases add
-  carriers to one identity. A supported local loan in a straight-line
-  statement region ends after the aggregate final proven carrier use. A use
-  inside an `if` condition or branch projects to the conditional join. HIR
-  carries either endpoint and MIR emits an explicit `EndBorrow` after the
-  corresponding statement or merge. Linear `if` arms can also end the loan on
-  each path before a branch-local invalidation, using branch entry for a path
-  with no carrier use. This endpoint planning now recurses through nested `if`
-  trees: it can end after a reachable nested merge or on the nested arms when a
-  conflict occurs before that merge. A terminating arm relies on ordinary loan
-  cleanup and does not impose state on the reachable merge. The next layer is
-  also implemented for ordinary loops: a pre-existing loan remains
-  live through every condition, body, increment, `continue`, and backedge, then
-  ends once after condition-false and `break` paths converge. A carrier created
-  inside a loop may still use precise per-iteration conditional endpoints;
-  loans first created in a `for` initializer retain lexical loop-scope cleanup.
-  The bounded switch/break layer is also implemented for one loan:
-  it ends at a switch's unified exit or after a final same-path use before an
-  invalidation immediately followed by the matching `break`. MIR normalizes
-  every relevant outgoing edge, and verification requires incoming loan states
-  to agree at the join. This does not imply general nested switch/loop analysis.
-- The bounded exclusive layer is implemented without new syntax: a mutable
-  local loan may produce a distinct mutable or read-only child over a stable
-  symbol/receiver root with named-field and checked-dereference projections.
-  Semantics validates prefix-overlap conflicts, permits known-disjoint sibling
-  children and projected parent access, and selects each child's endpoint plan;
-  HIR and MIR retain the parent relation, suspension, and full reactivation
-  only after the final active child ends.
-- M-OWN-01 fixes the complete planned place authority and M-OWN-02 implements
-  its first client: one snapshot/body-scoped value key, exact
-  equal/prefix/disjoint constant-index outcomes, conservative dynamic-index
-  may-alias, semantic source validity, concrete HIR transport, and MIR CFG
-  verification for directly owned fixed arrays. Dynamic/raw/opaque provenance
-  remains conservative.
-- Extend those graphs to indexed elements, raw or opaque provenance, stored or
-  escaping mutable dependencies, and dedicated range/element loans only when
-  their place and invalidation rules are represented directly.
-- Design explicit return-place transforms before narrowing a receiver- or
-  argument-tied result to a field selected only inside the callee body. Until
-  then, preserve the caller-visible origin place and protect the whole origin
-  when the call is made on a whole receiver or parameter.
-- Preserve readable diagnostics that identify both the borrow and the later
-  invalidating operation.
-- Keep source syntax as `T&` and `mut T&`; do not require explicit lifetime
-  parameters for the first complete model.
-
-### 2. Owner-tied borrowed values
-
-- The first slice is implemented: a direct stored-reference carrier retains one
-  read-only owner dependency. Instance methods derive it from `this`; free
-  functions and static methods may derive it from one eligible read-only
-  parameter. Concrete generic carrier relays, calls, explicit moves, returns,
-  and drops preserve the same dependency.
-- Retain the conservative stored-value boundary: no mutable owner-dependency
-  field or return derived from any local child reborrow (mutable or read-only,
-  direct or through a stored carrier), more than one or nested origin,
-  global/captured/storage escape, dependency-changing assignment, or
-  independent dependency changes between aliases. Bounded local exclusive
-  reborrows do not widen this carrier contract.
-- Extend the model only when semantic types, HIR, MIR, and diagnostics can
-  represent the additional owner graph directly.
-- Continue to treat every owner dependency as a language fact, not a library
-  trait or hidden C++ pointer.
-
-### 3. General place expressions
-
-- Make assignment target any semantically writable place, including a
-  receiver-tied call result, instead of growing one AST special case per target
-  shape.
-- Extend explicit movement from named bindings to fields and indexes when
-  definite-initialization analysis can prove the complete place is restored or
-  destroyed safely.
-- Track partial movement and reinitialization of aggregate places without
-  permitting reads of an incompletely initialized value.
-- Keep `std::move(place)` spelling, but retain GTI's rule that the source is
-  consumed rather than merely cast to an rvalue reference.
-
-### 4. Complete temporary and cleanup semantics
-
-- M-LIFE-01 now makes typed temporary/lexical obligations,
-  full-expression lifetime, normal-edge cleanup, exact destructor identity,
-  and active-drop state explicit and verified in HIR/MIR.
-- Complete ordered materialization and verify failure cleanup across failed
-  checks and partially initialized nested construction; normal `return`,
-  `break`, `continue`, short-circuit, conditional, and reverse lexical paths
-  have lifecycle coverage.
-- Remove remaining cases where correct destruction depends on native C++
-  temporary rules.
-
-### Parallel ownership extension: shared and weak ownership
-
-The temporary/drop prerequisite for shared ownership is authoritative; defined
-allocation-failure cleanup remains before its implementation. Shared ownership
-is not a prerequisite for owner-tied iterators, `std::vector`, or the Milestone
-1 exit gate.
-
-- Add source-defined `std::shared_ptr<T>` and `std::weak_ptr<T>` over trusted,
-  irreducible owner capabilities.
-- Make shared-owner copy, move, observation, locking, and drop behavior explicit
-  in semantic traits and MIR.
-- Ship weak observation with shared ownership so cyclic graphs are not
-  presented as safely solved by reference counting alone.
-- Keep allocation failure policy explicit and add recoverable `try_make_*`
-  factories returning `expected` where appropriate.
-
-### Exit gate
-
-An owner-tied iterator or view can be stored in a local, passed through an
-ordinary call that preserves its dependency, moved safely, and rejected when
-it would outlive or invalidate its owner. MIR verifies balanced loans and drops
-on every exit.
-
-## Milestone 2: Finish Containers, Iterators, And Ranges
-
-This milestone validates the lifetime model through real library types. Public
-containers remain ordinary GTI classes over `gti_internal` capabilities; the
-compiler must not recognize `std::vector` or another public wrapper by name to
-supply container behavior. The exact canonical
-`std::vector<std::string>` identity used by the implemented hosted `main`
-signature is a bounded program-boundary type check, not container magic.
-
-### Implemented language and IR substrate
-
-- Fixed-array range iteration uses a compiler-owned indexed strategy with no
-  pointer decay.
-- Use the implemented single-origin read-only carrier and free/static factory
-  propagation for source-defined read-only iterators, cursors, and focused
-  view APIs; design mutable, nested, or multi-owner variants separately.
-- Stable lvalues and owned temporaries are evaluated exactly once and retain
-  exact range ownership through cleanup.
-- Read-only and mutable per-element loans end before increment and every exit,
-  including `continue` and defined failure.
-- Mutable traversal uses `begin_mut()` and one exclusive whole-owner loan;
-  structural mutation, movement, overlapping reads, and overlapping mutable
-  iteration are conservatively rejected.
-- Nested non-overlapping read-only/mutable iteration is supported. Public
-  effect metadata for proven non-invalidating owner operations remains future
-  refinement.
-
-### First container wave
-
-The first source-defined `std::vector<T>` slice is implemented over checked
-private storage. It is move-only, constrains elements to `std::movable`, and
-provides default/size construction, observation, reserve, clear, push/pop,
-checked indexed access, indexed insertion/erasure, variadic exact in-place
-`emplace_back`, read-only iteration, and mutable iteration with conservative
-whole-owner invalidation exclusion. Storage rejects element
-types containing borrowed state. Its by-value pack avoids an intermediate `T`
-but is not C++ perfect forwarding: copyable arguments may be copied at the
-method boundary and a move-only pack is consumed by its first expansion.
-
-The remaining first-wave work is:
-
-- Complete `std::array<T, N>` with `front`, `back`, fill operations, and
-  read-only/mutable iteration.
-- Extend `std::vector<T>` with precise public invalidation effects, richer
-  construction, iterator-position mutation, and the remaining reviewed
-  foundational surface. Indexed insert/erase and mutable range iteration are
-  implemented.
-- The bounded owner-tied `std::span<T>` borrowed view is implemented for
-  vector and string owners without exposing `.data()` or pointer-and-length
-  pairs. Mutable and multi-owner views remain.
-- Add read-only iteration to `std::string_view` and mutable iteration to
-  `std::string`. Read-only `std::string` iteration is implemented through the
-  structural protocol and an owner-tied source-defined iterator.
-- Dynamic `std::string_view` construction is implemented through
-  `std::string::view()` and retains the owning string's lifetime through local
-  copies and exact relays. Nested, reseatable, and multi-owner forms remain.
-
-### Deliberate improvements over C++
-
-- No iterator may silently dangle after reallocation or owner destruction.
-- A range temporary lives for the whole loop by a frontend rule rather than a
-  backend lifetime accident.
-- Element syntax states copy versus read-only borrow versus writable borrow.
-- Initial iterators do not need category tags, ADL, customization-point
-  objects, proxy references, or raw pointer compatibility.
-
-### Exit gate
-
-`std::vector`, `std::array`, `std::string`, `std::string_view`, fixed arrays,
-and an application-defined range all pass the same structural protocol and the
-same invalidation tests, with no backend range lookup.
-
-## Milestone 3: Callable Parameters And Generic Library Capabilities
-
-Foundational algorithms need to accept predicates and operations. The current
-baseline supports both confined forms: a typed lambda or function object may
-bind to a direct by-value generic parameter, and concrete instantiation checks
-each exact operation or predicate invocation before lowering. Immutable
-parameters provide read-only invocation; parameters declared `mut` permit
-repeatable mutable invocation. This is enough for the callback half of
-foundational algorithms, but not yet a general callable model or generic range
-algorithm surface.
-
-### Confined callables
-
-The accepted
-[`callable-ownership-and-escape.md`](callable-ownership-and-escape.md)
-contract now fixes one GTI-owned concrete identity/signature model and
-read/mut/once invocation capability for lexical closures, callable objects,
-and future exact function items. The implementation remains deliberately
-confined until the lifecycle and owned-callable rows below land.
-
-- The implemented first layer permits typed lambdas and function objects on
-  direct by-value generic parameters whose lifetime is confined to one call.
-- Semantics, HIR, and MIR record required calls, exact concrete signatures,
-  selected lambda or `operator()` targets, and explicit confined call
-  boundaries.
-- Required calls may return `void`, exact `bool`, or an exact non-reference
-  value without tracked borrowed state or lambda identity whose type is
-  supplied by an explicit initializer, assignment, condition, or enclosing
-  return.
-- Immutable confined parameters require read-callable targets. A confined
-  parameter declared `mut` accepts read-callable or mut-callable targets for
-  repeatable invocation and retains the exact selected receiver capability
-  through MIR and backend emission.
-- `std::move(operation)()` on a direct by-value generic parameter requires
-  once-callable invocation. It accepts an exact reusable target or nominal
-  `operator() &&`, consumes the source under ordinary path-sensitive move
-  rules, and retains the proving move and selected capability through MIR.
-  This checkpoint permits consuming invocation only for receivers that do not
-  structurally require active cleanup; cleanup-bearing callables need the
-  future owned full-expression receiver representation.
-- Proven nested forwarding is implemented only through another direct by-value
-  generic parameter whose selected callee contract is confined. Semantic
-  analysis resolves chains independent of declaration order, and HIR/MIR retain
-  each concrete forwarding target.
-- Keep `auto`-deduced, reference, tracked borrowed-state, and inferred
-  lambda-identity results and callable references rejected. The implemented
-  owned slice permits only explicit movement through an exact same-type generic
-  result or the exact sole field of a concrete generic owner.
-- Explicit `[target = std::move(source)]` move capture is implemented now that
-  semantic/HIR/MIR capture ownership and local closure moves/drop are
-  represented. Keep other init-capture expressions unavailable.
-- Keep implicit capture defaults and untracked reference capture unavailable.
-- Keep consuming invocation confined to named source places and direct generic
-  parameters; bounded owned transport does not yet add owner extraction or
-  invocation through a stored callable field.
-- Defer a general owning `std::function`-style type erasure facility until a
-  demonstrated client justifies a separate design; the accepted bounded
-  contract deliberately preserves exact concrete callable types.
-
-### Exact generic capabilities
-
-The source concept layer now maps public standard-library declarations onto the
-first exact frontend capabilities:
-
-- `std::copy_constructible`, `std::copyable`, `std::movable`, and
-  `std::default_initializable`;
-- `std::equality_comparable` and `std::totally_ordered` based on exact operator
-  contracts, with `std::ordered` retained as a compatibility spelling; and
-- public unary/binary read, repeatable mutable, and once-callable relations,
-  composed into predicates, operations, comparators, indirect iterator
-  operations, and a consuming `once_action` utility.
-
-Lifecycle checks use GTI traits and public construction availability. Nominal
-comparison checks require exact public read-only member operators, and
-constrained `T()` construction is represented through MIR rather than inferred
-by the backend. Public aliases and implications are composed in the prelude;
-the compiler owns only irreducible facts. User code may define multi-parameter
-concepts and bounded trailing `requires` expressions with conjunction,
-disjunction, and parentheses without introducing a second metaprogramming
-language. Symbolic bodies receive only facts common to every alternative. The
-first relational
-slice supplies public input-iterator, iterator/sentinel, exact dereference, and
-forward-iterator concepts; ordinary `<std/numeric>` uses them for
-`std::accumulate`, and `<std/algorithm>` uses the forward contract for
-`std::binary_search`. Requirements affect validity only and do not rank
-overloads.
-The remaining capability work is:
-
-- structural complete-range, readable, writable, sized, and later bidirectional or
-  random-access capabilities after the range protocol is stable;
-- heterogeneous accumulation through a separately specified exact operation
-  relationship, rather than implicit conversion;
-- hashability through an exact hasher call rather than hidden ADL.
-
-ADR 020 supplies the exact qualified class-specialization mechanism needed to
-implement `std::hash<AppType>`. It does not itself define the hashability
-capability or ship hash algorithms.
-
-These capabilities should affect validity, not overload ranking. Do not import
-C++ general requires-expressions, SFINAE, subsumption, partial specialization,
-or a second template metaprogramming language merely to describe them.
-
-### Bounded compile-time programming
-
-- Scalar bindings, `static constexpr` class fields, concrete non-pack generic
-  free functions and methods, exact scoped enums, fixed arrays, structural
-  class/struct values, ordinary constexpr constructors, structured control
-  flow, recursion, and frontend-selected `if constexpr` are implemented through
-  one checked, resource-bounded GTI evaluator. Typed results retain canonical
-  declaration/type/value identity and supply concrete array extents and
-  value-generic arguments.
-- Backend materialization consumes the exact frontend-proven value; it does not
-  delegate selection or evaluation to native C++ constant evaluation.
-- Restrict constant evaluation to deterministic, side-effect-free operations
-  with explicit resource limits and useful stack diagnostics.
-- Exact scoped-enum values, value arguments, array extents, and the initial
-  `std::array<T, N>`/`std::gcd<T>` library clients use the same evaluator.
-- Declaration-owned trailing type/value defaults and closed dependent
-  `uint64_t` arithmetic are implemented by `L-GEN-01`: GTI normalizes them,
-  applies them after exact inference, and carries their complete canonical
-  identity into concrete reanalysis. Do not widen exact specialization into
-  partial or constraint-selected specialization as a side effect.
-- Compile-time reflection is delivered as the public `<std/meta>` library
-  over compiler-private operations: `constexpr for` over compile-time
-  sequences, type/field/enumerator/method/constructor/parameter metaobjects,
-  declared attributes with constant arguments, `[[reflect_private]]` and
-  `std::meta::reflectable`, and structural construction through the
-  designated-construction model. Queries fold to constants and leave no
-  run-time representation; invocation through metaobjects, runtime
-  reflection, source generation and layout are not part of it.
-
-This is library-enabling work, especially for constants and generic API
-ergonomics, but it is not allowed to block the owner-tied container and
-callable critical path when ordinary runtime source can express the same API.
-
-### Exit gate
-
-Ordinary GTI source can implement `find`, `find_if`, `count`, `all_of`,
-`for_each`, `transform`, and `sort` over supported ranges without compiler
-recognition of the public algorithm names.
-
-## Milestone 4: Safe C++-Aligned Language Completeness
-
-These additions are useful and familiar, but they should not displace the
-lifetime and container work. Each must have complete frontend, HIR, MIR,
-formatter, Tree-sitter, LSP, and diagnostic coverage.
-
-| C++-familiar surface | GTI rule |
+| Numeric and target facts | Exact binary32/binary64, checked fixed-width arithmetic and conversions, explicit arithmetic modes, target-owned data-layout facts, bounded `sizeof`/`alignof` and public layout queries. See [static semantics](../language/static-semantics.md) and [target rules](../language/programs-and-targets.md). |
+| Values and control flow | Classes, interfaces, generated lifecycle, fixed arrays, generics/defaults/type packs, payload enums and exhaustive matching, conditional values, loops and explicit movement. See [static semantics](../language/static-semantics.md). |
+| Ownership and borrowing | Checked shared/exclusive references, stable-place reborrows, indexed places, range-element loans, multiple stored dependencies and conflict-checked mixed reference aggregates. Inference remains the default; explicit origin contracts cover supported otherwise-ambiguous bridges. See [ownership](../language/ownership-and-lifetimes.md). |
+| Low-level memory | General nested raw pointers, safe inert address formation, explicit unsafe access/conversion obligations, manual construction/destruction/relocation, typed leases, source sparse storage, process/resource providers and arena/pool clients. See [raw pointers](../language/raw-pointers.md) and [allocation rationale](../decisions/022-safe-typed-allocation.md). |
+| Source-owned sequences | Vector, string and resource-vector initialized-prefix policy is source-defined over raw buffers and general lifetime operations; the former private prefix-storage engine is retired. See [the operation ledger](../architecture/standard-library-and-runtime.md#operation-ownership-ledger). |
+| Library composition | Mutable spans and buffers, read/mut iteration, AVL maps, bucketed unordered maps, other executable containers, explicit cloning, shared ownership, Expected propagation/extraction/combinators and optional values. These do not imply that every declared operation is executable; consult the [library contract](../language/standard-library.md). |
+| Callables | Exact function items, local move captures, owned read/mut/once wrappers, and bounded inline/boxed polymorphic storage. General callable and lifecycle facts remain distinct from source-selected storage policy. See [static semantics](../language/static-semantics.md) and [library architecture](../architecture/standard-library-and-runtime.md). |
+| Text and services | Source formatter customization including integral-enum defaults, numeric parsing, encoding, buffered/file I/O, clocks, synchronous processes, filesystem operations, HTTP/HTTPS, URLs and JSON. See [the library specification](../language/standard-library.md). |
+| Concurrency | Transfer/share facts, concurrent-global policy, joined owned tasks/results, ordered scalar atomics and integer fetch operations, scoped mutex guards, and bounded unsafe C-style thread/mutex/condition-variable services. See [concurrency](../language/concurrency.md). |
+| C interoperability | Target-correct C scalars, imported enum aliases/constants, passive C ABI records, opaque handles, nested pointers, native function-pointer invocation, exact GTI callback adapters, generated C/C++ headers and libclang-based binding import. Ordinary passive unions exist, but are not C ABI signature types. See [native interop](../language/native-c-interop.md). |
+| Compile-time facilities | Staged verified-MIR evaluation of the supported scalar/text/passive-record/fixed-array profile, checked read-only reference observation and selected operators. Reflection phases 1–3 supply `constexpr for`, declaration/type/field/enumerator/base/generic/callable metaobjects, attributes and structural construction through the designated-construction model. Metadata folds to constants; structural construction uses ordinary initialization/ownership and does not enable metaobject invocation or runtime reflection. See [static semantics](../language/static-semantics.md) and [the reflection plan](reflection.md). |
+| Modules and packages | Explicit source imports/exports/re-exports, named standard-library modules, workspaces/path/Git dependencies, integrity locks, source registry acquisition/publication/authentication and build programs. See [programs](../language/programs-and-targets.md) and [driver architecture](../architecture/build-and-driver.md). |
+| Compiler authority | Every executable body follows verified MIR into a self-contained `LoweredProgram`; exact generated-item, layout, ABI and representation tables keep source meaning out of backend execution. See [backend architecture](../architecture/backend.md). |
+| Optimization | Stable editing/proof replay, per-instance effects, deterministic local dataflow/SCCP, loop/range and alias/capture facts, bounded closed-call/exact-receiver facts and proof-carrying check elimination. Analysis availability does not imply every loop/memory/interprocedural transform exists. See [optimization architecture](../architecture/optimization.md). |
+| Tooling and quality | Compiler-owned hover/completion/signatures/navigation, safe actions, documentation projection, project configuration, source-level debugging foundations, colour/progress, timing/reports and typed interaction/differential/metamorphic/reduction tools. See [LSP](../architecture/lsp.md), [driver](../architecture/build-and-driver.md) and [verification](../architecture/verification.md). |
+
+## Systems-Readiness Workloads
+
+These remain program/API outcomes, not public-name compiler exceptions. Existing
+acceptance is a baseline to preserve, not proof that later extensions are free.
+
+| Outcome | Current foundation | Remaining readiness work |
+| --- | --- | --- |
+| Real C-library wrapper | Layout-stable records, opaque handles, callbacks, native pointer/scalar families and generated bindings. | Broader ownership/retention contracts and foreign storage where a real binding needs them; keep exact ABI and native fixture evidence. |
+| Application-owned arena or pool | Typed providers, leases, source allocator policy, manual lifetime and allocator clients exist. | Extend allocator-aware clients without private policy shortcuts; verify layout, rollback, exhaustion, release identity and execution cost. |
+| Multithreaded work queue | Owned tasks, ordered atomics/fetch, scoped mutex guards, join and worker failure are executable. | Scoped borrowed tasks or richer synchronization require additional explicit lifetime/entry contracts; the current owned queue does not wait for them. |
+| Renderer/game update | Mutable containers/views, source prefix storage, time/files/allocation, payloads and exact domain operators exist. | Direct final-address/inline construction, useful range/operator breadth and optimized representative frame workloads. |
+| Compiler-style AST/protocol | Generic payload enums, matching and owned transport have delivered profiles. | Record any newly needed recursive/indirect/callable composition as a concrete lifecycle prerequisite, rather than restarting the enum feature. |
+| Fallible application pipeline | Owned and checked borrowed Expected extraction, `?`, mapping and source-defined host wrappers exist. | Broaden applicable construction/borrowed-combinator profiles, recoverable owner factories and service composition with exact cleanup. |
+| Host-embedded gameplay module | Versioned ABI decision, dormant library/export configuration and semantic export roots are delivered. | Context containment, generated wrappers/header, shared-library publication, editor support and installed load/call/fail/unload/reload acceptance. See [embedding delivery](implementation-sequence.md#engine-embedding-delivery-campaign). |
+
+Each extension must state the general rule without its motivating library's
+name, preserve semantic -> HIR -> MIR authority and prove it with an unrelated
+user type where appropriate. Existing safety guarantees are not relaxed merely
+because a native backend could execute a representation.
+
+## Remaining Goal Families
+
+The operational sequence determines readiness and ordering for individual
+slices. This table is the durable scope map; it is not another numbered queue.
+
+| Goal family | Remaining scope and prerequisites |
 | --- | --- |
-| `condition ? left : right` | implemented as a lazy owned-value merge with an exact bool condition, exact arm types, explicit move-only transfer, and branch-state merging; branch-selected borrowed results remain later breadth under `R-BORROWED-MERGES` in the restriction ledger |
-| `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` | implemented with GTI checked arithmetic and shift rules and one target-place evaluation |
-| `do { ... } while (condition);` | implemented as a body-first loop CFG with the same boolean and cleanup rules as existing loops |
-| `constexpr` and `if constexpr` | scalar and structural-aggregate bindings, concrete non-pack generic functions/methods, ordinary constructors, exact scoped enums/fixed arrays, structured control flow, recursion, and frontend-selected branches are implemented with bounded GTI evaluation; references, allocation, aggregate mutation, packs, operators, polymorphism, and payload/union/cleanup-owning values remain staged, and native C++ evaluation is never the language authority |
-| `[[deprecated("message")]]` | compiler-owned API migration diagnostic, retained in hover and completion |
-| documentation comments | declaration-owned Markdown available to generated library docs, hover, and completion |
+| Final-address and inline construction | Close borrowed-pack acceptance, adopt node emplacement, extend optional-like inline publication/rollback and prove immovable wrapper eligibility. Sparse allocated final-address emplacement already exists. `L-UP-10/11/12/18` distinguish these outcomes. |
+| Borrow precision and traversal | Independently shorten selected owner dependencies, support justified reseatable/proxy/output-range forms and refine invalidation. Preserve whole-carrier dependencies while that carrier remains live. `L-UP-16` and the [range plan](iterators-and-ranges.md) own the next clients. |
+| Ownership-library completion | Recoverable unique/shared factories, executable weak ownership and selected aliasing/co-allocation. Source-policy candidates M05–M10 require per-operation proofs; they do not mandate erasing irreducible lifetime, borrowing or propagation support. See [the operation ledger](../architecture/standard-library-and-runtime.md#operation-ownership-ledger). |
+| Compile-time execution and reflection | Extend the staged MIR profile rather than permanently duplicate runtime rules in an AST interpreter. Reflection's structural construction and callable metadata are delivered within initialization/ownership/budget contracts. Follow-on codec clients, including the scheduled experimental JSON verification gate, and broader constant-execution profiles remain distinct work. See `L-CONST-01` and [reflection](reflection.md). |
+| Generic contracts and text | Conditional member operators, required literal-format validation, useful range/callable/hash relationships, named/dynamic fields and explicit decoding. Current exact formatter contracts and ordinary method requirements are delivered; broader constraints need their own source rule. `L-UP-14/15` and the [restriction ledger](language-alignment.md) own these boundaries. |
+| Native boundary breadth | C-08B foreign variables, explicit ownership transfer, retained/captured callbacks and justified foreign-thread entry; later C++ import policy/reader work. Reuse implemented nested pointer/native signature identities. See [binding import](native-bindings-import.md). |
+| Hosted and concurrent services | Read-only environment lookup is delivered; environment mutation/enumeration and child-local overrides, process capture/redirection/asynchronous ownership, traversal/watch and further network/clock clients remain; safe condition variables and scoped borrowed threading where required. Implemented unsafe C-style services are not missing safe wrappers by default. See [library gaps](../language/standard-library.md#77-library-specification-gaps) and [concurrency omissions](../language/concurrency.md#current-omissions). |
+| Efficient successful execution | Context refinement, conversion/division/shift and relational proofs, optimized failure-effect refresh, bounded inlining, loop/memory clients and source-library representations. Foundations and earlier performance campaigns are not completion of this ongoing requirement. See [optimization goals](optimization.md). |
+| Daily development latency | On-demand trusted-body facts, scoped completion, appropriate reuse, whole-program reachability and cleanup/emission scaling, with bounded diagnostics and identity/invalidation contracts. See [LSP evolution](lsp-evolution.md) and [performance tooling](performance-tooling.md). |
+| Packaging/module/platform breadth | Aggregate standard-library import and platform selection, real source exports, registry governance/backend extensions, freestanding or further target profiles, and separate compilation when a named outcome requires it. Existing manifests/cache/Git/registry/project-aware LSP are foundations, not tasks to repeat. |
 
-### Bounded native interoperability
+General requires-expressions, associated types, partial specialization, broader
+inheritance, coroutines, unrestricted reflection and ordinary GTI binary ABI
+remain separate design goals when justified. Intentional exact overloads,
+explicit movement, compiler-controlled lifecycle and absence of textual macros
+are not automatically missing features. Do not reintroduce withdrawn custom
+copy/move bodies as an incidental prerequisite of a library optimization.
 
-The bounded C ABI layer is implemented with familiar `extern "C"`
-linkage blocks without promising a C++ or GTI binary ABI:
+## Runtime Performance And Compiler Cost
 
-- only bodyless free-function declarations bind, using the exact identifier as
-  one program-global native C symbol;
-- parameters and results use a closed fixed-width integer, `float`, and `double` allowlist;
-  `void` is also a result, and `std::string_view` is an immutable non-retained
-  input lowered to the explicit `gti_c_string_view` counted record;
-- `[[c_abi]] struct` opts a closed passive field family into compiler-owned
-  source-order layout; valid records may cross by value or one-level pointer,
-  while initialization policy remains in safe wrappers/native factories;
-- `[[c_opaque]] struct Name;` opts one incomplete nominal handle into
-  pointer-only passage. The generated C branch emits an incomplete typedef and
-  the C++ branch preserves its exact namespace, so either language can complete
-  private implementation state without exposing object layout;
-- one-level raw pointers may cross when their pointee is `void`, an allowed
-  scalar, a valid native record, or an opaque handle; pointer-bearing calls,
-  including records containing pointers, require lexical `unsafe`, while
-  pointer-free record, scalar-only, and counted-text calls remain safe;
-- `c_string` carries a NUL-terminated `const char*` boundary, and
-  `[[c_array(count)]]` admits the exact returned pointer-plus-count family,
-  including one bounded outer pointer, without introducing general nested
-  pointers;
-- ordinary GTI classes/structs, enums, generics, ownership wrappers,
-  `expected`, references, array parameters, bool, char, variadics, general
-  pointer-to-pointer and function-pointer types, callbacks, and backend C++
-  types do not cross the boundary;
-- direct mode links native libraries through explicit compiler arguments after
-  `--`; project manifests provide structured package/profile/target native
-  inputs selected from the resolved target; source-level native includes and
-  linker flags remain unavailable; and
-- direct `--emit-native-header` emits the checked records and prototypes once
-  for both C17 and C++20/C++23 adapter sources. The C++ branch preserves source
-  namespaces but still exposes only C linkage; classes, overloads, templates,
-  exceptions, and ownership stay behind the adapter rather than crossing it;
-  and
-- the standard runtime declarations use this same surface. The legacy
-  compiler-owned `@runtime` allowlist remains accepted as a compatibility
-  mechanism, not the only native path and not a general FFI.
+[ADR 012's performance revision](../decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09)
+is current policy. Reasoned operation families and a cost model can justify
+optimization architecture before a benchmark exposes a regression. Measurements
+validate results; they are not permission to start. The old exclusive O-PERF
+campaign is a historical completion, not a permanent freeze on language work.
 
-Opaque pointers remain nullable and non-owning; ordinary GTI RAII wrappers own
-factory/null/destroy policy. The exact implemented rules live in
-[`docs/language/native-c-interop.md`](../language/native-c-interop.md) and
-[`docs/language/raw-pointers.md`](../language/raw-pointers.md). Remaining work
-includes callback types, annotated opaque-handle ownership transfer, casts,
-array parameters/enums at the boundary, and manual lifetime. General nested
-pointers remain deliberately unavailable beyond the annotated C-array return.
-Those additions need explicit semantic, lifetime, ABI, build, and diagnostic design
-rather than widening the current allowlist by accident.
+Acceptance measures successful-path work, allocations, metadata, dispatch,
+cleanup/failure isolation, code size and applicable compile/memory costs. Keep
+semantic C++ and idiomatic C++ comparisons distinct. Preserve observable order,
+first failure, partial writes, active lifetime and exact cleanup. A material
+runtime regression requires a correction or explicit owner acceptance; a green
+correctness suite or follow-up issue is not a waiver.
 
-Other conveniences enter when they unlock a real program or remove significant
-friction and can be specified coherently. They are not allowed to delay a more
-valuable systems-readiness slice merely to increase C++ syntax coverage.
+The existing reference-workload readiness objectives remain visible: fixed-array
+overflow at most 1.2x idiomatic C++, core checked scalar/container kernels at
+most 1.5x idiomatic, and game update at most 1.5x semantic/2x idiomatic C++, with
+the recorded control-regression policy. These are workload-specific goals on a
+published reference configuration, not a universal speedup threshold or shared
+CI wall-time gate. Revalidate on the actual combined toolchain; historical
+measurements do not certify every later source-storage or optimizer change.
+
+Compiler/edit latency is measured separately from generated execution. Tests
+must keep exact-head identities, bounded worker accounting, optimized compiler
+builds and reproducible evidence. Rebuildable outputs are not recovery evidence;
+retain the source/revision, settings, reports and logs needed to explain results.
+
+## Historical Milestone Text Retained During Reconciliation
+
+The following milestone and track sections preserve the complete incoming
+upstream planning text at `fe2d8751`. They are historical context, not a second
+current queue or specification: early private-storage, callable, allocation,
+MIR, constraint and version-horizon restrictions below have later delivered
+contracts. The reconciled capability/remaining-goal tables above and the
+implementation sequence own current status. The same excerpt is preserved in
+the historical roadmap so no upstream planning content is lost.
 
 ## Milestone 5: Standard-Library Foundation
 
@@ -1022,94 +438,58 @@ standard-library need, and tooling impact.
 
 ## Operational Sequence
 
-The maintained goals, prerequisites, and current ready queue live in
-[`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
-the source executable-body cutover is complete. Every body identity
-recorded by `tests/mir_census_baseline.json` uses verified optimized MIR and
-the general C++ body emitter. The no-MIR emitter and executable AST statement
-route are gone; the exact census and two-endpoint corpus oracle guard that
-result.
+Use the [implementation sequence](implementation-sequence.md) for the next
+prompt. Select an unfinished outcome with met external prerequisites, or
+co-deliver its explicitly scoped prerequisite. Diagnose actual failures instead
+of relying on a dated absence list. Do not mark a whole family complete from one
+fixture or require a monolithic rewrite before a useful vertical slice.
 
-MIR failure effects cover functions, constructors, and destructors and permit
-conservative true summaries while rejecting unproved false claims and
-propagation drift. Broader double-failure, embedding, task, and callback
-containment remain explicit feature work rather than retroactive claims of the
-hosted boundary.
-
-The generated-item inventory is target-independent and exhaustive for hosted
-entry, program initialization, structural/callable adapters, lifecycle cleanup,
-native callbacks, and concrete generic functions/constructors. ADR 016 is
-complete: C++ declaration/template assembly consumes the immutable lowered
-declaration, symbol, instance, layout, ABI, MIR, and generated-item tables, and
-the transitional frontend tuple has been removed. A future backend starts from
-that same self-contained `LoweredProgram` contract.
-
-Do not copy a numbered implementation queue back into this roadmap. Update the
-operational plan as rows complete and update this document only when a durable
-capability or release gate changes.
+The grammar specifies source structure, not all implemented semantics. Canonical
+language documents, source and tests establish actual support; detailed plans
+describe proposed/incomplete work. Update those roles as behavior lands and
+retain dated evidence separately from the active queue.
 
 ## Soft 1.0 Readiness Gates
 
-### Language
+### Language And Library
 
-- Every accepted construct has documented frontend semantics and HIR/MIR
-  representation.
-- Integer, floating-point, evaluation-order, temporary, borrow, move, and drop
-  behavior is backend-independent.
-- The safe concurrency/data-race boundary, ownership transfer/share rules, and
-  bounded public thread/task, ordered scalar atomic/fetch, and mutex-guard
-  profile are executable and verified.
-- All public standard-library features are expressible through ordinary GTI
-  declarations plus narrowly audited runtime/internal capabilities.
-- A compatibility and future-edition policy is published.
+- Every admitted construct has backend-independent meaning and applicable
+  semantic/HIR/MIR verification; invalid supported-source use diagnoses before
+  native compilation rather than falling through to another language checker.
+- Safe/unsafe obligations, exact arithmetic, evaluation order, movement,
+  borrowing and cleanup remain explicit. Unsafe does not disable provable facts.
+- Required library components are executable, documented and covered across
+  applicable primitive, aggregate, move-only, polymorphic, empty, failure and
+  boundary profiles. A bodyless declaration is not completed library support.
+- Public examples use documented general facilities, not private names. Library
+  policies and performance are validated independently of the backend choice.
+- Compatibility, intentional restrictions and outstanding profiles are honest.
 
-### Standard library
+### Compiler, Runtime And Performance
 
-- The required foundation and host-service modules are implemented, documented,
-  and tested with primitive, copyable aggregate, move-only, polymorphic, empty,
-  failure, and boundary cases.
-- Public examples never depend on `gti_internal`.
-- Public names are not compiler-recognized shortcuts.
-- API removals and changes follow the compatibility policy.
+- O0 is correct without optimizer rescue; higher optimization preserves exact
+  observable behavior and independently verifies transformations.
+- Every executable body and generated artifact uses the authoritative lowered
+  contract. New backends start there rather than recreate source semantics.
+- Defined failure, allocation abort, recovery through Expected, callback/task
+  firewalls and future embedding containment retain distinct documented rules.
+- Representative workload execution/cost meets its stated acceptance, with exact
+  identities, raw observations, controls and explicit platform limits.
+- Required sanitizers, malformed-IR, feature-interaction, differential and
+  installed-toolchain gates have no unresolved release-blocking failure.
 
-### Compiler and runtime
+### Projects, Tooling And Release
 
-- Invalid GTI is rejected before native compilation with stable source-facing
-  diagnostics.
-- The C++ backend consumes one authoritative checked representation for every
-  executable operation family.
-- O0 correctness does not depend on native optimization; higher levels preserve
-  identical observable behavior.
-- Compiler output, package resolution, and report formats are deterministic
-  where documented.
-- Sanitizer, fuzz, differential, and installed-toolchain tests have no open
-  release-blocking failures.
+- Direct and manifest build/check/run/test, dependencies, locks, offline use,
+  publication/cache integrity and contained cleanup work from installed tools.
+- CLI/LSP share compiler and driver facts; diagnostics, actions, completion,
+  navigation, formatting and Tree-sitter agree during valid and incomplete edits.
+- Supported archives contain matching compiler, LSP, parser, runtime, source
+  library, metadata, checksums and licences; platform contracts are exercised.
+- Release candidates state omissions, compatibility window and performance
+  acceptance rather than delegate gaps to generated C++ or count syntax.
 
-### Project and tooling
-
-- Direct compile commands remain stable.
-- Manifest build/check/run/test, path and locked Git dependencies, offline
-  builds, and safe cleanup work from installed toolchains.
-- Formatter, parser, highlighting, diagnostics, hover, completion, definition,
-  references, and rename agree with compiler semantics.
-- Project discovery gives CLI and LSP the same target and source-root facts.
-
-### Release
-
-- All supported archives contain matching compiler, LSP, parser, runtime,
-  standard library, metadata, checksums, and licenses.
-- Release candidates pass a documented compatibility window with no unplanned
-  source breakage.
-- On a published reference configuration, fixed-array overflow reaches at most
-  1.2x idiomatic C++, core checked scalar/container kernels reach at most 1.5x
-  idiomatic C++, and the game-style update reaches at most 1.5x
-  semantic-equivalent and 2x idiomatic C++. Correctness/failure records match,
-  controls stay within the recorded regression policy, and no constituent
-  misses a gate without a completed fix or measured-defer record.
-- Known omissions are documented as omissions rather than silently delegated
-  to the C++ backend.
-
-The gates and feature scope may change as the workloads expose missing pieces.
-When every gate and workload is satisfied, 1.0.0 is both a meaningful systems-
-readiness claim and a declared compatibility boundary rather than a statement
-that GTI has accumulated enough syntax.
+When these workloads and gates are satisfied, 1.0 is a meaningful readiness and
+compatibility claim. The goals may be revised before that publication; the
+revision must preserve truthful implementation status and the mandatory safety,
+verification and performance contracts.

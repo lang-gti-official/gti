@@ -2,6 +2,13 @@
 
 Status: Accepted
 
+Implementation note (2026-10-11): this records a completed migration step.
+The compatibility body route mentioned below is removed under ADR 016; static
+members, entry and admitted pack-bearing bodies now use verified MIR and the
+lowered-program contract. A newly unsupported shape fails closed rather than
+falling back to compatibility emission. The generic-owner failure sibling
+rationale remains useful, but its initial admission pool is not a current queue.
+
 ## Context
 
 ADR 017 migrates failure-capable bodies per body: the transformed private
