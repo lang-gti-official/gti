@@ -1,0 +1,23 @@
+#include <std/string>
+#include <std/vector>
+enum class errc { bad, missing };
+struct point { int32_t x = 0; int32_t y = 0; };
+struct holder {
+  std::vector<int32_t> values;
+  holder(std::vector<int32_t> values) : values(std::move(values)) {}
+  holder(holder& other) = delete;
+};
+expected<point, errc> first(mut holder& h) {
+  if (h.values.size() == std::size_t(0)) { return unexpected(errc::missing); }
+  return point();
+}
+expected<point, errc> direct(std::vector<int32_t> values) {
+  mut holder h{std::move(values)};
+  return first(h);
+}
+int main() {
+  std::vector<int32_t> a = {7};
+  mut auto x = direct(std::move(a));
+  if (!x) { return 1; }
+  return x.value().x == 0 ? 0 : 2;
+}

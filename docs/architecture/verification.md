@@ -1,5 +1,46 @@
 # Compiler Verification
 
+## Expected returns across scope cleanup (0.399.4)
+
+- **Defects.** Three verified programs stopped at the C++ backend with
+  `GTI-B0001` ("outside the complete C++ text vocabulary"). Each returns an
+  `expected` call result while a local that owns a `std::vector` still needs
+  its fallible drop:
+  - `return first(h);` with an `expected<point, errc>` payload, where `point`
+    is a passive struct and `errc` an enum. The bound-and-moved form already
+    built; the direct form failed with an `int32_t` error too.
+  - `expected<role, errc>` with an enum payload, in the bound-and-moved form
+    and inside a range loop.
+- **Causes and rules.**
+  - `requiresMirFailureControlFlow` gave a failure-capable call returning a
+    lexically dropped `Expected` an `Invoke` only for scalar or void payloads,
+    so `return role_first(h);` had no failure edge. An enum payload is the same
+    passive value and now gets the edge; the verifier and lowering share the
+    rule.
+  - The transformed failure boundary admitted passive `Expected` results only
+    for scalar, void and read-only borrowed successes.
+    `cppMirPassiveExpectedBoundaryResult` adds enums with a boundary row, for
+    function and lambda bodies alike.
+  - `cleanupFreeExpectedClassAlternatives` required every non-class
+    alternative to be scalar, so an enum error disqualified the cleanup-free
+    `Expected<Class, E>` staging slot. Integral enums now qualify.
+  - The cleanup-free `Expected<Class, E>` slot had call, constructor and
+    assignment consumers but no Return consumer. Its sole Return now consumes
+    it after MIR's scope cleanup, unless `placementDirectReturnCall` already
+    constructs into the caller's storage. The existing class publication then
+    moves the slot into the caller's placement result.
+- **Regression tests.** `expected_scoped_return_runtime` builds four fixtures
+  under C++20 and C++23 at O0, O1 and O3, plus the no-elide and ASan/UBSan
+  modes. Three fixtures are the reduced reproducers. The fourth covers direct,
+  bound and loop returns for both payload kinds on success and error paths,
+  plus an enum-payload lambda. Its last stage fails inside a guard destructor
+  after the result exists, and the test expects the defined failure.
+- **Pre-existing gap left out.** A lambda returning `Expected<Class, E>`
+  whose class has no default constructor, called as a by-value argument
+  (`code(lam(a))`), emits a default-constructed native `expected`. The native
+  compile then fails. It fails the same way without this change, and with no
+  pending cleanup. The new fixture keeps its lambda case to an enum payload.
+
 ## Record-published field initializers under optimization (0.399.1)
 
 - **Defect.** A literal-backed `std::string_view` field default read back

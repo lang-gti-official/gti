@@ -1,0 +1,161 @@
+#include <std/string>
+#include <std/vector>
+
+// An Expected call result returned while other locals still need cleanup:
+// directly (`return first(h);`), bound and moved, and from inside a loop.
+// The success alternative is a passive class or an enum; the error is an enum.
+// Stage 2 fails in a cleanup that runs after the returned result exists.
+
+mut int32_t stage = 0;
+
+enum class errc { bad, missing };
+enum class role { player, npc };
+struct point {
+  int32_t x;
+  int32_t y;
+  point(int32_t x, int32_t y) : x(x), y(y) {}
+};
+
+struct holder {
+  std::vector<int32_t> values;
+  holder(std::vector<int32_t> values) : values(std::move(values)) {}
+  holder(holder& other) = delete;
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    std::println(2);
+    int32_t divisor = stage == 2 ? 0 : 1;
+    int32_t checked = 2 / divisor;
+  }
+};
+
+expected<point, errc> point_first(mut holder& h) {
+  if (h.values.size() == std::size_t(0)) { return unexpected(errc::missing); }
+  return point(h.values[std::size_t(0)], int32_t(h.values.size()));
+}
+
+expected<point, errc> point_peek(holder& h) {
+  if (h.values.size() == std::size_t(0)) { return unexpected(errc::missing); }
+  return point(h.values[std::size_t(0)], int32_t(h.values.size()));
+}
+
+expected<point, errc> point_direct(std::vector<int32_t> values) {
+  mut holder h{std::move(values)};
+  return point_first(h);
+}
+
+expected<point, errc> point_bound(std::vector<int32_t> values) {
+  mut holder h{std::move(values)};
+  mut auto result = point_first(h);
+  return std::move(result);
+}
+
+expected<point, errc> point_loop(holder& h) {
+  for (auto& v : h.values) {
+    if (v == 7) {
+      mut auto result = point_peek(h);
+      return std::move(result);
+    }
+  }
+  return unexpected(errc::bad);
+}
+
+expected<point, errc> point_guarded(std::vector<int32_t> values) {
+  Guard guard{};
+  mut holder h{std::move(values)};
+  return point_first(h);
+}
+
+expected<role, errc> role_first(mut holder& h) {
+  if (h.values.size() == std::size_t(0)) { return unexpected(errc::missing); }
+  return h.values[std::size_t(0)] == 7 ? role::npc : role::player;
+}
+
+expected<role, errc> role_peek(holder& h) {
+  if (h.values.size() == std::size_t(0)) { return unexpected(errc::missing); }
+  return h.values[std::size_t(0)] == 7 ? role::npc : role::player;
+}
+
+expected<role, errc> role_direct(std::vector<int32_t> values) {
+  mut holder h{std::move(values)};
+  return role_first(h);
+}
+
+expected<role, errc> role_bound(std::vector<int32_t> values) {
+  mut holder h{std::move(values)};
+  mut auto result = role_first(h);
+  return std::move(result);
+}
+
+expected<role, errc> role_loop(holder& h) {
+  for (auto& v : h.values) {
+    if (v == 7) {
+      mut auto result = role_peek(h);
+      return std::move(result);
+    }
+  }
+  return unexpected(errc::bad);
+}
+
+expected<role, errc> role_guarded(std::vector<int32_t> values) {
+  Guard guard{};
+  mut holder h{std::move(values)};
+  return role_first(h);
+}
+
+int32_t point_code(expected<point, errc> result) {
+  if (!result) { return result.error() == errc::missing ? -1 : -2; }
+  return result.value().x * 10 + result.value().y;
+}
+
+int32_t role_code(expected<role, errc> result) {
+  if (!result) { return result.error() == errc::missing ? -1 : -2; }
+  return result.value() == role::npc ? 1 : 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  if (stage != 0) {
+    std::vector<int32_t> guarded_point = {7, 8, 9};
+    std::println(point_code(point_guarded(std::move(guarded_point))));
+    std::vector<int32_t> guarded_role = {7};
+    std::println(role_code(role_guarded(std::move(guarded_role))));
+    return 0;
+  }
+  std::vector<int32_t> a = {7, 1};
+  std::vector<int32_t> b = {};
+  std::vector<int32_t> c = {3, 4, 5};
+  std::vector<int32_t> d = {};
+  std::println(point_code(point_direct(std::move(a))));
+  std::println(point_code(point_direct(std::move(b))));
+  std::println(point_code(point_bound(std::move(c))));
+  std::println(point_code(point_bound(std::move(d))));
+  std::vector<int32_t> e = {7};
+  std::vector<int32_t> f = {};
+  std::vector<int32_t> g = {2};
+  std::vector<int32_t> h = {};
+  std::println(role_code(role_direct(std::move(e))));
+  std::println(role_code(role_direct(std::move(f))));
+  std::println(role_code(role_bound(std::move(g))));
+  std::println(role_code(role_bound(std::move(h))));
+  std::vector<int32_t> hit = {1, 7};
+  std::vector<int32_t> miss = {1, 2};
+  holder found{std::move(hit)};
+  holder missing{std::move(miss)};
+  std::println(point_code(point_loop(found)));
+  std::println(point_code(point_loop(missing)));
+  std::println(role_code(role_loop(found)));
+  std::println(role_code(role_loop(missing)));
+  auto role_lambda = [](std::vector<int32_t> values) -> expected<role, errc> {
+    mut holder h{std::move(values)};
+    return role_first(h);
+  };
+  std::vector<int32_t> i = {7};
+  std::vector<int32_t> j = {};
+  std::println(role_code(role_lambda(std::move(i))));
+  std::println(role_code(role_lambda(std::move(j))));
+  return 0;
+}
