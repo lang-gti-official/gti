@@ -106,7 +106,7 @@ public:
 
         def build_failure(case):
             name, expression, label, flags, native = case
-            fixture = output / f"{name}.gti"
+            fixture = output / f"{name}-{label}.gti"
             expected_stdout = ""
             if name in step_states:
                 reverse, decrement, position, begin, end = step_states[name]
