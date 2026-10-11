@@ -2384,39 +2384,11 @@ stagedConstructorFieldPublication(const MirProgram &program,
       !instruction.result || !onlyRootRecordUses(body, *instruction.result)) {
     return nullptr;
   }
-  const MirConstructorInstance *constructor =
-      program.findConstructorInstance(owner);
-  if (constructor == nullptr) {
-    return nullptr;
-  }
-  for (std::size_t index = 0; index < constructor->initializers.size();
-       ++index) {
-    const MirConstructorInitializer &initializer =
-        constructor->initializers[index];
-    if (initializer.kind == ConstructorInitializerTargetKind::Field &&
-        initializer.field != 0 && initializer.arguments.size() == 1 &&
-        initializer.arguments.front() == instruction.hirValue &&
-        !initializer.storesReference) {
-      // One source expression can produce several MIR records (for example,
-      // ++value has an arithmetic value and a discarded assignment result).
-      // An explicit Initialize owns the field write for the entire source
-      // initializer, not just the particular SSA value it consumes. Never
-      // publish a second time from a metadata-only sibling record.
-      for (const MirBlock &block : body.blocks) {
-        if (std::any_of(block.instructions.begin(), block.instructions.end(),
-                        [&](const MirInstruction &candidate) {
-                          return !candidate.tombstone &&
-                                 candidate.kind ==
-                                     MirInstructionKind::Initialize &&
-                                 candidate.constructorInitializer == index + 1;
-                        })) {
-          return nullptr;
-        }
-      }
-      return &initializer;
-    }
-  }
-  return nullptr;
+  // The MIR query owns the record-publication rule (including the explicit
+  // Initialize that suppresses a metadata-only sibling record), so the
+  // optimizer retains exactly the values this emitter publishes from.
+  return mirRecordPublishedConstructorInitializer(program, body, owner,
+                                                  instruction);
 }
 
 // A stores-reference initializer is represented by the constructor's paired

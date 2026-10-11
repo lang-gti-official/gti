@@ -9,14 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.399.1 — Returning a construction built from an `expected`
+## 0.400.1 — Returning a construction built from an `expected`
 
 - A construction from a by-value `expected<T, E>` argument can now be returned
   directly or used as a member initializer, as in
   `return Holder(make_item());` or `owner() : held(Holder(make_item())) {}`,
   when `T` is a class that needs no cleanup. Such programs used to fail
   native compilation, or report GTI-B0001, depending on how the `expected`
-  was produced (#6). It also works when `T` has no default constructor, in
+  was produced. It also works when `T` has no default constructor, in
   both the value and the error state, and for a named local copied or moved
   in. A returned construction whose payload owns resources, such as a
   `std::string` field, now builds too.
@@ -25,6 +25,15 @@ for what minor and patch releases mean.
   emitting C++ that the native compiler rejects. Assigning such a
   construction to an existing variable still reports GTI-B0001, and so does a
   member initializer whose `expected` payload owns resources.
+
+## 0.399.2 — Repository moved to `lang-gti-official`
+
+- GTI's canonical repository is now
+  [github.com/lang-gti-official/gti](https://github.com/lang-gti-official/gti).
+  The previous `gti-lang-official` organization is no longer available.
+- The Neovim installer and the lazy.nvim spec now download from the new
+  repository. Update an existing plugin spec to
+  `https://github.com/lang-gti-official/gti.git`.
 
 ## 0.399.0 — Declared attributes and richer reflection
 

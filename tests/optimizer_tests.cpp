@@ -8653,8 +8653,128 @@ int main() {
       "coherence replay should reject forged unreachable-block evidence");
 }
 
+// A constructor record can publish a field initializer that the body leaves
+// unstaged, so the publishing value has no MIR use. The dead-computation
+// rewrite, the pass and coherence replay must all keep that value.
+void testRecordPublishedInitializerRetained() {
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      lang::Frontend({.target = lang::TargetInfo::host()})
+          .analyze("record-published-initializer.gti", R"gti(
+#include <std/string>
+struct P { std::string_view name = "Ada"; uint32_t health = 7; };
+int main() {
+  P p{};
+  std::print(p.name);
+  return 0;
+}
+)gti",
+                   {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "record-published initializer fixture should lower to verified MIR");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << "record-published initializer: " << diagnostic.message
+                << '\n';
+    return;
+  }
+
+  // Locate the generated default constructor's unstaged text-view literal:
+  // the record names its HIR argument and no Initialize carries it.
+  std::optional<lang::MirBodyAddress> address;
+  lang::MirInstructionId literal = 0;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    if (!constructor.generatedDefault) {
+      continue;
+    }
+    const lang::MirBodyAddress candidate{.kind = lang::MirBodyKind::Constructor,
+                                         .owner = constructor.id};
+    const lang::MirBody *body = lang::findMirBody(frontend.mir, candidate);
+    if (body == nullptr) {
+      continue;
+    }
+    for (const lang::MirBlock &block : body->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        const lang::MirConstructorInitializer *published =
+            lang::mirRecordPublishedConstructorInitializer(
+                frontend.mir, *body, constructor.id, instruction);
+        if (published == nullptr ||
+            published->targetType != lang::SemanticType::StringView ||
+            instruction.operation != lang::MirOperation::Literal ||
+            !instruction.result || !body->usesOf(*instruction.result).empty()) {
+          continue;
+        }
+        address = candidate;
+        literal = instruction.id;
+      }
+    }
+  }
+  expect(address.has_value() && literal != 0,
+         "the generated default constructor should publish its text-view "
+         "field from an unstaged literal with no MIR use");
+  if (!address) {
+    return;
+  }
+
+  lang::MirProgram rewritten = frontend.mir;
+  expect(!lang::rewriteMirDeadInstruction(rewritten, *address, literal),
+         "the canonical dead-instruction rewrite should refuse a value the "
+         "constructor record publishes from");
+  expect(rewritten == frontend.mir,
+         "a refused dead-instruction rewrite should leave MIR unchanged");
+
+  const lang::OptimizationPipeline pipeline;
+  const lang::OptimizedProgram optimized =
+      pipeline.run({.hir = frontend.hir,
+                    .mir = frontend.mir,
+                    .level = lang::OptimizationLevel::O1});
+  expect(optimized.valid(), "optimizing the fixture at O1 should verify");
+  const lang::MirBody *body = lang::findMirBody(optimized.mir, *address);
+  const lang::MirInstruction *retained = nullptr;
+  if (body != nullptr) {
+    for (const lang::MirBlock &block : body->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == literal) {
+          retained = &instruction;
+        }
+      }
+    }
+  }
+  expect(retained != nullptr && !retained->tombstone &&
+             retained->operation == lang::MirOperation::Literal,
+         "O1 should keep the literal that publishes the text-view field");
+  expect(std::none_of(optimized.report.transformations.begin(),
+                      optimized.report.transformations.end(),
+                      [&](const lang::MirTransformRecord &record) {
+                        return record.body == *address &&
+                               record.instruction == literal;
+                      }),
+         "no transformation record should remove the publishing literal");
+  const lang::OptimizationPassReport *deadComputations =
+      findPass(optimized.report, "dead-unused-computations");
+  expect(deadComputations != nullptr &&
+             std::any_of(deadComputations->remarks.begin(),
+                         deadComputations->remarks.end(),
+                         [&](const lang::OptimizationRemark &remark) {
+                           return remark.kind ==
+                                      lang::OptimizationRemarkKind::Missed &&
+                                  remark.body == *address &&
+                                  remark.instruction == literal &&
+                                  remark.message.find(
+                                      "constructor record publishes "
+                                      "an unstaged field initializer") !=
+                                      std::string::npos;
+                         }),
+         "the dead-computation pass should report the retained publishing "
+         "value instead of removing it");
+}
+
 int main() {
   lang::installCrashHandlers("gti_optimizer_tests");
+  testRecordPublishedInitializerRetained();
   testComparisonComputeFold();
   testBinaryFloatComputeFold();
   testBranchLiteralFold();
