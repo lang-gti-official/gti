@@ -1508,6 +1508,15 @@ such as a scalar payload with a cleanup-free class error, keeps its ordinary SSA
 local. An owning alternative keeps MIR's value drop and the value-rooted
 transfer slot described above.
 
+A callable value invocation produces the same fresh temporary as a source
+call: a closure literal, a stored closure, or a callable parameter invoked as
+`code(make(a))` uses that slot under the same consumer, observer, extraction
+and discard proofs. The enclosing body's ABI decides how the invocation
+publishes into it. A transformed invocation passes the slot's construction
+address and marks it constructed on its success edge; a plain invocation
+constructs it from the returned value. A raising callable leaves the slot
+unconstructed, and a discarded result retires as soon as it is published.
+
 The same slot may instead feed one by-value parameter of an exact ordinary
 source constructor, mirroring the owning route's constructor consumer. The
 construction must match the constructor's parameter types and owner, carry no
