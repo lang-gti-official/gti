@@ -85,15 +85,18 @@ prerequisites and measured clients; they are not added to this implementation.
 
 ## Scoped concurrency and composable shared jobs (2026-10-11)
 
-**State:** the public APIs and production execution paths are implemented in
-PR #20 for 0.405.0. The reflected-JSON reconciliation passed all 51 combined-head
-integration gates pass, including native/sanitizer, editor, installed-consumer
-and complete corpus checks. The final reconciled-source full sweep passes all
-648 remote checks plus the separate local debugger check. Clean-head runtime,
-allocation, code-size and build-memory evidence passes. Main subsequently
-advanced to 0.404.0 with constexpr builders and owning-class conditional fixes;
-the final reconciliation preserves those changes and requires their affected
-families plus scoped/ownership/corpus integration checks before publication.
+**State:** the public APIs and production execution paths are implemented and
+validated in PR #20 for 0.405.0. The reflected-JSON reconciliation passes all 51
+combined-head integration gates and all 648 remote full-sweep checks, plus the
+separate local debugger check. Subsequent constexpr-builder and owning-class
+conditional integration passes all 125 selected checks on `8eaa07a3`, including
+complete corpus, native/sanitizer, editor and installed-consumer coverage.
+Final reconciliation with main's expected-payload fix (0.404.1) passes all 35
+affected backend/concurrency checks on `e76e1493`, direct example O0/O3 execution
+and conclusive exact-head runtime/allocation/code-size evidence. Scoped and
+owned-thread runtime is effectively equal; scoped transport uses fewer counted
+allocations. Linux build-time/RSS measurements retain their original source
+identity. None of the earlier full sweeps is relabeled as a run of later source.
 See [the acceptance record](../architecture/verification.md#scoped-concurrency-04050).
 The owner requested both scoped parallel borrowing and shared-state/callable
 composition. This is one delivery goal, not completion of either item through
