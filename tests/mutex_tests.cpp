@@ -441,6 +441,90 @@ int main() { std::mutex<payload> value{payload(4)}; return 0; }
       "retiring its parameter shell cannot require a copy constructor");
 }
 
+void testPassiveClosureParameterStorage() {
+  const auto frontend = analyze("passive-closure-storage.gti", R"gti(
+#include <std/thread>
+struct MoveOnly {
+  int number = 42;
+  MoveOnly() = default;
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+int main() {
+  MoveOnly value{};
+  mut std::thread_result<int> worker{};
+  if (!worker.start([owned = std::move(value)]() -> int {
+        return owned.number;
+      })) return 1;
+  auto result = worker.join();
+  return result && result.value() == 42 ? 0 : 2;
+}
+)gti");
+  expect(frontend.canGenerateCode(), "passive closure parameter lowers");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+  const auto lowered = gti_test::lowerProgram(frontend, frontend.mir,
+                                              frontend.mir, concurrentTarget());
+  bool found = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &stage : block.instructions) {
+        if (stage.kind != lang::MirInstructionKind::CallInput ||
+            stage.info.type.kind != lang::SemanticType::Lambda ||
+            !stage.preparedParameterDrop || !stage.destination ||
+            stage.lifecycle.size() != 1 ||
+            stage.lifecycle.front().kind !=
+                lang::MirLifecycleEventKind::Initialize)
+          continue;
+        const auto *prepared =
+            function.body.findDropObligation(*stage.preparedParameterDrop);
+        if (!prepared || prepared->dropType.requiresActiveCleanup)
+          continue;
+        found = true;
+        expect(stage.info.traits.drop == lang::DropKind::Lexical,
+               "regression retains lexical destruction without active cleanup");
+        for (const auto standard :
+             {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+          const lang::CppMirBodyEmissionMap map(
+              lang::buildCppMirBodyEmissionMapRows(lowered, standard));
+          const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                             function.id};
+          expect(lang::CppMirBodyEmitter(frontend.mir, map)
+                     .supportsFailureBodyText(address),
+                 "cleanup-free lexical closure has exact prepared storage");
+          for (int mutation = 0; mutation != 5; ++mutation) {
+            auto malformed = frontend.mir;
+            auto &changed = const_cast<lang::MirFunctionInstance &>(
+                *malformed.findFunctionInstance(function.id));
+            auto &drop = changed.body.dropObligations[prepared->id - 1];
+            if (mutation == 0)
+              drop.dropType.requiresActiveCleanup = true;
+            if (mutation == 1)
+              drop.initiallyActive = true;
+            if (mutation == 2)
+              drop.place = 0;
+            for (auto &changedBlock : changed.body.blocks)
+              for (auto &instruction : changedBlock.instructions)
+                if (instruction.id == stage.id) {
+                  if (mutation == 3)
+                    instruction.lifecycle.front().conditional = true;
+                  if (mutation == 4)
+                    instruction.lifecycle.front().source = prepared->id;
+                }
+            expect(!lang::CppMirBodyEmitter(malformed, map)
+                        .supportsFailureBodyText(address),
+                   "passive closure admission rejects active cleanup, stale "
+                   "slot activation, and invented lifetime publication");
+          }
+        }
+      }
+    }
+  }
+  expect(found, "fixture exercises passive lexical closure publication");
+}
+
 void testMutexCleanupRecipe() {
   const auto frontend = analyze("mutex-cleanup-recipe.gti", R"gti(
 #include <std/memory>
@@ -734,6 +818,7 @@ int main() {
   testPublicPipeline();
   testReferencePrefixBeforeOwnedField();
   testPreparedMutexPayload();
+  testPassiveClosureParameterStorage();
   testMutexCleanupRecipe();
   testSemanticBoundaries();
   testPayloadConcurrencyCapabilities();

@@ -113,6 +113,23 @@ shared-mutex worker/affine-payload controls. It is not yet validation evidence.
 The scoped-borrow requirements in the concurrency plan remain the contract for
 the second stage, including join on every exit and parent-loan reactivation.
 
+The runtime group foundation now starts and joins borrowed opaque contexts
+without taking their ownership. Focused native tests cover concurrent disjoint
+writes, deterministic worker-failure selection, join-all on partial creation,
+nested scopes and terminal native join failure. A Release snapshot also builds
+and runs the shared-mutex/owned move-only capture regression at O3. These are
+prerequisite results, not scoped-source acceptance: semantic admission, the
+public API, verified scope records, source failure/borrow controls, editor and
+full performance evidence remain incomplete. Release snapshot
+`fe54139368e01eeccb8662364cf6a8cf4e5b7d9d30153002a3002b9340e0a461`
+passes `mutex_semantic_ir` (including passive-closure malformed-MIR controls),
+`scoped_thread_c_header`, `scoped_thread_runtime`,
+`scoped_thread_join_boundary`, `managed_thread_runtime`, and
+`shared_ownership_threads`. The latter executes shared owners, shared mutexes
+and transferable read/mut/once jobs in C++20/C++23 at O0/O1/O3, no-elide and
+ASan/UBSan modes (24 fixture/mode combinations). This is focused checkpoint
+evidence, not final current-head validation or a TSan/performance claim.
+
 ## Compile-Time Reflection Delivered (2026-10-11)
 
 The owner accepted [`reflection.md`](reflection.md) with its decisions. All

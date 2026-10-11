@@ -10113,11 +10113,14 @@ materializedConstructorArgumentStage(const MirBody &body, MirValueId id) {
         drop != nullptr && event.kind == MirLifecycleEventKind::Reparent &&
         event.source == drop->id;
     // A cleanup-free closure has no source value obligation to reparent.
-    // It still occupies real prepared storage before later arguments or
-    // allocation: MIR initializes that parameter's bookkeeping obligation.
+    // Its native representation can still require lexical destruction (for
+    // example, a generated move-only aggregate capture). Trivial DropKind is
+    // therefore not the test: the exact prepared cleanup recipe and empty
+    // producer lifecycle prove that no active source obligation is lost.
+    // It occupies real storage before later arguments or allocation; MIR
+    // initializes that parameter's bookkeeping obligation.
     const bool passivePublication =
-        drop == nullptr && source->info.traits.drop == DropKind::Trivial &&
-        producer->lifecycle.empty() &&
+        drop == nullptr && producer->lifecycle.empty() &&
         event.kind == MirLifecycleEventKind::Initialize && event.source == 0 &&
         prepared != nullptr &&
         prepared->kind == MirDropObligationKind::PreparedParameter &&

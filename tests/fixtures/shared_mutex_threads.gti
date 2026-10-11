@@ -8,6 +8,14 @@
   mut int total = 0;
 };
 
+// The closure-storage rule is structural, not a mutex exception.
+struct MoveOnly {
+  int number = 42;
+  MoveOnly() = default;
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+
 void increment(std::shared_ptr<std::mutex<State>> state) {
   for (mut int i = 0; i < 1000; i++) {
     mut auto guard = state->lock();
@@ -42,5 +50,12 @@ int main() {
   if (!started) return 5;
   auto joined = result.join();
   if (!joined || joined.value() != 0) return 6;
+  MoveOnly value{};
+  mut std::thread_result<int> passive{};
+  if (!passive.start([owned = std::move(value)]() -> int {
+        return owned.number;
+      })) return 7;
+  auto passive_joined = passive.join();
+  if (!passive_joined || passive_joined.value() != 42) return 8;
   return 0;
 }
