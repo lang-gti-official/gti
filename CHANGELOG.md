@@ -37,7 +37,9 @@ for what minor and patch releases mean.
   payloads needing cleanup. Ordinary borrowed-receiver methods can consume
   owning Expected arguments without consuming the receiver. Pointer-backed
   recursive containers of Expected values retain finite layout; by-value
-  recursive payloads remain rejected.
+  recursive payloads remain rejected. Forwarding an owning Expected from a
+  failure-free producer preserves its unpublished result through fallible local
+  cleanup before returning it.
 - Inline Expected alternatives, including error alternatives and fixed arrays
   of the wrapper, now participate in the existing recursive-layout diagnostic.
   Such invalid fields are reported in source and the editor rather than as a

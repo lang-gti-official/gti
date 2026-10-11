@@ -2,6 +2,39 @@
 
 ## Container iterator completion: candidate validation (2026-10-12)
 
+The clean `a814a538` unfiltered 671-gate attempt is stopped after 52 completed
+gates expose one genuine regression: all eight native modes reject the complete
+Expected result forwarded by `source_prefix_forwarded_result_cleanup`. Partial
+CTest logs and its checkpoint are retained under
+`/private/tmp/gti-iterator-a814a538-interrupted.9V0Dn8/`; exit 130 is not a
+whole-suite pass. The admission repair reuses the existing exact
+`returnedCallResultSlot` proof, preserving activation, pending-result reparent,
+fallible local cleanup, rollback and final publication. Its focused runtime
+fixture passes all eight modes and all three success/primary/secondary-failure
+observations per binary (6.91 seconds), plus ten unsafe/loan negative controls.
+The owning lifecycle test independently passes C++20/23 admission/publication-
+order checks and eleven mutations: ten ownership corruptions fail MIR
+verification; an additional result-place alias preserves otherwise valid MIR
+but fails the backend's single-slot proof. The complete `source_prefix_owner_runtime`
+gate also passes all 104 build cases across its thirteen fixtures and eight
+native modes (72.97 seconds). Fresh clean final-head acceptance remains required.
+
+Fresh performance at `a814a538`, against frozen `5385c0b0`, is independently
+accepted: two five-warmup/21-interleaved-round campaigns, six complete-state
+cases, negative controls and all 305 artifact hashes. Paired vector ratios are
+0.989254 and 0.992608; particle ratios are 1.000237 and 1.000063. This remains
+evidence for that clean checkpoint, not automatic certification of the subsequent
+admission repair. The exact assessment and raw costs are retained under
+`/private/tmp/gti-iterator-final-performance-current.oUE5Ix/`.
+
+The counted-text allocation/asymptotic control is explicitly run with
+`text_view_iterator_runtime_test.py <Release-gti> --semantic-only --cost` at
+`a814a538`; default CTest does not enable its optional cost branch. Twelve source
+negatives, complete checksums and zero traversal allocations pass. Doubling
+extent from 128 to 256 gives a median time ratio of 1.948; this is a scheduling-
+tolerant smoke control, not a statistical speedup claim. Raw output is retained
+at `/private/tmp/gti-iterator-a814a538-text-cost.log`.
+
 The clean `981b1929` unfiltered 669-gate run is deliberately interrupted after
 it exposes two failing regressions: an obsolete consuming-carrier ancestry
 assertion and the JSON iterator matrix's missing worker registration. Raw partial

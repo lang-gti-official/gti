@@ -53248,6 +53248,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       if (classSsaLifetimeSlot(program_, representations_, body, value.id))
         continue;
+      // A failure-free producer may keep its owning result in the exact local
+      // slot while fallible cleanup runs before the Return publishes it.
+      if (returnedCallResultSlot(program_, body, value.id) != nullptr)
+        continue;
     }
     if (expectedOwnedClassExtractionReceiverSlot(body, value.id) != nullptr) {
       continue;
