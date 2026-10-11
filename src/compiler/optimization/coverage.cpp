@@ -311,6 +311,8 @@ MirOptimizationCoverage optimizationCoverage(MirTerminatorKind kind) {
   case MirTerminatorKind::ContainFailure:
   case MirTerminatorKind::TerminateCleanupFailure:
     return barrier("CFG exit with preserved failure/cleanup schedule");
+  case MirTerminatorKind::ContinueFailure:
+    return barrier("edge into a shared failure-cleanup continuation");
   case MirTerminatorKind::Exit:
   case MirTerminatorKind::Unreachable:
     return supported("CFG exit; no outgoing dataflow edges");

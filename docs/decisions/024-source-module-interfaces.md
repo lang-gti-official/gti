@@ -129,19 +129,24 @@ the standard library observes no application flags. Replay under each domain's
 flags with canonical-syntax comparison is the actual invariant, and it already
 caught the cases flag equality missed.
 
-An aggregate `import std;` is deferred. Every imported unit used to be lowered
-and emitted in full whether or not the program used it, and the whole library
-cost several seconds per compile.
+An aggregate `import std;` remains separate work. Artifact requests now retain
+the reached program prefix for MIR and emission. The subsequent
+`lowerLibraryReachableOnly` artifact profile also skips unreached
+compiler-trusted HIR declarations while retaining complete lowering of entry,
+application and package units. `gti check` retains complete HIR lowering.
+Semantic analysis still checks every imported trusted body; demand-driven
+trusted-body analysis remains a separate prerequisite for reducing that work.
+This is not an undone MIR/backend cutover or a reason to restart library HIR
+pruning.
 
-Artifact builds now lower and emit only reachable library code. Importing
-every standard unit into an empty program takes about 1.0 s (main `f3f85336`,
-M2 Max), against about 0.09 s for one `<std/vector>`. Of that, about 0.6 s is
-semantic analysis of every imported body, and about 0.25 s is C++ emission of
-every generic declaration's template, instantiated or not.
-
-An aggregate becomes reasonable once semantic analysis of unreferenced library
-bodies is also deferred. That is the direction of the deferred lazy
-body-analysis work.
+The recorded M2 Max baseline at `f3f85336`, before the latter HIR improvement,
+imported every standard unit into an empty program in about 1.0 s versus about
+0.09 s for `<std/vector>`. Approximately 0.6 s was semantic analysis and 0.25 s
+was generic physical-carrier declaration emission. These dated observations
+identify cost families; they are not a current-head benchmark or a universal
+acceptance threshold. Aggregate import needs current latency evidence and an
+explicit platform-gated unit selection rule. Lazy trusted-body analysis and
+narrower physical-carrier emission are reusable ways to reduce those costs.
 
 `import` and `module` become reserved GTI keywords; `export` was already a
 reserved C++ keyword. A minor-version migration must call out the two newly

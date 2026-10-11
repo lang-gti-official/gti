@@ -27,6 +27,14 @@ public:
   lower(const HirProgram &source, const FailureMetadata &failureMetadata) const;
 
 private:
+  // Function and lambda bodies share identical failure-cleanup suffixes
+  // unless this is cleared, which lowers one cleanup chain per failure edge.
+  static thread_local bool shareFailureCleanup_;
+
+  [[nodiscard]] MirLoweringResult
+  lowerVerified(const HirProgram &source,
+                const FailureMetadata &failureMetadata) const;
+
   [[nodiscard]] static MirLoweringResult
   lowerProgram(const HirProgram &source, const FailureMetadata &failureMetadata,
                const MirDefinedFailureEffects &definedFailureEffects,

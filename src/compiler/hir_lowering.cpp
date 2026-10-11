@@ -4806,16 +4806,42 @@ private:
     if (const Expr *producer = model.directInitializationSource(expression)) {
       const ExpressionInfo *info = model.findExpression(expression);
       const ExpressionInfo *input = model.findExpression(*producer);
+      const Binary *comma = model.builtinComma(expression);
+      const bool wrapper =
+          exprAs<Grouping>(&expression) != nullptr || comma != nullptr;
       if (info == nullptr || input == nullptr || info->type != input->type ||
-          (exprAs<Grouping>(&expression) == nullptr &&
-           !model.isFreshClassResult(*producer))) {
+          (!wrapper && !model.isFreshClassResult(*producer))) {
         lifecycleValid = false;
         return std::nullopt;
       }
+      // A comma's left operand completes, with its result discarded, before
+      // the right operand begins; its temporaries keep the enclosing
+      // full-expression lifetime. Sequence it before the producer itself.
+      std::optional<HirValueId> discarded;
+      if (comma != nullptr) {
+        discarded = lowerExpression(comma->left(), model, classArguments,
+                                    classValueArguments, body);
+        if (!discarded) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+      }
       const auto id = lowerExpression(*producer, model, classArguments,
                                       classValueArguments, body);
+      if (id && discarded) {
+        HirValue *produced = nullptr;
+        for (HirValue &candidate : body.values)
+          if (candidate.id == *id)
+            produced = &candidate;
+        if (produced == nullptr) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        produced->sequencedInputs.insert(produced->sequencedInputs.begin(),
+                                         *discarded);
+      }
       if (id) {
-        const bool grouping = exprAs<Grouping>(&expression) != nullptr;
+        const bool grouping = wrapper;
         std::optional<SemanticDirectInitializationProof> proof;
         if (!grouping) {
           proof = model.directInitializationProof(expression);

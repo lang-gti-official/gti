@@ -342,6 +342,14 @@
       "suite": "text"
     },
     {
+      "name": "testOwningExpectedFieldPublication",
+      "suite": "text"
+    },
+    {
+      "name": "testCommaDenotesRightOperandObject",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },

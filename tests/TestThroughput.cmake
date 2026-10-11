@@ -28,6 +28,7 @@ if(Python3_Interpreter_FOUND)
     conditional_owning_argument_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_null_native_runtime constructor_passive_field_rollback_runtime
+    comma_class_results_runtime
     construction_assignment_runtime
     consuming_call_assignment_runtime consuming_lambda_runtime consuming_methods_runtime consuming_owned_pointee_runtime
     consuming_receiver_runtime consuming_retained_field_replace_runtime
@@ -57,6 +58,7 @@ if(Python3_Interpreter_FOUND)
     owned_pointee_projection_runtime owned_unexpected_pending_cleanup_runtime
     owning_function_resource_result_runtime owning_function_runtime
     owned_argument_member_initializer_runtime
+    owning_expected_field_runtime
     owning_temporary_field_read_runtime
     pack_prefix_constructor_failure_runtime private_constructor_placement_runtime
     programmable_allocators_runtime prvalue_direct_initialization_runtime

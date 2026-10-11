@@ -95,8 +95,10 @@ public:
   }
 };
 
-// An exclusive checked storage dependency. Cursor movement never grants
-// independent access to the owner while its loan remains active.
+// This cursor retains one exclusive source-owner dependency. Local storage
+// and by-value algorithm transport keep that same checked loan; copying or
+// overlapping owner access is rejected. Range-for adds its traversal loans.
+// Movement, including reverse movement, never creates independent access.
 class vector_mut_iterator<std::storage_element T, uint64_t Reverse = 0> {
   mut std::detail::prefix_owner<T>& data;
   mut size_t current_position;
