@@ -23,6 +23,12 @@ permission to build the architecture. Current conservative analyses remain
 sound implementation boundaries, not permanent reasons to defer generality.
 This changes development policy, not the implemented pass inventory above.
 
+Measurements and validation runs below are recorded evidence for their named
+checkpoint/workload/platform, not a fresh certification of every later head or
+all supported toolchains. Current source and tests define the implemented
+profiles; a new change still requires its own correctness and performance
+acceptance.
+
 ## Canonical Proof-Evidence Bookkeeping
 
 SCCP and safety analysis maintain their internally produced block, instruction,
@@ -240,8 +246,9 @@ binding, an intrinsic or native-callee call, virtual dispatch (virtual,
 override, and pure-virtual methods), non-GTI linkage, or a non-source
 definition. Tombstoned references still open a function. The analysis reads
 verified MIR only: it never counts implementations, recognizes public library
-names, or trusts backend emission. Library programs are closed except for
-their embedding exports.
+names, or trusts backend emission. The same analysis applies to dormant library
+artifacts: exports are open roots, and other adapter/item/dispatch escapes still
+open their targets. Artifact kind alone does not prove a function closed.
 
 The first fact is the **exact referent class** of a class-reference parameter.
 Each visible call contributes to a three-point lattice (unset, exact class,
@@ -511,9 +518,11 @@ return that exact entry address. Return transport and construction postcondition
 share caller substitution: the caller must already retain the prepared input's
 current typed field-address fact. No field identity is invented after mutation
 or an opaque call. Distinct or ambiguous fields, pointee writes, synchronization
-and unsupported effects retain checks. This bounded prerequisite does not yet
+and unsupported effects retain checks. This address-relay rule does not by itself
 create field facts absent from the caller's represented places, export an
-initialized interval, or associate a lifetime witness with its pointee.
+initialized interval, or associate a lifetime witness with its pointee. The
+separate constructed-cell and bounded prefix profiles below supply their own
+content proofs.
 
 Successful exact integer construction additionally establishes the value at
 one typed address: the root identity plus a constant nonnegative element offset.
@@ -648,7 +657,8 @@ calling intervals do not equate different parameters, and one indexed
 construction does not cover holes or its entire observed interval. Preparing
 an already evaluated pointer value is an inert argument transfer, even when
 its source expression was unsafe; the real producer and all its obligations
-remain in MIR. General contiguous initialization coverage remains separate.
+remain in MIR. The bounded initialized-prefix coverage described above is an
+independent content relation; an address-offset summary alone supplies none.
 
 This rule and its exact call postcondition do not initialize unknown pointer
 contents at entry. Successful vacant construction may additionally retain up
@@ -915,8 +925,10 @@ are republished. Actual raw writes, unsupported reads, destruction, relocation,
 unsupported calls and synchronization retain full invalidation. Failed paths do not become
 successful-path postconditions. Unrelated public-wrapper, nested-object,
 byte/array and destroy/reconstruct controls exercise independent proof replay.
-This profile does not yet recover the outstanding raw-backed element-envelope
-or logical-bounds migration requirements.
+This lifetime-preservation profile alone supplies neither a raw-backed
+element envelope nor logical bounds. The independently described prefix and
+source-predicate profiles establish those facts for their admitted shapes;
+broader source-storage performance acceptance remains a separate campaign.
 
 Ordinary class construction and owned class returns transport independently
 proved scalar field envelopes, including parameterized member initializers.
@@ -1059,14 +1071,14 @@ parameters; sequential publication would lose an old input and could produce
 an unsound safety proof. Only the argument facts are copied, not the whole
 abstract memory state.
 
-Context discovery is also bounded by complete summaries: an earlier
-source-allocation or raw object-lifetime call can prevent completion of a
-required closed-call summary, leaving later call contexts on that path
-undiscovered even when their local work is independent. Proofs established
-before the barrier remain valid. The current missed-optimization remark for
-this case is the generic `check retained: canonical MIR facts do not prove
-arithmetic-overflow safety`; it does not yet distinguish an allocator barrier
-from other missing contextual facts.
+Context discovery distinguishes an admitted source summary still pending from
+a permanently unsupported operation. The first postpones/retries its caller;
+the second is an opaque transfer with a normal continuation, allowing later
+independent source contexts to be discovered after mutable facts are retired.
+An allocator/raw-lifetime barrier still cannot export invented content or
+effect-closure facts. A generic missed remark (`check retained: canonical MIR
+facts do not prove arithmetic-overflow safety`) is not evidence of a specific
+allocator cause; it may describe other absent contextual facts too.
 
 At a complete closed-call boundary, a scalar or object result summary is not
 proof that other caller storage was unchanged. Mutable reference/pointer
@@ -1126,12 +1138,15 @@ defined-semantics boundary, including signed-minimum remainder by `-1`.
 
 Array borrows, unproved public logical-size checks, division, dynamic-divisor
 remainder, shifts, unsupported conversions, and unproved or mismatched dynamic
-indices remain checked. A proved public logical-size check and its matching
-private prefix read are discharged independently; proving only the first does
-not imply storage identity or initialization. A discharged public check emits
-no target operation and its existing failure edge becomes an unconditional
-success edge. Prefix append, insert, erase, pop, relocation, storage/index
-aliasing, opaque calls, and unsupported joins discard the exact relation.
+indices remain checked. A proved public logical-size check does not imply
+raw storage identity or initialization. The private prefix-read detector and
+its unchecked backend helper belonged to the retired prefix capability; they
+are not a current source-container optimization path. A discharged public
+check emits no target operation and its existing failure edge becomes an
+unconditional success edge. Source lifetime operations, storage/index aliasing,
+opaque calls and unsupported joins retain the independently documented
+invalidation rules; only admitted content/postcondition profiles republish
+facts.
 Place alias facts refine mutable safety state:
 duplicate
 `must-alias` place IDs share one deterministic fact key, and a write preserves
@@ -1144,9 +1159,9 @@ origin, code, and detail. The optimizer attaches a `MirSafetyDischarge` to the
 instruction but retains the source instruction and failure CFG. This keeps the
 proof inspectable and lets each backend select an unchecked representation
 only after `LoweredProgramBuilder` has independently replayed and sealed the
-transformation. For prefix reads, the C++ backend's unchecked helper is private
-representation vocabulary: it has no GTI declaration, intrinsic identity, or
-trusted-source spelling and is selected only from the verified discharge.
+transformation. No public or trusted-source unchecked-container spelling grants
+a discharge. Source-defined raw access keeps its unsafe obligations and actual
+load/store even when separately proved downstream arithmetic is discharged.
 
 ### Capture Analysis
 
@@ -1312,8 +1327,11 @@ while fields of a union overlap and remain `may-alias`. Escape reasons record
 address taking, returns, retained borrows, non-local stores, raw memory, and
 calls. Only closed exact static call summaries may project receiver or
 argument escape; unresolved, native, virtual, and recursive boundaries remain
-conservative. The analysis does not assert interprocedural pointer identity,
-and raw memory never becomes `no-alias`. Safety-state invalidation is its first
+conservative. The analysis does not assert interprocedural pointer identity.
+One body-local refinement proves a binding never borrowed, addressed or
+escaping in that body disjoint from dereferences/raw accesses/loan referents;
+it does not prove arbitrary raw pointees disjoint from each other.
+Safety-state invalidation is its first
 client. There is no MemorySSA or load/store elimination pass.
 
 ## Pass And Analysis Contract
@@ -1332,9 +1350,12 @@ constants. A semantic mutation to any body invalidates the program-wide summary
 and every derived body safety result. A pass may preserve them only for a
 metadata-only change that cannot affect analysis inputs; an unknown or omitted
 claim invalidates conservatively. Cache entries have stable addresses and no
-interior MIR pointer survives invalidation. Memory SSA, inlining,
-devirtualization, and loop or memory transformations remain absent until a
-bounded measured client requires them.
+interior MIR pointer survives invalidation. Bounded local and closed-world
+exact-parameter devirtualization are implemented as described above. Memory
+SSA, inlining, broader devirtualization, and loop/memory transforms remain
+unimplemented extensions. Their general consumers, cost model, invalidation
+and replay obligations justify selection; ADR 012 does not require a measured
+speedup before beginning that infrastructure.
 
 Preserving `ClosedCallSafety` alone does not implicitly preserve the local
 `SafetyChecks` cache. Preservation claims are valid only when the preserved

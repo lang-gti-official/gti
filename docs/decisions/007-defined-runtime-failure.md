@@ -2,11 +2,18 @@
 
 Status: Accepted
 
+Implementation note (2026-10-11): the adoption-time abort helpers described in
+Context are historical. Verified MIR now owns checked-failure propagation and
+cleanup; wrong-state Expected observers and infallible printing use the defined
+failure contract. The allocation-exhaustion revision below is the explicit
+abort-without-cleanup exception. Engine embedding remains its own delivery
+campaign, not evidence that hosted/task/callback containment is absent.
+
 ## Context
 
-GTI already checks integer arithmetic, numeric conversions, indexing, owner
-access, compiler-private storage, and infallible allocation. The transitional
-C++ emitter currently implements those checks with several local helpers that
+At adoption, GTI already checked integer arithmetic, numeric conversions,
+indexing, owner access, compiler-private storage, and infallible allocation.
+The transitional C++ emitter implemented those checks with several local helpers that
 write an English message and call `std::abort()`. That implementation loses the
 failure category and GTI source site, skips deterministic cleanup, exposes a
 signal-derived status, and terminates an embedding process. Invalid
@@ -111,8 +118,9 @@ source-token rules, and exact report format are maintained only in
 Public container operations must check their logical size and use `vector` or
 `string`; reaching `invalid_storage_state` through a well-formed public
 operation is an implementation/library invariant defect, not a public bounds
-category. The current wrappers and private storage lowering do not yet enforce
-that separation in every capacity-versus-size case.
+category. The source-defined vector/string wrappers now check their logical
+size at the public boundary; private storage state remains a distinct invariant
+failure rather than a substitute for that public check.
 
 ### Cleanup And Propagation
 
@@ -355,8 +363,8 @@ decision.
 
 ## Alternatives
 
-- **Immediate process abort with no cleanup.** This matches the current helper
-  mechanism and is substantially smaller, but it makes checked arithmetic or
+- **Immediate process abort with no cleanup for every check.** This matched
+  the adoption-time helper mechanism and was substantially smaller, but it makes checked arithmetic or
   indexing bypass GTI cleanup, prevents same-process containment, and turns an
   emitter limitation into the language's RAII boundary.
 - **Source exceptions or native exception unwinding.** Rejected because GTI's
@@ -374,15 +382,15 @@ decision.
 
 ## Consequences
 
-The implementation must eventually give potentially failing calls an explicit
-failure channel and make cleanup complete before MIR-backed emission of those
-bodies. That is broader than replacing `abort()` with one runtime call, but it
-preserves GTI's existing ownership premise and provides a real seam for
-embedding and tasks.
+Potentially failing calls now have an explicit failure channel and verified
+cleanup before MIR-backed emission. This completed migration was broader than
+replacing `abort()` with one runtime call; it preserves GTI's ownership premise
+and provides the seam reused by tasks and the remaining embedding campaign.
 
 Failure propagation must be allocation-free after a record is selected.
 Cleanup bodies should avoid failure because a second failure is necessarily
 process-fatal. Public infallible wrappers need a recoverable sibling when host
-failure is an expected operating condition. The current `std::print` status
-discard and native `expected` observers are implementation gaps that their
-owning implementation rows must close.
+failure is an expected operating condition. The earlier `std::print` status
+discard and native Expected observer gaps are closed. New public wrappers must
+preserve that rule rather than silently discard host errors or delegate
+wrong-state semantics to a backend library.

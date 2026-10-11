@@ -76,6 +76,12 @@ Observable behaviour includes:
 - whether and where a defined GTI runtime failure occurs.
 
 Optimization may change execution only when observable behaviour is preserved.
+Process-allocator requests/releases have the explicit non-observability rule in
+[ADR 022](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09):
+an unused process allocation may be removed or replaced with automatic storage.
+Application memory-resource calls remain ordinary observable source effects.
+That permission does not erase construction, destruction or other observable
+user operations merely because they are associated with an allocation.
 
 ## 1.4 Terms
 
@@ -122,6 +128,9 @@ Optimization may change execution only when observable behaviour is preserved.
   program, returns a structured record through a future generated embedding
   boundary, or captures a managed-task record for re-raise at join. It is not
   a source exception or an `expected` error.
+- An **allocation-exhaustion abort** is the terminal, no-cleanup outcome of an
+  infallible allocation, reported as `GTI-R0011`. It is distinct from the
+  contained runtime-failure effect; fallible allocation returns an error value.
 - A **compiler intrinsic** is a semantically identified operation whose
   behaviour cannot yet be expressed as ordinary GTI source. It is not thereby
   a public application API.

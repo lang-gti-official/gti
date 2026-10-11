@@ -1,0 +1,100 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// A construction whose constructor can fail, assigned to an existing
+// variable. The construction publishes into representation-only storage on
+// its success edge; the assignment then moves it in. A failed construction
+// leaves the variable untouched.
+mut int32_t destroyed = 0;
+
+struct item_value {
+  int32_t number;
+  item_value(int32_t number) : number(number) {}
+};
+
+// An owning payload.
+struct named_value {
+  std::string text;
+  named_value(std::string text) : text(std::move(text)) {}
+};
+
+// A payload whose destruction is counted.
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() { destroyed += 1; }
+};
+
+expected<item_value, int32_t> make_item(bool ok) {
+  if (ok) { return item_value(7); }
+  return unexpected(int32_t(3));
+}
+
+expected<named_value, int32_t> make_named(bool ok) {
+  if (ok) { return named_value(std::string("payload")); }
+  return unexpected(int32_t(6));
+}
+
+expected<counted, int32_t> make_counted(bool ok) {
+  if (ok) { return counted(5); }
+  return unexpected(int32_t(2));
+}
+
+// The constructor's checked addition can fail.
+struct sum_holder {
+  int32_t number;
+  sum_holder(int32_t number) : number(number + 1) {}
+};
+
+struct item_holder {
+  int32_t number;
+  item_holder(expected<item_value, int32_t> item)
+      : number(item ? item.value().number : 100 + item.error()) {}
+};
+
+struct named_holder {
+  int32_t size;
+  named_holder(expected<named_value, int32_t> item)
+      : size(item ? int32_t(item.value().text.size()) : 100 + item.error()) {}
+};
+
+struct counted_holder {
+  int32_t number;
+  counted_holder(expected<counted, int32_t> item)
+      : number(item ? item.value().number : 100 + item.error()) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  bool yes = argc > 0;
+  bool no = !yes;
+  mut sum_holder sum{1};
+  if (argc == 2) {
+    sum = sum_holder(2147483647);
+    return sum.number;
+  }
+  sum = sum_holder(6);
+  if (sum.number != 7) { return 1; }
+  mut item_holder item{make_item(no)};
+  if (item.number != 103) { return 2; }
+  item = item_holder(make_item(yes));
+  if (item.number != 7) { return 3; }
+  item = item_holder(make_item(no));
+  if (item.number != 103) { return 4; }
+  mut named_holder named{make_named(no)};
+  if (named.size != 106) { return 5; }
+  named = named_holder(make_named(yes));
+  if (named.size != 7) { return 6; }
+  mut counted_holder held{make_counted(no)};
+  if (held.number != 102 || destroyed != 0) { return 7; }
+  held = counted_holder(make_counted(yes));
+  if (held.number != 5 || destroyed != 1) { return 8; }
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    held = counted_holder(make_counted(index != 1));
+    total += held.number;
+  }
+  if (total != 112 || destroyed != 3) { return 9; }
+  return 0;
+}

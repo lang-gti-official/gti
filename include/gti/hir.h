@@ -244,8 +244,9 @@ struct HirValue {
   // Unlike branch operands these retain their full-expression cleanup on both
   // paths, including when the conditional mapper is never invoked.
   std::vector<HirValueId> conditionalInputs;
-  // Void evaluations that must complete in order before this value begins.
-  // They share the enclosing full-expression lifetime, not a nested scope.
+  // Evaluations that must complete in order before this value begins, such
+  // as a comma's left operand. Their results are discarded; they share the
+  // enclosing full-expression lifetime, not a nested scope.
   std::vector<HirValueId> sequencedInputs;
   SymbolId packFoldSymbol = 0;
   GenericParameterId packFoldParameter = 0;
