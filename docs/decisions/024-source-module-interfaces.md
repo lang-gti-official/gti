@@ -130,11 +130,23 @@ flags with canonical-syntax comparison is the actual invariant, and it already
 caught the cases flag equality missed.
 
 An aggregate `import std;` remains separate work. Artifact requests now retain
-the reached program prefix for MIR and emission, but ordinary complete
-checking still analyzes imported units and HIR currently also processes the
-unreached declaration tail before selecting that prefix. Removing unnecessary
-trusted-library HIR work is a remaining latency goal, not an undone MIR/backend
-cutover. Aggregate import additionally needs a rule for platform-gated units.
+the reached program prefix for MIR and emission. The subsequent
+`lowerLibraryReachableOnly` artifact profile also skips unreached
+compiler-trusted HIR declarations while retaining complete lowering of entry,
+application and package units. `gti check` retains complete HIR lowering.
+Semantic analysis still checks every imported trusted body; demand-driven
+trusted-body analysis remains a separate prerequisite for reducing that work.
+This is not an undone MIR/backend cutover or a reason to restart library HIR
+pruning.
+
+The recorded M2 Max baseline at `f3f85336`, before the latter HIR improvement,
+imported every standard unit into an empty program in about 1.0 s versus about
+0.09 s for `<std/vector>`. Approximately 0.6 s was semantic analysis and 0.25 s
+was generic physical-carrier declaration emission. These dated observations
+identify cost families; they are not a current-head benchmark or a universal
+acceptance threshold. Aggregate import needs current latency evidence and an
+explicit platform-gated unit selection rule. Lazy trusted-body analysis and
+narrower physical-carrier emission are reusable ways to reduce those costs.
 
 `import` and `module` become reserved GTI keywords; `export` was already a
 reserved C++ keyword. A minor-version migration must call out the two newly

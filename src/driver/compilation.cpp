@@ -17,8 +17,11 @@
 namespace lang::driver {
 namespace {
 
+// `artifact` is set when the result is compiled. `check` reports every
+// declaration's diagnostics, so it lowers library declarations completely.
 FrontendResult analyze(const CompilationRequest &request,
-                       CompilationInputs inputs, ProgressObserver *progress) {
+                       CompilationInputs inputs, ProgressObserver *progress,
+                       bool artifact) {
   // Compilation and `check` consume diagnostics, semantics, and symbols; only
   // editor position queries read the occurrence table, so it is not built on
   // this path.
@@ -35,6 +38,7 @@ FrontendResult analyze(const CompilationRequest &request,
   options.program = request.program();
   // Artifacts contain only code the program roots reach.
   options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = artifact;
   FrontendResult result = Frontend(options).analyzeLoaded(
       request.entry(), std::move(inputs.sourceGraph), std::move(inputs.sources),
       std::move(inputs.diagnostics), inputs.sourceValid);
@@ -52,7 +56,7 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
                                           CompilationInputs inputs,
                                           Backend &backend,
                                           ProgressObserver *progress) {
-  FrontendResult frontend = analyze(request, std::move(inputs), progress);
+  FrontendResult frontend = analyze(request, std::move(inputs), progress, true);
   CompilationResult result;
   if (!frontend.canGenerateCode()) {
     result.status = CompilationStatus::FrontendFailure;
@@ -387,8 +391,8 @@ CompilationResult compileWithBackend(const CompilationRequest &request,
 
 CheckResult checkCompilation(const CompilationRequest &request,
                              ProgressObserver *progress) {
-  FrontendResult frontend =
-      analyze(request, loadCompilationInputs(request, progress), progress);
+  FrontendResult frontend = analyze(
+      request, loadCompilationInputs(request, progress), progress, false);
   CheckResult result;
   result.sources = std::move(frontend.sources);
   result.diagnostics = std::move(frontend.diagnostics);
