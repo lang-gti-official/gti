@@ -4347,9 +4347,9 @@ public:
       case SemanticType::SharedPointer:
         return;
       case SemanticType::Class: {
-        // The declaration-bound optional capability stores its exact value
-        // inline even though it has no source fields. Its payload layout must
-        // precede every containing class, unlike pointer-backed storage.
+        // These declaration-bound capabilities embed their exact value even
+        // though they have no source fields. Payload layout must precede every
+        // containing class, unlike pointer-backed storage.
         const auto capability = std::find_if(
             mir.classInstances().begin(), mir.classInstances().end(),
             [&](const MirClassInstance &candidate) {
@@ -4357,7 +4357,9 @@ public:
                      (candidate.compilerCapability ==
                           CompilerCapabilityTypeKind::OptionalStorage ||
                       candidate.compilerCapability ==
-                          CompilerCapabilityTypeKind::UninitializedStorage);
+                          CompilerCapabilityTypeKind::UninitializedStorage ||
+                      candidate.compilerCapability ==
+                          CompilerCapabilityTypeKind::MutexStorage);
             });
         if (capability != mir.classInstances().end()) {
           for (const SemanticType &argument : type.arguments) {

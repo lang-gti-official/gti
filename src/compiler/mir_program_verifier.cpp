@@ -11306,6 +11306,23 @@ verifyMirProgramContracts(const MirProgram &program) {
   for (std::size_t index = 0; index < program.classInstances().size();
        ++index) {
     const MirClassInstance &instance = program.classInstances()[index];
+    if (instance.compilerCapability ==
+        CompilerCapabilityTypeKind::PolymorphicStorage) {
+      const auto erased = instance.type.arguments.size() == 1
+                              ? conditionalCapabilities(
+                                    program, instance.type.arguments.front())
+                              : std::nullopt;
+      if (!erased ||
+          instance.traits.transferCapable != erased->transferCapable ||
+          instance.traits.shareCapable != erased->shareCapable) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message =
+                 "polymorphic storage capabilities contradict its erased "
+                 "interface contract"});
+      }
+    }
     if (instance.generatedDefaultRequiresSchedule &&
         instance.defaultConstructor != SpecialMemberStatus::Generated) {
       result.errors.push_back(

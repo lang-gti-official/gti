@@ -863,6 +863,29 @@ int main() {
       printDiagnostics(frontend);
     expect(frontend.canGenerateCode(),
            "transfer-qualified erased targets must enter owned workers");
+    bool sawInlineSlot = false;
+    for (const auto &instance : frontend.mir.classInstances()) {
+      if (instance.compilerCapability !=
+          lang::CompilerCapabilityTypeKind::PolymorphicStorage)
+        continue;
+      sawInlineSlot = true;
+      expect(instance.traits.transferCapable && !instance.traits.shareCapable,
+             "inline erasure retains transfer without inventing sharing");
+      for (bool transfer : {true, false}) {
+        auto forged = frontend.mir;
+        auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+            forged.classInstances());
+        auto &traits = classes[instance.id - 1].traits;
+        if (transfer)
+          traits.transferCapable = !traits.transferCapable;
+        else
+          traits.shareCapable = !traits.shareCapable;
+        expect(!lang::verifyMirProgram(forged).valid(),
+               "MIR rejects a forged erased-slot concurrency capability");
+      }
+    }
+    expect(suffix == " &&" || sawInlineSlot,
+           "repeatable transfer wrappers should exercise inline storage");
   }
   for (const std::string suffix : {"", " mut", " &&"}) {
     const auto rejected = analyze("affine-erased-task.gti",
@@ -878,6 +901,22 @@ int main() {
     expect(!rejected.canGenerateCode() && !hasCode(rejected, "GTI-B0001") &&
                !hasCode(rejected, "GTI-P0001"),
            "erasure must reject a non-transferable target at construction");
+    const auto replacement =
+        analyze("affine-erased-replacement.gti",
+                "#include <std/functional>\n[[no_transfer]] struct Task { int "
+                "operator()()" +
+                    suffix + R"( { return 42; } };
+int main() {
+  mut std::transfer_function<int())" +
+                    suffix + R"(> callback{};
+  callback.replace(Task());
+  return 0;
+}
+)");
+    expect(!replacement.canGenerateCode() &&
+               hasCode(replacement, "GTI-S2029") &&
+               !hasCode(replacement, "GTI-B0001"),
+           "replacement cannot weaken an erased transfer contract");
   }
   // This is an ordinary interface contract, not a stdlib type-name rule.
   const auto unrelated = analyze("unrelated-transfer-interface.gti", R"(

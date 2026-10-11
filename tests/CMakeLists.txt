@@ -3606,6 +3606,17 @@ if(Python3_Interpreter_FOUND)
               "${CMAKE_CXX_COMPILER}"
     )
     set_tests_properties(managed_thread_tsan PROPERTIES TIMEOUT 300)
+    foreach(fixture shared_mutex_threads transfer_function_threads)
+      add_test(
+        NAME ${fixture}_tsan
+        COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tests/managed_thread_tsan_test.py"
+                "$<TARGET_FILE:gti>"
+                "${PROJECT_SOURCE_DIR}/tests/fixtures/${fixture}.gti"
+                "${CMAKE_CXX_COMPILER}"
+      )
+      set_tests_properties(${fixture}_tsan PROPERTIES TIMEOUT 300)
+    endforeach()
     add_test(
       NAME atomic_end_to_end
       COMMAND "${Python3_EXECUTABLE}"
@@ -3668,12 +3679,15 @@ if(Python3_Interpreter_FOUND)
       cthread_once_runtime
       cthread_create_join_runtime
       managed_thread_tsan
+      shared_mutex_threads_tsan
+      transfer_function_threads_tsan
       atomic_tsan
       mutex_tsan
       PROPERTIES ENVIRONMENT "GTI_TSAN_SUPPORTED=${gti_tsan_supported}"
     )
     set_tests_properties(
-      managed_thread_tsan atomic_tsan mutex_tsan
+      managed_thread_tsan shared_mutex_threads_tsan transfer_function_threads_tsan
+      atomic_tsan mutex_tsan
       PROPERTIES SKIP_RETURN_CODE 77
     )
     add_test(
