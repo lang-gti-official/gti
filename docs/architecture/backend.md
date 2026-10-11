@@ -1506,6 +1506,15 @@ such as a scalar payload with a cleanup-free class error, keeps its ordinary SSA
 local. An owning alternative keeps MIR's value drop and the value-rooted
 transfer slot described above.
 
+A callable value invocation produces the same fresh temporary as a source
+call: a closure literal, a stored closure, or a callable parameter invoked as
+`code(make(a))` uses that slot under the same consumer, observer, extraction
+and discard proofs. The enclosing body's ABI decides how the invocation
+publishes into it. A transformed invocation passes the slot's construction
+address and marks it constructed on its success edge; a plain invocation
+constructs it from the returned value. A raising callable leaves the slot
+unconstructed, and a discarded result retires as soon as it is published.
+
 The same slot may instead feed one by-value parameter of an exact ordinary
 source constructor, mirroring the owning route's constructor consumer. The
 construction must match the constructor's parameter types and owner, carry no
@@ -1942,7 +1951,10 @@ uninitialized output storage, from a transformed or a failure-free source call,
 such as `[[discard]] make_value()` or a comma's discarded left operand.
 Selection requires no SSA uses, value-rooted places, semantic result-drop
 obligation, borrowed state, or active cleanup; the class must have generated
-destruction. A transformed call marks that representation on success and a
+destruction. A failure-free call with a MIR destination is not discarded even
+though its value has no uses: MIR rehomed it into that place (for example a
+branch-only receiver temporary on the right of `||`, `&&` or `?:`), so it
+constructs there and the place's own drop retires it. A transformed call marks that representation on success and a
 failure-free call constructs it from its returned value; either retires it
 immediately, permitting repeated calls in a loop.
 Failure leaves the storage uninitialized and follows the existing MIR failure
