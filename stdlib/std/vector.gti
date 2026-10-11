@@ -22,12 +22,15 @@ public:
 };
 
 class vector_iterator<std::storage_element T, uint64_t Reverse = 0> {
+  // The whole-owner loan keeps this inclusive bound stable. Cache it before
+  // retaining the owner; it is movement state, never element-read authority.
+  size_t final_position;
   std::detail::prefix_owner<T>& data;
   mut size_t current_position;
 
 public:
   vector_iterator(std::detail::prefix_owner<T>& source, size_t position)
-      : data(source), current_position(position) {}
+      : final_position(source.length()), data(source), current_position(position) {}
 
   T& operator*() {
     if constexpr (Reverse != 0) {
@@ -48,7 +51,7 @@ public:
 
   void operator++() mut {
     this.current_position = checked_iterator_step<Reverse>(
-        this.current_position, size_t(0), this.data.length());
+        this.current_position, size_t(0), this.final_position);
   }
 
   // Backward and signed movement keep checked position arithmetic: stepping
@@ -56,7 +59,7 @@ public:
   // container argument failure; every element read remains prefix-checked.
   void operator--() mut {
     this.current_position = checked_iterator_step<Reverse, 1>(
-        this.current_position, size_t(0), this.data.length());
+        this.current_position, size_t(0), this.final_position);
   }
 
   void operator+=(ptrdiff_t distance) mut {
@@ -100,13 +103,16 @@ public:
 // overlapping owner access is rejected. Range-for adds its traversal loans.
 // Movement, including reverse movement, never creates independent access.
 class vector_mut_iterator<std::storage_element T, uint64_t Reverse = 0> {
+  // Element writes do not change the loan-protected owner length. Capturing
+  // it before retaining the exclusive owner avoids reloading it per step.
+  size_t final_position;
   mut std::detail::prefix_owner<T>& data;
   mut size_t current_position;
 
 public:
   vector_mut_iterator(mut std::detail::prefix_owner<T>& source,
                       size_t position)
-      : data(source), current_position(position) {}
+      : final_position(source.length()), data(source), current_position(position) {}
 
   T& operator*() {
     mut size_t position = this.current_position;
@@ -122,12 +128,12 @@ public:
 
   void operator++() mut {
     this.current_position = checked_iterator_step<Reverse>(
-        this.current_position, size_t(0), this.data.length());
+        this.current_position, size_t(0), this.final_position);
   }
 
   void operator--() mut {
     this.current_position = checked_iterator_step<Reverse, 1>(
-        this.current_position, size_t(0), this.data.length());
+        this.current_position, size_t(0), this.final_position);
   }
   void operator+=(ptrdiff_t offset) mut {
     this.current_position = checked_iterator_position(this.current_position, size_t(0),

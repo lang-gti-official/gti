@@ -127,6 +127,43 @@ An isolated single-worker reproduction, fixed-baseline census and both corpus
 oracles are scheduled on the reconciled head; sanitizer flags, allocation
 observations and all test assertions remain unchanged.
 
+The first checked one-step repair at frozen `120d6240` restores vector traversal
+to baseline performance (candidate/baseline 0.9980, paired 95% bootstrap interval
+0.9861–1.0003), but particles still take 177.73 ms versus 162.03 ms (1.0969,
+interval 1.0953–1.1007). The roughly 9.7% particle regression fails acceptance.
+Its native loop reloads the owner length and retains an extra increment guard.
+The measured records are retained under
+`/private/tmp/gti-iterator-performance.hheNJa/step-repair/`; neither this result
+nor the earlier checksum equality proves complete-state parity.
+
+The subsequent source repair captures the live-prefix bound before retaining
+the checked vector/resource-vector owner loan, for shared/exclusive and
+forward/reverse cursors. This changes no borrowing permission or element-access
+rule. Positive tests traverse and write through both directions, including empty
+endpoints; failure tests retain invalid-step identity and reverse cleanup; source
+negatives retain owner invalidation, exclusive-copy and child-borrow exclusions.
+The local O3/C++23 combined positive and all 21 source negatives pass, including
+clear/transfer followed only by cursor increment for both vector families: a
+snapshot-only operation still retains the actual owner loan without relying on
+a later dereference to keep it live.
+An optimized native layout probe measures each of the four cursor families as
+16 to 24 bytes: one inline `uint64_t`, no allocation. Its evidence is retained in
+`/private/tmp/gti-iterator-performance.hheNJa/bound-snapshot-proxy/layout-report.json`.
+The source repair still requires a frozen-head runtime/build/memory comparison
+and the corrected untimed complete-state observer; the proxy's matching loop
+shape is not performance acceptance. The disposable observer is compiled to an
+object before linking to avoid a multi-source native depfile overwrite.
+
+The repaired Linux sanitizer timeout uses GCC 14 for the GTI host compiler but
+Ubuntu `c++` 15.2.0 for generated native code. It remains a compile-time limit,
+not an observed sanitizer runtime failure. The unchanged-budget isolated
+reproduction must identify whether the combined fixture needs equivalent
+smaller sanitizer scenarios; raising its limit or dropping assertions is not
+acceptance. Reconciliation through `b5a8f371` incorporates main `c3dcf2a6`'s
+Expected-callable publication repair. Its local Release all-target build passes;
+focused Expected checks run during the iterator source edits are development
+feedback and must not be presented as clean-head integration evidence.
+
 ## Expected results of callable invocations (0.402.10)
 
 - **Defect.** A lambda returning `expected<point, errc>`, where `point` has no

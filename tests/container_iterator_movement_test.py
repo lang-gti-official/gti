@@ -81,6 +81,18 @@ def main():
             "step-reverse-increment-at-begin": (1, 0, 5, 5, 9),
             "step-reverse-decrement-at-end": (1, 1, 9, 5, 9),
         }
+        # A captured live-prefix bound does not make an empty/end coordinate
+        # readable or movable past its boundary, for either access direction.
+        cursor_sources = {
+            "vector-empty-step": "mut std::vector<int> values{}; mut auto cursor = values.begin();",
+            "vector-forward-end-step": "mut std::vector<int> values = {1, 2}; mut auto cursor = values.end_mut();",
+            "vector-reverse-end-step": "mut std::vector<int> values = {1, 2}; mut auto cursor = values.rend_mut();",
+            "vector-begin-backstep": "mut std::vector<int> values = {1, 2}; mut auto cursor = values.begin_mut();",
+            "resource-empty-step": "mut std::resource_vector<int, std::process_resource> values{resource}; mut auto cursor = values.begin();",
+            "resource-forward-end-step": "mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1); mut auto cursor = values.end_mut();",
+            "resource-reverse-end-step": "mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1); mut auto cursor = values.rend_mut();",
+            "resource-begin-backstep": "mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1); mut auto cursor = values.begin_mut();",
+        }
         state_source = """#include <std/string>
 #include <std/detail/iterator>
 class StepDrop {
@@ -108,7 +120,19 @@ public:
             name, expression, label, flags, native = case
             fixture = output / f"{name}-{label}.gti"
             expected_stdout = ""
-            if name in step_states:
+            if name in cursor_sources:
+                setup = cursor_sources[name]
+                operation = "--cursor;" if name.endswith("backstep") else "++cursor;"
+                if name.startswith("resource-"):
+                    setup = ("std::process_resource process{}; unsafe {\n"
+                             "auto resource = std::bind_resource(process);\n" + setup)
+                    operation += "\n}"
+                fixture.write_text(state_source + "#include <std/vector>\n"
+                    "#include <std/resource_vector>\n#include <std/resource>\n"
+                    "int main() {\nStepDrop outer{10};\n" + setup +
+                    "\nStepDrop inner{20};\n" + operation + "\nreturn 99;\n}\n")
+                expected_stdout = "20\n10\n"
+            elif name in step_states:
                 reverse, decrement, position, begin, end = step_states[name]
                 fixture.write_text(state_source + "int main() {\n"
                     "  StepDrop outer{10};\n"
@@ -137,7 +161,8 @@ public:
             assert "AddressSanitizer" not in result.stderr and "UndefinedBehaviorSanitizer" not in result.stderr, result
 
         failures = [(f"{name}-{label}", (name, expression, label, flags, native))
-                    for name, expression in {**invalid, **dict.fromkeys(step_states, "")}.items()
+                    for name, expression in {**invalid, **dict.fromkeys(step_states, ""),
+                                             **dict.fromkeys(cursor_sources, "")}.items()
                     for label, flags, native in modes]
         run_cases(failures, build_failure, options.jobs, observe_failure)
 

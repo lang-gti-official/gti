@@ -372,6 +372,16 @@ invalid access/movement raises GTI defined failure before changing the cursor.
 Queue adapters, owner/result/guard objects and uninitialized carriers are not
 automatically ranges. Directory streams retain their recoverable `next()` API.
 
+Vector and resource-vector cursors capture their immutable live-prefix bound
+before retaining the checked owner reference. Their whole-owner loan excludes
+resizing, owner transfer and destruction, so element writes through an exclusive
+cursor cannot invalidate that bound. One-step movement uses the snapshot without
+reloading the owner length; dereference and arbitrary signed jumps remain checked
+against the actual owner. The snapshot is movement state, not permission to read
+vacant or out-of-range storage. A child element borrow still prevents cursor
+movement until that borrow ends. On the measured 64-bit target this adds one
+inline eight-byte field to each vector/resource-vector cursor, with no allocation.
+
 ## Generic iterator contracts
 
 `<std/iterator>` exposes the implemented operator subset to generic functions
