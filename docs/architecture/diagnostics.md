@@ -175,8 +175,9 @@ driver's immutable `PackageWarningPolicy` suppresses only warnings whose
 primary source belongs to a registered non-selected package in the resolved
 source graph. It composes with group policy without changing analysis or
 hiding errors, consumer warnings, standard-library warnings or native-tool
-output. The LSP publishes the same default-profile policy through read-only
-project facts; a dependency opened as its own project retains its own warnings.
+output. The LSP publishes the selected default or named project profile's
+policy through read-only project facts; a dependency opened as its own project
+retains its own warnings.
 See [Dependency warnings](build-and-driver.md#dependency-warnings).
 
 CLI build/check/emission presentation ends with `Diagnostics: <errors>,
@@ -291,9 +292,12 @@ They are not frontend diagnostics: only a language-required constant context
 or existing direct-literal rule may issue an owning-phase diagnostic instead;
 an executable dynamic origin carries its `GTI-R` category/detail and canonical
 frontend anchor into HIR, the failure-metadata builder assigns an artifact-local
-site, and MIR preserves that identity. Q-FAIL-01 must make the two surfaces
-identify the same semantic family without converting runtime records into LSP
-diagnostics or letting a backend message choose either identity.
+site, and MIR preserves that identity. The implemented hosted failure consumer,
+native callback firewall and managed-task handoff use that same semantic family
+without converting runtime records into LSP diagnostics or letting a backend
+message choose either identity. Remaining embedding/foreign-thread boundaries
+and checked operation families require their own failure-integration evidence;
+the completed Q-FAIL-01 consumer is not proof of every proposed boundary.
 
 ## Production Rules
 
@@ -354,9 +358,13 @@ outputs use their existing `GTI-B2005` invalid-output family for this same
 target boundary.
 
 `GTI-S2099` owns invalid function contracts: duplicate or unknown attributes,
-unsupported native, polymorphic, operator or bodyless declarations, caller tracking on
-the hosted entry point, reachable normal completion of a terminal function,
+declaration shapes outside each attribute's contract, caller tracking on the
+hosted entry point, reachable normal completion of a terminal function,
 and loss of caller-location transport at a native callback boundary.
+The native, polymorphic, operator and bodyless restrictions apply to
+`[[noreturn]]`/`[[track_caller]]`, not to every function attribute.
+`[[discardable]]` may describe non-void native, polymorphic or operator results;
+`[[borrowed_from(...)]]` has its own checked GTI reference-return boundary.
 The following typed declaration determines function-attribute context even
 when the list contains no recognized attribute; unknown plain names therefore
 reach semantic validation rather than a misleading class-attribute parse error.
@@ -446,9 +454,13 @@ retain their existing reference diagnostics. Nominal type metadata is not
 itself reference storage. `GTI-S2017` explains when substituting a reference
 into an ordinary binding would require an explicit reference declarator; no
 automatic fix chooses a different generic argument or lifetime contract.
-Concrete named parameter packs admit read-only reference elements;
-`GTI-S2023` still rejects void, signature and mutable-reference elements at the
-pack ellipsis. It does not suggest a fix that would change borrow access.
+Concrete named parameter packs admit exact read-only and mutable reference
+elements supplied by signature metadata, preserving ordinary access and loan
+checks when forwarded. `GTI-S2023` rejects void and signature elements at the
+pack ellipsis. Decorated `Args&...` declarations and mutable pack bindings
+remain outside this syntax; their rejection does not prohibit a concrete
+reference type inside an otherwise ordinary `Args...` expansion. No fix changes
+borrow access or guesses a reference-deduction contract.
 
 `GTI-S2023` also reports failure to deduce one exact generic type pack from
 signature/nominal metadata and any supplied value arguments. It anchors the
@@ -580,8 +592,9 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   parameter and the resulting loans do not conflict.
   Point at the field, constructor binding, storage declaration, or
   return expression that introduces an unproven/global/captured origin,
-  custom cleanup, dependency-changing assignment, or ambiguous/incompatible
-  return. A mutable carrier is move-only; attempts to copy it use the ordinary
+  dependency-changing assignment, or ambiguous/incompatible return. A declared
+  destructor does not itself invalidate a carrier; its loan must survive the
+  cleanup obligation. A mutable carrier is move-only; attempts to copy it use the ordinary
   ownership-transfer diagnostic, while assignment remains the ordinary
   unavailable-assignment diagnostic. Do not suggest changing `mut` as a
   mechanical fix because that changes aliasing and API semantics.
@@ -662,7 +675,7 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   invent a replacement ABI name. Ordinary namespaces outside a native surface
   do not receive this portability restriction.
 - `GTI-S2064` owns a written `[[c_abi]]` record whose declaration shape, field
-  name, declaration shape, field name or type, recursive structure, or checked
+  name or type, recursive structure, or checked
   layout cannot satisfy the bounded C record contract. Point at the actionable
   identifier, attribute, member, field type, or recursive edge, preserve
   ordinary type-resolution diagnostics, and do not offer a fix-it when choosing
@@ -684,13 +697,14 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   parameter from a parameter that is not an immutable one-level pointer to a
   writable fixed-width integer. Do not infer a different count parameter or
   offer a fix-it.
-- `GTI-S2074` owns a written second raw-pointer level outside an exact
-  `[[c_array(count)]] extern "C"` return or exact opaque-handle out parameter
-  on a bodyless C declaration. Point at the outer `*`, explain the bounded
-  positions, and do not suggest general nested-pointer syntax. `GTI-S2056`
-  owns an attempted nested address value at an expression: point at `&` and
-  require the direct address of an exact mutable handle-pointer binding in the
-  selected C call.
+- The former `GTI-S2074` second-pointer-level rejection is retired: recursive
+  raw-pointer types and inert address formation are ordinary GTI facilities,
+  not exceptions reserved for native out parameters. `GTI-S2056` still owns
+  structurally invalid pointer pointees/operations such as pointer-to-array
+  syntax or member access through `void*`. An operation requiring an opaque
+  pointee's unavailable representation retains `GTI-S2065`. Unsafe access and native ABI checks
+  retain their own existing codes; address formation does not grant a checked
+  reference, pointee validity or permission to access it.
 - `GTI-P0003` owns malformed boolean compile-condition syntax, including a
   missing operand or delimiter. `GTI-P0004` owns `defined(...)` used as an
   ordinary GTI expression. Both keep the condition language confined to
@@ -765,9 +779,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   through an adapter. It rejects conversion without `<std/cthread>` or with a
   signature other than `int32_t(void*)` or `void()`
   in the concurrent profile. The exact registered worker/once forms additionally
-  checks target support through `GTI-S2084`. The code also owns a bare function
-  name used outside any exact native-callback, confined-callable, or thread-task
-  context; explain that a function name must otherwise be called directly.
+  checks target support through `GTI-S2084`. Ordinary GTI function items have
+  a separate `GTI-S2090` selection/transport contract; an unambiguous item does
+  not need a native-callback, confined-callable or thread-task context merely
+  to be formed or stored.
 - `GTI-S2077` owns a syntactically valid but semantically invalid parameter
   default. Point at the `=` for an unsupported declaration/type or recursive
   expansion, at the first following required parameter for a non-trailing
@@ -865,10 +880,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
 - `GTI-S2086` owns an invalid prefix `?` propagation expression. Point at the
   operator and distinguish a non-`expected<T, E>` operand, a callable that does
   not return `expected<U, E>`, a non-identical enclosing error type, and an
-  unavailable copy or move for either active alternative. The bounded
-  `expected<T&, E>` specialization also uses this family until propagation can
-  preserve its successful child loan; suggest explicit state inspection and
-  borrowing `value()` only on that success path. Suggest explicit error
+  unavailable copy or move for either owned active alternative. Implemented
+  `expected<T&, E>` propagation preserves the checked read-only success
+  dependency rather than copying or moving its referent; ordinary borrow
+  diagnostics reject invalid origins, lifetimes or conflicting access. Its
+  error alternative still requires the exact enclosing type and an available
+  copy or move. Suggest explicit error
   handling or conversion for other type/context failures, and
   `?std::move(result)` only for a named move-only expected. Do not offer a
   mechanical fix-it because consuming a named result or choosing a borrow
@@ -976,7 +993,7 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   rejection or unclassified backend exception remains `GTI-B0001`; only an
   explicit bounded backend classification may use `GTI-B0003`.
   One such classification is a fallible source function returning a class value
-  in a declaration-time field initializer (Gitea #2): the backend lacks the
+  in a declaration-time field initializer (historical Gitea issue #2): the backend lacks the
   enclosing constructor failure channel. The diagnostic names that prerequisite
   and suggests null initialization plus a later initialization method only for
   assignable nullable owners. It offers no automatic fix-it and does not claim
@@ -1126,7 +1143,8 @@ attribute, declaration name, native-facing name conflict, direct type use, or
 operation that would require the hidden pointee representation. It explains
 that the only valid declaration is `[[c_opaque]] struct Name;`, relates a
 direct use or pointee operation to the owning attribute when available, and
-recommends a one-level address-only raw pointer plus an ordinary safe wrapper.
+recommends a raw-pointer indirection plus an ordinary safe wrapper. Recursive
+pointer levels are admitted, but no level reveals the hidden pointee layout.
 It has no automatic fix because choosing native identity and ownership policy
 is not mechanical. Parser errors continue to own malformed declaration
 structure.

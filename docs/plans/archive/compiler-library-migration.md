@@ -4,6 +4,13 @@
 > documented in
 > [`docs/architecture/overview.md`](../../architecture/overview.md).
 
+This is a historical migration record. Its phase instructions, baseline gaps,
+source paths and command recipes describe that campaign, not work to restart.
+Later structural extraction and the `LoweredProgram` frontier supersede the
+intermediate implementation layout. Current changes use the workflow and
+verification contracts, including optimized host compilers and the shared
+build window; original measurements and delivery evidence remain unchanged.
+
 Status: implemented; phases 1 through 7 are complete
 
 Implementation update (2026-08-22): later ADR 016 work replaced the historical

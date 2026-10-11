@@ -26,7 +26,31 @@ records and supersedes the proposal's earlier LLVM-directed choices.
 
 ---
 
-## 0. Execution status
+## Current Disposition (2026-10-11)
+
+The source/canonical-contract reconciliation below supersedes the early status
+labels and stage order, not their original measurements. It records availability
+against integrated source through 0.402.0; no fresh compiler or runtime tests
+were run for this documentation-only audit.
+
+| Original work | Current disposition / next prerequisite |
+| --- | --- |
+| Dependency and public boundary | One mandatory LLVM dependency, pinned bundle or compatible system LLVM 18+ with RTTI and exact matching Clang/libclang. Posture A remains standing policy. |
+| Library/structural migration | Delivered compiled compiler, backend and driver boundaries, later separated catalog/instance/body/verifier/editor/text responsibilities and immutable lowered frontier. Do not restart Stage 2 or a structural freeze. |
+| Ordered execution/private identity | Delivered trusted declaration identity and compiler-private publication rules, exact MIR call stages, normal/failure cleanup and source-site failure records. Remaining materialization profiles extend those general contracts. |
+| Type/node/source/flow storage | AST kind queries and GTI casts are delivered; some RTTI sites remain. Canonical TypeContext ownership, dense NodeId/source-token handles and broader compact semantic flow state remain distinct design/migration goals. |
+| MIR infrastructure | Stable instruction/body addressing, canonical edits/invalidation/replay, block parameters, dataflow/SCCP, per-instance effects and bounded loop/alias/capture/closed-call facts are delivered. Further memory/loop/inlining transforms need exact proof clients, not another foundational framework. |
+| Diagnostics and editor reuse | Generated diagnostic identities/groups, lex/parse cache, error-tolerant query/completion profiles and documentation projection are delivered. General recovery nodes, finer semantic reuse and crash-state isolation remain separate goals. |
+| Backend/linkage | Concrete verified MIR instances own execution; source modules and whole-program caches exist. Independent compilation/content-stable linkage needs its own ABI/identity contract, not type interning as an automatic blocker of current caches. |
+| Measurement/selection | Preserve the instance-copy/occurrence-table attribution corrections and recorded results below. Architecture and explicit cost models can justify work under ADR 012; representative measurement validates acceptance. A private LLVM swap still must establish that it is the best implementation. |
+
+The [implementation sequence](../plans/implementation-sequence.md) owns new
+prompt-sized work. Remaining compiler-memory/identity goals must state snapshot
+ownership, equality/serialization, invalidation, affected operation families
+and cost model before changing central storage. Original stage numbering is
+traceability, not a prerequisite chain to re-enact.
+
+## 0. Recorded Early Execution Status
 
 **Stage 0 and Stage 1 were implemented** (first execution pass, on top of the
 exclusive-reborrow checkpoint). The initial optional-dependency probation used
@@ -38,9 +62,9 @@ system installation or the pinned bundle
 | Item | Status | Notes |
 | --- | --- | --- |
 | 0.1 ADR | **done** | [ADR 006](../decisions/006-llvm-support-adoption.md) |
-| 0.2 CMake vendoring | **done** | `find_package(LLVM CONFIG)` (18 ≤ v < 23) + `GTI_BUNDLE_LLVM` FetchContent; `GTI_RELEASE_BUILD` forces bundling |
+| 0.2 CMake vendoring | **done; range revised** | One system LLVM 18+ build with RTTI and exact matching Clang, or the pinned `GTI_BUNDLE_LLVM` bundle; `GTI_RELEASE_BUILD` forces bundling. The original `<23` upper bound is retired. |
 | 0.3 link-surface gate | **done** | `scripts/check_llvm_link_surface.py`, enforced in the mandatory LLVM build |
-| 0.4 crash handlers | **done** | Handlers are installed in `gti`, `gti_lsp`, and test mains. The containment follow-up landed: `runIsolatedAnalysis` guards analysis alone, catching its own exceptions and returning them as data so none crosses a no-exception LLVM frame, and holding no lock so a stack restore cannot strand `stateMutex`; `publishAnalysis` mutates shared state outside the guard. Covered by `lsp_protocol`'s `test_worker_survives_failed_analysis`. In-process containment is not process isolation, which `docs/architecture/lsp.md` and `lsp-evolution.md` record as the remaining option |
+| 0.4 crash handlers | **handlers/guard delivered; state-safe containment incomplete** | `runIsolatedAnalysis` catches ordinary exceptions inside the guard and publishes outside `stateMutex`. Guarded frontend work also accesses shared `FrontendCache` locking; arbitrary non-local fault recovery is not proven state-safe. `test_worker_survives_failed_analysis` covers failed analysis, not every LLVM fatal signal/locked-cache fault. The lock/state-safe seam or process-isolation follow-up belongs in current LSP architecture/evolution. |
 | 0.5 license install | **done** | `llvm-LICENSE.txt` installed when bundling |
 | 0.6 determinism tests | **done** | `output_determinism` (two-process `--emit-cpp` byte compare) + cross-analysis MIR-print test in `optimizer_foundation` |
 | 0.7 SYSTEM includes / no flag import | **done** | LLVM include directories stay private/system on `gti_compiler`; LLVM flags are never imported |
@@ -48,12 +72,12 @@ system installation or the pinned bundle
 | 1.1 `stopAfter` + bounded LSP lowering | **done, revised** | `FrontendPhase` remains the boundary; the LSP now requests `Hir` so concrete generic diagnostics match compilation while failure metadata and MIR stay skipped |
 | 1.2 SourceManager line index | **done** | binary-search `locate()`, allocation-free lookup. Error-path benchmark: **10.17 s → 1.29 s** at 25.6k lines/12.8k errors; scaling is now linear in diagnostics |
 | 1.3 model move | **done** | deep copy replaced by `takeModel()` after HIR reanalysis finishes |
-| 1.4 emitter type recognition | **investigated, deferred** | The spelling recognition is not emitter-local: semantics itself classifies `gti_internal::{unique_owner,storage,text_view}` by qualified name, and a user-declared `namespace gti_internal { class unique_owner<T> }` is accepted and then subjected to compiler-private rules. An emitter-only `ClassId` fix would desynchronize the two layers. Correct fix is semantics-layer: reserve the `gti_internal` namespace in ordinary units (as `__gti_` identifiers already are in the lexer), then bind these types by trusted declaration identity like intrinsics. Filed as a follow-up task |
-| 1.5 ordered argument evaluation | **assessed, deferred** | Both cheap strategies are unsound against GTI's loan model: IIFE-wrapping shortens argument-temporary lifetimes from full-expression to lambda-body (breaking call-result loans that semantics currently permits through the full expression), and statement-level hoisting requires full-expression decomposition with statement context the AST-walking emitter does not have. Needs a design tied to temporary-lifetime work (audit A§5.4/roadmap Milestone 1) or MIR-controlled emission. GCC's `-fstrong-eval-order=all` is a partial toolchain-side mitigation but clang has no equivalent, so it cannot close the gap alone |
+| 1.4 emitter type recognition | **delivered by later capability work** | Compiler-private functions/types bind by trusted declaration identity; application access to root `gti_internal` and private-signature leakage is rejected. The original emitter-only workaround is not a remaining task. |
+| 1.5 ordered argument evaluation | **delivered through MIR** | Strict left-to-right receiver/input staging, active temporary/parameter/result ownership and failure cleanup are verified executable facts. No AST-emitter hoisting workaround or host evaluation-order mitigation defines the language. Remaining unsupported composition profiles extend this same authority. |
 | 1.6 `TimeProfiler` | **done** | `PhaseTimeScope` shim (no llvm/* in public headers); five frontend phase scopes; `gti --time-trace <path>` emits valid Chrome Trace JSON |
 | 1.7 `parseTargetTriple` | **done** | Private `llvm::Triple` normalization maps to exact GTI `os`/`vendor`/`arch` vocabulary (`aarch64`→`arm64`, `darwin`→`macos`); `parseTargetTripleResult` distinguishes malformed, unsupported-architecture, endianness, and operating-system failures while the optional wrapper remains compatible |
-| 1.8 target data layout | **done, bounded** | Public LLVM-free `TargetDataLayout` owns size, ABI/preferred alignment, 64-bit pointer width, and little endianness for current scalar domains. Installed probes compare host facts with the native ABI and `GTI-S2062` rejects unsupported selected layouts before frontend analysis. All accepted targets use 64-bit `size_t`/`ptrdiff_t`; non-64-bit targets and aggregate/native layout require later contracts |
-| S-LAYOUT-02 follow-on | **done, bounded** | Reserved type-only `sizeof(type)`/`alignof(type)` consume `TargetDataLayout` for primitives, one-level raw pointers, aliases, recursive positive concrete fixed arrays, and the later `S-ABI-02` passive native-record family. Semantics produces exact `uint64_t` constants and `GTI-S2063`; HIR retains query provenance, MIR lowers a literal, and the backend never emits a native query. Synthetic supported-target facts plus native and installed-library probes cover the boundary. Expression operands, zero/symbolic extents, ordinary records, and backend-defined categories remain excluded |
+| 1.8 target data layout | **delivered, subsequently extended** | LLVM-free target/scalar/native layout facts, exact queries and general object-layout/manual-lifetime clients are implemented within their canonical eligibility rules. All selected targets remain 64-bit; another target width/layout needs a new coherent contract. |
+| S-LAYOUT-02 follow-on | **delivered, subsequently extended** | Frontend `sizeof`/`alignof` queries, passive native records, recursive native pointer/callback fields and general `layout_of`/manual-lifetime families exist. Read canonical layout/raw-memory/native contracts for supported shapes rather than treating the original one-level-pointer/non-record limit as current. |
 
 This follow-on closes the query half of the historical language audit's §4.2
 finding without rewriting that audit. `S-ABI-01/02` subsequently closed the
@@ -64,17 +88,17 @@ Stage 2 status (second execution pass):
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| 2.1 M-Phase 3 (semantic data/algorithm split) | **not started** | The long pole; needs its own focused sessions |
-| 2.2 M-Phase 4 (HIR/MIR lowering to `.cpp`) | **partially started** | `HirInstanceIndex` is the first compiled HIR seam; the lowerers remain implementation headers and require focused migration work |
+| 2.1 M-Phase 3 (semantic data/algorithm split) | **complete; later structurally refined** | Semantic records and queries remain public contracts; catalog, declarations, bodies, ownership and concrete-instance algorithms compile behind private services. |
+| 2.2 M-Phase 4 (HIR/MIR lowering to `.cpp`) | **complete; later structurally refined** | HIR instance/lowering and MIR body/program/hosted-startup implementations are compiled with exact ownership boundaries. |
 | 2.3 checked-integer operations to `src/compiler/` | **done** | `evaluateCheckedIntegerUnary/Binary` compiled in `src/compiler/checked_integer.cpp`; header keeps types, trivial helpers, and declarations. `constant_evaluator.h` was inspected and left in place: it is a thin conversion layer whose arithmetic authority is entirely the two compiled entry points |
 | 2.4 `llvm::APInt` swap | **done** | Two's-complement `APInt` implementation with `sadd_ov`-family overflow detection is the sole active implementation. The former portable evaluator and its completed probation evidence are preserved under `archive/compiler/`; they are not built or maintained as a fallback |
 
-Stage 4/5/7 status (current execution pass):
+Stage 4/5/7 disposition (early measurements retained):
 
 | Item | Status | Notes |
 | --- | --- | --- |
 | 4 Public-header posture | **closed: Posture A retained** | Installed headers remain LLVM-free. Changing that standing policy requires a new ADR. GTI owns type identity and casts; a measured private allocator or lookup index remains possible because it does not cross the interface |
-| 5a `TypeContext` interning | **deferred** | Types account for only ~3% of retained semantic memory after the occurrence fix, snapshot/`TypeContext` ownership has not been designed, and no allocation-churn benchmark demonstrates a payoff. Canonical type identity remains GTI-owned future work; private LLVM storage is not pre-approved |
+| 5a `TypeContext` interning | **remaining ownership/migration goal** | Snapshot/context lifetime, GTI type identity and affected construction/equality/storage costs need a coherent design. The historical ~3% retained-memory result is not a current allocation-churn measurement or a ban on architectural work; private LLVM machinery is not pre-approved. |
 | 5a′ compile-path occurrence opt-out | **done — the actual memory fix** | `FrontendOptions::toolingOccurrences` (default true) gates the occurrence table; the driver disables it because only editor position queries read it, while symbols stay recorded for HIR and the emitter. **Peak RSS: 789 MB → 512 MB at 25.6k lines (−35%) and 1,544 MB → 1,021 MB at 51.2k lines (−34%); user time −14%.** 41/41 examples byte-identical; contract covered by `testToolingOccurrenceOptOut` |
 | 5b exact IEEE floats + `APFloat` | **done** | `BinaryFloat` is GTI's width-tagged exact binary32/binary64 representation. Decimal literals parse directly with `APFloat`; arithmetic, comparison, and numeric conversion use the same compiled engine; C++ emits retained bits with `std::bit_cast`; the native driver enforces `-fno-fast-math -ffp-contract=off` and defines the generated artifact's strict-policy marker. Focused lexer/evaluator/pipeline/CLI/driver tests cover both widths, promotion, rounding, signed zero, NaN, infinity, and conversion boundaries |
 | 7.4–7.5 private dominance | **done, bounded** | `computeMirDominance` copies a valid `MirBody` CFG into a private pointer-stable snapshot, runs LLVM `GenericDomTree`, and returns only GTI reachability/immediate-dominator block IDs. The MIR verifier uses a fresh result for cross-block value availability. No tree is cached; `LoopInfo` and incremental updates remain deferred |
@@ -86,7 +110,7 @@ Stage 3 status (third execution pass):
 | 3a instance delta model | **done** | The four `analyze*Instance` whole-visitor copies are replaced by a detach/restore bracket (`InstanceAnalysisScope`) on the shared analyzer: instance analysis writes into an empty delta `SemanticModel`/`SemanticDatabase` that reads through to the detached base (loan tables deliberately restart instead of falling back, mirroring the old `clearLoans` semantics; record mutators materialize base records before updating; delta `SymbolId`s continue after the base's so identities never collide). **Gates:** HIR lowering at 400 distinct generic instances 8,073 ms → 24 ms; the A§3.3 experiment's per-instance term is eliminated (residual growth is the linear cost of lowering the added functions themselves); **41/41 examples emit byte-identical C++ across the change**. Note: 3a was sequenced after M-Phase 3 for hygiene, but the dependency proved soft — the delta was implementable against the existing model API because the visitor accesses the model exclusively through its methods |
 | 3b instance de-dup index | **done, with a correction** | The four `enqueue*` linear scans are replaced by a compiled `HirInstanceIndex` (GTI-owned interface in `include/gti/hir_instance_index.h`, implementation in `src/compiler/hir.cpp` — the first compiled slice of HIR and the M-Phase 4 seam). Keys reproduce the previous scans' equality exactly, including the detail that free functions ignore class arguments and that an instance whose owner failed to resolve was never matchable; hashing uses `llvm::hash_combine`. The former splitmix fallback is archived outside the build. Per ADR 006 the index is lookup-only — the ordered `HirProgram` vectors remain the identity authority and the only thing iterated. **Correction to the audit:** this delivered **no meaningful measured speedup** — 0–3% on realistic workloads and ~10% on a constructed worst case (one value-generic instantiated 800 times). Audit §4.2 attributed the §3.2 quadratic partly to these scans; that was wrong. 3a's visitor copy was essentially all of it, and the scans' fast-fail first comparison keeps them cheap in practice. The change is justified as asymptotic insurance plus the compiled seam, **not** as a performance fix, and by the repository review skill's own rubric it would classify as *prepare for* rather than *fix now*. `audit.md` §4.2 carries the same correction |
 
-## 1. Shape of the plan
+## 1. Original Shape Of The Plan
 
 Nine stages. The measured wins land early: editor latency and the diagnostic
 quadratic in **Stage 1**, the instantiation quadratic in **Stage 3**, the
@@ -100,7 +124,7 @@ Stage 3  The quadratic          instance delta model -> GTI-owned de-dup index
 Stage 4  Header boundary        Posture A retained; later change needs new ADR
 Stage 5  Canonical values       binary32/binary64 done; GTI TypeContext deferred
 Stage 6  Identity and dispatch  Kind tags + GTI casts, SourceUnitId, NodeId
-Stage 7  MIR for passes         dominance done; editing/dataflow still planned
+Stage 7  MIR for passes         infrastructure delivered; transforms remain
 Stage 8  Long tail              diagnostics, caching, emission, ABI, ...
 ```
 
@@ -113,8 +137,8 @@ Stage 0 ──┬─> Stage 1 ────────────────�
           ├─> exact float contracts ──> Stage 5b (done)
           └─> existing MIR CFG ──> Stage 7.4–7.5 (done)
 
-snapshot/context ownership + allocation benchmark ──> Stage 5a (deferred)
-MIR editing + concrete pass clients ──> remaining Stage 7 work
+snapshot/context ownership + operation/cost model ──> Stage 5a (remaining)
+verified MIR infrastructure + exact proof clients ──> further transforms
 
 Stage 4 constrains every stage: LLVM stays behind GTI-owned interfaces.
 ```
@@ -190,7 +214,7 @@ ordering and measurements establish that it is the best implementation.
 
 ---
 
-## 3. Stage 0 — Foundations
+## 3. Recorded Stage 0 — Foundations
 
 **Goal.** LLVM is vendored, linked, and safe to use. No compiler behavior
 changes.
@@ -225,7 +249,7 @@ condition into a hard language-server crash.
 
 ---
 
-## 4. Stage 1 — Zero-prerequisite wins
+## 4. Recorded Stage 1 — Zero-prerequisite wins
 
 **Goal.** Deliver the contained, user-visible wins and make everything after
 this measurable. Runs concurrently with Stage 2.
@@ -260,7 +284,7 @@ fields and their meaning are GTI's. Land them as one change.
 
 ---
 
-## 5. Stage 2 — Migration wave 1, and the first LLVM swap
+## 5. Recorded Stage 2 — Migration wave 1, and the first LLVM swap
 
 **Goal.** Move the subsystems that LLVM adoption depends on out of headers. This
 is `compiler-library-migration` work; this plan schedules it and gives it a
@@ -292,7 +316,7 @@ own acceptance criteria.
 
 ---
 
-## 6. Stage 3 — The instantiation quadratic
+## 6. Recorded Stage 3 — The instantiation quadratic
 
 **Goal.** Remove the largest measured cost in the compiler. Two ordered
 sub-stages with independent gates.
@@ -372,16 +396,18 @@ future evidence justifies it, give semantic types GTI-owned canonical identity
 without admitting LLVM representations into cross-phase interfaces.
 
 **Boundary.** Stage 4 applies throughout. The binary32/binary64 phase is complete. Type
-interning is deferred until snapshot/context ownership is designed and an
-allocation benchmark establishes a reason to undertake the migration.
+interning remains a snapshot/context ownership and storage-migration goal.
+State the affected operations and cost model; allocation/equality measurements
+validate its acceptance rather than granting permission to design it.
 
-### 5a — `TypeContext` interning (deferred)
+### 5a — `TypeContext` interning (remaining ownership/migration goal)
 
-Types account for about 3% of retained semantic memory after compile-path
-tooling occurrences are disabled. The compiler also has no defined ownership
-relationship between a frontend snapshot and a future `TypeContext`, and no
-benchmark currently attributes material allocation churn to type construction.
-Those are prerequisites, not details to invent while changing storage.
+The early measurement attributed about 3% of retained semantic memory to types
+after compile-path tooling occurrences were disabled; it is not a current
+allocation-churn profile. Snapshot/context lifetime, canonical identity and
+construction/equality/storage costs still need a coherent design. Define those
+facts before changing storage and measure the resulting candidate; a prior
+benchmark is not permission to begin architectural work.
 
 | # | Work | Owner |
 | --- | --- | --- |
@@ -391,8 +417,9 @@ Those are prerequisites, not details to invent while changing storage.
 | 5a.4 | Measure allocation churn and lookup cost after migration. Only if material, compare a private `TypeContext::Implementation` using `BumpPtrAllocator` and/or a non-authoritative LLVM index | measured option |
 | 5a.5 | Treat identifier interning as a separate measured change; do not couple name identity to the type-storage decision | GTI |
 
-**Sequencing rule if resumed.** First define snapshot/context ownership and add
-an allocation benchmark. Then build and test the GTI contract with ordinary
+**Sequencing rule if resumed.** First define snapshot/context ownership and the
+construction/equality/storage cost model, then establish allocation evidence.
+Build and test the GTI contract with ordinary
 storage before considering private LLVM machinery. An LLVM allocator may own
 bytes, and an LLVM container may accelerate lookup, but neither may define
 `TypeId`, node shape, equality, caller-visible lifetime, or iteration order.
@@ -402,7 +429,8 @@ RSS and allocation profiles, but do not claim the old 802 MB baseline as the
 type problem: disabling compile-path tooling occurrences already reduced the
 25,600-line case from 789 MB to 512 MB, while types in `ExpressionInfo`
 accounted for only about 13.5 MB. Any private storage swap needs its own
-before/after evidence. Until those prerequisites exist, 5a is not scheduled.
+before/after evidence. Design the missing ownership prerequisite as part of a
+coherent slice instead of treating the old measurements as a permanent veto.
 
 ### 5b — exact binary32 and binary64 with `APFloat` (implemented)
 
@@ -433,18 +461,20 @@ contract.
 
 ---
 
-## 9. Stage 6 — Node identity and dispatch
+## 9. Stage 6 — Node Identity And Dispatch Disposition
 
-**Goal.** Remove the RTTI dispatch mechanism and give the AST a dense identity.
+**Remaining goal.** Finish justified classification migration and define dense
+snapshot/body identity where it simplifies storage, lookup and invalidation.
+AST kinds and GTI-owned classification helpers are already delivered.
 
 **Prerequisites.** Stage 1. Independent of Stages 3–5, so it can run in parallel
 with them if staffing allows.
 
 | # | Work | Owner | Source |
 | --- | --- | --- | --- |
-| 6.1 | Add a `Kind` enum to `Expr`/`Stmt` (`include/gti/ast.h:330`, `:379`), set in each constructor, with `classof` per node | GTI | `A§4.6` |
-| 6.2 | Add GTI-owned `isa`/`cast`/`dyn_cast` helpers over those tags | GTI | `A§4.6` |
-| 6.3 | Migrate the 409 `dynamic_cast` sites, heaviest clusters first: `cpp_emitter.h` (94), `hir.h` (56), then `semantic_analyzer.h` (251) | GTI | `A§4.6` |
+| 6.1 | **Delivered:** exact `ExprKind`/`StmtKind` queries on AST nodes | GTI | `A§4.6` |
+| 6.2 | **Delivered:** GTI-owned `exprAs`/`stmtAs` classification helpers, without LLVM public-header dependency | GTI | `A§4.6` |
+| 6.3 | **Substantially delivered:** the old 409-site count is historical; remaining RTTI sites can migrate under focused classification/recovery evidence | GTI | `A§4.6` |
 | 6.4 | Replace `SourceSpan::source` and `Token::source` strings with `SourceUnitId` | GTI | `A§4.4` |
 | 6.5 | Assign each `Expr`/`Stmt` a snapshot-local `NodeId` at parse time; convert the 26 hash side tables (`include/gti/semantic_analyzer.h:2071`–`:2112`) to dense vectors; `clear()` becomes one loop | GTI | `A§4.5` |
 | 6.6 | Dense binding indices for flow state; replace whole-`ScopeStack` copies at the ~30 branch/loop/switch sites with a flat per-binding state vector | GTI | `A§4.7` |
@@ -458,38 +488,43 @@ types in core headers.
 **Note on 6.5.** This also turns the Stage 3a instance delta into a sparse
 overlay over dense vectors, which is materially simpler than a map clone.
 
-**Gate.** `dynamic_cast` count reaches zero in `cpp_emitter.h` and `hir.h`;
-`compiler_pipeline` green; `A§3.1` semantic-analysis time improves; the
-determinism test still passes.
+**Remaining gate.** Prove exact classification and parser/tooling recovery for
+remaining sites, with deterministic behavior and current cost evidence.
+Removed implementation headers and the old 409-site inventory do not define
+an unfinished full migration; new dense identities have separate snapshot and
+publication obligations.
 
 ---
 
 ## 10. Stage 7 — MIR shaped for the passes it is planned to host
 
-**Goal.** Establish the seams the roadmap's dataflow work needs, before the
-first transforming pass is written.
+**Current goal.** Extend the delivered analysis/editing/proof foundation with
+useful verified transforms; do not repeat a pre-first-pass infrastructure gate.
 
-**Status.** The bounded dominance slice, 7.4–7.5, is implemented against the
-existing MIR CFG and verifier. The editing protocol, effect summaries,
-dataflow framework, and representation work remain proposals with their own
-prerequisites.
+**Status.** The dominance adapter and subsequent stable editing/invalidation,
+proof replay, per-instance effects, block parameters, worklist dataflow/SCCP
+and bounded loop/alias/capture clients are implemented. Broader representation,
+memory/loop and interprocedural transforms remain goals with exact proof and
+performance obligations. The original rows below remain traceability, not a
+request to build a second framework.
 
 | # | Work | Owner | Source |
 | --- | --- | --- | --- |
-| 7.1 | Instruction addressing (`{block, index}`) and an accumulate-then-apply patch protocol. **GTI-owned**, modelled on rustc's `Location`/`MirPatch` | GTI | `A§5.4`, `L§7.1` |
-| 7.2 | Make `rebuildMirValueUses` (`src/compiler/mir.cpp:332`) incremental at patch granularity, or add a dirty flag so consecutive passes rebuild once | GTI | `A§5.4` |
-| 7.3 | Per-function conservative effect summaries from `MirFunctionInstance` bodies; consult them in `effects(const MirInstruction&)` (`src/compiler/optimization/effects.cpp:323`) for non-intrinsic calls | GTI | `A§5.4` |
+| 7.1 | **Delivered, revised:** stable body/instruction IDs and canonical edits/replay, not the original block/index-addressed proposal | GTI | `A§5.4`, `L§7.1` |
+| 7.2 | **Delivered editing contract:** canonical repair, invalidation and revision-keyed analyses preserve use/CFG coherence; finer incremental cost improvements remain measured work | GTI | `A§5.4` |
+| 7.3 | **Delivered:** conservative concrete-instance effect summaries, propagated failure/dispatch/capture facts and optimizer queries | GTI | `A§5.4` |
 | 7.4 | **Done:** copy one structurally valid `MirBody` CFG into a private pointer-stable snapshot and run LLVM generic dominator construction | **LLVM behind GTI API** | `L§6.1` |
 | 7.5 | **Done:** expose fresh `MirDominanceInfo` reachability/immediate-dominator queries in GTI block IDs and use them to verify cross-block value availability | GTI | `A§5.4`, `L§6.1` |
-| 7.6 | Dataflow framework: lattice concept, transfer function over `MirInstruction`, worklist solver over `MirBody`. Second client should be the loan-flow analysis currently in `SemanticVisitor` (`:6530`–`:6669`) | GTI | `A§5.4` |
-| 7.7 | Shrink `MirInstruction` from 776 B — move the rarely used call/construct payload behind a pointer, or make the representation kind-specific | GTI | `A§5.4` |
+| 7.6 | **Delivered MIR foundation:** worklist/lattice dataflow, scalar block parameters/promotion and SCCP. General semantic loan endpoint/flow-state redesign remains a separate authority problem. | GTI | `A§5.4` |
+| 7.7 | Representation compaction remains a candidate goal; 776 B is the historical baseline, not a current size claim. State current payload/access/allocation costs before choosing an indirect or kind-specific representation. | GTI | `A§5.4` |
 
-**`llvm::ilist` remains declined.** It presupposes address-identified nodes and
-an SSA use-graph. GTI's MIR is non-SSA and place-based, and
-`docs/architecture/mir.md` requires the printer to remain "deterministic and
-address-free." This is the clearest case in the plan where an LLVM tool is
-battle-tested for a problem GTI does not have — 7.1 is the correct answer and
-it needs no dependency.
+**`llvm::ilist` is not selected for this representation.** GTI's stable-ID,
+place-based MIR with scalar block parameters and canonical editing already has
+an ownership/invalidation contract. Replacing its storage with intrusive nodes
+is not a missing prerequisite of those passes. Any later private container
+choice must preserve GTI identity, deterministic address-free output and
+editing lifetime while clearly improving the applicable costs; availability
+alone does not justify the migration.
 
 **7.4–7.5 are the strongest "do not rewrite this" item in LLVM, but the first
 adoption is intentionally narrow.** `GenericDomTree.h` and
@@ -516,26 +551,27 @@ emitter migration in Stage 8.
 **Completed-slice gate.** Focused optimizer tests cover joins, loops,
 unreachable blocks, malformed CFG rejection, immediate-dominator queries, and
 verifier checks for direct and indexed cross-block uses. The broader Stage 7
-gate remains attached to the future dataflow framework in 7.6.
+infrastructure is delivered. New transforms extend its independent proof
+replay/verifier, invalidation and optimized-runtime acceptance instead.
 
 ---
 
-## 11. Stage 8 — Long tail
+## 11. Stage 8 — Remaining And Delivered Disposition
 
 Ordered by value, not dependency. Each is independently schedulable once its
 prerequisite lands.
 
 | # | Work | Owner | Prerequisite | Source |
 | --- | --- | --- | --- | --- |
-| 8.1 | `RecoveryExpr` in the AST; return it instead of unwinding past parsed sub-expressions | GTI | — | `A§6.3` |
-| 8.2 | Deterministic content-based symbol mangling replacing `__gti_fn_<counter>_` (`include/gti/cpp_emitter.h:2741`), applied uniformly including virtual methods | GTI | Stage 5a (canonical types) | `A§5.1` |
-| 8.3 | Diagnostic table: `{code, default severity, group, format string}`; `report()` takes an enum. Python generator over a data file | GTI | — | `A§4.8` |
+| 8.1 | General AST recovery nodes remain a possible extension; error-tolerant current completion already has a delivered bounded profile | GTI | Exact recovery/type/publication contract | `A§6.3` |
+| 8.2 | Independent linkage/content-stable mangling remains a goal; current source modules and whole-program caches are delivered | GTI | ABI/declaration identity contract; no automatic TypeContext dependency | `A§5.1` |
+| 8.3 | **Delivered foundation:** generated `DiagnosticId`/descriptor registry and warning groups; further per-message migration/policy extends that registry | GTI | Exact diagnostic identity and safe actions | `A§4.8` |
 | 8.4 | **Declined:** `raw_ostream` migration in `CppEmitter` and `MirPrinter`; current output is correct and native C++ compilation dominates | — | — | `L§6.4` |
 | 8.5 | **Deferred:** reconsider `llvm::vfs` only if a source-loader restructuring gives overlays a concrete client and measurable simplification | measured option | M-Phase 2 | `L§8` |
 | 8.6 | **Deferred:** reconsider `lit` + `FileCheck` only if the snapshot harness itself is restructured | measured option | — | `L§8` |
-| 8.7 | Parsed-unit cache keyed on `{path, content hash}` so an edit skips re-lexing and re-parsing the prelude and standard library | GTI | — | `A§6.2` |
-| 8.8 | Concrete instance emission replacing C++ templates, one instance family at a time | GTI | Stage 3, 8.2 | `A§5.2` |
-| 8.9 | Thread a location token into emitted checked-failure calls; single `gti_rt_fail(kind, location)` entry point replacing seven abort helpers | GTI | — | `A§7.2` |
+| 8.7 | **Delivered:** bounded lexed/parsed source-unit cache with content/configuration/dependency identities and retained immutable AST ownership | GTI | Finer semantic reuse/invalidation is separate | `A§6.2` |
+| 8.8 | **Delivered execution authority:** concrete verified MIR instances feed the immutable lowered frontier; native template lookup/instantiation does not decide body meaning | GTI | Broader representation clients preserve exact identities | `A§5.2` |
+| 8.9 | **Delivered:** exact artifact/site defined-failure records and checked cleanup/propagation; allocation exhaustion has its separate report-and-abort contract | GTI | New families preserve first/secondary failure and ownership | `A§7.2` |
 | 8.10 | **Done:** `llvm::json` replaced json-c in the private LSP protocol translation unit | **LLVM** | Landed as a protocol-only value/RAII migration; document-state extraction remains independently deferred | `L§8`, ADR 006 |
 
 **8.4 decision.** `raw_ostream` would touch hundreds of call sites and changes
@@ -545,14 +581,15 @@ The private dominance snapshot's required
 `printAsOperand(llvm::raw_ostream&)` compatibility hook is not an adoption for
 GTI emission and does not weaken this decision.
 
-**8.7 urgency note.** This is cheap today only because the standard library is
-1,103 lines. At 20,000 lines the fixed per-keystroke cost is ~30 ms before the
-user's own code; at 100,000 lines it is several hundred. Schedule it before the
-library grows, not after.
+**8.7 follow-on.** The old 1,103-line baseline and projected latency are
+historical motivation. Lex/parse reuse exists; current editor costs include
+whole-program semantic/concrete-instance work. Select scoped/demand-driven
+reuse from current evidence while preserving identity, invalidation, recovery
+and query completeness.
 
 ---
 
-## 12. Measurement obligations
+## 12. Recorded Measurement Obligations
 
 One benchmark set, re-run at every gate. All inputs and expected shapes come
 from `A§3`.
@@ -666,12 +703,11 @@ lifetime assumptions, or iteration order. Review each adoption against the
 full ADR boundary, not only the absence of an `llvm/*` include in public
 headers.
 
-**Stage 2 is the long pole.** M-Phase 3 (splitting semantic data from semantic
-algorithms across a 20,949-line header) is the single largest piece of work in
-this schedule. Stage 3 proved that its dependency was softer than expected,
-but canonical type migration and maintainable implementation boundaries still
-benefit from it. It has little immediate user-visible payoff and is therefore
-easy to defer indefinitely.
+**The original Stage 2 long pole is complete.** Compiled-library and later
+structural ownership boundaries supersede the 20,949-line-header baseline.
+Remaining identity/storage migrations use those services and need their own
+snapshot, invalidation and performance acceptance; they do not justify
+restarting the old extraction or treating it as an unmet prerequisite.
 
 **Oversized cross-cutting migrations.** Type handles, AST identities, and MIR
 editing each touch central structures. Land independently testable slices and

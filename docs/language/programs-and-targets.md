@@ -48,8 +48,9 @@ definition closure without requiring `main`.
 The parameter names are not significant, and either by-value binding may use
 ordinary `mut`. Aliases that resolve to the exact signature types are valid.
 Other arities and parameter types are ill-formed; in particular, GTI does not
-expose native `char**`, pointer-to-pointer types, or borrowed native argument
-storage through `main`.
+use the native `char**` entry signature or borrowed native argument storage
+through `main`. Recursive raw pointers exist elsewhere; they are not a hosted
+entry alternative.
 
 For the owned-argument form, the implementation creates one owned
 `std::string` for every hosted command-line argument and transfers the
@@ -80,9 +81,11 @@ operation, not native C++ adapter policy.
 Failure to represent the native argument count as GTI `int` is
 `GTI-R0006`; failure to allocate the owned values is `GTI-R0011`; and a
 malformed impossible host state such as a negative native count is
-`GTI-R0013`. Each generated check is anchored to the selected source `main`
-declaration and occurs before the user entry body begins. Already initialized
-startup values receive ordinary failure cleanup. Environment variables and a
+`GTI-R0013`. Adapter-owned count and native-state checks are anchored to the
+selected source `main`; failures from invoked string/vector construction keep
+their callee's category, detail and site. These all occur before the entry body.
+Ordinary defined failures clean initialized startup values; infallible
+exhaustion aborts without cleanup. Environment variables and a
 zero-copy borrowed argument view are not part of this entry contract.
 
 Reaching the closing brace of either `main` form returns zero. Parameters and
@@ -95,9 +98,10 @@ other value becomes status 1. In particular, a nonzero return can never become
 success through native status truncation. This conversion applies only at the
 hosted boundary, not to ordinary GTI function results.
 
-If checked hosted setup or user execution raises a defined runtime failure, the
+For a cleanup-preserving defined failure in hosted setup or user execution, the
 hosted program boundary completes required GTI cleanup, reports the structured
-record, and terminates with status 70 as specified in
+record, and terminates with status 70. Infallible allocation exhaustion instead
+reports best-effort and aborts at its detector, as specified in
 [Execution And Runtime Semantics](execution.md#410-defined-runtime-failure).
 
 ## 6.2 Target And Configuration Selection
@@ -189,10 +193,19 @@ disabled-warnings = ["unused-mut"]
 ```
 
 Command-line groups are additive to the profile list. Current warning groups
-are `configuration` (`GTI-S2075`), `unreachable-code` (`GTI-S2095`), and
-`unused-mut` (`GTI-S2096`). Unknown names are rejected, and errors cannot be
+are `configuration` (`GTI-S2075`), `unreachable-code` (`GTI-S2095`),
+`unused-mut` (`GTI-S2096`), `unused-unsafe` (`GTI-S2100`), and the optional
+raw-audit groups `raw-pointer-violation`, `raw-pointer-potential` and
+`raw-pointer-incomplete` (`GTI-S2101` through `GTI-S2103`). Unknown names are rejected, and errors cannot be
 suppressed through this mechanism. Successful and failed build/check commands
 end their status output with the remaining error and warning counts.
+
+The selected project profile may also set `dependency-warnings = false` to
+silence warnings whose primary source belongs to another registered package.
+It defaults to `true`; selected-package warnings and all errors remain visible.
+This is package-identity policy, not a `build/gti/deps` path filter, and does not
+suppress native-tool output. See [dependency warnings](../architecture/build-and-driver.md#dependency-warnings)
+for ownership, workspace and cache behavior.
 
 The frontend, optimizer, and backend shall consume equivalent target facts.
 
@@ -242,7 +255,7 @@ contract.
 The type-only operators `sizeof(type)` and `alignof(type)` expose a bounded
 projection of these selected facts as exact `uint64_t` frontend constants.
 `alignof` selects the ABI-alignment column; preferred alignment is not
-source-queryable. Primitive scalar types and one-level raw pointers use the
+source-queryable. Primitive scalar types and recursive raw pointers use the
 table directly after transparent alias resolution; pointer layout does not
 depend on whether the pointee is itself queryable. An integral scoped enum
 uses the layout of its exact fixed-width underlying integer type. A supported
@@ -317,11 +330,16 @@ In particular, an implementation shall not expose as GTI semantics:
 Resource exhaustion may prevent successful translation, but an implementation
 should diagnose it distinctly from an ill-formed program.
 
-Every declaration in a program, including every concrete generic instance it
-requires, is checked whether or not the program uses it. An unused function
-with an error therefore still makes the program ill-formed. The executable,
-however, need not contain code the program cannot reach. The reference
-compiler emits only what is reachable from the program roots:
+All loaded declarations receive semantic checking, including unused application
+functions. An error there still makes the program ill-formed; dead-code removal
+is not a way to suppress it. Application and package declarations also retain
+complete concrete HIR discovery. Artifact requests skip concrete HIR work for
+unreached **compiler-trusted library** declarations only; `gti check` retains
+complete library lowering. Do not infer lazy semantic analysis or zero frontend
+cost for all unreachable code.
+
+The executable need not contain code the program cannot reach. Its verified
+MIR/backend inventory is selected from the program roots:
 
 - the hosted entry;
 - library exports;
@@ -329,8 +347,9 @@ compiler emits only what is reachable from the program roots:
 - the C boundary, meaning every `extern "C"` declaration and C record.
 
 Everything those roots reach is emitted too, including virtual members of the
-classes that are used. Code that is never reached costs no lowering,
-optimization, or native compilation.
+classes that are used. Only the selected artifact bodies proceed to optimization
+and native emission; complete application/package validation remains independent
+of that inventory.
 
 ## 6.4 Diagnostics
 
@@ -358,26 +377,27 @@ methods, generics, overloading, redeclaration, and static or virtual qualifiers
 are ill-formed. The C symbol `main` is reserved for the GTI entry point, and a
 C-linkage function shall not reuse the name of root-namespace GTI storage.
 
-The bounded ABI permits `void` results and fixed-width signed or unsigned
-integer, `float`, and `double` scalar parameters/results, plus the
-NUL-terminated `c_string` boundary type. It also permits valid `[[c_abi]]`
-records by value and one-level raw pointers whose pointee is `void`, one of
-those scalar types, `c_string`, a valid `[[c_abi]]` record, or a
-`[[c_opaque]]` handle; the pointee may be qualified with `const`. An exact
-`[[c_array(count)]]` return may add one outer pointer and pairs that result
-with an immutable writable fixed-width integer out pointer. A namespace-scope
-`using` declaration may name one exact native function type whose parameter
-and result shape recursively uses this ABI family. Scalar, record,
-raw-pointer, and callback parameters are immutable bindings passed by value.
-One direct bodyless C parameter may use the exact `OpaqueHandle**` out form;
-its call argument is only the contextual address of an exact mutable
-`OpaqueHandle*` binding in `unsafe`, and that nested address cannot be retained
-or forwarded.
+The bounded ABI permits `void` results, fixed-width integers, `bool`, `float`
+and `double`, plus the target-correct `c_*` scalar families. The latter retain
+native rank/identity when equal width is not equal C type. It also admits
+NUL-terminated `c_string`, passive `[[c_abi]]` records, exact named native
+function types, and recursive raw pointers ending in an admitted scalar,
+`void`, record, opaque handle, `c_string` or named callback. Per-layer `const`
+qualification is retained. Scalar, record, raw-pointer and callback parameters
+are immutable by-value bindings. `[[c_array(count)]]` supplies a separate
+pointer-plus-count contract rather than granting pointer depth.
 
-`bool`, `char`, enums, references, arrays,
-ordinary classes and structs, generics, owners, recoverable-result types,
-general pointer-to-pointer types, and anonymous/general function-pointer
-declarators do not have C ABI forms.
+`OpaqueHandle**` and other admitted nested out-pointers are ordinary pointer
+values. Their slot addresses may be formed, stored and forwarded under the
+general address rules; the unsafe native-call contract owns slot lifetime,
+replacement and any eventual ownership transfer. There is no call-local staging
+buffer or automatically created cleanup obligation.
+
+GTI `char`, enums, references, fixed-array parameters, ordinary classes and
+structs, owners, recoverable-result types, and anonymous/general
+function-pointer declarators do not acquire C ABI forms. Prefer native `c_char`
+for C plain `char`. The complete allowlist and target-correct scalar examples
+are in [Native C Interoperation](native-c-interop.md).
 `std::string_view` is additionally permitted as a parameter only and lowers to
 the explicit record:
 
@@ -424,13 +444,13 @@ runtime, generated boundary, activation, and same-process re-entry evidence.
 
 **Specification gap:** Annotated opaque-handle ownership transfer, captured or
 userdata callbacks, arbitrary foreign-thread GTI callback entry, array
-parameters at the C boundary, C enums, alternate calling conventions, casts,
-native error conventions, allocation, packing, C ABI unions (distinct from
-GTI's passive source unions), bit-fields, and manual lifetime remain to be
-designed. The
-returned pointer-plus-count idiom and direct opaque-handle out parameter are
-the implemented bounded nested-pointer forms; neither is a general
-pointer-to-pointer facility.
+parameters at the C boundary, native error conventions, alternate calling
+conventions, packing, C ABI unions (distinct from passive source unions) and
+bit-fields require additional contracts. `gti bindgen` imports supported C
+enums as target-correct integer aliases/constants, not a native GTI enum ABI.
+General nested pointers, typed/void pointer conversion, byte allocation and
+manual GTI object lifetime are already implemented under their focused
+contracts; they do not infer a foreign library's ownership or object lifetime.
 
 ## 6.6 Hosted And Future Execution Environments
 

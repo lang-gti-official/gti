@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.402.1 — Smaller, faster builds for functions with many owned locals
+## 0.402.2 — Smaller, faster builds for functions with many owned locals
 
 - A function that owns many values with destructors no longer repeats the
   same cleanup code for every point where it can fail. The JSON
@@ -17,6 +17,15 @@ for what minor and patch releases mean.
   33.5 MB, and its optimized native build takes about 8 seconds instead of
   about 150. Behaviour on failure is unchanged: the same resources are
   released in the same order, and the same failure is reported.
+
+## 0.402.1 — Owning `expected` fields initialized from calls
+
+- A constructor's `expected<T, E>` field can now be initialized directly from
+  a call when `T` owns resources, as in
+  `box(bool ok) : named(make_named(ok)) {}` with a `std::string` in the
+  payload, or when `T` has a destructor. The result is constructed in the
+  field without a default value. If a later member fails, the field is
+  destroyed exactly once. Such constructors used to report GTI-B0001.
 
 ## 0.401.6 — Member initializers taking owning `expected` results
 
