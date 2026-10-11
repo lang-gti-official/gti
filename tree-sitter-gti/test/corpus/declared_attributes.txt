@@ -1,0 +1,92 @@
+==================
+Declared attributes on fields and classes
+==================
+namespace tags {
+[[attribute]] struct key { std::string_view name = ""; };
+[[attribute]] struct skip {};
+}
+[[tags::key("player")]]
+struct Player {
+  [[tags::key("display"), tags::skip]]
+  uint32_t level = 3;
+  [[tags::key(.name = "hp")]]
+  uint32_t health = 7;
+};
+---
+
+(source_file
+  (namespace_declaration
+    name: (identifier)
+    body: (namespace_body
+      (class_declaration
+        attributes: (class_attribute_list
+          attribute: (identifier))
+        name: (identifier)
+        body: (class_body
+          (variable_declaration
+            type: (type
+              (user_type
+                name: (scoped_identifier
+                  scope: (identifier)
+                  name: (identifier))))
+            name: (identifier)
+            value: (initializer_expression
+              (primary_expression
+                (literal
+                  (string_literal)))))))
+      (class_declaration
+        attributes: (class_attribute_list
+          attribute: (identifier))
+        name: (identifier)
+        body: (class_body))))
+  (class_declaration
+    declared_attributes: (declared_attribute_list
+      (declared_attribute
+        name: (scoped_identifier
+          scope: (identifier)
+          name: (identifier))
+        (primary_expression
+          (literal
+            (string_literal)))))
+    name: (identifier)
+    body: (class_body
+      (attributed_field_declaration
+        attributes: (declared_attribute_list
+          (declared_attribute
+            name: (scoped_identifier
+              scope: (identifier)
+              name: (identifier))
+            (primary_expression
+              (literal
+                (string_literal))))
+          (declared_attribute
+            name: (scoped_identifier
+              scope: (identifier)
+              name: (identifier))))
+        (variable_declaration
+          type: (type
+            (primitive_type))
+          name: (identifier)
+          value: (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal))))))
+      (attributed_field_declaration
+        attributes: (declared_attribute_list
+          (declared_attribute
+            name: (scoped_identifier
+              scope: (identifier)
+              name: (identifier))
+            (designated_initializer
+              field: (identifier)
+              value: (primary_expression
+                (literal
+                  (string_literal))))))
+        (variable_declaration
+          type: (type
+            (primitive_type))
+          name: (identifier)
+          value: (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal)))))))))

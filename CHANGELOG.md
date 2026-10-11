@@ -9,6 +9,29 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.399.0 — Declared attributes and richer reflection
+
+- A struct declared `[[attribute]]` can annotate fields and class-like
+  declarations with constant arguments, positionally or by designator:
+  `[[json::name("display")]]`, `[[scene::version(.major = 2)]]`. The compiler
+  stores the constant and gives it no meaning; `<std/meta>` exposes it through
+  `has_attribute<A>()`, `attribute<A>()`, `attribute_count()` and
+  `attributes()` on field and type metaobjects, folded in constant evaluation
+  and read as literals at run time. New diagnostics GTI-S2113 to GTI-S2117
+  cover ineligible attribute types, bad arguments, duplicates, missing
+  attributes and payload enumerator values.
+- `[[reflect_private]]` lets reflected field access reach a class's private
+  fields; `std::meta::reflectable<T>` constrains generics on types whose
+  fields reflection may read, with `std::meta::is_reflectable<T>()` as a
+  constant.
+- `std::meta::enumerators_of<E>()` / `alternatives_of<E>()` describe
+  enumerators (`name()`, `index()`, `value()`, `payload_fields()`),
+  `bases_of<T>()` the direct bases and `arguments_of<T>()` the type arguments
+  of a generic instance; `is_payload_enum`, `is_generic_instance` and
+  `is_signed_integral` join the predicates.
+- A direct-initialized struct temporary can be projected (`make().x` style
+  reads of `{.x = 1}` values) without an internal compiler error.
+- Example 137 shows attribute-driven text and binary encoders.
 ## 0.398.7 — Parenthesized lambdas
 
 - A lambda wrapped in parentheses, such as `auto f = ([]() { ... });`,

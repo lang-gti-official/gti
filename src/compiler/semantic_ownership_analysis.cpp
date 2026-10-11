@@ -2134,6 +2134,42 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "meta_type_kind") {
       return IntrinsicKind::MetaTypeKind;
     }
+    if (name == "meta_field_attribute_count") {
+      return IntrinsicKind::MetaFieldAttributeCount;
+    }
+    if (name == "meta_field_has_attribute") {
+      return IntrinsicKind::MetaFieldHasAttribute;
+    }
+    if (name == "meta_type_attribute_count") {
+      return IntrinsicKind::MetaTypeAttributeCount;
+    }
+    if (name == "meta_type_has_attribute") {
+      return IntrinsicKind::MetaTypeHasAttribute;
+    }
+    if (name == "meta_type_trait") {
+      return IntrinsicKind::MetaTypeTrait;
+    }
+    if (name == "meta_enumerator_count") {
+      return IntrinsicKind::MetaEnumeratorCount;
+    }
+    if (name == "meta_enumerator_name") {
+      return IntrinsicKind::MetaEnumeratorName;
+    }
+    if (name == "meta_enumerator_value") {
+      return IntrinsicKind::MetaEnumeratorValue;
+    }
+    if (name == "meta_payload_count") {
+      return IntrinsicKind::MetaPayloadCount;
+    }
+    if (name == "meta_payload_name") {
+      return IntrinsicKind::MetaPayloadName;
+    }
+    if (name == "meta_base_count") {
+      return IntrinsicKind::MetaBaseCount;
+    }
+    if (name == "meta_argument_count") {
+      return IntrinsicKind::MetaArgumentCount;
+    }
     return IntrinsicKind::None;
   }
   if (isSourceLocationLibraryUnit(sourceUnit)) {
@@ -6792,33 +6828,288 @@ auto SemanticVisitor::Impl::analyzeSourceLocationIntrinsicCall(
 // arguments the answer is recorded as a program constant on the call, so the
 // call is a literal at run time and in constant evaluation; with symbolic
 // arguments the call stays a call until concrete reanalysis substitutes them.
+namespace {
+
+// The generic-argument shape of a folded reflection query: `types` leading
+// type arguments (the subject, then an attribute type), then one `uint64_t`
+// field index when `index` is set.
+struct MetaQueryShape {
+  std::size_t types = 1;
+  std::size_t indices = 0;
+  SemanticType result = SemanticType::UInt64;
+  // The result is the subject type itself (an enumerator constant).
+  bool subjectResult = false;
+};
+
+[[nodiscard]] std::optional<MetaQueryShape>
+metaQueryShape(IntrinsicKind intrinsic) {
+  switch (intrinsic) {
+  case IntrinsicKind::MetaFieldCount:
+    return MetaQueryShape{};
+  case IntrinsicKind::MetaFieldName:
+    return MetaQueryShape{.indices = 1, .result = SemanticType::StringView};
+  case IntrinsicKind::MetaFieldIsPublic:
+    return MetaQueryShape{.indices = 1, .result = SemanticType::Bool};
+  case IntrinsicKind::MetaTypeName:
+    return MetaQueryShape{.result = SemanticType::StringView};
+  case IntrinsicKind::MetaTypeKind:
+    return MetaQueryShape{};
+  case IntrinsicKind::MetaFieldAttributeCount:
+    return MetaQueryShape{.indices = 1};
+  case IntrinsicKind::MetaFieldHasAttribute:
+    return MetaQueryShape{
+        .types = 2, .indices = 1, .result = SemanticType::Bool};
+  case IntrinsicKind::MetaTypeAttributeCount:
+    return MetaQueryShape{};
+  case IntrinsicKind::MetaTypeHasAttribute:
+    return MetaQueryShape{.types = 2, .result = SemanticType::Bool};
+  case IntrinsicKind::MetaTypeTrait:
+    return MetaQueryShape{.indices = 1, .result = SemanticType::Bool};
+  case IntrinsicKind::MetaEnumeratorCount:
+    return MetaQueryShape{};
+  case IntrinsicKind::MetaEnumeratorName:
+    return MetaQueryShape{.indices = 1, .result = SemanticType::StringView};
+  case IntrinsicKind::MetaEnumeratorValue:
+    return MetaQueryShape{.indices = 1, .subjectResult = true};
+  case IntrinsicKind::MetaPayloadCount:
+    return MetaQueryShape{.indices = 1};
+  case IntrinsicKind::MetaPayloadName:
+    return MetaQueryShape{.indices = 2, .result = SemanticType::StringView};
+  case IntrinsicKind::MetaBaseCount:
+  case IntrinsicKind::MetaArgumentCount:
+    return MetaQueryShape{};
+  default:
+    return std::nullopt;
+  }
+}
+
+} // namespace
+
+// The constant a concrete reflection query denotes, or nullopt when the field
+// index is out of range (the caller reports it).
+auto SemanticVisitor::Impl::metaQueryConstant(
+    IntrinsicKind intrinsic, const SemanticType &subject,
+    const std::optional<SemanticType> &attribute,
+    std::optional<std::uint64_t> index,
+    std::optional<std::uint64_t> second) const -> std::optional<ConstantValue> {
+  const auto unsignedConstant = [](std::uint64_t value) {
+    return ConstantValue{ConstantInteger{
+        .magnitude = value, .domain = CheckedIntegerDomain{.width = 64}}};
+  };
+  switch (intrinsic) {
+  case IntrinsicKind::MetaTypeTrait: {
+    if (!index) {
+      return std::nullopt;
+    }
+    switch (*index) {
+    case 0:
+      return ConstantValue{
+          subject.kind == SemanticType::Enum && subject.enumId != 0 &&
+          subject.enumId <= enums.size() && enums[subject.enumId - 1].payload};
+    case 1:
+      return ConstantValue{
+          (subject.kind == SemanticType::Class ||
+           subject.kind == SemanticType::Enum) &&
+          (!subject.arguments.empty() || !subject.valueArguments.empty())};
+    case 2:
+      return ConstantValue{isReflectableType(subject)};
+    case 3:
+      return ConstantValue{isSignedInteger(subject)};
+    default:
+      return std::nullopt;
+    }
+  }
+  case IntrinsicKind::MetaEnumeratorCount:
+    return unsignedConstant(metaEnumeratorCount(subject));
+  case IntrinsicKind::MetaBaseCount: {
+    const ClassInfo *owner =
+        subject.kind == SemanticType::Class ? classInfo(subject) : nullptr;
+    return unsignedConstant(owner == nullptr ? 0 : owner->bases.size());
+  }
+  case IntrinsicKind::MetaArgumentCount:
+    return unsignedConstant(metaTypeArguments(subject).size());
+  case IntrinsicKind::MetaEnumeratorName:
+  case IntrinsicKind::MetaEnumeratorValue:
+  case IntrinsicKind::MetaPayloadCount:
+  case IntrinsicKind::MetaPayloadName: {
+    const std::optional<MetaEnumeratorFacts> facts =
+        index ? metaEnumeratorFacts(subject, *index) : std::nullopt;
+    if (!facts) {
+      return std::nullopt;
+    }
+    switch (intrinsic) {
+    case IntrinsicKind::MetaEnumeratorName:
+      return ConstantValue{facts->name};
+    case IntrinsicKind::MetaEnumeratorValue:
+      return facts->payloadEnum ? std::nullopt : std::optional(facts->value);
+    case IntrinsicKind::MetaPayloadCount:
+      return unsignedConstant(facts->payloadTypes.size());
+    default:
+      return second && *second < facts->payloadNames.size()
+                 ? std::optional(ConstantValue{facts->payloadNames[*second]})
+                 : std::nullopt;
+    }
+  }
+  case IntrinsicKind::MetaFieldCount:
+    return unsignedConstant(metaFieldCount(subject));
+  case IntrinsicKind::MetaTypeKind:
+    return unsignedConstant(metaTypeKind(subject));
+  case IntrinsicKind::MetaTypeName:
+    return ConstantValue{typeSpelling(subject)};
+  case IntrinsicKind::MetaFieldName:
+  case IntrinsicKind::MetaFieldIsPublic: {
+    const std::optional<MetaFieldFacts> field =
+        index ? metaFieldFacts(subject, *index) : std::nullopt;
+    if (!field) {
+      return std::nullopt;
+    }
+    return intrinsic == IntrinsicKind::MetaFieldName
+               ? ConstantValue{field->name}
+               : ConstantValue{field->isPublic};
+  }
+  case IntrinsicKind::MetaFieldAttributeCount:
+  case IntrinsicKind::MetaTypeAttributeCount: {
+    const std::vector<ResolvedDeclarationAttribute> *attributes =
+        declarationAttributesOf(subject, index);
+    if (attributes == nullptr) {
+      return intrinsic == IntrinsicKind::MetaFieldAttributeCount
+                 ? std::nullopt
+                 : std::optional(unsignedConstant(0));
+    }
+    return unsignedConstant(attributes->size());
+  }
+  case IntrinsicKind::MetaFieldHasAttribute:
+  case IntrinsicKind::MetaTypeHasAttribute: {
+    const std::vector<ResolvedDeclarationAttribute> *attributes =
+        declarationAttributesOf(subject, index);
+    if (attributes == nullptr) {
+      return intrinsic == IntrinsicKind::MetaFieldHasAttribute
+                 ? std::nullopt
+                 : std::optional(ConstantValue{false});
+    }
+    const bool found =
+        attribute && attribute->kind == SemanticType::Class &&
+        std::any_of(attributes->begin(), attributes->end(),
+                    [&](const ResolvedDeclarationAttribute &candidate) {
+                      return candidate.type == attribute->classId;
+                    });
+    return ConstantValue{found};
+  }
+  case IntrinsicKind::MetaFieldAttribute:
+  case IntrinsicKind::MetaTypeAttribute: {
+    const std::vector<ResolvedDeclarationAttribute> *attributes =
+        declarationAttributesOf(subject, index);
+    if (attributes == nullptr || !attribute ||
+        attribute->kind != SemanticType::Class) {
+      return std::nullopt;
+    }
+    const auto found =
+        std::find_if(attributes->begin(), attributes->end(),
+                     [&](const ResolvedDeclarationAttribute &candidate) {
+                       return candidate.type == attribute->classId;
+                     });
+    return found == attributes->end() ? std::nullopt
+                                      : std::optional(found->value);
+  }
+  default:
+    return std::nullopt;
+  }
+}
+
+auto SemanticVisitor::Impl::metaQueryFailure(
+    IntrinsicKind intrinsic, const SemanticType &subject,
+    std::optional<std::uint64_t> index,
+    std::optional<std::uint64_t> second) const
+    -> std::pair<std::string, std::string> {
+  switch (intrinsic) {
+  case IntrinsicKind::MetaEnumeratorValue:
+    if (metaEnumeratorFacts(subject, index.value_or(0))) {
+      return {"GTI-S2117",
+              "Enumerator " + std::to_string(index.value_or(0)) + " of '" +
+                  typeSpelling(subject) +
+                  "' has no integral value; a payload enum's alternatives "
+                  "are not integer constants."};
+    }
+    [[fallthrough]];
+  case IntrinsicKind::MetaEnumeratorName:
+  case IntrinsicKind::MetaPayloadCount:
+  case IntrinsicKind::MetaPayloadName: {
+    const std::optional<MetaEnumeratorFacts> facts =
+        metaEnumeratorFacts(subject, index.value_or(0));
+    if (subject.kind != SemanticType::Enum) {
+      return {"GTI-S2117", "'" + typeSpelling(subject) +
+                               "' is not an enum; enumerator reflection "
+                               "applies to enum types only."};
+    }
+    if (!facts) {
+      return {"GTI-S2111", "Enumerator index " +
+                               std::to_string(index.value_or(0)) +
+                               " is out of range for '" +
+                               typeSpelling(subject) + "', which has " +
+                               std::to_string(metaEnumeratorCount(subject)) +
+                               " enumerator(s)."};
+    }
+    return {"GTI-S2111", "Payload index " + std::to_string(second.value_or(0)) +
+                             " is out of range for enumerator '" + facts->name +
+                             "' of '" + typeSpelling(subject) +
+                             "', which has " +
+                             std::to_string(facts->payloadTypes.size()) +
+                             " payload field(s)."};
+  }
+  case IntrinsicKind::MetaTypeTrait:
+    return {"GTI-S2019", "Unknown reflection trait selector " +
+                             std::to_string(index.value_or(0)) + "."};
+  default:
+    return {"GTI-S2111", "Field index " + std::to_string(index.value_or(0)) +
+                             " is out of range for '" + typeSpelling(subject) +
+                             "', which has " +
+                             std::to_string(metaFieldCount(subject)) +
+                             " instance field(s)."};
+  }
+}
+
 auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
   for (const ExprPtr &argument : expr.arguments()) {
     (void)analyze(argument);
   }
-  const bool fieldQuery = intrinsic == IntrinsicKind::MetaFieldName ||
-                          intrinsic == IntrinsicKind::MetaFieldIsPublic;
-  const SemanticType result = intrinsic == IntrinsicKind::MetaFieldName ||
-                                      intrinsic == IntrinsicKind::MetaTypeName
-                                  ? SemanticType::StringView
-                              : intrinsic == IntrinsicKind::MetaFieldIsPublic
-                                  ? SemanticType::Bool
-                                  : SemanticType::UInt64;
-  const std::size_t expectedArguments = fieldQuery ? 2 : 1;
+  const std::optional<MetaQueryShape> shape = metaQueryShape(intrinsic);
+  if (!shape) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const std::size_t expectedArguments = shape->types + shape->indices;
   std::optional<SemanticType> subject;
-  std::optional<CompileTimeValue> index;
+  std::optional<SemanticType> attribute;
+  std::vector<CompileTimeValue> indices;
+  bool indicesResolved = true;
   if (expr.typeArguments().size() == expectedArguments &&
       expr.arguments().empty()) {
     validateType(expr.typeArguments().front());
     subject = typeOf(expr.typeArguments().front());
-    if (fieldQuery) {
-      index = genericValueArgument(expr.typeArguments()[1]);
+    if (shape->types == 2) {
+      validateType(expr.typeArguments()[1]);
+      attribute = typeOf(expr.typeArguments()[1]);
+    }
+    for (std::size_t position = shape->types; position < expectedArguments;
+         ++position) {
+      const std::optional<CompileTimeValue> index =
+          genericValueArgument(expr.typeArguments()[position]);
+      if (!index) {
+        indicesResolved = false;
+        break;
+      }
+      indices.push_back(*index);
     }
   }
-  if (!subject || *subject == SemanticType::Unknown || (fieldQuery && !index) ||
-      declaration.returnType != result) {
+  const SemanticType result =
+      shape->subjectResult && subject ? *subject : shape->result;
+  if (!subject || *subject == SemanticType::Unknown ||
+      (shape->types == 2 &&
+       (!attribute || *attribute == SemanticType::Unknown)) ||
+      !indicesResolved || indices.size() != shape->indices ||
+      (!shape->subjectResult && declaration.returnType != shape->result)) {
     report(expr.paren(),
            "A reflection capability takes its subject as generic arguments, "
            "no call arguments, and must retain its exact standard-library "
@@ -6830,55 +7121,34 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
   currentType = result;
   ResolvedCallInfo resolved{.returnType = result,
                             .typeArguments = {*subject},
+                            .valueArguments = indices,
                             .intrinsic = intrinsic};
-  if (index) {
-    resolved.valueArguments = {*index};
+  if (attribute) {
+    resolved.typeArguments.push_back(*attribute);
   }
   semanticModel.record(expr, resolved);
   if (containsOpenTypeParameter(*subject) ||
-      (index && index->kind != CompileTimeValue::UInt64)) {
+      (attribute && containsOpenTypeParameter(*attribute)) ||
+      std::any_of(indices.begin(), indices.end(),
+                  [](const CompileTimeValue &index) {
+                    return index.kind != CompileTimeValue::UInt64;
+                  })) {
     return;
   }
-  const auto unsignedConstant = [](std::uint64_t value) {
-    return ConstantValue{ConstantInteger{
-        .magnitude = value, .domain = CheckedIntegerDomain{.width = 64}}};
-  };
-  std::optional<ConstantValue> constant;
-  switch (intrinsic) {
-  case IntrinsicKind::MetaFieldCount:
-    constant = unsignedConstant(metaFieldCount(*subject));
-    break;
-  case IntrinsicKind::MetaTypeKind:
-    constant = unsignedConstant(metaTypeKind(*subject));
-    break;
-  case IntrinsicKind::MetaTypeName:
-    constant = ConstantValue{typeSpelling(*subject)};
-    break;
-  case IntrinsicKind::MetaFieldName:
-  case IntrinsicKind::MetaFieldIsPublic: {
-    const std::optional<MetaFieldFacts> field =
-        metaFieldFacts(*subject, index->value);
-    if (!field) {
-      report(expr.paren(),
-             "Field index " + std::to_string(index->value) +
-                 " is out of range for '" + typeSpelling(*subject) +
-                 "', which has " + std::to_string(metaFieldCount(*subject)) +
-                 " instance field(s).",
-             "GTI-S2111");
-      return;
-    }
-    constant = intrinsic == IntrinsicKind::MetaFieldName
-                   ? ConstantValue{field->name}
-                   : ConstantValue{field->isPublic};
-    break;
+  const std::optional<std::uint64_t> index =
+      indices.empty() ? std::nullopt : std::optional(indices[0].value);
+  const std::optional<std::uint64_t> second =
+      indices.size() < 2 ? std::nullopt : std::optional(indices[1].value);
+  const std::optional<ConstantValue> constant =
+      metaQueryConstant(intrinsic, *subject, attribute, index, second);
+  if (!constant) {
+    const auto [code, message] =
+        metaQueryFailure(intrinsic, *subject, index, second);
+    report(expr.paren(), message, code);
+    return;
   }
-  default:
-    break;
-  }
-  if (constant) {
-    semanticModel.recordConstant(expr, *constant);
-    semanticModel.recordProgramConstantSubstitution(expr);
-  }
+  semanticModel.recordConstant(expr, *constant);
+  semanticModel.recordProgramConstantSubstitution(expr);
 }
 
 // The constant a reflection query denotes under the interpreter's current
@@ -6887,17 +7157,21 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
 auto SemanticVisitor::Impl::metaIntrinsicConstant(
     const ResolvedCallInfo &call, const ConstexprInterpreter &context) const
     -> std::optional<ConstantValue> {
-  switch (call.intrinsic) {
-  case IntrinsicKind::MetaFieldCount:
-  case IntrinsicKind::MetaFieldName:
-  case IntrinsicKind::MetaFieldIsPublic:
-  case IntrinsicKind::MetaTypeName:
-  case IntrinsicKind::MetaTypeKind:
-    break;
-  default:
+  std::size_t types = 1;
+  std::size_t indices = 0;
+  if (const std::optional<MetaQueryShape> shape =
+          metaQueryShape(call.intrinsic)) {
+    types = shape->types;
+    indices = shape->indices;
+  } else if (call.intrinsic == IntrinsicKind::MetaFieldAttribute ||
+             call.intrinsic == IntrinsicKind::MetaTypeAttribute) {
+    types = 2;
+    indices = call.intrinsic == IntrinsicKind::MetaFieldAttribute ? 1 : 0;
+  } else {
     return std::nullopt;
   }
-  if (call.typeArguments.size() != 1) {
+  if (call.typeArguments.size() != types ||
+      call.valueArguments.size() != indices) {
     return std::nullopt;
   }
   const SemanticType subject =
@@ -6905,36 +7179,24 @@ auto SemanticVisitor::Impl::metaIntrinsicConstant(
   if (containsOpenTypeParameter(subject)) {
     return std::nullopt;
   }
-  const auto unsignedConstant = [](std::uint64_t value) {
-    return ConstantValue{ConstantInteger{
-        .magnitude = value, .domain = CheckedIntegerDomain{.width = 64}}};
-  };
-  switch (call.intrinsic) {
-  case IntrinsicKind::MetaFieldCount:
-    return unsignedConstant(metaFieldCount(subject));
-  case IntrinsicKind::MetaTypeKind:
-    return unsignedConstant(metaTypeKind(subject));
-  case IntrinsicKind::MetaTypeName:
-    return ConstantValue{typeSpelling(subject)};
-  default:
-    break;
+  std::optional<SemanticType> attribute;
+  if (types == 2) {
+    attribute = constexprType(call.typeArguments[1], context);
+    if (containsOpenTypeParameter(*attribute)) {
+      return std::nullopt;
+    }
   }
-  if (call.valueArguments.size() != 1) {
-    return std::nullopt;
+  std::optional<std::uint64_t> index;
+  std::optional<std::uint64_t> second;
+  for (std::size_t position = 0; position < indices; ++position) {
+    const CompileTimeValue value =
+        constexprValue(call.valueArguments[position], context);
+    if (value.kind != CompileTimeValue::UInt64) {
+      return std::nullopt;
+    }
+    (position == 0 ? index : second) = value.value;
   }
-  const CompileTimeValue index =
-      constexprValue(call.valueArguments.front(), context);
-  if (index.kind != CompileTimeValue::UInt64) {
-    return std::nullopt;
-  }
-  const std::optional<MetaFieldFacts> field =
-      metaFieldFacts(subject, index.value);
-  if (!field) {
-    return std::nullopt;
-  }
-  return call.intrinsic == IntrinsicKind::MetaFieldName
-             ? ConstantValue{field->name}
-             : ConstantValue{field->isPublic};
+  return metaQueryConstant(call.intrinsic, subject, attribute, index, second);
 }
 
 auto SemanticVisitor::Impl::analyzeRestoringIntrinsicCall(
@@ -7396,11 +7658,8 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
-  if (intrinsic == IntrinsicKind::MetaFieldCount ||
-      intrinsic == IntrinsicKind::MetaFieldName ||
-      intrinsic == IntrinsicKind::MetaFieldIsPublic ||
-      intrinsic == IntrinsicKind::MetaTypeName ||
-      intrinsic == IntrinsicKind::MetaTypeKind) {
+  if (intrinsic >= IntrinsicKind::MetaFieldCount &&
+      intrinsic <= IntrinsicKind::MetaArgumentCount) {
     analyzeMetaIntrinsicCall(expr, declaration);
     bindIntrinsicCallDeclaration(expr, declaration);
     return;

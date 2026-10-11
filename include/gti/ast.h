@@ -723,6 +723,21 @@ template <typename Expression>
 using ExprPtr = std::unique_ptr<Expr>;
 using ExprList = std::vector<ExprPtr>;
 
+// `[[ns::name(arguments)]]` on a field or class-like declaration: a declared
+// attribute. `name` resolves to a struct marked `[[attribute]]`; the compiler
+// records the constant that constructing it from `arguments` denotes, and the
+// library that declared the struct gives it meaning. `construction` is the
+// arguments initialize its fields positionally or by designator.
+struct DeclarationAttribute {
+  Token open;
+  NamePath name;
+  Token paren;
+  ExprList arguments;
+  // Field names of a designated argument list; empty for positional
+  // arguments, which initialize the attribute struct's fields in order.
+  std::vector<Token> designators;
+};
+
 struct ParameterDefault {
   ParameterDefault(Token equal, ExprPtr expression)
       : equal(std::move(equal)), expression(std::move(expression)) {}
@@ -1893,6 +1908,13 @@ public:
   compilerTypeBinding() const {
     return compilerTypeBinding_;
   }
+  [[nodiscard]] const std::vector<DeclarationAttribute> &
+  declarationAttributes() const {
+    return declarationAttributes_;
+  }
+  void setDeclarationAttributes(std::vector<DeclarationAttribute> attributes) {
+    declarationAttributes_ = std::move(attributes);
+  }
 
 private:
   std::vector<ClassAttribute> attributes_;
@@ -1906,6 +1928,7 @@ private:
   StmtList members_;
   bool forwardDeclaration_ = false;
   std::optional<CompilerTypeBinding> compilerTypeBinding_;
+  std::vector<DeclarationAttribute> declarationAttributes_;
 };
 
 struct EnumeratorDecl {
@@ -2635,6 +2658,13 @@ public:
   [[nodiscard]] const std::optional<Token> &mutKeyword() const {
     return mutKeyword_;
   }
+  [[nodiscard]] const std::vector<DeclarationAttribute> &
+  declarationAttributes() const {
+    return declarationAttributes_;
+  }
+  void setDeclarationAttributes(std::vector<DeclarationAttribute> attributes) {
+    declarationAttributes_ = std::move(attributes);
+  }
 
 private:
   Mutability mutability_;
@@ -2647,6 +2677,7 @@ private:
   bool rangeOwner_ = false;
   bool rangeIterator_ = false;
   std::optional<Token> mutKeyword_;
+  std::vector<DeclarationAttribute> declarationAttributes_;
 };
 
 class StructuredBindingDecl final

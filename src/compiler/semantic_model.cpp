@@ -901,6 +901,16 @@ SemanticModel::findConstexprForExpansion(
   return base == nullptr ? nullptr : base->findConstexprForExpansion(statement);
 }
 
+[[nodiscard]] const std::vector<ResolvedDeclarationAttribute> *
+SemanticModel::findDeclarationAttributes(const Stmt &declaration) const {
+  const auto found = declarationAttributes.find(&declaration);
+  if (found != declarationAttributes.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr
+                         : base->findDeclarationAttributes(declaration);
+}
+
 [[nodiscard]] const Expr *
 SemanticModel::findExpressionAlias(const Expr &expression) const {
   const auto found = expressionAliases.find(&expression);
@@ -1599,6 +1609,7 @@ void SemanticModel::clear() {
   conditionalLoanEnds.clear();
   constexprBranches.clear();
   constexprForExpansions.clear();
+  declarationAttributes.clear();
   expressionAliases.clear();
   staticAssertResults.clear();
   switchArmLoanEnds.clear();
@@ -1954,6 +1965,12 @@ void SemanticModel::recordConstexprForExpansion(
     const ConstexprForStmt &statement,
     std::optional<ConstexprForExpansion> expansion) {
   constexprForExpansions.insert_or_assign(&statement, std::move(expansion));
+}
+
+void SemanticModel::recordDeclarationAttributes(
+    const Stmt &declaration,
+    std::vector<ResolvedDeclarationAttribute> attributes) {
+  declarationAttributes.insert_or_assign(&declaration, std::move(attributes));
 }
 
 const Expr &
