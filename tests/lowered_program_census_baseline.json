@@ -1996,7 +1996,7 @@
       }
     },
     "137-declared-attributes.gti": {
-      "declarations": 1360,
+      "declarations": 1363,
       "bodies": 192,
       "generated_items": 132,
       "generated_kinds": {
@@ -2011,7 +2011,7 @@
       }
     },
     "138-structural-construction.gti": {
-      "declarations": 1356,
+      "declarations": 1359,
       "bodies": 189,
       "generated_items": 123,
       "generated_kinds": {
@@ -2055,7 +2055,7 @@
         "concrete_instance_adapter": 40
       }
     },
-    "141-checked-container-iteration.gti": {
+    "142-checked-container-iteration.gti": {
       "declarations": 1347,
       "bodies": 481,
       "generated_items": 368,
@@ -2070,7 +2070,22 @@
         "concrete_instance_adapter": 302
       }
     },
-    "142-checked-view-iteration.gti": {
+    "141-reflected-json.gti": {
+      "declarations": 1168,
+      "bodies": 384,
+      "generated_items": 229,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 15,
+        "callable_adapter": 10,
+        "lifecycle_cleanup": 7,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 195
+      }
+    },
+    "143-checked-view-iteration.gti": {
       "declarations": 1426,
       "bodies": 391,
       "generated_items": 283,
@@ -2085,7 +2100,7 @@
         "concrete_instance_adapter": 222
       }
     },
-    "143-live-slot-and-lane-iteration.gti": {
+    "144-live-slot-and-lane-iteration.gti": {
       "declarations": 1459,
       "bodies": 291,
       "generated_items": 194,
@@ -2100,7 +2115,7 @@
         "concrete_instance_adapter": 135
       }
     },
-    "144-counted-text-view-iteration.gti": {
+    "145-counted-text-view-iteration.gti": {
       "declarations": 1054,
       "bodies": 126,
       "generated_items": 83,
@@ -2117,8 +2132,8 @@
     }
   },
   "totals": {
-    "declarations": 88556,
-    "bodies": 14081,
-    "generated_items": 8630
+    "declarations": 89730,
+    "bodies": 14465,
+    "generated_items": 8859
   }
 }
