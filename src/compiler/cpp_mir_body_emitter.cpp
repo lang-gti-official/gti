@@ -29366,10 +29366,11 @@ classSsaLifetimeSlot(const MirProgram &program,
 // The staging slots a plain callee's class result constructs into: it replaces
 // a binding, passes by value to one call or constructor, initializes one
 // constructor field, is observed once (one field read, or one Expected state
-// test or extraction), or is returned.
+// test or extraction), is returned, or is discarded.
 [[nodiscard]] bool
 plainCallStagedClassResult(const ClassSsaLifetimeSlot &slot) {
   return slot.consumerKind == ClassSsaSlotConsumerKind::Assignment ||
+         slot.consumerKind == ClassSsaSlotConsumerKind::Discard ||
          slot.consumerKind == ClassSsaSlotConsumerKind::CallArgument ||
          slot.consumerKind == ClassSsaSlotConsumerKind::ConstructorArgument ||
          slot.consumerKind == ClassSsaSlotConsumerKind::ExpectedObserver ||
@@ -29554,10 +29555,14 @@ classSsaLifetimeSlot(const MirProgram &program,
             : nullptr;
     if (consumer == nullptr)
       consumer = fieldInitialization;
+    // A discarded result still needs storage for its construction; it retires
+    // as soon as the producer has published it.
+    const bool discarded = uses.empty();
     if (target && target->linkage == LanguageLinkage::Gti &&
         target->definitionKind == MirDefinitionKind::Source &&
         target->returnType == value->info.type &&
-        target->parameterTypes == producer->parameterTypes && consumer &&
+        target->parameterTypes == producer->parameterTypes &&
+        (consumer || discarded) &&
         std::none_of(
             body.dropObligations.begin(), body.dropObligations.end(),
             [&](const auto &drop) { return drop.generatedValue == valueId; }) &&
@@ -29570,7 +29575,8 @@ classSsaLifetimeSlot(const MirProgram &program,
               .producer = producer,
               .consumer = consumer,
               .consumerKind =
-                  fieldInitialization != nullptr
+                  discarded ? ClassSsaSlotConsumerKind::Discard
+                  : fieldInitialization != nullptr
                       ? ClassSsaSlotConsumerKind::FieldInitialization
                   : observer != nullptr
                       ? ClassSsaSlotConsumerKind::ExpectedObserver
@@ -29610,10 +29616,10 @@ classSsaLifetimeSlot(const MirProgram &program,
           : transformedFailureCallee(program, representations, *producer);
   // Plain source calls need the same uninitialized staging when their result
   // replaces a binding, passes by value to one call, is observed through one
-  // field projection, or reaches a Return that cannot spell the call as its
-  // return expression. Default-constructing a C++ local would introduce a
-  // source-observable constructor call, and publishing directly into the old
-  // destination would overwrite it before the call succeeds.
+  // field projection, reaches a Return that cannot spell the call as its
+  // return expression, or is discarded. Default-constructing a C++ local would
+  // introduce a source-observable constructor call, and publishing directly
+  // into the old destination would overwrite it before the call succeeds.
   if (callee == nullptr && producer != nullptr &&
       producer->kind == MirInstructionKind::Call && producer->functionTarget &&
       producer->intrinsic == IntrinsicKind::None &&
@@ -29636,8 +29642,7 @@ classSsaLifetimeSlot(const MirProgram &program,
     if (((consumer != nullptr &&
           (consumer->kind == MirInstructionKind::Assign ||
            consumer->kind == MirInstructionKind::Call)) ||
-         projectedObservation || returnedResult ||
-         (cleanupFreeArray && uses.empty())) &&
+         projectedObservation || returnedResult || uses.empty()) &&
         target != nullptr && target->linkage == LanguageLinkage::Gti &&
         target->definitionKind == MirDefinitionKind::Source) {
       callee = target;
@@ -42627,12 +42632,14 @@ private:
     // A plain callee's staged class result constructs in its own slot.
     const bool stagedAssignment = assignmentResult.producer == &instruction &&
                                   plainCallStagedClassResult(assignmentResult);
-    const bool stagedArrayResult =
+    const bool stagedDiscard =
         assignmentResult.producer == &instruction &&
-        instruction.info.type.kind == SemanticType::Array &&
-        (assignmentResult.consumerKind ==
-             ClassSsaSlotConsumerKind::CallArgument ||
-         assignmentResult.consumerKind == ClassSsaSlotConsumerKind::Discard);
+        assignmentResult.consumerKind == ClassSsaSlotConsumerKind::Discard;
+    const bool stagedArrayResult =
+        stagedDiscard || (assignmentResult.producer == &instruction &&
+                          instruction.info.type.kind == SemanticType::Array &&
+                          assignmentResult.consumerKind ==
+                              ClassSsaSlotConsumerKind::CallArgument);
     if (target != nullptr &&
         target->definitionKind == MirDefinitionKind::Source &&
         target->linkage != LanguageLinkage::C &&
@@ -42789,10 +42796,10 @@ private:
                        stagedAssignment || stagedArrayResult
                    ? "; });\n"
                    : ";\n");
-    if (stagedArrayResult &&
-        assignmentResult.consumerKind == ClassSsaSlotConsumerKind::Discard) {
+    if (stagedDiscard) {
       writeIndent();
-      output << "__gti_mir_v_" << *instruction.result << ".destroy();\n";
+      output << "__gti_mir_v_" << *instruction.result
+             << ".destroy(); // end discarded result representation\n";
     }
     if (returnedAtCall) {
       // The consumed argument slots end their moved-from representations at
@@ -53890,9 +53897,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           continue;
         case MirOperation::Comma:
           // The operand definitions carry evaluation order. This instruction
-          // only consumes the left value and publishes the right value, so
-          // keep the initial slice to passive results until MIR grows an
-          // explicit ownership-transfer form for class-valued comma results.
+          // only consumes the left value and publishes the right value, so it
+          // stays passive. A comma whose value is a class or Expected object
+          // instead denotes its right operand's producer, and an object left
+          // operand is a discarded evaluation, so neither reaches here.
           if (instruction.operands.size() != 2 ||
               !valueOperand(instruction.operands.front()) ||
               !valueOperand(instruction.operands.back()) ||

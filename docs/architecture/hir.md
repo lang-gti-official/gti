@@ -241,9 +241,10 @@ payload extraction. Synthetic values retain stable IDs; lowering does not keep
 pointers into the values vector across appends.
 For a void-returning success mapper, a value's ordered `sequencedInputs`
 complete the ordinary void call before default construction publishes the
-`expected<void, E>` success. These are structural void-evaluation dependencies,
-not a backend expected special case. They share the full-expression lifetime;
-verification rejects missing, duplicate, cyclic, non-void, nonreturning, or
+`expected<void, E>` success. A comma alias sequences its left operand the same
+way. These are structural evaluation dependencies whose results are
+discarded, not a backend expected special case. They share the full-expression
+lifetime; verification rejects missing, duplicate, cyclic, nonreturning, or
 cross-expression dependencies and verifies the selected void mapper is not
 lost. Reachability, lifecycle assignment, and synthetic-default checks include
 these graph edges. MIR schedules the existing call and construction operations.
@@ -637,12 +638,17 @@ selection, or recognize the source-defined `std::thread` wrapper.
 
 ## Executable Values
 
-Same-type fresh-result construction and class-value grouping are non-executing
-source aliases. `HirDirectInitialization` retains each wrapper's source,
+Same-type fresh-result construction, and grouping or a builtin comma whose
+value is a class or Expected object, are non-executing source aliases. A comma
+denotes its right operand; its left operand becomes the first of the
+producer's ordered `sequencedInputs`, so it completes, with its result
+discarded and its temporaries kept for the full expression, before the
+producer begins. `HirDirectInitialization` retains each wrapper's source,
 immediate producer, exact concrete type and shared `HirValueId`. A construction
 also retains immutable provenance issued by its selected concrete semantic
 model, binding the source, immediate producer, exact type, and program snapshot;
-grouping has no construction proof. A class-instance ID alone is not evidence
+grouping and comma have no construction proof, and verification requires a
+comma's producer to sequence exactly its left operand. A class-instance ID alone is not evidence
 that an expression denotes construction. Lowering returns
 the producer's existing value rather than adding an Identity/Construct value
 and competing drop obligation. Full-expression roots, initialization plans and
