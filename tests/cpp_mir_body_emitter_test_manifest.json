@@ -362,6 +362,10 @@
       "suite": "text"
     },
     {
+      "name": "testShortCircuitOwnedFieldView",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },
