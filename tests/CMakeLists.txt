@@ -1869,6 +1869,18 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(generic_algorithm_breadth PROPERTIES TIMEOUT 600)
   add_test(
+    NAME ordered_search_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/ordered_search_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(
+    ordered_search_runtime
+    PROPERTIES TIMEOUT 600
+               ENVIRONMENT
+                 "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
+  )
+  add_test(
     NAME generic_algorithm_errors
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_errors_test.py"
@@ -2020,6 +2032,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_sequences.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_binary_writer.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_attributes.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_construct.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_callables.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_receiver_effects.gti"
   )
   set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
   add_test(

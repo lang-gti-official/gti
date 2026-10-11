@@ -28,6 +28,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Use the standard library through imports instead of includes | [134: standard-library modules](134-standard-library-modules.gti) |
 | Own small polymorphic objects without allocating | [135: inline polymorphic values](135-inline-polymorphic-values.gti) |
 | Annotate fields with attributes and read them in a generic encoder | [137: declared attributes](137-declared-attributes.gti) |
+| Decode a struct field by field without writing a constructor | [138: structural construction](138-structural-construction.gti) |
 | Import C enums, including high-bit flags and native-width values | [native enum bindings project](native-enum-bindings/README.md) |
 | Import callback slots, function typedefs, text and fixed-array aliases | [native callback slots project](native-callback-slots/README.md) |
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
@@ -191,6 +192,8 @@ is a teaching helper, not a production server.
 | `135-inline-polymorphic-values.gti` | an application interface owned by `std::inline_polymorphic`, with small sensors inline, an owning sensor boxed, state preserved across vector growth, and replacement |
 | `136-inline-closure-cells.gti` | an application-defined inline cell holding a bitwise-relocatable closure through raw-address lifetime helpers and `std::layout_of`, moved by its bytes |
 | `137-declared-attributes.gti` | `[[attribute]]` structs applied to fields and types with constant arguments, read through `<std/meta>` by a text encoder and a binary writer, with enumerator metaobjects and the `std::meta::reflectable` constraint |
+| `138-structural-construction.gti` | `std::meta::construct` building structs field by field from a byte reader and a text reader, with `expected` failures stopping production before construction |
+| `139-ordered-search.gti` | partition-point discovery and comparator bounds/binary search over application records without `operator<`, using the same descending order as sorting |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run

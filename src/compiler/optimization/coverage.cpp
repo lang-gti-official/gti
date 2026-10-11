@@ -237,10 +237,21 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::MetaPayloadName:
   case IntrinsicKind::MetaBaseCount:
   case IntrinsicKind::MetaArgumentCount:
+  case IntrinsicKind::MetaMethodCount:
+  case IntrinsicKind::MetaMethodName:
+  case IntrinsicKind::MetaMethodTrait:
+  case IntrinsicKind::MetaMethodParameterCount:
+  case IntrinsicKind::MetaParameterName:
+  case IntrinsicKind::MetaConstructorCount:
+  case IntrinsicKind::MetaConstructorParameterCount:
+  case IntrinsicKind::MetaConstructorParameterName:
+  case IntrinsicKind::MetaDeclarationLine:
+  case IntrinsicKind::MetaDeclarationFile:
   case IntrinsicKind::MetaFieldAttribute:
   case IntrinsicKind::MetaTypeAttribute:
   case IntrinsicKind::MetaFieldGet:
   case IntrinsicKind::MetaFieldGetMut:
+  case IntrinsicKind::MetaConstruct:
   case IntrinsicKind::SimdAdd:
   case IntrinsicKind::SimdSubtract:
   case IntrinsicKind::SimdMultiply:

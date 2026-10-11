@@ -315,10 +315,21 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // MetaPayloadName
     harmless(), // MetaBaseCount
     harmless(), // MetaArgumentCount
+    harmless(), // MetaMethodCount
+    harmless(), // MetaMethodName
+    harmless(), // MetaMethodTrait
+    harmless(), // MetaMethodParameterCount
+    harmless(), // MetaParameterName
+    harmless(), // MetaConstructorCount
+    harmless(), // MetaConstructorParameterCount
+    harmless(), // MetaConstructorParameterName
+    harmless(), // MetaDeclarationLine
+    harmless(), // MetaDeclarationFile
     harmless(), // MetaFieldAttribute: aliased to a struct construction.
     harmless(), // MetaTypeAttribute
     harmless(), // MetaFieldGet: aliased to the field projection it denotes.
     harmless(), // MetaFieldGetMut
+    harmless(), // MetaConstruct: recorded as the designated construction.
     MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdAdd
     MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdSubtract
     MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdMultiply
@@ -602,10 +613,21 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "meta-payload-name",
     "meta-base-count",
     "meta-argument-count",
+    "meta-method-count",
+    "meta-method-name",
+    "meta-method-trait",
+    "meta-method-parameter-count",
+    "meta-parameter-name",
+    "meta-constructor-count",
+    "meta-constructor-parameter-count",
+    "meta-constructor-parameter-name",
+    "meta-declaration-line",
+    "meta-declaration-file",
     "meta-field-attribute",
     "meta-type-attribute",
     "meta-field-get",
     "meta-field-get-mut",
+    "meta-construct",
     "simd-add",
     "simd-subtract",
     "simd-multiply",

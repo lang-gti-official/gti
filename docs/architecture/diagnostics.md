@@ -50,7 +50,10 @@ the first application as related information; `GTI-S2116` rejects
 `attribute<A>()` on a declaration that does not apply `A`, with a hint to test
 `has_attribute<A>()`; `GTI-S2117` rejects `enumerator::value()` on a payload
 enum, whose alternatives are not integer constants, and enumerator reflection
-on a non-enum type. Diagnostics produced inside an expanded copy carry related
+on a non-enum type. `GTI-S2118` rejects `std::meta::construct<T>` for a type
+that is not eligible for designated construction. Reflected field access
+reports an owner argument of another type as an ordinary argument mismatch
+(`GTI-S2003`), naming the described owner and the field's declaration. Diagnostics produced inside an expanded copy carry related
 information naming the element and are deduplicated across identical copies.
 
 `GTI-S2106` rejects a selected ordinary GTI call without a source definition
