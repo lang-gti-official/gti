@@ -5,6 +5,18 @@
 
 namespace {
 
+std::filesystem::path fixtureSourcePath(const std::filesystem::path &path) {
+  // Derive the identity through public source loading, not a second path
+  // normalizer or a platform-dependent weakly_canonical(relative) call.
+  lang::SourceLoader loader;
+  const auto graph = loader.load(path, std::string{});
+  const auto *entry = graph.findUnit(graph.entryUnit());
+  expect(
+      !loader.hadError() && entry != nullptr && entry->path.is_absolute(),
+      "diagnostic fixture paths retain the source loader's absolute identity");
+  return entry ? entry->path : path;
+}
+
 void testFixedWidthIntegers() {
   lang::Lexer aliasLexer;
   const std::vector<lang::Token> aliases = aliasLexer.scan(
@@ -1807,9 +1819,8 @@ int later() { return selected(); }
   expect(!failing.semanticValid && failureMetrics.constexprMirExecutions == 1 &&
              failure != nullptr &&
              failure->phase == lang::DiagnosticPhase::Semantics &&
-             failure->primary.source == lang::SourceLoader::canonicalPath(
-                                            "staged-constant-failure.gti")
-                                            .string() &&
+             failure->primary.source ==
+                 fixtureSourcePath("staged-constant-failure.gti").string() &&
              failure->primary.start == failingSource.find('/') &&
              failure->primary.end == failingSource.find('/') + 1 &&
              failure->fixes.empty(),
@@ -2143,9 +2154,9 @@ int main() {
                           d.phase == lang::DiagnosticPhase::Semantics &&
                           d.message.find("execution-step limit") !=
                               std::string::npos &&
-                          d.primary.source == lang::SourceLoader::canonicalPath(
-                                                  "shared-constexpr-budget.gti")
-                                                  .string() &&
+                          d.primary.source ==
+                              fixtureSourcePath("shared-constexpr-budget.gti")
+                                  .string() &&
                           d.primary.start == sharedSource.find("++") &&
                           d.primary.end == d.primary.start + 2 &&
                           std::any_of(d.related.begin(), d.related.end(),
@@ -2324,9 +2335,9 @@ void testConstexprOperators() {
         [&](const auto &d) {
           return d.code == "GTI-S2057" &&
                  d.phase == lang::DiagnosticPhase::Semantics &&
-                 d.primary.source == lang::SourceLoader::canonicalPath(
-                                         "constexpr-operator-invalid.gti")
-                                         .string() &&
+                 d.primary.source ==
+                     fixtureSourcePath("constexpr-operator-invalid.gti")
+                         .string() &&
                  d.primary.start == test.source.find(test.marker) &&
                  d.primary.end == d.primary.start + test.width &&
                  d.message.find(test.message) != std::string::npos;
@@ -2809,7 +2820,7 @@ void testConstexprReadOnlyReferences() {
                      return d.code == test.code &&
                             d.phase == lang::DiagnosticPhase::Semantics &&
                             d.primary.source ==
-                                lang::SourceLoader::canonicalPath(
+                                fixtureSourcePath(
                                     "constexpr-reference-invalid.gti")
                                     .string() &&
                             d.primary.start ==
@@ -2836,9 +2847,8 @@ void testConstexprReadOnlyReferences() {
                          [&](const auto &d) {
                            return d.code == "GTI-S2057" &&
                                   d.primary.source ==
-                                      lang::SourceLoader::canonicalPath(
-                                          standardLibraryRoot() /
-                                          "std/array.gti")
+                                      fixtureSourcePath(standardLibraryRoot() /
+                                                        "std/array.gti")
                                           .string() &&
                                   d.primary.start == access &&
                                   d.primary.end == access + 1;
@@ -3436,8 +3446,7 @@ int main() {
                 std::string::npos &&
             diagnostic->phase == lang::DiagnosticPhase::Semantics &&
             diagnostic->primary.source ==
-                lang::SourceLoader::canonicalPath("constexpr-text-bounds.gti")
-                    .string() &&
+                fixtureSourcePath("constexpr-text-bounds.gti").string() &&
             diagnostic->primary.start == source.find(index) &&
             diagnostic->primary.end ==
                 source.find(index) + (index == "-1" ? 1 : index.size()) &&
@@ -4310,7 +4319,7 @@ public:
   const std::filesystem::path left = root / "left.gti";
   const std::filesystem::path right = root / "right.gti";
   const auto canonical = [](const std::filesystem::path &path) {
-    return lang::SourceLoader::canonicalPath(path).string();
+    return fixtureSourcePath(path).string();
   };
   const lang::FrontendResult separateUnits = lang::Frontend().analyze(
       entry,
@@ -4819,8 +4828,7 @@ int main() { return selected_value() + local_state(); }
         std::filesystem::temp_directory_path() / "gti-configuration-includes";
     const std::filesystem::path entry = root / "main.gti";
     const std::filesystem::path dependency = root / "flags.gti";
-    const std::string dependencyKey =
-        lang::SourceLoader::canonicalPath(dependency).string();
+    const std::string dependencyKey = fixtureSourcePath(dependency).string();
     const lang::FrontendResult includeOrdered = lang::Frontend().analyze(
         entry,
         "#define BEFORE_INCLUDE\n"
