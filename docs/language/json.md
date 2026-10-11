@@ -218,3 +218,62 @@ fallback behavior. This keeps key choice, required versus optional fields,
 defaulting, and schema evolution in application code. A future reflection or
 derive facility may generate the same specialization without changing this
 API.
+
+## Experimental Reflected JSON
+
+Status: preview; the acceptance client of compile-time reflection.
+
+`<std/experimental/json>` maps reflectable structs to JSON text with no codec,
+field list or constructor: every rule is ordinary GTI over `<std/meta>`
+(static semantics §3.12). It exists to prove reflection on a complete library
+and to find what reflection still lacks; once it covers `std::json`'s codec
+use cases, `std::json`'s explicit codecs are deprecated in its favour.
+
+```gti
+#include <std/experimental/json>
+
+enum class severity { info, warning };
+
+struct report {
+  [[std::experimental::json::name("msg")]]
+  std::string message = std::string("");
+  severity level = severity::info;
+  std::vector<uint32_t> related = std::vector<uint32_t>();
+  [[std::experimental::json::ignore]]
+  uint64_t cache_key = 0;
+};
+
+std::string text = std::experimental::json::encode(value);
+expected<report, std::experimental::json::error> back =
+    std::experimental::json::decode<report>(text.view());
+```
+
+`encode<T>(T&)` requires `std::meta::reflectable<T>` and writes one object
+member per instance field, in declaration order. `decode<T>(string_view)`
+scans the text into per-member byte ranges and builds `T` through
+`std::meta::construct`, so no object exists before every field has a value and
+constructors are never bypassed; member order in the text is free, members
+that name no field are skipped, and the first of repeated keys wins.
+
+Field rules:
+
+- The key is the declared field name, or the argument of a
+  `[[std::experimental::json::name("key")]]` attribute.
+- `[[std::experimental::json::ignore]]` leaves the field out of the text;
+  decoding default-constructs it, so its type must be default-initializable.
+- Supported field types: `bool`; the fixed-width integers (decoded with range
+  checks, negative text is rejected for unsigned fields); `float` and `double`
+  (encoded with `std::to_string`'s six decimals, decoded without exponents);
+  `std::string` with JSON escapes; `std::string_view` (encoding only);
+  integral enums, encoded by enumerator name and rejected when the text names
+  none; `std::vector<E>` of a supported `E`; and nested reflectable structs.
+  Any other field type is a compile-time error at its use.
+
+Decoding reports `std::experimental::json::error{code, offset}`: an `errc`
+(`unexpected_end`, `unexpected_character`, `invalid_number`,
+`invalid_escape`, `missing_field`, `invalid_enumerator`, `type_mismatch`,
+`trailing_characters`) and the byte offset into the input where decoding
+stopped; `describe(errc)` spells each kind. The library does not yet offer
+optional fields, `null`, maps, pretty printing or a DOM; use `<std/json>` for
+those. Example 139 and `tests/fixtures/experimental_json.gti` cover the
+surface.

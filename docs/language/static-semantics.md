@@ -1643,7 +1643,11 @@ inherited fields are not part of `fields_of<T>()`.
 type arguments of a generic class or enum instance (`argument_count()`,
 `arguments()`; value arguments are not listed), and
 `std::meta::is_generic_instance<T>()` tells an instance from a non-generic
-type. A primary template is not a type and has no metaobject.
+type. A primary template is not a type and has no metaobject, but
+`std::meta::primary_name_of<T>()` (`type<T>::primary_name()`) is the qualified
+name of an instance's primary without its arguments (`std::vector` for
+`std::vector<int>`), and the type's own name for a non-generic type, so a
+generic client can dispatch on the template a field type instantiates.
 
 ### 3.12.5 Structural Construction
 
