@@ -27,6 +27,9 @@ debugging and fuzzing tools cite that established path.
 - [Compiler bug-finding and triage tooling](compiler-bug-finding-and-triage.md)
 - [Compiler library migration](compiler-library-migration.md)
 - [Compiler roadmap checkpoint](compiler-roadmap-status.md)
+- [Systems-readiness roadmap checkpoint (2026-10-11)](systems-readiness-roadmap-2026-10-11.md)
+  preserves the earlier milestone structure and measurements; the active
+  roadmap reconciles delivered capabilities rather than restarting them
 - [Compiler structural refactor](compiler-structural-refactor.md)
 - [Conditional compilation and configuration flags](conditional-compilation.md)
 - [Constructor-local type generics and constraints](constructor-local-type-generics.md)
@@ -35,5 +38,9 @@ debugging and fuzzing tools cite that established path.
 - [Read-only receiver diagnostic precision](read-only-receiver-diagnostics.md)
 - [Static assertions](static-assertions.md)
 - [Gitea Actions workflows](gitea-actions/README.md), archived 2026-10-11 when CI
-  hosting moved to the `gti-lang` GitHub organization; the earlier
+  hosting moved to the `gti-lang-official/gti` GitHub repository; the earlier
   [GitHub Actions workflows](github-actions/) they replaced sit beside them
+
+That hosting event is historical. The current canonical compiler repository is
+`lang-gti-official/gti`; current CI and publication contracts belong in
+[the workflow architecture](../../architecture/agent-workflow.md).

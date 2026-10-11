@@ -68,6 +68,16 @@ def main():
             '#include <std/string>', 'import std.string;'))
         run([cli, source, "-o", executable], environment)
         assert "portable installed GTI" in run([executable], environment)
+        # The owned environment API and its module must work without source
+        # paths/overrides after relocation, using only the packaged runtime.
+        source.write_text('import std.environment;\n#include <std/string>\n'
+                          'int main() { auto result = std::environment::get("GTI_INSTALLED_ENVIRONMENT");\n'
+                          'if (!result) { return 1; }\n'
+                          'auto value = std::move(result).expect("installed environment lookup");\n'
+                          'if (!value || value.value().view() != "relocated") { return 2; }\n'
+                          'std::println("owned installed environment"); return 0; }\n')
+        run([cli, source, "-O3", "-o", executable], environment)
+        assert run([executable], dict(environment, GTI_INSTALLED_ENVIRONMENT="relocated")) == "owned installed environment\n"
         header = root / "consumer.h"
         header.write_text("#include <stdint.h>\nint32_t native_add(int32_t a, int32_t b);\n")
         bindings = root / "bindings.gti"
