@@ -146,6 +146,19 @@ class BuildWindow(unittest.TestCase):
         with self.assertRaisesRegex(Error, "unknown slot kind"):
             self.window().take("deploy", ["x"])
 
+    def test_mutex_initialization_and_old_live_owner_are_not_reclaimed(self):
+        mutex = self.dir / "lock"
+        mutex.mkdir(parents=True)
+        window = self.window()
+        window._reclaim_mutex(mutex)
+        self.assertTrue(mutex.exists())
+        (mutex / "owner.json").write_text(json.dumps({"pid": os.getpid()}))
+        old = time.time() - module.MUTEX_STALE_SECONDS - 1
+        os.utime(mutex, (old, old))
+        window._reclaim_mutex(mutex)
+        self.assertTrue(mutex.exists())
+        self.assertFalse(self.messages)
+
     def test_stale_mutex_is_reclaimed(self):
         mutex = self.dir / "lock"
         mutex.mkdir(parents=True)
