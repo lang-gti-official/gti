@@ -4142,7 +4142,12 @@ in both HIR and MIR hosted plans.
 
 `discarded_nominal_result_runtime` covers discarded cleanup-free class results
 from member and free calls, loop-slot reuse, and failure with exact caller
-cleanup across the same eight native modes. The lifecycle emitter suite checks
+cleanup across the same eight native modes. Its `branch_temporary_call_result`
+fixture keeps a failure-free call's branch-only receiver result, which MIR
+publishes into a hidden temporary place with no remaining value uses, out of
+that discard representation, including when the receiver call fails; the
+emitter text test `testBranchTemporaryCallResultIsNotDiscarded` checks the
+same shape's MIR and representation. The lifecycle emitter suite checks
 output placement and retirement and rejects using that no-drop representation
 for classes with active cleanup. A cleanup-free borrowed result is admitted
 only when its exact stored loan is unused and ends at the full expression;

@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.402.6 — Class results that exist on only one branch
+
+- A call that returns a class needing no cleanup, used directly as the
+  receiver of a method on only one side of `||`, `&&` or `?:`, as in
+  `if (!ready || !make_reading(n).even())`, runs correctly again. Since
+  0.402.3 such programs aborted at run time with "verified MIR lifetime slot
+  was dropped while empty" at every optimization level. This also affected
+  `constexpr for` loops over `std::meta` metaobjects that test, for example,
+  `m.name() != "get" || !m.result().is_integral()`.
+
 ## 0.402.4 — Returning `expected` results across scope cleanup
 
 - A function that returns an `expected<T, E>` call result while

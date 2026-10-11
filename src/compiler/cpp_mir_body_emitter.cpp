@@ -29691,12 +29691,17 @@ classSsaLifetimeSlot(const MirProgram &program,
         uses.size() == 1 && uses.front().kind == MirValueUseKind::Terminator &&
         body.returnType == value->info.type &&
         returnCallDefinition(body, valueId) == nullptr;
+    // A result with no value uses is discarded only when the call publishes
+    // it nowhere else. A call with a MIR destination, such as a branch-only
+    // temporary that MIR rehomed into its hidden result place, constructs
+    // into that place, and its readers use the place rather than the value.
+    const bool discardedResult = uses.empty() && !producer->destination;
     const auto *target =
         program.findFunctionInstance(*producer->functionTarget);
     if (((consumer != nullptr &&
           (consumer->kind == MirInstructionKind::Assign ||
            consumer->kind == MirInstructionKind::Call)) ||
-         projectedObservation || returnedResult || uses.empty()) &&
+         projectedObservation || returnedResult || discardedResult) &&
         target != nullptr && target->linkage == LanguageLinkage::Gti &&
         target->definitionKind == MirDefinitionKind::Source) {
       callee = target;

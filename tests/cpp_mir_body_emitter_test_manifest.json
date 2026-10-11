@@ -350,6 +350,10 @@
       "suite": "text"
     },
     {
+      "name": "testBranchTemporaryCallResultIsNotDiscarded",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },
