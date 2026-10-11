@@ -110,6 +110,13 @@ not evidence of final integration or full release acceptance:
   retain independent endpoints, while overlapping writes remain rejected.
   The earlier remote focused check also passes the new mutation rejecting
   release of an external field authority before its forwarded dependent.
+- On reconciled main 0.402.11, the meta-library and temporary-owner O3 cases
+  and the reflection-callables C++20/C++23 O0/O1/O3 matrix pass. Fresh census
+  generation across all 137 examples measures 70002 declarations, 12583 bodies
+  and 6841 generated items: 53 functional-library consumers add 49 declarations
+  and three callable adapters, one thread-only consumer adds two declarations,
+  and no existing body count changes. The baseline records those measured
+  additions rather than weakening the inventory check.
 
 The remaining acceptance includes the extended nested-source native matrix, current-head
 ownership/backend/corpus controls, installed consumption, runtime/allocation/
