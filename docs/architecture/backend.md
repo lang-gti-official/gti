@@ -815,6 +815,19 @@ cleanup remain intact. Ordinary constructor-boundary admission still verifies
 the selected constructor. The shared class-publication query is used by both
 transformed constructor admission and emission; recognizing storage in the
 prologue alone is insufficient.
+A passive arm may also be a static source call, publishing plainly or on its
+Invoke success edge, a copy of a named place, or the move out of a nested
+passive join. A nested join is proved on its own, and the nested arm's region
+starts at that inner join's branch block. When a passive join's single move
+reaches neither the binding nor the prepared argument terminal, the moved value
+is staged in its own representation-only slot and the join's representation
+ends right after. That staged slot then serves a return, field read,
+assignment or field initializer exactly as a fresh result's slot does.
+An owning join's synthetic temporary, once a move has emptied it, ends its
+native shell where MIR hands its obligation away. In a plain body that staged
+the returned value, that point is the return's transfer-out. Otherwise it is
+the consuming `Initialize` that reparents the obligation into a field. A
+temporary that MIR later drops keeps that drop.
 
 A copy-loaded class result whose only executable use is `Return` also avoids an
 invented default-constructed SSA object. The plain C++ form returns the exact
@@ -1520,6 +1533,16 @@ returns the Expected by value, therefore constructs a staged slot from that
 return value. The guard stays as a backstop: a shape with no exact
 publication rejects body emission rather than emitting native code that cannot
 compile.
+
+A whole cleanup-free Expected binding moved into a new binding, as in
+`auto moved = std::move(original);`, is constructed the same way. MIR gives the
+moved value no drop and no lifecycle event, only the source's ownership
+transition, and the adjacent `Initialize` activates the new binding's own drop,
+as a copy's does. The `Move` therefore constructs the new binding's lifetime
+slot from the source, and the `Initialize` emits nothing more. The moved-from
+source keeps its own binding drop and is destroyed at its scope exit, as after
+a copy. An owning Expected moves through its value drop and the `Initialize`'s
+`Reparent` instead.
 
 The slot also serves an Expected call result that initializes a constructor
 field as that field's selected member initializer, immediately after the

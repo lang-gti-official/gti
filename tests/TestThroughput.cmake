@@ -28,6 +28,7 @@ if(Python3_Interpreter_FOUND)
     conditional_owning_argument_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_null_native_runtime constructor_passive_field_rollback_runtime
+    class_conditional_join_runtime
     comma_class_results_runtime
     construction_assignment_runtime
     consuming_call_assignment_runtime consuming_lambda_runtime consuming_methods_runtime consuming_owned_pointee_runtime
@@ -36,6 +37,7 @@ if(Python3_Interpreter_FOUND)
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
     dormant_capability_runtime
     expected_class_argument_runtime expected_class_assignment_runtime
+    expected_cleanup_free_move_runtime
     expected_class_return_runtime expected_constructor_return_runtime
     expected_field_and_join_runtime expected_scoped_return_runtime
     expected_temporary_observation_runtime
