@@ -9,6 +9,15 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.401.0 — Comparator-ordered search and partition points
+
+- `<std/algorithm>` adds `partition_point` and comparator overloads of
+  `lower_bound`, `upper_bound` and `binary_search`. Applications can discover
+  predicate boundaries or search records without defining `operator<`,
+  including descending orders and move-only records/callbacks. Returned
+  cursors retain checked owner loans; the queries allocate no element storage.
+- Example 139 demonstrates sorting and searching with the same custom order.
+
 ## 0.400.0 — Structural construction and callable reflection
 
 - `std::meta::construct<T, E, Producer>(producer)` builds a struct from one
