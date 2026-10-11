@@ -2012,6 +2012,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_sequences.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_binary_writer.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_attributes.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_construct.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_callables.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_receiver_effects.gti"
   )
   set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
   add_test(

@@ -2770,6 +2770,30 @@ auto SemanticVisitor::Impl::compilerTypeKind(std::string_view binding)
   if (binding == "meta_argument_list") {
     return CompilerTypeKind::MetaArgumentList;
   }
+  static constexpr std::pair<std::string_view, CompilerTypeKind> callables[] = {
+      {"meta_method", CompilerTypeKind::MetaMethod},
+      {"meta_parameter", CompilerTypeKind::MetaParameter},
+      {"meta_constructor", CompilerTypeKind::MetaConstructor},
+      {"meta_constructor_parameter",
+       CompilerTypeKind::MetaConstructorParameter},
+      {"meta_method_list", CompilerTypeKind::MetaMethodList},
+      {"meta_operator_list", CompilerTypeKind::MetaOperatorList},
+      {"meta_parameter_list", CompilerTypeKind::MetaParameterList},
+      {"meta_parameter_type", CompilerTypeKind::MetaParameterType},
+      {"meta_return_type", CompilerTypeKind::MetaReturnType},
+      {"meta_constructor_list", CompilerTypeKind::MetaConstructorList},
+      {"meta_constructor_parameter_list",
+       CompilerTypeKind::MetaConstructorParameterList},
+      {"meta_constructor_parameter_type",
+       CompilerTypeKind::MetaConstructorParameterType},
+      {"meta_list_first", CompilerTypeKind::MetaListFirst},
+      {"meta_list_rest", CompilerTypeKind::MetaListRest},
+  };
+  for (const auto &[name, kind] : callables) {
+    if (binding == name) {
+      return kind;
+    }
+  }
   return std::nullopt;
 }
 
@@ -3024,9 +3048,320 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
     }
     return SemanticType::classType(list, std::move(elements));
   }
+  case CompilerTypeKind::MetaMethodList:
+  case CompilerTypeKind::MetaOperatorList:
+  case CompilerTypeKind::MetaConstructorList: {
+    const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
+    const bool constructors =
+        info.compilerType == CompilerTypeKind::MetaConstructorList;
+    const ClassId element =
+        compilerTypeClass(constructors ? CompilerTypeKind::MetaConstructor
+                                       : CompilerTypeKind::MetaMethod);
+    if (list == 0 || element == 0 || type.arguments.size() != 1 ||
+        containsOpenTypeParameter(type.arguments.front())) {
+      return type;
+    }
+    const SemanticType &subject = type.arguments.front();
+    std::vector<SemanticType> elements;
+    if (constructors) {
+      const ClassInfo *owner =
+          subject.kind == SemanticType::Class ? classInfo(subject) : nullptr;
+      const std::uint64_t count =
+          owner == nullptr ? 0 : owner->constructors.size();
+      for (std::uint64_t index = 0; index < count; ++index) {
+        elements.push_back(SemanticType::classType(
+            element, {subject}, {CompileTimeValue::uint64(index)}));
+      }
+    } else {
+      const std::vector<const FunctionDecl *> methods =
+          metaMethodDeclarations(subject);
+      for (std::uint64_t index = 0; index < methods.size(); ++index) {
+        if (info.compilerType == CompilerTypeKind::MetaOperatorList &&
+            !methods[index]->operatorName()) {
+          continue;
+        }
+        elements.push_back(SemanticType::classType(
+            element, {subject}, {CompileTimeValue::uint64(index)}));
+      }
+    }
+    return SemanticType::classType(list, std::move(elements));
+  }
+  case CompilerTypeKind::MetaParameterList:
+  case CompilerTypeKind::MetaConstructorParameterList: {
+    const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
+    const bool constructors =
+        info.compilerType == CompilerTypeKind::MetaConstructorParameterList;
+    const ClassId element = compilerTypeClass(
+        constructors ? CompilerTypeKind::MetaConstructorParameter
+                     : CompilerTypeKind::MetaParameter);
+    if (list == 0 || element == 0 || type.arguments.size() != 1 ||
+        type.valueArguments.size() != 1 ||
+        type.valueArguments.front().kind != CompileTimeValue::UInt64 ||
+        containsOpenTypeParameter(type.arguments.front())) {
+      return type;
+    }
+    const SemanticType &subject = type.arguments.front();
+    const CompileTimeValue &callable = type.valueArguments.front();
+    std::size_t count = 0;
+    if (constructors) {
+      const std::optional<MetaConstructorFacts> facts =
+          metaConstructorFacts(subject, callable.value);
+      if (!facts) {
+        return type;
+      }
+      count = facts->parameterTypes.size();
+    } else {
+      const std::optional<MetaMethodFacts> facts =
+          metaMethodFacts(subject, callable.value);
+      if (!facts) {
+        return type;
+      }
+      count = facts->parameterTypes.size();
+    }
+    std::vector<SemanticType> elements;
+    for (std::uint64_t index = 0; index < count; ++index) {
+      elements.push_back(SemanticType::classType(
+          element, {subject}, {callable, CompileTimeValue::uint64(index)}));
+    }
+    return SemanticType::classType(list, std::move(elements));
+  }
+  case CompilerTypeKind::MetaParameterType:
+  case CompilerTypeKind::MetaConstructorParameterType: {
+    if (type.arguments.size() != 1 || type.valueArguments.size() != 2 ||
+        type.valueArguments[0].kind != CompileTimeValue::UInt64 ||
+        type.valueArguments[1].kind != CompileTimeValue::UInt64 ||
+        containsOpenTypeParameter(type.arguments.front())) {
+      return type;
+    }
+    const std::uint64_t position = type.valueArguments[1].value;
+    if (info.compilerType == CompilerTypeKind::MetaConstructorParameterType) {
+      const std::optional<MetaConstructorFacts> facts = metaConstructorFacts(
+          type.arguments.front(), type.valueArguments[0].value);
+      return facts && position < facts->parameterTypes.size()
+                 ? facts->parameterTypes[position]
+                 : type;
+    }
+    const std::optional<MetaMethodFacts> facts =
+        metaMethodFacts(type.arguments.front(), type.valueArguments[0].value);
+    return facts && position < facts->parameterTypes.size()
+               ? facts->parameterTypes[position]
+               : type;
+  }
+  case CompilerTypeKind::MetaListFirst:
+  case CompilerTypeKind::MetaListRest: {
+    const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
+    if (list == 0 || type.arguments.size() != 1 ||
+        containsOpenTypeParameter(type.arguments.front())) {
+      return type;
+    }
+    const std::optional<std::vector<SemanticType>> elements =
+        compileTimeSequenceElements(type.arguments.front());
+    if (!elements || elements->empty()) {
+      return type;
+    }
+    if (info.compilerType == CompilerTypeKind::MetaListFirst) {
+      return elements->front();
+    }
+    return SemanticType::classType(
+        list,
+        std::vector<SemanticType>(elements->begin() + 1, elements->end()));
+  }
+  case CompilerTypeKind::MetaReturnType: {
+    if (type.arguments.size() != 1 || type.valueArguments.size() != 1 ||
+        type.valueArguments.front().kind != CompileTimeValue::UInt64 ||
+        containsOpenTypeParameter(type.arguments.front())) {
+      return type;
+    }
+    const std::optional<MetaMethodFacts> facts = metaMethodFacts(
+        type.arguments.front(), type.valueArguments.front().value);
+    return facts ? facts->returnType : type;
+  }
   default:
     return type;
   }
+}
+
+auto SemanticVisitor::Impl::metaMethodDeclarations(
+    const SemanticType &type) const -> std::vector<const FunctionDecl *> {
+  std::vector<const FunctionDecl *> methods;
+  const ClassInfo *owner =
+      type.kind == SemanticType::Class ? classInfo(type) : nullptr;
+  if (owner == nullptr || owner->declaration == nullptr) {
+    return methods;
+  }
+  const auto visit = [&](const auto &self, const StmtList &members) -> void {
+    for (const StmtPtr &statement : members) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
+        if (const StmtList *active = conditional->activeBranch(target)) {
+          self(self, *active);
+        }
+      } else if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
+        methods.push_back(function);
+      }
+    }
+  };
+  visit(visit, owner->declaration->members());
+  return methods;
+}
+
+auto SemanticVisitor::Impl::metaMethodFacts(const SemanticType &type,
+                                            std::uint64_t index) const
+    -> std::optional<MetaMethodFacts> {
+  const std::vector<const FunctionDecl *> methods =
+      metaMethodDeclarations(type);
+  if (index >= methods.size()) {
+    return std::nullopt;
+  }
+  const FunctionDecl &declaration = *methods[index];
+  const FunctionInfo *function = semanticModel.findFunction(declaration);
+  const ClassInfo *owner = classInfo(type);
+  if (function == nullptr || owner == nullptr) {
+    return std::nullopt;
+  }
+  const GenericSubstitution substitution = classSubstitution(type);
+  MetaMethodFacts facts{
+      .name = declaration.operatorName()
+                  ? "operator" + declaration.operatorName()->symbol.lexeme
+                  : declaration.name().lexeme,
+      .declaration = &declaration,
+      .staticMember = function->staticMember,
+      .operatorMethod = declaration.operatorName().has_value(),
+      .constexprFunction = function->constexprFunction,
+      .virtualMethod = function->virtualMethod,
+      .mutableReceiver =
+          declaration.receiverMutability() != ReceiverMutability::ReadOnly,
+      .returnType = substituteType(function->returnType, substitution)};
+  const auto member = owner->members.find(declaration.name().lexeme);
+  if (member != owner->members.end()) {
+    for (const CallableCandidate &overload : member->second.symbol.overloads) {
+      if (overload.declaration == &declaration) {
+        facts.publicAccess = overload.access == AccessModifier::Public;
+      }
+    }
+  }
+  for (const SemanticType &parameter : function->parameterTypes) {
+    facts.parameterTypes.push_back(substituteType(parameter, substitution));
+  }
+  for (const Parameter &parameter : declaration.parameters()) {
+    facts.parameterNames.push_back(parameter.name.lexeme);
+  }
+  return facts;
+}
+
+auto SemanticVisitor::Impl::metaConstructorFacts(const SemanticType &type,
+                                                 std::uint64_t index) const
+    -> std::optional<MetaConstructorFacts> {
+  const ClassInfo *owner =
+      type.kind == SemanticType::Class ? classInfo(type) : nullptr;
+  if (owner == nullptr || index >= owner->constructors.size() ||
+      owner->constructors[index].declaration == nullptr) {
+    return std::nullopt;
+  }
+  const ConstructorInfo &constructor = owner->constructors[index];
+  const GenericSubstitution substitution = classSubstitution(type);
+  MetaConstructorFacts facts{.declaration = constructor.declaration};
+  for (const SemanticType &parameter : constructor.parameterTypes) {
+    facts.parameterTypes.push_back(substituteType(parameter, substitution));
+  }
+  for (const Parameter &parameter : constructor.declaration->parameters()) {
+    facts.parameterNames.push_back(parameter.name.lexeme);
+  }
+  return facts;
+}
+
+auto SemanticVisitor::Impl::metaDeclarationLine(const SemanticType &type,
+                                                std::uint64_t kind,
+                                                std::uint64_t index) const
+    -> std::optional<std::uint64_t> {
+  const auto line = [](const Token &token) {
+    return std::optional(static_cast<std::uint64_t>(std::max(token.line, 0)));
+  };
+  switch (kind) {
+  case 0:
+    if (type.kind == SemanticType::Class) {
+      const ClassInfo *owner = classInfo(type);
+      return owner == nullptr ? std::nullopt : line(owner->name);
+    }
+    if (type.kind == SemanticType::Enum && type.enumId != 0 &&
+        type.enumId <= enums.size()) {
+      return line(enums[type.enumId - 1].name);
+    }
+    return std::nullopt;
+  case 1: {
+    const std::optional<MetaFieldFacts> facts = metaFieldFacts(type, index);
+    return facts && facts->declaration != nullptr
+               ? line(facts->declaration->name())
+               : std::nullopt;
+  }
+  case 2: {
+    if (type.kind != SemanticType::Enum) {
+      return std::nullopt;
+    }
+    const std::optional<EnumTypeInfo> info = enumTypeFor(type);
+    return info && index < info->enumerators.size() &&
+                   info->enumerators[index].declaration != nullptr
+               ? line(info->enumerators[index].declaration->name)
+               : std::nullopt;
+  }
+  case 3: {
+    const std::optional<MetaMethodFacts> facts = metaMethodFacts(type, index);
+    return facts ? line(facts->declaration->name()) : std::nullopt;
+  }
+  case 4: {
+    const std::optional<MetaConstructorFacts> facts =
+        metaConstructorFacts(type, index);
+    return facts ? line(facts->declaration->name()) : std::nullopt;
+  }
+  default:
+    return std::nullopt;
+  }
+}
+
+auto SemanticVisitor::Impl::metaDeclarationFile(const SemanticType &type) const
+    -> std::string {
+  SourceUnitId unit = 0;
+  if (type.kind == SemanticType::Class) {
+    const ClassInfo *owner = classInfo(type);
+    unit = owner == nullptr ? 0 : owner->sourceUnit;
+  } else if (type.kind == SemanticType::Enum && type.enumId != 0 &&
+             type.enumId <= enums.size()) {
+    unit = enums[type.enumId - 1].sourceUnit;
+  }
+  if (unit == 0 || sourceGraph == nullptr) {
+    return "";
+  }
+  const SourceUnit *source = sourceGraph->findUnit(unit);
+  return source == nullptr ? "" : source->path.string();
+}
+
+auto SemanticVisitor::Impl::isSameOrDerivedClass(
+    const SemanticType &type, const SemanticType &owner) const -> bool {
+  SemanticType current = type;
+  for (std::size_t depth = 0; depth < 64; ++depth) {
+    if (current == owner) {
+      return true;
+    }
+    const ClassInfo *info =
+        current.kind == SemanticType::Class ? classInfo(current) : nullptr;
+    if (info == nullptr || info->bases.empty()) {
+      return false;
+    }
+    // GTI inheritance is public and single along the class chain; interfaces
+    // carry no fields, so the first non-interface base is the chain.
+    const GenericSubstitution substitution = classSubstitution(current);
+    SemanticType next = SemanticType::Unknown;
+    for (const ClassBaseTypeInfo &base : info->bases) {
+      if (!base.interface) {
+        next = substituteType(base.type, substitution);
+        break;
+      }
+    }
+    if (next == SemanticType::Unknown) {
+      return false;
+    }
+    current = next;
+  }
+  return false;
 }
 
 auto SemanticVisitor::Impl::metaEnumeratorCount(const SemanticType &type) const
@@ -7164,14 +7499,9 @@ auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
         owner.moveConstructor || owner.fields.empty()) {
       continue;
     }
-    std::vector<Parameter> parameters;
-    std::vector<ConstructorInitializer> initializers;
-    std::vector<SemanticType> types;
-    std::vector<const Call *> transfers;
     bool eligible = true;
     for (const FieldInfo &entry : owner.fields) {
-      const VariableDecl &field = *entry.declaration;
-      const auto member = owner.members.find(field.name().lexeme);
+      const auto member = owner.members.find(entry.declaration->name().lexeme);
       if (member == owner.members.end() ||
           member->second.access != AccessModifier::Public ||
           member->second.symbol.type.kind == SemanticType::Reference ||
@@ -7180,53 +7510,102 @@ auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
         eligible = false;
         break;
       }
-      Token parameter = field.name();
-      parameter.lexeme = "__gti_designated_" + parameter.lexeme;
-      parameter.generated = true;
-      parameters.emplace_back(field.type(), parameter);
-      types.push_back(member->second.symbol.type);
-      Token stdName = parameter;
-      stdName.lexeme = "std";
-      Token moveName = parameter;
-      moveName.lexeme = "move";
-      Token paren = parameter;
-      paren.kind = TokenKind::RIGHT_PAREN;
-      paren.lexeme = ")";
-      ExprList arguments;
-      arguments.push_back(std::make_unique<Variable>(parameter));
-      ExprList fieldArguments;
-      auto transfer = std::make_unique<Call>(
-          std::make_unique<QualifiedName>(
-              NamePath(std::vector<Token>{stdName, moveName})),
-          std::vector<TypeRef>{}, paren, std::move(arguments));
-      transfers.push_back(transfer.get());
-      fieldArguments.push_back(std::move(transfer));
-      initializers.push_back({.target = TypeRef(field.name()),
-                              .arguments = std::move(fieldArguments)});
     }
     if (!eligible) {
       continue;
     }
-    designatedMoves.insert(transfers.begin(), transfers.end());
-    Token name = owner.name;
-    name.generated = true;
-    auto declaration = std::make_shared<ConstructorDecl>(
-        std::nullopt, name, std::vector<GenericParameter>{},
-        std::move(parameters), std::nullopt, std::move(initializers),
-        std::nullopt, std::make_unique<BlockStmt>(StmtList{}));
-    owner.designatedConstructor =
-        ConstructorInfo{.id = nextConstructorId++,
-                        .owner = owner.id,
-                        .declaration = declaration.get(),
-                        .parameterTypes = std::move(types),
-                        .requiredParameterCount = owner.fields.size()};
-    constructorGenericParameters.emplace(declaration.get(),
-                                         std::vector<GenericParameterInfo>{});
-    ClassLifecycleInfo lifecycle =
-        *semanticModel.findClassLifecycle(*owner.declaration);
-    lifecycle.constructors.push_back(*owner.designatedConstructor);
-    semanticModel.record(*owner.declaration, std::move(lifecycle));
-    semanticModel.designatedConstructors.push_back(std::move(declaration));
+    // One generated constructor per parameter order: declaration order for
+    // designated construction, reverse order for std::meta::construct. Field
+    // initializers stay in declaration order; only the parameter list moves.
+    const auto generate = [&](bool reversed) {
+      std::vector<Parameter> parameters;
+      std::vector<ConstructorInitializer> initializers;
+      std::vector<SemanticType> types;
+      std::vector<const Call *> transfers;
+      const auto describe = [&](const FieldInfo &entry) {
+        const VariableDecl &field = *entry.declaration;
+        const auto member = owner.members.find(field.name().lexeme);
+        Token parameter = field.name();
+        parameter.lexeme =
+            (reversed ? "__gti_reversed_" : "__gti_designated_") +
+            parameter.lexeme;
+        parameter.generated = true;
+        parameters.emplace_back(field.type(), parameter);
+        types.push_back(member->second.symbol.type);
+      };
+      if (reversed) {
+        // A leading tag keeps the reversed signature distinct from the
+        // designated one for every field list (a single field or a
+        // palindromic type sequence would otherwise redeclare it).
+        Token tag = owner.name;
+        tag.kind = TokenKind::IDENTIFIER;
+        tag.lexeme = "__gti_reversed_tag";
+        tag.generated = true;
+        Token boolKeyword = owner.name;
+        boolKeyword.kind = TokenKind::BOOL;
+        boolKeyword.lexeme = "bool";
+        boolKeyword.generated = true;
+        parameters.emplace_back(TypeRef(boolKeyword), tag);
+        types.push_back(SemanticType::Bool);
+        for (auto entry = owner.fields.rbegin(); entry != owner.fields.rend();
+             ++entry) {
+          describe(*entry);
+        }
+      } else {
+        for (const FieldInfo &entry : owner.fields) {
+          describe(entry);
+        }
+      }
+      for (const FieldInfo &entry : owner.fields) {
+        const VariableDecl &field = *entry.declaration;
+        Token parameter = field.name();
+        parameter.lexeme =
+            (reversed ? "__gti_reversed_" : "__gti_designated_") +
+            parameter.lexeme;
+        parameter.generated = true;
+        Token stdName = parameter;
+        stdName.lexeme = "std";
+        Token moveName = parameter;
+        moveName.lexeme = "move";
+        Token paren = parameter;
+        paren.kind = TokenKind::RIGHT_PAREN;
+        paren.lexeme = ")";
+        ExprList arguments;
+        arguments.push_back(std::make_unique<Variable>(parameter));
+        ExprList fieldArguments;
+        auto transfer = std::make_unique<Call>(
+            std::make_unique<QualifiedName>(
+                NamePath(std::vector<Token>{stdName, moveName})),
+            std::vector<TypeRef>{}, paren, std::move(arguments));
+        transfers.push_back(transfer.get());
+        fieldArguments.push_back(std::move(transfer));
+        initializers.push_back({.target = TypeRef(field.name()),
+                                .arguments = std::move(fieldArguments)});
+      }
+      designatedMoves.insert(transfers.begin(), transfers.end());
+      Token name = owner.name;
+      name.generated = true;
+      auto declaration = std::make_shared<ConstructorDecl>(
+          std::nullopt, name, std::vector<GenericParameter>{},
+          std::move(parameters), std::nullopt, std::move(initializers),
+          std::nullopt, std::make_unique<BlockStmt>(StmtList{}));
+      ConstructorInfo info{.id = nextConstructorId++,
+                           .owner = owner.id,
+                           .declaration = declaration.get(),
+                           .parameterTypes = std::move(types),
+                           .requiredParameterCount =
+                               owner.fields.size() + (reversed ? 1 : 0)};
+      constructorGenericParameters.emplace(declaration.get(),
+                                           std::vector<GenericParameterInfo>{});
+      ClassLifecycleInfo lifecycle =
+          *semanticModel.findClassLifecycle(*owner.declaration);
+      lifecycle.constructors.push_back(info);
+      semanticModel.record(*owner.declaration, std::move(lifecycle));
+      semanticModel.designatedConstructors.push_back(std::move(declaration));
+      return info;
+    };
+    owner.designatedConstructor = generate(false);
+    owner.reversedDesignatedConstructor = generate(true);
   }
 }
 

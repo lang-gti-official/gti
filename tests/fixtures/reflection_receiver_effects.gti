@@ -1,0 +1,34 @@
+// A reflected access keeps the evaluation of the expression producing its
+// metaobject receiver (GitHub #4): the call runs exactly once, before the
+// owner, for both `get` and `get_mut`, at every optimization level.
+#include <std/meta>
+
+mut int32_t observations = int32_t(0);
+
+struct Owner {
+  mut { int32_t payload = int32_t(7); }
+};
+
+std::meta::field<Owner, 0> make_field() {
+  observations = observations + int32_t(1);
+  return std::meta::field<Owner, 0>();
+}
+
+int main() {
+  mut Owner owner{};
+  auto value = make_field().get(owner);
+  if (value != int32_t(7) || observations != int32_t(1)) {
+    return 1;
+  }
+  make_field().get_mut(owner) = int32_t(9);
+  if (owner.payload != int32_t(9) || observations != int32_t(2)) {
+    return 2;
+  }
+  // A pure receiver (a binding or a default construction) adds nothing.
+  std::meta::field<Owner, 0> descriptor{};
+  auto again = descriptor.get(owner);
+  if (again != int32_t(9) || observations != int32_t(2)) {
+    return 3;
+  }
+  return 0;
+}
