@@ -36,10 +36,12 @@ HOSTS = {
              "python": "/opt/homebrew/bin/python3", "transport": "ssh", "platform": "Darwin"},
     "ubuntu-6": {"host": "root@100.77.66.96", "root": "/tmp/gti-remote-runner",
                  "python": "/usr/bin/python3", "transport": "tailscale", "platform": "Linux",
-                 "cpus": 6, "memory_gib": 13, "jobs": 3, "test_jobs": 6},
+                 "cpus": 6, "memory_gib": 13, "jobs": 3, "test_jobs": 6,
+                 "cc": "/usr/bin/gcc-14", "cxx": "/usr/bin/g++-14"},
     "ubuntu-8": {"host": "root@100.81.111.76", "root": "/tmp/gti-remote-runner",
                  "python": "/usr/bin/python3", "transport": "tailscale", "platform": "Linux",
-                 "cpus": 8, "memory_gib": 13, "jobs": 3, "test_jobs": 6},
+                 "cpus": 8, "memory_gib": 13, "jobs": 3, "test_jobs": 6,
+                 "cc": "/usr/bin/gcc-14", "cxx": "/usr/bin/g++-14"},
 }
 HOST_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\Z")
 RETENTION = 24 * 60 * 60
@@ -65,7 +67,7 @@ def write_json(path, value):
 
 
 def validate_connection(config):
-    fields = {"host", "root", "python", "transport", "platform", "cpus", "memory_gib", "jobs", "test_jobs"}
+    fields = {"host", "root", "python", "transport", "platform", "cpus", "memory_gib", "jobs", "test_jobs", "cc", "cxx"}
     if not isinstance(config, dict) or set(config) - fields:
         raise RunnerError("runner connection has unknown fields")
     host = config.get("host")
@@ -80,6 +82,9 @@ def validate_connection(config):
     python = config.get("python")
     if not isinstance(python, str) or not python or "\0" in python:
         raise RunnerError("remote Python executable must be a nonempty path/name")
+    for key in ("cc", "cxx"):
+        if key in config and (not isinstance(config[key], str) or not config[key] or "\0" in config[key]):
+            raise RunnerError(f"runner {key} must be a nonempty executable path/name")
     if config.get("transport", "ssh") not in ("ssh", "tailscale"):
         raise RunnerError("transport must be ssh or tailscale")
     for key in ("jobs", "test_jobs", "cpus", "memory_gib"):
@@ -128,6 +133,10 @@ def save_connection(path, name, config, make_default=False):
         settings["hosts"][name] = validate_connection(config)
         if make_default:
             settings["default"] = name
+        # Older task worktrees can still read the original single-host fields
+        # during a rolling update. Preserve their Mini connection until rebased.
+        settings.update({key: settings["hosts"][settings["default"]][key]
+                         for key in ("host", "root", "python")})
         write_json(path, settings)
 
 
@@ -160,7 +169,7 @@ def select_connection(args, settings, local, run_id=None):
     config.update({key: value for key, value in {
         "host": args.host if args.host is not None else os.environ.get("GTI_REMOTE_HOST") or None,
         "root": args.root if args.root is not None else os.environ.get("GTI_REMOTE_ROOT") or None, "python": args.python,
-        "transport": args.transport}.items() if value is not None})
+        "transport": args.transport, "cc": args.cc, "cxx": args.cxx}.items() if value is not None})
     return name, validate_connection(config)
 
 
@@ -382,6 +391,9 @@ def default_steps(request):
     llvm = llvm_directory()
     if llvm:
         configure.append("-DLLVM_DIR=" + llvm)
+    for language, key in (("C", "cc"), ("CXX", "cxx")):
+        if request.get(key) and not os.environ.get("CC" if key == "cc" else "CXX"):
+            configure.append(f"-DCMAKE_{language}_COMPILER={request[key]}")
     configure.extend(request["cmake_args"])
     build = ["cmake", "--build", "{build}", "--parallel", str(jobs)]
     if request["targets"]:
@@ -802,6 +814,8 @@ def parser():
     result.add_argument("--root", help="absolute remote directory ending in gti-remote-runner")
     result.add_argument("--python", help="remote Python 3.9+ executable")
     result.add_argument("--transport", choices=["ssh", "tailscale"], help="authenticated SSH client")
+    result.add_argument("--cc", help="remote default C compiler; saved by configure")
+    result.add_argument("--cxx", help="remote default C++ compiler; saved by configure")
     commands = result.add_subparsers(dest="command", required=True)
     configure = commands.add_parser("configure", help="validate/save a named connection in the Git common directory")
     configure.add_argument("--default", action="store_true", help="also select this runner as the shared default")
@@ -849,7 +863,7 @@ def main(argv=None):
         print(json.dumps(settings, indent=2))
         return 0
     if args.command == "status" and args.all:
-        if args.run_id or any((args.runner, args.host, args.root, args.python, args.transport)):
+        if args.run_id or any((args.runner, args.host, args.root, args.python, args.transport, args.cc, args.cxx)):
             raise RunnerError("status --all cannot be combined with a run ID or connection overrides")
         states = {}
         for name, config in settings["hosts"].items():
@@ -895,6 +909,7 @@ def main(argv=None):
                        "targets": args.target, "ctest_regex": args.ctest_regex, "full_suite": args.full_suite,
                        "runner": {"name": name, "host": config["host"]},
                        "required_platform": args.platform or config.get("platform"),
+                       "cc": config.get("cc"), "cxx": config.get("cxx"),
                        "jobs": args.jobs or config.get("jobs"), "test_jobs": args.test_jobs or config.get("test_jobs"), "build_type": args.build_type,
                        "cmake_args": args.cmake_arg, "timeout": args.timeout}
             write_json(temporary / "request.json", request)
