@@ -20,8 +20,9 @@ flow. Each private/source boundary needs its own rationale. Removing a private
 handle is not success if safety, supported programs or execution cost regress.
 
 This roadmap was reconciled against the 0.399.1 source checkpoint on
-2026-10-11 and incorporates merged 0.400.0 reflection phase 3. That update is
-implementation status, not a newly executed whole-toolchain acceptance run. The earlier chronological milestones are preserved in the
+2026-10-11 and incorporates merged 0.400.0 reflection phase 3 and 0.401.0
+ordered-query composition. These updates record implementation status, not a
+newly executed whole-toolchain acceptance run. The earlier chronological milestones are preserved in the
 [historical roadmap](archive/systems-readiness-roadmap-2026-10-11.md), not
 silently discarded or presented as unfinished foundations. Their restrictions
 and version horizons must not override newer implemented contracts.
