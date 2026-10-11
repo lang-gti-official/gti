@@ -3842,6 +3842,109 @@ int main() {
          "no Expected should value-initialize an ordinary local");
 }
 
+void testOwnedArgumentMemberInitializer() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-owned-argument-member-initializer.gti", R"(
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() {}
+};
+
+expected<counted, int32_t> make_counted(bool ok) {
+  if (ok) { return counted(5); }
+  return unexpected(int32_t(2));
+}
+
+struct holder {
+  int32_t number;
+  holder(expected<counted, int32_t> item)
+      : number(item ? item.value().number : 100 + item.error()) {}
+};
+
+struct owner {
+  holder held;
+  owner(bool ok) : held(holder(make_counted(ok))) {}
+};
+
+int main() {
+  owner success{true};
+  return success.held.number - 5;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the owned-argument member initializer fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  // The member's constructor takes the owning result's own value obligation
+  // directly; that handoff is not a transfer into `this`.
+  bool routed = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const lang::MirBody &body = constructor.body;
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Construct)
+          continue;
+        for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
+          const lang::MirDropObligation *source =
+              body.findDropObligation(event.source);
+          routed = routed ||
+                   (event.kind == lang::MirLifecycleEventKind::TransferOut &&
+                    source != nullptr &&
+                    source->kind == lang::MirDropObligationKind::Value &&
+                    lang::mirBodyRoutesFailureEdges(body) &&
+                    !body.failureRecords.empty());
+        }
+      }
+    }
+  }
+  expect(routed, "a constructor handing an owned result to a member's "
+                 "constructor should keep routing its failure edges");
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::size_t constructed =
+      text.find(") ::__gti_program::holder(::gti_internal::backend::mir_"
+                "failure_constructor_tag_v1<");
+  const std::size_t lineEnd = constructed == std::string::npos
+                                  ? std::string::npos
+                                  : text.find('\n', constructed);
+  const std::size_t slotStart =
+      constructed == std::string::npos
+          ? std::string::npos
+          : text.find("{}, __gti_mir_p_", constructed);
+  const std::size_t slotEnd = slotStart >= lineEnd
+                                  ? std::string::npos
+                                  : text.find(".take(), &__gti_mir_construct_"
+                                              "success_",
+                                              slotStart);
+  const std::string slot =
+      slotEnd >= lineEnd ? std::string()
+                         : text.substr(slotStart + 4, slotEnd - slotStart - 4);
+  const std::size_t declared =
+      slot.empty() ? std::string::npos
+                   : text.rfind("::gti_internal::backend::mir_lifetime_slot<"
+                                "std::expected<::__gti_program::counted, "
+                                "std::int32_t>> " +
+                                    slot + ";",
+                                constructed);
+  expect(declared != std::string::npos &&
+             text.find(slot + ".construct_from([&]() { return ::__gti_"
+                              "program::__gti_fn_",
+                       declared) < constructed,
+         "the member should be constructed in place from the owned result's "
+         "slot, taken once after its producer published it");
+  expect(text.find("std::expected<::__gti_program::counted, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no Expected should value-initialize an ordinary local");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -4028,6 +4131,7 @@ constexpr NamedTest kTests[] = {
      testRaisingConstructionAssignmentSlot},
     {"testExpectedFieldAndJoinPublication",
      testExpectedFieldAndJoinPublication},
+    {"testOwnedArgumentMemberInitializer", testOwnedArgumentMemberInitializer},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",

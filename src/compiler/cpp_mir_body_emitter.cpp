@@ -8079,6 +8079,31 @@ uniqueValueDrop(const MirBody &body, MirValueId valueId,
 uniqueValueLifetimeDrop(const MirBody &body, MirValueId valueId,
                         const SemanticType &type);
 
+// An invocation consuming a completed owning result by value hands that
+// result's own value obligation to the callee: the event transfers, once and
+// unconditionally, the unique value drop of exactly one of its Value operands.
+[[nodiscard]] bool ownedOperandTransfer(const MirBody &body,
+                                        const MirInstruction &invocation,
+                                        const MirLifecycleEvent &event) {
+  return event.kind == MirLifecycleEventKind::TransferOut &&
+         event.source != 0 && event.target == 0 && !event.conditional &&
+         !event.failureCleanup &&
+         std::count_if(invocation.operands.begin(), invocation.operands.end(),
+                       [&](const MirOperand &operand) {
+                         const MirValue *argument =
+                             operand.kind == MirOperandKind::Value
+                                 ? body.findValue(operand.value)
+                                 : nullptr;
+                         const MirDropObligation *argumentDrop =
+                             argument == nullptr
+                                 ? nullptr
+                                 : uniqueValueDrop(body, argument->id,
+                                                   argument->info.type);
+                         return argumentDrop != nullptr &&
+                                argumentDrop->id == event.source;
+                       }) == 1;
+}
+
 [[nodiscard]] const MirDropObligation *
 returnResultObligation(const MirBody &body, MirValueId value);
 
@@ -16071,6 +16096,11 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
                 event.source == 0 || event.target != 0 || event.conditional ||
                 event.failureCleanup)
               return false;
+            // A completed owning result passed directly hands its own value
+            // obligation to the callee; its slot proof keeps the result
+            // through the producer's success edge and retires it here.
+            if (ownedOperandTransfer(body, *producer, event))
+              return true;
             return std::count_if(
                        producer->operands.begin(), producer->operands.end(),
                        [&](const MirOperand &operand) {
@@ -29599,25 +29629,7 @@ classSsaLifetimeSlot(const MirProgram &program,
       directConstructionShape && !producer->lifecycle.empty() &&
       std::all_of(producer->lifecycle.begin(), producer->lifecycle.end(),
                   [&](const MirLifecycleEvent &event) {
-                    return event.kind == MirLifecycleEventKind::TransferOut &&
-                           event.source != 0 && event.target == 0 &&
-                           !event.conditional && !event.failureCleanup &&
-                           std::count_if(
-                               producer->operands.begin(),
-                               producer->operands.end(),
-                               [&](const MirOperand &operand) {
-                                 const MirValue *argument =
-                                     operand.kind == MirOperandKind::Value
-                                         ? body.findValue(operand.value)
-                                         : nullptr;
-                                 const MirDropObligation *argumentDrop =
-                                     argument == nullptr
-                                         ? nullptr
-                                         : uniqueValueDrop(body, argument->id,
-                                                           argument->info.type);
-                                 return argumentDrop != nullptr &&
-                                        argumentDrop->id == event.source;
-                               }) == 1;
+                    return ownedOperandTransfer(body, *producer, event);
                   });
   // A construction that can fail and that the fused assignment does not spell
   // publishes on its success edge before the Assign moves it in. Every
