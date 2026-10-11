@@ -814,6 +814,35 @@ lang::MirInstruction *findIntrinsic(lang::MirProgram &program,
 }
 
 void testTransferQualifiedCallables() {
+  const auto packed = analyze("empty-pack-task.gti", R"(
+#include <std/thread>
+struct PackedTask<Args...> {
+  int operator()(Args... arguments) { return 42; }
+};
+int main() {
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(PackedTask<>());
+  if (!started) return 1;
+  auto result = worker.join();
+  return result && result.value() == 42 ? 0 : 2;
+}
+)");
+  if (!packed.canGenerateCode())
+    printDiagnostics(packed);
+  expect(packed.canGenerateCode(),
+         "a concrete empty parameter pack is an exact zero-argument task");
+  expectThreadRejection("nonempty-pack-task.gti", R"(
+#include <std/thread>
+struct PackedTask<Args...> {
+  int operator()(Args... arguments) { return 42; }
+};
+int main() {
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(PackedTask<int>());
+  return started ? 0 : 1;
+}
+)",
+                        "transfer-safe exact task");
   for (const std::string suffix : {"", " mut", " &&"}) {
     const auto frontend = analyze(
         "transfer-function.gti",
@@ -822,7 +851,7 @@ struct Task { int operator()())") +
             suffix + R"( { return 42; } };
 int main() {
   std::transfer_function<int())" +
-            suffix + R"(> callback(Task());
+            suffix + R"(> callback{Task()};
   mut std::thread_result<int> worker{};
   auto started = worker.start(std::move(callback));
   if (!started) return 1;
@@ -842,11 +871,12 @@ int main() {
                                       suffix + R"( { return 42; } };
 int main() {
   std::transfer_function<int())" + suffix +
-                                      R"(> callback(Task());
+                                      R"(> callback{Task()};
   return 0;
 }
 )");
-    expect(!rejected.canGenerateCode() && !hasCode(rejected, "GTI-B0001"),
+    expect(!rejected.canGenerateCode() && !hasCode(rejected, "GTI-B0001") &&
+               !hasCode(rejected, "GTI-P0001"),
            "erasure must reject a non-transferable target at construction");
   }
   // This is an ordinary interface contract, not a stdlib type-name rule.

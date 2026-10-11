@@ -6321,11 +6321,14 @@ auto SemanticVisitor::Impl::exactThreadTaskEntry(const SemanticType &type,
   const Symbol overloads = substituteSymbol(found->second.symbol, type);
   std::vector<const CallableCandidate *> viable;
   for (const CallableCandidate &candidate : overloads.overloads) {
+    std::vector<SemanticType> parameters;
+    for (const SemanticType &parameter : candidate.parameterTypes) {
+      SemanticType::appendExpandedArgument(parameters, parameter);
+    }
     if (candidate.id == 0 || candidate.declaration == nullptr ||
         candidate.access != AccessModifier::Public ||
         candidate.compilerPrivate || candidate.pureVirtual ||
-        candidate.returnType != resultType ||
-        !candidate.parameterTypes.empty() ||
+        candidate.returnType != resultType || !parameters.empty() ||
         !candidate.record().genericParameters.empty() ||
         !candidate.requirements.empty()) {
       continue;
