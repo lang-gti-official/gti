@@ -2649,6 +2649,35 @@ int main() { return 0; }
                         "requires the verified MIR execution profile"),
       "constructor-body mutation cannot fall back to a value-copy AST "
       "interpretation after an unsupported operation");
+
+  const std::string enclosing = R"(
+constexpr int write(mut int& value) { value++; return value; }
+constexpr int build() {
+  mut int value = 1;
+  [[discard]] write(value);
+  return value;
+}
+constexpr int result = build();
+static_assert(result == 2);
+int main() { return result - 2; }
+)";
+  const auto staged =
+      lang::Frontend().analyze("constexpr-mutation-enclosing.gti", enclosing);
+  expect(staged.canGenerateCode(),
+         "an enclosing verified-MIR builder retains an ignored mutable "
+         "callee's writes");
+  // Retain real source-unit/binding identities but withhold the source manager
+  // that the staged service needs. This selects the compatibility interpreter.
+  lang::SemanticVisitor withoutStagingSource(lang::TargetInfo::host(),
+                                             &staged.sourceGraph);
+  const bool compatible = withoutStagingSource.check(staged.program);
+  if (!hasDiagnostic(withoutStagingSource, "AST compatibility frame"))
+    for (const auto &diagnostic : withoutStagingSource.errors())
+      std::cerr << diagnostic.message << '\n';
+  expect(!compatible &&
+             hasDiagnostic(withoutStagingSource, "AST compatibility frame"),
+         "a source-less compatibility caller cannot stage an isolated mutable "
+         "callee and silently lose its writes");
 }
 
 void testConstexprReadOnlyReferences() {
