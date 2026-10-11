@@ -20,8 +20,8 @@ import urllib.parse
 import urllib.request
 import uuid
 
-CANONICAL = "https://github.com/gti-lang-official/gti.git"
-REPOSITORY = "gti-lang-official/gti"
+CANONICAL = "https://github.com/lang-gti-official/gti.git"
+REPOSITORY = "lang-gti-official/gti"
 API = "https://api.github.com/repos/" + REPOSITORY
 GRAPHQL = "https://api.github.com/graphql"
 # Gitea keeps a complete copy of main and the tags as a backup; it hosts no
