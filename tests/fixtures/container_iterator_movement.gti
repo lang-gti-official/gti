@@ -130,6 +130,11 @@ int main() {
   [[discard]] tree.insert(3, 30);
   [[discard]] tree.insert(1, 10);
   [[discard]] tree.insert(2, 20);
+  { mut auto read = tree.cbegin(); auto end = tree.cend();
+    if (read == end || read->first != 1) { return 41; }
+    ++read; ++read; ++read;
+    if (read != end) { return 42; }
+  }
   { mut auto end = tree.end_iterator(); --end;
     if (end->first != 3) { return 10; }
     --end; if (end->first != 2) { return 11; }
