@@ -1759,6 +1759,30 @@ cppMirEnumBoundaryRow(const MirProgram &program,
   return true;
 }
 
+// An Expected result whose success alternative is passive publishes by value
+// through the transformed body's ordinary typed out-parameter: the caller
+// declares the boundary value-initialized and the Return assigns it. Scalar,
+// void and read-only borrowed successes qualify, as does an enum whose own
+// boundary row proves it default-constructible and move-assignable (the same
+// structural rule that lets an enum result cross the boundary by itself).
+[[nodiscard]] bool cppMirPassiveExpectedBoundaryResult(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const SemanticType &type) {
+  if (type.kind != SemanticType::Expected || type.arguments.size() != 2)
+    return false;
+  const SemanticType &success = type.arguments.front();
+  const std::optional<CppMirTypeRepresentationKind> successKind =
+      cppMirExpectedTypeRepresentation(success);
+  return successKind &&
+         (*successKind == CppMirTypeRepresentationKind::Scalar ||
+          *successKind == CppMirTypeRepresentationKind::Void ||
+          (success.kind == SemanticType::Reference &&
+           success.referenceAccess == AccessMode::ReadOnly &&
+           success.arguments.size() == 1) ||
+          (*successKind == CppMirTypeRepresentationKind::Enum &&
+           cppMirEnumBoundaryRow(program, representations, success)));
+}
+
 // A cleanup-owning payload enum crosses the transformed failure ABI through
 // caller-provided uninitialized storage, just like an owning class result.
 // The copied MIR lifecycle row is the authority for this distinction: plain
@@ -29054,7 +29078,8 @@ passiveUnexpectedCleanupReturn(const MirBody &body,
 // place. A representation-only slot may then retire its moved-from wrapper
 // only when every alternative agrees: each class alternative is one instance
 // with a generated, inactive destructor, no borrowed state and a move that
-// cannot raise, and every other alternative is scalar. At least one
+// cannot raise, and every other alternative is scalar or an integral enum
+// (a payload-free enum is scalar-like storage with no lifecycle). At least one
 // alternative is a class; a scalar-only Expected keeps its ordinary SSA local.
 [[nodiscard]] bool
 cleanupFreeExpectedClassAlternatives(const MirProgram &program,
@@ -29064,8 +29089,11 @@ cleanupFreeExpectedClassAlternatives(const MirProgram &program,
   bool classAlternative = false;
   for (const SemanticType &alternative : type.arguments) {
     if (alternative.kind != SemanticType::Class) {
-      if (expectedTypeRepresentation(alternative) !=
-          CppMirTypeRepresentationKind::Scalar)
+      const std::optional<CppMirTypeRepresentationKind> kind =
+          expectedTypeRepresentation(alternative);
+      if (kind != CppMirTypeRepresentationKind::Scalar &&
+          (kind != CppMirTypeRepresentationKind::Enum ||
+           program.findIntegralEnum(alternative) == nullptr))
         return false;
       continue;
     }
@@ -29366,10 +29394,11 @@ classSsaLifetimeSlot(const MirProgram &program,
 // The staging slots a plain callee's class result constructs into: it replaces
 // a binding, passes by value to one call or constructor, initializes one
 // constructor field, is observed once (one field read, or one Expected state
-// test or extraction), or is returned.
+// test or extraction), is returned, or is discarded.
 [[nodiscard]] bool
 plainCallStagedClassResult(const ClassSsaLifetimeSlot &slot) {
   return slot.consumerKind == ClassSsaSlotConsumerKind::Assignment ||
+         slot.consumerKind == ClassSsaSlotConsumerKind::Discard ||
          slot.consumerKind == ClassSsaSlotConsumerKind::CallArgument ||
          slot.consumerKind == ClassSsaSlotConsumerKind::ConstructorArgument ||
          slot.consumerKind == ClassSsaSlotConsumerKind::ExpectedObserver ||
@@ -29494,9 +29523,14 @@ classSsaLifetimeSlot(const MirProgram &program,
   // producer constructs it on success, the consumer moves its safe wrapper,
   // and only the moved-from representation is retired after that call or
   // construction. A result replacing a whole mutable binding is moved into it
-  // the same way. Owning alternatives keep MIR's value drop and its
-  // value-rooted transfer slot; a non-placement Expected keeps its ordinary
-  // SSA local.
+  // the same way. A result whose sole use is the body's unique Return of the
+  // same type waits in that slot while the scope cleanup MIR schedules after
+  // the call runs in order (including fallible drops of other locals, which
+  // cannot alias this unaddressed slot); the Return then moves it into the
+  // caller's placement storage. A call that can construct directly in that
+  // storage keeps the direct placement instead. Owning alternatives keep
+  // MIR's value drop and its value-rooted transfer slot; a non-placement
+  // Expected keeps its ordinary SSA local.
   if (value && value->info.type.kind == SemanticType::Expected &&
       value->info.category == ValueCategory::Value &&
       value->info.traits.movable && !value->info.traits.containsBorrowedState &&
@@ -29554,10 +29588,29 @@ classSsaLifetimeSlot(const MirProgram &program,
             : nullptr;
     if (consumer == nullptr)
       consumer = fieldInitialization;
+    const MirBlock *returned =
+        uses.size() == 1 && consumer == nullptr &&
+                uses.front().kind == MirValueUseKind::Terminator &&
+                body.returnType == value->info.type &&
+                placementDirectReturnCall(program, representations, body,
+                                          valueId) == nullptr
+            ? body.findBlock(uses.front().block)
+            : nullptr;
+    if (returned != nullptr &&
+        (returned->terminator.kind != MirTerminatorKind::Return ||
+         !returned->terminator.value ||
+         returned->terminator.value->kind != MirOperandKind::Value ||
+         returned->terminator.value->value != valueId ||
+         returned->terminator.value->type != value->info.type))
+      returned = nullptr;
+    // A discarded result still needs storage for its construction; it retires
+    // as soon as the producer has published it.
+    const bool discarded = uses.empty();
     if (target && target->linkage == LanguageLinkage::Gti &&
         target->definitionKind == MirDefinitionKind::Source &&
         target->returnType == value->info.type &&
-        target->parameterTypes == producer->parameterTypes && consumer &&
+        target->parameterTypes == producer->parameterTypes &&
+        (consumer || returned || discarded) &&
         std::none_of(
             body.dropObligations.begin(), body.dropObligations.end(),
             [&](const auto &drop) { return drop.generatedValue == valueId; }) &&
@@ -29565,12 +29618,18 @@ classSsaLifetimeSlot(const MirProgram &program,
                      [&](const auto &place) {
                        return place.root == MirPlaceRootKind::Value &&
                               place.value == valueId;
-                     }))
+                     })) {
+      if (returned != nullptr)
+        return {.value = value,
+                .producer = producer,
+                .returnBlock = returned,
+                .consumerKind = ClassSsaSlotConsumerKind::Return};
       return {.value = value,
               .producer = producer,
               .consumer = consumer,
               .consumerKind =
-                  fieldInitialization != nullptr
+                  discarded ? ClassSsaSlotConsumerKind::Discard
+                  : fieldInitialization != nullptr
                       ? ClassSsaSlotConsumerKind::FieldInitialization
                   : observer != nullptr
                       ? ClassSsaSlotConsumerKind::ExpectedObserver
@@ -29579,6 +29638,7 @@ classSsaLifetimeSlot(const MirProgram &program,
                       : (construction != nullptr
                              ? ClassSsaSlotConsumerKind::ConstructorArgument
                              : ClassSsaSlotConsumerKind::CallArgument)};
+    }
   }
   if (const auto *returned =
           cleanupFreeExpectedUnexpectedReturn(program, body, valueId)) {
@@ -29610,10 +29670,10 @@ classSsaLifetimeSlot(const MirProgram &program,
           : transformedFailureCallee(program, representations, *producer);
   // Plain source calls need the same uninitialized staging when their result
   // replaces a binding, passes by value to one call, is observed through one
-  // field projection, or reaches a Return that cannot spell the call as its
-  // return expression. Default-constructing a C++ local would introduce a
-  // source-observable constructor call, and publishing directly into the old
-  // destination would overwrite it before the call succeeds.
+  // field projection, reaches a Return that cannot spell the call as its
+  // return expression, or is discarded. Default-constructing a C++ local would
+  // introduce a source-observable constructor call, and publishing directly
+  // into the old destination would overwrite it before the call succeeds.
   if (callee == nullptr && producer != nullptr &&
       producer->kind == MirInstructionKind::Call && producer->functionTarget &&
       producer->intrinsic == IntrinsicKind::None &&
@@ -29636,8 +29696,7 @@ classSsaLifetimeSlot(const MirProgram &program,
     if (((consumer != nullptr &&
           (consumer->kind == MirInstructionKind::Assign ||
            consumer->kind == MirInstructionKind::Call)) ||
-         projectedObservation || returnedResult ||
-         (cleanupFreeArray && uses.empty())) &&
+         projectedObservation || returnedResult || uses.empty()) &&
         target != nullptr && target->linkage == LanguageLinkage::Gti &&
         target->definitionKind == MirDefinitionKind::Source) {
       callee = target;
@@ -42627,12 +42686,14 @@ private:
     // A plain callee's staged class result constructs in its own slot.
     const bool stagedAssignment = assignmentResult.producer == &instruction &&
                                   plainCallStagedClassResult(assignmentResult);
-    const bool stagedArrayResult =
+    const bool stagedDiscard =
         assignmentResult.producer == &instruction &&
-        instruction.info.type.kind == SemanticType::Array &&
-        (assignmentResult.consumerKind ==
-             ClassSsaSlotConsumerKind::CallArgument ||
-         assignmentResult.consumerKind == ClassSsaSlotConsumerKind::Discard);
+        assignmentResult.consumerKind == ClassSsaSlotConsumerKind::Discard;
+    const bool stagedArrayResult =
+        stagedDiscard || (assignmentResult.producer == &instruction &&
+                          instruction.info.type.kind == SemanticType::Array &&
+                          assignmentResult.consumerKind ==
+                              ClassSsaSlotConsumerKind::CallArgument);
     if (target != nullptr &&
         target->definitionKind == MirDefinitionKind::Source &&
         target->linkage != LanguageLinkage::C &&
@@ -42789,10 +42850,10 @@ private:
                        stagedAssignment || stagedArrayResult
                    ? "; });\n"
                    : ";\n");
-    if (stagedArrayResult &&
-        assignmentResult.consumerKind == ClassSsaSlotConsumerKind::Discard) {
+    if (stagedDiscard) {
       writeIndent();
-      output << "__gti_mir_v_" << *instruction.result << ".destroy();\n";
+      output << "__gti_mir_v_" << *instruction.result
+             << ".destroy(); // end discarded result representation\n";
     }
     if (returnedAtCall) {
       // The consumed argument slots end their moved-from representations at
@@ -50573,20 +50634,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           cppMirVirtualFailureContractRoot(program_, *function) != nullptr;
       const bool exactPassiveExpectedResult =
           returnKind && *returnKind == CppMirTypeRepresentationKind::Expected &&
-          function->returnType.arguments.size() == 2 &&
-          cppMirExpectedTypeRepresentation(
-              function->returnType.arguments.front()) &&
-          (*cppMirExpectedTypeRepresentation(
-               function->returnType.arguments.front()) ==
-               CppMirTypeRepresentationKind::Scalar ||
-           *cppMirExpectedTypeRepresentation(
-               function->returnType.arguments.front()) ==
-               CppMirTypeRepresentationKind::Void ||
-           (function->returnType.arguments.front().kind ==
-                SemanticType::Reference &&
-            function->returnType.arguments.front().referenceAccess ==
-                AccessMode::ReadOnly &&
-            function->returnType.arguments.front().arguments.size() == 1));
+          cppMirPassiveExpectedBoundaryResult(program_, representations_,
+                                              function->returnType);
       if ((!function->mayRaiseDefinedFailure && !failureFreeVirtualOverride) ||
           !returnKind ||
           (*returnKind != CppMirTypeRepresentationKind::Scalar &&
@@ -50606,7 +50655,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            !exactFunctionItemResult && !exactOwningPayloadEnumResult &&
            !exactExpectedClassResult &&
            // An expected-typed result publishes by value through the
-           // ordinary out-parameter; the scalar-payload demand keeps the
+           // ordinary out-parameter; the passive-payload demand keeps the
            // boundary default-constructible on every shipped standard.
            !(*returnKind == CppMirTypeRepresentationKind::Enum &&
              cppMirEnumBoundaryRow(program_, representations_,
@@ -50749,20 +50798,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                                  lambda->returnType);
       const bool exactPassiveExpectedResult =
           returnKind && *returnKind == CppMirTypeRepresentationKind::Expected &&
-          lambda->returnType.arguments.size() == 2 &&
-          cppMirExpectedTypeRepresentation(
-              lambda->returnType.arguments.front()) &&
-          (*cppMirExpectedTypeRepresentation(
-               lambda->returnType.arguments.front()) ==
-               CppMirTypeRepresentationKind::Scalar ||
-           *cppMirExpectedTypeRepresentation(
-               lambda->returnType.arguments.front()) ==
-               CppMirTypeRepresentationKind::Void ||
-           (lambda->returnType.arguments.front().kind ==
-                SemanticType::Reference &&
-            lambda->returnType.arguments.front().referenceAccess ==
-                AccessMode::ReadOnly &&
-            lambda->returnType.arguments.front().arguments.size() == 1));
+          cppMirPassiveExpectedBoundaryResult(program_, representations_,
+                                              lambda->returnType);
       const bool passiveResult =
           returnKind &&
           (*returnKind == CppMirTypeRepresentationKind::Void ||
@@ -53890,9 +53927,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           continue;
         case MirOperation::Comma:
           // The operand definitions carry evaluation order. This instruction
-          // only consumes the left value and publishes the right value, so
-          // keep the initial slice to passive results until MIR grows an
-          // explicit ownership-transfer form for class-valued comma results.
+          // only consumes the left value and publishes the right value, so it
+          // stays passive. A comma whose value is a class or Expected object
+          // instead denotes its right operand's producer, and an object left
+          // operand is a discarded evaluation, so neither reaches here.
           if (instruction.operands.size() != 2 ||
               !valueOperand(instruction.operands.front()) ||
               !valueOperand(instruction.operands.back()) ||

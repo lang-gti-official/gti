@@ -4020,6 +4020,105 @@ int main() {
          "no Expected should value-initialize an ordinary local");
 }
 
+void testCommaDenotesRightOperandObject() {
+  const lang::FrontendResult frontend = analyze("cpp-mir-comma-object.gti", R"(
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() {}
+};
+
+struct plain_value {
+  int32_t number;
+  plain_value(int32_t number) : number(number) {}
+};
+
+int32_t tick(int32_t value) { return value; }
+counted make_counted(int32_t number) { return counted(number); }
+plain_value make_plain(int32_t number) { return plain_value(number); }
+
+int32_t use_owned() {
+  counted value = (tick(1), make_counted(2));
+  return value.number;
+}
+
+int32_t use_plain() {
+  plain_value value = (make_plain(1), make_plain(3));
+  return value.number;
+}
+
+int main() { return use_owned() + use_plain() - 5; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the class-valued comma fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  // No comma computes a class value. The right operand's call result
+  // initializes the binding itself, reparenting its own obligation; the left
+  // operand's class result is discarded.
+  std::size_t classCommas = 0;
+  std::size_t directPublications = 0;
+  std::size_t discarded = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const lang::MirBody &body = function.body;
+    for (const lang::MirBlock &block : body.blocks) {
+      for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+        const lang::MirInstruction &instruction = block.instructions[index];
+        if (instruction.kind == lang::MirInstructionKind::Compute &&
+            instruction.operation == lang::MirOperation::Comma &&
+            instruction.info.type.kind == lang::SemanticType::Class)
+          ++classCommas;
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            !instruction.result ||
+            instruction.info.type.kind != lang::SemanticType::Class)
+          continue;
+        const auto uses = body.usesOf(*instruction.result);
+        const auto executable = std::count_if(
+            uses.begin(), uses.end(), [](const lang::MirValueUse &use) {
+              return use.kind != lang::MirValueUseKind::PlaceRoot;
+            });
+        if (executable == 0) {
+          ++discarded;
+          continue;
+        }
+        const lang::MirInstruction *next = index + 1 < block.instructions.size()
+                                               ? &block.instructions[index + 1]
+                                               : nullptr;
+        if (executable == 1 && next != nullptr &&
+            next->kind == lang::MirInstructionKind::Initialize &&
+            next->operands.size() == 1 &&
+            next->operands.front().value == *instruction.result) {
+          const lang::MirPlace *destination =
+              next->destination ? body.findPlace(*next->destination) : nullptr;
+          if (destination != nullptr &&
+              destination->root == lang::MirPlaceRootKind::Binding)
+            ++directPublications;
+        }
+      }
+    }
+  }
+  expect(classCommas == 0 && directPublications == 2 && discarded >= 1,
+         "a class-valued comma should denote its right operand's result, "
+         "which initializes the binding directly, and discard its left "
+         "operand's result");
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  expect(text.find(".destroy(); // end discarded result representation") !=
+                 std::string::npos &&
+             text.find("::__gti_program::plain_value __gti_mir_v_") ==
+                 std::string::npos &&
+             text.find("::__gti_program::counted __gti_mir_v_") ==
+                 std::string::npos,
+         "the discarded left result should retire its representation, and "
+         "no class result should value-initialize an ordinary local");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -4208,6 +4307,7 @@ constexpr NamedTest kTests[] = {
      testExpectedFieldAndJoinPublication},
     {"testOwnedArgumentMemberInitializer", testOwnedArgumentMemberInitializer},
     {"testOwningExpectedFieldPublication", testOwningExpectedFieldPublication},
+    {"testCommaDenotesRightOperandObject", testCommaDenotesRightOperandObject},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",
