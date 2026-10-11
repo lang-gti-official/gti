@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.400.3 — Reading a field of a temporary that owns resources
+
+- A field of a temporary class value can now be read directly when the class
+  has a destructor or owns resources, as in `make_counted(5).number`,
+  `make_nested(4).inner.code` or `make_named().text.size()`. Such programs
+  used to report GTI-B0001. The temporary is destroyed exactly once, after the
+  read, including in loops, when a later operand of the same expression fails,
+  and when the call producing it can fail.
+- The same now works for the payload of a call's `expected` result, as in
+  `make_named(true).value().text.size()`, when the payload owns resources.
+  Reading `.value()` of an error still stops with GTI-R0009.
+
 ## 0.400.2 — Observing an `expected` call result directly
 
 - A call's `expected<T, E>` result can now be tested or read in place:
