@@ -201,8 +201,8 @@ construction with a borrowed text-view field was integrated through the former
 Gitea PR #245, and record-published literal defaults are retained under
 optimization in 0.399.1 (GitHub PR #7). This does not imply reflection is free
 of correctness work: GitHub issues
-[#4](https://github.com/gti-lang-official/gti/issues/4) (receiver evaluation)
-and [#5](https://github.com/gti-lang-official/gti/issues/5) (exact owner
+[#4](https://github.com/lang-gti-official/gti/issues/4) (receiver evaluation)
+and [#5](https://github.com/lang-gti-official/gti/issues/5) (exact owner
 compatibility) remain prerequisites of trustworthy reflected access and must
 be reconciled with phase 3 rather than bypassed by structural construction.
 

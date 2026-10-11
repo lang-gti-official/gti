@@ -98,7 +98,7 @@ implementation migration has these directional owners:
 | Written child order and source boundary syntax | Parser/AST | Snapshot-owned syntax consumed by semantics. |
 | Active target branches, resolved operations, ordered borrow validity, full-expression endpoints, and the source-graph-derived program-initialization plan | Semantics | Immutable `SemanticModel` facts for one frontend snapshot; HIR consumes them and must not rediscover them. |
 | Concrete receiver/argument/operand roles, explicit/default argument provenance, destination-materialization intent, and full-expression identity | HIR | Concrete-program facts consumed by MIR; generic reanalysis produces the same roles after substitution. |
-| Temporary identity, lifetime start, active-drop/loan obligations, transfer/reparenting, and reverse cleanup | M-LIFE-01 MIR authority | Body-local facts verified on every normal edge; M-FAIL-01 later adds equivalent failure edges. |
+| Temporary identity, lifetime start, active-drop/loan obligations, transfer/reparenting, and reverse cleanup | M-LIFE-01/M-FAIL-01 MIR authority | Body-local facts verified on normal and defined-failure edges. |
 | Instruction/CFG order, one-time target-place formation, short-circuit selection, invocation after parameter setup, ordered hosted setup, and one merged program-initialization body | M-EXEC-01 MIR authority | Body-local executable schedule consumed by optimization and a MIR backend. |
 | Native sequencing and representation | Matching M-BACK closed-body migration | May choose statements, result slots, or helper calls only when they realize verified MIR exactly. |
 
@@ -141,11 +141,11 @@ backend cannot treat combined-AST order as the rule.
 
 Source order now determines observable operand effects, temporary destruction,
 transient-loan overlap, initializer failure cleanup, and within-thread
-sequenced-before. An earlier mutation may eventually be followed by a later
+sequenced-before. An earlier mutation may be followed by a later
 borrow in the same call, while an earlier borrow still conflicts with a later
 overlapping mutation because it remains active through the full-expression.
-That relaxation occurs only after the matching ordered MIR and production
-backend family land.
+The matching ordered MIR and production backend family have landed; the
+implementation note above records that acceptance boundary.
 
 M-LIFE-01 implements the obligation model; M-EXEC-01 now linearizes a complete
 expression family and owns structural ordered-MIR evidence;
@@ -153,7 +153,7 @@ M-BACK-01/02 own production runtime traces and removal of compatibility paths.
 M-FAIL-01 consumes the same obligations rather than inventing a separate
 failure cleanup order.
 
-No source syntax or current executable behavior changes with this design-only
-decision. Until the named migrations land, the compatibility emitter and
-native-static initialization remain documented nonconformities rather than a
-second definition of GTI.
+The decision originally changed no executable behavior by itself. Its named
+migrations are now implemented; the compatibility body emitter is removed and
+verified program initialization replaces native-static execution. New slices
+must preserve this authority rather than reintroduce those nonconformities.

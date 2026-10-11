@@ -40,3 +40,7 @@ debugging and fuzzing tools cite that established path.
 - [Gitea Actions workflows](gitea-actions/README.md), archived 2026-10-11 when CI
   hosting moved to the `gti-lang-official/gti` GitHub repository; the earlier
   [GitHub Actions workflows](github-actions/) they replaced sit beside them
+
+That hosting event is historical. The current canonical compiler repository is
+`lang-gti-official/gti`; current CI and publication contracts belong in
+[the workflow architecture](../../architecture/agent-workflow.md).

@@ -130,8 +130,11 @@ keywords.
 
 ## Current Baseline Preserved
 
-As of GTI 0.126.0, the deliberately bounded callable layer plus local closure
-environment implements:
+This subsection preserves the GTI 0.126.0 checkpoint. Its confined-only,
+one-field and function-item storage exclusions are historical staging,
+superseded by the owning-wrapper/value-transport delivery summarized above.
+At that checkpoint, the bounded callable layer plus local closure environment
+implemented:
 
 - every lambda has explicit parameter and result types and one lexical
   `SemanticType::Lambda` identity;
@@ -223,9 +226,10 @@ types.
 A nominal callable object keeps its existing class identity. Its public exact
 `operator()` candidates supply callable signatures after ordinary overload
 resolution. An exact function item keeps the selected function instance
-identity. It is formed only when an existing confined or thread-task contract
-supplies a complete signature; a bare function name has no independently
-storable inferred type. Backend-generated C++ names are serialization details
+identity. An eligible unambiguous namespace function can form a stored item
+directly; an overload set requires an exact supplied callable context. Unsafe,
+generic, member and native targets do not enter ordinary item formation.
+Backend-generated C++ names are serialization details
 for all three forms.
 
 ### Exact Invocation Signatures
@@ -401,11 +405,11 @@ problem does not justify type erasure.
 | local binding in defining scope | current local copy/move baseline | existing lexical identity, capture mode, and traits |
 | direct by-value generic parameter, confined | current bounded baseline | visible invocation/forwarding summary |
 | exact generic parameter/result transport | current bounded owned slice | exact caller/callee moves plus M-LIFE cleanup proof |
-| field of a concrete generic owner | current bounded one-field owner | exact substituted type, constructor move, and owner drop proof |
+| field of a concrete generic owner | implemented exact field transport | exact substituted type, constructor move, and complete owner/capture drop proof |
 | capture of another owned closure | accepted bounded move-capture slice | explicit move and acyclic construction |
 | namespace global or static field | later breadth | requires separate global init/shutdown policy |
 | reference/callable-reference parameter | later breadth | requires explicit callable borrow lifetime |
-| erased common callable container | client-gated later breadth | needs a demonstrated client and separate row |
+| erased owning callable wrapper | implemented L-CALL-02 | source interfaces/owners, exact invocation and capture cleanup; bounded inline/boxed repeatable and unique-owned consuming storage |
 | borrowed/reference/raw capture | outside bounded owned escape | needs lifetime/provenance and client-specific proof |
 
 Passing or returning a callable is a normal value-state transition. A moved or
@@ -604,8 +608,9 @@ With M-LIFE-01 complete, implement bounded sub-slices in this order:
 9. **Done:** an eligible namespace free-function name can contextually satisfy
    those exact confined contracts and the existing consumed managed-thread
    `void()`/owned-result task contracts. Exact selection remains semantic,
-   declaration-order independent, and deliberately unavailable to general
-   storage or escape.
+   declaration-order independent. Later L-CALL-02 value transport also permits
+   eligible unambiguous items to be stored/captured and returned through exact
+   generic ownership; the original confined-only exclusion is superseded.
 
 Each sub-slice must preserve the current confined bridge until its replacement
 has equivalent semantic/HIR/MIR tests. Do not add a general callable base
@@ -626,7 +631,7 @@ Complete. The exact non-capturing function-to-native conversion and one
 same-thread callback trampoline use the recursively bounded C signature family.
 Semantic, HIR, MIR, backend, C/C++ header, formatter, Tree-sitter, LSP, and GLFW
 3.4 oracle evidence are shipped. Capturing callbacks, userdata ownership,
-foreign-thread entry, and general function values require separately named
+foreign-thread entry, and further native function-value profiles require separately named
 follow-ons.
 
 ## Verification Matrix
@@ -641,8 +646,9 @@ follow-ons.
   managed-thread task result forms without a lambda wrapper;
 - overloaded function-item selection succeeds only for one contextually exact
   target; ambiguity and mismatch are diagnosed without conversion ranking;
-- a bare function name without an exact callable context is rejected;
-  contextually selected function items can be stored, captured, returned
+- an eligible unambiguous namespace function can form a stored item without
+  contextual overload selection; an ambiguous or ineligible bare name is
+  rejected. Selected function items can be stored, captured, returned
   through exact generic transport, and retained by owning wrappers;
 - read-callable satisfies repeated read, exclusive, and one-call clients;
 - mut-callable fails read-only access but satisfies repeated exclusive use;
@@ -722,8 +728,10 @@ not add or promise:
 The original owning type-erasure exclusion is superseded by L-CALL-02; it is
 not an unmet wrapper prerequisite. Custom copy/move constructor bodies,
 implicit signature conversions, general typed brace expressions, allocator
-customization, and small-buffer optimization are likewise not requirements of
-the agreed callback API. Existing language restrictions still apply; named
+customization, and unrestricted inline-storage profiles are not requirements of
+the agreed callback API. Bounded repeatable small-buffer storage is already
+implemented; inline consuming projection remains an additional general proof
+goal. Existing language restrictions still apply; named
 brace declarations and parenthesized construction support wrapper use.
 
 Further capabilities require a demonstrated client and a new or already named

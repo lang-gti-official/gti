@@ -129,10 +129,12 @@ the standard library observes no application flags. Replay under each domain's
 flags with canonical-syntax comparison is the actual invariant, and it already
 caught the cases flag equality missed.
 
-An aggregate `import std;` is deferred. Every imported unit is lowered and
-emitted in full whether or not the program uses it, and the whole library
-costs several seconds per compile. An aggregate becomes reasonable once
-unreferenced library declarations need not reach lowering.
+An aggregate `import std;` remains separate work. Artifact requests now retain
+the reached program prefix for MIR and emission, but ordinary complete
+checking still analyzes imported units and HIR currently also processes the
+unreached declaration tail before selecting that prefix. Removing unnecessary
+trusted-library HIR work is a remaining latency goal, not an undone MIR/backend
+cutover. Aggregate import additionally needs a rule for platform-gated units.
 
 `import` and `module` become reserved GTI keywords; `export` was already a
 reserved C++ keyword. A minor-version migration must call out the two newly
