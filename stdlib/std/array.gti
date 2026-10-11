@@ -1,4 +1,5 @@
 #include <std/memory>
+#include <std/detail/iterator>
 
 // The value and indexed core is implemented without pointer decay or hidden
 // allocation. Nominal cursors borrow the array owner, never decay its storage.
@@ -10,38 +11,66 @@ public:
   array_sentinel(size_t length) : length(length) {}
   size_t position() { return this.length; }
 };
-class array_iterator<T, uint64_t N> {
+class array_iterator<T, uint64_t N, uint64_t Reverse = 0> {
   array<T, N>& owner;
   mut size_t position;
 public:
   array_iterator(array<T, N>& owner, size_t position) : owner(owner), position(position) {}
   T& operator*() {
-    gti_internal::index_bounds_check(this.position, N);
-    unsafe { return this.owner.get_unchecked(this.position); }
+    size_t selected = checked_iterator_element(this.position, size_t(0), N, ptrdiff_t(0), Reverse != 0);
+    unsafe { return this.owner.get_unchecked(selected); }
   }
-  void operator++() mut { this.position++; }
-  void operator--() mut { this.position--; }
-  void operator+=(ptrdiff_t offset) mut { this.position = size_t(ptrdiff_t(this.position) + offset); }
-  void operator-=(ptrdiff_t offset) mut { this.position = size_t(ptrdiff_t(this.position) - offset); }
+  T& operator->() { return *this; }
+  T& operator[](ptrdiff_t offset) {
+    size_t index = checked_iterator_element(this.position, size_t(0), N, offset, Reverse != 0);
+    return this.owner[index];
+  }
+  void operator++() mut { this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(1), Reverse != 0); }
+  void operator--() mut { this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1), Reverse != 0); }
+  void operator+=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0); }
+  void operator-=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0); }
   bool operator!=(array_sentinel end) { return this.position != end.position(); }
-  bool operator!=(array_iterator<T, N>& other) { return this.position != other.position; }
-  ptrdiff_t operator-(array_sentinel end) { return ptrdiff_t(end.position()) - ptrdiff_t(this.position); }
+  bool operator!=(array_iterator<T, N, Reverse>& other) { return this.position != other.position; }
+  bool operator==(array_sentinel end) { return this.position == end.position(); }
+  bool operator==(array_iterator<T, N, Reverse>& other) { return this.position == other.position; }
+  ptrdiff_t operator-(array_sentinel end) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
+    return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
+  }
 };
-class array_mut_iterator<T, uint64_t N> {
+class array_mut_iterator<T, uint64_t N, uint64_t Reverse = 0> {
   mut array<T, N>& owner;
   mut size_t position;
 public:
-  array_mut_iterator(mut array<T, N>& owner) : owner(owner), position(0) {}
+  array_mut_iterator(mut array<T, N>& owner, size_t position = 0) : owner(owner), position(position) {}
   T& operator*() {
-    gti_internal::index_bounds_check(this.position, N);
-    unsafe { return this.owner.get_unchecked(this.position); }
+    size_t selected = checked_iterator_element(this.position, size_t(0), N, ptrdiff_t(0), Reverse != 0);
+    unsafe { return this.owner.get_unchecked(selected); }
   }
   mut T& operator*() mut {
-    gti_internal::index_bounds_check(this.position, N);
-    unsafe { return this.owner.get_unchecked_mut(this.position); }
+    size_t selected = checked_iterator_element(this.position, size_t(0), N, ptrdiff_t(0), Reverse != 0);
+    unsafe { return this.owner.get_unchecked_mut(selected); }
   }
-  void operator++() mut { this.position++; }
+  T& operator->() { return *this; }
+  mut T& operator->() mut { return *this; }
+  T& operator[](ptrdiff_t offset) {
+    size_t index = checked_iterator_element(this.position, size_t(0), N, offset, Reverse != 0);
+    return this.owner[index];
+  }
+  mut T& operator[](ptrdiff_t offset) mut {
+    size_t index = checked_iterator_element(this.position, size_t(0), N, offset, Reverse != 0);
+    return this.owner[index];
+  }
+  void operator++() mut { this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(1), Reverse != 0); }
+  void operator--() mut { this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1), Reverse != 0); }
+  void operator+=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0); }
+  void operator-=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0); }
   bool operator!=(array_sentinel end) { return this.position != end.position(); }
+  bool operator==(array_sentinel end) { return this.position == end.position(); }
+  ptrdiff_t operator-(array_sentinel end) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
+    return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
+  }
 };
 }
 class array<T, uint64_t N> {
@@ -51,6 +80,8 @@ public:
   using iterator = detail::array_mut_iterator<T, N>;
   using const_iterator = detail::array_iterator<T, N>;
   using sentinel = detail::array_sentinel;
+  using reverse_iterator = detail::array_mut_iterator<T, N, 1>;
+  using const_reverse_iterator = detail::array_iterator<T, N, 1>;
 
   constexpr array() : values({}) {}
 
@@ -71,6 +102,16 @@ public:
     return detail::array_mut_iterator<T, N>(this);
   }
   detail::array_sentinel end() { return detail::array_sentinel(N); }
+  const_iterator end_iterator() { return const_iterator(this, N); }
+  iterator end_mut() mut { return iterator(this, N); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel cend() { return this.end(); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this, N); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return sentinel(size_t(0)); }
+  sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut { return reverse_iterator(this, N); }
+  reverse_iterator rend_mut() mut { return reverse_iterator(this, size_t(0)); }
 
   constexpr T& at(int index) {
     return this.values[index];

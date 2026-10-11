@@ -643,14 +643,26 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
   const auto *loan = producer != nullptr && producer->loan
                          ? body.findLoan(*producer->loan)
                          : nullptr;
+  const auto *retained = loan != nullptr && loan->storedDependency != 0
+                             ? body.findLoan(loan->storedDependency)
+                             : nullptr;
   if (!materialization || producer->info.type != place.type ||
       !producer->info.traits.containsBorrowedState ||
       producer->info.category != ValueCategory::Value || loan == nullptr ||
       loan->kind != MirLoanKind::Stored || loan->entry || loan->escapes ||
-      !loan->carriers.empty() || loan->storedDependency != 0 ||
+      !loan->carriers.empty() ||
+      (loan->storedDependency != 0 &&
+       (retained == nullptr || retained->kind != MirLoanKind::Stored ||
+        retained->id == loan->id)) ||
       loan->producedBy != place.sourceValue || loan->storedField != 0) {
     return {};
   }
+  // A cursor may borrow a stable carrier's physical shell while that carrier
+  // retains external owners. Its exact producer-owned Stored loan remains
+  // the temporary's dependency; do not flatten or discard the separately
+  // recorded storedDependency. Program verification independently checks
+  // that edge against the concrete reference fields and source publication,
+  // while lifetime dataflow keeps its full ancestry live through cleanup.
   const auto stableOwner = [&](MirPlaceId id) {
     const auto *owner = body.findPlace(id);
     return owner != nullptr && owner->root != MirPlaceRootKind::Value &&

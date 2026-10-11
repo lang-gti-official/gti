@@ -1,0 +1,64 @@
+#include <std/iterator>
+#include <std/vector>
+#include <std/array>
+#include <std/deque>
+#include <std/list>
+#include <std/map>
+#include <std/set>
+#include <std/unordered_map>
+#include <std/unordered_set>
+
+bool random_cursor<I>(I cursor) requires std::random_access_iterator<I> {
+  mut I copy = cursor;
+  copy += std::ptrdiff_t(2);
+  if (*copy != 3 || *cursor != 1) { return false; }
+  copy -= std::ptrdiff_t(1);
+  return *copy == 2;
+}
+
+int main() {
+  mut std::vector<int> values = {1, 2, 3};
+  if (!random_cursor(values.cbegin())) { return 1; }
+  { mut auto end = values.end_iterator(); --end; if (*end != 3) { return 2; } }
+  { mut auto write = values.end_mut(); --write; write[std::ptrdiff_t(-1)] = 12; }
+  if (values[std::size_t(1)] != 12) { return 3; }
+
+  mut std::array<int, 3> fixed = std::array<int, 3>({1, 2, 3});
+  if (!random_cursor(fixed.begin())) { return 4; }
+  { mut auto write = fixed.end_mut(); write -= std::ptrdiff_t(2); *write = 22; }
+  if (fixed[std::size_t(1)] != 22) { return 5; }
+
+  mut std::deque<int> queue = {1, 2, 3};
+  if (!random_cursor(queue.begin())) { return 6; }
+  { mut auto write = queue.end_mut(); --write; write[std::ptrdiff_t(-1)] = 32; }
+  if (queue[std::size_t(1)] != 32) { return 7; }
+
+  mut std::list<int> chain = {1, 2, 3};
+  { mut auto end = chain.end_iterator(); --end; if (*end != 3) { return 8; } }
+  { mut auto write = chain.end_mut(); --write; --write; *write = 42; }
+  { mut auto read = chain.begin(); ++read; if (*read != 42) { return 9; } }
+
+  mut std::map<int, int> tree{};
+  [[discard]] tree.insert(3, 30);
+  [[discard]] tree.insert(1, 10);
+  [[discard]] tree.insert(2, 20);
+  { mut auto end = tree.end_iterator(); --end;
+    if (end->first != 3) { return 10; }
+    --end; if (end->first != 2) { return 11; }
+    ++end; if (end->first != 3) { return 12; }
+  }
+  { mut auto write = tree.end_mut(); --write; write->second = 33; }
+  int three = 3;
+  if (tree.at(three) != 33) { return 13; }
+
+  std::set<int> keys = {3, 1, 2};
+  { mut auto end = keys.end_iterator(); --end; if (*end != 3) { return 14; }
+    --end; if (*end != 2) { return 15; }
+  }
+  mut std::unordered_map<int, int> hash{};
+  [[discard]] hash.insert(1, 2);
+  { auto end = hash.end_iterator(); if (end != hash.end()) { return 16; } }
+  std::unordered_set<int> hash_keys = {1, 2};
+  { auto end = hash_keys.end_iterator(); if (end != hash_keys.end()) { return 17; } }
+  return 0;
+}

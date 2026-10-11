@@ -1,0 +1,27 @@
+#include <std/paired_span>
+#include <std/vector>
+#include <std/string>
+int main(int argc, std::vector<std::string> argv) {
+  std::vector<int> left = {1, 2, 3};
+  std::vector<int> right = {4, 5};
+  auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());
+  mut auto current = pairs.begin();
+  if (argc == 1) { --current; }
+  if (argc == 2) { current += std::ptrdiff_t(3); }
+  if (argc == 3) { current += std::ptrdiff_t(2); return (*current).first(); }
+  if (argc == 5) {
+    mut auto reverse = pairs.rbegin();
+    reverse += std::ptrdiff_t(2);
+    return (*reverse).first();
+  }
+  if (argc == 6) {
+    auto tail = pairs.subspan(std::size_t(1), std::size_t(1));
+    mut auto reverse = tail.rbegin();
+    reverse += std::ptrdiff_t(2);
+    return (*reverse).second();
+  }
+  auto tail = pairs.subspan(std::size_t(1), std::size_t(1));
+  mut auto limited = tail.begin();
+  limited -= std::ptrdiff_t(1);
+  return (*limited).second();
+}

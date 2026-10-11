@@ -1,0 +1,62 @@
+#include <std/iterator>
+#include <std/vector>
+#include <std/array>
+#include <std/deque>
+#include <std/list>
+#include <std/map>
+#include <std/set>
+int main() {
+  std::vector<int> values = {1, 2, 3};
+  mut auto first = values.rbegin();
+  auto last = values.rend();
+  if (*first != 3) { return 1; }
+  ++first;
+  if (*first != 2 || !(first != last)) { return 2; }
+  ++first;
+  if (*first != 1) { return 3; }
+  ++first;
+  if (first != last) { return 4; }
+  --first;
+  if (*first != 1 || first[std::ptrdiff_t(-2)] != 3) { return 5; }
+  std::array<int, 3> fixed = std::array<int, 3>({1, 2, 3});
+  { mut auto it = fixed.crbegin();
+    if (it[std::ptrdiff_t(2)] != 1 || it - fixed.crend() != 3) { return 6; }
+    it += std::ptrdiff_t(3); --it; if (*it != 1) { return 7; }
+  }
+  mut std::deque<int> queue = {1, 2, 3};
+  { mut auto it = queue.rbegin_mut(); it[std::ptrdiff_t(1)] = 22;
+    ++it; if (*it != 22) { return 8; }
+    it += std::ptrdiff_t(2); --it; if (*it != 1) { return 9; }
+  }
+  mut std::list<int> chain = {1, 2, 3};
+  { mut auto it = chain.crbegin(); auto end = chain.crend();
+    mut int next = 3;
+    while (it != end) { if (*it != next) { return 10; } --next; ++it; }
+    --it; if (*it != 1) { return 11; }
+  }
+  { mut auto it = chain.rbegin_mut(); *it = 33; ++it; *it = 22; }
+  if (chain.back() != 33) { return 12; }
+  mut std::map<int, int> tree{};
+  [[discard]] tree.insert(2, 20);
+  [[discard]] tree.insert(1, 10);
+  [[discard]] tree.insert(3, 30);
+  { mut auto it = tree.rbegin(); auto end = tree.rend();
+    mut int next = 3;
+    while (it != end) { if (it->first != next) { return 13; } --next; ++it; }
+    --it; if (it->first != 1) { return 14; }
+  }
+  { mut auto it = tree.rbegin_mut(); it->second = 33; }
+  int key = 3;
+  if (tree.at(key) != 33) { return 15; }
+  std::set<int> keys = {3, 1, 2};
+  { mut auto it = keys.crbegin(); auto end = keys.crend();
+    mut int next = 3;
+    while (it != end) { if (*it != next) { return 16; } --next; ++it; }
+    --it; if (*it != 1) { return 17; }
+  }
+  std::list<int> empty{};
+  if (empty.rbegin() != empty.rend()) { return 18; }
+  std::map<int, int> empty_map{};
+  if (empty_map.rbegin() != empty_map.rend()) { return 19; }
+  return 0;
+}

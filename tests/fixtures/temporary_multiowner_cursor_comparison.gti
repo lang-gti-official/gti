@@ -1,0 +1,30 @@
+// A source-defined carrier borrows two unrelated integer owners. Its cursor
+// references the carrier shell and must retain both external dependencies.
+struct finish {};
+
+class two_values {
+  int& left;
+  int& right;
+public:
+  two_values(int& left_value, int& right_value) : left(left_value), right(right_value) {}
+  int total() { return this.left + this.right; }
+  reading_cursor begin() { return reading_cursor(this); }
+  finish end() { return finish(); }
+};
+
+class reading_cursor {
+  two_values& owner;
+public:
+  reading_cursor(two_values& source) : owner(source) {}
+  bool operator!=(finish other) { return this.owner.total() != 0; }
+  bool operator==(finish other) { return this.owner.total() == 0; }
+};
+
+int main() {
+  int left = 0;
+  int right = 0;
+  auto values = two_values(left, right);
+  if (values.begin() != values.end()) { return 1; }
+  if (!(values.begin() == values.end())) { return 2; }
+  return 0;
+}

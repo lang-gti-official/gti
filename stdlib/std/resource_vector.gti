@@ -1,6 +1,7 @@
 #include <std/resource>
 #include <std/memory>
 #include <std/numeric>
+#include <std/detail/iterator>
 
 namespace std {
 /// Growable resource-backed storage transfers elements by structural relocation.
@@ -67,16 +68,143 @@ public:
   size_t position() { return this.finish; }
 };
 
-class resource_vector_iterator<std::storage_element T, std::memory_resource R> {
+class resource_vector_iterator<std::storage_element T, std::memory_resource R, uint64_t Reverse = 0> {
   resource_prefix_owner<T, R>& slots;
   mut size_t position;
 public:
   resource_vector_iterator(resource_prefix_owner<T, R>& slots, size_t position)
-      : slots(slots), position(position) {}
-  T& operator*() { return this.slots.get(this.position); }
-  void operator++() mut { this.position++; }
+      : slots(slots), position(position) {
+    if (position > slots.length()) { gti_internal::index_bounds_check(position, slots.length()); }
+  }
+  T& operator*() {
+    mut size_t position = this.position;
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, size_t(0), this.slots.length(), ptrdiff_t(-1));
+    }
+    return this.slots.get(position);
+  }
+  T& operator->() { return *this; }
+  void operator++() mut {
+    this.position = detail::checked_iterator_position(
+        this.position, size_t(0), this.slots.length(), ptrdiff_t(1), Reverse != 0);
+  }
+  void operator--() mut {
+    this.position = detail::checked_iterator_position(
+        this.position, size_t(0), this.slots.length(), ptrdiff_t(-1), Reverse != 0);
+  }
+  void operator+=(ptrdiff_t offset) mut {
+    this.position = detail::checked_iterator_position(
+        this.position, size_t(0), this.slots.length(), offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.position = detail::checked_iterator_position(
+        this.position, size_t(0), this.slots.length(), offset, Reverse == 0);
+  }
+  T& operator[](ptrdiff_t offset) {
+    mut size_t position = detail::checked_iterator_position(
+        this.position, size_t(0), this.slots.length(), offset, Reverse != 0);
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, size_t(0), this.slots.length(), ptrdiff_t(-1));
+    }
+    return this.slots.get(position);
+  }
+  ptrdiff_t operator-(resource_vector_sentinel end) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
+    return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
+  }
+  ptrdiff_t operator-(resource_vector_iterator<T, R, Reverse>& other) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(other.position); }
+    return ptrdiff_t(other.position) - ptrdiff_t(this.position);
+  }
   bool operator!=(resource_vector_sentinel end) {
     return this.position != end.position();
+  }
+  bool operator!=(resource_vector_iterator<T, R, Reverse>& other) {
+    return this.position != other.position;
+  }
+  bool operator==(resource_vector_sentinel end) {
+    return this.position == end.position();
+  }
+  bool operator==(resource_vector_iterator<T, R, Reverse>& other) {
+    return this.position == other.position;
+  }
+};
+
+class resource_vector_mut_iterator<std::storage_element T, std::memory_resource R, uint64_t Reverse = 0> {
+  mut resource_prefix_owner<T, R>& slots;
+  mut size_t position;
+public:
+  resource_vector_mut_iterator(mut resource_prefix_owner<T, R>& slots, size_t position = size_t(0))
+      : slots(slots), position(position) {
+    if (position > slots.length()) { gti_internal::index_bounds_check(position, slots.length()); }
+  }
+  T& operator*() {
+    mut size_t position = this.position;
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, size_t(0), this.slots.length(), ptrdiff_t(-1));
+    }
+    return this.slots.get(position);
+  }
+  mut T& operator*() mut {
+    mut size_t position = this.position;
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, size_t(0), this.slots.length(), ptrdiff_t(-1));
+    }
+    return this.slots.get_mut(position);
+  }
+  T& operator->() { return *this; }
+  mut T& operator->() mut { return *this; }
+  void operator++() mut {
+    this.position = detail::checked_iterator_position(
+        this.position, size_t(0), this.slots.length(), ptrdiff_t(1), Reverse != 0);
+  }
+  void operator--() mut {
+    this.position = detail::checked_iterator_position(
+        this.position, size_t(0), this.slots.length(), ptrdiff_t(-1), Reverse != 0);
+  }
+  void operator+=(ptrdiff_t offset) mut {
+    this.position = detail::checked_iterator_position(
+        this.position, size_t(0), this.slots.length(), offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.position = detail::checked_iterator_position(
+        this.position, size_t(0), this.slots.length(), offset, Reverse == 0);
+  }
+  T& operator[](ptrdiff_t offset) {
+    mut size_t position = detail::checked_iterator_position(
+        this.position, size_t(0), this.slots.length(), offset, Reverse != 0);
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, size_t(0), this.slots.length(), ptrdiff_t(-1));
+    }
+    return this.slots.get(position);
+  }
+  mut T& operator[](ptrdiff_t offset) mut {
+    mut size_t position = detail::checked_iterator_position(
+        this.position, size_t(0), this.slots.length(), offset, Reverse != 0);
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, size_t(0), this.slots.length(), ptrdiff_t(-1));
+    }
+    return this.slots.get_mut(position);
+  }
+  ptrdiff_t operator-(resource_vector_sentinel end) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
+    return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
+  }
+  bool operator!=(resource_vector_sentinel end) {
+    return this.position != end.position();
+  }
+  bool operator==(resource_vector_sentinel end) {
+    return this.position == end.position();
+  }
+  ptrdiff_t operator-(resource_vector_mut_iterator<T, R, Reverse>& other) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(other.position); }
+    return ptrdiff_t(other.position) - ptrdiff_t(this.position);
+  }
+  bool operator!=(resource_vector_mut_iterator<T, R, Reverse>& other) {
+    return this.position != other.position;
+  }
+  bool operator==(resource_vector_mut_iterator<T, R, Reverse>& other) {
+    return this.position == other.position;
   }
 };
 }
@@ -108,7 +236,10 @@ class resource_vector<std::resource_vector_element T, std::memory_resource R> {
   }
 
 public:
+  using iterator = detail::resource_vector_mut_iterator<T, R>;
   using const_iterator = detail::resource_vector_iterator<T, R>;
+  using reverse_iterator = detail::resource_vector_mut_iterator<T, R, 1>;
+  using const_reverse_iterator = detail::resource_vector_iterator<T, R, 1>;
   using sentinel = detail::resource_vector_sentinel;
 
   resource_vector(resource_ref<R> resource)
@@ -209,8 +340,33 @@ public:
     return detail::resource_vector_iterator<T, R>(this.slots, size_t(0));
   }
 
+  detail::resource_vector_mut_iterator<T, R> begin_mut() mut {
+    return detail::resource_vector_mut_iterator<T, R>(this.slots);
+  }
+
   detail::resource_vector_sentinel end() {
     return detail::resource_vector_sentinel(this.size());
   }
+
+  detail::resource_vector_iterator<T, R> end_iterator() {
+    return detail::resource_vector_iterator<T, R>(this.slots, this.size());
+  }
+
+  detail::resource_vector_mut_iterator<T, R> end_mut() mut {
+    size_t length = this.size();
+    return detail::resource_vector_mut_iterator<T, R>(this.slots, length);
+  }
+
+  detail::resource_vector_iterator<T, R> cbegin() { return this.begin(); }
+  detail::resource_vector_sentinel cend() { return this.end(); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this.slots, this.size()); }
+  detail::resource_vector_sentinel rend() { return detail::resource_vector_sentinel(size_t(0)); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  detail::resource_vector_sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut {
+    size_t length = this.size();
+    return reverse_iterator(this.slots, length);
+  }
+  reverse_iterator rend_mut() mut { return reverse_iterator(this.slots, size_t(0)); }
 };
 }

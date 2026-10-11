@@ -1777,8 +1777,18 @@ private:
                                           : temporaryReceiverCarrier(*place);
     if (!carrier)
       return {};
-    const auto retained = failureCleanup ? temporaryCarrierLoans(retired)
-                                         : retainedReborrowAncestors(retired);
+    auto retained = failureCleanup ? temporaryCarrierLoans(retired)
+                                    : retainedReborrowAncestors(retired);
+    // Retiring this temporary does not retire an independently owned carrier
+    // whose cleanup still needs the same resource ancestry. Exclude only the
+    // just-dropped temporary's own lifecycle root, then retain every remaining
+    // live cleanup-bound carrier and all of its parent/dependency ancestors.
+    // Otherwise a passive cursor can release its provider before the storage
+    // owner has performed its resource deallocation on a failure edge.
+    auto retiredLoans = alreadyEnded;
+    retiredLoans.push_back(carrier.loan->id);
+    const auto lifecycleRetained = lifecycleRetainedLoans(retiredLoans);
+    retained.insert(lifecycleRetained.begin(), lifecycleRetained.end());
     std::vector<MirLoanId> result;
     // Producers precede their dependents in the lowering scope inventory.
     // Retire the carrier's dependency before any transient ancestor.
@@ -5449,7 +5459,13 @@ private:
       }
       if (const HirValue *source = findValue(*receiver);
           source != nullptr &&
-          source->unsafeOperation == UnsafeOperationKind::RawMember) {
+          source->unsafeOperation == UnsafeOperationKind::RawMember &&
+          source->info.category != ValueCategory::Place) {
+        // Only a direct `pointer->method()` uses the raw-pointee receiver
+        // contract. A field selected through that pointer is already an
+        // exact projected place, and its ordinary method/operator call must
+        // preserve the field projection. appendInstruction independently
+        // retains the raw-memory effect from that receiver place.
         call.unsafeOperation = UnsafeOperationKind::RawMember;
       }
     }
@@ -6052,7 +6068,14 @@ private:
                   value.borrowArgument < arguments.size()
               ? loanForValue(arguments[value.borrowArgument])
               : 0;
-      if (!shellReference && dependencyLoan != 0 &&
+      // A physical carrier borrow retains its external field set through the
+      // separately verified stored-dependency edge. Copying those sources
+      // into the shell loan would mix physical storage and external authority
+      // (and attach the input's field paths to a differently shaped cursor).
+      // Mapped result fields below still publish their exact explicit paths.
+      if (!shellReference &&
+          output.loans[loan - 1].storedDependency == 0 &&
+          dependencyLoan != 0 &&
           dependencyLoan <= output.loans.size()) {
         for (const auto &dependency :
              output.loans[dependencyLoan - 1].additionalDependencies)

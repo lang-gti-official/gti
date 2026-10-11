@@ -996,6 +996,202 @@ int main() {
          "before conditional carrier retirement");
 }
 
+void checkTemporaryCursorRetainedOwnerDependencies() {
+  const auto frontend = lang::Frontend().analyze(
+      "temporary-multiowner-cursor-comparison.gti", R"gti(
+struct Finish {};
+class OwnerPair {
+  int& first;
+  int& second;
+public:
+  OwnerPair(int& left, int& right) : first(left), second(right) {}
+  int total() { return this.first + this.second; }
+  ReadCursor begin() { return ReadCursor(this); }
+  Finish end() { return Finish(); }
+};
+class ReadCursor {
+  OwnerPair& owner;
+public:
+  ReadCursor(OwnerPair& source) : owner(source) {}
+  bool operator!=(Finish other) { return this.owner.total() != 0; }
+  bool operator==(Finish other) { return this.owner.total() == 0; }
+};
+int main() {
+  int first = 0;
+  int second = 0;
+  int third = 1;
+  int fourth = 2;
+  auto left = OwnerPair(first, second);
+  auto right = OwnerPair(third, fourth);
+  if (left.begin() != left.end()) { return 1; }
+  if (!(left.begin() == left.end())) { return 2; }
+  if (!(right.begin() != right.end())) { return 3; }
+  return 0;
+}
+)gti");
+  expect(frontend.canGenerateCode(),
+         "temporary cursor comparison retains a two-owner carrier's shell "
+         "and external dependencies");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  bool checked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &shell : body.loans) {
+      if (shell.kind != lang::MirLoanKind::CallArgument ||
+          shell.storedDependency == 0)
+        continue;
+      const auto *place = body.findPlace(shell.source);
+      const auto temporary =
+          place == nullptr
+              ? lang::MirTemporaryCarrierDependency{}
+              : lang::findMirTemporaryCarrierDependency(body, *place);
+      const auto *retained =
+          temporary ? body.findLoan(temporary.loan->storedDependency) : nullptr;
+      if (!temporary || retained == nullptr)
+        continue;
+      expect(temporary.loan->source != temporary.drop->place &&
+                 retained->kind == lang::MirLoanKind::Stored &&
+                 retained->additionalDependencies.size() == 1 &&
+                 shell.storedDependency == temporary.loan->id,
+             "temporary shell, physical receiver and two external owners "
+             "remain distinct exact identities");
+      const auto other = std::find_if(
+          body.loans.begin(), body.loans.end(), [&](const auto &candidate) {
+            return candidate.kind == lang::MirLoanKind::Stored &&
+                   candidate.id != temporary.loan->id &&
+                   candidate.storedDependency != 0 &&
+                   candidate.storedDependency != retained->id &&
+                   candidate.producedBy != 0 &&
+                   candidate.source != temporary.loan->source;
+          });
+      if (other == body.loans.end())
+        continue;
+      for (int mutation = 0; mutation < 6; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &changed = instance->body.loans[temporary.loan->id - 1];
+        switch (mutation) {
+        case 0:
+          changed.storedDependency = 0;
+          break;
+        case 1:
+          changed.storedDependency = other->storedDependency;
+          break;
+        case 2:
+          changed.source = other->source;
+          break;
+        case 3:
+          instance->body.loans[retained->id - 1].additionalDependencies.clear();
+          break;
+        case 4:
+          instance->body.loans[shell.id - 1].storedDependency = other->id;
+          break;
+        case 5:
+          changed.storedDependency = changed.id;
+          break;
+        }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "temporary cursor cannot erase, substitute or forge physical "
+               "shell and external-owner dependency authority");
+      }
+      checked = true;
+    }
+  }
+  expect(checked,
+         "temporary cursor regression exercises independently verified "
+         "multiowner dependency mutations");
+}
+
+void checkTemporaryCursorCleanupProviderLifetime() {
+  const auto frontend =
+      lang::Frontend().analyze("temporary-cursor-cleanup-provider.gti", R"gti(
+struct Provider { int value = 0; };
+struct Finish {};
+class Binding {
+  Provider& provider;
+public:
+  Binding(Provider& source) : provider(source) {}
+  int read() { return this.provider.value; }
+};
+class Owner {
+  Binding binding;
+public:
+  Owner(Binding source) : binding(source) {}
+  ~Owner() { int observed = this.binding.read(); }
+  int read() { return this.binding.read(); }
+  Cursor begin() { return Cursor(this); }
+  Finish end(int divisor) { int checked = 1 / divisor; return Finish(); }
+};
+class Cursor {
+  Owner& owner;
+public:
+  Cursor(Owner& source) : owner(source) {}
+  bool operator!=(Finish other) { return this.owner.read() != 0; }
+};
+int main() {
+  Provider provider{};
+  auto binding = Binding(provider);
+  Owner owner{binding};
+  int divisor = 0;
+  if (owner.begin() != owner.end(divisor)) { return 1; }
+  return 0;
+}
+)gti");
+  expect(frontend.canGenerateCode(),
+         "temporary cursor cleanup keeps an independent cleanup-bound "
+         "owner's provider alive on a later argument failure");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  bool checked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &loan : body.loans) {
+      if (!loan.lifecycleBound || loan.parent == 0)
+        continue;
+      for (const auto &block : body.blocks) {
+        const auto childEnd = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) {
+              return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                     instruction.loan == loan.id;
+            });
+        const auto providerEnd = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) {
+              return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                     instruction.loan == loan.parent;
+            });
+        if (childEnd == block.instructions.end() ||
+            providerEnd == block.instructions.end() || childEnd >= providerEnd)
+          continue;
+        auto malformed = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &instructions = instance->body.blocks[block.id - 1].instructions;
+        const auto saved = *providerEnd;
+        const auto childIndex = childEnd - block.instructions.begin();
+        instructions.erase(instructions.begin() +
+                           (providerEnd - block.instructions.begin()));
+        instructions.insert(instructions.begin() + childIndex, saved);
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "an independent cleanup owner's provider cannot end before "
+               "its child cleanup dependency");
+        checked = true;
+      }
+    }
+  }
+  expect(checked,
+         "cleanup-provider regression exercises early ancestor retirement");
+}
+
 } // namespace
 
 int main() {
@@ -1006,5 +1202,7 @@ int main() {
   checkReservedSiblingRetirement();
   checkTemporaryOperatorPhysicalStorage();
   checkConditionalParentReborrowMutation();
+  checkTemporaryCursorRetainedOwnerDependencies();
+  checkTemporaryCursorCleanupProviderLifetime();
   return failures == 0 ? 0 : 1;
 }

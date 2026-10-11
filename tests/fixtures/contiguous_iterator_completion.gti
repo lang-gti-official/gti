@@ -1,0 +1,178 @@
+#include <std/string>
+#include <std/vector>
+#include <std/span>
+#include <std/resource_vector>
+#include <std/resource>
+#include <std/algorithm>
+#include <std/iterator>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+void require_random<I>(I cursor) requires std::random_access_iterator<I> {}
+void require_output<I>(I cursor) requires std::output_iterator<I> && std::subscripts_to_mut<I, int> {}
+
+int main() {
+  mut std::string text{"abcde"};
+  adoption_count_begin();
+  {
+    require_random(text.begin());
+    mut auto first = text.begin();
+    auto copy = first;
+    if (first != copy || !(first == copy) || first - text.end() != std::ptrdiff_t(5)) { return 1; }
+    first += std::ptrdiff_t(5);
+    if (first != text.end() || !(first == text.end())) { return 2; }
+    --first;
+    if (*first != 'e' || first[std::ptrdiff_t(-3)] != 'b') { return 3; }
+    first -= std::ptrdiff_t(4);
+    if (*first != 'a' || *copy != 'a') { return 4; }
+    auto third = std::next(text.begin(), std::ptrdiff_t(2));
+    if (*third != 'c' || first - third != std::ptrdiff_t(2)) { return 5; }
+    mut auto final = text.end_iterator();
+    --final;
+    if (*final != 'e' || std::distance(text.cbegin(), text.cend()) != std::ptrdiff_t(5)) { return 17; }
+    require_random(text.rbegin());
+    mut auto reverse = text.crbegin();
+    auto reverse_copy = reverse;
+    if (*reverse != 'e' || reverse - text.crend() != std::ptrdiff_t(5)) { return 23; }
+    reverse += std::ptrdiff_t(2);
+    if (*reverse != 'c' || reverse[std::ptrdiff_t(1)] != 'b' || *reverse_copy != 'e') { return 24; }
+    reverse -= std::ptrdiff_t(2);
+    ++reverse;
+    if (*reverse != 'd') { return 25; }
+    --reverse;
+    if (*reverse != 'e') { return 26; }
+  }
+  for (mut char& character : text) { character = 'x'; }
+  {
+    mut auto final = text.end_mut();
+    --final;
+    *final = 'y';
+  }
+  {
+    auto end = text.rend();
+    mut auto reverse = text.rbegin_mut();
+    while (reverse != end) { *reverse = 'z'; ++reverse; }
+  }
+  adoption_count_end();
+  if (adoption_allocations() != uint64_t(0)) { return 20; }
+  if (text != "zzzzz" || text.size() != std::size_t(5)) { return 6; }
+
+  mut std::vector<int> values = {10, 20, 30, 40, 50};
+  adoption_count_begin();
+  {
+    auto whole = values.as_span();
+    auto middle = whole.subspan(std::size_t(1), std::size_t(3));
+    require_random(middle.begin());
+    mut auto current = middle.begin();
+    auto copy = current;
+    current += std::ptrdiff_t(3);
+    if (current != middle.end() || current - middle.end() != std::ptrdiff_t(0)) { return 7; }
+    --current;
+    if (*current != 40 || current[std::ptrdiff_t(-2)] != 20 || *copy != 20) { return 8; }
+    current -= std::ptrdiff_t(2);
+    if (current - middle.end() != std::ptrdiff_t(3)) { return 9; }
+    auto empty = middle.subspan(std::size_t(3), std::size_t(0));
+    mut auto exhausted = empty.begin();
+    exhausted += std::ptrdiff_t(0);
+    if (exhausted != empty.end()) { return 10; }
+    mut auto final = middle.end_iterator();
+    --final;
+    if (*final != 40 || std::distance(middle.cbegin(), middle.cend()) != std::ptrdiff_t(3)) { return 18; }
+    require_random(middle.rbegin());
+    mut auto reverse = middle.crbegin();
+    if (*reverse != 40 || reverse[std::ptrdiff_t(2)] != 20 || reverse - middle.crend() != std::ptrdiff_t(3)) { return 27; }
+    reverse += std::ptrdiff_t(3);
+    if (reverse != middle.rend()) { return 28; }
+    --reverse;
+    if (*reverse != 20) { return 29; }
+    auto empty_reverse = empty.rbegin();
+    if (empty_reverse != empty.rend()) { return 30; }
+  }
+  {
+    mut auto whole = values.as_mutable_span();
+    mut auto middle = whole.subspan(std::size_t(1), std::size_t(3));
+    require_output(middle.begin_mut());
+    {
+      mut auto output = middle.begin_mut();
+      output += std::ptrdiff_t(3);
+      --output;
+      *output = 400;
+      output[std::ptrdiff_t(-2)] = 200;
+      output -= std::ptrdiff_t(1);
+      *output = 300;
+    }
+    if (middle[std::size_t(0)] != 200 || middle[std::size_t(2)] != 400) { return 11; }
+    {
+      mut auto final = middle.end_mut();
+      --final;
+      *final = 401;
+    }
+    {
+      mut auto reverse = middle.rbegin_mut();
+      *reverse = 402;
+      reverse[std::ptrdiff_t(2)] = 202;
+      ++reverse;
+      if (*reverse != 300) { return 31; }
+    }
+  }
+  if (values.front() != 10 || values.back() != 50 || values[std::size_t(2)] != 300) { return 12; }
+  adoption_count_end();
+  if (adoption_allocations() != uint64_t(0)) { return 21; }
+
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> owned{resource};
+    owned.push_back(1);
+    owned.push_back(2);
+    owned.push_back(3);
+    adoption_count_begin();
+    {
+      require_random(owned.begin());
+      mut auto first = owned.begin();
+      auto copy = first;
+      first += std::ptrdiff_t(3);
+      --first;
+      if (*first != 3 || *copy != 1 || first[std::ptrdiff_t(-2)] != 1) { return 13; }
+      first -= std::ptrdiff_t(2);
+      if (first - owned.end() != std::ptrdiff_t(3)) { return 14; }
+      mut auto final = owned.end_iterator();
+      --final;
+      if (*final != 3 || std::distance(owned.cbegin(), owned.cend()) != std::ptrdiff_t(3)) { return 19; }
+      require_random(owned.rbegin());
+      mut auto reverse = owned.crbegin();
+      if (*reverse != 3 || reverse[std::ptrdiff_t(2)] != 1 || reverse - owned.crend() != std::ptrdiff_t(3)) { return 32; }
+      reverse += std::ptrdiff_t(3);
+      if (reverse != owned.rend()) { return 33; }
+      --reverse;
+      if (*reverse != 1) { return 34; }
+    }
+    for (mut int& value : owned) { value *= 10; }
+    if (owned.front() != 10 || owned.back() != 30) { return 15; }
+    {
+      require_output(owned.begin_mut());
+      mut auto output = owned.begin_mut();
+      output += std::ptrdiff_t(2);
+      *output = 300;
+      output[std::ptrdiff_t(-1)] = 200;
+    }
+    if (owned[std::size_t(1)] != 200 || owned.back() != 300) { return 16; }
+    {
+      mut auto final = owned.end_mut();
+      --final;
+      *final = 301;
+    }
+    {
+      mut auto reverse = owned.rbegin_mut();
+      *reverse = 302;
+      reverse[std::ptrdiff_t(2)] = 101;
+    }
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0)) { return 22; }
+  }
+  return 0;
+}

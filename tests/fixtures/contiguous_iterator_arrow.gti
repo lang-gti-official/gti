@@ -1,0 +1,58 @@
+#include <std/string>
+#include <std/vector>
+#include <std/span>
+#include <std/resource_vector>
+#include <std/resource>
+
+class Cell {
+  mut int number;
+  std::string label;
+public:
+  Cell(int number) : number(number), label(std::string("cell")) {}
+  int value() { return this.number; }
+  void set(int number) mut { this.number = number; }
+};
+
+int main() {
+  mut std::vector<Cell> values = {Cell(1), Cell(2)};
+  {
+    auto view = values.as_span();
+    auto first = view.begin();
+    auto last = view.rbegin();
+    if (first->value() != 1 || last->value() != 2) { return 1; }
+  }
+  {
+    mut auto view = values.as_mutable_span();
+    {
+      mut auto first = view.begin_mut();
+      first->set(10);
+    }
+    {
+      mut auto last = view.rbegin_mut();
+      last->set(20);
+    }
+  }
+  if (values.front().value() != 10 || values.back().value() != 20) { return 2; }
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<Cell, std::process_resource> cells{resource};
+    cells.emplace_back(3);
+    cells.emplace_back(4);
+    {
+      auto first = cells.begin();
+      auto last = cells.rbegin();
+      if (first->value() != 3 || last->value() != 4) { return 3; }
+    }
+    {
+      mut auto first = cells.begin_mut();
+      first->set(30);
+    }
+    {
+      mut auto last = cells.rbegin_mut();
+      last->set(40);
+    }
+    if (cells.front().value() != 30 || cells.back().value() != 40) { return 4; }
+  }
+  return 0;
+}
