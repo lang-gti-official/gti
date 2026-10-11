@@ -1022,6 +1022,15 @@ private:
     MetaType,
     MetaFieldList,
     MetaFieldType,
+    MetaFieldAttributes,
+    MetaTypeAttributes,
+    MetaEnumerator,
+    MetaPayloadField,
+    MetaEnumeratorList,
+    MetaPayloadList,
+    MetaPayloadType,
+    MetaBaseList,
+    MetaArgumentList,
   };
 
   struct ClassInfo {
@@ -1061,6 +1070,13 @@ private:
     std::optional<Token> cAbiAttribute;
     bool cOpaqueHandle = false;
     std::optional<Token> cOpaqueAttribute;
+    // `[[attribute]]`: a struct whose constant instances annotate
+    // declarations; `[[reflect_private]]`: reflected access reaches private
+    // fields from anywhere.
+    bool attributeType = false;
+    std::optional<Token> attributeAttribute;
+    bool reflectPrivate = false;
+    std::optional<Token> reflectPrivateAttribute;
     std::optional<CAbiRecordLayout> cAbiLayout;
     std::optional<UnionLayout> unionLayout;
     ConcurrencyCapabilityPolicy transferPolicy =
@@ -1097,6 +1113,10 @@ private:
     std::optional<Token> cAbiSource;
     bool cOpaqueHandle = false;
     std::optional<Token> cOpaqueSource;
+    bool attributeType = false;
+    std::optional<Token> attributeSource;
+    bool reflectPrivate = false;
+    std::optional<Token> reflectPrivateSource;
   };
 
   struct ShareCapabilityDenial {
@@ -3513,9 +3533,68 @@ private:
   [[nodiscard]] std::optional<ConstantValue>
   metaIntrinsicConstant(const ResolvedCallInfo &call,
                         const ConstexprInterpreter &context) const;
+  [[nodiscard]] std::optional<ConstantValue>
+  metaQueryConstant(IntrinsicKind intrinsic, const SemanticType &subject,
+                    const std::optional<SemanticType> &attribute,
+                    std::optional<std::uint64_t> index,
+                    std::optional<std::uint64_t> second) const;
+  // Why a concrete reflection query has no constant: {code, message}.
+  [[nodiscard]] std::pair<std::string, std::string>
+  metaQueryFailure(IntrinsicKind intrinsic, const SemanticType &subject,
+                   std::optional<std::uint64_t> index,
+                   std::optional<std::uint64_t> second) const;
+  struct MetaEnumeratorFacts {
+    std::string name;
+    ConstantValue value;
+    std::vector<SemanticType> payloadTypes;
+    std::vector<std::string> payloadNames;
+    bool payloadEnum = false;
+  };
+  // Enumerator `index`, in declaration order, of enum `type` (generic
+  // instances substituted), or nullopt when `type` is not an enum or the
+  // index is out of range.
+  [[nodiscard]] std::optional<MetaEnumeratorFacts>
+  metaEnumeratorFacts(const SemanticType &type, std::uint64_t index) const;
+  [[nodiscard]] std::uint64_t
+  metaEnumeratorCount(const SemanticType &type) const;
+  // The expanded type arguments of a class or enum instance.
+  [[nodiscard]] std::vector<SemanticType>
+  metaTypeArguments(const SemanticType &type) const;
   void analyzeMetaFieldAccess(const Call &expr, const Get &member,
                               const SemanticType &fieldObject,
                               bool mutableAccess);
+  // Set while the synthesized projection of a reflected field access is
+  // analysed: a `[[reflect_private]]` owner then admits its private fields.
+  bool analyzingReflectedFieldAccess = false;
+  // ---- Declared attributes ----
+  // Evaluates every `[[ns::name(args)]]` application once per declaration at
+  // the start of the body phase, before any body can query it.
+  void analyzeDeclarationAttributes();
+  void analyzeDeclarationAttributeList(
+      const std::vector<DeclarationAttribute> &attributes, const Stmt &owner);
+  std::unordered_set<const Stmt *> analyzedDeclarationAttributeOwners;
+  // The attributes of class `subject`, or of its instance field `index`;
+  // nullptr when `subject` is not a class or the index is out of range, and a
+  // pointer to an empty list when the declaration has none.
+  [[nodiscard]] const std::vector<ResolvedDeclarationAttribute> *
+  declarationAttributesOf(const SemanticType &subject,
+                          std::optional<std::uint64_t> index) const;
+  const std::vector<ResolvedDeclarationAttribute> noDeclarationAttributes;
+  void analyzeMetaAttributeAccess(const Call &expr, const Get &member,
+                                  const SemanticType &metaObject,
+                                  bool typeSubject);
+  // `attribute<A>().field`: aliases the read to a literal of the field's
+  // constant so run-time code carries the constant, not the attribute object.
+  [[nodiscard]] bool foldAttributeMemberRead(const Get &expr,
+                                             const SemanticType &objectType);
+  // A source expression denoting `value` with exact type `type`, or nullptr
+  // when the constant has no literal spelling (aggregates).
+  [[nodiscard]] ExprPtr constantLiteralExpression(const ConstantValue &value,
+                                                  const SemanticType &type,
+                                                  const Token &anchor) const;
+  // std::meta::reflectable: a struct or class whose instance fields are all
+  // public, or one declared [[reflect_private]].
+  [[nodiscard]] bool isReflectableType(const SemanticType &type) const;
   // The element binding of the `constexpr for` copy being analysed and the
   // element it is initialized with; visitCallExpr binds the generated
   // initializer to a default construction of that element.

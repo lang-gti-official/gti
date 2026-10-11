@@ -650,7 +650,55 @@ HIR lowering and the HIR source-alias table (`HirBody::sourceAliases`) follow
 the alias, so every access, borrow and lowering rule is the direct access's.
 The call keeps a `ResolvedCallInfo` with the `MetaFieldGet`/`MetaFieldGetMut`
 kind for passes that read the call shape; it has no borrow origin because it
-is the place itself.
+is the place itself. While the synthesized projection is analysed
+(`analyzingReflectedFieldAccess`), the member-access privacy check admits
+private fields of a `[[reflect_private]]` owner (`ClassInfo::reflectPrivate`);
+the lowered class record carries the same flag so the C++ representation
+emits every member public, since GTI access control is already enforced here.
+
+Declared attributes are parsed by `bracketAttributedDeclaration` into
+`DeclarationAttribute` (name path, argument list, optional designators) on
+`VariableDecl` and `ClassDecl`; a qualified name after `[[` distinguishes
+them from compiler attributes, which `registerClassAttributes` extends with
+`attribute` and `reflect_private` (`ClassInfo::attributeType`,
+`reflectPrivate`). They are evaluated once per declaration by
+`analyzeDeclarationAttributes`, which runs at the start of the body phase,
+before any body can query them: in the owner's declaration context it
+resolves the attribute type, checks it is an eligible struct, analyses each
+argument with `analyzeInitializer` against the field type, evaluates it with
+the constexpr interpreter, converts it with `convertConstantToType`, fills
+omitted fields from literal declaration defaults, and records the resulting
+object constant (`ResolvedDeclarationAttribute`, keyed by the declaration in
+`SemanticModel::declarationAttributes`, base-fallback aware). Attribute
+queries are folded intrinsics like the field queries, described by one shape
+table (`metaQueryShape`: leading type arguments, trailing `uint64_t` indices,
+result type) that `analyzeMetaIntrinsicCall`, `metaIntrinsicConstant` and
+`metaQueryConstant` share; enumerator, payload, base and argument queries use
+the same table (`metaEnumeratorFacts` reads `enumTypeFor`, so generic enum
+instances are substituted), and `meta_type_trait<T, N>` carries the boolean
+traits (payload enum, generic instance, reflectable, signed integral).
+`field_attributes`, `type_attributes`, `enumerator_list`, `payload_list`,
+`payload_type`, `base_list` and `argument_list` are further computed
+compiler types rewritten by `rewriteCompilerType`.
+
+`attribute<A>()` is intercepted like `get` (`analyzeMetaAttributeAccess`):
+the call records the attribute's object constant, which the interpreter uses
+directly, and is aliased to a synthesized designated construction of `A` from
+clones of the application's own arguments, so a run-time use of the whole
+object is an ordinary struct construction. `visitGetExpr` folds a member read
+of that result (`foldAttributeMemberRead`): the read is aliased to a literal
+of the field's type (`constantLiteralExpression`: string, bool, character,
+float, a typed integer conversion, or an enumerator path) and recorded as a
+constant, so the constructed object is never materialised for it. The
+`std::meta::reflectable` constraint is `GenericConstraintKind::Reflectable`
+(`isReflectableType`), bound by `@compiler_constraint("meta_reflectable")`
+in the meta unit.
+
+A direct-initialized class temporary consumed by a projection (the alias
+above, `return {.x = 1}` consumers and the like) is a fresh SSA value that
+MIR lowering now materialises before rooting a place at it
+(`emitPlaceDependencies` treats `HirValueKind::DirectInitializer` like a
+call); previously only call-like producers were emitted there.
 
 ## Request Sessions
 

@@ -2207,6 +2207,20 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::MetaFieldIsPublic:
         case IntrinsicKind::MetaTypeName:
         case IntrinsicKind::MetaTypeKind:
+        case IntrinsicKind::MetaFieldAttributeCount:
+        case IntrinsicKind::MetaFieldHasAttribute:
+        case IntrinsicKind::MetaTypeAttributeCount:
+        case IntrinsicKind::MetaTypeHasAttribute:
+        case IntrinsicKind::MetaTypeTrait:
+        case IntrinsicKind::MetaEnumeratorCount:
+        case IntrinsicKind::MetaEnumeratorName:
+        case IntrinsicKind::MetaEnumeratorValue:
+        case IntrinsicKind::MetaPayloadCount:
+        case IntrinsicKind::MetaPayloadName:
+        case IntrinsicKind::MetaBaseCount:
+        case IntrinsicKind::MetaArgumentCount:
+        case IntrinsicKind::MetaFieldAttribute:
+        case IntrinsicKind::MetaTypeAttribute:
         case IntrinsicKind::MetaFieldGet:
         case IntrinsicKind::MetaFieldGetMut:
         case IntrinsicKind::SimdAdd:
@@ -6320,7 +6334,9 @@ auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
   }
   if (member->symbol.type != SemanticType::Function &&
       member->access == AccessModifier::Private &&
-      currentClass != member->symbol.ownerClass) {
+      currentClass != member->symbol.ownerClass &&
+      !(analyzingReflectedFieldAccess &&
+        classInfo(member->symbol.ownerClass).reflectPrivate)) {
     const ClassInfo &declaringOwner = classInfo(member->symbol.ownerClass);
     Diagnostic diagnostic =
         makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, name,

@@ -374,7 +374,7 @@ runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
    bounded `extern "C"` surface above. `@runtime` is not a general FFI.
 *)
 
-class-declaration      = [ class-attributes ]
+class-declaration      = [ declaration-attributes ] [ class-attributes ]
                          ( ordinary-class-declaration
                          | exact-class-specialization ) ;
 
@@ -407,7 +407,25 @@ class-attributes       = "[[" class-attribute
 
 class-attribute        = IDENTIFIER [ "(" IDENTIFIER ")" ] ;
 (* An argument is valid only for unsafe_transfer/unsafe_share and names one
-   non-pack type parameter of the annotated class/struct. *)
+   non-pack type parameter of the annotated class/struct. `attribute` marks a
+   struct as an attribute type; `reflect_private` opens a class or struct's
+   private fields to reflected access. *)
+
+(* A declared attribute names an `[[attribute]]` struct by qualified name and
+   initializes its fields positionally or by designator with constant
+   expressions. It annotates a class-like declaration or an instance field;
+   the compiler records the constant and gives it no meaning. *)
+declaration-attributes = "[[" declaration-attribute
+                         { "," declaration-attribute } "]]" ;
+
+declaration-attribute  = qualified-name [ "(" [ attribute-arguments ] ")" ] ;
+
+attribute-arguments    = expression { "," expression }
+                       | designated-attribute-argument
+                         { "," designated-attribute-argument } ;
+
+designated-attribute-argument
+                       = "." IDENTIFIER "=" expression ;
 
 class-key              = "class" | "struct" | "interface" | "union" ;
 
@@ -427,7 +445,7 @@ class-member           = conditional-class-members
                        | operator-declaration
                        | method-declaration
                        | static-variable-declaration
-                       | variable-declaration
+                       | [ declaration-attributes ] variable-declaration
                        | empty-declaration ;
 
 conditional-class-members

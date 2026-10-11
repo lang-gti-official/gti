@@ -30,6 +30,9 @@ enum class GenericConstraintKind : std::uint8_t {
   AtomicScalar,
   MoveConstructible,
   IntegralEnum,
+  // Every instance field of a struct or class is readable through
+  // reflection where the constraint is checked (std::meta::reflectable).
+  Reflectable,
   Count,
 };
 
@@ -89,7 +92,7 @@ struct CompilerStructuralConstraintRecord {
   std::size_t arity;
 };
 
-inline constexpr std::array<GenericConstraintKind, 19> genericConstraintKinds{{
+inline constexpr std::array<GenericConstraintKind, 20> genericConstraintKinds{{
     GenericConstraintKind::Numeric,
     GenericConstraintKind::SignedNumeric,
     GenericConstraintKind::Integral,
@@ -109,9 +112,10 @@ inline constexpr std::array<GenericConstraintKind, 19> genericConstraintKinds{{
     GenericConstraintKind::RelationallyOrdered,
     GenericConstraintKind::AtomicScalar,
     GenericConstraintKind::IntegralEnum,
+    GenericConstraintKind::Reflectable,
 }};
 
-inline constexpr std::array<CompilerConstraintRecord, 19> compilerConstraints{{
+inline constexpr std::array<CompilerConstraintRecord, 20> compilerConstraints{{
     {"numeric", GenericConstraintKind::Numeric},
     {"signed_numeric", GenericConstraintKind::SignedNumeric},
     {"integral", GenericConstraintKind::Integral},
@@ -131,6 +135,7 @@ inline constexpr std::array<CompilerConstraintRecord, 19> compilerConstraints{{
     {"relationally_ordered", GenericConstraintKind::RelationallyOrdered},
     {"atomic_scalar", GenericConstraintKind::AtomicScalar},
     {"integral_enum", GenericConstraintKind::IntegralEnum},
+    {"meta_reflectable", GenericConstraintKind::Reflectable},
 }};
 
 inline constexpr std::array<CompilerStructuralConstraintRecord, 32>
