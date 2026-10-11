@@ -334,6 +334,10 @@
       "suite": "text"
     },
     {
+      "name": "testExpectedFieldAndJoinPublication",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },
