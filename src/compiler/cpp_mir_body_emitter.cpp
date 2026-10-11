@@ -55905,6 +55905,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             valueRootedClassCallResultSlot(program_, representations_, body,
                                            *instruction.result)
                     .producer != &instruction &&
+            // A result read only through field views of its conditional
+            // temporary constructs there.
+            conditionalTemporaryViewedResult(program_, representations_, body,
+                                             *instruction.result) == nullptr &&
             returnedCallResultSlot(program_, body, *instruction.result) ==
                 nullptr &&
             // A nested contained-member result spells inline at its

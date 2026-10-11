@@ -62,6 +62,7 @@ if(Python3_Interpreter_FOUND)
     owning_expected_field_runtime
     owning_temporary_field_read_runtime
     plain_call_member_initializer_runtime
+    short_circuit_field_view_runtime
     pack_prefix_constructor_failure_runtime private_constructor_placement_runtime
     programmable_allocators_runtime prvalue_direct_initialization_runtime
     raw_owner_witness_runtime raw_pointer_conversion_runtime
