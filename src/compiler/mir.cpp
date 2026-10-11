@@ -4012,6 +4012,26 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                 canonicalPlace(body, resolved->place, bindingLoans, active);
             if (operandPlace.throughLoan == parent)
               return true;
+            // A reference-field projection of an incoming carrier (including
+            // `this`) has a concrete place rather than a Loan operand. Its
+            // abstract stored entry is nevertheless the exact authority for
+            // that referent. Reuse the field/access proof, requiring the
+            // selected input to name the result origin exactly; mere overlap
+            // with the carrier shell cannot establish this ancestry.
+            const auto &dependency = body.loans[parent - 1];
+            const auto &result = body.loans[loan - 1];
+            if ((resolved->kind == MirOperandKind::BorrowRead ||
+                 resolved->kind == MirOperandKind::BorrowWrite) &&
+                (result.access == AccessMode::ReadOnly ||
+                 resolved->kind == MirOperandKind::BorrowWrite) &&
+                abstractStoredEntry(body, dependency) &&
+                active[parent - 1] == MirLoanFlowState::Active &&
+                sameCanonicalPlace(operandPlace,
+                                   canonicalPlace(body, result.source,
+                                                  bindingLoans, active)) &&
+                loanPermitsPlace(body, dependency, operandPlace, result.access,
+                                 bindingLoans, active))
+              return true;
             if (mappedAliasDependency(operandPlace.throughLoan))
               return true;
             if (place != nullptr && place->root == MirPlaceRootKind::Binding) {

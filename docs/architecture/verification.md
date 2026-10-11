@@ -55,6 +55,18 @@ not evidence of final integration or full release acceptance:
   a move. Ordinary overload/unsafe negatives remain rejected. The relocated
   install step stopped before consumer execution because this targeted build
   omitted `gti.so`; all-target build plus installation remains required.
+- macOS Release run `run-0bb60840f66f490f8d1dae0f8f922a5d`, snapshot
+  `f5bb194a1982739c4d39ff9a4453540e8fb14b05a32f49f8bfcb0b405cda2872`,
+  passes cleanup-bound borrowing, cleanup-bound proof mutations, scoped
+  semantic/IR/backend controls and all five scoped fixtures at C++23 O3.
+  The nested worker-failure case now preserves its original failure and joins
+  both levels before caller cleanup. Its general prerequisite is exact
+  reborrowing through an incoming reference field when constructing a
+  cleanup-owning child; an ordinary non-threaded guard exercises the same rule.
+  Wrong-field origins and insufficient parent access remain verifier failures.
+  The earlier all-target Release build (`run-967b1ba839284d39bb429e8ee0bef1d1`)
+  passed, but this nested regression stopped its subsequent validation before
+  installed consumption or the full suite. Those gates must run again.
 
 The remaining acceptance includes the extended nested-source native matrix, current-head
 ownership/backend/corpus controls, installed consumption, runtime/allocation/

@@ -396,6 +396,14 @@ loan or the caller's cleanup ownership. In particular, borrowing a guard does
 not acquire its lock-release obligation. Local bindings of stored referents
 retain their concrete reference-field dereference; semantic overlap identities
 are not substituted for executable projection chains.
+Constructing a cleanup-owning child from an incoming carrier's reference field
+uses that same abstract entry as its parent authority. A concrete field borrow
+need not be spelled as a `Loan` operand: verification requires an active entry,
+its exact declared reference-field/dereference path, sufficient access, and an
+argument place identical to the child's recorded origin. A different field,
+carrier shell, read-only authority for a mutable child, or merely overlapping
+place cannot satisfy the proof. This rule applies equally to ordinary methods
+and nested scoped jobs; it does not grant the parent any cleanup ownership.
 Cleanup-bound nominal carriers are classified from concrete borrowed-state and
 active-cleanup facts, independently of the trusted mutex capability. Exact
 by-value entries own a binding drop; owning call/constructor publications own

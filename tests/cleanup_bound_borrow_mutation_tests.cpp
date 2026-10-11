@@ -1670,6 +1670,73 @@ int main() { Resource resource{}; use(Handle(resource)); return 0; }
   expect(checked, "shared-origin mutation exercises multi-field publication");
 }
 
+void checkProjectedEntryConstruction() {
+  const auto control = analyze("projected entry construction", R"gti(
+class MutGuard {
+  mut int& target;
+public:
+  MutGuard(mut int& target) : target(target) {}
+  ~MutGuard() { this.target += 1; }
+};
+class Parent {
+  mut int& first;
+  mut int& second;
+public:
+  Parent(mut int& first, mut int& second) : first(first), second(second) {}
+  void apply() mut {
+    int other = this.second;
+    MutGuard child{this.first};
+  }
+};
+int main() { mut int first = 7; mut int second = 9;
+  { mut Parent parent{first, second}; parent.apply(); }
+  return first - 8;
+}
+)gti");
+  if (!control)
+    return;
+  bool checked = false;
+  for (const auto &function : control->functionInstances()) {
+    for (const auto &loan : function.body.loans) {
+      const auto *parent = function.body.findLoan(loan.parent);
+      const auto *origin = function.body.findPlace(loan.source);
+      if (!loan.lifecycleBound || !parent || !parent->entry || !origin ||
+          parent->designatedFields.empty() ||
+          origin->root != lang::MirPlaceRootKind::This ||
+          origin->projections.size() != 2)
+        continue;
+      const BodyKey key{lang::MirBodyKind::Function, function.id};
+      auto readonly = *control;
+      body(readonly, key).loans[parent->id - 1].access =
+          lang::AccessMode::ReadOnly;
+      rejected(readonly, "projected child cannot upgrade parent access");
+      for (const auto &place : function.body.places) {
+        if (place.root != origin->root ||
+            place.projections.size() != origin->projections.size() ||
+            place.projections.front().kind != lang::MirProjectionKind::Field ||
+            place.projections.front().field ==
+                origin->projections.front().field ||
+            place.projections.back().kind !=
+                lang::MirProjectionKind::Dereference)
+          continue;
+        auto redirected = *control;
+        body(redirected, key).loans[loan.id - 1].source = place.id;
+        rejected(redirected,
+                 "projected child origin must match its selected argument");
+        auto wrongField = *control;
+        body(wrongField, key).loans[parent->id - 1].designatedFields = {
+            place.projections.front().field};
+        rejected(wrongField,
+                 "projected child cannot borrow through another entry field");
+        checked = true;
+        break;
+      }
+    }
+  }
+  expect(checked,
+         "projected entry mutations exercise a distinct receiver field");
+}
+
 } // namespace
 
 int main() {
@@ -1750,6 +1817,7 @@ int main() {
   checkExternalReceiverAdapterReturn();
   checkFactoryCarrierAndDestructor();
   checkSharedOriginFieldIdentities();
+  checkProjectedEntryConstruction();
   if (failures == 0)
     std::cout << mutations << " cleanup-bound proof mutations rejected\n";
   return failures == 0 ? 0 : 1;
