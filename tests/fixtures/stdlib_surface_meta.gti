@@ -55,5 +55,6 @@ int main() {
   Player made = std::move(built).value();
   if (made.health != 5 || made.alive) { return 10; }
   if (std::meta::type_of<Player>().method_count() != uint64_t(0) || std::meta::type_of<Player>().line() == uint64_t(0)) { return 11; }
+  if (std::meta::primary_name_of<Player>() != "Player" || std::meta::type_of<Player>().primary_name() != "Player") { return 12; }
   return 0;
 }
