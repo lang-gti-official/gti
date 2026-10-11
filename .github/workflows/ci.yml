@@ -83,13 +83,14 @@ jobs:
   build-and-test:
     name: Native toolchain
     runs-on: ubuntu-latest
-    # The formatting and release-version checks finish in about a minute and
-    # a failure in either means the commit must change, so the hours this job
-    # takes are not spent on that head. The Tree-sitter job is not a gate
-    # while its grammar drift stays red; add it here once it is green.
+    # The formatting, release-version and Tree-sitter checks finish in a few
+    # minutes and a failure in any of them means the commit must change, so
+    # the hours this job takes are not spent on that head. The sanitizer job
+    # follows this one and inherits the same gates.
     needs:
       - formatting
       - release-version
+      - tree-sitter
 
     steps:
       - name: Check out GTI
