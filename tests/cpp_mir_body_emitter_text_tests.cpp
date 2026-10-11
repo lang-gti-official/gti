@@ -3159,6 +3159,68 @@ int main() {
          "no Expected should value-initialize an ordinary local");
 }
 
+// Copying a cleanup-free Expected<Class, E> binding into a new binding
+// copy-constructs the new binding's lifetime slot from the source at the
+// Load; the adjacent Initialize only activates the binding's drop. The success
+// payload has no default constructor, so no value-initialized Expected local
+// may exist. (Regression: the copy was outside the C++ text vocabulary and
+// reported GTI-B0001.)
+void testCleanupFreeExpectedClassCopySlot() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-expected-class-copy.gti", R"(
+struct point {
+  mut int32_t x;
+  mut int32_t y;
+};
+
+expected<point, int32_t> make_point(int32_t x) {
+  point made = {.x = x, .y = x + 1};
+  return made;
+}
+
+int main() {
+  auto original = make_point(3);
+  auto copy = original;
+  return copy.value().y + original.value().x - 7;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the cleanup-free Expected copy fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string marker = "// GTI MIR copied Expected initializes p";
+  const std::size_t initialized = text.find(marker);
+  expect(initialized != std::string::npos,
+         "the copied binding's Initialize should only activate its drop");
+  if (initialized == std::string::npos) {
+    return;
+  }
+  const std::size_t idStart = initialized + marker.size();
+  const std::string destination =
+      "__gti_mir_p_" + text.substr(idStart, text.find('\n', idStart) - idStart);
+  const std::size_t declared =
+      text.find("::gti_internal::backend::mir_lifetime_slot<std::expected<"
+                "::__gti_program::point, std::int32_t>> " +
+                destination + ";");
+  const std::size_t constructed =
+      text.rfind(destination + ".construct(__gti_mir_p_", initialized);
+  expect(declared != std::string::npos && constructed != std::string::npos &&
+             declared < constructed &&
+             text.find('\n', constructed) == text.rfind('\n', initialized),
+         "the Load should copy-construct the new binding's lifetime slot "
+         "from the source immediately before its Initialize");
+  expect(text.find("std::expected<::__gti_program::point, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no Expected should value-initialize an ordinary local");
+}
+
 // Every other source replacing a whole Expected<Class, E> binding spells the
 // native wrapper's own assignment after MIR's replacement cleanup, with no
 // value-initialized Expected local. A cleanup-free copy, move, Unexpected and
@@ -4338,6 +4400,125 @@ int main() { return pick(true).number + pick_counted(true).number - 4; }
          "no join value or storage should value-initialize an ordinary local");
 }
 
+void testShortCircuitOwnedFieldView() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-short-circuit-field-view.gti", R"(
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() {}
+};
+
+counted make_counted(int32_t number) { return counted(number); }
+
+bool check(bool skip) { return skip || make_counted(5).number == 5; }
+
+int main() { return check(false) ? 0 : 1; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the short-circuit field view fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // The call constructs its owning result in the conditional temporary, and
+  // the field is read from that temporary in place.
+  const std::string declaration =
+      "::gti_internal::backend::mir_lifetime_slot<::__gti_program::counted> "
+      "__gti_mir_p_";
+  const std::size_t declared = text.find(declaration);
+  const std::size_t nameStart = declared == std::string::npos
+                                    ? std::string::npos
+                                    : declared + declaration.size() - 12;
+  const std::string temporary =
+      nameStart == std::string::npos
+          ? std::string()
+          : text.substr(nameStart, text.find(';', nameStart) - nameStart);
+  const std::size_t constructed =
+      temporary.empty()
+          ? std::string::npos
+          : text.find(temporary + ".construct_from([&]() { return "
+                                  "::__gti_program::__gti_fn_");
+  expect(constructed != std::string::npos &&
+             text.find(" = " + temporary + ".get().number;", constructed) !=
+                 std::string::npos,
+         "the owning result should construct in its conditional temporary "
+         "and its field should be read from that temporary");
+  expect(text.find("::__gti_program::counted __gti_mir_v_") ==
+             std::string::npos,
+         "the viewed result should not declare an ordinary local");
+}
+
+void testBranchTemporaryCallResultIsNotDiscarded() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-branch-temporary-result.gti", R"(
+class reading {
+public:
+  reading(uint32_t value) : value(value) {}
+  bool even() { return (this.value + uint32_t(1)) % uint32_t(2) == uint32_t(1); }
+private:
+  uint32_t value;
+};
+
+reading make_reading(uint32_t value) { return reading(value); }
+
+int main() {
+  mut uint32_t one = uint32_t(1);
+  one = one + uint32_t(0);
+  if (one != uint32_t(1) || !make_reading(uint32_t(4)).even()) { return 1; }
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the branch-temporary receiver fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  // The receiver temporary exists only on the right of `||`, so MIR rehomes
+  // its owning value into a hidden temporary place and the plain call
+  // publishes there. The call's value has no uses, yet it is not discarded.
+  std::size_t rehomed = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const lang::MirBody &body = function.body;
+    for (const lang::MirBlock &block : body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            !instruction.result || !instruction.destination ||
+            instruction.info.type.kind != lang::SemanticType::Class)
+          continue;
+        const lang::MirPlace *destination =
+            body.findPlace(*instruction.destination);
+        if (destination != nullptr &&
+            destination->root == lang::MirPlaceRootKind::Temporary &&
+            body.usesOf(*instruction.result).empty())
+          ++rehomed;
+      }
+  }
+  expect(rehomed == 1,
+         "the branch-only receiver result should publish into its hidden "
+         "temporary place with no remaining value uses");
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  expect(text.find("end discarded result representation") ==
+                 std::string::npos &&
+             text.find("mir_lifetime_slot<::__gti_program::reading, true> "
+                       "__gti_mir_v_") == std::string::npos &&
+             text.find(".construct_from([&]() { return "
+                       "::__gti_program::") != std::string::npos,
+         "a call publishing into its MIR destination should construct there "
+         "and never retire an unconstructed discard slot");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -4527,14 +4708,19 @@ constexpr NamedTest kTests[] = {
     {"testOwnedArgumentMemberInitializer", testOwnedArgumentMemberInitializer},
     {"testOwningExpectedFieldPublication", testOwningExpectedFieldPublication},
     {"testCommaDenotesRightOperandObject", testCommaDenotesRightOperandObject},
+    {"testBranchTemporaryCallResultIsNotDiscarded",
+     testBranchTemporaryCallResultIsNotDiscarded},
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
+    {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",
      testCleanupFreeExpectedClassAssignmentSlot},
     {"testCleanupFreeExpectedClassMoveSlot",
      testCleanupFreeExpectedClassMoveSlot},
+    {"testCleanupFreeExpectedClassCopySlot",
+     testCleanupFreeExpectedClassCopySlot},
     {"testExpectedClassReplacementSources",
      testExpectedClassReplacementSources},
     {"testOwningExpectedReplacementSources",

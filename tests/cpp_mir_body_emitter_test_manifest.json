@@ -350,11 +350,19 @@
       "suite": "text"
     },
     {
+      "name": "testBranchTemporaryCallResultIsNotDiscarded",
+      "suite": "text"
+    },
+    {
       "name": "testPlainCallMemberInitializer",
       "suite": "text"
     },
     {
       "name": "testClassConditionalJoinConsumers",
+      "suite": "text"
+    },
+    {
+      "name": "testShortCircuitOwnedFieldView",
       "suite": "text"
     },
     {
@@ -367,6 +375,10 @@
     },
     {
       "name": "testCleanupFreeExpectedClassMoveSlot",
+      "suite": "text"
+    },
+    {
+      "name": "testCleanupFreeExpectedClassCopySlot",
       "suite": "text"
     },
     {
