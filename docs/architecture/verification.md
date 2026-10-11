@@ -3101,6 +3101,11 @@ creation cannot strand the child and cleanup errors cannot report success.
 The [remote-runner contract](agent-workflow.md#mac-mini-remote-runs) describes
 live SSH usage and the limits of custom command plans.
 
+`agent_workflow` also verifies that remote validation submits the exact plan
+without taking a laptop slot or retaining the metadata lock, records retrieved
+evidence against the clean published head, and refuses failed runs and
+mismatched source identities. Existing head/base race checks remain unchanged.
+
 ## CLI terminal colour
 
 `runtime_failure_subprocess` independently checks ordinary v1 failures, v2

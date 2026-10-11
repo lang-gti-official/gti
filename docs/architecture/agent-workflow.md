@@ -133,7 +133,7 @@ cooperating agents, not a security boundary. Owner liveness uses
 dependencies, so there a slot is never reclaimed automatically; `--status`
 reports the recorded owner and the file to delete by hand.
 
-`verify` acquires a `suite` slot around its checks and records them in the
+Local `verify --checks-file` acquires a `suite` slot around its checks and records them in the
 slot file, so helper validation and ad hoc suite runs queue behind each
 other. Builds that the checks need should be run beforehand through a `build`
 slot. The environment variables above apply to the helper too.
@@ -254,8 +254,19 @@ substituted with isolated absolute paths. Commands run in the indicated
 directory. Custom plans remain responsible for optimized GTI compilers,
 correct test inputs and evidence. Do not nest `agent_workflow verify` or another
 `build_window` acquisition for the same slot inside a step: the wrapper already
-holds that slot. Local publication still uses `agent_workflow` after reviewing
-the retrieved evidence; the remote worker never publishes or installs.
+holds that slot. To validate a published task through the normal PR lifecycle
+without occupying a laptop suite slot, use:
+
+```sh
+python3 scripts/agent_workflow.py verify <task> --remote-steps-file /absolute/path/plan.json
+```
+
+The helper submits that plan through the runner, retains results under its
+local task metadata, and checks success and source identity before binding
+validation to the clean published head and current upstream base. Changes to
+either head/base still invalidate evidence. Failed remote runs cannot authorize
+integration. Publication still uses `agent_workflow finish` after reviewing the
+retrieved evidence; the remote worker never publishes or installs.
 
 ## Integration and validation
 
