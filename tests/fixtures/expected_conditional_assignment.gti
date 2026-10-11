@@ -1,0 +1,175 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// A conditional whose arms are Expected call results replaces an existing
+// binding as a whole, as initializing a new binding from it does. The arms
+// construct one shared join temporary, MIR's paired replacement cleanup runs,
+// and the join's single move publishes into the binding's live storage. A
+// cleanup-free success class without a default constructor needs no default
+// alternative, whether the error is an integral enum or a scalar. An owning
+// success class retires each replaced value exactly once; a nested join hands
+// its value to the enclosing one and ends its own moved-from shell.
+
+enum class errc { bad, missing };
+
+struct point {
+  int32_t x;
+  int32_t y;
+  point(int32_t x, int32_t y) : x(x), y(y) {}
+};
+
+// A record whose field is replaced by a conditional.
+struct holder {
+  mut expected<point, errc> slot;
+  holder(expected<point, errc> slot) : slot(std::move(slot)) {}
+};
+
+// An owning payload whose destructor reports each retirement.
+class noisy {
+public:
+  int32_t id;
+  noisy(int32_t id) : id(id) {}
+  ~noisy() { std::println(std::to_string(this.id)); }
+};
+
+int32_t bump(int32_t value) { return value + 1; }
+
+expected<point, errc> make(int32_t v) {
+  if (v == 0) { return unexpected(errc::missing); }
+  if (v < 0) { return unexpected(errc::bad); }
+  return point(v, 2);
+}
+
+expected<point, int32_t> make_scalar(int32_t v) {
+  if (v < 0) { return unexpected(v); }
+  return point(v, 4);
+}
+
+expected<noisy, errc> make_noisy(int32_t id) {
+  if (id > 0) { return noisy(id); }
+  return unexpected(errc::bad);
+}
+
+// Replacing producers that fail before publishing a result.
+expected<point, errc> make_bumped(int32_t value) {
+  return point(bump(value), 0);
+}
+
+expected<noisy, errc> make_bumped_noisy(int32_t value) {
+  return noisy(bump(value));
+}
+
+int32_t observe(expected<point, errc> &result) {
+  if (!result) { return result.error() == errc::missing ? -1 : -2; }
+  return result.value().x * 10 + result.value().y;
+}
+
+int32_t observe_scalar(expected<point, int32_t> &result) {
+  if (!result) { return result.error(); }
+  return result.value().x * 10 + result.value().y;
+}
+
+// A helper whose body needs no failure ABI replaces its binding.
+int32_t replace_plain(bool pick) {
+  mut auto current = make(4);
+  current = pick ? make(5) : make(6);
+  return observe(current);
+}
+
+// A failure-propagating caller replaces its binding.
+expected<int32_t, errc> relay(bool pick) {
+  mut auto current = make(4);
+  current = pick ? make(-5) : make(6);
+  return observe(current);
+}
+
+// Owning results replace one binding through every alternative pair, nested
+// and in a loop. Each replaced value is retired exactly once; an error
+// retires nothing.
+int32_t replace_owned(bool yes, bool no) {
+  mut auto owned = make_noisy(100);
+  owned = yes ? make_noisy(101) : make_noisy(102);
+  owned = no ? make_noisy(103) : make_noisy(-1);
+  owned = yes ? make_noisy(-2) : make_noisy(104);
+  owned = no ? make_noisy(105) : make_noisy(106);
+  owned = yes ? (no ? make_noisy(107) : make_noisy(108)) : make_noisy(109);
+  owned = no ? make_noisy(110) : (yes ? make_noisy(-3) : make_noisy(111));
+  owned = no ? make_noisy(112) : (no ? make_noisy(113) : make_noisy(114));
+  for (mut int32_t i = 0; i < 3; i += 1) {
+    owned = i == 1 ? make_noisy(-4) : make_noisy(120 + i);
+  }
+  // A nested owning join initializing a new binding hands its value on the
+  // same way.
+  auto fresh = yes ? (no ? make_noisy(130) : make_noisy(131)) : make_noisy(132);
+  return owned && fresh ? owned.value().id : 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  bool yes = argc > 0;
+  bool no = argc < 0;
+  if (argc == 2) {
+    // A cleanup-free replacing arm fails before the binding is replaced.
+    mut auto replaced = make(1);
+    replaced = yes ? make_bumped(int32_t(2147483647)) : make(2);
+    return observe(replaced);
+  }
+  if (argc == 3) {
+    // An owning replacing arm fails; the old value is retired once.
+    mut auto owned = make_noisy(9);
+    owned = no ? make_noisy(8) : make_bumped_noisy(int32_t(2147483647));
+    return owned ? owned.value().id : 1;
+  }
+  if (argc == 4) {
+    // The failing arm is nested inside the enclosing conditional.
+    mut auto owned = make_noisy(7);
+    owned = yes ? (no ? make_noisy(6) : make_bumped_noisy(int32_t(2147483647)))
+                : make_noisy(5);
+    return owned ? owned.value().id : 1;
+  }
+  // Both arms succeeding or failing, through both error alternatives.
+  mut auto r = make(3);
+  r = yes ? make(1) : make(2);
+  std::println(observe(r));
+  r = no ? make(1) : make(-2);
+  std::println(observe(r));
+  r = yes ? make(0) : make(5);
+  std::println(observe(r));
+  r = no ? make(0) : make(6);
+  std::println(observe(r));
+
+  // Nested conditionals in either arm, and a grouped conditional.
+  r = yes ? (no ? make(6) : make(7)) : make(8);
+  std::println(observe(r));
+  r = no ? make(6) : (yes ? make(-7) : make(8));
+  std::println(observe(r));
+  r = (yes ? make(9) : make(10));
+  std::println(observe(r));
+
+  // The same binding replaced on every loop iteration.
+  for (mut int32_t i = 0; i < 3; i += 1) {
+    r = i % 2 == 0 ? make(i + 11) : make(-1);
+    std::println(observe(r));
+  }
+
+  // A scalar error alternative.
+  mut auto s = make_scalar(1);
+  s = yes ? make_scalar(-5) : make_scalar(6);
+  std::println(observe_scalar(s));
+  s = no ? make_scalar(-5) : make_scalar(6);
+  std::println(observe_scalar(s));
+  s = yes ? (yes ? make_scalar(7) : make_scalar(-8)) : make_scalar(9);
+  std::println(observe_scalar(s));
+
+  // A field of a binding.
+  mut holder h = holder(make(1));
+  h.slot = yes ? make(12) : make(13);
+  std::println(observe(h.slot));
+
+  std::println(replace_plain(true));
+  std::println(replace_plain(false));
+  auto relayed = relay(true);
+  std::println(relayed ? relayed.value() : 99);
+  std::println(replace_owned(yes, no));
+  return 0;
+}
