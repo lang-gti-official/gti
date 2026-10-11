@@ -4857,6 +4857,16 @@ when the public wrapper is added.
 `installed_native_record_pipeline` additionally verifies that the packaged
 compiler library exposes the same semantic/HIR/MIR native-record contract.
 
+The Gitea Actions workflows are archived under
+`docs/plans/archive/gitea-actions/` (2026-10-11): the self-hosted instance's
+single 6-core runner could not carry the full suite's workload, and CI hosting
+moves to the `gti-lang` GitHub organization, with Gitea remaining a repository
+mirror and backup. No remote workflow runs until the GitHub Actions workflows
+exist. The budgets, preflights and selections below describe the archived jobs
+and are the contract a replacement workflow inherits; the helper scripts and
+their gates (`ci_resources`, `ci_cache`, `ci_sanitizer_capability`,
+`ci_release`, `release_version_policy`) remain live.
+
 CI and release jobs use the job's detected available processor count for both
 compilation and CTest. `scripts/configure_ci_resources.sh` uses `nproc` (not
 `nproc --all`), then host-appropriate `sysctl` or `getconf` when unavailable;
@@ -6043,9 +6053,13 @@ but non-Ninja generators are outside the first-party verification path.
 ## Platform Signal
 
 Local verification runs on the macOS/AppleClang host. Gitea CI
-(`ubuntu-latest`) is the accepted first Linux/GCC/libstdc++ signal; there is
-no local Linux gate in the pre-push loop. Two mitigations keep that gap
-narrow. First, all first-party targets compile with `-Wall -Wextra
+(`ubuntu-latest`) was the accepted first Linux/GCC/libstdc++ signal until its
+workflows were archived on 2026-10-11; GitHub Actions in the `gti-lang`
+organization is the planned replacement, and until it exists there is no
+remote Linux signal at all, as there is no local Linux gate in the pre-push
+loop. Treat a change that touches Linux-divergent behavior as unverified on
+Linux until that signal returns, and say so in its PR. Two mitigations keep the
+gap narrow. First, all first-party targets compile with `-Wall -Wextra
 -Werror`, which turns the compiler-divergence class that previously
 surfaced only on GCC — for example C++20 designated-initializer
 declaration order, which AppleClang merely warns about — into local build
@@ -6053,8 +6067,9 @@ failures. Second, behavior known to diverge by standard library (path
 canonicalization, container assertions) must carry tests that mirror the
 production code path rather than reimplementing it, so both libraries
 exercise the same contract. A change that touches those areas should be
-watched through CI after push; an asynchronous CI failure there is a Linux
-finding requiring follow-up, rather than evidence of a successful Linux check.
+watched through CI after push once a remote Linux workflow runs again; an
+asynchronous CI failure there is a Linux finding requiring follow-up, rather
+than evidence of a successful Linux check.
 
 ## Optional Local Language Audit
 

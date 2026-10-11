@@ -120,6 +120,10 @@ one-off implementation-note or redesign files when an existing category fits.
 ## Release Channels And VERSION
 
 Two channels publish this repository, and they answer different questions.
+The Gitea release workflow that published them is archived as of 2026-10-11
+(`docs/plans/archive/gitea-actions/`); neither channel publishes until the
+replacement GitHub Actions release workflow in the `gti-lang` organization
+exists. The `VERSION` rule below is unchanged by that gap.
 
 - **Nightly** republishes one rolling `nightly` release per commit on `main`.
   It is automatic, replaces its own assets, and needs no `VERSION` change.
