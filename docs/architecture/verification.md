@@ -1,6 +1,43 @@
 # Compiler Verification
 
-## Scoped-concurrency candidate (2026-10-11)
+## Scoped concurrency (0.404.0)
+
+### Reconciled acceptance evidence
+
+The implementation is reconciled with reflected JSON 0.403.0 at clean published
+commit `a4e16a8d179c95f8e2c35b63ab0f3cfa0e0db126`, snapshot
+`f0a678f1565a543343e7cd7b39c2884968aa4ee8194866622a7d530ff4e28dc4`.
+Release run `run-64b4217c848948fcb0d8bd5e9eeaffa5` builds all targets (526 steps) and
+passes all 51 selected integration CTests, including ownership/cleanup proof
+mutations, shared and scoped native matrices, executed ThreadSanitizer gates,
+LSP recovery, relocated installed O0/O3 consumers, reflection/experimental JSON,
+standard-library coverage and complete backend/example corpus gates. The same
+source passes local `source_debug_lldb`; the noninteractive remote Mac cannot
+grant debugger attachment permission. The previous clean `41b2889c` full sweep
+(`run-f9d393d12e8a40dca39465e0bec8391e`) passed all 647 selected tests plus
+the separate local debugger check. The reconciled-source full completion sweep
+`run-f23d1f8deb0b42f0a5843bdb24b52cf6` remains in progress.
+
+Clean-head Linux run `run-007dae38ae1241e49acf4231ecda9bf7` reports exact compiler
+and source identity and conclusive timing quality. GCC 14/C++23 O3 on an
+eight-vCPU Intel i3-13100F host runs three warmups and fifteen interleaved
+samples while holding both repository build and suite windows. Every variant
+produces digest `000000097bfbb42c` for 2,800,000 work units. Sequential / four
+owned / four scoped medians are 697.691 / 186.762 / 186.120 ms; MAD is
+0.891 / 1.416 / 2.417 ms and CV is 0.28% / 1.40% / 1.46%. Scoped and owned
+runtime are effectively equal, not evidence of a scoped runtime speedup.
+Binary sizes are 123408 / 158024 / 130280 bytes; emitted C++ sizes are
+465527 / 647461 / 521963 bytes. Separate GTI-plus-native O3 builds take
+1.21 s and 194368 KiB peak RSS for scoped versus 1.58 s and 215784 KiB for
+owned. The allocation oracle counts two GTI transport/state allocations for
+two scoped workers versus four for owned workers and zero for an empty scope;
+native thread-library/libc allocations are excluded. The Linux five-fixture
+40-case scoped and 24-case shared-job matrices pass in
+`run-a3427feb65584aa8a90b7791fbcb509a`; the matched allocation-hook ASan/UBSan
+control also passes on clean `41b2889c` in
+`run-207e4dabb32b4100ad1aff773e99592a` without suppression.
+
+### Earlier candidate evidence
 
 The scoped-concurrency branch now connects public `std::parallel_invoke` to
 semantic admission, concrete HIR, verified MIR scope/loan contracts, generated
@@ -118,11 +155,10 @@ not evidence of final integration or full release acceptance:
   and no existing body count changes. The baseline records those measured
   additions rather than weakening the inventory check.
 
-The remaining acceptance includes the extended nested-source native matrix, current-head
-ownership/backend/corpus controls, installed consumption, runtime/allocation/
-code-size measurements and final reconciled-head validation. The native group
-still creates OS threads; these results do not establish cheap job dispatch
-or imply a persistent worker pool.
+The outstanding gates in these historical checkpoints are superseded by the
+reconciled evidence above; the final full completion sweep is still pending.
+The native group creates OS threads. These results do not establish cheap job
+dispatch or imply a persistent worker pool.
 
 ## Expected results of callable invocations (0.402.10)
 
