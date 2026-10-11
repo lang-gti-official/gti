@@ -13630,8 +13630,50 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       check(iteration.iteratorType);
       check(iteration.sentinelType);
       check(iteration.elementType);
-      if (!iteration.materializesElementValue)
+      if (!iteration.materializesElementValue) {
+        const auto *element = body->findLoan(iteration.elementLoan);
+        if (iteration.strategy != RangeIterationStrategy::Structural ||
+            iteration.elementType.kind != SemanticType::Class || !element ||
+            element->kind != MirLoanKind::CallResult ||
+            element->source != iteration.iterator)
+          continue;
+        const MirInstruction *producer = nullptr;
+        for (const auto &block : body->blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.kind == MirInstructionKind::Call &&
+                instruction.loan == element->id)
+              producer = &instruction;
+        const auto *selected =
+            producer && producer->functionTarget
+                ? program.findFunctionInstance(*producer->functionTarget)
+                : nullptr;
+        const auto nominal = std::find_if(
+            program.classInstances().begin(), program.classInstances().end(),
+            [&](const auto &instance) {
+              return instance.type == iteration.elementType;
+            });
+        // Body verification owns exact cursor and producer identities; the
+        // program catalog independently owns the nominal result's traits and
+        // selected declaration. Falsifying those traits cannot turn a physical
+        // inline proxy into the abstract Stored-parent element profile.
+        if (!selected ||
+            selected->declaration != iteration.dereferenceFunction ||
+            selected->overloadedOperator != OverloadedOperator::Dereference ||
+            !selected->parameterTypes.empty() ||
+            selected->returnType !=
+                SemanticType::referenceTo(iteration.elementType,
+                                          iteration.elementAccess) ||
+            selected->returnBorrowOrigin != BorrowOriginKind::Receiver ||
+            nominal == program.classInstances().end() ||
+            producer->info.traits != nominal->traits)
+          result.errors.push_back(
+              {.bodyKind = address.kind,
+               .owner = address.owner,
+               .instruction = producer == nullptr ? 0 : producer->id,
+               .message = "reference iteration element has no exact nominal "
+                          "traits and selected dereference declaration"});
         continue;
+      }
       const auto *value = body->findValue(iteration.elementAccessValue);
       const MirInstruction *producer = nullptr;
       if (value)

@@ -1,5 +1,7 @@
 // Native C families retain their actual declaration identities on this target.
 // They use GTI's checked numeric operations, not C's unchecked arithmetic.
+// long and long long are distinct families even when both are 64-bit.
+// int64_t is a genuine native alias: long on Linux, long long on macOS/Windows.
 extern "C" {
   c_size_t strlen(c_string text);
   c_long labs(c_long value);
@@ -11,9 +13,9 @@ struct Counter<T> {
 
 int main() {
   Counter<c_long> native{.value = c_long(-7)};
-  Counter<int64_t> fixed{.value = int64_t(11)};
+  Counter<c_longlong> ranked{.value = c_longlong(11)};
   if (labs(native.value) != c_long(7)) { return 1; }
-  if (fixed.value != int64_t(11)) { return 2; }
+  if (ranked.value != c_longlong(11)) { return 2; }
   c_size_t length = strlen("native");
   if (length != c_size_t(6)) { return 3; }
   c_char character = c_char(65);

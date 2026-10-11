@@ -19,6 +19,31 @@ MODES += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
 FIXTURES = ("contiguous_iterator_completion", "contiguous_iterator_bounds", "contiguous_iterator_cost", "contiguous_iterator_arrow")
 
 
+def sanitizer_partitions(source):
+    """Instrument each independent scenario without losing any fixture text.
+
+    GCC's sanitizer optimization of the combined positive exceeds its native
+    compile budget even with one worker. Keep the combined program for every
+    other mode; these three bodies retain the exact assertions and allocation
+    windows from the one authoritative fixture. Unexpected fixture structure
+    fails closed instead of silently excluding a new scenario.
+    """
+    opening = "int main() {\n"
+    closing = "  return 0;\n}\n"
+    assert source.count(opening) == 1, "ambiguous combined positive entry"
+    prefix, _, body = source.partition(opening)
+    assert body.endswith(closing), "combined positive changed its final return"
+    body = body.removesuffix(closing)
+    boundaries = ("  mut std::vector<int> values =", "  std::process_resource process{};")
+    assert all(body.count(boundary) == 1 for boundary in boundaries), "ambiguous scenario boundary"
+    span, resource = (body.index(boundary) for boundary in boundaries)
+    assert 0 < span < resource < len(body), "out-of-order scenario boundary"
+    regions = (body[:span], body[span:resource], body[resource:])
+    assert prefix + opening + "".join(regions) + closing == source
+    return {name: prefix + opening + region + closing
+            for name, region in zip(("string", "span", "resource-vector"), regions, strict=True)}
+
+
 def negative_sources():
     headers = """#include <std/string>
 #include <std/vector>
@@ -150,11 +175,19 @@ def main():
     fixtures_to_run = options.fixture or FIXTURES
     with tempfile.TemporaryDirectory(prefix="gti-contiguous-iterator-") as directory:
         output = pathlib.Path(directory)
+        sanitizer_sources = {}
+        if "contiguous_iterator_completion" in fixtures_to_run and any(label == "sanitized" for label, _, _ in modes):
+            source = (fixtures / "contiguous_iterator_completion.gti").read_text()
+            for region, contents in sanitizer_partitions(source).items():
+                path = output / f"contiguous_iterator_completion-{region}.gti"
+                path.write_text(contents)
+                sanitizer_sources[region] = path
 
         def build(case):
-            fixture, label, flags, native = case
-            executable = output / f"{fixture}-{label}"
-            command = [str(compiler), str(fixtures / f"{fixture}.gti"), *flags,
+            fixture, label, flags, native, source, region = case
+            name = f"{fixture}-{region}" if region else fixture
+            executable = output / f"{name}-{label}"
+            command = [str(compiler), str(source), *flags,
                        "--progress=never"]
             native_sources = []
             if fixture in ("contiguous_iterator_completion", "contiguous_iterator_cost"):
@@ -168,7 +201,7 @@ def main():
                 capture_output=True, text=True, timeout=180)
             assert result.returncode == 0, (fixture, label, result.stdout, result.stderr)
             assert "// GTI verified-MIR body:" in executable.with_suffix(".gti.cpp").read_text()
-            return fixture, label, executable
+            return fixture, f"{region}/{label}" if region else label, executable
 
         def observe(case):
             fixture, label, executable = case
@@ -185,9 +218,13 @@ def main():
                     assert result.returncode == 70 and result.stdout == "", (fixture, label, count, result)
                     assert f"runtime error[{code}]" in result.stderr, (fixture, label, count, result.stderr)
 
-        plan = [(f"{fixture}/{label}", (fixture, label, flags, native))
-                for label, flags, native in modes
-                for fixture in fixtures_to_run]
+        plan = []
+        for label, flags, native in modes:
+            for fixture in fixtures_to_run:
+                sources = sanitizer_sources.items() if fixture == "contiguous_iterator_completion" and label == "sanitized" else [(None, fixtures / f"{fixture}.gti")]
+                for region, source in sources:
+                    name = f"{fixture}-{region}" if region else fixture
+                    plan.append((f"{name}/{label}", (fixture, label, flags, native, source, region)))
         run_cases(plan, build, options.jobs, observe)
         if not options.no_negative:
             for name, source in negative_sources().items():
