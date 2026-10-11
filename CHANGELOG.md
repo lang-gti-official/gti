@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.405.2 — Replacing `expected` bindings with conditionals
+
+- Assigning a conditional whose arms are `expected<T, E>` call results to an
+  existing binding, or to a field of one, as in `r = ok ? make(1) : make(2);`,
+  now builds and runs, whether `E` is an `enum` or a scalar and whether `T` is
+  a plain struct or a class with a destructor. Arms may nest. The replaced
+  value is destroyed exactly once. These programs previously failed in the
+  native C++ compiler; only initializing a new binding from such a
+  conditional built.
+- A nested conditional of `expected<T, E>` call results whose `T` has a
+  destructor, as in `auto o = ok ? (other ? make(1) : make(2)) : make(3);`,
+  no longer aborts with "verified MIR lifetime slot escaped without Drop" when
+  the inner conditional runs.
+
 ## 0.405.1 — Replacing `expected` bindings with call results
 
 - Assigning a fresh `expected<T, E>` call result to an existing binding, as in

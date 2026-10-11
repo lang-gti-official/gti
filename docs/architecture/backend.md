@@ -1637,6 +1637,17 @@ the Initialize. Grouping the join's transport, as in
 extraction or by-value consumer reads the join directly. Before each
 publication, the previous representation is retired, which keeps a loop from
 constructing the storage twice. The last one ends at scope exit.
+The join's single move may also be consumed by an `Assign` that replaces an
+existing binding, or a field chain rooted in one, of the join's exact type,
+as in `r = ok ? a() : b();`. After MIR's paired `CleanupBeforeAssign`, the
+binding's live storage is move-assigned from the join temporary, as a new
+binding is constructed from it. Who ends the temporary's moved-from shell
+follows MIR's events: a passive join has no obligation, so the shell ends at
+the assignment and a loop may construct the join again; an owning join's
+`Replace` takes the temporary's obligation, and MIR's later `Drop` of the
+temporary ends the shell. A nested join moved into the enclosing join's
+temporary has its obligation reparented, or has none, so no later `Drop`
+names it; its shell ends at that `Initialize`.
 
 The same representation-only slot serves a cleanup-free call temporary that
 is observed once in place. The single use is either the state test
