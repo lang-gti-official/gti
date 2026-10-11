@@ -39,7 +39,8 @@ constexpr Table build(int seed) {
   mut Table table = Table(seed);
   table.offset(2);
   add(table.at(0), 3);
-  table.at(1) = table.at(2) + 5;
+  int replacement = table.at(2) + 5;
+  table.at(1) = replacement;
   return table;
 }
 

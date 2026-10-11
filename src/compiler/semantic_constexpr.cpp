@@ -257,17 +257,43 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                     : evaluateMirConstantFunction(mir.program, root.owner,
                                                   arguments, limits, receiver);
   context.work->steps += result.steps;
+  const bool requiresMir = std::any_of(
+      mir.program.functionInstances().begin(),
+      mir.program.functionInstances().end(), [](const auto &function) {
+        const auto mutableReference = [](const SemanticType &type) {
+          return type.kind == SemanticType::Reference &&
+                 type.referenceAccess == AccessMode::Mutable;
+        };
+        return function.constexprFunction &&
+               function.definitionKind == MirDefinitionKind::Source &&
+               (function.receiverMutability == ReceiverMutability::Mutable ||
+                function.returnType == SemanticType::Void ||
+                mutableReference(function.returnType) ||
+                std::any_of(function.parameterTypes.begin(),
+                            function.parameterTypes.end(), mutableReference));
+      });
   // Until the ordinary MIR profile covers aggregates/references and every
   // existing statement, retain the legacy driver's admitted subset. Work
   // already executed still consumes the shared budget; arithmetic and resource
   // failures are authoritative and must never be retried in the AST driver.
   if (result.failure == ConstantEvaluationFailure::UnsupportedExpression ||
       result.failure == ConstantEvaluationFailure::UnsupportedType) {
-    return std::nullopt;
+    if (!requiresMir)
+      return std::nullopt;
+    // The compatibility walker does not own reference or receiver mutation.
+    // Retrying a value-copy interpretation could silently lose a caller write.
+    return constexprFailure(
+        callSite, result.failure,
+        "This constexpr call requires the verified MIR execution profile. " +
+            result.detail);
   }
   if (workMetrics != nullptr) {
     ++workMetrics->constexprMirExecutions;
   }
+  if (result.voidResult)
+    return constexprFailure(
+        callSite, ConstantEvaluationFailure::UnsupportedType,
+        "A void constexpr call does not produce a constant value.");
   Token location = callSite;
   const auto *mirBody = findMirBody(mir.program, result.body);
   const HirBody *hirBody = nullptr;
