@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.398.7 — Parenthesized lambdas
+
+- A lambda wrapped in parentheses, such as `auto f = ([]() { ... });`,
+  `run(([]() { ... }))` or `auto g = (f);`, now compiles and runs exactly like
+  the unparenthesized lambda. Such programs used to stop with an internal
+  compiler error (GTI-B0001).
+
 ## 0.398.4 — Raw-pointer audit tracks class static fields
 
 - `--raw-pointer-audit` now follows raw addresses stored in class static
