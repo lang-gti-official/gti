@@ -1,0 +1,47 @@
+#include <std/memory>
+#include <std/string>
+#include <std/thread>
+#include <std/vector>
+
+// A managed worker fails while a different set of its own resources is
+// live in each phase. The worker releases them, the join hands its original
+// failure to the starting thread, and that thread then releases its own.
+[[unsafe_transfer, unsafe_share]] class Resource {
+  int32_t id;
+public:
+  Resource(int32_t id) : id(id) { std::println(id); }
+  ~Resource() { std::println(0 - this.id); }
+};
+
+void step(int32_t at, int32_t fail_at, int32_t zero) {
+  if (fail_at == at) {
+    int32_t failure = 13 / zero;
+  }
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int32_t fail_at = argc - 1;
+  int32_t zero = argc - argc;
+  Resource outer = Resource(1);
+  auto task = [fail_at, zero]() -> void {
+    Resource first = Resource(10);
+    step(1, fail_at, zero);
+    Resource second = Resource(11);
+    step(2, fail_at, zero);
+    for (mut int32_t i = 0; i < 2; i++) {
+      Resource loop = Resource(20 + i);
+      step(3 + i, fail_at, zero);
+    }
+    Resource third = Resource(12);
+    step(5, fail_at, zero);
+  };
+  auto started = std::thread::start(std::move(task));
+  if (!started.has_value()) {
+    return 1;
+  }
+  mut auto worker = std::move(started).value();
+  [[discard]] worker.join();
+  Resource after = Resource(2);
+  step(6, fail_at, zero);
+  return 0;
+}

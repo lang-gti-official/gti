@@ -2308,6 +2308,8 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
       case MirTerminatorKind::Invoke:
       case MirTerminatorKind::Return:
       case MirTerminatorKind::Unreachable:
+      // The continuation's own endpoint records the trap.
+      case MirTerminatorKind::ContinueFailure:
         break;
       }
     }

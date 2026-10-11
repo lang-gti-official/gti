@@ -2718,41 +2718,24 @@ analysis, HIR, MIR, and the backend.
   A terminal wrapper is not completion. This remains M-FAIL-01/M-BACK-02 work,
   not a change to source-language validity.
 
-- **Shared failure cleanup (Gitea #222, 2026-10-11):** failure cleanup is
-  lowered separately for every failure edge, so a body's size grows
-  quadratically with its live owners. Each failure-capable operation gets its
-  own reverse drop chain over every owner live at that point. Every block of
-  that chain is bound to the edge's failure record (`MirBlock::activeFailure`).
-  Each failure-capable drop in the chain adds a secondary record and a
-  `TerminateCleanupFailure` block. Measured on main `f3f85336` at `-O0`:
-  - A function whose N owning locals are each built by a failure-capable
-    constructor lowers to 1,261 blocks for N = 20 and 4,921 for N = 40.
-  - With an early return after each local, it lowers to 4,861 and 29,721
-    blocks.
-  - `tests/fixtures/stdlib_surface_json.gti`'s 240-line `main` has 146 calls
-    and about 25 returns. It lowers to 31,299 drops in 61,225 blocks, and emits
-    30 MB of the 33.5 MB generated C++ unit. That unit's native `-O3` build
-    takes 117 s on a lightly loaded M2 Max and has passed 300 s under
-    concurrent suite load. The `json` surface case therefore records a
-    600-second build limit instead of the default 300.
+- **Shared failure cleanup (Gitea #222), delivered in 0.399.4:**
+  - Function and lambda bodies emit each distinct failure-cleanup suffix once,
+    as a continuation record entered by `ContinueFailure`; see
+    [MIR](../architecture/mir.md#shared-failure-cleanup).
+  - Failure cleanup is now one drop per owner, against failure sites times
+    owners before.
+  - The `stdlib_surface_json` fixture's generated C++ fell from 33.5 MB to
+    4.3 MB, and its native `-O3` build from 153 s to 7.7 s; see
+    [verification](../architecture/verification.md#shared-failure-cleanup-0399-4).
 
-  **Direction:** edges whose remaining obligations and cleanup phase are the
-  same should share one cleanup tail, like a drop tree. That makes a body's
-  cleanup linear in its owners. Prerequisite: a shared block cannot be bound to
-  one static `activeFailure`, so the record it propagates must travel with the
-  edge, for example as a block parameter. The verifier, failure effects,
-  optimizer replay and the C++ emitter's cleanup admission must then accept a
-  cleanup block reached from several records. They must still preserve exact
-  record identity, reverse cleanup order, loan ending, and termination when
-  cleanup itself fails.
-
-  **Acceptance:**
-  - The synthetic N-owner body grows linearly in N.
-  - The JSON unit shrinks proportionally, and the `json` case returns to the
-    default build limit.
-  - Runtime output and failure attribution are unchanged.
-  - Verifier mutations reject a shared tail with a mismatched obligation
-    suffix, phase or record.
+  **Remaining:**
+  - Constructor, field-initializer, destructor, module and hosted-startup
+    bodies keep one chain per failure edge.
+  - Moved-shell drops, prepared-argument drops and lifecycle-bound loan ends
+    keep the cleanup before them private, because verification proves their
+    meaning along their own producer's path.
+  - Normal-path exits still each destroy their own live owners. Sharing those
+    exit drops would be a separate normal-path change.
 
 - **State/role:** active for broader failure semantics; `D-FAIL-01`,
   `I-CAP-01`, `M-LIFE-01`, and the source-body backend cutover are done. Exact

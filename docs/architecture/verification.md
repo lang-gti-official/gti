@@ -1,5 +1,61 @@
 # Compiler Verification
 
+## Shared failure cleanup (0.399.4)
+
+Function and lambda bodies now emit each distinct failure-cleanup suffix once,
+as a continuation record entered by `ContinueFailure`; see
+[MIR](mir.md#shared-failure-cleanup). The before/after figures below compare
+baseline main `23071134` with the candidate built on it. Both are Release
+builds on an M2 Max with AppleClang 21, and the machine's load is noted.
+
+`tests/fixtures/stdlib_surface_json.gti`:
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| `main` MIR blocks | 61,225 | 3,362 |
+| `main` failure-cleanup drops | 29,941 | 145 |
+| Generated C++, `-O0` / `-O3` | 33.5 MB / 33.5 MB | 4.34 MB / 4.31 MB |
+| `gti -O0 --emit-cpp` | 7.3 s, 2.49 GB | 2.2 s, 0.75 GB |
+| `gti -O3 --emit-cpp` | 29.4 s, 3.43 GB | 3.9 s, 0.85 GB |
+| Native `-O3` build, end to end | 153 s, 4.04 GB | 7.7 s, 0.84 GB |
+| `-O3` executable | 1.89 MB | 517 KB |
+
+Load averages were 17–30 for the before figures and 15–20 for the after
+figures. The JSON surface case therefore runs at the default build limit
+again.
+
+Synthetic bodies whose N owners are each built by a failure-capable
+constructor and have a failure-capable destructor (`run` at `-O0`). Each cell
+is MIR blocks, then failure-cleanup drops, for 10 / 20 / 40 / 80 owners:
+
+| Variant | Before | After |
+| --- | --- | --- |
+| constructions | 221 / 841 / 3,281 / 12,961 blocks; 90 / 380 / 1,560 / 6,320 drops | 68 / 138 / 278 / 558 blocks; 9 / 19 / 39 / 79 drops |
+| plus a failing call after each owner | 351 / 1,301 / 5,001 / 19,601 blocks; 145 / 590 / 2,380 / 9,560 drops | 90 / 180 / 360 / 720 blocks; 10 / 20 / 40 / 80 drops |
+| plus an early return after each owner | 821 / 4,441 / 28,081 / 196,961 blocks; 310 / 1,920 / 13,040 / 94,880 drops | 230 / 660 / 2,120 / 7,440 blocks; 10 / 20 / 40 / 80 drops |
+
+Failure cleanup is one drop per owner in every variant. With early returns
+the remaining growth is each return's own normal-path drops, not shared
+cleanup; `mir_shared_failure_cleanup` bounds both.
+
+**Evidence.**
+- **Corpus differential.** Both compilers built the 1,176 programs of
+  `examples/`, `tests/fixtures/`, `tests/coverage/` and
+  `tests/coverage/reproducers/` with `--emit-cpp`, retrying threaded programs
+  with `--execution-profile concurrent`. Exit codes and diagnostics are
+  identical for all of them once standard-library paths are normalized, and
+  1,107 compile. A debug build counted 36,411 bodies with shared cleanup
+  across the lowering rounds, and neither the body nor the program fallback
+  ever ran.
+- **Runtime controls.** The 15 runtime-audit probes and the storage probe in
+  both modes were built at `-O2` by both compilers. Their output is identical
+  and their timings are within noise: 11 interleaved samples at load average
+  15–22, with minimum ratios between 0.96 and 1.05. Every `__text` section is
+  0.6–2% smaller and generated C++ is 3–9% smaller.
+- **New tests.** `mir_shared_failure_cleanup` covers structure and verifier
+  mutations. `shared_failure_cleanup_runtime` is a differential runtime matrix
+  over 33 phases in 9 modes, including ASan/UBSan.
+
 ## Record-published field initializers under optimization (0.399.1)
 
 - **Defect.** A literal-backed `std::string_view` field default read back
@@ -4610,6 +4666,8 @@ upstream code.
 | `format_output_matrix_runtime` | A generated matrix of 1,110 formatted results compared byte-for-byte with output recorded before the allocation-lean formatter, at O0 and O3. It covers every integer width with sign, base, alternate, zero-padding, fill and alignment specs; `char` and `c` presentations; strings, views and `bool` with precision; float and double presentations; positional and escaped fields; long output; `try_format_to`; and rejected specs. |
 | `binary64_pipeline` | exact binary64 parsing/evaluation, promotion, conversions, diagnostics, constexpr, generic numeric use, HIR/MIR, formatting, and backend bits |
 | `binary64_runtime` | example 47 at O0/O3 under C++20/C++23 plus emitted strict-IEEE policy evidence |
+| `mir_shared_failure_cleanup` | shared failure-cleanup structure and contract: failure-cleanup drops stay at one per live owner and blocks grow linearly for 10/20/40/80 owners with failure-capable construction, calls and early returns. Mutations reject a continuation edge naming a producer, a `Goto` into a continuation, a secondary that continues, a continuation forged as a producer, duplicated and missing shared drops, a loan ended before its shared endpoint, continuations that form a cycle, and a secondary under the wrong primary. A lone failure edge stays unshared, a moved-shell drop never enters a shared suffix, and both the parity fixture and `stdlib_surface_json` share cleanup |
+| `shared_failure_cleanup_runtime` | differential parity of shared cleanup, with exact exit status, complete acquire/release traces and failure reports recorded from the compiler before sharing. User-defined resources fail at 26 points with different live sets: around nested scopes and a borrow, in loop iterations, in a callee holding a pending return, after an ownership transfer, in a partially constructed holder, with conditional initialization and early returns, and with a destructor failing during cleanup (`GTI-R0014` with both records). A managed worker fails at 6 points before its join hands the failure on. Each case runs at C++20/C++23 O0/O1/O2/O3 plus ASan/UBSan, and the test asserts that the emitted MIR shares cleanup |
 | `failure_metadata` | deterministic artifact sites; independently derived checked-scalar operation/domain outcome sets; bounded scalar/cleanup-owning-call `Invoke`; exact local-detector and static direct-call argument edges after prepared owners; fixed-record failure parameters; success-edge result initialization; reverse cleanup; and record-preserving propagation |
 | `many_fallible_scope_guards_runtime` / `testBoundedSecondaryFailureRecordStorage` | An unrelated ordinary 48-guard function runs complete reverse cleanup, first-failure propagation, an intervening successful destructor and immediate secondary-failure termination with exact messages/sites at C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan. macOS native compilation rejects uninitialized/sometimes-uninitialized carrier warnings. Detached body emission proves one invocation-local secondary record and cleanup scope, exact primary-entry activation, one in-place reset per active-primary fallible Drop, producer-only Drop status definitions, no per-terminal emergency local, and unchanged exact terminal-edge count. |
 | `runtime_failure_boundary` | C++ ABI shape, allocation-free partial/`EINTR` writer, per-site outcome rejection, runtime-sentinel rules, and every boundary of the generated Unicode 15.1 allowlist |
@@ -4698,7 +4756,7 @@ upstream code.
 | `feature_interaction_model` | constrained pairwise/selected-triple and full three-way coverage, seeded typed source generation, independent value/effect/cleanup expectations, metamorphic renaming, failure classifiers, retained evidence, and predicate-preserving bounded reduction |
 | `feature_interaction_smoke` | three fixed interaction programs through the real optimized compiler at C++20/C++23 and O0/O3, original/renamed variants, repeated execution, exact destructor/call/output checks, and negative ownership admission controls |
 | `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
-| `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces. Each native build has a 300-second limit unless its case records a longer one, at most 900 seconds, with a `build_timeout_reason`. Only `json` does, because of [quadratic failure cleanup](../plans/implementation-sequence.md#m-fail-01-failure-operations-and-cleanup-edges) |
+| `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces. Each native build has a 300-second limit unless its case records a longer one, at most 900 seconds, with a `build_timeout_reason`; no case currently does |
 | `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an include-only translation unit, including unused generic declarations |
 | `stdlib_modules` | every public `<std/name>` unit has exactly one canonical `stdlib/modules/name.gti` interface, and `import std.name;` alone reaches verified MIR for each |
 | `dormant_capability_runtime` | include-only programs for every capability-family module (atomic storage, mutex storage and lock token, shared owner, managed thread, C thread), alone under both execution profiles and together under both profiles at C++20/C++23, compile natively and exit cleanly; so do an uninstantiated application generic over those members and a concrete atomic beside a dormant mutex in the concurrent profile. This is the native complement to the emission-only sweep (#164) |

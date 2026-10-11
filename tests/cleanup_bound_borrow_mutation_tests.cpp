@@ -156,6 +156,25 @@ std::optional<lang::MirInstructionId> loanEnd(const lang::MirBody &body,
 }
 
 // Move only proof instructions, preserving all value/block/obligation IDs.
+// Blocks one failure's primary cleanup runs after `from`, through ordinary
+// edges, fallible-drop continuations and shared cleanup continuations.
+bool failurePathReaches(const lang::MirBody &body, lang::MirBlockId from,
+                        lang::MirBlockId to) {
+  const lang::MirBlock *cursor = body.findBlock(from);
+  for (std::size_t steps = 0; cursor != nullptr && steps <= body.blocks.size();
+       ++steps) {
+    if (cursor->id == to)
+      return true;
+    const auto &terminator = cursor->terminator;
+    if (terminator.kind != lang::MirTerminatorKind::Goto &&
+        terminator.kind != lang::MirTerminatorKind::Invoke &&
+        terminator.kind != lang::MirTerminatorKind::ContinueFailure)
+      return false;
+    cursor = body.findBlock(terminator.target);
+  }
+  return false;
+}
+
 bool moveBefore(lang::MirBody &body, lang::MirInstructionId moved,
                 lang::MirInstructionId before) {
   std::optional<lang::MirInstruction> saved;
@@ -770,7 +789,11 @@ int main() {
                         place->binding) == loan.carriers.end())
             continue;
           for (const auto &continuation : function.body.blocks) {
-            if (continuation.activeFailure != block.activeFailure)
+            // A failure's cleanup may continue into a shared suffix that
+            // runs under its own continuation record.
+            if (continuation.activeFailure != block.activeFailure &&
+                (block.activeFailure == 0 ||
+                 !failurePathReaches(function.body, block.id, continuation.id)))
               continue;
             for (const auto &end : continuation.instructions) {
               if (end.kind != lang::MirInstructionKind::EndBorrow ||

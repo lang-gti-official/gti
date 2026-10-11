@@ -9,6 +9,15 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.399.4 — Smaller, faster builds for functions with many owned locals
+
+- A function that owns many values with destructors no longer repeats the
+  same cleanup code for every point where it can fail. The JSON
+  standard-library test program now generates 4.3 MB of C++ instead of
+  33.5 MB, and its optimized native build takes about 8 seconds instead of
+  about 150. Behaviour on failure is unchanged: the same resources are
+  released in the same order, and the same failure is reported.
+
 ## 0.399.3 — Faster builds that include standard-library units
 
 - `gti build`, `gti run` and C++ emission no longer lower standard-library
