@@ -1524,12 +1524,7 @@ the fused assignment already spells, keeps that fused route.
 The success class of such an Expected often has no default constructor. An
 ordinary SSA local would value-initialize the native wrapper and invent that
 construction, so the declaration fails closed instead, as for a fixed array
-whose element class has none. The success row's boundary proof still admits
-the classes whose value-initialization runs no source construction. A passive
-`[[c_abi]]` record, which has no default constructor because a raw-pointer
-field needs an explicit initializer, value-initializes to zeroed bytes like
-every other passive-record local, and compiler capability storage owns its
-own empty state. A failure-free producer, whose plain call
+whose element class has none. A failure-free producer, whose plain call
 returns the Expected by value, therefore constructs a staged slot from that
 return value. The guard stays as a backstop: a shape with no exact
 publication rejects body emission rather than emitting native code that cannot
