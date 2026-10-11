@@ -1939,7 +1939,10 @@ uninitialized output storage, from a transformed or a failure-free source call,
 such as `[[discard]] make_value()` or a comma's discarded left operand.
 Selection requires no SSA uses, value-rooted places, semantic result-drop
 obligation, borrowed state, or active cleanup; the class must have generated
-destruction. A transformed call marks that representation on success and a
+destruction. A failure-free call with a MIR destination is not discarded even
+though its value has no uses: MIR rehomed it into that place (for example a
+branch-only receiver temporary on the right of `||`, `&&` or `?:`), so it
+constructs there and the place's own drop retires it. A transformed call marks that representation on success and a
 failure-free call constructs it from its returned value; either retires it
 immediately, permitting repeated calls in a loop.
 Failure leaves the storage uninitialized and follows the existing MIR failure
