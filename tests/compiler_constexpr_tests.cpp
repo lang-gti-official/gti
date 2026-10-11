@@ -2377,6 +2377,18 @@ constexpr int scalar_work(int seed) {
   { mut int& same = forward_mut(value); add(same, 2); }
   return value;
 }
+struct Flag {
+  mut bool enabled;
+  constexpr Flag() : enabled(true) {}
+};
+constexpr void flip(mut bool& flag) {
+  if (flag) { flag = false; } else { flag = true; }
+}
+constexpr bool conditional_work() {
+  mut Flag flag = Flag();
+  flip(flag.enabled);
+  return !flag.enabled;
+}
 int main() { return scalar_work(3) - 9; }
 )");
   lang::HirFunctionInstanceId scalarId = 0;
@@ -2408,6 +2420,24 @@ int main() { return scalar_work(3) - 9; }
   expect(!shallow &&
              shallow.failure == lang::ConstantEvaluationFailure::ResourceLimit,
          "mutable calls share the ordinary constexpr call-depth limit");
+  for (const auto &function : scalar.hir.functionInstances()) {
+    if (!function.source ||
+        function.source->name().lexeme != "conditional_work")
+      continue;
+    const auto conditional =
+        lang::evaluateMirConstantFunction(scalar.mir, function.id, {});
+    expect(conditional && conditional.value == lang::ConstantValue{true},
+           "a branch reads the live mutable field referent");
+    for (std::size_t budget = 0; conditional && budget < conditional.steps;
+         ++budget) {
+      const auto limited = lang::evaluateMirConstantFunction(
+          scalar.mir, function.id, {}, {.steps = budget});
+      expect(!limited && limited.failure ==
+                             lang::ConstantEvaluationFailure::ResourceLimit,
+             "an interrupted mutable-reference branch retains its resource "
+             "failure instead of being relabeled as invalid input");
+    }
+  }
   for (const auto &function : scalar.hir.functionInstances()) {
     if (!function.source || function.source->name().lexeme != "add")
       continue;
