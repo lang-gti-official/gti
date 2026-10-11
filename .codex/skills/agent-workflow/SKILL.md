@@ -1,21 +1,28 @@
 ---
 name: agent-workflow
-description: Carry GTI implementation tasks through isolated branches, published checkpoints, validated Gitea PR integration, local-main synchronization, and safe worktree cleanup. Use for repository changes and resuming unfinished implementation tasks; read-only discussions and audits do not create branches or PRs.
+description: Carry GTI implementation tasks through isolated branches, published checkpoints, validated GitHub PR integration, local-main synchronization, and safe worktree cleanup. Use for repository changes and resuming unfinished implementation tasks; read-only discussions and audits do not create branches or PRs.
 ---
 
 # GTI Agent Workflow
 
-The normal implementation outcome is a merged Gitea PR and a primary checkout
+The normal implementation outcome is a merged GitHub PR and a primary checkout
 on current `main`, ready for the user's local installer. The repository owner's
 standing authorization is in `AGENTS.md`. Explicit instructions such as
 "PR only", "leave local", "do not merge", or a release/install request override
 the default. Never infer permission to change other repositories or services.
 
-Use `scripts/agent_workflow.py` for shared Git/API operations. It uses canonical
-Gitea `origin`, accepts `GTI_GITEA_TOKEN`/`GITEA_TOKEN` or the primary checkout's
-ignored `.env`, and keeps token-free recovery records in the common Git
-directory. Run it from the primary checkout or pass `--repo <primary>`.
-Do not copy credentials into worktrees. Read
+Use `scripts/agent_workflow.py` for shared Git/API operations. GitHub
+(`gti-lang-official/gti`, remote `origin`) is the canonical host for branches,
+PRs, issues, CI and releases; the self-hosted Gitea repository (remote
+`gitea`) is a backup mirror that `sync` updates and that never receives PRs or
+issues. The helper authenticates with the GitHub CLI (`gh auth token`) or
+`GTI_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`, including from the primary
+checkout's ignored `.env`, and keeps token-free recovery records in the common
+Git directory. Run it from any checkout of the repository, or pass
+`--repo <checkout>`; it always acts on the primary checkout it shares a Git
+directory with. Do not copy credentials into worktrees. Task records from
+before the GitHub move show as `legacy-gitea` in `status`; re-register such a
+worktree with `start --adopt`. Read
 [the command contract](../../../docs/architecture/agent-workflow.md) when
 recovering interruptions or interpreting a refused operation.
 
@@ -72,7 +79,8 @@ updates for language changes. Use `finish-release` for VERSION decisions.
 3. Write the final PR description to a temporary file, including behaviour,
    validation and limitations. Run `finish <task> --body-file <file>`.
    It marks the PR ready, checks validation and branch protection, merges through
-   Gitea with the exact tested head, then attempts a local-main fast-forward.
+   GitHub with the exact tested head, then attempts a local-main fast-forward
+   and pushes `main` and the tags to the `gitea` mirror remote.
    Use `--pr-only` when the user requested review before integration.
 4. Required server checks/reviews are respected; never force or administratively
    bypass a rejection. Wait using the product's wait/continuation facilities
@@ -106,7 +114,7 @@ deletes the integrated local branch. Unexpected commits stop deletion.
 interrupted request; PR lookup prevents duplicate creation, and confirmed merges
 can resume sync/cleanup without merging twice. Inspect a stale lock's owner
 before removing that exact lock directory; the lock is short, and a build-window
-slot whose owner exited is reclaimed on its own. Records are recovery aids; Gitea PRs
+slot whose owner exited is reclaimed on its own. Records are recovery aids; GitHub PRs
 and published Git commits remain the work inventory. Losing local records can
 be recovered by adopting the preserved branch and rediscovering its PR.
 

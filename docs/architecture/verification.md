@@ -3090,7 +3090,7 @@ Status: Current test and audit structure.
 
 ## Agent task lifecycle
 
-`agent_workflow` uses disposable real Git repositories and a fake Gitea API to
+`agent_workflow` uses disposable real Git repositories, a fake GitHub API and a Gitea mirror to
 exercise branch publication, draft creation/retry, successful PR integration,
 upstream reconciliation, exact head/base validation, server merge races and
 required-check refusal. It checks preservation of dirty/divergent local main,
@@ -4712,8 +4712,8 @@ upstream code.
 | `lsp_scalability_benchmark_smoke` | real JSON-RPC workload/schema, frontend work traces, root-only dependency reuse, scoped dirty-dependency invalidation, protocol-valid completion/cancellation race handling, supersession, and bounded cache occupancy without a CI wall-time threshold |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
-| `repository_hosting` | fail-closed Gitea source, workflow, release, installer, Lazy package, issue-template, release-policy, and delivery-instruction authority; tracked first-party GitHub repository dependencies are rejected outside explicit historical evidence |
-| `gitea_release_asset_sync` | post-upload exact Gitea rolling-release asset synchronization, including deterministic retired-platform removal, malformed-identity rejection, and empty-input fail-closed behavior |
+| `repository_hosting` | fail-closed GitHub source, workflow, release, installer, Lazy package, issue-template, release-policy, mirror, and delivery-instruction authority; tracked first-party GitHub repository dependencies are rejected outside explicit historical evidence |
+| `release_asset_sync` | post-upload exact GitHub rolling-release asset synchronization, including deterministic retired-platform removal, malformed-identity rejection, and empty-input fail-closed behavior |
 | `benchmark_harness` | strict schema-1 GTI/C++ and schema-2 multi-GTI/profile descriptors; schema-3 fixed-native attribution; schema-4 bounded generated arithmetic proxies; path and provenance containment; correctness records; deterministic interleaving; and threshold-free vector plus managed-thread smoke execution |
 | `compile_time_harness` | sequential clean/full/emission/native/C++ attribution with preserved compiler identities; raw samples and randomized order; before/after emission equality and optimized runtime output checks; existing-output preservation and invalid repetition rejection, without a timing threshold |
 | `runtime_performance_workloads` | threshold-free build, execution, descriptor, and exact-result-record coverage for the admitted checked-scalar, fixed-array proof/overflow, strict-FP, optimizer-level, and game-update workloads |
@@ -4883,15 +4883,23 @@ when the public wrapper is added.
 `installed_native_record_pipeline` additionally verifies that the packaged
 compiler library exposes the same semantic/HIR/MIR native-record contract.
 
-The Gitea Actions workflows are archived under
-`docs/plans/archive/gitea-actions/` (2026-10-11): the self-hosted instance's
-single 6-core runner could not carry the full suite's workload, and CI hosting
-moves to the `gti-lang` GitHub organization, with Gitea remaining a repository
-mirror and backup. No remote workflow runs until the GitHub Actions workflows
-exist. The budgets, preflights and selections below describe the archived jobs
-and are the contract a replacement workflow inherits; the helper scripts and
-their gates (`ci_resources`, `ci_cache`, `ci_sanitizer_capability`,
-`ci_release`, `release_version_policy`) remain live.
+The live workflows are GitHub Actions under `.github/workflows/` of
+`gti-lang-official/gti` (`ci.yml`, `release.yml`, `mirror.yml`), running on
+GitHub-hosted `ubuntu-latest` and `macos-15` runners. They replace the Gitea
+Actions workflows archived under `docs/plans/archive/gitea-actions/` on
+2026-10-11, when the self-hosted instance's single 6-core runner could not
+carry the full suite's workload; Gitea remains a backup mirror of `main` and
+the tags. The budgets, preflights and selections below carried over unchanged,
+and the helper scripts and their gates (`ci_resources`, `ci_cache`,
+`ci_sanitizer_capability`, `ci_release`, `release_asset_sync`,
+`release_version_policy`, `repository_hosting`) guard them. The CI workflow
+orders its jobs: the formatting and release-version checks finish in about a
+minute and a failure in either means the head must change, so they gate the
+native toolchain job (`needs`); the sanitizer job follows the native job on a
+success or failure, never when it was skipped, so a native test failure still
+yields the sanitizer signal and the two heavy jobs never share one runner's
+budget. The Tree-sitter job stays independent until its grammar check is green
+again, at which point it joins the native job's gates.
 
 CI and release jobs use the job's detected available processor count for both
 compilation and CTest. `scripts/configure_ci_resources.sh` uses `nproc` (not
@@ -4917,9 +4925,10 @@ remain external policy; the helper prints the processors and memory it saw so
 a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution
 is an explicit host capability controlled by
-`GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled. The generic
-Gitea Docker runner disables it because its runtime cannot reserve the required
-shadow-memory mapping before any GTI code executes. Mixed runtime matrices keep
+`GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled. The hosted
+workflows disable it: the former Gitea Docker runner could not reserve the
+required shadow-memory mapping before any GTI code executed, and GitHub-hosted
+runners have not passed the TSAN preflight. Mixed runtime matrices keep
 their ordinary and ASan/UBSan modes; dedicated TSAN CTests report an explicit
 skip with return code 77. A compatible dedicated runner must pass the TSAN
 preflight and leave the option enabled before its result counts as race-checking
@@ -4931,8 +4940,8 @@ and C++ compilation uses explicitly installed `ccache` through CMake's
 compiler-launcher contract. Native, sanitizer, and bundled-release object
 stores are persisted separately by OS, architecture, and profile, with
 configuration fingerprints and per-run snapshot keys. Failed partial builds
-also attempt to save reusable objects. The pinned Gitea cache action supports
-the runner's v1 cache service; restore/save errors are non-fatal optimization
+also attempt to save reusable objects. The pinned `actions/cache` restore and save
+steps persist them; restore/save errors are non-fatal optimization
 failures, not reasons to skip verification. The cache helper uses compiler
 content checks without header/PCH/time-macro sloppiness or path rewriting, and
 caches no build tree, test results, or installed toolchain.
@@ -6061,7 +6070,7 @@ instrumentation retained.
 
 ## Repository Build Generator
 
-First-party developer instructions and Gitea automation configure CMake
+First-party developer instructions and GitHub automation configure CMake
 with the Ninja generator. CMake remains the portable configuration and build
 entry point; workflows invoke `cmake --build` rather than calling `ninja`
 directly. Every fresh first-party build tree, including sanitizer, release, and
@@ -6078,14 +6087,10 @@ but non-Ninja generators are outside the first-party verification path.
 
 ## Platform Signal
 
-Local verification runs on the macOS/AppleClang host. Gitea CI
-(`ubuntu-latest`) was the accepted first Linux/GCC/libstdc++ signal until its
-workflows were archived on 2026-10-11; GitHub Actions in the `gti-lang`
-organization is the planned replacement, and until it exists there is no
-remote Linux signal at all, as there is no local Linux gate in the pre-push
-loop. Treat a change that touches Linux-divergent behavior as unverified on
-Linux until that signal returns, and say so in its PR. Two mitigations keep the
-gap narrow. First, all first-party targets compile with `-Wall -Wextra
+Local verification runs on the macOS/AppleClang host. GitHub Actions CI
+(`ubuntu-latest`, GCC/libstdc++) is the accepted first Linux signal; there is
+no local Linux gate in the pre-push loop. Two mitigations keep that gap
+narrow. First, all first-party targets compile with `-Wall -Wextra
 -Werror`, which turns the compiler-divergence class that previously
 surfaced only on GCC — for example C++20 designated-initializer
 declaration order, which AppleClang merely warns about — into local build
@@ -6093,9 +6098,8 @@ failures. Second, behavior known to diverge by standard library (path
 canonicalization, container assertions) must carry tests that mirror the
 production code path rather than reimplementing it, so both libraries
 exercise the same contract. A change that touches those areas should be
-watched through CI after push once a remote Linux workflow runs again; an
-asynchronous CI failure there is a Linux finding requiring follow-up, rather
-than evidence of a successful Linux check.
+watched through CI after push; an asynchronous CI failure there is a Linux
+finding requiring follow-up, rather than evidence of a successful Linux check.
 
 ## Optional Local Language Audit
 

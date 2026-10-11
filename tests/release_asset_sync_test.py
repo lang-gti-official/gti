@@ -7,9 +7,7 @@ import tempfile
 
 
 def load_module(path: pathlib.Path):
-    specification = importlib.util.spec_from_file_location(
-        "sync_gitea_release_assets", path
-    )
+    specification = importlib.util.spec_from_file_location("sync_release_assets", path)
     if specification is None or specification.loader is None:
         raise AssertionError(f"could not load {path}")
     module = importlib.util.module_from_spec(specification)
@@ -24,16 +22,15 @@ def expect(condition: bool, message: str) -> None:
 
 def main() -> None:
     if len(sys.argv) != 2:
-        raise SystemExit(
-            "usage: gitea_release_asset_sync_test.py "
-            "sync_gitea_release_assets.py"
-        )
+        raise SystemExit("usage: release_asset_sync_test.py sync_release_assets.py")
 
     module = load_module(pathlib.Path(sys.argv[1]).resolve())
-    with tempfile.TemporaryDirectory(prefix="gti-gitea-assets-") as directory:
+    with tempfile.TemporaryDirectory(prefix="gti-release-assets-") as directory:
         root = pathlib.Path(directory)
         names = [
             "BUILD_ID",
+            "gti-nightly-darwin-arm64.tar.gz",
+            "gti-nightly-darwin-arm64.tar.gz.sha256",
             "gti-nightly-linux-x64.tar.gz",
             "gti-nightly-linux-x64.tar.gz.sha256",
         ]
@@ -42,9 +39,11 @@ def main() -> None:
         (root / "ignored-directory").mkdir()
 
         published = [
-            {"id": 3, "name": names[2]},
+            {"id": 3, "name": names[4]},
             {"id": 1, "name": names[0]},
-            {"id": 2, "name": names[1]},
+            {"id": 2, "name": names[3]},
+            {"id": 6, "name": names[1]},
+            {"id": 7, "name": names[2]},
             {"id": 5, "name": "gti-nightly-darwin-x64.tar.gz.sha256"},
             {"id": 4, "name": "gti-nightly-darwin-x64.tar.gz"},
         ]
@@ -56,31 +55,19 @@ def main() -> None:
                 return {"id": 91, "assets": published}
             return None
 
-        stale = module.sync_assets("gti-lang/gti", "nightly", root, request)
+        stale = module.sync_assets("gti-lang-official/gti", "nightly", root, request)
         expect(
             calls
             == [
-                (
-                    "GET",
-                    "/repos/gti-lang/gti/releases/tags/nightly",
-                ),
-                (
-                    "DELETE",
-                    "/repos/gti-lang/gti/releases/91/assets/4",
-                ),
-                (
-                    "DELETE",
-                    "/repos/gti-lang/gti/releases/91/assets/5",
-                ),
+                ("GET", "/repos/gti-lang-official/gti/releases/tags/nightly"),
+                # GitHub deletes an asset by its own id, in deterministic name order.
+                ("DELETE", "/repos/gti-lang-official/gti/releases/assets/4"),
+                ("DELETE", "/repos/gti-lang-official/gti/releases/assets/5"),
             ],
-            "only stale Gitea assets may be removed, in deterministic order",
+            f"only stale GitHub assets may be removed, in deterministic order: {calls}",
         )
         expect(
-            stale
-            == [
-                "gti-nightly-darwin-x64.tar.gz",
-                "gti-nightly-darwin-x64.tar.gz.sha256",
-            ],
+            stale == ["gti-nightly-darwin-x64.tar.gz", "gti-nightly-darwin-x64.tar.gz.sha256"],
             "retired assets were not selected exactly",
         )
 
@@ -89,7 +76,7 @@ def main() -> None:
         empty_calls: list[tuple[str, str]] = []
         try:
             module.sync_assets(
-                "gti-lang/gti",
+                "gti-lang-official/gti",
                 "nightly",
                 empty,
                 lambda method, path: empty_calls.append((method, path)),
@@ -98,14 +85,28 @@ def main() -> None:
             expect("is empty" in str(error), "empty-set failure is not actionable")
         else:
             raise AssertionError("an empty asset set must fail closed")
-        expect(not empty_calls, "empty input must fail before calling Gitea")
+        expect(not empty_calls, "empty input must fail before calling GitHub")
+
+        for repository, tag in (("missing-owner", "nightly"), ("owner/name", "")):
+            try:
+                module.release_path(repository, tag)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("malformed release identity must fail closed")
 
         try:
-            module.release_path("missing-owner", "nightly")
+            module.make_api_request("https://api.github.com", "")
+        except ValueError as error:
+            expect("GITHUB_TOKEN" in str(error), "missing token is not actionable")
+        else:
+            raise AssertionError("a missing token must fail closed")
+        try:
+            module.make_api_request("api.github.com", "token")
         except ValueError:
             pass
         else:
-            raise AssertionError("malformed repository identity must fail closed")
+            raise AssertionError("a relative API URL must fail closed")
 
 
 if __name__ == "__main__":
