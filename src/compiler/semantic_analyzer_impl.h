@@ -1911,6 +1911,8 @@ private:
   void analyzeThreadIntrinsicCall(const Call &expr,
                                   const CallableCandidate &declaration);
 
+  void analyzeThreadScopeCall(const Call &expr);
+
   void analyzeAtomicIntrinsicCall(const Call &expr,
                                   const CallableCandidate &declaration);
 

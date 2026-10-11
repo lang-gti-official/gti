@@ -833,6 +833,11 @@ No source lifetime parameters are introduced. Constructor parameter bindings
 and unambiguous direct return expressions establish field-wise origin maps.
 A factory may reorder its parameters or bind several shared fields to one
 parameter; unused parameters do not become result dependencies. Ordinary
+local carriers may compose shared and exclusive references from independent
+reference parameters, including through nested carrier constructors. Those
+parameters provide the initial permissions, not competing loans; the resulting
+carrier still excludes conflicting use of each referent until its own borrow
+ends. A live overlapping child borrow is not exempted by this rule. Ordinary
 accessors and operators preserve the selected stored field's permission and
 origin rather than using the carrier's first dependency. Caller metadata is
 checked against the callee's actual returned origins before backend entry.

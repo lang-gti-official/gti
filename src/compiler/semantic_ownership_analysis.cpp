@@ -1995,6 +1995,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "thread_auto_join" || name == "thread_result_auto_join") {
       return IntrinsicKind::ThreadAutoJoin;
     }
+    if (name == "thread_scope") {
+      return IntrinsicKind::ThreadScope;
+    }
     return IntrinsicKind::None;
   }
   if (isAtomicLibraryUnit(sourceUnit)) {
@@ -4896,6 +4899,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     // obey copy/reborrow rules. Exclude only that input's loan, not its live
     // children or unrelated overlapping loans.
     std::vector<SemanticLoanId> transferredInputs;
+    std::vector<SemanticLoanId> entryReferenceInputs;
     if (construction != nullptr ||
         (resolved != nullptr && resolved->intrinsic == IntrinsicKind::None)) {
       const auto *initializer = exprAs<DirectInitializer>(expression.get());
@@ -4916,7 +4920,26 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                 parameters.end())
           parameters.push_back(field.parameter);
       if (arguments != nullptr)
-        for (const auto parameter : parameters)
+        for (const auto parameter : parameters) {
+          if (parameter < arguments->size() &&
+              parameter < parameterTypes.size() &&
+              parameterTypes[parameter].kind == SemanticType::Reference) {
+            const auto source = retainedLoanSource((*arguments)[parameter]);
+            const auto *loan =
+                source ? semanticModel.findLoan(source->loan) : nullptr;
+            // An exact reference formal is the callee's entry permission,
+            // not a competing borrow of its own referent. Argument checking
+            // has already validated this reborrow, including any live child.
+            // These entry capabilities last through the whole invocation;
+            // the new composed loan still protects each place from parent
+            // access for its own lifetime. Never exempt local children or a
+            // carrier's unrelated dependency merely because it overlaps.
+            if (loan != nullptr && loan->entry &&
+                loan->kind == SemanticLoanKind::Reference &&
+                loan->storedDependency == 0 &&
+                loan->place == retainedLoanPlace((*arguments)[parameter]))
+              entryReferenceInputs.push_back(loan->id);
+          }
           if (parameter < arguments->size() &&
               parameter < parameterTypes.size() &&
               parameterTypes[parameter].kind == SemanticType::Class &&
@@ -4925,12 +4948,16 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             if (const auto source = retainedLoanSource((*arguments)[parameter]);
                 source && source->transfer)
               transferredInputs.push_back(source->loan);
+        }
     }
     for (const auto &dependency : dependencies) {
       auto conflicts = conflictingLoans(dependency.place, dependency.access);
       std::erase_if(conflicts, [&](SemanticLoanId id) {
         return std::find(transferredInputs.begin(), transferredInputs.end(),
-                         id) != transferredInputs.end();
+                         id) != transferredInputs.end() ||
+               std::find(entryReferenceInputs.begin(),
+                         entryReferenceInputs.end(),
+                         id) != entryReferenceInputs.end();
       });
       reportBorrowConflict(
           expressionToken(expression), conflicts,
@@ -4966,6 +4993,15 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         }))
       parent = originLoan->id;
     const auto primary = dependencies.front();
+    if (originLoan != nullptr && !origin->transfer && originLoan->entry &&
+        originLoan->kind == SemanticLoanKind::Reference &&
+        originLoan->storedDependency == 0 &&
+        originLoan->access == AccessMode::Mutable &&
+        originLoan->place == primary.place)
+      // The primary reference is still a reborrow of its exact entry
+      // permission. The other fields retain independent origins; they are
+      // not projections under this parent.
+      parent = originLoan->id;
     const SemanticLoanId id = createRetainedLoan(
         *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
         expression.get(), primary.place, primary.place.root,
@@ -6443,6 +6479,102 @@ auto SemanticVisitor::Impl::scopedThreadTaskShapeFor(const SemanticType &type)
         {.fields = std::move(fields), .reference = path.reference});
   }
   return shape;
+}
+
+auto SemanticVisitor::Impl::analyzeThreadScopeCall(const Call &expr) -> void {
+  std::vector<SemanticType> types;
+  for (const auto &argument : expr.arguments())
+    types.push_back(analyze(argument));
+  for (const auto &argument : expr.typeArguments())
+    validateType(argument);
+
+  ResolvedCallInfo resolved{.returnType = SemanticType::Int32,
+                            .intrinsic = IntrinsicKind::ThreadScope};
+  const auto inputs = concreteCallArguments(types, expr.arguments());
+  if (!inputs) {
+    // Generic primary bodies retain the symbolic pack. Concrete reanalysis
+    // must replace it with one checked task record for every actual operand.
+    resolved.parameterTypes = std::move(types);
+    currentType = resolved.returnType;
+    semanticModel.record(expr, std::move(resolved));
+    return;
+  }
+
+  (void)validateConcurrentSurfaceAvailability(expr.paren(), "A parallel scope");
+
+  for (const auto &input : *inputs) {
+    const auto &argument = *input.expression;
+    const auto *info = semanticModel.findExpression(*argument);
+    const auto shape = scopedThreadTaskShapeFor(input.type);
+    const bool consumed =
+        input.forwardedPackElement ||
+        (info != nullptr && info->category == ValueCategory::Value);
+    resolved.parameterTypes.push_back(input.type);
+    if (!shape || !consumed) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2084", DiagnosticPhase::Semantics, expressionToken(argument),
+          "A parallel scope requires consumed exact void() tasks whose owned "
+          "state may transfer and whose borrowed referents permit the "
+          "selected access.");
+      diagnostic.hints.emplace_back(
+          "Pass a fresh task or std::move(task). Shared references require "
+          "shareable referents; mutable references require transferable "
+          "referents. Ordinary managed threads still require owned state.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      continue;
+    }
+    ResolvedScopedThreadTask task{.shape = *shape};
+    const auto dependencies = storedBorrowDependencies(argument);
+    bool complete = true;
+    for (const auto &path : shape->dependencies) {
+      auto found =
+          std::find_if(dependencies.begin(), dependencies.end(),
+                       [&](const auto &dependency) {
+                         return dependency.designatedFields == path.fields;
+                       });
+      // The compact one-reference carrier form predates composed field paths.
+      // Resolve that representation here, where the exact source type and
+      // origin are both authoritative, rather than teaching a backend it.
+      if (found == dependencies.end() && shape->dependencies.size() == 1 &&
+          dependencies.size() == 1 &&
+          dependencies.front().designatedFields.empty())
+        found = dependencies.begin();
+      if (found == dependencies.end() ||
+          (found->place.root == 0 && !found->place.receiver) ||
+          (path.reference.referenceAccess == AccessMode::Mutable &&
+           found->access != AccessMode::Mutable)) {
+        complete = false;
+        break;
+      }
+      auto dependency = *found;
+      dependency.designatedFields = path.fields;
+      dependency.access = path.reference.referenceAccess;
+      task.dependencies.push_back(std::move(dependency));
+    }
+    if (!complete) {
+      report(expressionToken(argument),
+             "A parallel task must retain an exact checked origin for every "
+             "borrowed field through completion of the scope.",
+             "GTI-S2084");
+      continue;
+    }
+    // Argument evaluation is sequenced, but every child may execute at once.
+    // Reuse ordinary place overlap, including disjoint field projections.
+    for (const auto &previous : resolved.scopedThreadTasks)
+      for (const auto &left : previous.dependencies)
+        for (const auto &right : task.dependencies)
+          if ((left.access == AccessMode::Mutable ||
+               right.access == AccessMode::Mutable) &&
+              loanPlacesOverlap(left.place, right.place)) {
+            report(expressionToken(argument),
+                   "Parallel tasks have overlapping borrowed access and at "
+                   "least one task requires mutable access.",
+                   "GTI-S2084");
+          }
+    resolved.scopedThreadTasks.push_back(std::move(task));
+  }
+  currentType = resolved.returnType;
+  semanticModel.record(expr, std::move(resolved));
 }
 
 auto SemanticVisitor::Impl::analyzeThreadIntrinsicCall(
@@ -7981,6 +8113,11 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
   }
   if (intrinsic == IntrinsicKind::StorageBoundsCheck) {
     analyzeStorageBoundsCheckCall(expr);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::ThreadScope) {
+    analyzeThreadScopeCall(expr);
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

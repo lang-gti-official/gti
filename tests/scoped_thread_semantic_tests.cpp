@@ -1,7 +1,12 @@
 #include "gti/frontend.h"
+#include "gti/mir_verifier.h"
 #include "gti/semantic_analyzer.h"
 
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -15,9 +20,284 @@ void expect(bool value, std::string_view message) {
     ++failures;
   }
 }
+
+lang::FrontendResult
+invocation(std::string body, bool concurrent = true,
+           lang::FrontendPhase phase = lang::FrontendPhase::Hir,
+           bool privateDeclaration = true) {
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto threadPath = standardLibrary / "std/thread.gti";
+  std::ifstream input(threadPath);
+  std::ostringstream contents;
+  contents << input.rdbuf();
+  // Exercise the private declaration from its actual trusted source identity.
+  // No public wrapper is advertised until the executable pipeline is complete.
+  std::ostringstream fixture;
+  fixture << R"(
+namespace scoped_fixture {
+class Write {
+  mut int& target;
+public:
+  Write(mut int& target) : target(target) {}
+  void operator()() mut { this.target = 9; }
+};
+class Read {
+  int& target;
+public:
+  Read(int& target) : target(target) {}
+  void operator()() {}
+};
+struct Data { mut int left = 0; mut int right = 0; };
+class Pair {
+  int& input;
+  mut int& output;
+public:
+  Pair(int& input, mut int& output) : input(input), output(output) {}
+  void operator()() mut { this.output = this.input; }
+};
+class Nested {
+  mut Pair task;
+public:
+  Nested(int& input, mut int& output) : task(Pair(input, output)) {}
+  void operator()() mut { this.task(); }
+};
+struct Once { void operator()() && {} };
+[[no_transfer, no_share]] struct Affine { int value = 0; };
+class AffineRead {
+  Affine& value;
+public:
+  AffineRead(Affine& value) : value(value) {}
+  void operator()() {}
+};
+int scope_probe(mut int& first, mut int& second, mut Data& data,
+                Affine& affine) {
+)" << body << "\n}\n}\n";
+  if (privateDeclaration)
+    contents << fixture.str();
+  lang::FrontendOptions options;
+  options.stopAfter = phase;
+  options.target.executionProfile =
+      concurrent ? lang::ExecutionProfile::Concurrent
+                 : lang::ExecutionProfile::SingleThreaded;
+  options.target.runtimeCapabilities.threads = true;
+  return lang::Frontend(options).analyze(
+      "scoped-invocation.gti",
+      "#include <std/thread>\n" +
+          (privateDeclaration ? std::string{} : fixture.str()) +
+          "int main() { return 0; }",
+      {standardLibrary / "prelude.gti"},
+      {{threadPath.string(), contents.str()}}, {standardLibrary});
+}
+
+void checkComposedAuthorities(const lang::FrontendResult &result) {
+  if (!result.canGenerateCode())
+    return;
+  bool checked = false;
+  for (std::size_t index = 0; index < result.mir.functionInstances().size();
+       ++index) {
+    const auto &body = result.mir.functionInstances()[index].body;
+    for (const auto &loan : body.loans) {
+      if (loan.kind != lang::MirLoanKind::Stored || loan.entry ||
+          loan.escapes || loan.parent == 0 ||
+          loan.additionalDependencies.size() != 1)
+        continue;
+      const auto *source =
+          body.findPlace(loan.additionalDependencies[0].source);
+      const auto authority = std::find_if(
+          body.loans.begin(), body.loans.end(), [&](const auto &candidate) {
+            const auto *origin = body.findPlace(candidate.source);
+            return candidate.entry &&
+                   candidate.kind == lang::MirLoanKind::Parameter &&
+                   source != nullptr && origin != nullptr &&
+                   source->root == lang::MirPlaceRootKind::Binding &&
+                   origin->root == lang::MirPlaceRootKind::Binding &&
+                   origin->binding == source->binding &&
+                   candidate.id != loan.parent;
+          });
+      if (authority == body.loans.end())
+        continue;
+      checked = true;
+      expect(lang::mirLoanRetainsDependency(body, loan.id, authority->id),
+             "general lifetime queries retain the secondary input authority");
+      auto collapsed = result.mir;
+      auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+          collapsed.functionInstances());
+      functions[index]
+          .body.loans[loan.id - 1]
+          .additionalDependencies[0]
+          .source = loan.source;
+      expect(!lang::verifyMirProgram(collapsed).valid(),
+             "MIR rejects collapsing independent composed-reference origins");
+
+      auto early = body;
+      bool changed = false;
+      for (auto &block : early.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+              instruction.loan == loan.id) {
+            instruction.loan = authority->id;
+            changed = true;
+            break;
+          }
+        }
+        if (changed)
+          break;
+      }
+      const auto verification = lang::verifyMirBody(early);
+      expect(changed && !verification.valid() &&
+                 std::any_of(
+                     verification.errors.begin(), verification.errors.end(),
+                     [](const auto &error) {
+                       return error.message.find("before its child reborrow") !=
+                              std::string::npos;
+                     }),
+             "MIR retains the secondary input until its composed child ends");
+    }
+  }
+  expect(checked, "ordinary carrier exercises independent reference entries");
+}
+
+void checkInvocations() {
+  for (const auto &body :
+       {"mut auto task = Pair(first, second); task(); return 0;",
+        "mut auto task = Nested(first, second); task(); return 0;",
+        "{ mut auto task = Pair(first, second); task(); } "
+        "first = 1; second = 2; return 0;"}) {
+    const auto result = invocation(body, true, lang::FrontendPhase::Mir, false);
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(
+        result.canGenerateCode(),
+        "ordinary composed entry-reference carriers retain verified MIR loans");
+    checkComposedAuthorities(result);
+  }
+  for (const auto &body :
+       {"return gti_internal::thread_scope(Write(first), Write(second));",
+        "return gti_internal::thread_scope(Read(first), Read(first));",
+        "return gti_internal::thread_scope(Write(data.left), "
+        "Write(data.right));",
+        "return gti_internal::thread_scope(Pair(first, second));",
+        "return gti_internal::thread_scope(Nested(first, second));",
+        "auto task = Pair(first, second); return "
+        "gti_internal::thread_scope(std::move(task));",
+        "return gti_internal::thread_scope(Once());",
+        "return gti_internal::thread_scope();"}) {
+    const auto result = invocation(body);
+    if (!result.diagnostics.empty())
+      std::cerr << "Invocation: " << body << '\n';
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << " at "
+                << diagnostic.primary.start << '\n';
+    expect(result.sourceValid && result.syntaxValid && result.semanticValid,
+           "scoped invocation resolves actual consumed task origins");
+    expect(
+        result.hirValid &&
+            lang::verifyHirProgramPlans(result.semantics, result.hir).valid(),
+        "scoped invocation preserves an exact verified HIR task group");
+    const lang::ResolvedCallInfo *selected = nullptr;
+    for (const auto &declaration : result.program.declarations()) {
+      const auto *space =
+          dynamic_cast<const lang::NamespaceDecl *>(declaration.get());
+      if (space == nullptr || space->name().lexeme != "scoped_fixture")
+        continue;
+      for (const auto &member : space->declarations()) {
+        const auto *function =
+            dynamic_cast<const lang::FunctionDecl *>(member.get());
+        if (function == nullptr || function->name().lexeme != "scope_probe" ||
+            !function->body())
+          continue;
+        const auto *returned = dynamic_cast<const lang::ReturnStmt *>(
+            function->body()->statements().back().get());
+        const auto *call =
+            returned == nullptr
+                ? nullptr
+                : dynamic_cast<const lang::Call *>(returned->value().get());
+        if (call != nullptr)
+          selected = result.semantics.findCall(*call);
+      }
+    }
+    if (selected != nullptr) {
+      const auto &resolved = *selected;
+      expect(resolved.intrinsic == lang::IntrinsicKind::ThreadScope,
+             "resolved operation is the exact scoped intrinsic");
+      expect(resolved.parameterTypes.size() ==
+                 resolved.scopedThreadTasks.size(),
+             "every concrete operand retains one exact task record");
+      for (const auto &task : resolved.scopedThreadTasks) {
+        expect(task.dependencies.size() == task.shape.dependencies.size(),
+               "every borrowed path has its actual origin");
+        for (std::size_t index = 0; index < task.dependencies.size(); ++index) {
+          const auto &dependency = task.dependencies[index];
+          expect(
+              dependency.place.root != 0 &&
+                  dependency.designatedFields ==
+                      task.shape.dependencies[index].fields &&
+                  dependency.access ==
+                      task.shape.dependencies[index].reference.referenceAccess,
+              "origin, field identity and selected access survive resolution");
+        }
+      }
+    }
+    expect(selected != nullptr,
+           "fixture reaches the identity-bound scope operation");
+    for (std::size_t index = 0; index < result.hir.threadTaskAdapters().size();
+         ++index) {
+      if (!result.hir.threadTaskAdapters()[index].scoped)
+        continue;
+      auto malformed = result.hir;
+      auto &adapters = const_cast<std::vector<lang::HirThreadTaskAdapter> &>(
+          malformed.threadTaskAdapters());
+      ++adapters[index].scopeArgument;
+      expect(!lang::verifyHirProgramPlans(result.semantics, malformed).valid(),
+             "HIR rejects a scoped adapter rebound to another operand");
+      if (!adapters[index].scopeDependencies.empty()) {
+        adapters[index].scopeArgument =
+            result.hir.threadTaskAdapters()[index].scopeArgument;
+        adapters[index].scopeDependencies.front().place.domain = {};
+        expect(
+            !lang::verifyHirProgramPlans(result.semantics, malformed).valid(),
+            "HIR rejects an origin from outside its body domain");
+      }
+      break;
+    }
+  }
+  for (const auto &body :
+       {"return gti_internal::thread_scope(Write(first), Write(first));",
+        "return gti_internal::thread_scope(Read(first), Write(first));",
+        "return gti_internal::thread_scope(AffineRead(affine));",
+        "auto task = Read(first); return gti_internal::thread_scope(task);"}) {
+    const auto result = invocation(body);
+    bool scopedError = false;
+    for (const auto &diagnostic : result.diagnostics)
+      scopedError |= diagnostic.code == "GTI-S2084" &&
+                     diagnostic.phase == lang::DiagnosticPhase::Semantics;
+    expect(!result.semanticValid && scopedError,
+           "overlap, affinity and unconsumed inputs fail in semantics");
+  }
+  const auto single = invocation("return gti_internal::thread_scope();", false);
+  expect(!single.semanticValid,
+         "scoped execution requires the concurrent profile");
+  for (const auto &body :
+       {"auto task = Pair(first, second); second = 3; return "
+        "gti_internal::thread_scope(std::move(task));",
+        "auto task = Pair(first, second); first = 3; return "
+        "gti_internal::thread_scope(std::move(task));",
+        "auto child = Write(second); auto task = Pair(first, second); child(); "
+        "return gti_internal::thread_scope(std::move(task));"}) {
+    const auto result = invocation(body);
+    bool loanError = false;
+    for (const auto &diagnostic : result.diagnostics)
+      loanError |= diagnostic.code == "GTI-S2017";
+    expect(!result.semanticValid && loanError,
+           "composing entry references does not permit parent mutation or "
+           "erase live children");
+  }
+}
 } // namespace
 
 int main() {
+  checkInvocations();
   const std::string source = R"(
 class PairJob {
   int& input;

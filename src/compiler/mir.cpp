@@ -23,6 +23,11 @@
 
 namespace lang {
 
+namespace {
+[[nodiscard]] std::vector<MirLoanId>
+additionalLoanAuthorities(const MirBody &body, const MirLoan &loan);
+}
+
 bool isMirExactReceiverPresentation(const MirProgram &program,
                                     const MirInstruction &instruction,
                                     const SemanticType &receiverType) {
@@ -705,6 +710,8 @@ bool mirLoanRetainsDependency(const MirBody &body, MirLoanId loan,
       return true;
     pending.push_back(record->parent);
     pending.push_back(record->storedDependency);
+    const auto additional = additionalLoanAuthorities(body, *record);
+    pending.insert(pending.end(), additional.begin(), additional.end());
   }
   return false;
 }
@@ -2197,22 +2204,81 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner) {
   return {};
 }
 
+[[nodiscard]] MirLoanId dependencyAuthority(const MirBody &body,
+                                            MirPlaceId sourceId) {
+  const auto *source = body.findPlace(sourceId);
+  if (source == nullptr)
+    return 0;
+  if (source->root == MirPlaceRootKind::Loan)
+    return source->loan;
+  if (source->root != MirPlaceRootKind::Binding)
+    return 0;
+  // Canonical source places intentionally erase a reference's local spelling.
+  // A reference formal nevertheless has one unambiguous entry permission for
+  // that binding. Ordinary local storage is not such a permission, and a
+  // borrowed carrier's opaque external dependency is not its physical shell.
+  for (const auto &candidate : body.loans) {
+    const auto *origin = body.findPlace(candidate.source);
+    if (candidate.entry && candidate.kind == MirLoanKind::Parameter &&
+        origin != nullptr && origin->root == MirPlaceRootKind::Binding &&
+        origin->binding == source->binding && origin->projections.empty() &&
+        origin->type.kind == SemanticType::Reference)
+      return candidate.id;
+  }
+  return 0;
+}
+
+// A composed stored value can retain independently borrowed inputs. Its
+// primary parent does not enclose the other referents: each Loan-rooted
+// dependency already names the authority through which that input was
+// obtained. Retain those identities, rather than pretending that every
+// reference field is a projection of the first input.
+[[nodiscard]] std::vector<MirLoanId>
+additionalLoanAuthorities(const MirBody &body, const MirLoan &loan) {
+  std::vector<MirLoanId> result;
+  // Entry loans describe caller-proven dependencies; escaping publications
+  // transfer them out of this body instead of retaining a local reborrow.
+  if (loan.kind != MirLoanKind::Stored || loan.entry || loan.escapes)
+    return result;
+  for (const auto &dependency : loan.additionalDependencies) {
+    const auto authority = dependencyAuthority(body, dependency.source);
+    if (authority != 0 && authority != loan.parent &&
+        std::find(result.begin(), result.end(), authority) == result.end())
+      result.push_back(authority);
+  }
+  return result;
+}
+
 [[nodiscard]] bool isLoanAncestor(const MirBody &body, MirLoanId ancestor,
                                   MirLoanId descendant) {
   if (ancestor == 0 || descendant == 0 || ancestor == descendant) {
     return false;
   }
   std::unordered_set<MirLoanId> visited;
-  MirLoanId current = descendant;
-  while (current != 0 && visited.insert(current).second) {
+  std::vector<MirLoanId> pending;
+  auto current = descendant;
+  while (current != 0 || !pending.empty()) {
+    if (current == 0) {
+      current = pending.back();
+      pending.pop_back();
+    }
+    if (!visited.insert(current).second) {
+      current = 0;
+      continue;
+    }
     const MirLoan *loan = body.findLoan(current);
     if (loan == nullptr) {
-      return false;
+      current = 0;
+      continue;
     }
-    current = loan->parent;
-    if (current == ancestor) {
+    if (loan->parent == ancestor)
       return true;
-    }
+    const auto additional = additionalLoanAuthorities(body, *loan);
+    if (std::find(additional.begin(), additional.end(), ancestor) !=
+        additional.end())
+      return true;
+    pending.insert(pending.end(), additional.begin(), additional.end());
+    current = loan->parent;
   }
   return false;
 }
@@ -2397,6 +2463,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
     if (loan.parent != 0) {
       children[loan.parent - 1].push_back(loan.id);
     }
+    for (const auto authority : additionalLoanAuthorities(body, loan))
+      children[authority - 1].push_back(loan.id);
     if (loan.storedDependency != 0) {
       dependentShells[loan.storedDependency - 1].push_back(loan.id);
     }
@@ -2448,6 +2516,15 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
             childSources.begin(), childSources.end(), [&](MirPlaceId child) {
               const auto childPlace =
                   canonicalPlace(body, child, bindingLoans, inactive);
+              const auto authority = dependencyAuthority(body, child);
+              // Independent input references retain their own checked
+              // authority. The production flow check below verifies its
+              // liveness and access; it must not be contained in the first
+              // input's unrelated storage.
+              if (loan.kind == MirLoanKind::Stored && !loan.entry &&
+                  !loan.escapes && child != loan.source && authority != 0 &&
+                  authority != loan.parent)
+                return false;
               return std::none_of(
                   parentSources.begin(), parentSources.end(),
                   [&](MirPlaceId source) {
@@ -3260,7 +3337,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
           const bool siblingSuspends = std::any_of(
               children[parent - 1].begin(), children[parent - 1].end(),
               [&](MirLoanId child) {
-                return (loanFlowContains(active[child - 1],
+                return body.loans[child - 1].parent == parent &&
+                       (loanFlowContains(active[child - 1],
                                          MirLoanFlowState::Active) ||
                         loanFlowContains(active[child - 1],
                                          MirLoanFlowState::Suspended)) &&
@@ -3300,6 +3378,27 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                 *instruction.loan, "loan production or activation",
                 instruction.id)) {
           return *invalid;
+        }
+        const auto &produced = body.loans[*instruction.loan - 1];
+        const auto authorities = additionalLoanAuthorities(body, produced);
+        for (const auto &dependency : produced.additionalDependencies) {
+          const auto authority = dependencyAuthority(body, dependency.source);
+          if (std::find(authorities.begin(), authorities.end(), authority) ==
+              authorities.end())
+            continue;
+          if ((active[authority - 1] != MirLoanFlowState::Active &&
+               active[authority - 1] != MirLoanFlowState::Suspended) ||
+              !loanPermitsPlace(
+                  body, body.loans[authority - 1],
+                  canonicalPlace(body, dependency.source, bindingLoans, active),
+                  dependency.access, bindingLoans, active))
+            return failure(body, owner,
+                           "composed loan dependency lacks a live input "
+                           "authority with the required access",
+                           block.id, instruction.id);
+          if (auto invalid = requireStoredDependency(
+                  authority, "composed loan dependency", instruction.id))
+            return *invalid;
         }
       }
 
@@ -9628,6 +9727,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         pending.emplace_back(record.parent, false);
       if (record.storedDependency != 0)
         pending.emplace_back(record.storedDependency, false);
+      for (const auto authority : additionalLoanAuthorities(body, record))
+        pending.emplace_back(authority, false);
     }
   }
 

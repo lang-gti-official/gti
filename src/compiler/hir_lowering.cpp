@@ -5574,6 +5574,62 @@ private:
               qualifyBorrowPlace(*value.borrowPlace, body.placeDomain);
         }
         value.callableArguments = resolved->callableArguments;
+        if (resolved->intrinsic == IntrinsicKind::ThreadScope) {
+          ensurePlaceDomain(body);
+          if (resolved->scopedThreadTasks.size() !=
+              resolved->parameterTypes.size())
+            lifecycleValid = false;
+          for (std::size_t index = 0;
+               index < resolved->scopedThreadTasks.size(); ++index) {
+            const auto &task = resolved->scopedThreadTasks[index];
+            const auto &taskType = task.shape.taskType;
+            const auto &entry = task.shape.entry;
+            std::optional<HirFunctionInstanceId> functionTarget;
+            std::optional<HirLambdaId> lambdaTarget;
+            if (entry.function != 0 && entry.lambda == 0) {
+              if (const auto *target =
+                      baseModel->findFunction(entry.function)) {
+                const auto instance =
+                    enqueueFunction(*target,
+                                    taskType.kind == SemanticType::Class
+                                        ? taskType.arguments
+                                        : std::vector<SemanticType>{},
+                                    taskType.kind == SemanticType::Class
+                                        ? taskType.valueArguments
+                                        : std::vector<CompileTimeValue>{},
+                                    {}, {}, SemanticType::Void, {});
+                if (instance != 0)
+                  functionTarget = instance;
+              }
+            } else if (entry.lambda != 0 && entry.function == 0) {
+              if (const auto target = lambdaTargets.find(entry.lambda);
+                  target != lambdaTargets.end())
+                lambdaTarget = target->second;
+            }
+            if (functionTarget.has_value() == lambdaTarget.has_value()) {
+              lifecycleValid = false;
+              continue;
+            }
+            HirThreadTaskAdapter adapter{
+                .id = output.program.threadTasks.size() + 1,
+                .taskType = taskType,
+                .spawnValue = value.id,
+                .functionTarget = functionTarget,
+                .lambdaTarget = lambdaTarget,
+                .targetInvocation = entry.capability,
+                .invocation = CallableInvocationCapability::Once,
+                .scoped = true,
+                .scopeArgument = index,
+                .scopeDependencies = task.dependencies};
+            for (auto &dependency : adapter.scopeDependencies)
+              dependency.place =
+                  qualifyPlace(dependency.place, body.placeDomain);
+            value.scopedThreadTasks.push_back(adapter.id);
+            output.program.threadTasks.push_back(std::move(adapter));
+          }
+          value.synchronization.kind =
+              SynchronizationOperationKind::ThreadScope;
+        }
         if (resolved->intrinsic == IntrinsicKind::ThreadSpawn &&
             resolved->parameterTypes.size() == 2 &&
             resolved->parameterTypes[1] != SemanticType::Unknown &&

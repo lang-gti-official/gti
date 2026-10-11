@@ -1539,9 +1539,30 @@ The query preserves thread-affinity and unaudited-cleanup denials. Even an unsaf
 positive assertion on the task cannot remove the separate requirements on its
 checked referents. Missing dependency paths reject the shape rather than losing
 the borrow. This result has no origin places, endpoint, or joining proof and
-cannot authorize a spawn alone: source-call admission, invocation loan mapping,
+cannot authorize a spawn alone. The identity-bound private `thread_scope`
+operation now resolves consumed concrete inputs into `ResolvedScopedThreadTask`
+records: each exact field path is paired with its checked origin place and
+access, and sibling accesses use ordinary place-overlap analysis. Read/read
+sharing and disjoint projections are admitted; overlapping mutable access,
+unconsumed tasks, affine referents and missing origins are rejected in semantics.
+The concurrent profile and target thread capability are required. The call is
+classified as a join failure-propagation boundary, not a recoverable conversion
+of worker failures into its integer creation status.
+
+This internal operation is not yet exposed through a public source wrapper.
+Concrete pack-element origin retention, full invocation-loan endpoints,
 verified MIR child accesses/join-all cleanup, and production adapters remain
-implementation work. The public owned-thread boundary above is unchanged.
+implementation work. HIR preparation alone is not executable acceptance.
+The public owned-thread boundary above is unchanged.
+
+Composed borrowed locals may reborrow exact reference-formal entry permissions
+without treating those permissions as competing loans. This applies to ordinary
+constructor/function borrow mappings, not just scoped work. Only the exact
+mapped reference entry is exempted when checking the new loan; unrelated local
+children remain conflicts, and the composed dependencies continue to prohibit
+parent mutation while the carrier is live. A primary origin from a mutable
+reference formal retains that exact entry as its parent; independent fields
+retain their own origins instead of being folded under that parent.
 
 ## Temporary Value Call Capabilities
 

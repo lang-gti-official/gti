@@ -1120,7 +1120,8 @@ struct MirTemporaryCarrierDependency {
 [[nodiscard]] MirTemporaryCarrierDependency
 findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place);
 
-// Includes the loan itself and both physical-parent and stored-owner edges.
+// Includes the loan itself, physical-parent/stored-owner edges, and the
+// independent input authorities retained by composed stored dependencies.
 [[nodiscard]] bool mirLoanRetainsDependency(const MirBody &body, MirLoanId loan,
                                             MirLoanId dependency);
 

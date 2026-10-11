@@ -266,6 +266,7 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
     return barrier("exclusive restoring ownership transfer; mutable place "
                    "facts invalidated");
   case IntrinsicKind::ThreadSpawn:
+  case IntrinsicKind::ThreadScope:
   case IntrinsicKind::ThreadJoin:
   case IntrinsicKind::ThreadAutoJoin:
   case IntrinsicKind::AtomicLoad:
@@ -502,6 +503,7 @@ optimizationCoverage(SynchronizationOperationKind kind) {
   case SynchronizationOperationKind::None:
     return inapplicable("no explicit synchronization");
   case SynchronizationOperationKind::ThreadSpawn:
+  case SynchronizationOperationKind::ThreadScope:
   case SynchronizationOperationKind::ThreadJoin:
   case SynchronizationOperationKind::AtomicLoad:
   case SynchronizationOperationKind::AtomicStore:

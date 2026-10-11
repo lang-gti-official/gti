@@ -32,6 +32,9 @@ bool thread_result_joinable<Result>(gti_internal::thread_result_handle<Result>& 
 int32_t thread_result_spawn<Result, Task>(mut gti_internal::thread_result_handle<Result>& handle, Task task);
 expected<Result, std::thread_errc> thread_result_join<Result>(mut gti_internal::thread_result_handle<Result>& handle);
 void thread_result_auto_join<Result>(mut gti_internal::thread_result_handle<Result>& handle);
+// Internal join-all operation. Public scoped invocation is not exposed until
+// its complete HIR/MIR ownership and failure contract is verified.
+int32_t thread_scope<Tasks...>(Tasks... tasks);
 }
 
 namespace std {
