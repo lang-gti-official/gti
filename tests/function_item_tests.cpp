@@ -713,6 +713,16 @@ void testPackInvocationContracts() {
 int invoke_with<Function, Args...>(Function function, Args... args) { return function(args...); }
 )";
   for (const std::string declaration :
+       {"void work() {} void work(int value) {}", "unsafe void work() {}"}) {
+    const auto invalid = analyze("invalid-item-in-pack.gti", declaration + R"(
+void accept<Values...>(Values... values) {}
+int main() { accept(1, work); return 0; }
+)");
+    expect(!invalid.canGenerateCode() && hasCode(invalid, "GTI-S2090") &&
+               !hasCode(invalid, "GTI-B0001"),
+           "an unconstrained pack does not guess an overload or erase unsafe");
+  }
+  for (const std::string declaration :
        {"int work(int a, int b) { return a + b; }",
         "bool work(int a) { return true; }",
         "int work(mut int& a) { a++; return a; }",

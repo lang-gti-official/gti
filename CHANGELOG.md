@@ -21,6 +21,9 @@ for what minor and patch releases mean.
 - `std::transfer_function` retains an explicit transfer requirement through
   read-only, mutable, and consuming owning callable erasure. Ordinary local
   function wrappers do not acquire permission to cross threads implicitly.
+- Unambiguous free-function names can fill generic parameter-pack elements,
+  including later elements after ordinary values; deduction retains each
+  function's exact identity rather than indexing an unexpanded formal list.
 
 ## 0.402.8 — Field reads of temporaries inside `&&`, `||` and conditionals
 
