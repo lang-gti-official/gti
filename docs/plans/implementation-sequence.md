@@ -88,9 +88,11 @@ prerequisites and measured clients; they are not added to this implementation.
 **State:** the public APIs and production execution paths are implemented in
 PR #20 for 0.404.0, reconciled with reflected JSON 0.403.0. All 51 combined-head
 integration gates pass, including native/sanitizer, editor, installed-consumer
-and complete corpus checks. Clean-head runtime, allocation, code-size and
-build-memory evidence passes; the final reconciled-source full suite remains
-in progress. See [the acceptance record](../architecture/verification.md#scoped-concurrency-04040).
+and complete corpus checks. The final reconciled-source full sweep passes all
+648 remote checks plus the separate local debugger check. Clean-head runtime,
+allocation, code-size and build-memory evidence passes. The final documentation
+delta is checked against that exact tested source before publication. See
+[the acceptance record](../architecture/verification.md#scoped-concurrency-04040).
 The owner requested both scoped parallel borrowing and shared-state/callable
 composition. This is one delivery goal, not completion of either item through
 its prerequisite alone.

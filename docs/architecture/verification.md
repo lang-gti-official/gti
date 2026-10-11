@@ -16,7 +16,19 @@ source passes local `source_debug_lldb`; the noninteractive remote Mac cannot
 grant debugger attachment permission. The previous clean `41b2889c` full sweep
 (`run-f9d393d12e8a40dca39465e0bec8391e`) passed all 647 selected tests plus
 the separate local debugger check. The reconciled-source full completion sweep
-`run-f23d1f8deb0b42f0a5843bdb24b52cf6` remains in progress.
+`run-f23d1f8deb0b42f0a5843bdb24b52cf6` passes all 648 selected CTests, with no
+failures or skips, plus its all-target build, five scoped O3 fixtures and
+relocated installed O0/O3 consumers. Only `source_debug_lldb` is excluded from
+the remote selection; it passes locally on the same source. Full-suite test
+execution takes 1335.13 seconds, excluding the shared-window wait. The final
+acceptance-documentation commits change no compiler, runtime, library, fixture,
+example or benchmark source from this tested commit; the publication checks
+enforce that exact delta and recheck focused ownership/native controls.
+
+The combined 138-example LoweredProgram census measures 71225 declarations,
+12967 bodies and 7073 generated items; the MIR census measures 12956 bodies.
+The reflected-JSON addition and callable-interface inventories were measured
+together rather than accepted by resolving numerical conflicts arbitrarily.
 
 Clean-head Linux run `run-007dae38ae1241e49acf4231ecda9bf7` reports exact compiler
 and source identity and conclusive timing quality. GCC 14/C++23 O3 on an
@@ -155,8 +167,8 @@ not evidence of final integration or full release acceptance:
   and no existing body count changes. The baseline records those measured
   additions rather than weakening the inventory check.
 
-The outstanding gates in these historical checkpoints are superseded by the
-reconciled evidence above; the final full completion sweep is still pending.
+The outstanding gates in these historical checkpoints are closed by the
+reconciled acceptance evidence above.
 The native group creates OS threads. These results do not establish cheap job
 dispatch or imply a persistent worker pool.
 
