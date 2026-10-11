@@ -1240,6 +1240,16 @@ dependency. A cleanup-bound construction from one shared input retains that
 input's ancestry while recording the full result map. Multi-input composition
 does not invent a common parent. Independent mutations reject missing or
 collapsed result paths and premature release of the guarded pair.
+When an additional concrete dependency originates through an independent
+reference-formal entry or an explicit loan-rooted place, it retains that
+input's authority separately from the primary parent. Canonicalizing a source
+place does not erase the formal's entry permission. Body verification checks
+the secondary input's liveness, containment and access at publication, retains
+it in the lifetime/ancestry graph, rejects cycles and child-before-input release,
+and continues to check every protected place for conflicting access. It does
+not require unrelated inputs to fit inside the first parent's storage. The
+ordinary primary reborrow and its suspension/reactivation remain represented;
+escaping publications keep their separate transfer contract.
 Returning the carrier or its exact stored referent publishes a fresh escaping
 `Return` loan through one `Borrow` operand that names that entry loan. A carrier
 return also names the exact SSA value loaded or moved from one of that loan's

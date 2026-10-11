@@ -163,6 +163,24 @@ admission: actual invocation origins/endpoints, HIR/MIR scope records and their
 verification, production adapters, the public source wrapper, scoped examples,
 editor behavior and whole-goal performance/acceptance gates remain unfinished.
 
+The next checkpoint admits identity-bound private scope calls through semantics
+and HIR, pairing each consumed task's resolved borrowed field paths with its
+actual body-local origins and checking sibling overlap. This is still not a
+public executable scope. Ordinary named and nested carriers constructed from
+independent reference parameters now retain every input authority in MIR instead
+of incorrectly requiring the second input to lie within the first. The same
+ordinary-source tests reject parent mutation and live overlapping children;
+verifier mutations reject collapsed origins and early release of a secondary
+input. Release snapshot
+`31a0353b62cf5b57bc3431fd3c8a257440ad3f4b01d57aa0133cd8b1c13965ca`
+passes scoped semantic/HIR shapes, ordinary carrier MIR including parent
+reactivation, managed-thread and mutex controls, and the scoped runtime gate.
+Snapshot `88b2f6ef86c39db9738e354193183077e051550832cee27999a39dd7f6d1e6e3`
+also passes borrowing composition and both cleanup-bound borrowing gates; its
+broad ownership suite remains queued in the remote shared window. Full MIR
+scope lowering/verification, production adapters, public generic forwarding,
+examples, editor and final runtime/performance acceptance remain required.
+
 ## Compile-Time Reflection Delivered (2026-10-11)
 
 The owner accepted [`reflection.md`](reflection.md) with its decisions. All
