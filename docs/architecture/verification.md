@@ -1,5 +1,49 @@
 # Compiler Verification
 
+## Expected call results replacing bindings (0.405.1)
+
+- **Defects.** Two families of verified programs failed in the C++ backend:
+  - `r = make(7);` replacing an `expected<point, errc>` binding, where `point`
+    is a cleanup-free class and `errc` an integral enum, from a source
+    function or a lambda. Without a default constructor for `point` this
+    reported `GTI-B0001` ("value-initialization would invent success default
+    construction"); with one, the emitted assignment into the binding's
+    lifetime slot did not compile. A scalar error alternative already built.
+  - A callable value invocation returning an owning `expected<noisy, E>`,
+    where `noisy` has a destructor, used anywhere except to initialize a new
+    binding: replacing a binding, a by-value argument, a state test, a checked
+    extraction or a discard all reported `GTI-B0001`.
+- **Causes and rules.**
+  - The cleanup-free `Expected<Class, E>` assignment consumer of
+    `classSsaLifetimeSlot` requires MIR's paired `CleanupBeforeAssign` to be
+    passive. `passiveReplacementRecipe` accepted scalar nodes but not integral
+    enums, although `cleanupFreeExpectedClassAlternatives` admits them as the
+    same lifecycle-free storage. The recipe now accepts an integral enum node,
+    so the call result stages in its representation-only slot and
+    move-assigns into the binding. The copy, move and payload replacement
+    fusions share that pair proof; they also reported `GTI-B0001` with an
+    enum error and now build.
+  - `valueRootedPlacementCallResultSlot` and
+    `ownedExpectedClassExtractionProducer` admitted only static source-call
+    producers. A callable value invocation now qualifies when its exact lambda
+    instance matches the result and parameter types and its Invoke success
+    edge activates the result under callable propagation. The invocation
+    emitter constructs that value-rooted slot in either ABI, and every
+    existing slot consumer and MIR's value drop apply unchanged.
+- **Regression tests.** `expected_call_reassignment_runtime` builds a new
+  fixture under C++20 and C++23 at O0, O1 and O3, plus the no-elide and
+  ASan/UBSan modes. It replaces `expected<Class, errc>` bindings from source
+  functions, closure literals, a capturing closure and callable parameters,
+  through success and both error alternatives, inside a loop, in a
+  failure-propagating caller, and by copy, move, `Unexpected` and payload.
+  Owning bindings are replaced by source function and closure results; each
+  replaced value is retired exactly once, also when the replacing call raises
+  before publishing.
+- **Out of scope.** Assigning a conditional whose arms are `expected` call
+  results to an existing binding, as in `r = ok ? make(1) : make(2);`, still
+  fails in the native compiler for scalar and enum errors alike; initializing
+  a new binding from it builds.
+
 ## Scoped concurrency (0.405.0)
 
 ### Reconciled acceptance evidence

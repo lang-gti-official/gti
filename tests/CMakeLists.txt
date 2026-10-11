@@ -909,6 +909,11 @@ add_test(NAME expected_lambda_class_argument_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_lambda_class_argument_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_lambda_class_argument_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_call_reassignment_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_call_reassignment_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_call_reassignment_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_constructor_return_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_constructor_return_runtime_test.py"
