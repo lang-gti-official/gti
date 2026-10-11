@@ -1366,7 +1366,20 @@ requires exact target, owner, result, parameter, and operand metadata; one
 single-field projection; a trivial scalar copy load; and no active cleanup,
 lifecycle, borrowed-state, or drop obligation. Additional consumers, nested or
 non-field projections, cleanup-owning temporaries, and incoherent type rows
-reject body emission rather than falling back to native temporary behavior.
+reject this route rather than falling back to native temporary behavior.
+A cleanup-owning class result keeps MIR's value-rooted slot and its
+full-expression Drop, and may instead be read through field views of that
+slot. That covers `make_tracked(7).number`, nested fields, and a field lent to
+one member call as in `make_named().text.size()`. A view is a pure field
+projection of the result's value root with exact field rows. It carries no
+loan or drop and is touched only by copying `Load`s or by read-only borrow
+stages consumed by one call. It declares no local and spells
+`slot.get().field`, so a field class without a default constructor is never
+default-constructed. MIR's verified initialization bounds every read, and the
+result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.
+An owning Expected temporary's payload whose fields alone are read moves into
+the payload's own result slot on the checked extraction's success edge, then is
+read the same way, as in `make_named(true).value().text.size()`.
 Reading a trivial scalar does not transfer its owner: fresh passive immovable
 results use this same proof and storage without requiring a copy or move
 constructor. They cannot carry borrowed state or active drop state through

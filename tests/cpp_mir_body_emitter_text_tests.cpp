@@ -3628,6 +3628,81 @@ int main() { return observe(true) + observe(false) - 13; }
          "slot");
 }
 
+// A field of an owning class temporary is a view of the result's own
+// value-rooted lifetime slot, read in place before MIR's full-expression Drop
+// destroys the temporary. An owning Expected temporary's payload moves into
+// its own result slot and is read the same way. The view declares no local:
+// a field class without a default constructor could not be declared.
+// (Regression: these reported GTI-B0001.)
+void testOwningTemporaryFieldView() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-owning-temporary-field-view.gti", R"(
+struct inner_value {
+  int32_t code;
+  inner_value(int32_t code) : code(code) {}
+};
+
+class tracked {
+public:
+  inner_value inner;
+  tracked(int32_t code) : inner(inner_value(code)) {}
+  ~tracked() {}
+};
+
+tracked make_tracked(int32_t code) { return tracked(code); }
+
+expected<tracked, int32_t> make_result(bool ok) {
+  if (ok) { return tracked(7); }
+  return unexpected(int32_t(3));
+}
+
+int32_t read() {
+  return make_tracked(7).inner.code + make_result(true).value().inner.code;
+}
+
+int main() { return read() - 14; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the owning temporary field view fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // Each view reads one declared owning slot that a normal-path Drop retires.
+  const std::string read = ".get().inner.code;";
+  std::size_t views = 0;
+  std::string moved;
+  for (std::size_t at = text.find(read); at != std::string::npos;
+       at = text.find(read, at + read.size())) {
+    const std::size_t slotStart = text.rfind("__gti_mir_p_", at);
+    const std::string slot = text.substr(slotStart, at - slotStart);
+    if (text.find("mir_lifetime_slot<::__gti_program::tracked> " + slot +
+                  ";") == std::string::npos ||
+        text.find(slot + ".destroy();\n") == std::string::npos)
+      continue;
+    ++views;
+    if (text.find("mir_expected_value_move_v1(__gti_mir_p_") <
+            text.find(slot + read) &&
+        text.find(", &" + slot + ");") != std::string::npos)
+      moved = slot;
+  }
+  expect(views == 2,
+         "both field reads should view a declared owning slot that MIR's "
+         "Drop retires: " +
+             std::to_string(views) + " views");
+  expect(!moved.empty(),
+         "the owning Expected payload should move into its own result slot "
+         "before its field is read");
+  expect(text.find("::__gti_program::inner_value __gti_mir_p_") ==
+             std::string::npos,
+         "a field view should declare no local of its own");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -3809,6 +3884,7 @@ constexpr NamedTest kTests[] = {
      testExpectedClassArgumentReturnedConstruction},
     {"testExpectedTemporaryObservationSlot",
      testExpectedTemporaryObservationSlot},
+    {"testOwningTemporaryFieldView", testOwningTemporaryFieldView},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",

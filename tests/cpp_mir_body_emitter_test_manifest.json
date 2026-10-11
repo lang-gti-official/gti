@@ -326,6 +326,10 @@
       "suite": "text"
     },
     {
+      "name": "testOwningTemporaryFieldView",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },

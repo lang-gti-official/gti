@@ -19466,6 +19466,89 @@ directExpectedClassExtractionForReceiver(const MirProgram &program,
 // Expected shell remains alive until its ordinary MIR Drop, while the
 // successful Invoke edge arms the payload drop and the following Initialize
 // reparents that identity to the binding.
+// An owned class result read through a field while it is still live. The view
+// is a pure field projection of the result's value root: it owns no storage,
+// carries no loan or drop, and is only copied out by Loads or lent read-only
+// to one call through a borrow stage, if touched at all. MIR's verified
+// initialization and the result's own Drop bound every read.
+[[nodiscard]] bool ownedResultFieldViewShape(const MirBody &body,
+                                             const MirValue &value,
+                                             const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Value || place.value != value.id ||
+      place.projections.empty() ||
+      !std::all_of(place.projections.begin(), place.projections.end(),
+                   [](const MirPlaceProjection &projection) {
+                     return projection.kind == MirProjectionKind::Field;
+                   }) ||
+      std::any_of(
+          body.loans.begin(), body.loans.end(),
+          [&](const MirLoan &loan) { return loan.source == place.id; }) ||
+      std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const MirDropObligation &drop) {
+                    return drop.place == place.id;
+                  }))
+    return false;
+  for (const MirBlock &block : body.blocks) {
+    if (block.terminator.value && block.terminator.value->place == place.id)
+      return false;
+    for (const MirInstruction &instruction : block.instructions) {
+      const bool touched =
+          (instruction.destination && *instruction.destination == place.id) ||
+          (instruction.successResultDestination &&
+           *instruction.successResultDestination == place.id) ||
+          (instruction.receiver && instruction.receiver->place == place.id) ||
+          std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                      [&](const MirOperand &operand) {
+                        return operand.place == place.id;
+                      });
+      if (!touched)
+        continue;
+      // A read-only borrow stage hands the field to one call that executes
+      // while the result is live; the call spells the place directly.
+      if (instruction.kind == MirInstructionKind::CallInput &&
+          instruction.result && !instruction.destination &&
+          !instruction.receiver && instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::BorrowRead &&
+          instruction.operands.front().place == place.id &&
+          instruction.operands.front().loan == 0 && !instruction.loan &&
+          instruction.lifecycle.empty() &&
+          instruction.localFailureSites.empty() &&
+          instruction.definedFailure.empty())
+        continue;
+      if (instruction.kind != MirInstructionKind::Load ||
+          instruction.destination || instruction.receiver ||
+          instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != MirOperandKind::Copy ||
+          instruction.operands.front().place != place.id ||
+          instruction.info.type != place.type ||
+          !instruction.lifecycle.empty() ||
+          !instruction.localFailureSites.empty() ||
+          !instruction.definedFailure.empty())
+        return false;
+    }
+  }
+  // A view no instruction touches is a pure prefix record of a longer view.
+  return true;
+}
+
+// The value's uses are exactly its result slot and field views of it.
+[[nodiscard]] bool ownedResultReadOnlyThroughFieldViews(const MirBody &body,
+                                                        const MirValue &value,
+                                                        const MirPlace &slot) {
+  std::size_t views = 0;
+  for (const MirValueUse &use : body.usesOf(value.id)) {
+    if (use.kind != MirValueUseKind::PlaceRoot)
+      return false;
+    if (use.place == slot.id)
+      continue;
+    const MirPlace *view = body.findPlace(use.place);
+    if (view == nullptr || !ownedResultFieldViewShape(body, value, *view))
+      return false;
+    ++views;
+  }
+  return views != 0;
+}
+
 [[nodiscard]] const MirPlace *
 expectedOwnedClassExtractionDestination(const MirBody &body,
                                         MirValueId valueId) {
@@ -19482,6 +19565,16 @@ expectedOwnedClassExtractionDestination(const MirBody &body,
   if (temporary.producer == call) {
     return temporary.slot;
   }
+
+  // A payload read only through field views stays in its own result slot,
+  // which the extraction's success edge activates and MIR's Drop retires.
+  if (const MirPlace *own = body.findPlace(valueDrop->place);
+      own != nullptr && own->root == MirPlaceRootKind::Value &&
+      own->value == valueId && own->projections.empty() &&
+      own->type == value->info.type &&
+      invokeSuccessActivates(body, *call, valueDrop->id) &&
+      ownedResultReadOnlyThroughFieldViews(body, *value, *own))
+    return own;
 
   // Consuming an error may feed an Unexpected publication rather than a
   // named binding. That wrapper's exact activation/transfer proof owns the
@@ -20821,6 +20914,23 @@ constructionPublishesResult(const MirProgram &program, const MirBody &body,
   return consumer;
 }
 
+[[nodiscard]] bool
+exactFieldProjectionRows(const MirProgram &program,
+                         const CppMirBodyEmissionMap &representations,
+                         SemanticType currentType,
+                         const std::vector<MirPlaceProjection> &projections,
+                         std::size_t firstProjection,
+                         const SemanticType &resultType, bool referenceFields);
+
+// The view's field rows must also be exact representation rows.
+[[nodiscard]] bool ownedResultFieldView(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const MirBody &body, const MirValue &value, const MirPlace &place) {
+  return ownedResultFieldViewShape(body, value, place) &&
+         exactFieldProjectionRows(program, representations, value.info.type,
+                                  place.projections, 0, place.type, false);
+}
+
 struct ValueRootedClassCallResultSlot {
   const MirValue *value = nullptr;
   const MirInstruction *producer = nullptr;
@@ -21002,13 +21112,20 @@ valueRootedClassCallResultSlot(const MirProgram &program,
            activation.source == 0 && activation.target == drop->id &&
            !activation.conditional && !activation.failureCleanup;
   }();
+  // A checked extraction moving an owned payload out of an owning Expected
+  // temporary activates the payload's own result slot on its success edge.
+  const bool ownedExtractionProducer =
+      producer != nullptr && drop != nullptr &&
+      ownedExpectedClassExtractionProducer(body, valueId).call == producer &&
+      producer->successResultDrop == drop->id &&
+      invokeSuccessActivates(body, *producer, drop->id);
   if (value == nullptr || value->info.type.kind != SemanticType::Class ||
       value->info.category != ValueCategory::Value ||
       value->info.traits.drop != DropKind::Lexical || producer == nullptr ||
       !producer->result || *producer->result != valueId ||
       producer->info.type != value->info.type ||
       (!transformedCallProducer && !plainCallProducer &&
-       !defaultConstructionProducer) ||
+       !defaultConstructionProducer && !ownedExtractionProducer) ||
       drop == nullptr || drop->kind != MirDropObligationKind::Value ||
       drop->initiallyActive || drop->dropType.type != value->info.type ||
       slot == nullptr || slot->root != MirPlaceRootKind::Value ||
@@ -21028,8 +21145,20 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       std::count_if(uses.begin(), uses.end(), [&](const MirValueUse &use) {
         return use.kind == MirValueUseKind::PlaceRoot && use.place == slot->id;
       });
-  if (rootUses != 1 || uses.size() != executableUses.size() + 1 ||
-      executableUses.size() > 1) {
+  const std::size_t fieldViews =
+      std::count_if(uses.begin(), uses.end(), [&](const MirValueUse &use) {
+        const MirPlace *view =
+            use.kind == MirValueUseKind::PlaceRoot && use.place != slot->id
+                ? body.findPlace(use.place)
+                : nullptr;
+        return view != nullptr && ownedResultFieldView(program, representations,
+                                                       body, *value, *view);
+      });
+  if (rootUses != 1 || uses.size() != executableUses.size() + 1 + fieldViews ||
+      executableUses.size() > 1 ||
+      (fieldViews != 0 && !executableUses.empty()) ||
+      // Other extraction destinations keep their own publication routes.
+      (ownedExtractionProducer && fieldViews == 0)) {
     return {};
   }
 
@@ -21193,7 +21322,7 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       if (event.source != drop->id && event.target != drop->id) {
         continue;
       }
-      if (!transformedCallProducer ||
+      if (!(transformedCallProducer || ownedExtractionProducer) ||
           block.terminator.kind != MirTerminatorKind::Invoke ||
           block.terminator.invokeInstruction != producer->id ||
           event.kind != MirLifecycleEventKind::Initialize ||
@@ -21221,6 +21350,23 @@ valueRootedClassCallResultSlot(const MirProgram &program,
                                               .destroy = destroy,
                                               .slot = slot,
                                               .drop = drop};
+}
+
+// The owned result's slot when this place is one of its field views.
+[[nodiscard]] const MirPlace *
+ownedResultFieldViewSlot(const MirProgram &program,
+                         const CppMirBodyEmissionMap &representations,
+                         const MirBody &body, const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Value || place.projections.empty())
+    return nullptr;
+  const ValueRootedClassCallResultSlot owned = valueRootedClassCallResultSlot(
+      program, representations, body, place.value);
+  return owned && owned.consumingCall == nullptr && owned.consumer == nullptr &&
+                 owned.slot != &place &&
+                 ownedResultFieldView(program, representations, body,
+                                      *owned.value, place)
+             ? owned.slot
+             : nullptr;
 }
 
 // A moved callable receiver is materialized at its Move instruction, not at
@@ -31368,6 +31514,11 @@ public:
       if (expectedClassExtractionFieldPlace(facts.body, place)) {
         continue;
       }
+      // A field view spells through its owned result's slot.
+      if (ownedResultFieldViewSlot(program, representations, facts.body,
+                                   place) != nullptr) {
+        continue;
+      }
       if (place.root == MirPlaceRootKind::Value &&
           expectedScalarExtractionPlace(facts.body, place.value) == &place) {
         continue;
@@ -40881,6 +41032,7 @@ private:
           stagedExtraction.producer == &instruction) {
         ownedExtraction = stagedExtraction.slot;
       }
+
       if (ownedExtraction != nullptr) {
         const MirPlace *receiverSlot = expectedOwnedClassExtractionReceiverSlot(
             facts.body, instruction.receiver->value);
@@ -41067,6 +41219,7 @@ private:
           stagedExtraction.producer == &instruction) {
         ownedExtraction = stagedExtraction.slot;
       }
+
       if (ownedExtraction != nullptr) {
         const MirPlace *receiverSlot = expectedOwnedClassExtractionReceiverSlot(
             facts.body, instruction.receiver->value);
@@ -43788,6 +43941,14 @@ private:
       emitOperand({.kind = MirOperandKind::Value,
                    .value = place.value,
                    .type = place.type});
+      return;
+    }
+    if (const MirPlace *owned = ownedResultFieldViewSlot(
+            program, representations, facts.body, place)) {
+      // A field view over the owned result's live value-rooted slot.
+      output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *owned)
+             << ".get()";
+      emitFieldProjectionChain(owned->type, place.projections, 0);
       return;
     }
     if (place.root == MirPlaceRootKind::Value) {
@@ -51236,6 +51397,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     if (borrowedPayloadPlace(program_, body, place) && typeRow(place.type))
       continue;
+    if (ownedResultFieldViewSlot(program_, representations_, body, place) !=
+            nullptr &&
+        typeRow(place.type))
+      continue;
     if (!place.projections.empty() || !typeRow(place.type) ||
         // A class-typed local declares value-initialized, so its row must
         // carry the boundary proof (a deleted default constructor cannot
@@ -51704,7 +51869,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                         return projection.kind == MirProjectionKind::Field ||
                                projection.kind ==
                                    MirProjectionKind::Dereference;
-                      })));
+                      })) ||
+         // A field view of an owned result lives in that result's slot.
+         ownedResultFieldViewSlot(program_, representations_, body, *place) !=
+             nullptr);
     if (value == nullptr || stage == nullptr ||
         stage->kind != MirInstructionKind::CallInput || place == nullptr ||
         !stablyAddressedPlace ||
@@ -54683,6 +54851,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               stagedExtraction.producer == &instruction) {
             ownedExtraction = stagedExtraction.slot;
           }
+
           const MirPlace *viewPlace =
               receiverBorrow.kind == MirOperandKind::BorrowRead &&
                       receiverBorrow.place != 0
