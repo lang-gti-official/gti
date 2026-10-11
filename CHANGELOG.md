@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.398.4 — Raw-pointer audit tracks class static fields
+
+- `--raw-pointer-audit` now follows raw addresses stored in class static
+  fields, as it already did for namespace globals. Storing `&local` in
+  `Holder::slot`, directly, through a setter function, or from inside one of
+  `Holder`'s own static members, and reading it after the local's scope ends
+  now reports GTI-S2101 or GTI-S2102. Previously such accesses were never
+  reported. Valid uses stay silent, and programs without raw-pointer static
+  fields report exactly what they did before.
+
 ## 0.398.3 — Generic callees declared after their caller
 
 - A generic function that returns a moved by-value parameter, such as an
