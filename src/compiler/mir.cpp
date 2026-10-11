@@ -388,6 +388,47 @@ MirBody *findMirBody(MirProgram &program, MirBodyAddress address) {
   return const_cast<MirBody *>(findMirBody(std::as_const(program), address));
 }
 
+const MirConstructorInitializer *
+mirRecordPublishedConstructorInitializer(const MirProgram &program,
+                                         const MirBody &body, std::size_t owner,
+                                         const MirInstruction &instruction) {
+  if (body.kind != MirBodyKind::Constructor || instruction.tombstone ||
+      instruction.hirValue == 0 || !instruction.result) {
+    return nullptr;
+  }
+  const MirConstructorInstance *constructor =
+      program.findConstructorInstance(owner);
+  if (constructor == nullptr || constructor->id != owner) {
+    return nullptr;
+  }
+  for (std::size_t index = 0; index < constructor->initializers.size();
+       ++index) {
+    const MirConstructorInitializer &initializer =
+        constructor->initializers[index];
+    if (initializer.kind != ConstructorInitializerTargetKind::Field ||
+        initializer.field == 0 || initializer.arguments.size() != 1 ||
+        initializer.arguments.front() != instruction.hirValue ||
+        initializer.storesReference) {
+      continue;
+    }
+    // One source expression can produce several MIR records. An explicit
+    // Initialize owns the field write for the entire source initializer, so
+    // no metadata-only sibling record publishes it a second time.
+    const bool staged = std::any_of(
+        body.blocks.begin(), body.blocks.end(), [&](const MirBlock &block) {
+          return std::any_of(
+              block.instructions.begin(), block.instructions.end(),
+              [&](const MirInstruction &candidate) {
+                return !candidate.tombstone &&
+                       candidate.kind == MirInstructionKind::Initialize &&
+                       candidate.constructorInitializer == index + 1;
+              });
+        });
+    return staged ? nullptr : &initializer;
+  }
+  return nullptr;
+}
+
 bool mirTransformRecordLess(const MirTransformRecord &left,
                             const MirTransformRecord &right) {
   const auto key = [](const MirTransformRecord &record) {
@@ -4891,6 +4932,13 @@ mir_detail::rewriteVerifiedMirDeadInstruction(MirProgram &program,
       target->hostedStartupOperation == 0 && !target->loan &&
       !target->programConstantSubstitution;
   if (!neutral) {
+    return std::nullopt;
+  }
+  // The body records no use, but the constructor record still publishes a
+  // field from this value: removing it would leave the backend writing the
+  // field from an undefined value.
+  if (mirRecordPublishedConstructorInitializer(candidate, *body, address.owner,
+                                               *target) != nullptr) {
     return std::nullopt;
   }
 

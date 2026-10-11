@@ -542,6 +542,18 @@ therefore execute the ordinary MIR move and initialization without falling
 back to a separate AST interpretation of movement. Active-cleanup arrays still
 use their rollback-armed owning stages.
 
+Not every field initializer has an explicit stage. Borrowed-state scalar
+fields such as `std::string_view`, and other initializers outside the staged
+families, are published by the constructor record alone: the record's
+initializer names its single HIR argument, the body defines that argument's
+MIR value, and the backend writes the field from it with no `Initialize`
+instruction. `mirRecordPublishedConstructorInitializer` identifies these
+record-published values, and an explicit `Initialize` carrying the same
+initializer index suppresses the record so one source initializer never
+publishes twice. Such a value is live for the record even though the body
+records no use of it; the verified dead-instruction rewrite refuses to remove
+it, and the C++ emitter publishes from the same query.
+
 Program v80/body v68 also serialize the resolved caller literal on each private
 source-location intrinsic. MIR verification requires the exact zero-argument,
 effect-free call shape, matching scalar/text result, and attached literal;
