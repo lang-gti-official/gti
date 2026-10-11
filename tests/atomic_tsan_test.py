@@ -45,7 +45,7 @@ def main() -> int:
         pathlib.Path(sys.argv[3]).resolve(),
         pathlib.Path(sys.argv[4]).resolve(),
     ]
-    native_compiler = pathlib.Path(sys.argv[5]).resolve()
+    native_compiler = pathlib.Path(sys.argv[5]).absolute()
 
     with tempfile.TemporaryDirectory(prefix="gti-atomic-tsan-") as scratch:
         root = pathlib.Path(scratch)

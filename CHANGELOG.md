@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.403.2 — Replacing `expected` bindings with call results
+## 0.404.1 — Replacing `expected` bindings with call results
 
 - Assigning a fresh `expected<T, E>` call result to an existing binding, as in
   `r = make(7);`, now builds when `T` is a struct or class without cleanup and
@@ -25,6 +25,19 @@ for what minor and patch releases mean.
   or `error()`, or is discarded. Each replaced or temporary value is destroyed
   exactly once. These programs previously stopped with `GTI-B0001`; only
   initializing a new binding from such a call built.
+
+## 0.404.0 — Mutable constexpr value builders
+
+- Pure constexpr helpers may return `void`, edit checked mutable references,
+  and forward owner-bound mutable reference results. Mutable methods and
+  operators, and constructor bodies after explicit field initialization, use
+  the same verified-MIR execution as runtime programs.
+- Mutable `std::array` accessors and `fill` are constexpr-capable. Existing
+  reflection can drive compile-time field edits; it gains no new metadata or
+  expansion rules. See `examples/142-constexpr-builders.gti`.
+- Ordinary access, ownership and loan rules, checked arithmetic and resource
+  limits still apply. This does not admit allocation, stored references,
+  active cleanup or host I/O during constant execution.
 
 ## 0.403.1 — Conditionals of classes with destructors
 
