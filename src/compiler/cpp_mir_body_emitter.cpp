@@ -48520,6 +48520,38 @@ cppMirConstructedFieldInitializerBindings(
   return bindings;
 }
 
+namespace {
+// An EndBorrow that retires an entry loan carried by one of the constructor's
+// own formal parameters. The loan has no body-local producer and never
+// escapes, the record carries no result, operand, lifecycle, failure or
+// boundary metadata, and the C++ text spells it as a comment only.
+[[nodiscard]] bool
+formalEntryLoanEndInstruction(const MirConstructorInstance &constructor,
+                              const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::EndBorrow || !instruction.loan ||
+      instruction.result || instruction.destination || instruction.receiver ||
+      !instruction.operands.empty() || instruction.ownership ||
+      !instruction.lifecycle.empty() ||
+      !instruction.localFailureSites.empty() ||
+      !instruction.definedFailure.empty() ||
+      instruction.fullExpressionEnd != 0 ||
+      instruction.cleanupBoundaryEnd != 0) {
+    return false;
+  }
+  const MirLoan *loan = constructor.body.findLoan(*instruction.loan);
+  if (loan == nullptr || !loan->entry || loan->escapes ||
+      loan->producedBy != 0) {
+    return false;
+  }
+  const MirPlace *source = constructor.body.findPlace(loan->source);
+  return source != nullptr && source->root == MirPlaceRootKind::Binding &&
+         source->projections.empty() &&
+         std::find(constructor.parameterBindings.begin(),
+                   constructor.parameterBindings.end(),
+                   source->binding) != constructor.parameterBindings.end();
+}
+} // namespace
+
 std::optional<std::vector<CppMirOwnedParameterFieldBinding>>
 cppMirOwnedParameterFieldBindings(const MirProgram &program,
                                   const MirConstructorInstance &constructor) {
@@ -49007,7 +49039,15 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
                      instruction.loan == publication->operands.front().loan &&
                      instruction.hirValue == publication->hirValue));
           });
-      if (!named && !metadataBoundary && !nestedBorrowPublication) {
+      // A borrowed-carrier parameter (a text view, for example) enters the
+      // body already carrying its caller's dependency, and the prologue ends
+      // that entry loan after the parameter's move. Ending a verified
+      // dependency has no runtime effect and reorders nothing, so the
+      // metadata record is admitted beside the field moves.
+      const bool formalEntryLoanEnd =
+          formalEntryLoanEndInstruction(constructor, instruction);
+      if (!named && !metadataBoundary && !nestedBorrowPublication &&
+          !formalEntryLoanEnd) {
         return std::nullopt;
       }
     }
