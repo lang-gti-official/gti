@@ -36,6 +36,7 @@ def main():
                        GTI_ENVIRONMENT_LARGE="x" * 16384,
                        ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1")
+    environment["GTI ENVIRONMENT:NAME"] = "non-shell-name"
     environment.pop("GTI_ENVIRONMENT_MISSING_7d4c9f3e", None)
     environment.pop("GTI_DEMO_PROFILE", None)
     with tempfile.TemporaryDirectory(prefix="gti-environment-") as temporary:

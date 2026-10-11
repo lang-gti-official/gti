@@ -14,7 +14,8 @@ enum {
   GTI_ENVIRONMENT_OUT_OF_MEMORY_V1 = 3,
 };
 
-// Counted native bytes; names must be nonempty and contain neither NUL nor '='.
+// Counted native bytes; a nonnull name must cover length readable bytes and the
+// output pointer must be writable. Names are nonempty with neither NUL nor '='.
 // Input is never retained. A successful missing lookup publishes handle zero;
 // a present value (including an empty one) publishes a unique immutable copy.
 // On failure *snapshot is zero. Caller must exclude concurrent native mutation

@@ -22,6 +22,13 @@ new module and runtime symbols from a relocated install without repository
 overrides. Existing process, filesystem and I/O boundaries remain separate
 regression gates.
 
+A local M2 Max O3/C++23 observation of the 100,000-lookup workload had a
+five-run median of 0.0368 seconds (including process startup), a 125,864-byte
+executable, and a separate maximum-RSS observation of 1,785,856 bytes. The
+direct build took about one second. These are informational costs on a shared
+development host, not a quiet-machine speedup claim or a universal latency
+budget. The native allocation assertions above remain deterministic gates.
+
 ## Record-published field initializers under optimization (0.399.1)
 
 - **Defect.** A literal-backed `std::string_view` field default read back
