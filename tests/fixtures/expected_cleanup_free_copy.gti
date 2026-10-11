@@ -36,6 +36,12 @@ expected<point, int32_t> missing_point(int32_t code) {
 
 expected<token, int32_t> make_token(int32_t id) { return token(id); }
 
+// A class error with a scalar success keeps the ordinary Expected carrier.
+expected<int32_t, point> missing_count(int32_t x) {
+  point made = {.x = x, .y = x + 1};
+  return unexpected(made);
+}
+
 expected<sized, int32_t> make_sized(int32_t width) {
   sized made = {.width = width};
   return made;
@@ -84,6 +90,13 @@ int main(int argc, std::vector<std::string> argv) {
   right = make_point(2);
   std::swap(left, right);
   std::println(left.value().x * 10 + right.value().x);
+
+  mut auto counted = missing_count(6);
+  auto counted_copy = counted;
+  auto counted_move = std::move(counted);
+  counted = counted_copy;
+  counted = counted_move;
+  std::println(counted.error().y + counted_copy.error().x);
 
   // A failure while every copy is still live.
   if (argc == 2) {

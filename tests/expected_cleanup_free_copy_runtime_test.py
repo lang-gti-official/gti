@@ -14,7 +14,7 @@ if __name__ == "__main__":
     site = lambda text: next(i + 1 for i, line in enumerate(lines) if text in line)
     overflow_site = site("return value + 1;")
     overflow = "runtime error[GTI-R0001]: integer_overflow in addition\n"
-    output = "17\n11\n8\n12\n7\n15\n21\n"
+    output = "17\n11\n8\n12\n7\n15\n21\n13\n"
     main(names=(fixture.stem,), cases={fixture.stem: [
         ((), (0, output, "")),
         (("fail",),
