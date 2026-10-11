@@ -22,12 +22,14 @@ SELECTED = (
     "cfg_grouped_local",
     "cfg_comma_local",
     "cfg_grouped_condition",
+    # A read through a reference parameter has no failure source, so the
+    # structural failure-freedom proof selects the plain form.
+    "compatibility_reference",
 )
 FAILURE_SELECTED = (
     "compatibility_checked",
     "compatibility_call_target",
     "compatibility_call",
-    "compatibility_reference",
     "entry",
 )
 

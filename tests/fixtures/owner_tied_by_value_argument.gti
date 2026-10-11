@@ -11,6 +11,17 @@ Iterator relay<Iterator>(mut Iterator iterator)
   return std::move(iterator);
 }
 
+// A failure-capable later argument: the copied iterator stays in its
+// caller-owned prepared slot across that argument's Invoke and failure
+// cleanup, then transfers into the consuming call.
+mut int32_t divisor = 1;
+int32_t checked_offset(int32_t value) { return value / divisor; }
+
+Iterator relay_after<Iterator>(mut Iterator iterator, int32_t offset)
+  requires std::input_iterator<Iterator> {
+  return std::move(iterator);
+}
+
 int main() {
   mut std::vector<int32_t> values = std::vector<int32_t>();
   values.push_back(1);
@@ -38,6 +49,9 @@ int main() {
   // The fresh prvalue argument stays on the staged route.
   std::ptrdiff_t direct = std::distance(values.begin(), values.end());
   std::println(direct == std::ptrdiff_t(3) ? "prvalue ok" : "prvalue bad");
+
+  auto delayed = relay_after(cursor, checked_offset(int32_t(0)));
+  std::println(*delayed == 1 ? "relay-after ok" : "relay-after bad");
 
   return 0;
 }

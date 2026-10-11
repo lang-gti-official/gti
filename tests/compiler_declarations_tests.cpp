@@ -2831,8 +2831,7 @@ int main() {
              containsMangledFunction(generated, "", "identity",
                                      "(std::int32_t __gti_mir_arg_0)") &&
              containsMangledFunction(generated, "", "identity",
-                                     "__gti_mir_failure(std::string_view "
-                                     "__gti_mir_arg_0") &&
+                                     "(std::string_view __gti_mir_arg_0)") &&
              containsMangledFunction(generated, "", "unbox", ""),
          "nameable generic functions should lower as GTI-selected concrete "
          "functions");
@@ -3665,10 +3664,11 @@ int main() {
          "HIR and MIR");
 
   const std::string capabilityCpp = gti_test::emitCppText(capabilities);
+  // The failure-free default_value<Rank> publishes its exact default
+  // construction as its plain return expression.
   expect(capabilityCpp.find("operator<(") != std::string::npos &&
              capabilityCpp.find("operator>=(") != std::string::npos &&
-             capabilityCpp.find(
-                 "construct_representation_at(__gti_mir_out_result);") !=
+             capabilityCpp.find("return ::__gti_program::Rank();") !=
                  std::string::npos &&
              capabilityCpp.find("constructor-instance " +
                                 std::to_string(defaultRankConstructor)) !=
@@ -7992,23 +7992,24 @@ int main() {
          "final function type packs should infer, forward, and preserve exact "
          "concrete MIR parameter roles across equivalent pack groupings");
 
+  // None of these forwarding bodies can fail, so each concrete instance
+  // lowers in its plain form.
   const std::string generated = gti_test::emitCppText(valid);
   expect(containsMangledFunction(
              generated, "", "consume",
-             "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
-             "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
+             "(std::int32_t __gti_mir_arg_0, bool __gti_mir_arg_1, "
+             "std::string_view __gti_mir_arg_2"),
          "variadic declarations and forwarding should lower explicitly");
   expect(containsMangledFunction(
              generated, "", "consume",
-             "__gti_mir_failure(std::int32_t __gti_mir_arg_0, "
-             "std::int32_t __gti_mir_arg_1, bool __gti_mir_arg_2, "
-             "std::string_view __gti_mir_arg_3"),
+             "(std::int32_t __gti_mir_arg_0, std::int32_t __gti_mir_arg_1, "
+             "bool __gti_mir_arg_2, std::string_view __gti_mir_arg_3"),
          "a final symbolic pack should compose with concrete pack elements");
   expect(generated.find("Rest... __gti_mir_arg_1") == std::string::npos &&
              containsMangledFunction(
                  generated, "", "first",
-                 "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
-                 "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
+                 "(std::int32_t __gti_mir_arg_0, bool __gti_mir_arg_1, "
+                 "std::string_view __gti_mir_arg_2"),
          "fixed generic arguments and explicit pack elements should lower in "
          "source order");
 
@@ -8423,12 +8424,13 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  // The checked integer pow keeps its failure form; unchecked float
+  // multiplication cannot fail, so the float overload is plain.
   expect(
       artifact.contents.find(
           "::__gti_program::math::__gti_fn_1_pow__gti_mir_failure(") !=
               std::string::npos &&
-          artifact.contents.find(
-              "::__gti_program::math::__gti_fn_2_pow__gti_mir_failure(") !=
+          artifact.contents.find("::__gti_program::math::__gti_fn_2_pow(") !=
               std::string::npos &&
           concreteBackendSymbols(artifact.contents, "__gti_type_", "Selector")
                   .size() == 1 &&

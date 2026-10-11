@@ -16,7 +16,9 @@ import subprocess
 import sys
 import tempfile
 
-EXPECTED_OUTPUT = "distance-read ok\ndistance-mut ok\nrelay ok\nprvalue ok\n"
+EXPECTED_OUTPUT = (
+    "distance-read ok\ndistance-mut ok\nrelay ok\nprvalue ok\nrelay-after ok\n"
+)
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
