@@ -1456,8 +1456,9 @@ source constructor, mirroring the owning route's constructor consumer. The
 construction must match the constructor's parameter types and owner, carry no
 local failure site, and publish its own result at an exact MIR destination.
 Both routes share that publication rule. The destination is MIR's staged or
-published class slot, a constructor field's result slot, or the transformed or
-plain result of the Return that consumes the construction. A raising
+published class slot, a constructor field's result slot, the transformed or
+plain result of the Return that consumes the construction, or the assignment
+slot described below. A raising
 constructor must cross the failure constructor boundary; a non-raising one
 carries no defined failure. Parameter identity and dominance are the shared
 call-argument conditions. Every construction form that spells these arguments
@@ -1466,10 +1467,22 @@ transformed result retires the moved-from representation right after it. A
 plain Return leaves that retirement to the representation slot's scope exit,
 since nothing executes after the return. A class value reaches a constructor
 parameter through MIR's prepared-parameter place instead, so only the Expected
-wrapper, which MIR gives no place, uses this consumer. A construction assigned
-to an existing binding still has no such publication and rejects body
-emission. MIR lowering separately rejects an owning Expected payload consumed
-by a member-initializer construction.
+wrapper, which MIR gives no place, uses this consumer. MIR lowering
+separately rejects an owning Expected payload consumed by a member-initializer
+construction.
+
+A cleanup-free class construction whose constructor can fail, consumed by one
+adjacent `Assign` into an existing binding, uses the same representation-only
+slot as a call result that replaces a binding. That covers `h = holder(6)`,
+whatever its arguments are. The failure-tag constructor publishes into the
+slot on its Invoke success edge. The `Assign` then move-assigns the slot's
+value into the binding, and the generated representation retires. A failed
+construction leaves the binding untouched. The class needs a generated move
+constructor and move assignment, no borrowed state and no active drop state.
+The construction's only lifecycle events may transfer its owning arguments'
+own value drops into the constructor, once each, so a consumed owning Expected
+argument is accepted too. A failure-free construction, or any construction
+the fused assignment already spells, keeps that fused route.
 
 The success class of such an Expected often has no default constructor. An
 ordinary SSA local would value-initialize the native wrapper and invent that

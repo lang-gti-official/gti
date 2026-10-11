@@ -330,6 +330,10 @@
       "suite": "text"
     },
     {
+      "name": "testRaisingConstructionAssignmentSlot",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },

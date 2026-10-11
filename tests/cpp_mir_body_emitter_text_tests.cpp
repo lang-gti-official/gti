@@ -3703,6 +3703,102 @@ int main() { return read() - 14; }
          "a field view should declare no local of its own");
 }
 
+// A construction whose constructor can fail, assigned to an existing
+// variable, publishes into representation-only storage on its success edge;
+// the Assign then moves it in and the slot retires. This holds when the
+// construction consumes a staged Expected argument too. A failure-free
+// construction keeps the fused assignment. (Regression: GTI-B0001.)
+void testRaisingConstructionAssignmentSlot() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-raising-construction-assignment.gti", R"(
+struct item_value {
+  int32_t number;
+  item_value(int32_t number) : number(number) {}
+};
+
+expected<item_value, int32_t> make_item(bool ok) {
+  if (ok) { return item_value(7); }
+  return unexpected(int32_t(3));
+}
+
+struct sum_holder {
+  int32_t number;
+  sum_holder(int32_t number) : number(number + 1) {}
+};
+
+struct item_holder {
+  int32_t number;
+  item_holder(expected<item_value, int32_t> item)
+      : number(item ? item.value().number : 0) {}
+};
+
+struct plain_holder {
+  int32_t number;
+  plain_holder(int32_t number) : number(number) {}
+};
+
+int main() {
+  mut sum_holder sum{1};
+  sum = sum_holder(6);
+  mut item_holder item{make_item(false)};
+  item = item_holder(make_item(true));
+  mut plain_holder plain{1};
+  plain = plain_holder(7);
+  return sum.number + item.number + plain.number - 21;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the raising construction assignment fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // The assignment slot is constructed by the failure-tag constructor, moved
+  // into the binding, and retired on the next line.
+  const auto assignedThroughSlot = [&](std::string_view holder) {
+    const std::string declaration =
+        "::gti_internal::backend::mir_lifetime_slot<::__gti_program::" +
+        std::string(holder) + ", true> __gti_mir_v_";
+    const std::size_t declared = text.find(declaration);
+    if (declared == std::string::npos)
+      return false;
+    const std::size_t idStart = declared + declaration.size();
+    const std::string slot =
+        "__gti_mir_v_" +
+        text.substr(idStart, text.find(';', idStart) - idStart);
+    const std::string move = ", std::move(" + slot + ".get()));\n";
+    const std::size_t moved = text.find(move);
+    if (moved == std::string::npos)
+      return false;
+    const std::size_t next = text.find_first_not_of(' ', moved + move.size());
+    return text.find(slot + ".construction_address())) ::__gti_program::" +
+                     std::string(holder) +
+                     "(::gti_internal::backend::mir_failure_constructor_tag_"
+                     "v1<") != std::string::npos &&
+           text.compare(next, slot.size() + 11, slot + ".destroy();") == 0;
+  };
+  expect(assignedThroughSlot("sum_holder"),
+         "a raising construction should publish into its assignment slot "
+         "before the binding moves it in");
+  expect(assignedThroughSlot("item_holder") &&
+             text.find("item_holder(::gti_internal::backend::mir_failure_"
+                       "constructor_tag_v1<") != std::string::npos &&
+             text.find("end moved-from argument representation") !=
+                 std::string::npos,
+         "a raising construction consuming a staged Expected argument should "
+         "use the same assignment slot");
+  expect(text.find("mir_lifetime_slot<::__gti_program::plain_holder, true>") ==
+                 std::string::npos &&
+             text.find("= ::__gti_program::plain_holder(") != std::string::npos,
+         "a failure-free construction should keep the fused assignment");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -3885,6 +3981,8 @@ constexpr NamedTest kTests[] = {
     {"testExpectedTemporaryObservationSlot",
      testExpectedTemporaryObservationSlot},
     {"testOwningTemporaryFieldView", testOwningTemporaryFieldView},
+    {"testRaisingConstructionAssignmentSlot",
+     testRaisingConstructionAssignmentSlot},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",
