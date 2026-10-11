@@ -362,6 +362,8 @@ class RemoteRunner(unittest.TestCase):
         self.assertEqual(submitted[0]["jobs"], 3)
         self.assertEqual(submitted[0]["test_jobs"], 6)
         self.assertEqual(submitted[0]["required_platform"], "Linux")
+        self.assertEqual(submitted[0]["cc"], "/usr/bin/gcc-14")
+        self.assertEqual(submitted[0]["cxx"], "/usr/bin/g++-14")
 
 
 class RunnerConnections(unittest.TestCase):
@@ -416,8 +418,13 @@ class RunnerConnections(unittest.TestCase):
         self.assertEqual(settings["default"], "mini")
         self.assertEqual(settings["hosts"]["ubuntu-6"]["jobs"], 2)
         self.assertEqual(settings["hosts"]["ubuntu-8"]["jobs"], 1)
+        # Old worktrees still use these flat fields during rolling updates.
+        saved = runner.read_json(self.path)
+        for key in ("host", "root", "python"):
+            self.assertEqual(saved[key], runner.HOSTS["mini"][key])
         runner.save_connection(self.path, "ubuntu-8", runner.HOSTS["ubuntu-8"], make_default=True)
         self.assertEqual(runner.load_settings(self.path)["default"], "ubuntu-8")
+        self.assertEqual(runner.read_json(self.path)["host"], runner.HOSTS["ubuntu-8"]["host"])
 
     def test_cli_configure_validates_os_and_preserves_default(self):
         with mock.patch.object(runner, "local_directory", return_value=self.local), \
@@ -555,8 +562,22 @@ class RunnerConnections(unittest.TestCase):
         self.assertEqual(steps[1]["argv"][4], "3")
         self.assertIn("6", steps[2]["argv"])
         request["cmake_args"] = ["-DCMAKE_CXX_COMPILER=/custom/cxx"]
-        with mock.patch.object(runner, "llvm_directory", return_value=None):
-            self.assertIn("-DCMAKE_CXX_COMPILER=/custom/cxx", runner.default_steps(request)[0]["argv"])
+        request.update(cc="/usr/bin/gcc-14", cxx="/usr/bin/g++-14")
+        with mock.patch.object(runner, "llvm_directory", return_value=None), \
+                mock.patch.dict(os.environ, {"CC": "", "CXX": ""}):
+            configure = runner.default_steps(request)[0]["argv"]
+            self.assertIn("-DCMAKE_C_COMPILER=/usr/bin/gcc-14", configure)
+            self.assertIn("-DCMAKE_CXX_COMPILER=/usr/bin/g++-14", configure)
+            self.assertEqual(configure[-1], "-DCMAKE_CXX_COMPILER=/custom/cxx")
+        with mock.patch.object(runner, "llvm_directory", return_value=None), \
+                mock.patch.dict(os.environ, {"CC": "/env/cc", "CXX": "/env/cxx"}):
+            configure = runner.default_steps(request)[0]["argv"]
+            self.assertFalse(any(arg.endswith("=/usr/bin/gcc-14") or arg.endswith("=/usr/bin/g++-14")
+                                 for arg in configure))
+        config = runner.select_connection(self.args("--runner", "ubuntu-6", "--cc", "/custom/cc",
+                                                     "--cxx", "/custom/cxx", "status"),
+                                          runner.load_settings(self.path), self.local)[1]
+        self.assertEqual((config["cc"], config["cxx"]), ("/custom/cc", "/custom/cxx"))
 
     def test_platform_selection_rejects_wrong_host_before_snapshot(self):
         with mock.patch.object(runner, "local_directory", return_value=self.local), \

@@ -199,10 +199,14 @@ exclusive; zero matching tests is an error. Default CMake configuration is
 The configured cache is checked before building. Extra options use
 `--cmake-arg=-DNAME=value`. On macOS the wrapper prepends Homebrew's bin
 directory and supplies the Homebrew LLVM directory when present. Otherwise it
-discovers LLVM through `llvm-config --cmakedir`. Native compiler selection stays
-with CMake; `CC`/`CXX` or explicit CMake arguments override it, and Linux is not
-forced to Clang merely because LLVM is installed. Custom steps retain their
-exact toolchain arguments. Remote
+discovers LLVM through `llvm-config --cmakedir`. The Mini retains normal CMake
+compiler selection. The Ubuntu profiles select `/usr/bin/gcc-14` and
+`/usr/bin/g++-14`: Ubuntu 26's newer default GCC 15 and Clang 21 currently expose
+warning-as-error failures in the compiler sources. No warning is suppressed.
+`--cc`/`--cxx` override the profile defaults and can be saved by `configure`;
+remote `CC`/`CXX` take precedence over those defaults, and explicit
+`--cmake-arg=-DCMAKE_CXX_COMPILER=...` arguments are applied last. Custom steps
+retain their exact toolchain arguments. Remote
 Python is `/opt/homebrew/bin/python3` on the Mini and `/usr/bin/python3` on
 Ubuntu (`--python` overrides it).
 Global options precede the subcommand. `--repo` selects another worktree;
@@ -214,6 +218,8 @@ default. `configure` saves only that named host without changing the default;
 `configure --default` changes it explicitly. Metadata updates are serialized so
 concurrent configuration cannot lose a peer's profile. Custom names can be
 registered with `--runner NAME --host USER@HOST` and the applicable paths/client.
+Saved settings also retain the original flat connection fields for the selected
+default, allowing older task worktrees to keep using the Mini during an update.
 
 All runs use one window **per host**, not their isolated Git directories. The
 Mini's is `/private/tmp/gti-remote-runner/window`; Ubuntu uses
