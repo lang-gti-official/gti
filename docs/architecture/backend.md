@@ -1883,11 +1883,14 @@ the destination and cleanup remain checked. Native virtual boundary bridges
 placement-construct class results in uninitialized storage instead of first
 default-constructing an object and overwriting it.
 
-An unused cleanup-free nominal result also receives uninitialized output
-storage for a transformed call. Selection requires no SSA uses, value-rooted
-places, semantic result-drop obligation, borrowed state, or active cleanup;
-the class must have generated destruction. On success the emitter marks and
-immediately retires that representation, permitting repeated calls in a loop.
+An unused cleanup-free nominal or Expected result also receives
+uninitialized output storage, from a transformed or a failure-free source call,
+such as `[[discard]] make_value()` or a comma's discarded left operand.
+Selection requires no SSA uses, value-rooted places, semantic result-drop
+obligation, borrowed state, or active cleanup; the class must have generated
+destruction. A transformed call marks that representation on success and a
+failure-free call constructs it from its returned value; either retires it
+immediately, permitting repeated calls in a loop.
 Failure leaves the storage uninitialized and follows the existing MIR failure
 edge. This is not a substitute for the MIR cleanup schedule of an owning or
 destructor-bearing result.

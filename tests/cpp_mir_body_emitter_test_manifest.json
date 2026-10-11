@@ -346,6 +346,10 @@
       "suite": "text"
     },
     {
+      "name": "testCommaDenotesRightOperandObject",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },
