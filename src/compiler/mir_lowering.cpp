@@ -75,9 +75,29 @@ lowerUnionLayout(const HirClassInstance &instance) {
 }
 
 } // namespace
+
 MirLoweringResult
 MirLowerer::lower(const HirProgram &source,
                   const FailureMetadata &failureMetadata) const {
+  MirLoweringResult result = lowerVerified(source, failureMetadata);
+  if (result.valid() || !shareFailureCleanup_) {
+    return result;
+  }
+  // Program verification also reads each body's lowered failure cleanup.
+  // Should a shared cleanup schedule ever fail it, lower the program again
+  // with one cleanup chain per failure edge, the established form.
+  struct UnsharedCleanup {
+    UnsharedCleanup() { shareFailureCleanup_ = false; }
+    ~UnsharedCleanup() { shareFailureCleanup_ = true; }
+    UnsharedCleanup(const UnsharedCleanup &) = delete;
+    UnsharedCleanup &operator=(const UnsharedCleanup &) = delete;
+  } unshared;
+  return lowerVerified(source, failureMetadata);
+}
+
+MirLoweringResult
+MirLowerer::lowerVerified(const HirProgram &source,
+                          const FailureMetadata &failureMetadata) const {
   MirLoweringResult provisional =
       lowerProgram(source, failureMetadata, MirDefinedFailureEffects{}, false);
   if (!provisional.valid()) {

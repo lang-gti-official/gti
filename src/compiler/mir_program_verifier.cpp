@@ -6010,8 +6010,17 @@ private:
               ? candidate.terminator.kind == MirTerminatorKind::ContainFailure
               : candidate.terminator.kind ==
                     MirTerminatorKind::PropagateFailure;
-      if (exactKind &&
-          candidate.activeFailure == candidate.terminator.failureRecord) {
+      // A record's own chain ends at its endpoint or where it enters a
+      // shared cleanup continuation, which propagates it unchanged.
+      const bool continuation =
+          body.kind != MirBodyKind::HostedStartup &&
+          candidate.terminator.kind == MirTerminatorKind::ContinueFailure &&
+          candidate.activeFailure != 0 &&
+          (candidate.failureParameter == 0 ||
+           candidate.failureParameter == candidate.activeFailure);
+      if ((exactKind &&
+           candidate.activeFailure == candidate.terminator.failureRecord) ||
+          continuation) {
         ++recordEndpoints[candidate.activeFailure];
       }
     }
