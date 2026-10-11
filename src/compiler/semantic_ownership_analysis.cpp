@@ -2221,6 +2221,7 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
          IntrinsicKind::MetaConstructorParameterName},
         {"meta_declaration_line", IntrinsicKind::MetaDeclarationLine},
         {"meta_declaration_file", IntrinsicKind::MetaDeclarationFile},
+        {"meta_type_primary_name", IntrinsicKind::MetaTypePrimaryName},
         {"meta_construct", IntrinsicKind::MetaConstruct},
     };
     for (const auto &[candidate, kind] : callables) {
@@ -7219,6 +7220,7 @@ metaQueryShape(IntrinsicKind intrinsic) {
   case IntrinsicKind::MetaDeclarationLine:
     return MetaQueryShape{.indices = 2};
   case IntrinsicKind::MetaDeclarationFile:
+  case IntrinsicKind::MetaTypePrimaryName:
     return MetaQueryShape{.result = SemanticType::StringView};
   default:
     return std::nullopt;
@@ -7335,6 +7337,23 @@ auto SemanticVisitor::Impl::metaQueryConstant(
   }
   case IntrinsicKind::MetaDeclarationFile:
     return ConstantValue{metaDeclarationFile(subject)};
+  case IntrinsicKind::MetaTypePrimaryName: {
+    // The declaration's qualified name: a generic instance names its primary,
+    // every other type its own spelling.
+    if (subject.kind == SemanticType::Class) {
+      const ClassInfo *owner = classInfo(subject);
+      if (owner != nullptr) {
+        return ConstantValue{
+            qualifiedName(owner->namespaceScope, owner->name.lexeme)};
+      }
+    } else if (subject.kind == SemanticType::Enum && subject.enumId != 0 &&
+               subject.enumId <= enums.size()) {
+      const EnumInfo &info = enums[subject.enumId - 1];
+      return ConstantValue{
+          qualifiedName(info.namespaceScope, info.name.lexeme)};
+    }
+    return ConstantValue{typeSpelling(subject)};
+  }
   case IntrinsicKind::MetaEnumeratorName:
   case IntrinsicKind::MetaEnumeratorValue:
   case IntrinsicKind::MetaPayloadCount:
@@ -8126,7 +8145,7 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     return;
   }
   if (intrinsic >= IntrinsicKind::MetaFieldCount &&
-      intrinsic <= IntrinsicKind::MetaDeclarationFile) {
+      intrinsic <= IntrinsicKind::MetaTypePrimaryName) {
     analyzeMetaIntrinsicCall(expr, declaration);
     bindIntrinsicCallDeclaration(expr, declaration);
     return;

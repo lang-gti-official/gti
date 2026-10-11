@@ -403,6 +403,8 @@ enum class IntrinsicKind {
   // <T, Kind, I>: 0 type, 1 field, 2 enumerator, 3 method, 4 constructor.
   MetaDeclarationLine,
   MetaDeclarationFile,
+  // <T>: the qualified name of T's primary declaration, without arguments.
+  MetaTypePrimaryName,
   // Attribute value access: semantics records the attribute's constant on the
   // call and aliases it to a construction of the attribute struct.
   MetaFieldAttribute,

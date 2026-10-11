@@ -2234,6 +2234,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::MetaConstructorParameterName:
         case IntrinsicKind::MetaDeclarationLine:
         case IntrinsicKind::MetaDeclarationFile:
+        case IntrinsicKind::MetaTypePrimaryName:
         case IntrinsicKind::MetaFieldAttribute:
         case IntrinsicKind::MetaTypeAttribute:
         case IntrinsicKind::MetaFieldGet:
