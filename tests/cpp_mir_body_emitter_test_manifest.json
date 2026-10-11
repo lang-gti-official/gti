@@ -322,6 +322,10 @@
       "suite": "text"
     },
     {
+      "name": "testExpectedTemporaryObservationSlot",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },

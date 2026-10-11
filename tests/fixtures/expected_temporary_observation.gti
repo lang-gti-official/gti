@@ -1,0 +1,111 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// An Expected<Class, E> call temporary observed in place: tested for its
+// state, or read once through a checked value() or error(). The success class
+// has no default constructor, so nothing may value-initialize the Expected. A
+// cleanup-free temporary lives in representation-only storage until that one
+// read; an owning temporary keeps MIR's full-expression drop.
+struct item_value {
+  int32_t number;
+  item_value(int32_t number) : number(number) {}
+};
+
+// A cleanup-free class error alternative without a default constructor.
+struct code_value {
+  int32_t code;
+  code_value(int32_t code) : code(code) {}
+};
+
+// An owning payload.
+struct named_value {
+  std::string text;
+  named_value(std::string text) : text(std::move(text)) {}
+};
+
+// A failure-free producer returns the Expected by value.
+expected<item_value, int32_t> make_item(bool ok) {
+  if (ok) { return item_value(7); }
+  return unexpected(int32_t(3));
+}
+
+// A producer that can fail publishes the Expected on its success edge.
+expected<item_value, int32_t> make_checked(int32_t value) {
+  return item_value(value + 1);
+}
+
+expected<item_value, code_value> make_coded(bool ok) {
+  if (ok) { return item_value(4); }
+  return unexpected(code_value(9));
+}
+
+expected<named_value, int32_t> make_named(bool ok) {
+  if (ok) { return named_value(std::string("payload")); }
+  return unexpected(int32_t(3));
+}
+
+int32_t take_item(item_value item) { return item.number; }
+
+struct holder {
+  int32_t number;
+  holder(item_value item) : number(item.number) {}
+};
+
+// A constructor body is also emitted in its plain form.
+struct reader {
+  mut int32_t number = 0;
+  reader(bool ok) {
+    if (make_item(ok)) {
+      this.number = make_item(ok).value().number;
+    } else {
+      this.number = make_item(ok).error();
+    }
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  bool yes = argc > 0;
+  bool no = !yes;
+  if (argc == 2) {
+    return make_item(no).value().number;
+  }
+  if (argc == 3) {
+    return make_item(yes).error();
+  }
+  if (argc == 4) {
+    return make_checked(2147483647).has_value() ? 1 : 2;
+  }
+  if (!make_item(yes)) { return 1; }
+  if (make_item(no)) { return 2; }
+  if (!make_item(yes).has_value()) { return 3; }
+  if (make_item(no).has_value()) { return 4; }
+  if ((make_item(yes) ? 10 : 20) != 10) { return 5; }
+  if (!(make_item(yes) && make_coded(yes))) { return 6; }
+  if (make_item(yes).value().number != 7) { return 7; }
+  if (make_item(no).error() != 3) { return 8; }
+  if (make_coded(yes).value().number != 4) { return 9; }
+  if (make_coded(no).error().code != 9) { return 10; }
+  if (make_checked(6).value().number != 7) { return 11; }
+  if (!make_checked(6)) { return 12; }
+  if (take_item(make_item(yes).value()) != 7) { return 13; }
+  item_value bound = make_item(yes).value();
+  if (bound.number != 7) { return 14; }
+  holder held{make_item(yes).value()};
+  if (held.number != 7) { return 15; }
+  reader success{yes};
+  reader failure{no};
+  if (success.number != 7 || failure.number != 3) { return 16; }
+  if (!make_named(yes)) { return 17; }
+  if (make_named(no).error() != 3) { return 18; }
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    if (make_item(index != 1)) {
+      total += make_item(index != 1).value().number;
+    } else {
+      total += make_item(index != 1).error();
+    }
+  }
+  if (total != 17) { return 19; }
+  return 0;
+}

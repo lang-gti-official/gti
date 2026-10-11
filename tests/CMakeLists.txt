@@ -857,6 +857,11 @@ add_test(NAME expected_constructor_return_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_constructor_return_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_constructor_return_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_temporary_observation_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_temporary_observation_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_temporary_observation_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_class_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"
