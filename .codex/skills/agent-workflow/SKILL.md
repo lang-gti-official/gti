@@ -12,7 +12,7 @@ standing authorization is in `AGENTS.md`. Explicit instructions such as
 the default. Never infer permission to change other repositories or services.
 
 Use `scripts/agent_workflow.py` for shared Git/API operations. GitHub
-(`gti-lang-official/gti`, remote `origin`) is the canonical host for branches,
+(`lang-gti-official/gti`, remote `origin`) is the canonical host for branches,
 PRs, issues, CI and releases; the self-hosted Gitea repository (remote
 `gitea`) is a backup mirror that `sync` updates and that never receives PRs or
 issues. The helper authenticates with the GitHub CLI (`gh auth token`) or

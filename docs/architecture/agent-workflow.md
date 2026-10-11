@@ -62,7 +62,7 @@ both fetch and push URLs are checked before anything is sent.
 
 ## Hosts and records
 
-GitHub (`gti-lang-official/gti`) owns branches, pull requests, issues, CI and
+GitHub (`lang-gti-official/gti`) owns branches, pull requests, issues, CI and
 releases. The self-hosted Gitea repository is a backup mirror of `main` and
 the tags: `sync` pushes both there after the primary fast-forward (`main`
 without force, so a merge that landed only on the mirror surfaces as a
