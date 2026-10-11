@@ -3345,6 +3345,10 @@ inactiveExpectedReplacement(const MirProgram &program, const MirBody &body,
   return hasLoan;
 }
 
+[[nodiscard]] bool exactMutableCallResultDestination(const MirProgram &program,
+                                                     const MirBody &body,
+                                                     const MirPlace &place);
+
 // A failure-free class Move consumed immediately by one fixed-array Assign has
 // no independent MIR storage or drop identity. Preserve the exact schedule by
 // staging the source into the checked-write helper's by-value parameter. That
@@ -21270,10 +21274,11 @@ struct ValueRootedClassCallResultSlot {
 
 // A transformed class-returning call may own its result in one value-rooted
 // place until the full-expression Drop. The result is either discarded or
-// moved once into an existing class binding; in the latter case MIR replaces
-// that binding's live state with the result before ending the moved-from
-// shell. Preserve that exact slot and schedule instead of inventing an
-// initialized C++ SSA local whose destructor would run again.
+// moved once into an existing class binding or checked mutable referent; in
+// the latter case MIR replaces the destination's live state with the result
+// before ending the moved-from shell. Preserve that exact slot and schedule
+// instead of inventing an initialized C++ SSA local whose destructor would run
+// again.
 [[nodiscard]] ValueRootedClassCallResultSlot
 valueRootedClassCallResultSlot(const MirProgram &program,
                                const CppMirBodyEmissionMap &representations,
@@ -21530,10 +21535,16 @@ valueRootedClassCallResultSlot(const MirProgram &program,
     receiverFieldTransfer =
         receiverFieldTransfer ||
         exactMutableReferenceDestination(body, *destination) ||
+        exactMutableCallResultDestination(program, body, *destination) ||
         (consumer->replacementPair != 0 &&
          checkedArrayElementDestination(body, *destination));
     if ((!bindingDestination && !receiverFieldTransfer) ||
         (defaultConstructionProducer && !receiverFieldTransfer)) {
+      return {};
+    }
+    if (destination->root == MirPlaceRootKind::Loan &&
+        (consumer->replacementPair == 0 ||
+         exactReplacementPair(body, *consumer, *destination) == nullptr)) {
       return {};
     }
     const MirLifecycleEvent &publication = consumer->lifecycle.front();
@@ -27425,6 +27436,66 @@ producedCallResultLoan(const MirBody &body, const MirInstruction &producer) {
     }
   }
   return found;
+}
+
+// A returned checked reference names existing storage, not a second owning
+// slot. Its exact source call establishes the referent type and mutable access;
+// MIR's loan verification owns ancestry, activation and the complete interval.
+// Share this proof between result-slot admission and assignment spelling, so
+// an owning result can replace a checked referent without inventing cleanup
+// authority or relying on a particular accessor/container name.
+[[nodiscard]] bool exactMutableCallResultDestination(const MirProgram &program,
+                                                     const MirBody &body,
+                                                     const MirPlace &place) {
+  const MirLoan *loan = place.root == MirPlaceRootKind::Loan
+                            ? body.findLoan(place.loan)
+                            : nullptr;
+  if (loan == nullptr || !place.projections.empty() ||
+      place.access != AccessMode::Mutable ||
+      loan->kind != MirLoanKind::CallResult ||
+      loan->access != AccessMode::Mutable || loan->entry || loan->escapes ||
+      loan->producedBy == 0 || !loan->carriers.empty() ||
+      body.findPlace(loan->source) == nullptr ||
+      std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const MirDropObligation &drop) {
+                    return drop.place == place.id;
+                  })) {
+    return false;
+  }
+  const MirInstruction *producer = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &candidate : block.instructions) {
+      if (candidate.kind != MirInstructionKind::Call ||
+          candidate.loan != loan->id) {
+        continue;
+      }
+      if (producer != nullptr)
+        return false;
+      producer = &candidate;
+    }
+  }
+  const MirFunctionInstance *target =
+      producer != nullptr && producer->functionTarget
+          ? program.findFunctionInstance(*producer->functionTarget)
+          : nullptr;
+  const MirValue *result = producer != nullptr && producer->result
+                               ? body.findValue(*producer->result)
+                               : nullptr;
+  return target != nullptr && result != nullptr &&
+         target->definitionKind == MirDefinitionKind::Source &&
+         target->linkage == LanguageLinkage::Gti &&
+         target->returnType.kind == SemanticType::Reference &&
+         target->returnType.referenceAccess == AccessMode::Mutable &&
+         target->returnType.arguments.size() == 1 &&
+         target->returnType.arguments.front() == place.type &&
+         producer->hirValue == loan->producedBy &&
+         producedCallResultLoan(body, *producer) == loan &&
+         producer->intrinsic == IntrinsicKind::None &&
+         producer->borrowAccess == AccessMode::Mutable &&
+         producer->info.type == place.type &&
+         producer->info.category == ValueCategory::Reference &&
+         producer->info.access == AccessMode::Mutable &&
+         result->definition == producer->id && result->info == producer->info;
 }
 
 [[nodiscard]] const MirInstruction *rawBorrowLoanProducer(const MirBody &body,
@@ -37295,6 +37366,8 @@ private:
           const bool receiverField =
               destination != nullptr &&
               (exactMutableReferenceDestination(facts.body, *destination) ||
+               exactMutableCallResultDestination(program, facts.body,
+                                                 *destination) ||
                moveOnlyOwnedFieldDestination(program, representations,
                                              facts.body, *resultSlot.value,
                                              *destination) ||

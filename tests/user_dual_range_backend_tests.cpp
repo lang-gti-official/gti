@@ -123,6 +123,109 @@ void testMixedCarrierParameterPrefix() {
   }
 }
 
+void testOwningReturnedReferenceReplacement() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/user_owning_reference_replacement.gti";
+  std::ifstream input(path);
+  const std::string source((std::istreambuf_iterator<char>(input)), {});
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(!source.empty() && frontend.canGenerateCode(),
+         "unrelated owning accessor replacement has verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::MirFunctionInstance *entry = nullptr;
+  for (const auto &function : frontend.mir.functionInstances())
+    if (function.entryKind != lang::ProgramEntryKind::None)
+      entry = &function;
+  expect(entry != nullptr, "owning accessor fixture has an entry point");
+  if (!entry)
+    return;
+  const lang::MirInstruction *assignment = nullptr;
+  for (const auto &block : entry->body.blocks)
+    for (const auto &candidate : block.instructions) {
+      const auto *destination =
+          candidate.destination ? entry->body.findPlace(*candidate.destination)
+                                : nullptr;
+      if (candidate.kind == lang::MirInstructionKind::Assign && destination &&
+          destination->root == lang::MirPlaceRootKind::Loan) {
+        assignment = &candidate;
+        break;
+      }
+    }
+  expect(assignment && assignment->replacementPair &&
+             assignment->lifecycle.size() == 1,
+         "owning returned-reference write carries replacement and cleanup");
+  if (!assignment || !assignment->replacementPair ||
+      assignment->lifecycle.size() != 1)
+    return;
+  const auto *destination = entry->body.findPlace(*assignment->destination);
+  const auto *loan = entry->body.findLoan(destination->loan);
+  const lang::MirInstruction *accessor = nullptr;
+  for (const auto &block : entry->body.blocks)
+    for (const auto &candidate : block.instructions)
+      if (candidate.kind == lang::MirInstructionKind::Call && loan &&
+          candidate.loan == loan->id)
+        accessor = &candidate;
+  expect(loan && accessor && accessor->result,
+         "replacement destination names one checked reference call");
+  if (!loan || !accessor || !accessor->result)
+    return;
+
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(frontend, frontend.mir, standard));
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = entry->id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.supportsFailureBodyText(address),
+           "owning source-call result replaces checked accessor referent");
+    expect(
+        emitter.emitFailureBodyText(address, "owning-reference", 1).emitted(),
+        "owning returned-reference assignment has a verified body plan");
+    const auto reject = [&](auto mutate, std::string_view reason) {
+      auto malformed = frontend.mir;
+      auto *changed = const_cast<lang::MirFunctionInstance *>(
+          malformed.findFunctionInstance(entry->id));
+      mutate(changed->body);
+      (void)lang::rebuildMirValueUses(changed->body);
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "independent verifier rejects forged owning-reference write");
+      const lang::CppMirBodyEmitter changedEmitter(malformed, map);
+      expect(!changedEmitter.supportsFailureBodyText(address), reason);
+    };
+    reject(
+        [&](auto &body) {
+          auto *changed = const_cast<lang::MirLoan *>(body.findLoan(loan->id));
+          changed->access = lang::AccessMode::ReadOnly;
+        },
+        "owning replacement cannot use a read-only returned loan");
+    reject([&](auto &body) { instruction(body, accessor->id)->loan.reset(); },
+           "owning replacement cannot lose exact accessor loan identity");
+    reject(
+        [&](auto &body) {
+          instruction(body, accessor->id)->borrowAccess =
+              lang::AccessMode::ReadOnly;
+        },
+        "source call must retain the declared mutable reference authority");
+    reject(
+        [&](auto &body) {
+          instruction(body, assignment->id)->replacementPair = 0;
+        },
+        "owning returned-reference write must retain old-target cleanup");
+    reject(
+        [&](auto &body) {
+          instruction(body, assignment->replacementPair)->replacementPair = 0;
+        },
+        "old-target cleanup must pair with the exact replacement");
+    reject(
+        [&](auto &body) {
+          instruction(body, assignment->id)->lifecycle.front().source = 0;
+        },
+        "owning source-call stage transfers exactly its own obligation");
+  }
+}
+
 void testExclusiveGeneratedShell() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/user_mutable_inline_proxy_endpoint.gti";
@@ -466,6 +569,7 @@ void testSourceLiteralScalarSiblings() {
 
 int main() {
   testMixedCarrierParameterPrefix();
+  testOwningReturnedReferenceReplacement();
   testScalarSiblingPositions();
   testSourceLiteralScalarSiblings();
   testExclusiveGeneratedShell();

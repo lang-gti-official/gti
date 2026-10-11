@@ -1,0 +1,44 @@
+#include <std/string>
+#include <std/vector>
+#include <std/panic>
+
+class LoggedText {
+  mut std::string text;
+  int tag;
+public:
+  LoggedText(std::string input, int tag) : text(std::move(input)), tag(tag) {}
+  ~LoggedText() {
+    if ((this.tag == 10 && this.text != "before") ||
+        (this.tag == 20 && this.text != "after")) {
+      std::panic("replacement corrupted the live target");
+    }
+    std::println(this.tag);
+  }
+  bool is(std::string_view wanted) { return this.text == wanted; }
+};
+
+class LoggedBox {
+  mut LoggedText text;
+public:
+  LoggedBox(LoggedText input) : text(std::move(input)) {}
+  mut LoggedText& value(bool fail) mut {
+    std::println(100);
+    if (fail) { std::panic("accessor failed"); }
+    return this.text;
+  }
+  bool is(std::string_view wanted) { return this.text.is(wanted); }
+};
+
+LoggedText make_text(int phase) {
+  std::println(200);
+  if (phase == 1) { std::panic("replacement failed"); }
+  LoggedText result(std::string("after"), 20);
+  if (phase == 2) { std::panic("replacement partially built"); }
+  return result;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut LoggedBox box{LoggedText(std::string("before"), 10)};
+  box.value(argc == 2) = make_text(argc == 3 ? 1 : argc == 4 ? 2 : 0);
+  return box.is("after") ? 0 : 1;
+}

@@ -2794,6 +2794,20 @@ obligation. An owning `Replace` therefore has target zero, while its paired
 Unlike an ephemeral call-result loan, the named reference is not ended at commit:
 subsequent uses retain the original MIR-verified loan interval. This representation
 does not authorize movement out of a borrowed referent.
+
+An owning class call result may also replace an exact unprojected mutable
+call-result loan returned by an ordinary source accessor. The result-slot
+admission and assignment emitter share one witness requiring the exact GTI
+source declaration, mutable reference result, producer/result identity and
+loan access. The referent has no separate owning obligation. MIR's existing
+paired replacement preparation destroys the old target only after the RHS
+successfully exists; its `Replace` retains target zero and the staging shell
+is dropped once. The backend neither invents a destination owner nor repeats
+the accessor call. Read-only, detached or independently owned loans and missing
+replacement/cleanup pairs fail closed. The unrelated owning-accessor matrix
+checks left-before-right evaluation, both pre-construction and partially built
+RHS failures, the old target's preserved contents, and exactly-once destruction.
+
 Body-local MIR verification requires exactly one `Replace` from each consumed
 active-cleanup RHS value obligation; validating only present lifecycle events
 is insufficient, because a missing transfer could leave the published source

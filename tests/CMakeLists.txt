@@ -1649,6 +1649,7 @@ if(Python3_Interpreter_FOUND)
       cursor_carrier_publication
       map_mutable_entry_projection
       user_dual_range_lifetime
+      user_owning_reference_replacement
       range_endpoint_parking_runtime
       text_view_iterator_runtime
       container_iterator_movement)
