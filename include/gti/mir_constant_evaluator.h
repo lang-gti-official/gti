@@ -13,6 +13,9 @@ struct MirConstantLimits {
 
 struct MirConstantEvaluation {
   std::optional<ConstantValue> value;
+  // Successful void execution has no persistable constant value. This is an
+  // execution result, not a new language constant or a null-pointer value.
+  bool voidResult = false;
   ConstantEvaluationFailure failure = ConstantEvaluationFailure::None;
   // Retained typed-body provenance. The staging caller maps these identities
   // to source spans; execution never needs an AST pointer.
@@ -23,7 +26,10 @@ struct MirConstantEvaluation {
   std::size_t steps = 0;
   std::string detail;
 
-  [[nodiscard]] explicit operator bool() const { return value.has_value(); }
+  [[nodiscard]] explicit operator bool() const {
+    return failure == ConstantEvaluationFailure::None &&
+           (value.has_value() || voidResult);
+  }
 };
 
 // Development foundation for staged constexpr lowering, not a post-semantics

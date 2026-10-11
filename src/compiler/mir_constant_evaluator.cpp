@@ -97,7 +97,6 @@ public:
 private:
   const SemanticType &observedType(const SemanticType &type) const {
     return type.kind == SemanticType::Reference &&
-                   type.referenceAccess == AccessMode::ReadOnly &&
                    type.arguments.size() == 1
                ? type.arguments.front()
                : type;
@@ -142,15 +141,42 @@ private:
                        });
   }
 
+  struct Frame;
+  // A checked reference designates an existing constant cell and a resolved
+  // field/index path, never a target address. Frames live throughout nested
+  // calls; an internal returned reference must designate an enclosing frame.
+  // Resolving indices at formation preserves the source's once-formed place.
+  struct Location {
+    Frame *frame = nullptr;
+    MirPlaceRootKind root = MirPlaceRootKind::Binding;
+    std::size_t cell = 0;
+    std::size_t epoch = 0;
+    std::vector<MirPlaceProjection> path;
+    const SemanticType *type = nullptr;
+    AccessMode access = AccessMode::ReadOnly;
+  };
+
+  struct Loan {
+    Location location;
+    bool active = true;
+  };
+
   struct Frame {
     const MirBody &body;
     MirBodyAddress address;
     std::vector<std::optional<ConstantValue>> values;
     std::vector<std::optional<ConstantValue>> places;
-    std::vector<std::optional<ConstantValue>> loans;
+    std::vector<std::optional<Loan>> loans;
+    std::vector<std::optional<Location>> references;
+    std::vector<std::optional<Location>> valueReferences;
+    std::vector<std::size_t> placeEpochs;
+    std::vector<std::size_t> valueEpochs;
     MirBlockId block = 0;
     MirInstructionId instruction = 0;
     std::optional<ConstantValue> receiver;
+    std::optional<Location> receiverOrigin;
+    AccessMode receiverAccess = AccessMode::ReadOnly;
+    std::size_t receiverEpoch = 1;
   };
 
   MirConstantEvaluation fail(const Frame &frame,
@@ -186,6 +212,186 @@ private:
       }
     }
     return 0;
+  }
+
+  std::optional<ConstantValue> &storage(const Location &location) {
+    if (location.root == MirPlaceRootKind::This)
+      return location.frame->receiver;
+    if (location.root == MirPlaceRootKind::Value)
+      return location.frame->values[location.cell];
+    return location.frame->places[location.cell];
+  }
+
+  std::size_t &epoch(const Location &location) {
+    if (location.root == MirPlaceRootKind::This)
+      return location.frame->receiverEpoch;
+    if (location.root == MirPlaceRootKind::Value)
+      return location.frame->valueEpochs[location.cell];
+    return location.frame->placeEpochs[location.cell];
+  }
+
+  ConstantEvaluation locate(Frame &frame, MirPlaceId id, Location &location,
+                            bool writing = false) {
+    const auto *place = frame.body.findPlace(id);
+    if (!place || !observedStorageType(place->type))
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    const MirPlace *binding = nullptr;
+    if (place->root == MirPlaceRootKind::Loan) {
+      if (place->loan >= frame.loans.size() || !frame.loans[place->loan])
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      const auto &loan = *frame.loans[place->loan];
+      if (writing && !loan.active)
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      if (!charge(loan.location.path.size()))
+        return {.failure = ConstantEvaluationFailure::ResourceLimit};
+      location = loan.location;
+    } else if (place->root == MirPlaceRootKind::This) {
+      if (frame.receiverOrigin) {
+        if (!charge(frame.receiverOrigin->path.size()))
+          return {.failure = ConstantEvaluationFailure::ResourceLimit};
+        location = *frame.receiverOrigin;
+      } else {
+        const auto *aggregate = frame.receiver
+                                    ? std::get_if<ConstantAggregateValue>(
+                                          &*frame.receiver)
+                                    : nullptr;
+        const auto *owner = aggregate && aggregate->value &&
+                                    aggregate->value->exactType
+                                ? record(*aggregate->value->exactType)
+                                : nullptr;
+        if (!owner)
+          return {.failure = ConstantEvaluationFailure::UnsupportedType};
+        location = {.frame = &frame,
+                    .root = MirPlaceRootKind::This,
+                    .epoch = frame.receiverEpoch,
+                    .type = &owner->type,
+                    .access = frame.receiverAccess};
+      }
+    } else if (place->root == MirPlaceRootKind::Value) {
+      if (place->value == 0 || place->value >= frame.values.size())
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      if (place->value < frame.valueReferences.size() &&
+          frame.valueReferences[place->value]) {
+        if (!charge(frame.valueReferences[place->value]->path.size()))
+          return {.failure = ConstantEvaluationFailure::ResourceLimit};
+        location = *frame.valueReferences[place->value];
+      } else {
+        location = {.frame = &frame,
+                    .root = MirPlaceRootKind::Value,
+                    .cell = place->value,
+                    .epoch = frame.valueEpochs[place->value],
+                    .type = &observedType(
+                        frame.body.findValue(place->value)->info.type),
+                    .access = place->access};
+      }
+    } else {
+      const auto root = cell(frame, id);
+      if (!root)
+        return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
+      binding = frame.body.findPlace(root);
+      if (root < frame.references.size() && frame.references[root]) {
+        if (!charge(frame.references[root]->path.size()))
+          return {.failure = ConstantEvaluationFailure::ResourceLimit};
+        location = *frame.references[root];
+      } else {
+        location = {.frame = &frame,
+                    .cell = root,
+                    .epoch = frame.placeEpochs[root],
+                    .type = &observedType(binding->type),
+                    .access = binding->type.kind == SemanticType::Reference
+                                  ? binding->type.referenceAccess
+                                  : binding->access};
+      }
+    }
+    // Root/loan/receiver permission and field declarations determine what
+    // may be written. MirPlace::access also describes a particular expression's
+    // read access; it is not the maximum permission of a checked referent.
+    const SemanticType *projectedType = location.type;
+    for (std::size_t index = 0; index < place->projections.size(); ++index) {
+      if (!charge(1))
+        return {.failure = ConstantEvaluationFailure::ResourceLimit};
+      auto projection = place->projections[index];
+      if (projection.kind == MirProjectionKind::Dereference && index == 0 &&
+          binding && binding->type.kind == SemanticType::Reference)
+        continue;
+      if (projection.kind == MirProjectionKind::Index) {
+        if (!projectedType || projectedType->kind != SemanticType::Array ||
+            projectedType->arguments.size() != 1)
+          return {.failure = ConstantEvaluationFailure::UnsupportedType};
+        projectedType = &projectedType->arguments.front();
+        if (projection.index != 0) {
+          if (projection.index >= frame.values.size() ||
+              !frame.values[projection.index])
+            return {.failure = ConstantEvaluationFailure::NonConstantReference};
+          projection.constantIndex =
+              constantUnsignedMagnitude(*frame.values[projection.index]);
+          projection.index = 0;
+        }
+        if (!projection.constantIndex)
+          return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      } else if (projection.kind == MirProjectionKind::Field) {
+        const auto *owner = projectedType ? record(*projectedType) : nullptr;
+        if (!owner)
+          return {.failure = ConstantEvaluationFailure::UnsupportedType};
+        const auto field = std::find_if(
+            owner->declaredFields.begin(), owner->declaredFields.end(),
+            [&](const auto &candidate) {
+              return candidate.symbol == projection.field;
+            });
+        if (field == owner->declaredFields.end())
+          return {.failure = ConstantEvaluationFailure::InvalidOperands};
+        projectedType = &field->type;
+        if (field->access == AccessMode::ReadOnly)
+          location.access = AccessMode::ReadOnly;
+      } else {
+        return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
+      }
+      location.path.push_back(projection);
+    }
+    location.type = &observedType(place->type);
+    // locate's success has no value; callers distinguish it by failure.
+    return {};
+  }
+
+  ConstantEvaluation locateOperand(Frame &frame, const MirOperand &input,
+                                   Location &location) {
+    if (input.kind == MirOperandKind::Loan) {
+      if (input.loan >= frame.loans.size() || !frame.loans[input.loan])
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      const auto &loan = *frame.loans[input.loan];
+      if (input.place) {
+        const auto result = locate(frame, input.place, location);
+        if (result.failure != ConstantEvaluationFailure::None)
+          return result;
+      } else {
+        if (!charge(loan.location.path.size()))
+          return {.failure = ConstantEvaluationFailure::ResourceLimit};
+        location = loan.location;
+      }
+      if (loan.location.access == AccessMode::ReadOnly || !loan.active)
+        location.access = AccessMode::ReadOnly;
+      return {};
+    }
+    if (input.place)
+      return locate(frame, input.place, location,
+                    input.kind == MirOperandKind::BorrowWrite);
+    if (input.kind == MirOperandKind::Value && input.value != 0 &&
+        input.value < frame.values.size()) {
+      if (input.value < frame.valueReferences.size() &&
+          frame.valueReferences[input.value]) {
+        if (!charge(frame.valueReferences[input.value]->path.size()))
+          return {.failure = ConstantEvaluationFailure::ResourceLimit};
+        location = *frame.valueReferences[input.value];
+      } else {
+        location = {.frame = &frame,
+                    .root = MirPlaceRootKind::Value,
+                    .cell = input.value,
+                    .epoch = frame.valueEpochs[input.value],
+                    .type = &observedType(input.type)};
+      }
+      return {};
+    }
+    return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
   }
 
   bool charge(std::size_t amount) {
@@ -233,27 +439,17 @@ private:
     return converted;
   }
 
-  ConstantEvaluation project(Frame &frame, const ConstantValue &value,
-                             const MirPlace &place, std::size_t offset,
+  ConstantEvaluation project(const ConstantValue &value,
+                             std::span<const MirPlaceProjection> path,
+                             const SemanticType &type, std::size_t offset,
                              const ConstantValue *replacement = nullptr) {
-    if (offset == place.projections.size()) {
-      return replacement ? convertConstantToType(*replacement, place.type)
+    if (offset == path.size()) {
+      return replacement ? convertConstantToType(*replacement, type)
                          : ConstantEvaluation{.value = value};
     }
     if (!charge(1))
       return {.failure = ConstantEvaluationFailure::ResourceLimit};
-    const auto &projection = place.projections[offset];
-    if (projection.kind == MirProjectionKind::Dereference && offset == 0 &&
-        place.root == MirPlaceRootKind::Binding) {
-      const auto root = cell(frame, place.id);
-      const auto *binding = frame.body.findPlace(root);
-      if (binding && binding->type.kind == SemanticType::Reference &&
-          observedStorageType(binding->type))
-        return replacement
-                   ? ConstantEvaluation{.failure = ConstantEvaluationFailure::
-                                            UnsupportedExpression}
-                   : project(frame, value, place, offset + 1);
-    }
+    const auto &projection = path[offset];
     if (projection.kind == MirProjectionKind::Field) {
       const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
       if (!aggregate || !aggregate->value ||
@@ -267,7 +463,7 @@ private:
       if (field == fields.end())
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
       auto result =
-          project(frame, field->value, place, offset + 1, replacement);
+          project(field->value, path, type, offset + 1, replacement);
       if (!result || !replacement)
         return result;
       if (!charge(fields.size()))
@@ -278,20 +474,14 @@ private:
     }
     if (projection.kind != MirProjectionKind::Index)
       return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
-    auto index = projection.constantIndex;
-    if (projection.index != 0) {
-      if (projection.index >= frame.values.size() ||
-          !frame.values[projection.index])
-        return {.failure = ConstantEvaluationFailure::NonConstantReference};
-      index = constantUnsignedMagnitude(*frame.values[projection.index]);
-    }
+    const auto index = projection.constantIndex;
     const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
     if (!aggregate || !aggregate->value ||
         aggregate->value->kind != ConstantAggregateKind::Array)
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
     if (!index || *index >= aggregate->value->elements.size())
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
-    auto result = project(frame, aggregate->value->elements[*index], place,
+    auto result = project(aggregate->value->elements[*index], path, type,
                           offset + 1, replacement);
     if (!result || !replacement)
       return result;
@@ -303,29 +493,19 @@ private:
     return {.value = makeConstantAggregate(std::move(updated))};
   }
 
-  ConstantEvaluation readPlace(Frame &frame, MirPlaceId id) {
-    const auto *place = frame.body.findPlace(id);
-    if (place && place->root == MirPlaceRootKind::Loan &&
-        place->loan < frame.loans.size() && frame.loans[place->loan])
-      return project(frame, *frame.loans[place->loan], *place, 0);
-    if (place && place->root == MirPlaceRootKind::This && frame.receiver)
-      return project(frame, *frame.receiver, *place, 0);
-    // Materialized call/constructor results are ordinary Value-root places,
-    // not binding storage. Their SSA value remains live until the represented
-    // full-expression drop or ownership transfer retires it.
-    if (place && place->root == MirPlaceRootKind::Value &&
-        observedStorageType(place->type)) {
-      if (place->value == 0 || place->value >= frame.values.size() ||
-          !frame.values[place->value])
-        return {.failure = ConstantEvaluationFailure::NonConstantReference};
-      return project(frame, *frame.values[place->value], *place, 0);
-    }
-    const auto storage = cell(frame, id);
-    if (!storage)
-      return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
-    if (!frame.places[storage])
+  ConstantEvaluation readLocation(const Location &location) {
+    const auto &value = storage(location);
+    if (location.epoch != epoch(location) || !value)
       return {.failure = ConstantEvaluationFailure::NonConstantReference};
-    return project(frame, *frame.places[storage], *place, 0);
+    return project(*value, location.path, *location.type, 0);
+  }
+
+  ConstantEvaluation readPlace(Frame &frame, MirPlaceId id) {
+    Location location;
+    const auto located = locate(frame, id, location);
+    return located.failure == ConstantEvaluationFailure::None
+               ? readLocation(location)
+               : located;
   }
 
   bool retirePlace(Frame &frame, MirPlaceId id) {
@@ -335,12 +515,16 @@ private:
     if (place->root == MirPlaceRootKind::Value && place->value != 0 &&
         place->value < frame.values.size()) {
       frame.values[place->value].reset();
+      ++frame.valueEpochs[place->value];
+      if (place->value < frame.valueReferences.size())
+        frame.valueReferences[place->value].reset();
       return true;
     }
     const auto storage = cell(frame, id);
     if (!storage)
       return false;
     frame.places[storage].reset();
+    ++frame.placeEpochs[storage];
     return true;
   }
 
@@ -348,11 +532,10 @@ private:
                                 const ConstantValue &value,
                                 bool initializing = false) {
     const auto *target = frame.body.findPlace(id);
-    if (target && target->root == MirPlaceRootKind::This && frame.receiver) {
-      if (frame.address.kind != MirBodyKind::Constructor || !initializing ||
-          target->projections.size() != 1 ||
-          target->projections[0].kind != MirProjectionKind::Field)
-        return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
+    if (target && target->root == MirPlaceRootKind::This && frame.receiver &&
+        frame.address.kind == MirBodyKind::Constructor && initializing &&
+        target->projections.size() == 1 &&
+        target->projections[0].kind == MirProjectionKind::Field) {
       const auto *aggregate =
           std::get_if<ConstantAggregateValue>(&*frame.receiver);
       if (!aggregate || !aggregate->value)
@@ -374,22 +557,25 @@ private:
       frame.receiver = makeConstantAggregate(std::move(updated));
       return converted;
     }
-    const auto storage = cell(frame, id);
-    if (!storage)
+    Location location;
+    const auto located = locate(frame, id, location, true);
+    if (located.failure != ConstantEvaluationFailure::None)
+      return located;
+    if (!initializing && location.access != AccessMode::Mutable)
       return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
-    const auto &place = *target;
-    const auto *root = frame.body.findPlace(storage);
-    if (root->type.kind == SemanticType::Reference &&
-        (!initializing || !place.projections.empty()))
-      return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
-    if (!place.projections.empty() && !frame.places[storage])
+    auto &valueStorage = storage(location);
+    if (location.epoch != epoch(location) ||
+        (!location.path.empty() && !valueStorage))
       return {.failure = ConstantEvaluationFailure::NonConstantReference};
     auto updated =
-        place.projections.empty()
-            ? convertConstantToType(value, observedType(place.type))
-            : project(frame, *frame.places[storage], place, 0, &value);
-    if (updated)
-      frame.places[storage] = std::move(updated.value);
+        location.path.empty()
+            ? convertConstantToType(value, *location.type)
+            : project(*valueStorage, location.path, *location.type, 0, &value);
+    if (updated) {
+      valueStorage = std::move(updated.value);
+      if (initializing && location.path.empty())
+        ++epoch(location);
+    }
     return updated.failure == ConstantEvaluationFailure::None
                ? ConstantEvaluation{.value = value}
                : updated;
@@ -441,8 +627,11 @@ private:
   ConstantEvaluation operand(Frame &frame, const MirOperand &input) {
     if (input.kind == MirOperandKind::Loan && input.loan < frame.loans.size() &&
         frame.loans[input.loan]) {
-      return input.place ? readPlace(frame, input.place)
-                         : ConstantEvaluation{.value = frame.loans[input.loan]};
+      Location location;
+      const auto located = locateOperand(frame, input, location);
+      return located.failure == ConstantEvaluationFailure::None
+                 ? readLocation(location)
+                 : located;
     }
     if (input.kind == MirOperandKind::Constant && input.literal) {
       return evaluateConstantLiteral(*input.literal,
@@ -450,11 +639,15 @@ private:
     }
     if (input.kind == MirOperandKind::Value && input.value != 0 &&
         input.value < frame.values.size() && frame.values[input.value]) {
+      if (input.value < frame.valueReferences.size() &&
+          frame.valueReferences[input.value])
+        return readLocation(*frame.valueReferences[input.value]);
       return {.value = frame.values[input.value]};
     }
     if (input.kind == MirOperandKind::Copy ||
         input.kind == MirOperandKind::Move ||
-        input.kind == MirOperandKind::BorrowRead) {
+        input.kind == MirOperandKind::BorrowRead ||
+        input.kind == MirOperandKind::BorrowWrite) {
       return readPlace(frame, input.place);
     }
     return {.failure = ConstantEvaluationFailure::NonConstantReference};
@@ -496,18 +689,28 @@ private:
 
   MirConstantEvaluation execute(Frame &frame, const MirInstruction &instruction,
                                 std::size_t depth) {
-    // Loans hold immutable observations, never host addresses. The verified
-    // source loan prevents writes/movement during the observation's lifetime.
+    // The ordinary verifier owns loan conflicts and endpoints. Execution
+    // retains their exact constant-cell origins rather than freezing copies.
     if (instruction.kind == MirInstructionKind::EndBorrow && instruction.loan) {
       frame.loans[*instruction.loan].reset();
+      return {};
+    }
+    if (instruction.kind == MirInstructionKind::ActivateBorrow &&
+        instruction.loan) {
+      auto &loan = frame.loans[*instruction.loan];
+      if (!loan)
+        return fail(frame, ConstantEvaluationFailure::NonConstantReference);
+      loan->active = true;
       return {};
     }
     if (instruction.rawMemoryAccess ||
         instruction.unsafeOperation != UnsafeOperationKind::None ||
         instruction.bodyTarget || instruction.lambdaTarget ||
         (instruction.callableInvocation &&
-         (*instruction.callableInvocation !=
-              CallableInvocationCapability::Read ||
+         ((*instruction.callableInvocation !=
+               CallableInvocationCapability::Read &&
+           *instruction.callableInvocation !=
+               CallableInvocationCapability::Mutable) ||
           instruction.kind != MirInstructionKind::Call ||
           !instruction.functionTarget ||
           instruction.dispatch != CallDispatch::Static))) {
@@ -544,7 +747,9 @@ private:
         return checked ? MirConstantEvaluation{} : fail(frame, checked.failure);
       }
     }
-    if (!observedStorageType(instruction.info.type)) {
+    if (!observedStorageType(instruction.info.type) &&
+        !(instruction.kind == MirInstructionKind::Call &&
+          instruction.info.type == SemanticType::Void)) {
       return fail(frame, ConstantEvaluationFailure::UnsupportedType);
     }
     // The positive magnitude/identity chain for a signed-minimum literal has
@@ -557,6 +762,7 @@ private:
         frame.values[*instruction.result] =
             makeConstantInteger({.negative = true, .magnitude = magnitude},
                                 *constantIntegerDomain(instruction.info.type));
+        ++frame.valueEpochs[*instruction.result];
         return {};
       }
       if ((instruction.operation == MirOperation::Literal ||
@@ -574,9 +780,23 @@ private:
       arguments.push_back(std::move(*value.value));
     }
     ConstantEvaluation evaluated;
+    std::optional<Location> reference;
+    bool voidResult = false;
     switch (instruction.kind) {
     case MirInstructionKind::Borrow:
       if (instruction.loan && arguments.size() == 1) {
+        Location location;
+        const auto located =
+            locateOperand(frame, instruction.operands.front(), location);
+        if (located.failure != ConstantEvaluationFailure::None)
+          return fail(frame, located.failure);
+        const auto *loan = frame.body.findLoan(*instruction.loan);
+        if (!loan || (loan->access == AccessMode::Mutable &&
+                      location.access != AccessMode::Mutable))
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        location.access = loan->access;
+        frame.loans[*instruction.loan] =
+            Loan{std::move(location), !loan->twoPhase};
         evaluated.value = arguments.front();
       }
       break;
@@ -587,12 +807,48 @@ private:
     case MirInstructionKind::Move:
     case MirInstructionKind::CallInput:
       if (arguments.size() == 1) {
+        if (instruction.kind == MirInstructionKind::CallInput &&
+            (instruction.callInputKind == HirCallInputKind::ReadBorrow ||
+             instruction.callInputKind == HirCallInputKind::MutableBorrow ||
+             instruction.callInputKind == HirCallInputKind::ReadTemporaryBorrow ||
+             instruction.callInputKind == HirCallInputKind::MutableTemporaryBorrow)) {
+          Location location;
+          const auto located =
+              locateOperand(frame, instruction.operands.front(), location);
+          if (located.failure != ConstantEvaluationFailure::None)
+            return fail(frame, located.failure);
+          if (instruction.callInputKind == HirCallInputKind::ReadBorrow ||
+              instruction.callInputKind == HirCallInputKind::ReadTemporaryBorrow)
+            location.access = AccessMode::ReadOnly;
+          reference = std::move(location);
+        }
         evaluated.value = arguments.front();
       }
       break;
     case MirInstructionKind::Initialize:
     case MirInstructionKind::Assign:
       if (arguments.size() == 1 && instruction.destination) {
+        const auto *target = frame.body.findPlace(*instruction.destination);
+        if (instruction.kind == MirInstructionKind::Initialize && target &&
+            target->type.kind == SemanticType::Reference &&
+            target->projections.empty()) {
+          Location location;
+          const auto located =
+              locateOperand(frame, instruction.operands.front(), location);
+          if (located.failure != ConstantEvaluationFailure::None)
+            return fail(frame, located.failure);
+          const auto root = cell(frame, target->id);
+          if (!root ||
+              (target->type.referenceAccess == AccessMode::Mutable &&
+               location.access != AccessMode::Mutable))
+            return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+          location.access = target->type.referenceAccess;
+          if (frame.references.empty())
+            frame.references.resize(frame.places.size());
+          frame.references[root] = std::move(location);
+          evaluated.value = arguments.front();
+          break;
+        }
         if (instruction.kind == MirInstructionKind::Assign &&
             operatorToken(instruction.operation)) {
           const auto before = readPlace(frame, *instruction.destination);
@@ -673,18 +929,54 @@ private:
             {.width = 64, .signedValue = false});
       } else if (instruction.functionTarget &&
                  instruction.intrinsic == IntrinsicKind::None) {
+        const auto *callee =
+            program.findFunctionInstance(*instruction.functionTarget);
+        if (!callee || callee->parameterTypes.size() != arguments.size())
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        std::vector<std::optional<Location>> origins(arguments.size());
+        for (std::size_t index = 0; index < arguments.size(); ++index) {
+          if (callee->parameterTypes[index].kind != SemanticType::Reference)
+            continue;
+          Location location;
+          const auto located =
+              locateOperand(frame, instruction.operands[index], location);
+          if (located.failure != ConstantEvaluationFailure::None)
+            return fail(frame, located.failure);
+          if (callee->parameterTypes[index].referenceAccess ==
+                  AccessMode::Mutable &&
+              location.access != AccessMode::Mutable)
+            return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+          location.access = callee->parameterTypes[index].referenceAccess;
+          origins[index] = std::move(location);
+        }
         std::optional<ConstantValue> receiver;
+        std::optional<Location> receiverOrigin;
         if (instruction.receiver) {
           auto value = operand(frame, *instruction.receiver);
           if (!value)
             return fail(frame, value.failure);
           receiver = std::move(value.value);
+          Location location;
+          const auto located =
+              locateOperand(frame, *instruction.receiver, location);
+          if (located.failure != ConstantEvaluationFailure::None)
+            return fail(frame, located.failure);
+          if (callee->receiverMutability == ReceiverMutability::Mutable &&
+              location.access != AccessMode::Mutable)
+            return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+          location.access =
+              callee->receiverMutability == ReceiverMutability::Mutable
+                  ? AccessMode::Mutable
+                  : AccessMode::ReadOnly;
+          receiverOrigin = std::move(location);
         }
         auto result = invoke(*instruction.functionTarget, arguments, depth + 1,
-                             std::move(receiver));
+                             std::move(receiver), origins,
+                             std::move(receiverOrigin), &reference);
         if (!result)
           return result;
         evaluated.value = std::move(result.value);
+        voidResult = result.voidResult;
       } else if (instruction.receiver && arguments.empty() &&
                  (instruction.intrinsic == IntrinsicKind::StringViewSize ||
                   instruction.intrinsic == IntrinsicKind::StringViewEmpty)) {
@@ -707,15 +999,39 @@ private:
       return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
                   "Instruction is outside the scalar constant MIR profile.");
     }
-    if (!evaluated) {
+    if (!evaluated && !voidResult) {
       return fail(frame, evaluated.failure == ConstantEvaluationFailure::None
                              ? ConstantEvaluationFailure::UnsupportedExpression
                              : evaluated.failure);
     }
-    if (instruction.result)
+    if (instruction.result) {
       frame.values[*instruction.result] = evaluated.value;
-    if (instruction.loan)
-      frame.loans[*instruction.loan] = evaluated.value;
+      ++frame.valueEpochs[*instruction.result];
+      if (reference && frame.valueReferences.empty())
+        frame.valueReferences.resize(frame.values.size());
+      if (*instruction.result < frame.valueReferences.size())
+        frame.valueReferences[*instruction.result] = reference;
+    }
+    if (instruction.loan && instruction.kind != MirInstructionKind::Borrow) {
+      const auto *loan = frame.body.findLoan(*instruction.loan);
+      if (!loan)
+        return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+      if (!reference) {
+        if (!instruction.result || !evaluated)
+          return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
+        reference = Location{.frame = &frame,
+                             .root = MirPlaceRootKind::Value,
+                             .cell = *instruction.result,
+                             .epoch = frame.valueEpochs[*instruction.result],
+                             .type = &observedType(instruction.info.type)};
+      }
+      if (loan->access == AccessMode::Mutable &&
+          reference->access != AccessMode::Mutable)
+        return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+      reference->access = loan->access;
+      frame.loans[*instruction.loan] =
+          Loan{std::move(*reference), !loan->twoPhase};
+    }
     for (const auto &input : instruction.operands) {
       if (input.kind == MirOperandKind::Move) {
         if (!retirePlace(frame, input.place))
@@ -728,18 +1044,23 @@ private:
   MirConstantEvaluation invoke(HirFunctionInstanceId id,
                                std::span<const ConstantValue> arguments,
                                std::size_t depth,
-                               std::optional<ConstantValue> receiver = {}) {
+                               std::optional<ConstantValue> receiver = {},
+                               std::span<const std::optional<Location>>
+                                   argumentOrigins = {},
+                               std::optional<Location> receiverOrigin = {},
+                               std::optional<Location> *referenceResult =
+                                   nullptr) {
     const auto *function = program.findFunctionInstance(id);
     if (function == nullptr || !function->constexprFunction ||
         function->requiresUnsafe || function->virtualMethod ||
         function->definitionKind != MirDefinitionKind::Source ||
-        function->receiverMutability != ReceiverMutability::ReadOnly ||
+        function->receiverMutability == ReceiverMutability::Consuming ||
         (function->returnBorrowOrigin != BorrowOriginKind::None &&
-         (function->returnType.kind != SemanticType::Reference ||
-          function->returnType.referenceAccess != AccessMode::ReadOnly)) ||
+         function->returnType.kind != SemanticType::Reference) ||
         function->entryKind != ProgramEntryKind::None ||
         function->linkage != LanguageLinkage::Gti ||
-        !observedStorageType(function->returnType) ||
+        (!observedStorageType(function->returnType) &&
+         function->returnType != SemanticType::Void) ||
         arguments.size() != function->parameterTypes.size()) {
       return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
               .function = id,
@@ -762,7 +1083,12 @@ private:
     return executeBody(function->body, {MirBodyKind::Function, id},
                        function->returnType, function->parameterTypes,
                        function->parameterBindings, arguments, depth,
-                       std::move(receiver));
+                       std::move(receiver), argumentOrigins,
+                       std::move(receiverOrigin),
+                       function->receiverMutability == ReceiverMutability::Mutable
+                           ? AccessMode::Mutable
+                           : AccessMode::ReadOnly,
+                       referenceResult);
   }
 
   MirConstantEvaluation construct(HirConstructorInstanceId id,
@@ -828,7 +1154,8 @@ private:
     return executeBody(constructor->body, {MirBodyKind::Constructor, id},
                        owner->type, constructor->parameterTypes,
                        constructor->parameterBindings, arguments, depth,
-                       makeConstantAggregate(std::move(receiver)));
+                       makeConstantAggregate(std::move(receiver)), {}, {},
+                       AccessMode::Mutable);
   }
 
   MirConstantEvaluation
@@ -837,16 +1164,23 @@ private:
               const std::vector<SemanticType> &parameterTypes,
               const std::vector<HirBindingId> &parameterBindings,
               std::span<const ConstantValue> arguments, std::size_t depth,
-              std::optional<ConstantValue> receiver = {}) {
+              std::optional<ConstantValue> receiver = {},
+              std::span<const std::optional<Location>> argumentOrigins = {},
+              std::optional<Location> receiverOrigin = {},
+              AccessMode receiverAccess = AccessMode::ReadOnly,
+              std::optional<Location> *referenceResult = nullptr) {
     Frame frame{
-        body,
-        address,
-        std::vector<std::optional<ConstantValue>>(body.values.size() + 1),
-        std::vector<std::optional<ConstantValue>>(body.places.size() + 1),
-        std::vector<std::optional<ConstantValue>>(body.loans.size() + 1),
-        body.entry,
-        0,
-        std::move(receiver)};
+        .body = body,
+        .address = address,
+        .values = std::vector<std::optional<ConstantValue>>(body.values.size() + 1),
+        .places = std::vector<std::optional<ConstantValue>>(body.places.size() + 1),
+        .loans = std::vector<std::optional<Loan>>(body.loans.size() + 1),
+        .placeEpochs = std::vector<std::size_t>(body.places.size() + 1),
+        .valueEpochs = std::vector<std::size_t>(body.values.size() + 1),
+        .block = body.entry,
+        .receiver = std::move(receiver),
+        .receiverOrigin = std::move(receiverOrigin),
+        .receiverAccess = receiverAccess};
     if (depth >= limits.callDepth) {
       return fail(frame, ConstantEvaluationFailure::ResourceLimit,
                   "The constexpr call depth exceeded the compiler limit.");
@@ -860,12 +1194,12 @@ private:
     }
     for (const auto &loan : body.loans) {
       const auto *source = body.findPlace(loan.source);
-      if (loan.access != AccessMode::ReadOnly || loan.storedDependency != 0 ||
+      if (loan.storedDependency != 0 ||
           !loan.additionalSources().empty() || loan.lifecycleBound ||
-          loan.twoPhase || source == nullptr ||
+          source == nullptr ||
           !observedStorageType(source->type)) {
         return fail(frame, ConstantEvaluationFailure::UnsupportedType,
-                    "Constant MIR only admits read-only loans to supported "
+                    "Constant MIR only admits checked loans to supported "
                     "values, without stored reference carriers.");
       }
     }
@@ -905,18 +1239,34 @@ private:
             place.projections.empty() &&
             place.binding == parameterBindings[index]) {
           const auto storage = cell(frame, place.id);
-          if (storage != 0)
+          if (storage != 0) {
             frame.places[storage] = arguments[index];
+            ++frame.placeEpochs[storage];
+            if (type.kind == SemanticType::Reference &&
+                index < argumentOrigins.size() && argumentOrigins[index]) {
+              if (frame.references.empty())
+                frame.references.resize(frame.places.size());
+              frame.references[storage] = argumentOrigins[index];
+            }
+          }
         }
       }
     }
     for (const auto &loan : body.loans) {
       if (!loan.entry)
         continue;
-      const auto value = readPlace(frame, loan.source);
+      Location location;
+      const auto located = locate(frame, loan.source, location);
+      if (located.failure != ConstantEvaluationFailure::None)
+        return fail(frame, located.failure);
+      const auto value = readLocation(location);
       if (!value)
         return fail(frame, value.failure);
-      frame.loans[loan.id] = value.value;
+      if (loan.access == AccessMode::Mutable &&
+          location.access != AccessMode::Mutable)
+        return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+      location.access = loan.access;
+      frame.loans[loan.id] = Loan{std::move(location), true};
     }
     while (const auto *block = body.findBlock(frame.block)) {
       for (const auto &instruction : block->instructions) {
@@ -996,10 +1346,30 @@ private:
           return complete ? MirConstantEvaluation{.value = complete.value}
                           : fail(frame, complete.failure);
         }
+        if (returnType == SemanticType::Void)
+          return {.voidResult = true};
         const auto result = terminator.value ? operand(frame, *terminator.value)
                                              : ConstantEvaluation{};
         if (!result)
-          return fail(frame, ConstantEvaluationFailure::NonConstantReference);
+          return fail(frame,
+                      result.failure == ConstantEvaluationFailure::None
+                          ? ConstantEvaluationFailure::NonConstantReference
+                          : result.failure);
+        if (returnType.kind == SemanticType::Reference && referenceResult) {
+          Location location;
+          const auto located =
+              locateOperand(frame, *terminator.value, location);
+          if (located.failure != ConstantEvaluationFailure::None)
+            return fail(frame, located.failure);
+          if (location.frame == &frame ||
+              (returnType.referenceAccess == AccessMode::Mutable &&
+               location.access != AccessMode::Mutable))
+            return fail(frame, ConstantEvaluationFailure::NonConstantReference,
+                        "A constant reference result must retain its caller's "
+                        "live origin and access.");
+          location.access = returnType.referenceAccess;
+          *referenceResult = std::move(location);
+        }
         const auto converted =
             convertConstantToType(*result.value, observedType(returnType));
         return converted ? MirConstantEvaluation{.value = converted.value}

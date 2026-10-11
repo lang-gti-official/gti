@@ -2293,12 +2293,12 @@ void testConstexprOperators() {
     std::size_t width;
   };
   const std::vector<Rejection> rejected{
-      {"struct Item { int x; constexpr int operator()() mut { return this.x; } "
+      {"struct Item { int* x = nullptr; constexpr int operator()() mut { return 0; } "
        "};",
-       "read-only receiver", "operator()", 8},
+       "structural aggregate", "operator()", 8},
       {"struct Item { int x; constexpr int operator()() && { return this.x; } "
        "};",
-       "read-only receiver", "operator()", 8},
+       "cannot consume", "operator()", 8},
       {"struct Item { int x; constexpr Item(int x) : x(x) {} int operator+(int "
        "n) { return this.x + n; } }; "
        "constexpr Item item = Item(1); constexpr int bad = item + 2;",
@@ -2366,11 +2366,75 @@ void testConstexprOperators() {
 }
 
 void testConstexprMutation() {
+  const auto scalar = lang::Frontend().analyze("constexpr-mutation-scalar.gti", R"(
+constexpr void add(mut int& value, int amount) { value += amount; }
+constexpr mut int& forward_mut(mut int& value) { return value; }
+constexpr int scalar_work(int seed) {
+  mut int value = seed;
+  add(value, 4);
+  { mut int& same = forward_mut(value); add(same, 2); }
+  return value;
+}
+int main() { return scalar_work(3) - 9; }
+)");
+  lang::HirFunctionInstanceId scalarId = 0;
+  for (const auto &function : scalar.hir.functionInstances()) {
+    if (function.source && function.source->name().lexeme == "scalar_work")
+      scalarId = function.id;
+  }
+  const std::array<lang::ConstantValue, 1> argument{lang::makeConstantInteger(
+      {.magnitude = 3}, {.width = 32, .signedValue = true})};
+  const auto computed =
+      lang::evaluateMirConstantFunction(scalar.mir, scalarId, argument);
+  if (!computed)
+    std::cerr << "Mutable scalar MIR failure: " << int(computed.failure)
+              << " body " << computed.body.owner << " instruction "
+              << computed.instruction << ": " << computed.detail << '\n';
+  expect(scalar.canGenerateCode() && computed &&
+             std::get<lang::ConstantInteger>(*computed.value).magnitude == 9,
+         "direct canonical MIR shares mutable referents across nested calls");
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constexpr_mutation.gti";
   std::ifstream input(fixture);
   const std::string source((std::istreambuf_iterator<char>(input)),
                            std::istreambuf_iterator<char>());
+  const auto constants = source.find("\nconstexpr Table baked");
+  const auto runtimeSource = source.substr(0, constants) + R"(
+int main() { Table table = build(4); return table.total() + array_work(4) - 68; }
+)";
+  const auto runtime = lang::Frontend().analyze(
+      fixture, runtimeSource, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  for (const auto &name : {"build", "array_work"}) {
+    lang::HirFunctionInstanceId id = 0;
+    for (const auto &function : runtime.hir.functionInstances()) {
+      if (function.source && function.source->name().lexeme == name)
+        id = function.id;
+    }
+    const std::array<lang::ConstantValue, 1> seed{lang::makeConstantInteger(
+        {.magnitude = 4}, {.width = 32, .signedValue = true})};
+    const auto direct =
+        lang::evaluateMirConstantFunction(runtime.mir, id, seed);
+    if (!direct) {
+      std::cerr << name << " MIR failure " << int(direct.failure) << " body "
+                << int(direct.body.kind) << ':' << direct.body.owner
+                << " instruction " << direct.instruction << ": "
+                << direct.detail << '\n';
+      if (const auto *body = lang::findMirBody(runtime.mir, direct.body)) {
+        if (const auto *block = body->findBlock(direct.block)) {
+          for (const auto &instruction : block->instructions) {
+            if (instruction.id == direct.instruction)
+              std::cerr << "kind " << int(instruction.kind) << " operation "
+                        << int(instruction.operation) << " type "
+                        << int(instruction.info.type.kind) << '\n';
+          }
+        }
+      }
+    }
+    expect(runtime.canGenerateCode() && direct,
+           "direct constant execution supports the mutable builder: " +
+               std::string(name));
+  }
   lang::FrontendWorkMetrics metrics;
   const auto result = lang::Frontend({.workMetrics = &metrics})
                           .analyze(fixture, source, {standardLibraryPrelude()},
@@ -2487,7 +2551,7 @@ void testConstexprReadOnlyReferences() {
   const std::vector<Rejection> rejections{
       {"constexpr int& bad() { int value = 4; return value; }", "GTI-S2017",
        "borrowed return requires", "bad()", 3},
-      {"constexpr int bad(mut int& value) { return value; }", "GTI-S2057",
+      {"constexpr int bad(mut int* value) { return 0; }", "GTI-S2057",
        "parameters must be", "value)", 5},
       {"constexpr int bad() { mut int value = 4; int& ref = value; "
        "value = 5; return ref; }",
@@ -3453,7 +3517,7 @@ int32_t runtime_value() { return 1; }
 constexpr int32_t called = runtime_value();
 constexpr int32_t generic_values<Args...>(Args... values) { return 0; }
 class InvalidMethod {
-  constexpr int32_t method() mut { return 1; }
+  constexpr int32_t method() && { return 1; }
 };
 class InvalidMember {
   constexpr int32_t value = 1;
@@ -3473,7 +3537,7 @@ constexpr RuntimePoint runtime_point = RuntimePoint(1);
              hasDiagnostic(invalid.diagnostics,
                            "Constexpr generic parameter packs") &&
              hasDiagnostic(invalid.diagnostics,
-                           "must have a read-only receiver") &&
+                           "cannot consume its receiver") &&
              hasDiagnostic(invalid.diagnostics, "must be static") &&
              hasDiagnostic(invalid.diagnostics,
                            "not an available constexpr constructor"),
