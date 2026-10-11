@@ -1,0 +1,69 @@
+#include <std/algorithm>
+#include <std/array>
+#include <std/deque>
+#include <std/functional>
+#include <std/iterator>
+#include <std/list>
+#include <std/vector>
+
+class Below {
+  int limit;
+public:
+  Below(int limit) : limit(limit) {}
+  bool operator()(int& value) { return value < this.limit; }
+};
+
+bool verify<I, S>(I first, S last, std::size_t lower,
+                  std::size_t upper, int key, bool descending)
+  requires std::forward_iterator<I> && std::sentinel_for<S, I> &&
+           std::dereferences_to<I, int> && std::indirect_predicate<Below, I> {
+  if (descending) {
+    auto low = std::lower_bound(first, last, key, std::greater<int>());
+    auto high = std::upper_bound(first, last, key, std::greater<int>());
+    return std::size_t(std::distance(first, low)) == lower &&
+           std::size_t(std::distance(first, high)) == upper &&
+           std::binary_search(first, last, key, std::greater<int>()) == (lower != upper);
+  }
+  auto low = std::lower_bound(first, last, key, std::less<int>());
+  auto high = std::upper_bound(first, last, key, std::less<int>());
+  auto boundary = std::partition_point(first, last, Below(key));
+  return std::size_t(std::distance(first, low)) == lower &&
+         std::size_t(std::distance(first, high)) == upper &&
+         std::size_t(std::distance(first, boundary)) == lower &&
+         std::binary_search(first, last, key, std::less<int>()) == (lower != upper);
+}
+
+int main() {
+  // Every partition boundary, duplicate run, absent key and empty sequence.
+  for (mut std::size_t length = 0; length <= 8; length++) {
+    mut std::vector<int> ascending{};
+    mut std::vector<int> descending{};
+    for (mut std::size_t index = 0; index < length; index++) {
+      ascending.push_back(int(index / 2));
+      descending.push_back(int((length - index - 1) / 2));
+    }
+    for (mut int key = -1; key <= 5; key++) {
+      mut std::size_t lower = 0;
+      mut std::size_t upper = 0;
+      mut std::size_t reverse_lower = 0;
+      mut std::size_t reverse_upper = 0;
+      for (auto& value : ascending) {
+        if (value < key) { lower++; }
+        if (value <= key) { upper++; }
+        if (value > key) { reverse_lower++; }
+        if (value >= key) { reverse_upper++; }
+      }
+      if (!verify(ascending.begin(), ascending.end(), lower, upper, key, false)) { return 1; }
+      if (!verify(descending.begin(), descending.end(), reverse_lower, reverse_upper, key, true)) { return 2; }
+    }
+  }
+  std::list<int> linked = {1, 2, 2, 4, 7};
+  std::deque<int> deque = {7, 4, 2, 2, 1};
+  std::array<int, 5> fixed = std::array<int, 5>({1, 2, 2, 4, 7});
+  if (!verify(linked.begin(), linked.end(), std::size_t(1), std::size_t(3), 2, false)) { return 3; }
+  if (!verify(deque.begin(), deque.end(), std::size_t(2), std::size_t(4), 2, true)) { return 4; }
+  if (!verify(fixed.begin(), fixed.end(), std::size_t(1), std::size_t(3), 2, false)) { return 5; }
+  std::array<int, 0> empty{};
+  if (!verify(empty.begin(), empty.end(), std::size_t(0), std::size_t(0), 2, false)) { return 6; }
+  return 0;
+}

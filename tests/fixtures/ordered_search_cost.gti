@@ -1,0 +1,109 @@
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+mut std::size_t calls = 0;
+mut std::size_t increments = 0;
+
+class CostEnd {
+  std::size_t length;
+public:
+  CostEnd(std::size_t length) : length(length) {}
+  std::size_t position() { return this.length; }
+};
+class CostCursor {
+  CostSeries& owner;
+  mut std::size_t index;
+public:
+  CostCursor(CostSeries& owner, std::size_t index) : owner(owner), index(index) {}
+  int& operator*() { return this.owner.at(this.index); }
+  void operator++() mut { this.index++; increments++; }
+  bool operator!=(CostEnd& end) { return this.index != end.position(); }
+  bool operator!=(CostCursor& other) { return this.index != other.index; }
+};
+class CostSeries {
+  mut std::vector<int> elements{};
+public:
+  CostSeries(std::size_t length) {
+    this.elements.reserve(length);
+    for (mut std::size_t index = 0; index < length; index++) {
+      this.elements.push_back(int(index / 2));
+    }
+  }
+  int& at(std::size_t index) { return this.elements[index]; }
+  CostCursor begin() { return CostCursor(this, std::size_t(0)); }
+  CostEnd end() { return CostEnd(this.elements.size()); }
+};
+class CostOrder {
+public:
+  bool operator()(int& left, int& right) { calls++; return left < right; }
+};
+class CostPredicate {
+  int threshold;
+public:
+  CostPredicate(int threshold) : threshold(threshold) {}
+  bool operator()(int& value) { calls++; return value < this.threshold; }
+};
+
+void reset_cost() {
+  calls = 0;
+  increments = 0;
+  unsafe { adoption_count_begin(); }
+}
+bool check_cost(std::size_t length, std::size_t maximum_calls) {
+  unsafe {
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0)) { return false; }
+  }
+  // Counted forward search uses at most three traversals and logarithmically
+  // many callback invocations. Counters observe the real source operations.
+  return calls <= maximum_calls && increments <= std::size_t(3) * length;
+}
+
+int exercise(std::size_t length, int key) {
+  CostSeries values{length};
+  CostEnd end = values.end();
+  mut std::size_t levels = 0;
+  for (mut std::size_t size = length; size > 0; size /= 2) { levels++; }
+  mut std::size_t expected_lower = 0;
+  mut std::size_t expected_upper = 0;
+  for (mut std::size_t index = 0; index < length; index++) {
+    if (int(index / 2) < key) { expected_lower++; }
+    if (int(index / 2) <= key) { expected_upper++; }
+  }
+  reset_cost();
+  auto lower = std::lower_bound(values.begin(), end, key, CostOrder());
+  if (!check_cost(length, levels)) { return 1; }
+  if (std::size_t(std::distance(values.begin(), lower)) != expected_lower) { return 2; }
+
+  reset_cost();
+  auto upper = std::upper_bound(values.begin(), end, key, CostOrder());
+  if (!check_cost(length, levels)) { return 3; }
+  if (std::size_t(std::distance(values.begin(), upper)) != expected_upper) { return 4; }
+
+  reset_cost();
+  auto partition = std::partition_point(values.begin(), end, CostPredicate(key));
+  if (!check_cost(length, levels)) { return 5; }
+  if (std::size_t(std::distance(values.begin(), partition)) != expected_lower) { return 6; }
+
+  reset_cost();
+  bool found = std::binary_search(values.begin(), end, key, CostOrder());
+  if (!check_cost(length, levels + 1)) { return 7; }
+  if (found != (expected_lower != expected_upper)) { return 8; }
+  return 0;
+}
+
+int main() {
+  for (mut std::size_t length = 16; length <= 128; length *= 2) {
+    if (exercise(length, -1) != 0) { return 1; }
+    if (exercise(length, int(length / 4)) != 0) { return 2; }
+    if (exercise(length, int(length / 2)) != 0) { return 3; }
+  }
+  return 0;
+}
