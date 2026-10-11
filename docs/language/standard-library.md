@@ -453,6 +453,10 @@ The current implemented foundation includes:
   working directory, and standard streams, recoverable spawn/execute/wait
   errors, and structured ordinary-exit versus signal termination status; see
   [Child Processes](process.md); and
+- `<std/environment>` read-only current environment lookup returning
+  `expected<std::optional<std::string>, std::environment::errc>`; absent and
+  empty values stay distinct, and successful values are independent owners;
+  see [Environment Observation](process.md#environment-observation); and
 - `<std/http>` an owned move-only `std::http::url` with fallible absolute
   HTTP(S) parsing, secure authority construction, component-safe path/query
   building, explicit cloning, receiver-tied views, and request/client

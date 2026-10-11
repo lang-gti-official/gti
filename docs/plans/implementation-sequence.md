@@ -8178,10 +8178,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
   seek/tell, standard-stream flush, and exact synchronous child-process
   execution are implemented through ordinary GTI wrappers over versioned
   runtime ABIs. Exact signed-nanosecond monotonic and wall-clock observation is
-  also implemented. The remaining independent minimum service is process
-  environment access.
-- **Scope:** The remaining systems-ready minimum covers process environment
-  access.
+  also implemented. Read-only process environment access now completes the
+  listed minimum hosted-service families: `<std/environment>` returns an owned
+  optional string, preserving missing versus empty values and native bytes.
+- **Scope:** Environment mutation/enumeration and child-local environment
+  overrides remain distinct follow-ons with explicit process-wide concurrency
+  or child ownership contracts; read-only lookup does not authorize them.
   Deterministic PRNG plus nondeterministic seed, process arguments, and the
   bounded I/O family are implemented. The first public process slice owns exact
   argv without shell expansion, recoverable create/execute/wait errors, and

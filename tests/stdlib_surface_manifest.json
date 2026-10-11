@@ -14,6 +14,7 @@
     "stdlib/std/deque.gti": "51fc37f145409c7fd8d20da63a73c8ffdf73fa59459b4044cd358350e2e1c0b3",
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
+    "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "270c138f347f77a7c991395e21316d5cc2846f8fe66d3c8a1d7b0c395b1266fa",
@@ -553,6 +554,13 @@
       "id": "encoding",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_encoding.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "environment",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_environment.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -1738,6 +1746,27 @@
         "stdlib/std/encoding.gti",
         "tests/encoding_runtime_test.py",
         "tests/fixtures/stdlib_surface_encoding.gti"
+      ]
+    },
+    {
+      "id": "environment.executable",
+      "source": "stdlib/std/environment.gti",
+      "status": "executable",
+      "operations": ["std::environment::errc", "std::environment::get"],
+      "case_ids": ["environment"],
+      "required_instantiations": [
+        "missing versus present empty owned optional strings",
+        "invalid empty, equals and embedded-NUL names",
+        "independent owners surviving subsequent lookups"
+      ],
+      "evidence": [
+        "docs/language/process.md",
+        "examples/139-environment-configuration.gti",
+        "runtime/src/environment.cpp",
+        "tests/fixtures/stdlib_surface_environment.gti",
+        "tests/fixtures/environment_lookup.gti",
+        "tests/environment_runtime_test.py",
+        "tests/runtime_environment_tests.cpp"
       ]
     },
     {
