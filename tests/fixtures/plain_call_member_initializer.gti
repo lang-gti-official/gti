@@ -1,0 +1,101 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// Constructor fields initialized directly from calls that cannot fail. The
+// result is published into the field in place; an owning result's
+// obligation becomes the field's rollback, so a later member's failure
+// destroys it exactly once.
+mut int32_t destroyed = 0;
+
+// A cleanup-free class without a default constructor.
+struct plain_value {
+  int32_t number;
+  plain_value(int32_t number) : number(number) {}
+};
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() { destroyed += 1; }
+};
+
+// Reports its destruction.
+class traced {
+public:
+  int32_t number;
+  traced(int32_t number) : number(number) {}
+  ~traced() { std::println(this.number); }
+};
+
+int32_t tick(int32_t value) { return value; }
+
+plain_value make_plain(int32_t number) { return plain_value(number); }
+
+counted make_counted(int32_t number) { return counted(number); }
+
+traced make_traced(int32_t number) { return traced(number); }
+
+struct plain_holder {
+  plain_value plain;
+  plain_holder(int32_t number) : plain(make_plain(number)) {}
+};
+
+struct owner {
+  plain_value plain;
+  counted owned;
+  owner(int32_t number)
+      : plain(make_plain(number)), owned(make_counted(number + 1)) {}
+};
+
+// Comma initializers denote their right operand's result.
+struct comma_owner {
+  plain_value plain;
+  counted owned;
+  comma_owner(int32_t number)
+      : plain((tick(number), make_plain(number))),
+        owned((tick(number), make_counted(number + 1))) {}
+};
+
+// A later member can fail after the owning field was published.
+struct failing_owner {
+  traced first;
+  int32_t sum;
+  failing_owner(int32_t number) : first(make_traced(4)), sum(number + 1) {}
+};
+
+int32_t check() {
+  plain_holder holder{3};
+  if (holder.plain.number != 3) { return 1; }
+  owner both{4};
+  if (both.plain.number != 4 || both.owned.number != 5 || destroyed != 0) {
+    return 2;
+  }
+  comma_owner comma{6};
+  if (comma.plain.number != 6 || comma.owned.number != 7) { return 3; }
+  failing_owner fine{1};
+  if (fine.first.number != 4 || fine.sum != 2) { return 4; }
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    owner looped{index};
+    total += looped.plain.number + looped.owned.number;
+  }
+  if (total != 9 || destroyed != 3) { return 5; }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) {
+    // The owning field's argument fails before the call runs.
+    owner failing{2147483647};
+    return failing.owned.number;
+  }
+  if (argc == 3) {
+    failing_owner failing{2147483647};
+    return failing.sum;
+  }
+  int32_t status = check();
+  std::println(destroyed);
+  return status;
+}

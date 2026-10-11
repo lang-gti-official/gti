@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.402.7 — `expected` results returned from lambdas
+## 0.402.8 — `expected` results returned from lambdas
 
 - A lambda or other callable that returns `expected<T, E>`, where `T` has no
   default constructor, can now be called where its result is passed by value,
@@ -18,6 +18,37 @@ for what minor and patch releases mean.
   programs previously stopped with internal compiler error `GTI-B0001`.
 - Still reporting `GTI-B0001`: assigning a fresh `expected<T, E>` result to an
   existing binding, as in `r = make(7);`, when `T` has no default constructor.
+
+## 0.402.7 — Moving `expected` values of plain structs and classes
+
+- Moving an `expected<T, E>` into a new variable, as in
+  `auto moved = std::move(original);`, builds again when `T` is a struct or
+  class without cleanup and without a default constructor, including a
+  `[[c_abi]]` record. Since 0.401.6 this stopped with internal compiler error
+  `GTI-B0001`. The new variable is constructed directly from the moved value.
+
+## 0.402.6 — Class-valued conditionals
+
+- A conditional whose arms are class values that need no cleanup, such as
+  `ok ? make_value(1) : make_value(2)`, now builds when it is bound,
+  returned, passed by value, read through a field, assigned, nested in
+  another conditional, or used as a member initializer. Each arm may be a
+  call, including one that can fail, a construction, a copy of a local, or
+  another conditional. These used to report GTI-B0001.
+- A conditional whose arms have destructors no longer stops at run time with
+  "verified MIR lifetime slot escaped without Drop" when it is returned from a
+  function or used as a member initializer. It is destroyed exactly once.
+- Still reporting GTI-B0001: reading a field of, assigning, or nesting a
+  conditional whose arms have destructors, and such a conditional with an arm
+  that moves a local.
+
+## 0.402.5 — Member initializers from calls that cannot fail
+
+- A constructor field can now be initialized directly from a call that cannot
+  fail, as in `holder(int32_t n) : value(make_value(n)) {}`, whether the class
+  needs no cleanup or has a destructor, and also through a comma, as in
+  `value((log(), make_value(n)))`. If a later member fails, an owning field is
+  destroyed exactly once. Such constructors used to report GTI-B0001.
 
 ## 0.402.4 — Returning `expected` results across scope cleanup
 
