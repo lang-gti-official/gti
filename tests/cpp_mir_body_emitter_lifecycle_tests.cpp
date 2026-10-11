@@ -11198,89 +11198,119 @@ void testBorrowedFieldCompoundAssignment() {
   std::ifstream input(fixture);
   expect(input.good(), "borrowed field compound assignment fixture must exist");
   const std::string source{std::istreambuf_iterator<char>(input), {}};
-  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
-  expect(frontend.canGenerateCode(),
-         "iterator compound assignment must verify");
-  if (!frontend.canGenerateCode())
-    return;
-  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
-  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
-  expect(emitter.analyzeProgram().ready(),
-         "checked compound assignment must retain its borrowed field lvalue");
-  const auto definition =
-      [](const lang::MirBody &body,
-         lang::MirValueId valueId) -> const lang::MirInstruction * {
-    const auto *value = body.findValue(valueId);
-    const auto *block =
-        value ? body.findBlock(value->definitionBlock) : nullptr;
-    if (block != nullptr)
-      for (const auto &instruction : block->instructions)
-        if (instruction.id == value->definition)
-          return &instruction;
-    return nullptr;
+  const std::pair<std::string, std::string> sources[] = {
+      {fixture.string(), source},
+      {"unrelated-borrowed-field-compound.gti", R"(
+struct Counter { mut int value = 30; };
+int main() {
+  mut Counter owner{};
+  mut Counter& entry = owner;
+  entry.value += 1;
+  return entry.value - 31;
+}
+)"},
   };
-  std::size_t assignments = 0;
-  for (const auto &function : frontend.mir.functionInstances()) {
-    if (function.entryKind != lang::ProgramEntryKind::NoArguments)
+  for (const auto &[name, fixtureSource] : sources) {
+    const auto frontend = analyzeWithStandardLibrary(name, fixtureSource);
+    expect(frontend.canGenerateCode(),
+           "iterator compound assignment must verify");
+    if (!frontend.canGenerateCode())
       continue;
-    for (const auto &block : function.body.blocks) {
-      for (const auto &instruction : block.instructions) {
-        if (instruction.kind != lang::MirInstructionKind::Assign ||
-            instruction.operation != lang::MirOperation::Assign ||
-            !instruction.destination || instruction.operands.size() != 1 ||
-            instruction.operands.front().kind != lang::MirOperandKind::Value)
-          continue;
-        const auto *place = function.body.findPlace(*instruction.destination);
-        if (!place || place->root != lang::MirPlaceRootKind::Binding ||
-            place->projections.size() != 2 ||
-            place->projections.front().kind !=
-                lang::MirProjectionKind::Dereference ||
-            place->projections.back().kind != lang::MirProjectionKind::Field)
-          continue;
-        const auto *sum =
-            definition(function.body, instruction.operands.front().value);
-        if (!sum || sum->kind != lang::MirInstructionKind::Compute ||
-            sum->operation != lang::MirOperation::Add ||
-            sum->operands.size() != 2 ||
-            sum->operands.front().kind != lang::MirOperandKind::Value ||
-            !sum->result)
-          continue;
-        ++assignments;
-        const auto *read =
-            definition(function.body, sum->operands.front().value);
-        const auto *sumValue = function.body.findValue(*sum->result);
-        const auto *sumBlock =
-            sumValue ? function.body.findBlock(sumValue->definitionBlock)
-                     : nullptr;
-        expect(read && read->kind == lang::MirInstructionKind::Load &&
-                   read->operands.size() == 1 &&
-                   read->operands.front().kind == lang::MirOperandKind::Copy &&
-                   read->operands.front().place == place->id &&
-                   read->info.type == place->type &&
-                   sum->info.type == place->type,
-               "borrowed compound update reads the exact checked field before "
-               "computing its sum");
-        expect(sum->localFailureSites.size() == 1 &&
-                   sum->definedFailure.localOrigins.size() == 1 && sumBlock &&
-                   sumBlock->terminator.kind ==
-                       lang::MirTerminatorKind::Invoke &&
-                   sumBlock->terminator.invokeInstruction == sum->id &&
-                   sumBlock->terminator.target == block.id &&
-                   sumBlock->terminator.elseTarget != block.id,
-               "borrowed field commit occurs only after the checked addition "
-               "succeeds");
-        auto malformed = frontend.mir;
-        auto *body = lang::findMirBody(
-            malformed, {lang::MirBodyKind::Function, function.id});
-        body->places[place->id - 1].projections.back().field = 0;
-        expect(!lang::verifyMirProgram(malformed).valid(),
-               "compound assignment cannot forge a borrowed field projection");
+    const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyzeProgram().ready(),
+           "checked compound assignment must retain its borrowed field lvalue");
+    const auto definition =
+        [](const lang::MirBody &body,
+           lang::MirValueId valueId) -> const lang::MirInstruction * {
+      const auto *value = body.findValue(valueId);
+      const auto *block =
+          value ? body.findBlock(value->definitionBlock) : nullptr;
+      if (block != nullptr)
+        for (const auto &instruction : block->instructions)
+          if (instruction.id == value->definition)
+            return &instruction;
+      return nullptr;
+    };
+    std::size_t assignments = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      if (function.entryKind != lang::ProgramEntryKind::NoArguments)
+        continue;
+      for (const auto &block : function.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Assign ||
+              instruction.operation != lang::MirOperation::Assign ||
+              !instruction.destination || instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != lang::MirOperandKind::Value)
+            continue;
+          const auto *place = function.body.findPlace(*instruction.destination);
+          const bool projectedField =
+              place && place->root == lang::MirPlaceRootKind::Binding &&
+              place->projections.size() == 2 &&
+              place->projections.front().kind ==
+                  lang::MirProjectionKind::Dereference &&
+              place->projections.back().kind == lang::MirProjectionKind::Field;
+          const auto *loan =
+              place && place->root == lang::MirPlaceRootKind::Loan
+                  ? function.body.findLoan(place->loan)
+                  : nullptr;
+          const bool accessorReferent =
+              loan && place->projections.empty() &&
+              loan->kind == lang::MirLoanKind::CallResult &&
+              loan->access == lang::AccessMode::Mutable;
+          if (!projectedField && !accessorReferent)
+            continue;
+          const auto *sum =
+              definition(function.body, instruction.operands.front().value);
+          if (!sum || sum->kind != lang::MirInstructionKind::Compute ||
+              sum->operation != lang::MirOperation::Add ||
+              sum->operands.size() != 2 ||
+              sum->operands.front().kind != lang::MirOperandKind::Value ||
+              !sum->result)
+            continue;
+          ++assignments;
+          const auto *read =
+              definition(function.body, sum->operands.front().value);
+          const auto *sumValue = function.body.findValue(*sum->result);
+          const auto *sumBlock =
+              sumValue ? function.body.findBlock(sumValue->definitionBlock)
+                       : nullptr;
+          expect(
+              read && read->kind == lang::MirInstructionKind::Load &&
+                  read->operands.size() == 1 &&
+                  read->operands.front().kind == lang::MirOperandKind::Copy &&
+                  read->operands.front().place == place->id &&
+                  read->info.type == place->type &&
+                  sum->info.type == place->type,
+              "borrowed compound update reads the exact checked field before "
+              "computing its sum");
+          expect(sum->localFailureSites.size() == 1 &&
+                     sum->definedFailure.localOrigins.size() == 1 && sumBlock &&
+                     sumBlock->terminator.kind ==
+                         lang::MirTerminatorKind::Invoke &&
+                     sumBlock->terminator.invokeInstruction == sum->id &&
+                     sumBlock->terminator.target == block.id &&
+                     sumBlock->terminator.elseTarget != block.id,
+                 "borrowed field commit occurs only after the checked addition "
+                 "succeeds");
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(
+              malformed, {lang::MirBodyKind::Function, function.id});
+          if (projectedField)
+            body->places[place->id - 1].projections.back().field = 0;
+          else
+            body->loans[loan->id - 1].access = lang::AccessMode::ReadOnly;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "compound assignment cannot forge a borrowed field projection "
+                 "or mutable accessor loan");
+        }
       }
     }
+    expect(
+        assignments == 1,
+        "one checked-reference compound assignment must exercise each route: " +
+            name + ": " + std::to_string(assignments));
   }
-  expect(assignments == 1,
-         "one projected compound assignment must exercise this route: " +
-             std::to_string(assignments));
 }
 
 void testBorrowedTemporaryOperatorReceiver() {

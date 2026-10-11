@@ -11399,21 +11399,44 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(construct && destroy && relocate &&
-             lang::verifyMirProgram(frontend.mir).valid() &&
-             concreteBackendSymbols(artifact.contents, "__gti_type_", "Buffer")
-                     .size() == 2 &&
-             concreteBackendSymbols(artifact.contents, "__gti_type_", "storage")
-                     .size() >= 2 &&
-             artifact.contents.find("construct_representation_at(") !=
-                 std::string::npos &&
-             artifact.contents.find("::gti_internal::backend::storage<") ==
+  expect(
+      construct && destroy && relocate,
+      "source storage uses the general construct/destroy/relocate operations");
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "source storage object lifetimes have independently verified MIR");
+  const auto buffers =
+      concreteBackendSymbols(artifact.contents, "__gti_type_", "Buffer");
+  expect(buffers.size() == 2,
+         "source storage emits both ordinary Buffer instances: " +
+             std::to_string(buffers.size()));
+  const auto storageInstances = std::count_if(
+      frontend.hir.classInstances().begin(),
+      frontend.hir.classInstances().end(), [](const auto &instance) {
+        return instance.source && instance.source->name().lexeme == "storage";
+      });
+  // Adding source iterator aliases makes storage's definition eligible for
+  // ordinary template representation. Concrete GTI instances remain typed and
+  // verified; digest-named C++ classes are not the language's layout contract.
+  expect(
+      storageInstances >= 2 &&
+          (concreteBackendSymbols(artifact.contents, "__gti_type_", "storage")
+                   .size() >= 2 ||
+           (artifact.contents.find("class storage {") != std::string::npos &&
+            artifact.contents.find("::__gti_std::storage<std::int32_t>") !=
+                std::string::npos &&
+            artifact.contents.find("::__gti_std::storage<char8_t>") !=
+                std::string::npos)),
+      "source storage emits an ordinary class/template with both typed "
+      "storage instances");
+  expect(artifact.contents.find("construct_representation_at(") !=
+             std::string::npos,
+         "source storage emits general object construction");
+  expect(artifact.contents.find("::gti_internal::backend::storage<") ==
                  std::string::npos &&
              artifact.contents.find("mir_storage_") == std::string::npos &&
              artifact.contents.find("mir_allocate_storage_v1") ==
                  std::string::npos,
-         "source storage lowers ordinary classes and general object lifetimes, "
-         "never the retired sparse backend");
+         "source storage never uses the retired sparse backend");
 
   const lang::FrontendResult invalid =
       analyzeSourceStorageFixture("invalid-source-storage.gti", R"(
@@ -13316,51 +13339,54 @@ int main() {
              lang::Formatter().format(formatted) == formatted,
          "operator declarations should format with stable C++-style layout");
 
-  const lang::FrontendResult invalidContracts =
-      lang::Frontend().analyze("invalid-operator-contracts.gti", R"(
-class InvalidOperators {
-  mut int value = 0;
+  const auto valueDereference =
+      lang::Frontend().analyze("independent-value-dereference.gti", R"(
+class ValueHandle {
+  int value = 7;
 public:
   int operator*() { return this.value; }
-  int operator->() { return this.value; }
-  int& operator[](uint64_t first, uint64_t second) { return this.value; }
-  bool operator==(nullptr_t other) mut { return true; }
-  int operator<(InvalidOperators& other) { return 0; }
-  int operator+(int other) mut { return this.value + other; }
-  int& operator-(int other) { return this.value; }
-  int operator+=(int other) { return this.value + other; }
-  void operator--() {}
-  int operator~(int other) { return other; }
-  operator bool() mut { return true; }
 };
-int main() { return 0; }
+int main() { ValueHandle handle{}; return *handle - 7; }
 )");
-  expect(!invalidContracts.canGenerateCode() &&
-             hasDiagnosticCode(invalidContracts.diagnostics, "GTI-S2022") &&
-             hasDiagnostic(invalidContracts.diagnostics,
-                           "operator* must return a checked reference") &&
-             hasDiagnostic(invalidContracts.diagnostics,
-                           "operator-> must return a checked reference") &&
-             hasDiagnostic(invalidContracts.diagnostics,
-                           "operator[] expects 1 parameter") &&
-             hasDiagnostic(invalidContracts.diagnostics,
-                           "operator< must return bool") &&
-             hasDiagnostic(
-                 invalidContracts.diagnostics,
-                 "operator+ must use a read-only or consuming receiver") &&
-             hasDiagnostic(invalidContracts.diagnostics,
-                           "operator- must return an owned value") &&
-             hasDiagnostic(invalidContracts.diagnostics,
-                           "operator+= must return void") &&
-             hasDiagnostic(invalidContracts.diagnostics,
-                           "operator+= must use a mutable receiver") &&
-             hasDiagnostic(invalidContracts.diagnostics,
-                           "operator-- must use a mutable receiver") &&
-             hasDiagnostic(invalidContracts.diagnostics,
-                           "operator~ expects 0 parameters") &&
-             hasDiagnostic(invalidContracts.diagnostics,
-                           "must use a read-only receiver"),
-         "operator declarations should enforce the restricted contracts");
+  expect(valueDereference.canGenerateCode(),
+         "read-only dereference may yield an independent copyable value");
+
+  const std::pair<std::string_view, std::string_view> invalidContracts[] = {
+      {"int operator*() mut { return this.value; }",
+       "operator* must return a checked reference"},
+      {"int operator->() { return this.value; }",
+       "operator-> must return a checked reference"},
+      {"int& operator[](uint64_t first, uint64_t second) { return this.value; "
+       "}",
+       "operator[] expects 1 parameter"},
+      {"bool operator==(nullptr_t other) mut { return true; }",
+       "must use a read-only receiver"},
+      {"int operator<(InvalidOperators& other) { return 0; }",
+       "operator< must return bool"},
+      {"int operator+(int other) mut { return this.value + other; }",
+       "operator+ must use a read-only or consuming receiver"},
+      {"int& operator-(int other) { return this.value; }",
+       "operator- must return an owned value"},
+      {"int operator+=(int other) mut { return this.value + other; }",
+       "operator+= must return void"},
+      {"void operator+=(int other) {}",
+       "operator+= must use a mutable receiver"},
+      {"void operator--() {}", "operator-- must use a mutable receiver"},
+      {"int operator~(int other) { return other; }",
+       "operator~ expects 0 parameters"},
+      {"operator bool() mut { return true; }", "must use a read-only receiver"},
+  };
+  for (const auto &[declaration, message] : invalidContracts) {
+    const auto invalid = lang::Frontend().analyze(
+        "invalid-operator-contract.gti",
+        "class InvalidOperators { mut int value = 0; public: " +
+            std::string(declaration) + " }; int main() { return 0; }");
+    expect(!invalid.canGenerateCode() &&
+               hasDiagnosticCode(invalid.diagnostics, "GTI-S2022") &&
+               hasDiagnostic(invalid.diagnostics, std::string(message)),
+           "each invalid operator retains its own contract diagnostic: " +
+               std::string(declaration));
+  }
 
   const lang::FrontendResult invalidUses =
       lang::Frontend().analyze("invalid-operator-uses.gti", R"(
@@ -15380,8 +15406,7 @@ int main() {
          "the C++ backend should consume only verifier-certified Expected "
          "payload range plans");
 
-  const lang::FrontendResult invalid = lang::Frontend().analyze(
-      "invalid-expected-payload-range-loans.gti", R"(
+  const std::string invalidPrefix = R"(
 #include <std/string>
 
 expected<std::string, int32_t> make_text() {
@@ -15395,39 +15420,49 @@ public:
   mut expected<std::string, int32_t> value;
 };
 
-void field_receiver(mut box& owner) {
+)";
+  const std::pair<std::string_view, std::string_view> invalidCases[] = {
+      {R"(void field_receiver(mut box& owner) {
   for (auto& byte : owner.value.value()) {}
-}
-
-void mutable_payload() {
+})",
+       "temporary storage that does not outlive the binding"},
+      {R"(void mutable_payload() {
   mut auto text = make_text();
   for (mut auto& byte : text.value()) {}
-}
-
-void replace_owner() {
+})",
+       "temporary storage that does not outlive the binding"},
+      {R"(void replace_owner() {
   mut auto text = make_text();
   for (auto& byte : text.value()) { text = make_text(); }
-}
-
-void move_owner() {
+})",
+       "Cannot assign to storage while an overlapping borrow"},
+      {R"(void move_owner() {
   mut auto text = make_text();
   for (auto& byte : text.value()) { auto moved = std::move(text); }
-}
-
-char& escape_element(expected<std::string, int32_t> text) {
+})",
+       "Cannot move storage while an overlapping borrow"},
+      {R"(char& escape_element(expected<std::string, int32_t> text) {
   for (auto& byte : text.value()) { return byte; }
   return text.value()[0];
-}
-
-int main() { return 0; }
-)",
-      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!invalid.canGenerateCode() &&
-             hasDiagnosticCode(invalid.diagnostics, "GTI-S2017") &&
-             hasDiagnosticCode(invalid.diagnostics, "GTI-S2018") &&
-             hasDiagnosticCode(invalid.diagnostics, "GTI-S2083"),
-         "Expected payload ranges should reject projected owners, mutable "
-         "elements, owner replacement or movement, and escaping elements");
+})",
+       "borrowed return requires"},
+  };
+  for (const auto &[body, message] : invalidCases) {
+    const auto invalid = lang::Frontend().analyze(
+        "invalid-expected-payload-range-loan.gti",
+        invalidPrefix + std::string(body) + "\nint main() { return 0; }\n",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!invalid.canGenerateCode() &&
+               hasDiagnosticCode(invalid.diagnostics, "GTI-S2017") &&
+               hasDiagnostic(invalid.diagnostics, std::string(message)),
+           "each invalid Expected payload range retains its own lifetime "
+           "diagnostic: " +
+               std::string(body));
+    if (body.find("void move_owner") != std::string_view::npos)
+      expect(
+          hasDiagnosticCode(invalid.diagnostics, "GTI-S2018"),
+          "consuming a payload owner also violates loop-backedge availability");
+  }
 
   const lang::FrontendResult owningTemporary = lang::Frontend().analyze(
       "owning-temporary-expected-payload-range.gti", R"(
