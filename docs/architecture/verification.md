@@ -74,6 +74,17 @@ not automatically promoted baselines. Their complete records are retained at
 The checked-in inventories remain unchanged pending native corpus and owning
 matrix acceptance.
 
+The clean `c52cae70` Mini snapshot subsequently passes the complete native
+cutover oracle: all 141 examples build and run at O0/C++20 and O3/C++23,
+retaining the same 14,072 reviewed emitted body identities and identical exit
+status, stdout and stderr. This head has the same compiler/runtime/stdlib
+closure as `120d6240`; its additional changes are the movement-fixture filename
+repair and validation documentation. Exact source identity and native results
+are retained at
+`.git/gti-remote-runner/results/run-a84a02445b944922a6edd479c42b40c9/`.
+The fresh owning matrix, repaired Linux gates, performance comparison,
+unfiltered suite and integration-bound validation still remain separate gates.
+
 ## Expected returns across scope cleanup (0.402.4)
 
 - **Defects.** Three verified programs stopped at the C++ backend with
