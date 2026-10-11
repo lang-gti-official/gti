@@ -126,8 +126,9 @@ An `execute_failed` result is distinct from a child that successfully starts
 and exits with code 127. Native `errno`-style values remain private runtime
 detail and are not a stable portable public enum.
 
-Allocation needed to own command text follows GTI's ordinary allocation-
-failure contract rather than being reported as `process::errc`.
+Infallible allocation needed to own command text aborts on exhaustion without
+cleanup rather than returning `process::errc`; size overflow retains the
+contained defined-failure contract.
 
 ## Runtime Boundary
 

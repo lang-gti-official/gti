@@ -23,15 +23,16 @@ table is removed. Current scope, snapshot invalidation and conservative limits
 are recorded in the canonical LSP architecture document. This does not provide
 workspace-wide references/rename or a persistent project index.
 
-### 0. Make the crash boundary state-safe - implemented
+### 0. Isolate protocol publication — implemented; shared-cache fault safety remains
 
 `runIsolatedAnalysis` now guards only analysis and snapshot construction. It
 catches all C++ exceptions inside the callback and returns them as
-`GuardedAnalysis` state, so none crosses an LLVM frame, and it holds no lock
-and touches no shared state, so a stack restore cannot strand `stateMutex`.
+`GuardedAnalysis` state, so none crosses an LLVM frame. `stateMutex` is not held
+by that guarded callback, so a stack restore there cannot strand the protocol
+publication lock.
 `publishAnalysis` performs generation checks, diagnostic publication, request
-rejection, and every other shared-state mutation outside the crash-recovery
-context. `lsp_protocol` covers the recovery path with
+rejection, and protocol-state mutation outside the crash-recovery context.
+`lsp_protocol` covers ordinary failed-input recovery with
 `test_worker_survives_failed_analysis`, which drives repeated failing analyses
 through the worker and then requires ordinary analysis and a semantic request
 to still succeed.
@@ -43,11 +44,21 @@ exhausted, including completion's independent frontend analysis. The protocol
 regression then edits and formats the same document, proving that the
 analysis and completion workers and shared state remain usable.
 
-What remains is the stronger guarantee, not the state-safety one: in-process
-recovery cannot undo heap damage that occurred before a fatal signal. Moving
-analysis to a subprocess and treating process termination as the recovery
-boundary is the option if that is ever required. Do not broaden the current
-guard around more protocol or stateful work.
+The 2026-10-11 source audit found that guarded analysis still calls the shared
+frontend cache, whose lookup/store operations own a mutex. Recovery from a
+signal during those operations can skip unlocking or leave an incomplete cache
+update. The existing missing-include and depth-limit tests do not establish
+signal-fault safety. The current boundary is best-effort, not generally
+state-safe, and in-process recovery also cannot undo heap damage.
+
+The next recovery slice must choose a lock/state-safe cache seam or worker
+process isolation before promising continued operation after a compiler fault.
+Acceptance needs isolated fault-injection cases at cache access/update and
+ordinary analysis, proving no stranded worker/lock, no partial snapshot
+publication, stale-request rejection and subsequent healthy queries. Measure
+latency/memory impact against current parsed-unit reuse; process isolation is
+not permission to duplicate semantics or discard cache identity contracts.
+Do not broaden the guard around protocol or additional stateful work.
 
 ### 1. Retain documentation comments and declaration extents - hover, completion, and signature help implemented
 
@@ -61,9 +72,11 @@ own declaration symbol rather than the shared overload-set scope entry, and
 the protocol adapter follows the client's declared `documentationFormat`
 exactly as hover follows `contentFormat`.
 
-Generated API documentation and broader standard library documentation remain
-to consume the same value; they must not add a second comment parser or
-documentation store.
+Compiler-generated API documentation now consumes the same symbol-attached
+value through `DocumentationIndex`; its JSON/Markdown projection is delivered.
+Broader documentation coverage remains library/content work, not a second
+comment parser or documentation store. See
+[the documentation architecture](../architecture/reference-documentation.md).
 
 Statement-level declaration extents are implemented: the parser stamps every
 statement funnel result with its first-through-last-token span, and document
@@ -204,17 +217,19 @@ lexical fallbacks are acceptable only when clearly less authoritative.
 
 ## Per-Keystroke Analysis Cost
 
-Status: measured 2026-10-10; recommendation recorded, implementation not
-started. This is the compiler-side half of editor responsiveness. The
+Status: measured 2026-10-10; editor-scoped HIR and background raw-pointer audit
+are implemented. Lazy trusted-body analysis and broader semantic reuse remain
+proposed. This is the compiler-side half of editor responsiveness. The
 protocol-side half (edit-time publication, adaptive debounce, refresh policy)
 is implemented and described in the architecture document.
 
-### Measurement
+### Measured Baseline Before Scope Reduction
 
 Release `gti_lsp` on arm64 macOS, driven by a client-like message flow (open,
 `didChange`, tokens and hover requests) with `GTI_LSP_FRONTEND_TRACE`. Every
-edit re-runs semantic analysis and HIR for every loaded unit; the parse cache
-removes parsing from the picture but nothing else.
+edit in that baseline re-ran semantic analysis and HIR for every loaded unit;
+the parse cache removed parsing from the picture but nothing else. These
+figures establish the motivation, not current per-edit timings after step 1.
 
 | Workload | Units analysed per edit | Per-edit frontend time |
 | --- | ---: | ---: |
@@ -250,6 +265,13 @@ layer.
    much of what it includes) and 45 ms to 5 ms per transit-planner file.
    Diagnostics inside library bodies that the open file instantiates are
    still produced because those instances are reached.
+
+   Artifact builds gained a different trusted-library HIR scope in 0.399.3
+   (`lowerLibraryReachableOnly`, commit `514b7554`): application/package units
+   are lowered completely and unreached compiler-trusted HIR declarations are
+   skipped. This is delivered compiler work, not a remaining editor-scope
+   task. Neither option makes trusted semantic body analysis lazy; `gti check`
+   retains complete lowering.
 
    The same measurement found a far larger cost next to it: with
    `raw-pointer-audit = "warn"` in the project profile, one analysis of the
@@ -299,10 +321,12 @@ compiler-architecture review applies.
 
 ## Deferred clangd Complexity
 
-Preambles/PCH, compile-command borrowing, macro expansion
-locations, per-file workers, AST LRUs, remote indexes, and
-memory accounting solve C++/clang scale. Adopt none without a measured GTI
-problem. clangd's update debounce was adopted in 0.397.3 after the
+Preambles/PCH, compile-command borrowing, macro expansion locations, per-file
+workers, retained semantic-AST LRUs and remote indexes are not default GTI
+requirements. The implemented bounded lexical/parsed-unit LRU already has
+memory accounting; it does not retain a semantic snapshot. Broader cache or
+index machinery needs an identified GTI latency/coverage problem and an
+identity/invalidation contract. clangd's update debounce was adopted in 0.397.3 after the
 measurement above showed per-keystroke whole-program re-analysis; it is
 described in the architecture document.
 

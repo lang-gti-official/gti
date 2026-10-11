@@ -18,9 +18,11 @@
 Original design baseline: GTI 0.93.0. Current implemented policy is documented
 in the canonical language and architecture documents linked above.
 
-This document records the language boundary used by GTI's managed-thread and
-scalar-atomic slices and required before mutexes, scoped threads, or callbacks
-entered from native threads. It is design and implementation-matrix evidence,
+This document records the boundary used by delivered managed threads, scalar
+atomics and mutex guards, and the remaining prerequisites for scoped threads
+and general callbacks entered from foreign threads. The separate bounded
+unsafe `<std/cthread>` surface is implemented, not a future managed-thread
+replacement. It is design and implementation-matrix evidence,
 not current source authority. Current behavior remains defined by
 [`docs/language/`](../language/), and implementation order remains owned by
 [`implementation-sequence.md`](implementation-sequence.md).
@@ -357,8 +359,8 @@ share-capable.
 
 ### Process-Wide Static Storage
 
-Current mutable globals remain valid in the single-threaded language. In a
-future thread-capable execution profile, the conservative first policy is:
+Current mutable globals remain valid in the single-threaded language. In the implemented
+`concurrent` execution profile, the bounded process-wide policy is:
 
 - every process-wide global or static binding is immutable and its value is
   share-capable;
@@ -506,15 +508,17 @@ The guard provides exclusive access, unlocks exactly once on every exit, and
 prevents the protected access from escaping. Unlock synchronizes-with a later
 successful lock of the same mutex.
 
-The bounded M-OWN-03 stored dependency is now implemented specifically for the
-guard carrier: moving transfers the owner dependency, the source becomes
-inert, and guard-derived child loans end before unlock. Execution cleanup
+The guard is a client of the implemented owner-dependent carrier contract,
+not a nominal borrowing exception: moving transfers its owner dependency,
+the source becomes inert, and guard-derived child loans end before unlock. Execution cleanup
 unlocks before propagating a primary failure. The surface deliberately has no
 poisoning; lock acquisition failure is a defined host-operation outcome, while
 an application needing transactional invariants records them in `T`.
 
-Condition variables require an atomic guard release/wait/reacquire operation
-and are deferred beyond that first mutex slice. Volatile/MMIO operations and
+A safe condition-variable API over owner-tied guards still needs verified
+release/wait/reacquire and loan suspension. The separate unsafe manual
+`cnd_*`/`mtx_*` family is implemented in `<std/cthread>`; its caller-managed
+obligations do not establish that safe guard protocol. Volatile/MMIO operations and
 signals are separate language problems: volatile is not synchronization, and
 neither is added by this proposal.
 
@@ -607,17 +611,22 @@ diagnostic serialization, and observers follow Execution §4.10 rather than host
 
 ## Native Threads, Callbacks, And FFI
 
-The current C ABI remains call-only. A foreign declaration is not presumed
-thread-safe merely because its parameters contain no pointers. In a concurrent
-profile, safe invocation requires an adopted declaration contract saying that
-the operation is thread-safe and either nonsynchronizing or has one recognized
-synchronization effect. A thread-confined operation is callable only on its
-owning thread. An unclassified foreign call requires an unsafe proof, including
-serialization of hidden foreign state; final declaration spelling belongs to
-the native-callable and FFI rows. Existing single-threaded calls are unchanged.
+The C ABI now includes generated GTI callback adapters and native-indirect
+invocation, but not arbitrary foreign-thread entry or an adopted general
+thread-safety annotation system. Scalar parameters alone do not prove a native
+implementation is thread-safe. Future declaration contracts should distinguish
+thread-safe, thread-confined and unclassified operations and recognized
+synchronization effects. Their spelling, admission and migration rules belong
+to the native-callable/FFI work; this proposal does not claim the current
+compiler rejects every unclassified scalar C call. Safe external bindings must
+already uphold their declared contract, and pointer/retention/serialization
+obligations remain with the unsafe binding or wrapper.
 
-Future native callbacks and foreign-thread entry must satisfy all of these
-rules:
+Generated callback adapters already have failure firewalls and bounded runtime
+entry. Registered `<std/cthread>` workers and once callbacks have their exact
+implemented entry contract in [Concurrency](../language/concurrency.md).
+General foreign-thread registration/attachment remains future work and must
+satisfy all of these rules:
 
 1. a native thread enters through a generated ABI thunk tied to one exact
    semantically resolved GTI callable;
@@ -693,10 +702,11 @@ name.
 
 MIR needs explicit operation categories for:
 
-- atomic load, store, exchange/read-modify-write, compare-exchange, and future
-  fence, each with an order;
+- atomic load, store, exchange/read-modify-write, compare-exchange and fence,
+  each with an order;
 - task storage construction, spawn, task entry, completion, and join;
-- future lock, unlock, wait, and reacquire; and
+- implemented mutex lock/unlock, with explicit safe guard wait/reacquire still
+  requiring a new protocol; and
 - foreign attach, callback entry/exit, and runtime detach where those become
   executable.
 
@@ -765,7 +775,7 @@ column is part of every stage rather than a final test-only pass.
 | C-ORDER-01 | **Done:** static `std` tag types expose only the accepted explicit orders | Complete operation/order compile-fail matrix, exact HIR/MIR pairs, deterministic release/acquire publication, relaxed no-edge metadata, O0/O3 and C++20/C++23 native coverage, optimizer barriers, installed workflows, and TSAN where supported. |
 | C-ATOM-02 | **Done:** fixed-width integer fetch add/subtract/bitwise operations are source-defined verified strong-CAS loops | Every operation/order overload, prior-value semantics, exact CAS order pairs, checked overflow before publication, bool rejection, optimizer preservation, LSP discovery, O0/O3 C++20/C++23 execution, contention stress, installed surface, and TSAN where supported. |
 | later scoped threads | Extend the existing loan graph through structured spawn/join | Shared and exclusive scoped borrow positives; escape/detach/early-drop negatives; parent suspension and reactivation MIR verification. |
-| later native callbacks | Add ABI thunk, registration owner, attach/detach, and in-flight completion | Foreign-thread entry stress, post-unregister rejection, TLS cleanup, failure-boundary tests, and no unwind across C. |
+| general foreign-thread callbacks | Reuse delivered exact ABI thunks/firewalls and bounded registered worker/once entry; add general registration ownership, attach/detach and in-flight completion | Foreign-thread entry stress, post-unregister rejection, TLS cleanup, failure-boundary tests, and no unwind across C. |
 | diagnostics and LSP across public stages | Publish shared frontend capability, boundary, order, and target diagnostics without spelling inference | Deterministic primary/related spans, generic-instance cases, incomplete-source recovery, and protocol snapshots. |
 | C-CONFORM-01 | **Done for `std::thread`, ordered scalar atomics including integer fetch operations, and scoped mutex guards; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
 
@@ -779,13 +789,16 @@ the runtime capability.
 
 This proposal does not add or promise:
 
-- source syntax for thread creation, atomics, thread-local storage, memory
-  orders, or native callbacks beyond the implemented capability attributes;
-- condition variables, recursive/read-write mutexes, public manual unlock,
-  scoped cross-thread borrows, stop tokens, typed argument packs, or detach in
-  the shipped concurrency profile;
+- dedicated language keywords for thread creation, atomics or memory orders;
+  the delivered public APIs are source-defined, while TLS remains future work;
+- safe owner-tied condition variables, recursive/read-write guard mutexes,
+  scoped cross-thread borrows, stop tokens, typed argument packs or detach in
+  the shipped safe profile; unsafe manual mutex/unlock and condition-variable
+  APIs are already delivered separately;
 - cross-thread references in the first executable profile;
-- pointer atomics before a public provenance/cast contract;
+- pointer atomics without an adopted pointer-domain/access and target-order
+  contract; the general raw-pointer/allocation foundation is now implemented,
+  but atomic transport must not invent pointee lifetime or checked ownership;
 - volatile/MMIO, signals, coroutines, async tasks, work stealing, parallel
   algorithms, lock-free guarantees, atomic aggregates, hazard pointers, epoch
   reclamation, or a C-compatible atomic layout;
@@ -809,8 +822,10 @@ choice this proposal reserved:
    by explicit or automatic join;
 5. transfer-capable/share-capable are canonical semantic terms, while
    C-TYPE-01 owns final declaration spelling and need not add keywords; and
-6. detach, scoped cross-thread borrows, pointer atomics, mutex guards, and
-   foreign-thread callbacks retain their explicit later prerequisites.
+6. detach, scoped cross-thread borrows, pointer atomics and general
+   foreign-thread callbacks retain their explicit later prerequisites. Mutex
+   guards have since completed their bounded profile; broader safe
+   synchronization remains separate.
 
 This plan remains design evidence and an implementation matrix. The ADR and
 canonical language documents own the accepted rule.

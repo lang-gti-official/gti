@@ -24,8 +24,10 @@
    binary `0b`/`0B` digits. Every spelling is decoded as one unsigned
    magnitude no larger than uint64_t before semantic type selection.
 
-   One-level raw pointers use C++-familiar `T*`/`const T*` spelling. Operations
-   that form or access raw addresses are gated by lexical `unsafe` blocks.
+   Recursive raw pointers use C++-familiar `T*`/`const T*` spelling with
+   per-layer qualification. Inert address formation from an admitted checked
+   place is safe; raw projections and memory/native-call operations require
+   lexical `unsafe` permission.
 
    Whitespace, ordinary `//` line comments, and non-nesting `/* ... */` block
    comments are discarded between tokens. Contiguous `///` lines immediately
@@ -295,8 +297,9 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    this type-context syntax.
    Class aliases are direct members and are not inherited through base types.
 
-   Alias cycles and aliases whose target contains a reference are invalid;
-   keeping `&` at each use site preserves explicit borrow syntax. The standard
+   Alias cycles and direct reference aliases are invalid; keeping `&` at each
+   binding use site preserves explicit borrow syntax. Reference components in
+   generic or function-signature metadata do not create stored borrows. The standard
    prelude defines `std::size_t` as `uint64_t`, `std::ptrdiff_t` as `int64_t`,
    and `std::string_view` as the compiler-defined counted text-view type.
 
@@ -442,8 +445,8 @@ class-member           = conditional-class-members
                        | access-specifier
                        | constructor-declaration
                        | destructor-declaration
-                       | operator-declaration
-                       | method-declaration
+                       | [ function-contract-attributes ] operator-declaration
+                       | [ function-contract-attributes ] method-declaration
                        | static-variable-declaration
                        | [ declaration-attributes ] variable-declaration
                        | empty-declaration ;
@@ -509,15 +512,16 @@ access-specifier       = ( "public" | "private" ) ":" ;
    ordinary classes/structs; interfaces instead accept `transfer` and `share`
    requirements. A non-generic passive struct may use `c_abi` instead to opt
    into the closed native C record contract. It then contains only public
-   instance fields from the admitted scalar, one-level pointer, and nested
-   native-record family, with no field initializers, bases, access sections,
+   instance fields from the admitted scalar, recursive pointer, fixed-array,
+   callback and nested native-record family, with no field initializers,
+   bases, access sections,
    methods, static fields, constructors, cleanup, or copy/move policies.
    Initialization belongs in a safe wrapper or native factory. `c_abi` cannot be
    combined with a concurrency capability attribute. The alternative
    declaration-only class form is accepted solely for
    `[[c_opaque]] struct Name;`: it is nongeneric, baseless, has no layout or
-   members, and may appear only behind one raw pointer. Other incomplete type
-   declarations are rejected with `GTI-S2065`. Identifier syntax is
+   members, and may appear only behind raw-pointer indirection. Other incomplete
+   type declarations are rejected with `GTI-S2065`. Identifier syntax is
    deliberately broader so unknown, misplaced, duplicate, and conflicting
    attributes receive a recoverable semantic diagnostic rather than a parser
    cascade (`GTI-S2059` for capability policy, `GTI-S2064` for C ABI records,
@@ -533,10 +537,11 @@ access-specifier       = ( "public" | "private" ) ":" ;
    noncopyable. Moves transfer the complete dependency set. Assignment cannot
    reseat it. Unambiguous constructors, receiver/parameter returns and selected
    stored-field accessors retain field-wise origins through concrete generic
-   substitution, calls and cleanup. Inherited borrowed state, user cleanup,
-   global/static/captured storage, arrays of carriers and ambiguous return
-   origins remain rejected. The full current lifetime and escape contract is
-   specified in ownership-and-lifetimes.md. *)
+   substitution, calls and cleanup. Cleanup-owning carriers retain their
+   external dependencies until their owned fields and cleanup have drained.
+   Inherited borrowed state, global/static/captured storage, arrays of carriers
+   and ambiguous return origins remain outside this contract. The full current
+   lifetime and escape contract is specified in ownership-and-lifetimes.md. *)
 
 constructor-declaration
                        = [ "constexpr" ] IDENTIFIER
@@ -739,7 +744,8 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    class or struct rather than an object, require an in-class initializer, and
    are accessed as `Type::member`; object access is rejected. The current
    qualified-expression grammar does not support static members on generic
-   classes or structs. A static method may return a reference from one exact
+   classes or structs, except the exact collection-protocol hooks selected with
+   their concrete owner by that protocol. A static method may return a reference from one exact
    global/static place under the reference rules below. Static members do not
    participate in object layout, construction, generated special members, or
    destruction. *)
@@ -848,14 +854,23 @@ static-variable-declaration
    4096-step budget and a 64-call-depth limit.
 
    `if constexpr` requires a computed bool and analyzes and lowers only its
-   selected branch. Generic packs, operator or polymorphic calls, mutable
-   receivers, references, allocation, payload enums, unions, inherited or
-   cleanup-owning aggregates, and runtime, intrinsic, or C calls remain outside
-   the evaluator. Native C++ constant evaluation is never the GTI semantic
-   authority. *)
+   selected branch. Completed function closures execute supported fixed-array
+   operations, passive aggregate mutation, read-only references and read-only
+   operators through verified MIR. Generic packs, polymorphism, mutable
+   reference/receiver execution, allocation, payload enums, unions, inherited
+   or cleanup-owning aggregates, and unsupported runtime/intrinsic/C calls
+   remain outside the constant-execution profiles. Native C++ constant evaluation
+   is never the GTI semantic authority. *)
 
 direct-initializer     = "{" [ assignment-expression
-                         { "," assignment-expression } [ "," ] ] "}" ;
+                         { "," assignment-expression } [ "," ] ] "}"
+                       | designated-initializer ;
+
+designated-initializer = "{" designated-initializer-entry
+                         { "," designated-initializer-entry } [ "," ] "}" ;
+
+designated-initializer-entry
+                       = "." IDENTIFIER "=" brace-initializer-element ;
 
 type                   = ( raw-pointer-base | base-type )
                          { array-extent } [ "&" ]
@@ -929,15 +944,24 @@ base-type              = primitive-type
    of an individual name. Structured bindings are not valid at namespace or
    class scope or in a for-loop initializer. *)
 
-(* Direct initialization is confined to class and struct declarations. The
-   declared type supplies the construction target, and the arguments select
-   one exact constructor just as in `Type(arguments)`. It is not C++ list
-   initialization: primitives, fixed arrays, references, scoped enums,
-   `auto`, `Type name = {...}`, and aggregate/initializer-list preference are
-   not part of this syntax. Empty braces select an exact zero-argument declared
-   or generated constructor. Parenthesized block-scope declarations remain
-   invalid so `Type name(arguments)` cannot acquire C++'s declaration
-   ambiguity. *)
+(* Positional direct initialization is confined to class and struct
+   declarations. The declared type supplies one exact construction target,
+   without C++ list preference, implicit conversion or CTAD. Empty braces select
+   zero-argument construction. Parenthesized block-scope declarations remain
+   invalid so `Type name(arguments)` cannot acquire declaration ambiguity.
+
+   A typed struct destination additionally supplies context for designated
+   construction (`Point p{.x = 1}` or `Point p = {.x = 1}`). Designators are
+   unique public instance fields in declaration order; missing fields need
+   declaration defaults, and positional/designated entries cannot mix. The
+   admitted struct has no declared constructor, base or unsupported borrowed,
+   array or native-layout field. Nested entries receive their field's exact
+   type. This is not an untyped general expression.
+
+   A class-typed `C values = {elements}` may instead use the source-defined
+   `collection_init`/`collection_insert` protocol, including nested designated
+   elements. Fixed-array destinations retain their array initialization rules.
+   See static-semantics.md for exact hook and ownership constraints. *)
 
 array-extent           = "[" array-extent-expression "]" ;
 
@@ -959,10 +983,14 @@ array-extent-primary-expression
                        | "(" array-extent-expression ")" ;
 
 initializer-expression
-                       = expression | array-initializer ;
+                       = expression | array-initializer | designated-initializer ;
 
-array-initializer      = "{" [ initializer-expression
-                         { "," initializer-expression } [ "," ] ] "}" ;
+brace-initializer-element
+                       = assignment-expression | array-initializer
+                       | designated-initializer ;
+
+array-initializer      = "{" [ brace-initializer-element
+                         { "," brace-initializer-element } [ "," ] ] "}" ;
 
 (* C++ declarator spelling is canonical for declarations: `int values[4]`.
    Array suffixes may remain attached to a type where no declarator exists,
@@ -976,7 +1004,7 @@ array-initializer      = "{" [ initializer-expression
    Variable-length arrays are not supported.
 
    Fixed arrays are inline contiguous values with no pointer decay. An array
-   of one-level raw-pointer elements is still an array and does not expose the
+   of recursive raw-pointer elements is still an array and does not expose the
    array's address. A non-empty
    initializer must provide exactly one value per element; `{}` value-initializes
    every element and requires a default-initializable element type. Elements
@@ -994,8 +1022,10 @@ array-initializer      = "{" [ initializer-expression
 expected-type          = "expected" "<" type "," type ">" ;
 
 (* `void` is accepted syntactically as a type and restricted semantically to
-   function return types, a one-level `void*` pointee, and the value position
-   of `expected<void, E>`. The error type E cannot be void. `void*` is opaque:
+   function return types, raw-pointer terminal pointees, generic/signature
+   metadata and the value position of `expected<void, E>`. It has no object
+   storage, reference referent or value parameter. The error type E cannot be
+   void. `void*` is opaque:
    it may be carried, compared, passed, and returned, but not dereferenced,
    indexed, used for member access, or used in pointer arithmetic. GTI does not
    implicitly convert between a typed pointer and `void*`.
@@ -1010,22 +1040,20 @@ expected-type          = "expected" "<" type "," type ">" ;
    the single-threaded profile. Temporary global call borrows end at the full
    expression; retained writable aliases conflict until their lexical scope
    ends. A move-only owner with a retained borrow cannot be moved, replaced, or
-   passed to a mutable method until the loan ends. Multi-origin and nested
-   references, reference fields outside the confined carrier above, reference
-   globals, references over arrays, and references to raw pointers remain
-   unsupported.
+   passed to a mutable method until the loan ends. Nominal multi-origin and
+   nested carrier fields use the stored-reference contract above; they are not
+   general nested-reference types. Reference globals, whole fixed-array
+   references and references to raw pointers remain unsupported.
 
    Public sparse storage uses ordinary class, generic, call and unsafe-block
    syntax over the general typed object-lifetime operations. The former private
    sparse-storage type and operation family have no compiler syntax or identity.
 
-   `gti_internal::prefix_storage<T>` is a separate reserved move-only
-   capability for one contiguous live prefix. Its allocate, append, pop,
-   borrowed read, complete-prefix relocate, insert, and erase operations
-   preserve that prefix invariant. It cannot create an arbitrary live-slot
-   pattern. It rejects borrowed-state elements and exposes
-   no raw address or independent deallocation operation. Public size, capacity,
-   growth, and invalidation policy remain ordinary source-defined class state.
+   Initialized-prefix storage is also ordinary GTI policy over region leases,
+   general construction/destruction/relocation, and checked borrowing. The
+   private `prefix_storage` type and operation family are retired. Sparse and
+   prefix policies differ in their live-slot model, not compiler syntax or
+   public-library name recognition.
 *)
 
 primitive-type         = integer-type | "float" | "double" | "bool" | "char" ;
@@ -1043,9 +1071,9 @@ unsigned-integer-type  = "uint" | "uint8_t" | "uint16_t" | "uint32_t"
 (* `char` is one exact unsigned 8-bit character code unit and remains distinct
    from `uint8_t`. It supports initialization, assignment, and equality with
    another `char`; it does not participate in arithmetic or integer
-   constraints. The explicit `uint8_t(character)` form extracts the same eight
-   code-unit bits and cannot fail. It does not make `char` numeric, is never
-   implicit, and does not add the inverse `char(uint8_t)` conversion. A
+   constraints. Explicit `uint8_t(character)` extraction and `char(uint8_t)`
+   construction preserve the same eight code-unit bits and cannot fail. Neither
+   is implicit, makes `char` numeric or performs Unicode conversion. A
    CHARACTER_LITERAL must decode to exactly one code unit and supports `\\`,
    `\'`, `\"`, `\n`, `\r`, `\t`, and `\0` escapes.
 
@@ -1077,8 +1105,9 @@ unsigned-integer-type  = "uint" | "uint8_t" | "uint16_t" | "uint32_t"
    Variable conversions may widen only when every source value fits the
    destination. As in C++, arithmetic promotes all 8- and 16-bit integers to
    int32_t. Mixed
-   signed/unsigned operands are valid only when the emitted C++ conversion
-   cannot reinterpret a possible negative value as unsigned.
+   signed/unsigned operands use GTI's exact common-type rules and reject
+   combinations that could reinterpret a negative value as unsigned. Native
+   conversions do not define those rules.
 
    `%`, `~`, `&`, `^`, `|`, `<<`, and `>>` accept integers only. Modulo and
    binary bitwise operators use the arithmetic promotion and safe common-type
@@ -1181,9 +1210,11 @@ constexpr-for-statement = "constexpr" "for" "(" [ "mut" ] type IDENTIFIER ":"
    instance, like a dependent `if constexpr`. No runtime loop exists. *)
 
 (* Range-based for uses an ordinary structural protocol rather than a
-   compiler-known stdlib type. The range must be a stable addressable value and
-   provide exact zero-argument `begin()` and `end()` members. `begin()` returns
-   an iterator value; `end()` may return a distinct sentinel value. The
+   compiler-known stdlib type. An addressable range is borrowed; an admitted
+   owned temporary is transferred into hidden loop storage. A nominal read
+   range provides exact zero-argument `begin()` and `end()` members; mutable
+   traversal selects `begin_mut()` under its exclusive owner loan. `begin()`
+   returns an iterator value; `end()` may return a distinct sentinel value. The
    iterator provides an exact `operator!=(Sentinel&)` with one read-only
    sentinel reference parameter, plus `operator*()` and mutable prefix
    `operator++()` operations. The dereference operator returns a checked
@@ -1192,14 +1223,13 @@ constexpr-for-statement = "constexpr" "for" "(" [ "mut" ] type IDENTIFIER ":"
    resolves every operation in semantics and lowers it through HIR/MIR; it does
    not invoke C++ range lookup or recognize `std::vector`/`std::array` names.
    `continue` executes the selected increment operation before the next test.
-   Fixed arrays do not yet supply this member protocol. Imported
-   standard-library iterators may retain one checked read-only storage borrow
-   through the confined stored-reference contract. A free/static factory may
-   propagate one such owner dependency from an eligible read-only parameter.
-   Read-only iterator copies share that dependency while retaining independent
-   positions and remain nonassignable. Compiler-generated mutable iterators
-   remain noncopyable; nested or multiple owner-borrowing iterators and general
-   range/element loan scopes remain later lifetime layers. *)
+   Fixed arrays use a separate exact indexed strategy, not invented member
+   calls. Ordinary nominal iterators retain checked owner dependencies under
+   the same stored-reference rules as user-defined views. Shared copies retain
+   independent positions; exclusive carriers move their loans and are
+   noncopyable. Range lowering additionally retains traversal and per-element
+   child loans, ending the element before increment or every exit. General
+   proxy iterators and paired mutable subranges need separate contracts. *)
 
 switch-statement       = "switch" "(" expression ")"
                          "{" { switch-item } "}" ;
@@ -1209,7 +1239,7 @@ switch-item            = switch-label | block-item ;
 switch-label           = "case" ( logical-or-expression | payload-borrow-pattern ) ":" | "default" ":" ;
 payload-borrow-pattern = qualified-name "(" payload-pattern-binding
                          { "," payload-pattern-binding } ")" ;
-payload-pattern-binding = identifier | [ "mut" ] "auto" "&" identifier ;
+payload-pattern-binding = IDENTIFIER | [ "mut" ] "auto" "&" IDENTIFIER ;
 
 (* Switch subjects are concrete integer, char, or scoped-enum values. Case
    labels must be compile-time literals, explicitly converted integer
@@ -1240,7 +1270,8 @@ discarded-expression-statement
 
 (* A discarded-expression statement must contain a call to a function with a
    non-void return type. Non-void function results are otherwise required to be
-   used by the surrounding expression, stored, passed, or returned.
+   used by the surrounding expression, stored, passed, or returned, unless the
+   selected declaration explicitly permits omission with `[[discardable]]`.
 *)
 
 expression-statement   = [ expression ] ";" ;
@@ -1324,7 +1355,7 @@ call-suffix            = [ generic-argument-clause ]
 argument-list          = call-argument { "," call-argument }
                        | { call-argument "," } pack-expansion ;
 
-call-argument          = assignment-expression | array-initializer ;
+call-argument          = brace-initializer-element ;
 
 pack-expansion         = IDENTIFIER "..." ;
 
@@ -1399,9 +1430,11 @@ pack-expansion         = IDENTIFIER "..." ;
    parameters and carry the same inline and trailing requirements. Its local
    parameters cover only its parameters, requirements, initializer list,
    defaults, and body; they are never explicit call arguments and do not
-   escape to later class members. Constructor-local packs remain unsupported,
-   and the existing local `uint64_t` form remains restricted to an inferred
-   fixed-array extent.
+   escape to later class members. One final constructor-local type pack with
+   its named by-value parameter pack is implemented through ordered owned
+   argument staging, including exact final-field construction. This is not a
+   pack of uint64_t generic values. Constructor-local `uint64_t` remains
+   restricted to an inferred fixed-array extent.
 
    A trailing clause is semantically rejected on an operator
    or a virtual, pure, overriding, or interface method. Concept negation,
@@ -1460,9 +1493,10 @@ pack-expansion         = IDENTIFIER "..." ;
    type-list expansion in a formal parameter type: Tag<R(Args...)>& deduces
    the exact signature tail, and Types<Args...>& deduces a nominal type list.
    Repeated patterns and explicitly supplied pack elements must agree. If a
-   named value pack is also present, its deduced list must agree as well.
-   Metadata-only packs add no runtime arguments. This does not add reference
-   value packs, class-pattern selection, or overload ranking.
+   named value pack is also present, its deduced list must agree as well,
+   including exact reference elements. Metadata-only packs add no runtime
+   arguments. Decorated reference-pack declarators and overload ranking are
+   not introduced; signature-pattern primaries have their separate syntax.
 
    Classes and structs may separately own one final type pack, without value
    parameters or defaults. A bare type-list expansion `Args...` may be the
@@ -1480,7 +1514,7 @@ pack-expansion         = IDENTIFIER "..." ;
 
    One additional expression may iterate that same named pack:
    `(function_call(fixed, args), ...)`. The pattern is exactly one ordinary
-   free-function or static-method call, contains the bare pack name exactly
+   free-function call, contains the bare pack name exactly
    once as its final argument, and has only named-place fixed arguments. The
    selected target is one non-overloaded generic `void` declaration whose
    final type parameter represents one pack element. Its corresponding value
@@ -1491,8 +1525,9 @@ pack-expansion         = IDENTIFIER "..." ;
    per element, arbitrary fold patterns, multiple pack occurrences, and
    mutable or consuming element access are not implemented.
 
-   Generic class and struct applications always provide every type argument,
-   including at constructor calls. Generic function arguments may be explicit
+   Generic class and struct applications provide every non-defaulted argument,
+   including at constructor calls; declaration defaults complete the suffix.
+   Generic function arguments may be explicit
    or inferred exactly from call arguments. For a variadic call, explicit type
    arguments first bind every fixed generic parameter; any remaining explicit
    arguments bind the pack, otherwise each pack element is inferred in order.
@@ -1548,7 +1583,9 @@ pack-expansion         = IDENTIFIER "..." ;
    reachable path; any later overlapping read is an error until valid plain
    assignment reinitializes that place. Different constant elements remain
    disjoint, but a dynamic index may alias every element and is not movable. A
-   method cannot return with a moved receiver place. References, globals,
+   non-consuming method must restore moved receiver state before returning;
+   an explicitly consuming receiver has its separate transfer contract.
+   References, globals,
    already-created lambda capture fields, temporaries, and dynamic indexed
    places are not movable through the current operation. A lambda capture
    initializer may use the separately defined
@@ -1623,14 +1660,18 @@ lambda-capture         = IDENTIFIER
    parameter only
    when that selected parameter has a visible, proven confined contract;
    semantics, HIR, and MIR retain the forwarding edge. Once invoked, a confined
-   parameter cannot occur in the function's return type. `auto` result
-   inference, callable references, reference or borrowed-state results, owned
-   escape, and storage in globals or fields are not part of this callable
-   layer. *)
+   parameter cannot occur in the function's return type under that confined
+   contract. Open callable result inference and unsupported borrowed results
+   remain excluded. Separately, exact owned generic transport permits ordinary
+   callable retention, returns, owned captures and fields; source-defined
+   owning wrappers provide read/mut/once erasure. Those profiles preserve exact
+   callable identity, movement and cleanup rather than escaping confinement
+   implicitly. Globals remain unavailable for cleanup-owning callable state.
+   See ownership-and-lifetimes.md and concepts.md for current boundaries. *)
 
 unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
 
-numeric-conversion     = ( integer-type | "float" | "double" )
+numeric-conversion     = ( integer-type | "float" | "double" | "char" )
                          "(" assignment-expression ")" ;
 
 layout-query-expression
@@ -1644,14 +1685,15 @@ layout-query-operator  = "sizeof" | "alignof" ;
    constant from the selected GTI target layout; `alignof` reports ABI
    alignment, not preferred alignment.
 
-   The bounded operand set is a primitive scalar, one-level raw pointer, a
-   transparent alias to a supported type, or a recursively supported fixed
-   array with concrete positive extents. Pointer layout is independent of
-   whether its pointee is itself queryable. Bare `void`, `nullptr_t`,
-   references, enums, classes, structs, interfaces, expected values,
-   compiler-private types, direct symbolic type parameters, symbolic or zero
-   extents, and size overflow are rejected semantically. No source record
-   currently has a layout-stable opt-in.
+   The bounded operand set is an admitted scalar, recursive raw pointer,
+   integral scoped enum, passive union, concrete `[[c_abi]]` record, transparent
+   alias to an admitted type, or recursively supported fixed array with
+   concrete positive extents. Pointer layout does not require a queryable
+   pointee. Bare `void`, `nullptr_t`, references, ordinary classes/structs,
+   interfaces, payload enums, expected values, compiler-private types, direct
+   symbolic parameters, symbolic/zero extents and size overflow are rejected.
+   The separate general `std::layout_of<T>()` library contract is not an
+   expansion of these type-only operator operands.
 
    `layout-query-expression` is deliberately absent from
    `array-extent-expression`. A named non-negative `constexpr uint64_t`
@@ -1666,8 +1708,9 @@ layout-query-operator  = "sizeof" | "alignof" ;
    binary64 destination using round-to-nearest, ties-to-even. `double` to
    `float` requires this explicit conversion form. Integer literals outside
    the destination range are semantic
-   errors. Bool, char, string-view, class, expected, pointer, and reference
-   conversions are not provided by this syntax. *)
+   errors. The separate lossless `char`/`uint8_t` code-unit pair is admitted;
+   bool, string-view, class, expected, pointer and reference conversions are
+   not provided by this numeric syntax. *)
 
 (* `return value;` constructs the success state of an expected return type.
    `return unexpected(error);` constructs its error state. A bare `return;`
