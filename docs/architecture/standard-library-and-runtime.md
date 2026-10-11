@@ -286,7 +286,9 @@ Before retiring any existing private path, establish:
    retain distinct language mechanisms and honest native boundaries.
 6. **Performance evidence:** measure allocations, metadata, checks and throughput.
    Source-defined is an authority improvement, not an automatic speedup. The
-   latest source-allocation acceptance explicitly records a runtime regression.
+   earlier S-ALLOC-07 acceptance records a material sparse-allocation regression;
+   later S-ALLOC-09 prefix/string acceptance has its own paired measurements.
+   Neither record establishes parity for every allocation family.
 
 The main takeaway: **most library state and algorithms belong in source; layout,
 typed lifecycle, ownership/borrow checking and primitive execution semantics
@@ -318,13 +320,15 @@ one element, not arbitrary constructor arguments; semantic checking and MIR
 verification reject a hidden source-constructor target. This preserves the
 normal constructor failure record, argument ordering, and partial cleanup.
 
-The compiler retains one declarative mapping from public nominal type names to
-their canonical optional unit solely for unresolved-type diagnostics and
-missing-include fix-its. That catalog grants no semantic behavior and does not
-make a declaration visible: applying the edit causes the normal source loader
-and semantic declaration identity to resolve the type on the next snapshot.
-Unknown application/package names never receive a guessed standard-library
-include.
+Missing-include fixes use compiler-owned declaration discovery, not a
+hardcoded public-type-to-header catalog. Structured unresolved lookup requests
+search the selected project, declared direct package roots and public standard
+units. The canonical parser filters actual declarations, then speculative
+frontend analysis must resolve the occurrence to that exact source declaration
+without introducing an error. Dirty/new/deleted inputs invalidate discovery;
+private, module-only and incompatible candidates fail closed. This supplies
+advice without granting semantic behavior or implementing a second declaration
+parser; the edited file still uses ordinary source loading and exact identity.
 
 Integer `std::print`/`std::println` overloads, `<std/string>` conversion, and
 `<std/format>`'s bounded heterogeneous replacement are a deliberate
@@ -455,8 +459,10 @@ and a portable scalar fallback for other C++20 compilers. The test-only
 The preamble planner emits this support only when verified MIR contains one of
 the six operations; a dormant library import does not add vector support.
 
-`gti_internal` declarations represent operations ordinary GTI cannot yet
-express safely, including unique ownership and partially initialized storage.
+`gti_internal` capability declarations represent operations ordinary GTI cannot
+establish alone, including selected unique/inline-owner representations, raw
+uninitialized representation and general typed object-lifetime facts. Sparse
+and prefix engagement bookkeeping are no longer private capabilities.
 The source graph assigns every unit one explicit role: application, implicit
 prelude, or installed standard-library source. Only the prelude and physical
 units below the configured standard-library root are compiler-trusted. A
@@ -691,8 +697,10 @@ contract, and the C++ backend selects the inline representation only from that
 verified capability row.
 
 Allocation-free describes the optional slot itself. Constructing `T` may still
-execute user code and report its ordinary `allocation_failure` /
-`element_construction` outcome. A failed emplacement leaves the slot empty.
+execute user code, allocate, or raise a contained defined failure. Such a
+constructor failure leaves the slot empty after rollback. Infallible allocation
+exhaustion instead aborts without cleanup under S-ALLOC-08; it is not an
+optional-specific recoverable or cleanup-propagating failure.
 
 The public class owns empty/engaged policy, checked access, reset/emplacement,
 and move-only ownership. Moving transfers the live payload and retires the
@@ -1015,8 +1023,9 @@ attachment, ownership, synchronization, and failure contracts.
 The source-private `runtime/src/cthread_state.cpp` now supplies the native
 create/join, identity, and registered-entry implementation. It is a separate archive member,
 so C consumers referencing only the yield ABI do not acquire the registry.
-GTI currently emits unused ordinary wrappers conservatively, so importing the
-expanded module can link that archive member without starting the service.
+Executable lowering follows reached roots rather than emitting every unused
+ordinary wrapper. Linking this archive member depends on reached runtime and
+adapter requirements; importing the module does not itself start the service.
 `cthread_internal.h` is not
 installed. The stable C boundary now exposes create/join plus compiler-generated
 begin/end/enter/leave entries. Ordinary `unsafe` GTI wrappers expose
@@ -1156,9 +1165,10 @@ initializer restores ordinary managed-worker failure transport.
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure) assigns
 checked-failure meaning to compiler-owned facts and leaves the runtime a narrow
 environment role. Semantics/HIR select local origins and propagation, the
-failure-metadata builder assigns artifact-local sites, MIR retains their exact
-detector mappings, and later MIR slices own propagation and cleanup control
-flow. A generated boundary/runtime pair may serialize,
+failure-metadata builder assigns artifact-local sites, and verified MIR retains
+their exact detector mappings, propagation and cleanup control flow. Remaining
+composition slices extend that authority rather than introducing a source-tree
+emission fallback. A generated boundary/runtime pair may serialize,
 observe, return, or terminate with the completed record, but it may not infer a
 category, choose caller cleanup, or use a generated/native source location.
 
@@ -1185,7 +1195,8 @@ called at the detector, before cleanup. Verified MIR distinguishes allocation
 abort from contained failures; scalar/class/shared allocation and source
 infallible growth use that terminal path without an exhaustion cleanup edge.
 Mixed outcomes retain their other cleanup edges. Combined source-family,
-corpus and performance acceptance remains in progress under S-ALLOC-08/09.
+corpus and performance acceptance passed for S-ALLOC-08/09 in 0.397.0; see
+[verification](verification.md#source-prefix-ownership-and-allocation-abort-acceptance-03970).
 
 Only `panic` / `explicit_panic` (`GTI-R0017`, detail 37) admits a message.
 Generated code prepares its exact record header, then calls
@@ -1290,9 +1301,8 @@ Runtime formatting never consults a host locale, host Unicode library, LLVM,
 or a newer Unicode release.
 
 Public source-defined vector/string bounds require a narrow trusted,
-identity-bound origin/check capability supplied by M-FAIL-01. I-CAP-01 has
-already established the private identity and visibility boundary that this new
-capability must use.
+identity-bound origin/check capability already supplied by M-FAIL-01. It uses
+the established I-CAP-01 private identity and visibility boundary.
 Ordinary GTI wrappers call it with logical size and a fixed public domain;
 applications cannot forge its identity or choose an arbitrary category/detail.
 This keeps public `vector`/`string` origins in source/library policy without
@@ -1310,7 +1320,9 @@ accessors preserve ordinary checked owner loans while requiring the caller to
 prove the index. Fixed-array unchecked access forms an element pointer under
 the concrete nonempty-extent branch; empty arrays have no valid unchecked index.
 No former private prefix-length optimizer relation proves arbitrary source
-calls, and this source cutover does not itself establish optimization parity.
+calls. The integrated source cutover has passed its general source-container
+proof/replay and optimized workload acceptance; that is not a claim that every
+future accessor or workload is already optimized.
 
 Sparse and prefix relocation consume semantic `RelocationKind` facts verified
 against concrete MIR type tables. Raw-buffer growth selects general

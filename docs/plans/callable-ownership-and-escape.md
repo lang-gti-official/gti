@@ -15,8 +15,9 @@
 > unique-owner invocation with full-expression capture lifetime. The agreed
 > owning-wrapper API is implemented, passes the combined 294-test production
 > suite and clean installed-consumer checks, and is installed locally.
-> Combined repository publication is user-approved under L-CALL-02; Gitea owns
-> asynchronous release packaging. Exact
+> Those production/install statements record the L-CALL-02 delivery campaign,
+> not a fresh validation of every later main commit. Canonical GitHub workflows
+> now own asynchronous release packaging; Gitea is a backup mirror. Exact
 > namespace free-function items are stateless values that can be retained,
 > captured, returned through generics and erased by the owning wrappers.
 > Existing confined and managed-task contracts also select contextual items.

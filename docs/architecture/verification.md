@@ -1,5 +1,40 @@
 # Compiler Verification
 
+The command contracts, test ownership and development/completion guidance below
+describe how to verify current work. Delivery sections retain dated, exact-head
+acceptance and candidate evidence: an earlier "remaining" failure is not a live
+blocker after its later acceptance, and an earlier green suite does not certify
+today's compiler. Preserve those observations rather than rewriting their
+counts, timings or platform limits to match a new revision. Current scheduling
+belongs in the [implementation sequence](../plans/implementation-sequence.md).
+
+## Documentation reconciliation capability probes (2026-10-11)
+
+The documentation audit built a fresh Release compiler from clean checkpoint
+`1f95c961` (0.399.1; compiler/runtime/stdlib sources identical to main
+`f3f85336`). Run `run-e8d659fafab542379e52380c3dcddc0d` used the Mini's shared
+build/suite window and recorded identical clean source identity before and
+after the checks. Its local report and logs are retained under the common Git
+directory's `gti-remote-runner/results/`; the disposable remote source/build
+and finished run were removed after evidence retrieval.
+
+Both programs below emitted the backend representation, built natively with
+the default C++23 mode, and ran with exit zero, empty stdout/stderr and zero
+compiler diagnostics at both GTI O0 and O3:
+
+- `tests/fixtures/forward_list_emplacement_borrowed.gti`, forwarding an owned
+  string pack element to a read-only constructor argument of an immovable node
+  payload. The earlier L-UP-10 reproducer is no longer a current backend failure.
+- `examples/120-immovable-storage.gti`, checking final-address emplacement,
+  allocation-owner movement without moving the element, destruction,
+  reconstruction and explicit release.
+
+These are availability probes, not a full feature-acceptance or platform claim.
+They do not cover C++20, sanitizers, every pack shape or failure path, installed
+consumption, Linux or Windows, and do not by themselves close L-UP-10's full
+matrix. Existing source-storage acceptance remains separately recorded below.
+Documentation-only reconciliation changes no compiler behavior or VERSION.
+
 ## Record-published field initializers under optimization (0.399.1)
 
 - **Defect.** A literal-backed `std::string_view` field default read back

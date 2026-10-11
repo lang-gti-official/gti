@@ -69,7 +69,7 @@ order, or serialized form must not become the contract between GTI phases.
 | --- | --- | --- |
 | `APInt` evaluates checked arithmetic | adopted | `CheckedIntegerValue`/`Domain` remain the representation |
 | `Triple` parses a target string | adopted | `TargetInfo` remains the representation; the triple is mapped into GTI's vocabulary and never stored |
-| `APFloat` evaluates float constants | adopted | `BinaryFloat` stores GTI-owned binary32 bits from exact source ingestion; `APFloat` parses, computes, compares, and converts with explicit rounding inside compiled code; the native driver disables reassociation and contraction, and direct backend consumers inherit the same obligation |
+| `APFloat` evaluates float constants | adopted | `BinaryFloat` stores GTI-owned width-tagged binary32/binary64 bits from exact source ingestion; `APFloat` parses, computes, compares, and converts with explicit rounding inside compiled code; the native driver disables reassociation and contraction, and direct backend consumers inherit the same obligation |
 | `GraphTraits` + `GenericDomTree` over MIR | adopted, bounded | A private CFG snapshot computes a fresh read-only `MirDominanceInfo` expressed in GTI block IDs; the verifier consumes it, and no analysis survives CFG mutation |
 | `llvm::json` parses and encodes LSP messages | adopted, confined | `src/lsp/main.cpp` still owns the JSON-RPC/LSP schema and validation; LLVM value types remove manual reference counting and the separate json-c build, validate incoming UTF-8, and never leave the private protocol translation unit |
 | Unicode terminal widths and UTF-8 sequence validation | adopted, confined | Private CLI rendering uses LLVM's maintained Unicode tables and sequence checks instead of inventing terminal-width tables; GTI still owns source bytes, spans, scalar heading columns, tab policy, escaping, and LSP UTF-16 positions |
@@ -176,7 +176,7 @@ the Apache-2.0 modification-notice clause moot.
   installed CMake package, but do not require LLVM headers merely to parse a
   GTI header.
 - Crash handling, compile-time telemetry (`--time-trace`), target-triple
-  parsing, checked-integer arithmetic, exact binary32 computation, the HIR
+  parsing, checked-integer arithmetic, exact binary32/binary64 computation, the HIR
   instance lookup index, snapshot-scoped MIR dominance, and private LSP JSON
   parsing/encoding have one active LLVM-backed implementation behind GTI-owned
   interfaces.
