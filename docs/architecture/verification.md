@@ -5990,6 +5990,13 @@ C++ driver spelling, optimization/standard, strict floating-point flags,
 sanitizer options and both phases' failure diagnostics. Its unit gate checks
 those boundaries; runtime allocation/failure/cleanup assertions are unchanged.
 
+Native compiler invocation spelling is likewise distinct from canonical binary
+identity: resolving `clang++` to `clang` changes link-driver selection. Runtime
+and sanitizer harnesses preserve the invocation path. Benchmark tools retain
+the canonical binary for hashes/provenance but execute the selected alias, query
+that alias's version, and check both identities in a GTI build report. The
+benchmark harness includes a symlink regression for this boundary.
+
 `local_reference_inference` pairs explicit and inferred reference programs,
 checking admission and concrete binding/drop facts, HIR owner dependencies and
 MIR loan records. Detached local-loan source mutations must fail verification.
