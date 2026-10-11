@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import unittest.mock
 
@@ -497,6 +498,52 @@ class Lifecycle(unittest.TestCase):
         self.flow.window.timeout = None
         self.flow.verify("task", [[sys.executable, "-c", "pass"]])
         self.assertEqual(self.flow.load("task")["phase"], "ready")
+
+    def test_remote_verify_uses_remote_window_and_binds_retrieved_evidence(self):
+        self.start()
+        self.checkpoint()
+        real_runner = module.load_remote_runner()
+        steps = [{"name": "fixture", "kind": "suite", "cwd": "source", "argv": ["python3", "fixture.py"]}]
+        head = git(self.worktree, "rev-parse", "HEAD")
+        scenario = {"head": head, "code": 0, "final_status": ""}
+
+        def run(arguments):
+            self.assertFalse((self.flow.state_dir / "lock").exists())
+            self.assertEqual(len(self.flow.window.holders("suite")), 1)  # no second laptop slot
+            self.assertEqual(arguments[arguments.index("--repo") + 1], str(self.worktree))
+            plan = Path(arguments[arguments.index("--steps-file") + 1])
+            self.assertEqual(json.loads(plan.read_text()), steps)
+            destination = Path(arguments[arguments.index("--results") + 1])
+            destination.mkdir(parents=True)
+            (destination / "report.json").write_text(json.dumps({
+                "id": "run-" + "a" * 32, "state": "passed", "exit_code": 0,
+                "final_source": {"head": head, "status": scenario["final_status"]},
+                "source": {"head": scenario["head"], "status": "", "snapshot_sha256": "digest"}}))
+            return scenario["code"]
+
+        fake = types.SimpleNamespace(validate_steps=real_runner.validate_steps,
+                                     RunnerError=real_runner.RunnerError, main=run)
+        with self.flow.window.acquire("suite", ["unrelated local suite"]):
+            self.flow.window.timeout = 0
+            with unittest.mock.patch.object(module, "load_remote_runner", return_value=fake):
+                state = self.flow.verify("task", steps, remote=True)
+                self.assertEqual(state["phase"], "ready")
+                self.assertEqual(state["verified"]["head"], head)
+                self.assertEqual(state["verified"]["remote"]["snapshot_sha256"], "digest")
+                scenario["head"] = "wrong head"
+                with self.assertRaisesRegex(Error, "clean published head"):
+                    self.flow.verify("task", steps, remote=True)
+                self.assertEqual(self.flow.load("task")["phase"], "blocked")
+                self.assertNotIn("verified", self.flow.load("task"))
+                scenario["head"] = head
+                scenario["final_status"] = " M base.txt\n"
+                with self.assertRaisesRegex(Error, "clean published head"):
+                    self.flow.verify("task", steps, remote=True)
+                scenario["final_status"] = ""
+                scenario["code"] = 7
+                with self.assertRaisesRegex(Error, "Remote validation failed"):
+                    self.flow.verify("task", steps, remote=True)
+                self.assertEqual(self.flow.load("task")["phase"], "blocked")
 
     def test_metadata_commands_run_while_verify_executes_checks(self):
         self.start()
