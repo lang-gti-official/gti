@@ -2009,11 +2009,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 84
       }
+    },
+    "138-environment-configuration.gti": {
+      "declarations": 881,
+      "bodies": 124,
+      "generated_items": 67,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 11,
+        "callable_adapter": 10,
+        "lifecycle_cleanup": 4,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 40
+      }
     }
   },
   "totals": {
-    "declarations": 64155,
-    "bodies": 12073,
-    "generated_items": 6370
+    "declarations": 65036,
+    "bodies": 12197,
+    "generated_items": 6437
   }
 }
