@@ -156,6 +156,13 @@ ineligible. Untaken runtime-only
 calls do not execute. Rewritten/tombstoned instructions and optimizer-produced
 control flow cannot determine constant eligibility.
 
+The existing enum and checked-integer `expected` constant profiles have not yet
+migrated their values and operations to this executor. They retain their
+compatibility evaluation where previously supported, but cannot participate in
+the new mutation-capable MIR profile, including as aggregate fields. This is a
+representation/operation prerequisite, not permission for mutable calls to
+retry the copy-based AST interpreter.
+
 The service returns `ConstantValue` or a failure carrying the concrete body
 address, block, and instruction identity, including constructor failures.
 One shared step budget covers instructions and
