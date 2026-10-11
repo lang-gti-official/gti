@@ -56,7 +56,11 @@ def main():
                     for count in range(12):
                         failed = run([executable, *(["failure"] * count)], timeout=30)
                         expected_status = 0 if count == 11 else 70
-                        expected_output = "2\n1\n" if count <= 5 or count == 7 else "3\n2\n1\n"
+                        # A second failure during cleanup terminates through
+                        # the emergency envelope immediately, without running
+                        # any remaining destructors (the established contract).
+                        expected_output = ("3\n" if count == 9 else
+                                           "2\n1\n" if count <= 5 or count == 7 else "3\n2\n1\n")
                         assert (failed.returncode, failed.stdout) == (expected_status, expected_output), (name, count, failed)
                         if expected_status == 0:
                             assert failed.stderr == "", (name, count, failed.stderr)
