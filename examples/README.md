@@ -198,6 +198,7 @@ is a teaching helper, not a production server.
 | `141-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `142-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `143-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
+| `144-counted-text-view-iteration.gti` | literal and dynamically owned text-view cursors, checked reverse/positional access, generic search, and retained view-shell lifetime |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run

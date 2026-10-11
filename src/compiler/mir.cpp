@@ -934,6 +934,8 @@ enum class MirLoanFlowState : std::uint8_t {
   Active = 2,
   Suspended = 4,
   Reserved = 8,
+  ParkedActive = 16,
+  ParkedSuspended = 32,
   // Joins may carry these sets only for exact conditional temporary-carrier
   // dependencies and their ancestors. No executable access accepts a set.
   MaybeActive = 3,
@@ -948,6 +950,11 @@ enum class MirLoanFlowState : std::uint8_t {
 }
 
 using MirLoanState = std::vector<MirLoanFlowState>;
+
+[[nodiscard]] bool isParkedLoan(MirLoanFlowState state) {
+  return state == MirLoanFlowState::ParkedActive ||
+         state == MirLoanFlowState::ParkedSuspended;
+}
 
 struct MirCanonicalPayloadSelection {
   // Inserted at this position among the ordinary field/dereference path.
@@ -2473,7 +2480,9 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
       if (!instruction.loan ||
-          instruction.kind == MirInstructionKind::EndBorrow) {
+          instruction.kind == MirInstructionKind::EndBorrow ||
+          instruction.kind == MirInstructionKind::ParkRangeCursor ||
+          instruction.kind == MirInstructionKind::RestoreRangeCursor) {
         continue;
       }
       if (instruction.kind == MirInstructionKind::ActivateBorrow) {
@@ -2669,6 +2678,12 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                 context,
             block.id, instruction);
       }
+      if (isParkedLoan(active[loan - 1])) {
+        return failure(body, owner,
+                       "parked range cursor cannot authorize a loan use in " +
+                           std::string(context),
+                       block.id, instruction);
+      }
       if (active[loan - 1] == MirLoanFlowState::Suspended) {
         return failure(body, owner,
                        "loan " + std::to_string(loan) +
@@ -2848,6 +2863,7 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
           const bool overlapsDescendant = std::any_of(
               body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
                 if (active[loan.id - 1] == MirLoanFlowState::Inactive ||
+                    isParkedLoan(active[loan.id - 1]) ||
                     !isLoanAncestor(body, place.throughLoan, loan.id)) {
                   return false;
                 }
@@ -2877,7 +2893,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
 
       for (const MirLoan &loan : body.loans) {
         const MirLoanFlowState loanState = active[loan.id - 1];
-        if (loanState == MirLoanFlowState::Inactive || loan.id == exemptLoan ||
+        if (loanState == MirLoanFlowState::Inactive ||
+            isParkedLoan(loanState) || loan.id == exemptLoan ||
             loan.id == place.throughLoan ||
             (place.throughLoan != 0 &&
              isLoanAncestor(body, loan.id, place.throughLoan)) ||
@@ -3135,6 +3152,121 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
 
     std::optional<MirLoanId> activatedForCommit;
     for (const MirInstruction &instruction : block.instructions) {
+      const MirRangeIteration *parkedRange = nullptr;
+      for (const auto &range : body.rangeIterations) {
+        if (!range.endpointParking)
+          continue;
+        const auto *cursor = body.findLoan(range.endpointParking->cursor);
+        if (cursor && isParkedLoan(active[cursor->id - 1])) {
+          if (parkedRange)
+            return failure(body, owner,
+                           "nested range endpoint parking is invalid", block.id,
+                           instruction.id);
+          parkedRange = &range;
+        }
+      }
+      if (parkedRange) {
+        const auto &parking = *parkedRange->endpointParking;
+        const bool restore =
+            instruction.kind == MirInstructionKind::RestoreRangeCursor &&
+            (instruction.id == parking.restore ||
+             std::find(parking.failureRestores.begin(),
+                       parking.failureRestores.end(),
+                       instruction.id) != parking.failureRestores.end());
+        if (!restore && instruction.id != parking.endReceiver &&
+            instruction.id != parking.endCall)
+          return failure(body, owner,
+                         "only the exact readonly range endpoint may execute "
+                         "while its cursor is parked",
+                         block.id, instruction.id);
+      } else if (std::any_of(active.begin(), active.end(), isParkedLoan)) {
+        return failure(body, owner,
+                       "parked loan has no exact range endpoint inventory",
+                       block.id, instruction.id);
+      }
+      if (instruction.kind == MirInstructionKind::ParkRangeCursor ||
+          instruction.kind == MirInstructionKind::RestoreRangeCursor) {
+        const auto found = std::find_if(
+            body.rangeIterations.begin(), body.rangeIterations.end(),
+            [&](const auto &range) {
+              if (!range.endpointParking ||
+                  range.hirStatement != instruction.hirStatement ||
+                  range.endpointParking->cursor != instruction.loan ||
+                  range.endpointParking->endValue != instruction.hirValue)
+                return false;
+              const auto &parking = *range.endpointParking;
+              return instruction.kind == MirInstructionKind::ParkRangeCursor
+                         ? parking.park == instruction.id
+                         : parking.restore == instruction.id ||
+                               std::find(parking.failureRestores.begin(),
+                                         parking.failureRestores.end(),
+                                         instruction.id) !=
+                                   parking.failureRestores.end();
+            });
+        const auto *cursor =
+            instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+        const auto *parent = cursor ? body.findLoan(cursor->parent) : nullptr;
+        if (found == body.rangeIterations.end() || !cursor || !parent ||
+            cursor->kind != MirLoanKind::Stored || cursor->entry ||
+            cursor->escapes || cursor->access != AccessMode::Mutable ||
+            parent->id != found->rangeLoan ||
+            parent->access != AccessMode::Mutable)
+          return failure(
+              body, owner,
+              "range endpoint control has no exact fresh mutable cursor",
+              block.id, instruction.id);
+        const bool park =
+            instruction.kind == MirInstructionKind::ParkRangeCursor;
+        if (park) {
+          if (parkedRange ||
+              active[cursor->id - 1] != MirLoanFlowState::Active ||
+              active[parent->id - 1] != MirLoanFlowState::Suspended)
+            return failure(body, owner,
+                           "range cursor cannot park outside its active "
+                           "exclusive lifetime",
+                           block.id, instruction.id);
+          for (const auto child : children[parent->id - 1])
+            if (child != cursor->id &&
+                active[child - 1] != MirLoanFlowState::Inactive)
+              return failure(body, owner,
+                             "range cursor cannot park with another active "
+                             "traversal child",
+                             block.id, instruction.id);
+          for (const auto &loan : body.loans) {
+            if (!mirLoanRetainsDependency(body, loan.id, cursor->id))
+              continue;
+            auto &state = active[loan.id - 1];
+            if (state == MirLoanFlowState::Active)
+              state = MirLoanFlowState::ParkedActive;
+            else if (state == MirLoanFlowState::Suspended)
+              state = MirLoanFlowState::ParkedSuspended;
+            else if (state != MirLoanFlowState::Inactive)
+              return failure(body, owner,
+                             "range cursor cannot park a conditional or "
+                             "reserved descendant",
+                             block.id, instruction.id);
+          }
+          active[parent->id - 1] = MirLoanFlowState::Active;
+        } else {
+          if (parkedRange != &*found ||
+              active[cursor->id - 1] != MirLoanFlowState::ParkedActive ||
+              active[parent->id - 1] != MirLoanFlowState::Active)
+            return failure(body, owner,
+                           "range cursor restore has no exact parked lifetime",
+                           block.id, instruction.id);
+          for (const auto &loan : body.loans) {
+            if (!mirLoanRetainsDependency(body, loan.id, cursor->id))
+              continue;
+            auto &state = active[loan.id - 1];
+            if (state == MirLoanFlowState::ParkedActive)
+              state = MirLoanFlowState::Active;
+            else if (state == MirLoanFlowState::ParkedSuspended)
+              state = MirLoanFlowState::Suspended;
+          }
+          active[parent->id - 1] = MirLoanFlowState::Suspended;
+        }
+        continue;
+      }
       if (activatedForCommit) {
         const MirCanonicalPlace destination =
             instruction.destination
@@ -4047,6 +4179,24 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                      block.id);
     }
 
+    if (std::any_of(active.begin(), active.end(), isParkedLoan)) {
+      const auto found =
+          std::find_if(body.rangeIterations.begin(), body.rangeIterations.end(),
+                       [&](const auto &range) {
+                         const auto *cursor =
+                             range.endpointParking
+                                 ? body.findLoan(range.endpointParking->cursor)
+                                 : nullptr;
+                         return cursor && isParkedLoan(active[cursor->id - 1]);
+                       });
+      if (found == body.rangeIterations.end() ||
+          block.terminator.kind != MirTerminatorKind::Invoke ||
+          block.terminator.invokeInstruction != found->endpointParking->endCall)
+        return failure(body, owner,
+                       "parked cursor crosses a non-endpoint control-flow edge",
+                       block.id);
+    }
+
     if (block.terminator.value) {
       if (auto invalid =
               checkOperand(*block.terminator.value, "a terminator")) {
@@ -4148,6 +4298,7 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
           continue;
         const MirLoanId loan = index + 1;
         if (!conditionalDependencies.contains(loan) ||
+            isParkedLoan((*entry)[index]) || isParkedLoan(active[index]) ||
             loanFlowContains((*entry)[index], MirLoanFlowState::Reserved) ||
             loanFlowContains(active[index], MirLoanFlowState::Reserved)) {
           return failure(
@@ -6966,6 +7117,7 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
     return failure(body, owner,
                    "range iteration inventory has an invalid body CFG");
   }
+  std::unordered_set<HirStatementId> sourceRanges;
   for (std::size_t index = 0; index < body.rangeIterations.size(); ++index) {
     const MirRangeIteration &range = body.rangeIterations[index];
     const MirPlace *ownerPlace = body.findPlace(range.owner);
@@ -7014,6 +7166,7 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
                                          payloadExtraction->sourceValue;
                             });
     if (range.id != index + 1 || range.hirStatement == 0 ||
+        !sourceRanges.insert(range.hirStatement).second ||
         range.coreLoop == 0 || ownerPlace == nullptr || rangePlace == nullptr ||
         iteratorPlace == nullptr || sentinelPlace == nullptr ||
         elementPlace == nullptr || rangeLoan == nullptr ||
@@ -7028,13 +7181,171 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
              std::find(loan.carriers.begin(), loan.carriers.end(), binding) !=
                  loan.carriers.end();
     };
+    const MirLoan *physicalCursor = nullptr;
+    bool ambiguousCursor = false;
+    if (range.strategy == RangeIterationStrategy::Structural)
+      for (const auto &loan : body.loans)
+        if (loan.id != range.rangeLoan && loan.kind == MirLoanKind::Stored &&
+            carries(loan, iteratorPlace->binding)) {
+          ambiguousCursor |= physicalCursor != nullptr;
+          physicalCursor = &loan;
+        }
+    const bool physicalProxy =
+        !ambiguousCursor && physicalCursor != nullptr &&
+        !physicalCursor->entry && !physicalCursor->escapes &&
+        physicalCursor->parent == range.rangeLoan &&
+        physicalCursor->access == range.elementAccess &&
+        physicalCursor->storedDependency == rangeLoan->storedDependency &&
+        elementLoan != nullptr &&
+        elementLoan->kind == MirLoanKind::CallResult &&
+        elementLoan->parent == 0 && elementLoan->producedBy != 0 &&
+        elementLoan->source == range.iterator &&
+        elementLoan->storedDependency == physicalCursor->id;
+    const MirInstruction *elementProducer = nullptr;
+    bool ambiguousElementProducer = false;
+    if (elementLoan)
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::Call &&
+              instruction.loan == elementLoan->id) {
+            ambiguousElementProducer |= elementProducer != nullptr;
+            elementProducer = &instruction;
+          }
+    const bool physicalElement =
+        elementLoan && elementLoan->kind == MirLoanKind::CallResult &&
+        elementLoan->source == range.iterator &&
+        range.elementType.kind == SemanticType::Class &&
+        elementPlace->traits.containsBorrowedState && elementProducer &&
+        elementProducer->borrowOrigin == BorrowOriginKind::Receiver &&
+        elementProducer->borrowFields.empty();
+    if (physicalElement || physicalProxy) {
+      if (!physicalProxy || ambiguousElementProducer || !elementProducer ||
+          elementProducer->hirValue != elementLoan->producedBy ||
+          elementProducer->borrowAccess != elementLoan->access ||
+          elementProducer->borrowOrigin != BorrowOriginKind::Receiver ||
+          elementProducer->info.type != range.elementType ||
+          elementProducer->info.category != ValueCategory::Place)
+        return failure(body, owner,
+                       "physical range element lacks its exact cursor and "
+                       "selected dereference producer");
+    }
+    if (range.endpointParking) {
+      const auto &parking = *range.endpointParking;
+      const auto locate = [&](MirInstructionId id) {
+        std::pair<const MirBlock *, std::size_t> result{nullptr, 0};
+        for (const auto &block : body.blocks)
+          for (std::size_t position = 0; position < block.instructions.size();
+               ++position)
+            if (block.instructions[position].id == id)
+              result = {&block, position};
+        return result;
+      };
+      const auto [beginBlock, beginIndex] = locate(parking.beginCall);
+      const auto [endBlock, endIndex] = locate(parking.endCall);
+      const auto [parkBlock, parkIndex] = locate(parking.park);
+      const auto [receiverBlock, receiverIndex] = locate(parking.endReceiver);
+      const auto [restoreBlock, restoreIndex] = locate(parking.restore);
+      const auto *beginCall =
+          beginBlock ? &beginBlock->instructions[beginIndex] : nullptr;
+      const auto *endCall =
+          endBlock ? &endBlock->instructions[endIndex] : nullptr;
+      const auto *receiver =
+          receiverBlock ? &receiverBlock->instructions[receiverIndex] : nullptr;
+      const auto *endpointPlace =
+          receiver && receiver->operands.size() == 1
+              ? body.findPlace(receiver->operands.front().place)
+              : nullptr;
+      const bool exactEndpointPlace =
+          endpointPlace && endpointPlace->type == range.rangeType &&
+          ((endpointPlace->root == MirPlaceRootKind::Binding &&
+            endpointPlace->binding == rangePlace->binding &&
+            endpointPlace->projections.size() == 1 &&
+            endpointPlace->projections.front().kind ==
+                MirProjectionKind::Dereference) ||
+           (endpointPlace->root == MirPlaceRootKind::Loan &&
+            endpointPlace->loan == range.rangeLoan &&
+            endpointPlace->projections.empty()));
+      const auto exactControl = [&](const MirInstruction &instruction,
+                                    MirInstructionKind kind) {
+        return instruction == MirInstruction{.id = instruction.id,
+                                             .kind = kind,
+                                             .hirValue = parking.endValue,
+                                             .hirStatement = range.hirStatement,
+                                             .loan = parking.cursor};
+      };
+      if (!physicalProxy ||
+          range.strategy != RangeIterationStrategy::Structural ||
+          range.elementAccess != AccessMode::Mutable || parking.endValue == 0 ||
+          physicalCursor->id != parking.cursor ||
+          physicalCursor->carriers !=
+              std::vector<HirBindingId>{iteratorPlace->binding} ||
+          !beginCall || beginCall->kind != MirInstructionKind::Call ||
+          beginCall->loan != parking.cursor ||
+          beginCall->hirValue != physicalCursor->producedBy ||
+          !beginCall->result || !endCall ||
+          endCall->kind != MirInstructionKind::Call ||
+          endCall->hirValue != parking.endValue ||
+          endCall->callSite != parking.endValue || !endCall->functionTarget ||
+          endCall->dispatch != CallDispatch::Static ||
+          endCall->intrinsic != IntrinsicKind::None || endCall->neverReturns ||
+          endCall->borrowOrigin != BorrowOriginKind::None || endCall->loan ||
+          !endCall->borrowFields.empty() || endCall->borrowPlace ||
+          !endCall->borrowArguments.empty() || !endCall->result ||
+          endCall->info.type != range.sentinelType ||
+          endCall->info.type.kind == SemanticType::Reference ||
+          endCall->info.traits.containsBorrowedState ||
+          !endCall->operands.empty() || !endCall->parameterTypes.empty() ||
+          !receiver || receiver->kind != MirInstructionKind::CallInput ||
+          receiver->callSite != parking.endValue ||
+          receiver->callInputRole != MirCallInputRole::Receiver ||
+          receiver->callInputKind != HirCallInputKind::ReadBorrow ||
+          receiver->loan || receiver->operands.size() != 1 ||
+          receiver->operands.front().kind != MirOperandKind::BorrowRead ||
+          !exactEndpointPlace || !receiver->result || !endCall->receiver ||
+          endCall->receiver->kind != MirOperandKind::Value ||
+          endCall->receiver->value != *receiver->result || !parkBlock ||
+          parkBlock != receiverBlock || parkBlock != endBlock ||
+          receiverIndex != parkIndex + 1 || endIndex != receiverIndex + 1 ||
+          !exactControl(parkBlock->instructions[parkIndex],
+                        MirInstructionKind::ParkRangeCursor) ||
+          !restoreBlock ||
+          !exactControl(restoreBlock->instructions[restoreIndex],
+                        MirInstructionKind::RestoreRangeCursor) ||
+          !dominance->dominates(beginBlock->id, parkBlock->id) ||
+          (beginBlock == parkBlock && beginIndex >= parkIndex))
+        return failure(body, owner,
+                       "range endpoint parking lost its exact readonly call, "
+                       "fresh cursor or source order");
+      const auto &terminator = endBlock->terminator;
+      if (terminator.kind == MirTerminatorKind::Invoke &&
+          terminator.invokeInstruction == endCall->id) {
+        const auto *normal = body.findBlock(terminator.target);
+        const auto *failed = body.findBlock(terminator.elseTarget);
+        if (!normal || !failed || restoreBlock != normal || restoreIndex != 0 ||
+            parking.failureRestores.size() != 1 ||
+            failed->instructions.empty() ||
+            failed->instructions.front().id !=
+                parking.failureRestores.front() ||
+            !exactControl(failed->instructions.front(),
+                          MirInstructionKind::RestoreRangeCursor))
+          return failure(body, owner,
+                         "range endpoint must restore its cursor before "
+                         "success publication or failure cleanup");
+      } else if (restoreBlock != endBlock || restoreIndex != endIndex + 1 ||
+                 !parking.failureRestores.empty()) {
+        return failure(body, owner,
+                       "nonfailing range endpoint must restore its cursor "
+                       "immediately after its call");
+      }
+    }
     if (rangeLoan->access != range.elementAccess || rangeLoan->escapes ||
         (range.elementLoan != 0 &&
          (elementLoan == nullptr ||
           elementLoan->access != range.elementAccess || elementLoan->escapes ||
           (range.elementAccess == AccessMode::Mutable &&
            (range.elementLoan == range.rangeLoan ||
-            elementLoan->parent != range.rangeLoan))))) {
+            (elementLoan->parent != range.rangeLoan && !physicalProxy))) ||
+          (physicalCursor != nullptr && !physicalProxy)))) {
       return failure(body, owner,
                      "range iteration contains an incoherent or escaping "
                      "range/element loan");
@@ -7044,7 +7355,7 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
          !carries(*elementLoan, elementPlace->binding)) ||
         (range.elementAccess == AccessMode::Mutable &&
          range.strategy == RangeIterationStrategy::Structural &&
-         !carries(*rangeLoan, iteratorPlace->binding))) {
+         !carries(*rangeLoan, iteratorPlace->binding) && !physicalProxy)) {
       return failure(body, owner,
                      "range iteration loan does not retain its exact carrier");
     }
@@ -9184,6 +9495,18 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirInstructionKind::EndBorrow:
       return noOperation && !hasResult && instruction.loan &&
              instruction.operands.empty();
+    case MirInstructionKind::ParkRangeCursor:
+    case MirInstructionKind::RestoreRangeCursor: {
+      // These controls carry no executable operation, data or hidden cleanup.
+      // The exact source range/call/loan schedule is checked independently.
+      MirInstruction canonical{.id = instruction.id,
+                               .kind = instruction.kind,
+                               .hirValue = instruction.hirValue,
+                               .hirStatement = instruction.hirStatement,
+                               .loan = instruction.loan};
+      return instruction.hirValue != 0 && instruction.hirStatement != 0 &&
+             instruction.loan && instruction == canonical;
+    }
     case MirInstructionKind::Lifecycle:
       return noOperation && !hasResult && !instruction.destination &&
              !instruction.receiver && instruction.operands.empty() &&
@@ -9474,8 +9797,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
            loan.kind == MirLoanKind::CallResult ||
            (loan.kind == MirLoanKind::Stored &&
             (parent.kind == MirLoanKind::CallResult ||
-             (parent.kind == MirLoanKind::Stored &&
-              parent.storedDependency != 0)))) &&
+             parent.kind == MirLoanKind::Local ||
+             parent.kind == MirLoanKind::Parameter ||
+             parent.kind == MirLoanKind::Stored))) &&
           loan.access == AccessMode::ReadOnly &&
           parent.access == AccessMode::ReadOnly;
       const bool projectedStoredChild = parent.kind == MirLoanKind::Stored &&
@@ -10302,8 +10626,25 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             instruction.cleanupBoundaryEnd <= body.cleanupBoundaries.size() &&
             body.cleanupBoundaries[instruction.cleanupBoundaryEnd - 1].kind ==
                 MirCleanupBoundaryKind::Failure;
+        const bool endpointRestore =
+            instructionIndex == 0 &&
+            instruction.kind == MirInstructionKind::RestoreRangeCursor &&
+            std::any_of(
+                body.rangeIterations.begin(), body.rangeIterations.end(),
+                [&](const auto &range) {
+                  return range.endpointParking &&
+                         range.endpointParking->cursor == instruction.loan &&
+                         range.endpointParking->endValue ==
+                             instruction.hirValue &&
+                         range.hirStatement == instruction.hirStatement &&
+                         std::find(
+                             range.endpointParking->failureRestores.begin(),
+                             range.endpointParking->failureRestores.end(),
+                             instruction.id) !=
+                             range.endpointParking->failureRestores.end();
+                });
         if (instruction.kind != MirInstructionKind::EndBorrow && !failureDrop &&
-            !failureBoundary) {
+            !failureBoundary && !endpointRestore) {
           return failure(body, owner,
                          "failure block contains a non-cleanup instruction",
                          block.id, instruction.id);

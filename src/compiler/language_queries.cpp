@@ -31,6 +31,29 @@ std::string SignaturePrinter::nativeCall(const ResolvedCallInfo &selected,
   return result;
 }
 
+std::string
+SignaturePrinter::forwardedMemberCall(const FunctionInfo &info,
+                                      const ResolvedCallInfo &selected,
+                                      std::string_view name) const {
+  if (selected.argumentReceiver == nullptr || selected.parameterTypes.empty() ||
+      selected.parameterTypes.front().kind != SemanticType::Reference ||
+      selected.parameterTypes.front().arguments.size() != 1)
+    return {};
+  auto labels = parameterLabels(
+      selected.parameterTypes,
+      info.declaration ? &info.declaration->parameters() : nullptr, false);
+  std::string result =
+      types.print(selected.returnType) + " " +
+      types.print(selected.parameterTypes.front().arguments.front()) +
+      "::" + std::string(name) + "(";
+  for (std::size_t index = 1; index < labels.size(); ++index) {
+    if (index != 1)
+      result += ", ";
+    result += labels[index];
+  }
+  return result + ")";
+}
+
 [[nodiscard]] std::string
 SignaturePrinter::function(const FunctionInfo &info,
                            const ResolvedCallInfo *selected) const {
@@ -718,7 +741,10 @@ public:
       }
       const FunctionInfo *function = semantics.findFunction(selected.function);
       if (function != nullptr) {
-        result.signature = signatures.function(*function, &selected);
+        result.signature = selected.argumentReceiver != nullptr
+                               ? signatures.forwardedMemberCall(
+                                     *function, selected, occurrence->name)
+                               : signatures.function(*function, &selected);
         hoveredFunction = function;
         hoveredCall = &selected;
       }
@@ -1116,13 +1142,19 @@ public:
         if (function == nullptr) {
           return std::nullopt;
         }
-        result.label = signatures.function(*function, &resolved);
+        result.label = resolved.argumentReceiver != nullptr
+                           ? signatures.forwardedMemberCall(*function, resolved,
+                                                            selected->name)
+                           : signatures.function(*function, &resolved);
         result.parameterLabels = signatures.parameterLabels(
             resolved.parameterTypes,
             function->declaration == nullptr
                 ? nullptr
                 : &function->declaration->parameters(),
             false);
+        if (resolved.argumentReceiver != nullptr &&
+            !result.parameterLabels.empty())
+          result.parameterLabels.erase(result.parameterLabels.begin());
       }
     } else if (selected->kind == SemanticOccurrenceKind::SelectedConstruction &&
                selected->selectedConstruction) {

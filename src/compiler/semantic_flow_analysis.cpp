@@ -109,7 +109,7 @@ auto SemanticVisitor::Impl::forceProgramStorageBoundaryAccess(
 
 auto SemanticVisitor::Impl::recordProgramArgumentBoundaryEffects(
     std::span<const SemanticType> parameterTypes,
-    std::span<const ExprPtr> arguments) -> void {
+    ResolvedCallArguments arguments) -> void {
   const std::size_t count = std::min(parameterTypes.size(), arguments.size());
   for (std::size_t index = 0; index < count; ++index) {
     if (parameterTypes[index].kind == SemanticType::Reference ||
@@ -832,7 +832,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     return;
   }
   recordProgramArgumentBoundaryEffects(resolved->parameterTypes,
-                                       call->arguments());
+                                       ResolvedCallArguments(*call, resolved));
   const FunctionInfo *target =
       resolved->function == 0 ? nullptr
                               : semanticModel.findFunction(resolved->function);
@@ -1756,9 +1756,10 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     if (borrowedTextType(type) && resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {
       if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
-          resolved->borrowArgument < call.arguments().size()) {
+          resolved->borrowArgument <
+              resolvedCallArgumentCount(call, resolved)) {
         const ExpressionInfo *sourceInfo = semanticModel.findExpression(
-            *call.arguments()[resolved->borrowArgument]);
+            **resolvedCallArgument(call, resolved, resolved->borrowArgument));
         const bool ownerlessCStringSource =
             type.kind == SemanticType::CString && sourceInfo != nullptr &&
             (sourceInfo->type.kind == SemanticType::CString ||
@@ -4482,6 +4483,21 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
          .qualifiedName = "empty",
          .detail = "bool empty()",
          .scopeDistance = 0});
+    for (const auto name : {"begin", "end", "cbegin", "cend", "end_iterator",
+                            "iterator_at", "rbegin", "rend", "crbegin", "crend",
+                            "rend_iterator", "reverse_iterator_at"}) {
+      if (const auto factory = textViewMemberFactory(name)) {
+        context.candidates.push_back(
+            {.kind = SemanticCompletionCandidateKind::Method,
+             .name = name,
+             .qualifiedName = name,
+             .detail = typeSpelling(factory->returnType) + " " + name +
+                       (factory->parameterTypes.size() == 1
+                            ? "()"
+                            : "(std::size_t position)"),
+             .scopeDistance = 0});
+      }
+    }
   } else if (objectType.kind == SemanticType::Expected &&
              objectType.arguments.size() == 2) {
     const SemanticType &value = objectType.arguments[0];
@@ -8267,11 +8283,11 @@ auto SemanticVisitor::Impl::rawProducedFields(
                                     : nullptr;
   if (!query && !suppliedFields)
     return {};
-  const std::span<const ExprPtr> arguments =
-      invocation ? invocation->arguments
-      : call     ? std::span<const ExprPtr>{call->arguments()}
-      : direct   ? std::span<const ExprPtr>{direct->arguments()}
-                 : std::span<const ExprPtr>{};
+  const ResolvedCallArguments arguments =
+      invocation ? ResolvedCallArguments(invocation->arguments)
+      : call     ? ResolvedCallArguments(*call, resolved)
+      : direct   ? ResolvedCallArguments(direct->arguments())
+                 : ResolvedCallArguments{};
   const auto &defaults = construction ? construction->defaultArguments
                                       : resolved->defaultArguments;
   std::vector<ProjectedRawPointerOrigins> result;
@@ -8420,11 +8436,12 @@ auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
       mergeRawPointerOrigins(result, {{place, tokenSpan(expressionToken(value)),
                                        accessLoan(value)}});
   };
-  const ExprList *arguments = nullptr;
+  ResolvedCallArguments arguments;
   const std::vector<SemanticType> *parameters = nullptr;
   if (const auto *call = exprAs<Call>(&expression)) {
-    arguments = &call->arguments();
-    if (const auto *resolved = semanticModel.findCall(*call))
+    const auto *resolved = semanticModel.findCall(*call);
+    arguments = ResolvedCallArguments(*call, resolved);
+    if (resolved)
       parameters = &resolved->parameterTypes;
     if (const auto *member = exprAs<Get>(call->callee().get())) {
       addValue(member->object().get());
@@ -8433,16 +8450,16 @@ auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
         addReference(member->object());
     }
   } else if (const auto *direct = exprAs<DirectInitializer>(&expression)) {
-    arguments = &direct->arguments();
+    arguments = ResolvedCallArguments(direct->arguments());
   }
   if (const auto *construction = semanticModel.findConstruction(expression))
     parameters = &construction->parameterTypes;
-  if (arguments) {
-    for (std::size_t index = 0; index < arguments->size(); ++index) {
-      addValue((*arguments)[index].get());
+  {
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      addValue(arguments[index].get());
       if (parameters && index < parameters->size() &&
           (*parameters)[index].kind == SemanticType::Reference)
-        addReference((*arguments)[index]);
+        addReference(arguments[index]);
     }
   }
   if (includeProduced)
@@ -8684,11 +8701,11 @@ auto SemanticVisitor::Impl::applyRawCallWrites(const Expr &expression,
                                : resolved   ? resolved->parameterTypes
                                : lambda     ? lambda->parameterTypes
                                             : deferred->parameterTypes;
-  const std::span<const ExprPtr> arguments =
-      invocation ? invocation->arguments
-      : call     ? std::span<const ExprPtr>{call->arguments()}
-      : direct   ? std::span<const ExprPtr>{direct->arguments()}
-                 : std::span<const ExprPtr>{};
+  const ResolvedCallArguments arguments =
+      invocation ? ResolvedCallArguments(invocation->arguments)
+      : call     ? ResolvedCallArguments(*call, resolved)
+      : direct   ? ResolvedCallArguments(direct->arguments())
+                 : ResolvedCallArguments{};
   const auto span =
       tokenSpan(invocation ? invocation->site : expressionToken(expression));
   if (!requestSession.rawResultQueries)
@@ -9040,13 +9057,14 @@ auto SemanticVisitor::Impl::preserveRawCallWrites(const Call &call) -> void {
     }
     mergeRawPointerFields(root->rawPointerFields, fields);
   };
-  for (std::size_t index = 0; index < call.arguments().size() &&
-                              index < resolved->parameterTypes.size();
+  for (std::size_t index = 0;
+       index < resolvedCallArgumentCount(call, resolved) &&
+       index < resolved->parameterTypes.size();
        ++index) {
     const auto &parameter = resolved->parameterTypes[index];
     if (parameter.kind == SemanticType::Reference &&
         parameter.referenceAccess == AccessMode::Mutable)
-      preserve(call.arguments()[index], parameter);
+      preserve(*resolvedCallArgument(call, resolved, index), parameter);
   }
   if (resolved->receiverMode == CallReceiverMode::MutablePlace)
     if (const auto *member = exprAs<Get>(call.callee().get()))
@@ -9155,9 +9173,9 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
                                    .projections = key.projections,
                                    .receiver = key.receiver});
   };
-  const std::span<const ExprPtr> arguments =
-      invocation ? invocation->arguments
-                 : std::span<const ExprPtr>{call->arguments()};
+  const ResolvedCallArguments arguments =
+      invocation ? ResolvedCallArguments(invocation->arguments)
+                 : ResolvedCallArguments(*call, resolved);
   for (std::size_t index = 0;
        index < arguments.size() && index < resolved->parameterTypes.size();
        ++index) {
@@ -9948,9 +9966,12 @@ auto SemanticVisitor::Impl::validateRawCallAccesses(
             : std::vector<ProjectedRawPointerOrigins>{},
         invocation->receiverType);
   } else if (call) {
-    for (const auto &argument : call->arguments())
+    for (std::size_t index = 0;
+         index < resolvedCallArgumentCount(*call, resolved); ++index) {
+      const auto &argument = *resolvedCallArgument(*call, resolved, index);
       possibleAccess(rawPointerFields(argument.get()),
                      semanticModel.typeOf(*argument));
+    }
     if (lambda || deferred)
       possibleAccess(rawPointerFields(call->callee().get()),
                      semanticModel.typeOf(*call->callee()));

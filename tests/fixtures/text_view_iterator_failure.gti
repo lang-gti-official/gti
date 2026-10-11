@@ -1,0 +1,42 @@
+#include <std/string>
+#include <std/vector>
+
+extern "C" void text_view_drop(int32_t value);
+class TextViewDrop {
+  int32_t value;
+public:
+  TextViewDrop(int32_t value) : value(value) {}
+  ~TextViewDrop() { text_view_drop(this.value); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  TextViewDrop first{1};
+  TextViewDrop second{2};
+  std::string_view view = "abc";
+  if (argc == 1) {
+    auto end = view.end_iterator();
+    return int(*end);
+  }
+  if (argc == 2) {
+    mut auto begin = view.begin();
+    --begin;
+    return 1;
+  }
+  if (argc == 3) {
+    mut auto end = view.end_iterator();
+    ++end;
+    return 2;
+  }
+  if (argc == 4) {
+    auto bad = view.iterator_at(std::size_t(4));
+    return int(*bad);
+  }
+  if (argc == 5) {
+    std::string_view empty = "";
+    auto reverse = empty.rbegin();
+    return int(*reverse);
+  }
+  mut auto begin = view.begin();
+  begin += std::ptrdiff_t(-9223372036854775807) - std::ptrdiff_t(1);
+  return 3;
+}

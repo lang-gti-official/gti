@@ -1,0 +1,31 @@
+#include <std/map>
+#include <std/unordered_map>
+#include <std/string>
+#include <std/vector>
+
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  ~Marker() { std::println(this.value); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Marker first{10};
+  Marker second{20};
+  if (argc <= 6) {
+    mut std::map<int,int> values{};
+    [[discard]] values.insert(1,10);
+    if (argc == 1) { mut auto end = values.end_mut(); [[discard]] end->mapped(); }
+    else if (argc == 2) { mut auto first = values.begin_mut(); --first; }
+    else if (argc == 3) { mut auto end = values.end_mut(); ++end; }
+    else if (argc == 4) { mut auto end = values.rend_mut(); [[discard]] end->mapped(); }
+    else if (argc == 5) { mut auto first = values.rbegin_mut(); --first; }
+    else { mut auto end = values.rend_mut(); ++end; }
+  } else {
+    mut std::unordered_map<int,int> values{};
+    if (argc == 7) { mut auto end = values.end_mut(); [[discard]] end->mapped(); }
+    else { mut auto end = values.end_mut(); ++end; }
+  }
+  return 99;
+}

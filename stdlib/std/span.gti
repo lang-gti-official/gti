@@ -79,13 +79,13 @@ public:
   }
 
   ptrdiff_t operator-(span_sentinel sentinel) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(sentinel.position()); }
-    return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(sentinel.position(), this.current_position); }
+    return detail::checked_iterator_difference(this.current_position, sentinel.position());
   }
 
   ptrdiff_t operator-(span_iterator<T, Reverse>& other) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(other.current_position); }
-    return ptrdiff_t(other.current_position) - ptrdiff_t(this.current_position);
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(other.current_position, this.current_position); }
+    return detail::checked_iterator_difference(this.current_position, other.current_position);
   }
 
   bool operator!=(span_sentinel sentinel) {
@@ -181,12 +181,12 @@ public:
     unsafe { return this.data.read_mut_unchecked(position); }
   }
   ptrdiff_t operator-(span_sentinel sentinel) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(sentinel.position()); }
-    return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(sentinel.position(), this.current_position); }
+    return detail::checked_iterator_difference(this.current_position, sentinel.position());
   }
   ptrdiff_t operator-(mutable_span_iterator<T, Reverse>& other) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(other.current_position); }
-    return ptrdiff_t(other.current_position) - ptrdiff_t(this.current_position);
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(other.current_position, this.current_position); }
+    return detail::checked_iterator_difference(this.current_position, other.current_position);
   }
   bool operator!=(span_sentinel sentinel) {
     return this.current_position != sentinel.position();

@@ -1,4 +1,5 @@
 #include <std/iterator>
+#include <std/string_view>
 #include <std/span>
 #include <std/detail/iterator>
 #include <std/memory>
@@ -311,13 +312,13 @@ namespace std {
       }
 
       ptrdiff_t operator-(storage_sentinel sentinel) {
-        if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(sentinel.position()); }
-        return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
+        if constexpr (Reverse != 0) { return detail::checked_iterator_difference(sentinel.position(), this.current_position); }
+        return detail::checked_iterator_difference(this.current_position, sentinel.position());
       }
 
       ptrdiff_t operator-(storage_iterator<T, Reverse>& other) {
-        if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(other.current_position); }
-        return ptrdiff_t(other.current_position) - ptrdiff_t(this.current_position);
+        if constexpr (Reverse != 0) { return detail::checked_iterator_difference(other.current_position, this.current_position); }
+        return detail::checked_iterator_difference(this.current_position, other.current_position);
       }
 
       bool operator!=(storage_sentinel sentinel) {
@@ -410,8 +411,8 @@ namespace std {
         unsafe { return this.data.read_mut_unchecked(position); }
       }
       ptrdiff_t operator-(storage_sentinel sentinel) {
-        if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(sentinel.position()); }
-        return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
+        if constexpr (Reverse != 0) { return detail::checked_iterator_difference(sentinel.position(), this.current_position); }
+        return detail::checked_iterator_difference(this.current_position, sentinel.position());
       }
       bool operator!=(storage_sentinel sentinel) {
         return this.current_position != sentinel.position();
@@ -420,8 +421,8 @@ namespace std {
         return this.current_position == sentinel.position();
       }
       ptrdiff_t operator-(string_mut_iterator<Reverse>& other) {
-        if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(other.current_position); }
-        return ptrdiff_t(other.current_position) - ptrdiff_t(this.current_position);
+        if constexpr (Reverse != 0) { return detail::checked_iterator_difference(other.current_position, this.current_position); }
+        return detail::checked_iterator_difference(this.current_position, other.current_position);
       }
       bool operator!=(string_mut_iterator<Reverse>& other) {
         return this.current_position != other.current_position;

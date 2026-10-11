@@ -1,0 +1,120 @@
+#include <std/iterator>
+#include <std/detail/iterator>
+
+namespace std::detail {
+class text_view_sentinel {
+  size_t final_position;
+public:
+  text_view_sentinel(size_t position) : final_position(position) {}
+  size_t position() { return this.final_position; }
+};
+
+// The counted view is retained by reference, not copied into an untracked
+// field. This keeps both its physical shell and any dynamic owner live.
+class text_view_iterator<uint64_t Reverse = 0> {
+  std::string_view& view;
+  mut size_t current_position;
+public:
+  text_view_iterator(std::string_view& source, size_t position)
+      : view(source), current_position(position) {
+    gti_internal::require_container_argument(position <= source.size());
+  }
+
+  char operator*() {
+    size_t selected = checked_iterator_element(this.current_position, size_t(0),
+                                               this.view.size(), ptrdiff_t(0), Reverse != 0);
+    // A counted byte view yields a code-unit value, not a typed object
+    // reference. Ordinary checked indexing remains the read authority.
+    return this.view[selected];
+  }
+  void operator++() mut {
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.view.size(), ptrdiff_t(1), Reverse != 0);
+  }
+  void operator--() mut {
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.view.size(), ptrdiff_t(1), Reverse == 0);
+  }
+  void operator+=(ptrdiff_t offset) mut {
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.view.size(), offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.view.size(), offset, Reverse == 0);
+  }
+  char operator[](ptrdiff_t offset) {
+    size_t selected = checked_iterator_element(this.current_position, size_t(0),
+                                               this.view.size(), offset, Reverse != 0);
+    return this.view[selected];
+  }
+  ptrdiff_t operator-(text_view_sentinel sentinel) {
+    if constexpr (Reverse != 0) {
+      return checked_iterator_difference(sentinel.position(), this.current_position);
+    }
+    return checked_iterator_difference(this.current_position, sentinel.position());
+  }
+  ptrdiff_t operator-(text_view_iterator<Reverse>& other) {
+    if constexpr (Reverse != 0) {
+      return checked_iterator_difference(other.current_position, this.current_position);
+    }
+    return checked_iterator_difference(this.current_position, other.current_position);
+  }
+  bool operator==(text_view_sentinel sentinel) { return this.current_position == sentinel.position(); }
+  bool operator!=(text_view_sentinel sentinel) { return this.current_position != sentinel.position(); }
+  bool operator==(text_view_iterator<Reverse>& other) { return this.current_position == other.current_position; }
+  bool operator!=(text_view_iterator<Reverse>& other) { return this.current_position != other.current_position; }
+};
+}
+
+namespace gti_internal {
+// Trusted declaration identities bind builtin member syntax to these ordinary
+// source functions. They do not become backend-known iteration operations.
+std::detail::text_view_iterator<0> text_view_begin(std::string_view& view) {
+  return std::detail::text_view_iterator<0>(view, std::size_t(0));
+}
+std::detail::text_view_iterator<0> text_view_cbegin(std::string_view& view) {
+  return text_view_begin(view);
+}
+std::detail::text_view_sentinel text_view_end(std::string_view& view) {
+  return std::detail::text_view_sentinel(view.size());
+}
+std::detail::text_view_sentinel text_view_cend(std::string_view& view) {
+  return text_view_end(view);
+}
+std::detail::text_view_iterator<0> text_view_end_iterator(std::string_view& view) {
+  return std::detail::text_view_iterator<0>(view, view.size());
+}
+std::detail::text_view_iterator<0> text_view_iterator_at(std::string_view& view, std::size_t position) {
+  return std::detail::text_view_iterator<0>(view, position);
+}
+std::detail::text_view_iterator<1> text_view_rbegin(std::string_view& view) {
+  return std::detail::text_view_iterator<1>(view, view.size());
+}
+std::detail::text_view_iterator<1> text_view_crbegin(std::string_view& view) {
+  return text_view_rbegin(view);
+}
+std::detail::text_view_sentinel text_view_rend(std::string_view& view) {
+  return std::detail::text_view_sentinel(std::size_t(0));
+}
+std::detail::text_view_sentinel text_view_crend(std::string_view& view) {
+  return text_view_rend(view);
+}
+std::detail::text_view_iterator<1> text_view_rend_iterator(std::string_view& view) {
+  return std::detail::text_view_iterator<1>(view, std::size_t(0));
+}
+std::detail::text_view_iterator<1> text_view_reverse_iterator_at(std::string_view& view, std::size_t position) {
+  return std::detail::text_view_iterator<1>(view, position);
+}
+}
+
+namespace std {
+detail::text_view_iterator<0> begin(std::string_view& view) { return gti_internal::text_view_begin(view); }
+detail::text_view_sentinel end(std::string_view& view) { return gti_internal::text_view_end(view); }
+detail::text_view_iterator<0> cbegin(std::string_view& view) { return gti_internal::text_view_cbegin(view); }
+detail::text_view_sentinel cend(std::string_view& view) { return gti_internal::text_view_cend(view); }
+detail::text_view_iterator<1> rbegin(std::string_view& view) { return gti_internal::text_view_rbegin(view); }
+detail::text_view_sentinel rend(std::string_view& view) { return gti_internal::text_view_rend(view); }
+detail::text_view_iterator<1> crbegin(std::string_view& view) { return gti_internal::text_view_crbegin(view); }
+detail::text_view_sentinel crend(std::string_view& view) { return gti_internal::text_view_crend(view); }
+}

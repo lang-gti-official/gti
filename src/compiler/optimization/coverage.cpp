@@ -50,6 +50,10 @@ MirOptimizationCoverage optimizationCoverage(MirInstructionKind kind) {
   case MirInstructionKind::ActivateBorrow:
   case MirInstructionKind::EndBorrow:
     return barrier("loan/alias analysis; no loan schedule transformation");
+  case MirInstructionKind::ParkRangeCursor:
+  case MirInstructionKind::RestoreRangeCursor:
+    return barrier("exact range endpoint permission transition; no loan "
+                   "schedule transformation");
   case MirInstructionKind::Move:
   case MirInstructionKind::CallInput:
   case MirInstructionKind::Lifecycle:

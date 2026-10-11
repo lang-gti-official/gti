@@ -34,8 +34,12 @@ public:
   bool operator==(array_sentinel end) { return this.position == end.position(); }
   bool operator==(array_iterator<T, N, Reverse>& other) { return this.position == other.position; }
   ptrdiff_t operator-(array_sentinel end) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
-    return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
+    if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position());
+  }
+  ptrdiff_t operator-(array_iterator<T, N, Reverse>& other) {
+    if constexpr (Reverse != 0) { return checked_iterator_difference(other.position, this.position); }
+    return checked_iterator_difference(this.position, other.position);
   }
 };
 class array_mut_iterator<T, uint64_t N, uint64_t Reverse = 0> {
@@ -68,8 +72,12 @@ public:
   bool operator!=(array_sentinel end) { return this.position != end.position(); }
   bool operator==(array_sentinel end) { return this.position == end.position(); }
   ptrdiff_t operator-(array_sentinel end) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
-    return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
+    if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position());
+  }
+  ptrdiff_t operator-(array_mut_iterator<T, N, Reverse>& other) {
+    if constexpr (Reverse != 0) { return checked_iterator_difference(other.position, this.position); }
+    return checked_iterator_difference(this.position, other.position);
   }
 };
 }

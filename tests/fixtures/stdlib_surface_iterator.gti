@@ -71,7 +71,7 @@ int main() {
   --cursor;
   auto last = values.end();
   std::ptrdiff_t left = cursor - last;
-  if (!forward || !backward || *cursor != 20 || left != std::ptrdiff_t(3)) {
+  if (!forward || !backward || *cursor != 20 || left != std::ptrdiff_t(-3)) {
     return 5;
   }
 

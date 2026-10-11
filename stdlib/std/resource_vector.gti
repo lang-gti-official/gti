@@ -109,12 +109,12 @@ public:
     return this.slots.get(position);
   }
   ptrdiff_t operator-(resource_vector_sentinel end) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
-    return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(end.position(), this.position); }
+    return detail::checked_iterator_difference(this.position, end.position());
   }
   ptrdiff_t operator-(resource_vector_iterator<T, R, Reverse>& other) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(other.position); }
-    return ptrdiff_t(other.position) - ptrdiff_t(this.position);
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(other.position, this.position); }
+    return detail::checked_iterator_difference(this.position, other.position);
   }
   bool operator!=(resource_vector_sentinel end) {
     return this.position != end.position();
@@ -187,8 +187,8 @@ public:
     return this.slots.get_mut(position);
   }
   ptrdiff_t operator-(resource_vector_sentinel end) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
-    return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(end.position(), this.position); }
+    return detail::checked_iterator_difference(this.position, end.position());
   }
   bool operator!=(resource_vector_sentinel end) {
     return this.position != end.position();
@@ -197,8 +197,8 @@ public:
     return this.position == end.position();
   }
   ptrdiff_t operator-(resource_vector_mut_iterator<T, R, Reverse>& other) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(other.position); }
-    return ptrdiff_t(other.position) - ptrdiff_t(this.position);
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(other.position, this.position); }
+    return detail::checked_iterator_difference(this.position, other.position);
   }
   bool operator!=(resource_vector_mut_iterator<T, R, Reverse>& other) {
     return this.position != other.position;

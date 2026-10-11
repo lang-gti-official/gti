@@ -1453,6 +1453,9 @@ private:
   bool reportMissingLambdaCapture(const Token &use);
 
   [[nodiscard]] SemanticTypeTraits typeTraits(const SemanticType &type) const;
+  // A readonly iterator can yield an independent ordinary value instead of
+  // lending an element. Shared by operator and structural range contracts.
+  [[nodiscard]] bool readableIteratorValue(const SemanticType &type) const;
 
   struct ActiveCleanupCause {
     const Token *source = nullptr;
@@ -2375,7 +2378,8 @@ private:
                      std::vector<CompileTimeValue> valueArguments,
                      std::vector<std::size_t> ephemeralBorrowArguments,
                      std::vector<CallableArgumentBoundary> callableArguments,
-                     CallReceiverMode receiverMode);
+                     CallReceiverMode receiverMode,
+                     const ExprPtr *argumentReceiver = nullptr);
 
   void requireFunctionDefinition(const CallableCandidate &function,
                                  const Token &location);
@@ -3345,7 +3349,7 @@ private:
 
   void recordProgramArgumentBoundaryEffects(
       std::span<const SemanticType> parameterTypes,
-      std::span<const ExprPtr> arguments);
+      ResolvedCallArguments arguments);
 
   void addProgramEffectEdge(ProgramEffectOwner target, SourceSpan span);
 
@@ -3516,6 +3520,8 @@ private:
   [[nodiscard]] bool isMutexLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool isMemoryLibraryUnit(SourceUnitId sourceUnit) const;
+  [[nodiscard]] std::optional<CallableCandidate>
+  textViewMemberFactory(std::string_view member) const;
   [[nodiscard]] bool isOptionalLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isPolymorphicLibraryUnit(SourceUnitId sourceUnit) const;
 

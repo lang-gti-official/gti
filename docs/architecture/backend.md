@@ -2536,6 +2536,22 @@ declaration order, child input preparation, original Invoke outcomes, and
 publication/rollback identities still require proof. An observable or panicking
 default that the selected constructor overrides must never execute.
 
+The complete owned-parameter field prefix may include scalar/enum parameter
+copies beside moved fields. A copied sibling must retain its exact
+declaration-ordered parameter `Load`, field `Initialize`, and full-expression
+boundary, with no hidden value use, failure, cleanup or borrowed state. Those
+copies remain executable MIR statements rather than being hoisted into native
+initializers. The complete witness preserves every moved parameter's unique
+source, loan/drop handoff and publication; a scalar sibling must not make a
+later moved field lose its otherwise valid prefix proof.
+
+Range endpoint permission markers have no native borrowing representation.
+The writer admits `ParkRangeCursor` and `RestoreRangeCursor` only with canonical
+neutral instruction shape and one exact verified range-inventory membership.
+They erase to comments, without a cursor copy, allocation, native reborrow or
+change to begin/end evaluation order. The backend never infers permission from
+the public range or cursor type.
+
 A cleanup-free, zero-input, single-field constructor can retain a child's
 status-tag native construction when that child has no ordinary constructor
 representation. The proof covers the complete parent body: one selected

@@ -69,11 +69,14 @@ public:
                                                       this.data.length(), distance, Reverse == 0);
   }
 
-  // The signed distance from this iterator to the sentinel; positive while
-  // the sentinel is ahead.
+  // C++-familiar signed coordinate subtraction; the endpoint is not an element.
   ptrdiff_t operator-(vector_sentinel sentinel) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(sentinel.position()); }
-    return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
+    if constexpr (Reverse != 0) { return checked_iterator_difference(sentinel.position(), this.current_position); }
+    return checked_iterator_difference(this.current_position, sentinel.position());
+  }
+  ptrdiff_t operator-(vector_iterator<T, Reverse>& other) {
+    if constexpr (Reverse != 0) { return checked_iterator_difference(other.current_position, this.current_position); }
+    return checked_iterator_difference(this.current_position, other.current_position);
   }
 
   bool operator!=(vector_sentinel sentinel) {
@@ -147,8 +150,12 @@ public:
   T& operator->() { return *this; }
   mut T& operator->() mut { return *this; }
   ptrdiff_t operator-(vector_sentinel sentinel) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(sentinel.position()); }
-    return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
+    if constexpr (Reverse != 0) { return checked_iterator_difference(sentinel.position(), this.current_position); }
+    return checked_iterator_difference(this.current_position, sentinel.position());
+  }
+  ptrdiff_t operator-(vector_mut_iterator<T, Reverse>& other) {
+    if constexpr (Reverse != 0) { return checked_iterator_difference(other.current_position, this.current_position); }
+    return checked_iterator_difference(this.current_position, other.current_position);
   }
 
   bool operator!=(vector_sentinel sentinel) {

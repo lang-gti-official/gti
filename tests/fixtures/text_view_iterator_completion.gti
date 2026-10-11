@@ -1,0 +1,97 @@
+#include <std/string>
+#include <std/string_view>
+#include <std/iterator>
+#include <std/algorithm>
+
+using UserCountedText = std::string_view;
+
+// An unrelated source wrapper uses precisely the same checked view shell.
+class UserTextRange {
+  UserCountedText& text;
+public:
+  UserTextRange(UserCountedText& text) : text(text) {}
+  std::detail::text_view_iterator<0> begin() { return std::begin(this.text); }
+  std::detail::text_view_sentinel end() { return std::end(this.text); }
+};
+
+void require_random<I>(I iterator) requires std::random_access_iterator<I> {}
+
+std::string_view& select_text(std::string_view& view, mut int& events) {
+  events = events * 10 + 1;
+  return view;
+}
+std::size_t select_position(mut int& events) {
+  events = events * 10 + 2;
+  return std::size_t(1);
+}
+
+int inspect(std::string_view& view) {
+  require_random(view.begin());
+  require_random(view.rbegin());
+  mut auto first = view.cbegin();
+  auto copy = first;
+  if (*first != 'a' || first != copy || first - view.end() != std::ptrdiff_t(-5)) { return 1; }
+  first += std::ptrdiff_t(4);
+  if (*first != 'e' || first[std::ptrdiff_t(-2)] != 'c' || *copy != 'a') { return 2; }
+  ++first;
+  if (first != view.cend() || !(first == view.cend())) { return 3; }
+  --first;
+  first -= std::ptrdiff_t(4);
+  if (*first != 'a' || first - copy != std::ptrdiff_t(0)) { return 4; }
+  mut auto last = view.end_iterator();
+  --last;
+  if (*last != 'e') { return 5; }
+  auto middle = view.iterator_at(std::size_t(2));
+  if (*middle != 'c' || middle - first != std::ptrdiff_t(2)) { return 6; }
+  mut auto reverse = view.crbegin();
+  auto reverse_copy = reverse;
+  if (*reverse != 'e' || reverse - view.rend() != std::ptrdiff_t(-5)) { return 7; }
+  reverse += std::ptrdiff_t(2);
+  if (*reverse != 'c' || reverse[std::ptrdiff_t(1)] != 'b' || *reverse_copy != 'e') { return 8; }
+  reverse -= std::ptrdiff_t(2);
+  ++reverse;
+  if (*reverse != 'd') { return 9; }
+  --reverse;
+  if (*reverse != 'e') { return 10; }
+  mut auto reverse_end = view.rend_iterator();
+  --reverse_end;
+  if (*reverse_end != 'a') { return 11; }
+  auto second_reverse = view.reverse_iterator_at(std::size_t(4));
+  if (*second_reverse != 'd') { return 12; }
+  if (std::distance(view.begin(), view.end()) != std::ptrdiff_t(5)) { return 13; }
+  mut std::size_t count = 0;
+  for (char character : view) {
+    if (character != view[count]) { return 14; }
+    count++;
+  }
+  if (count != std::size_t(5)) { return 15; }
+  UserTextRange wrapped{view};
+  mut std::size_t wrapped_count = 0;
+  for (char character : wrapped) {
+    if (character != view[wrapped_count]) { return 16; }
+    wrapped_count++;
+  }
+  if (wrapped_count != count) { return 17; }
+  mut int events = 0;
+  auto sequenced = select_text(view, events).iterator_at(select_position(events));
+  if (events != 12 || *sequenced != 'b') { return 18; }
+  return 0;
+}
+
+int main() {
+  UserCountedText literal = "abcde";
+  if (inspect(literal) != 0) { return 20; }
+  mut std::string owner{"abcde"};
+  {
+    UserCountedText dynamic = owner.view();
+    if (inspect(dynamic) != 0) { return 21; }
+  }
+  owner.clear();
+  std::string_view empty = "";
+  auto begin = empty.begin();
+  auto reverse = empty.rbegin();
+  if (begin != empty.end() || reverse != empty.rend()) { return 22; }
+  mut int count = 0;
+  for (char character : empty) { count++; }
+  return count;
+}

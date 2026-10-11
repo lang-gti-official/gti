@@ -53,10 +53,10 @@ public:
   void operator-=(ptrdiff_t offset) mut {
     this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0);
   }
-  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
-    return ptrdiff_t(end.position()) - ptrdiff_t(this.position); }
-  ptrdiff_t operator-(simd_iterator<T, N, Reverse>& other) { if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(other.position); }
-    return ptrdiff_t(other.position) - ptrdiff_t(this.position); }
+  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position()); }
+  ptrdiff_t operator-(simd_iterator<T, N, Reverse>& other) { if constexpr (Reverse != 0) { return checked_iterator_difference(other.position, this.position); }
+    return checked_iterator_difference(this.position, other.position); }
   bool operator!=(lane_sentinel end) { return this.position != end.position(); }
   bool operator==(lane_sentinel end) { return this.position == end.position(); }
   bool operator!=(simd_iterator<T, N, Reverse>& other) { return this.position != other.position; }
@@ -108,8 +108,8 @@ public:
   void operator-=(ptrdiff_t offset) mut {
     this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0);
   }
-  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
-    return ptrdiff_t(end.position()) - ptrdiff_t(this.position); }
+  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position()); }
   bool operator!=(lane_sentinel end) { return this.position != end.position(); }
   bool operator==(lane_sentinel end) { return this.position == end.position(); }
 };
@@ -146,10 +146,10 @@ public:
   void operator-=(ptrdiff_t offset) mut {
     this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0);
   }
-  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
-    return ptrdiff_t(end.position()) - ptrdiff_t(this.position); }
-  ptrdiff_t operator-(simd_mask_iterator<N, Reverse>& other) { if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(other.position); }
-    return ptrdiff_t(other.position) - ptrdiff_t(this.position); }
+  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position()); }
+  ptrdiff_t operator-(simd_mask_iterator<N, Reverse>& other) { if constexpr (Reverse != 0) { return checked_iterator_difference(other.position, this.position); }
+    return checked_iterator_difference(this.position, other.position); }
   bool operator!=(lane_sentinel end) { return this.position != end.position(); }
   bool operator==(lane_sentinel end) { return this.position == end.position(); }
   bool operator!=(simd_mask_iterator<N, Reverse>& other) { return this.position != other.position; }
@@ -201,8 +201,8 @@ public:
   void operator-=(ptrdiff_t offset) mut {
     this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0);
   }
-  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
-    return ptrdiff_t(end.position()) - ptrdiff_t(this.position); }
+  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position()); }
   bool operator!=(lane_sentinel end) { return this.position != end.position(); }
   bool operator==(lane_sentinel end) { return this.position == end.position(); }
 };

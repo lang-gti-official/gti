@@ -20,7 +20,7 @@ int main() {
   if (*first != 1 || first[std::ptrdiff_t(-2)] != 3) { return 5; }
   std::array<int, 3> fixed = std::array<int, 3>({1, 2, 3});
   { mut auto it = fixed.crbegin();
-    if (it[std::ptrdiff_t(2)] != 1 || it - fixed.crend() != 3) { return 6; }
+    if (it[std::ptrdiff_t(2)] != 1 || it - fixed.crend() != -3) { return 6; }
     it += std::ptrdiff_t(3); --it; if (*it != 1) { return 7; }
   }
   mut std::deque<int> queue = {1, 2, 3};
@@ -45,7 +45,7 @@ int main() {
     while (it != end) { if (it->first != next) { return 13; } --next; ++it; }
     --it; if (it->first != 1) { return 14; }
   }
-  { mut auto it = tree.rbegin_mut(); it->second = 33; }
+  { mut auto it = tree.rbegin_mut(); it->mapped() = 33; }
   int key = 3;
   if (tree.at(key) != 33) { return 15; }
   std::set<int> keys = {3, 1, 2};

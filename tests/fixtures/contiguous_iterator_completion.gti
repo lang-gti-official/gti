@@ -22,7 +22,7 @@ int main() {
     require_random(text.begin());
     mut auto first = text.begin();
     auto copy = first;
-    if (first != copy || !(first == copy) || first - text.end() != std::ptrdiff_t(5)) { return 1; }
+    if (first != copy || !(first == copy) || first - text.end() != std::ptrdiff_t(-5)) { return 1; }
     first += std::ptrdiff_t(5);
     if (first != text.end() || !(first == text.end())) { return 2; }
     --first;
@@ -30,16 +30,18 @@ int main() {
     first -= std::ptrdiff_t(4);
     if (*first != 'a' || *copy != 'a') { return 4; }
     auto third = std::next(text.begin(), std::ptrdiff_t(2));
-    if (*third != 'c' || first - third != std::ptrdiff_t(2)) { return 5; }
+    if (*third != 'c' || first - third != std::ptrdiff_t(-2) || third - first != std::ptrdiff_t(2)) { return 5; }
     mut auto final = text.end_iterator();
     --final;
-    if (*final != 'e' || std::distance(text.cbegin(), text.cend()) != std::ptrdiff_t(5)) { return 17; }
+    if (*final != 'e' || final - copy != std::ptrdiff_t(4) ||
+        std::distance(text.cbegin(), text.cend()) != std::ptrdiff_t(5)) { return 17; }
     require_random(text.rbegin());
     mut auto reverse = text.crbegin();
     auto reverse_copy = reverse;
-    if (*reverse != 'e' || reverse - text.crend() != std::ptrdiff_t(5)) { return 23; }
+    if (*reverse != 'e' || reverse - text.crend() != std::ptrdiff_t(-5)) { return 23; }
     reverse += std::ptrdiff_t(2);
-    if (*reverse != 'c' || reverse[std::ptrdiff_t(1)] != 'b' || *reverse_copy != 'e') { return 24; }
+    if (*reverse != 'c' || reverse[std::ptrdiff_t(1)] != 'b' || *reverse_copy != 'e' ||
+        reverse - reverse_copy != std::ptrdiff_t(2) || reverse_copy - reverse != std::ptrdiff_t(-2)) { return 24; }
     reverse -= std::ptrdiff_t(2);
     ++reverse;
     if (*reverse != 'd') { return 25; }
@@ -50,6 +52,7 @@ int main() {
   {
     mut auto final = text.end_mut();
     --final;
+    if (final - final != std::ptrdiff_t(0) || !(final == final)) { return 33; }
     *final = 'y';
   }
   {
@@ -74,17 +77,18 @@ int main() {
     --current;
     if (*current != 40 || current[std::ptrdiff_t(-2)] != 20 || *copy != 20) { return 8; }
     current -= std::ptrdiff_t(2);
-    if (current - middle.end() != std::ptrdiff_t(3)) { return 9; }
+    if (current - middle.end() != std::ptrdiff_t(-3)) { return 9; }
     auto empty = middle.subspan(std::size_t(3), std::size_t(0));
     mut auto exhausted = empty.begin();
     exhausted += std::ptrdiff_t(0);
     if (exhausted != empty.end()) { return 10; }
     mut auto final = middle.end_iterator();
     --final;
-    if (*final != 40 || std::distance(middle.cbegin(), middle.cend()) != std::ptrdiff_t(3)) { return 18; }
+    if (*final != 40 || final - copy != std::ptrdiff_t(2) ||
+        std::distance(middle.cbegin(), middle.cend()) != std::ptrdiff_t(3)) { return 18; }
     require_random(middle.rbegin());
     mut auto reverse = middle.crbegin();
-    if (*reverse != 40 || reverse[std::ptrdiff_t(2)] != 20 || reverse - middle.crend() != std::ptrdiff_t(3)) { return 27; }
+    if (*reverse != 40 || reverse[std::ptrdiff_t(2)] != 20 || reverse - middle.crend() != std::ptrdiff_t(-3)) { return 27; }
     reverse += std::ptrdiff_t(3);
     if (reverse != middle.rend()) { return 28; }
     --reverse;
@@ -103,6 +107,7 @@ int main() {
       *output = 400;
       output[std::ptrdiff_t(-2)] = 200;
       output -= std::ptrdiff_t(1);
+      if (output - output != std::ptrdiff_t(0) || !(output == output)) { return 34; }
       *output = 300;
     }
     if (middle[std::size_t(0)] != 200 || middle[std::size_t(2)] != 400) { return 11; }
@@ -139,13 +144,14 @@ int main() {
       --first;
       if (*first != 3 || *copy != 1 || first[std::ptrdiff_t(-2)] != 1) { return 13; }
       first -= std::ptrdiff_t(2);
-      if (first - owned.end() != std::ptrdiff_t(3)) { return 14; }
+      if (first - owned.end() != std::ptrdiff_t(-3)) { return 14; }
       mut auto final = owned.end_iterator();
       --final;
-      if (*final != 3 || std::distance(owned.cbegin(), owned.cend()) != std::ptrdiff_t(3)) { return 19; }
+      if (*final != 3 || final - copy != std::ptrdiff_t(2) ||
+          std::distance(owned.cbegin(), owned.cend()) != std::ptrdiff_t(3)) { return 19; }
       require_random(owned.rbegin());
       mut auto reverse = owned.crbegin();
-      if (*reverse != 3 || reverse[std::ptrdiff_t(2)] != 1 || reverse - owned.crend() != std::ptrdiff_t(3)) { return 32; }
+      if (*reverse != 3 || reverse[std::ptrdiff_t(2)] != 1 || reverse - owned.crend() != std::ptrdiff_t(-3)) { return 32; }
       reverse += std::ptrdiff_t(3);
       if (reverse != owned.rend()) { return 33; }
       --reverse;
@@ -164,6 +170,7 @@ int main() {
     {
       mut auto final = owned.end_mut();
       --final;
+      if (final - final != std::ptrdiff_t(0) || !(final == final)) { return 35; }
       *final = 301;
     }
     {

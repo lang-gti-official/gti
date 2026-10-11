@@ -27,4 +27,21 @@ size_t checked_iterator_element(size_t position, size_t begin, size_t end,
   gti_internal::index_bounds_check(selected - begin, end - begin);
   return selected;
 }
+
+// Subtract unsigned coordinates before converting. Large absolute positions
+// can still have a small representable distance, and INT64_MIN is valid.
+ptrdiff_t checked_iterator_difference(size_t left, size_t right) {
+  size_t maximum = size_t(9223372036854775807);
+  if (left >= right) {
+    size_t magnitude = left - right;
+    gti_internal::require_container_argument(magnitude <= maximum);
+    return ptrdiff_t(magnitude);
+  }
+  size_t magnitude = right - left;
+  gti_internal::require_container_argument(magnitude <= maximum + size_t(1));
+  if (magnitude == maximum + size_t(1)) {
+    return ptrdiff_t(-9223372036854775807) - ptrdiff_t(1);
+  }
+  return -ptrdiff_t(magnitude);
+}
 }
