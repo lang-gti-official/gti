@@ -16197,6 +16197,23 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       !producer->lifecycle.front().conditional &&
       !producer->lifecycle.front().failureCleanup &&
       cppMirConstructorStatusCannotFail(program, constructorTarget->id);
+  // A failure-free source call likewise publishes its owning result with its
+  // own Initialize event, after any prepared input transferred out, rather
+  // than on an Invoke edge. The field Initialize still reparents that exact
+  // obligation into the field's rollback.
+  const bool successfulFunctionProducer =
+      commonProducer && producer->kind == MirInstructionKind::Call &&
+      producer->functionTarget && !producer->constructorTarget &&
+      !producer->receiver && producer->dispatch == CallDispatch::Static &&
+      producer->definedFailure.empty() && !producer->successResultDrop &&
+      functionTarget != nullptr && !functionTarget->mayRaiseDefinedFailure &&
+      functionTarget->returnType == value->info.type &&
+      functionTarget->parameterTypes == producer->parameterTypes &&
+      (!functionTarget->owner || functionTarget->staticMember) &&
+      functionTarget->definitionKind == MirDefinitionKind::Source &&
+      functionTarget->linkage == LanguageLinkage::Gti && valueDrop != nullptr &&
+      plainCallActivates(body, *producer, valueDrop->id) &&
+      exactPreparedInputTransfers(body, *producer);
   const MirClassInstance *defaultOwner =
       value == nullptr ? nullptr
                        : uniqueClassInstanceForType(program, value->info.type);
@@ -16361,9 +16378,11 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       value->info.category != ValueCategory::Value ||
       value->info.traits.drop != DropKind::Lexical ||
       (!functionProducer && !constructorProducer &&
-       !successfulConstructorProducer && !defaultProducer) ||
+       !successfulConstructorProducer && !successfulFunctionProducer &&
+       !defaultProducer) ||
       valueDrop == nullptr || valueDrop->initiallyActive ||
       (!defaultProducer && !successfulConstructorProducer &&
+       !successfulFunctionProducer &&
        (producer->successResultDrop != valueDrop->id ||
         !invokeSuccessActivates(body, *producer, valueDrop->id)))) {
     return {};
@@ -21692,12 +21711,13 @@ valueRootedClassPrvalueAssignmentSlot(
     const MirProgram &program, const CppMirBodyEmissionMap &representations,
     const MirBody &body, MirValueId valueId);
 
-// A whole Expected value initializes one constructor field as that field's
-// selected member initializer, immediately after its producer succeeds. The
-// field's empty representation is replaced by the moved wrapper. Callers add
-// the field's lifecycle: none for a cleanup-free result, or MIR's Reparent of
-// an owning result's obligation into the field's construction rollback.
-[[nodiscard]] const MirInstruction *expectedFieldInitializerPublication(
+// A whole class or Expected value initializes one constructor field as that
+// field's selected member initializer, immediately after its producer
+// succeeds. The field's empty representation is replaced by the moved value.
+// Callers add the field's lifecycle: none for a cleanup-free result, or MIR's
+// Reparent of an owning result's obligation into the field's construction
+// rollback.
+[[nodiscard]] const MirInstruction *fieldInitializerPublication(
     const MirProgram &program, const MirBody &body, const MirValue &value,
     const MirInstruction &producer, const MirValueUse &use) {
   const MirInstruction *consumer =
@@ -21949,8 +21969,8 @@ valueRootedPlacementCallResultSlot(const MirProgram &program,
                                          const MirInstruction &consumer) {
     if (value->info.type.kind != SemanticType::Expected ||
         conditionalTemporary || drop == nullptr || consumingCall != nullptr ||
-        expectedFieldInitializerPublication(program, body, *value, *producer,
-                                            use) != &consumer ||
+        fieldInitializerPublication(program, body, *value, *producer, use) !=
+            &consumer ||
         consumer.lifecycle.size() != 1)
       return false;
     const MirLifecycleEvent &reparent = consumer.lifecycle.front();
@@ -29289,7 +29309,7 @@ classSsaExpectedObserverConsumer(const MirBody &body, const MirValue &value,
     const MirProgram &program, const MirBody &body, const MirValue &value,
     const MirInstruction &producer, const MirValueUse &use) {
   const MirInstruction *consumer =
-      expectedFieldInitializerPublication(program, body, value, producer, use);
+      fieldInitializerPublication(program, body, value, producer, use);
   return consumer != nullptr && consumer->lifecycle.empty() ? consumer
                                                             : nullptr;
 }
@@ -29669,9 +29689,10 @@ classSsaLifetimeSlot(const MirProgram &program,
           ? nullptr
           : transformedFailureCallee(program, representations, *producer);
   // Plain source calls need the same uninitialized staging when their result
-  // replaces a binding, passes by value to one call, is observed through one
-  // field projection, reaches a Return that cannot spell the call as its
-  // return expression, or is discarded. Default-constructing a C++ local would
+  // replaces a binding, passes by value to one call, initializes one
+  // constructor field, is observed through one field projection, reaches a
+  // Return that cannot spell the call as its return expression, or is
+  // discarded. Default-constructing a C++ local would
   // introduce a source-observable constructor call, and publishing directly
   // into the old destination would overwrite it before the call succeeds.
   if (callee == nullptr && producer != nullptr &&
@@ -29698,10 +29719,15 @@ classSsaLifetimeSlot(const MirProgram &program,
     const bool discardedResult = uses.empty() && !producer->destination;
     const auto *target =
         program.findFunctionInstance(*producer->functionTarget);
+    const bool fieldInitialization =
+        consumer != nullptr &&
+        fieldInitializerPublication(program, body, *value, *producer,
+                                    uses.front()) == consumer;
     if (((consumer != nullptr &&
           (consumer->kind == MirInstructionKind::Assign ||
            consumer->kind == MirInstructionKind::Call)) ||
-         projectedObservation || returnedResult || discardedResult) &&
+         fieldInitialization || projectedObservation || returnedResult ||
+         discardedResult) &&
         target != nullptr && target->linkage == LanguageLinkage::Gti &&
         target->definitionKind == MirDefinitionKind::Source) {
       callee = target;
@@ -30302,63 +30328,24 @@ classSsaLifetimeSlot(const MirProgram &program,
   const MirInstruction *consumer =
       findInstruction(body, uses.front().instruction);
   // A cleanup-free class returned into a constructor field still needs an
-  // uninitialized status-result slot. There is no semantic Value drop to own
-  // that representation. Publish only on the immediate Invoke success edge;
-  // the failed call must leave the private empty field shell untouched.
+  // uninitialized result slot. There is no semantic Value drop to own that
+  // representation. A failure-free call publishes it immediately before the
+  // field Initialize; a transformed call only on the immediate Invoke success
+  // edge, so a failed call leaves the private empty field shell untouched.
   if (consumer && consumer->kind == MirInstructionKind::Initialize &&
-      body.kind == MirBodyKind::Constructor && callee != nullptr &&
-      !cleanupFreeArray && !classInstance->requiresActiveDropState &&
+      callee != nullptr &&
+      fieldInitializerPublication(program, body, *value, *producer,
+                                  uses.front()) == consumer &&
+      consumer->lifecycle.empty() && !cleanupFreeArray &&
+      !classInstance->requiresActiveDropState &&
       !classInstance->traits.containsBorrowedState &&
       !value->info.traits.containsBorrowedState &&
       classInstance->moveConstructor == SpecialMemberStatus::Generated &&
-      mirTypeMoveIsDefinedFailureFree(program, value->info.type) &&
-      failureConstructorEmptyDefaultFieldType(program, value->info.type,
-                                              EmptyFieldUse::Construction)) {
-    const auto *destination = consumer->destination
-                                  ? body.findPlace(*consumer->destination)
-                                  : nullptr;
-    const auto *invoke = invokeProducerBlock(body, *producer);
-    const auto *success =
-        invoke ? body.findBlock(invoke->terminator.target) : nullptr;
-    const auto constructor = std::find_if(
-        program.constructorInstances().begin(),
-        program.constructorInstances().end(),
-        [&](const auto &candidate) { return &candidate.body == &body; });
-    if (destination && destination->root == MirPlaceRootKind::This &&
-        destination->projections.size() == 1 &&
-        destination->projections.front().kind == MirProjectionKind::Field &&
-        !destination->initiallyAvailable &&
-        destination->type == value->info.type && success &&
-        !success->instructions.empty() &&
-        &success->instructions.front() == consumer &&
-        invoke->terminator.successLifecycle.empty() && !consumer->result &&
-        !consumer->receiver && consumer->operands.size() == 1 &&
-        consumer->operands.front().kind == MirOperandKind::Value &&
-        consumer->operands.front().value == valueId &&
-        consumer->operands.front().type == value->info.type &&
-        consumer->info.type == value->info.type &&
-        consumer->localFailureSites.empty() &&
-        consumer->definedFailure.empty() && consumer->lifecycle.empty() &&
-        constructor != program.constructorInstances().end() &&
-        consumer->constructorInitializer != 0 &&
-        consumer->constructorInitializer <= constructor->initializers.size()) {
-      const auto &selected =
-          constructor->initializers[consumer->constructorInitializer - 1];
-      if (selected.kind == ConstructorInitializerTargetKind::Field &&
-          selected.field == destination->projections.front().field &&
-          selected.targetType == destination->type &&
-          !selected.generatedDefault && !selected.constructorTarget &&
-          !selected.storesReference && !selected.ownedParameter &&
-          producer->hirValue != 0 &&
-          selected.arguments == std::vector<HirValueId>{producer->hirValue} &&
-          consumer->hirValue == producer->hirValue)
-        return {.value = value,
-                .producer = producer,
-                .consumer = consumer,
-                .consumerKind = ClassSsaSlotConsumerKind::FieldInitialization};
-    }
-    return {};
-  }
+      mirTypeMoveIsDefinedFailureFree(program, value->info.type))
+    return {.value = value,
+            .producer = producer,
+            .consumer = consumer,
+            .consumerKind = ClassSsaSlotConsumerKind::FieldInitialization};
   if (consumer != nullptr && consumer->kind == MirInstructionKind::Assign) {
     const MirPlace *destination = consumer->destination
                                       ? body.findPlace(*consumer->destination)

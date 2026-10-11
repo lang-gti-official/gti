@@ -4119,6 +4119,90 @@ int main() { return use_owned() + use_plain() - 5; }
          "no class result should value-initialize an ordinary local");
 }
 
+void testPlainCallMemberInitializer() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-plain-call-member-initializer.gti", R"(
+struct plain_value {
+  int32_t number;
+  plain_value(int32_t number) : number(number) {}
+};
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() {}
+};
+
+plain_value make_plain(int32_t number) { return plain_value(number); }
+counted make_counted(int32_t number) { return counted(number); }
+
+struct owner {
+  plain_value plain;
+  counted owned;
+  owner(int32_t number)
+      : plain(make_plain(number)), owned(make_counted(number)) {}
+};
+
+int main() {
+  owner both{2};
+  return both.plain.number + both.owned.number - 4;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the plain-call member initializer fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const auto slotNamed = [&](const std::string &declaration) {
+    const std::size_t at = text.find(declaration);
+    if (at == std::string::npos)
+      return std::string();
+    const std::size_t start = at + declaration.size();
+    return text.substr(start, text.find(';', start) - start);
+  };
+  // The cleanup-free result constructs in representation-only storage, then
+  // replaces the field's empty representation.
+  const std::string plain = slotNamed(
+      "::gti_internal::backend::mir_lifetime_slot<::__gti_program::plain_"
+      "value, true> ");
+  const std::size_t plainCall =
+      plain.empty() ? std::string::npos
+                    : text.find(plain + ".construct_from([&]() { return "
+                                        "::__gti_program::__gti_fn_");
+  expect(plainCall != std::string::npos &&
+             text.find("construct_representation_at(std::addressof(__gti_mir_"
+                       "p_",
+                       plainCall) <
+                 text.find(", std::move(" + plain + ".get()));", plainCall),
+         "a failure-free call's cleanup-free result should construct the "
+         "field in place from its representation-only slot");
+  // The owning result constructs in its lifetime slot and moves into the
+  // field, whose rollback MIR then owns.
+  const std::string owned = slotNamed(
+      "::gti_internal::backend::mir_lifetime_slot<::__gti_program::counted> ");
+  const std::size_t ownedCall =
+      owned.empty() ? std::string::npos
+                    : text.find(owned + ".construct_from([&]() { return "
+                                        "::__gti_program::__gti_fn_");
+  expect(ownedCall != std::string::npos &&
+             text.find(" = std::move(" + owned + ".get());", ownedCall) !=
+                 std::string::npos,
+         "a failure-free call's owning result should move from its slot into "
+         "the field");
+  expect(text.find("::__gti_program::plain_value __gti_mir_v_") ==
+                 std::string::npos &&
+             text.find("::__gti_program::counted __gti_mir_v_") ==
+                 std::string::npos,
+         "no class result should value-initialize an ordinary local");
+}
+
 void testBranchTemporaryCallResultIsNotDiscarded() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-branch-temporary-result.gti", R"(
@@ -4374,6 +4458,7 @@ constexpr NamedTest kTests[] = {
     {"testCommaDenotesRightOperandObject", testCommaDenotesRightOperandObject},
     {"testBranchTemporaryCallResultIsNotDiscarded",
      testBranchTemporaryCallResultIsNotDiscarded},
+    {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",
