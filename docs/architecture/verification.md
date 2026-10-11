@@ -372,6 +372,50 @@ Expected-callable publication repair. Its local Release all-target build passes;
 focused Expected checks run during the iterator source edits are development
 feedback and must not be presented as clean-head integration evidence.
 
+## Expected conditionals replacing bindings (0.405.2)
+
+- **Defects.** Two families of verified programs failed natively:
+  - `r = ok ? make(1) : make(2);` replacing an `expected<point, E>` binding,
+    for an integral-enum or a scalar `E`, did not compile in the native C++
+    compiler (`no viable overloaded '='` on the binding's lifetime slot); an
+    owning `expected<noisy, E>` failed the same way. Initializing a new binding
+    from the same conditional built.
+  - A nested owning join, as in
+    `auto o = ok ? (other ? make(1) : make(2)) : make(3);`, built but aborted
+    at scope exit with "verified MIR lifetime slot escaped without Drop" once
+    the inner conditional ran.
+- **Causes and rules.**
+  - An Expected-valued join's single transport handed to an `Assign` had no
+    publication of its own and fell to the generic store, which spells the
+    destination slot instead of its live value and never ended a passive
+    join's representation. `expectedConditionalAssignmentJoin` admits that
+    exact `Assign`: a destination rooted in a binding with only field
+    projections, of the join's type, as the transport's sole use. The emitter
+    move-assigns the binding's live storage from the join temporary after
+    MIR's paired `CleanupBeforeAssign`, which retires the old value.
+  - `expectedConditionalJoinEndsAtConsumer` reads who ends the temporary's
+    moved-from shell from MIR: the consumer when the join has no obligation or
+    the consumer's `Reparent` takes it, otherwise MIR's later `Drop` (an owning
+    join consumed through `Replace`). A nested join moved into the enclosing
+    join's temporary is reparented there, so its shell now ends at that
+    `Initialize` rather than escaping.
+- **Regression tests.** `expected_conditional_assignment_runtime` builds a new
+  fixture under C++20 and C++23 at O0, O1 and O3, plus the no-elide and
+  ASan/UBSan modes. Cleanup-free `expected<point, errc>` and
+  `expected<point, int32_t>` bindings and a binding's field are replaced with
+  both arms succeeding or failing through each error alternative, through
+  nested conditionals in either arm, a grouped conditional, a loop, a helper
+  without the failure ABI and a failure-propagating caller. An owning binding
+  is replaced through every alternative pair, nested and in a loop, and a
+  nested owning join initializes a new binding; each replaced value is
+  retired exactly once. Three raising runs fail inside a cleanup-free arm, an
+  owning arm and a nested owning arm, retiring the old owning value once.
+- **Out of scope.** Arms that are not call results of a source function, such
+  as a closure invocation, a copy or a move of a named `expected` binding, are
+  still rejected with `GTI-B0001` whether the conditional initializes a new
+  binding or replaces one. They need the Expected join arm vocabulary extended,
+  not assignment publication.
+
 ## Expected call results replacing bindings (0.405.1)
 
 - **Defects.** Two families of verified programs failed in the C++ backend:
@@ -413,8 +457,8 @@ feedback and must not be presented as clean-head integration evidence.
   before publishing.
 - **Out of scope.** Assigning a conditional whose arms are `expected` call
   results to an existing binding, as in `r = ok ? make(1) : make(2);`, still
-  fails in the native compiler for scalar and enum errors alike; initializing
-  a new binding from it builds.
+  failed in the native compiler for scalar and enum errors alike; 0.405.2
+  publishes it (see above).
 
 ## Scoped concurrency (0.405.0)
 
