@@ -1963,6 +1963,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/stdlib_surface_manifest_test.py"
             "${PROJECT_SOURCE_DIR}"
   )
+  add_test(NAME native_fixture_build
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/native_fixture_build_test.py")
   add_test(
     NAME stdlib_modules
     COMMAND "${Python3_EXECUTABLE}"

@@ -10,6 +10,8 @@ import sys
 import tempfile
 import time
 
+from native_fixture_build import build_fixture
+
 
 def run(command):
     return subprocess.run(command, text=True, capture_output=True, timeout=180)
@@ -70,10 +72,13 @@ def reject_invalid(compiler, fixtures, directory):
 def measure_projection(compiler, fixtures, directory):
     binary = directory / "map-entry-cost"
     started = time.monotonic()
-    built = run([str(compiler), str(fixtures / "map_mutable_entry_cost.gti"),
-                 "--std", "c++23", "-O3", "--keep-cpp", "-o", str(binary), "--",
-                 str(fixtures / "stdlib_adoption_allocation_counts.cpp"),
-                 str(fixtures / "storage_lane_iterator_cost.cpp")])
+    built = build_fixture(
+        [str(compiler), str(fixtures / "map_mutable_entry_cost.gti"),
+         "--std", "c++23", "-O3"], binary,
+        native_sources=[fixtures / "stdlib_adoption_allocation_counts.cpp",
+                        fixtures / "storage_lane_iterator_cost.cpp"],
+        standard="c++23", optimization="O3", capture_output=True, text=True,
+        timeout=180)
     assert built.returncode == 0, (built.stdout, built.stderr)
     seconds = time.monotonic() - started
     completed = run([str(binary)])
