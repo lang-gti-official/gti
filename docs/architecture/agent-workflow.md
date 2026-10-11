@@ -263,7 +263,9 @@ python3 scripts/agent_workflow.py verify <task> --remote-steps-file /absolute/pa
 
 The helper submits that plan through the runner, retains results under its
 local task metadata, and checks success and source identity before binding
-validation to the clean published head and current upstream base. Changes to
+validation to the clean published head and current upstream base. Remote HEAD
+and Git status are recorded again after checks, before cleanup; a plan that
+changes source cannot validate the published commit. Changes to
 either head/base still invalidate evidence. Failed remote runs cannot authorize
 integration. Publication still uses `agent_workflow finish` after reviewing the
 retrieved evidence; the remote worker never publishes or installs.

@@ -187,6 +187,16 @@ class RemoteRunner(unittest.TestCase):
             with self.assertRaises(runner.RunnerError):
                 runner.main(["--host", "example", "run", "--cmake-arg=-DCMAKE_BUILD_TYPE=Debug"])
 
+    def test_successful_step_reports_source_mutation_before_cleanup(self):
+        head = runner.git(self.repo, "rev-parse", "HEAD").decode().strip()
+        run_id = self.submit("from pathlib import Path;Path('tracked.txt').write_text('modified by test')")
+        report = self.wait(run_id)
+        self.assertEqual(report["exit_code"], 0)
+        self.assertEqual(report["source"]["status"], "")
+        self.assertEqual(report["final_source"]["head"], head)
+        self.assertIn(" M tracked.txt", report["final_source"]["status"])
+        self.assert_clean(run_id)
+
     def test_fetch_failure_retains_remote_evidence(self):
         run_id = self.submit()
         self.wait(run_id)

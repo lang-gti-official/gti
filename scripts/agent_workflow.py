@@ -452,9 +452,12 @@ class Workflow:
                     self.record(task, "verifying", "blocked")
                     raise WorkflowError("Remote validation report is missing or unreadable") from error
                 if (not isinstance(report, dict) or not isinstance(report.get("source"), dict)
+                        or not isinstance(report.get("final_source"), dict)
                         or report.get("state") != "passed" or report.get("exit_code") != 0
                         or report.get("source", {}).get("head") != head
-                        or report.get("source", {}).get("status") != ""):
+                        or report.get("source", {}).get("status") != ""
+                        or report["final_source"].get("head") != head
+                        or report["final_source"].get("status") != ""):
                     self.record(task, "verifying", "blocked")
                     raise WorkflowError("Remote evidence does not match the clean published head")
                 remote_evidence = {"directory": str(destination), "id": report["id"],
