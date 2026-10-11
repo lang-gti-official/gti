@@ -2170,6 +2170,27 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "meta_argument_count") {
       return IntrinsicKind::MetaArgumentCount;
     }
+    static constexpr std::pair<std::string_view, IntrinsicKind> callables[] = {
+        {"meta_method_count", IntrinsicKind::MetaMethodCount},
+        {"meta_method_name", IntrinsicKind::MetaMethodName},
+        {"meta_method_trait", IntrinsicKind::MetaMethodTrait},
+        {"meta_method_parameter_count",
+         IntrinsicKind::MetaMethodParameterCount},
+        {"meta_parameter_name", IntrinsicKind::MetaParameterName},
+        {"meta_constructor_count", IntrinsicKind::MetaConstructorCount},
+        {"meta_constructor_parameter_count",
+         IntrinsicKind::MetaConstructorParameterCount},
+        {"meta_constructor_parameter_name",
+         IntrinsicKind::MetaConstructorParameterName},
+        {"meta_declaration_line", IntrinsicKind::MetaDeclarationLine},
+        {"meta_declaration_file", IntrinsicKind::MetaDeclarationFile},
+        {"meta_construct", IntrinsicKind::MetaConstruct},
+    };
+    for (const auto &[candidate, kind] : callables) {
+      if (name == candidate) {
+        return kind;
+      }
+    }
     return IntrinsicKind::None;
   }
   if (isSourceLocationLibraryUnit(sourceUnit)) {
@@ -6877,7 +6898,23 @@ metaQueryShape(IntrinsicKind intrinsic) {
     return MetaQueryShape{.indices = 2, .result = SemanticType::StringView};
   case IntrinsicKind::MetaBaseCount:
   case IntrinsicKind::MetaArgumentCount:
+  case IntrinsicKind::MetaMethodCount:
+  case IntrinsicKind::MetaConstructorCount:
     return MetaQueryShape{};
+  case IntrinsicKind::MetaMethodName:
+    return MetaQueryShape{.indices = 1, .result = SemanticType::StringView};
+  case IntrinsicKind::MetaMethodTrait:
+    return MetaQueryShape{.indices = 2, .result = SemanticType::Bool};
+  case IntrinsicKind::MetaMethodParameterCount:
+  case IntrinsicKind::MetaConstructorParameterCount:
+    return MetaQueryShape{.indices = 1};
+  case IntrinsicKind::MetaParameterName:
+  case IntrinsicKind::MetaConstructorParameterName:
+    return MetaQueryShape{.indices = 2, .result = SemanticType::StringView};
+  case IntrinsicKind::MetaDeclarationLine:
+    return MetaQueryShape{.indices = 2};
+  case IntrinsicKind::MetaDeclarationFile:
+    return MetaQueryShape{.result = SemanticType::StringView};
   default:
     return std::nullopt;
   }
@@ -6928,6 +6965,71 @@ auto SemanticVisitor::Impl::metaQueryConstant(
   }
   case IntrinsicKind::MetaArgumentCount:
     return unsignedConstant(metaTypeArguments(subject).size());
+  case IntrinsicKind::MetaMethodCount:
+    return unsignedConstant(metaMethodDeclarations(subject).size());
+  case IntrinsicKind::MetaConstructorCount: {
+    const ClassInfo *owner =
+        subject.kind == SemanticType::Class ? classInfo(subject) : nullptr;
+    return unsignedConstant(owner == nullptr ? 0 : owner->constructors.size());
+  }
+  case IntrinsicKind::MetaMethodName:
+  case IntrinsicKind::MetaMethodTrait:
+  case IntrinsicKind::MetaMethodParameterCount:
+  case IntrinsicKind::MetaParameterName: {
+    const std::optional<MetaMethodFacts> facts =
+        index ? metaMethodFacts(subject, *index) : std::nullopt;
+    if (!facts) {
+      return std::nullopt;
+    }
+    switch (intrinsic) {
+    case IntrinsicKind::MetaMethodName:
+      return ConstantValue{facts->name};
+    case IntrinsicKind::MetaMethodParameterCount:
+      return unsignedConstant(facts->parameterTypes.size());
+    case IntrinsicKind::MetaMethodTrait:
+      switch (second.value_or(99)) {
+      case 0:
+        return ConstantValue{facts->staticMember};
+      case 1:
+        return ConstantValue{facts->operatorMethod};
+      case 2:
+        return ConstantValue{facts->constexprFunction};
+      case 3:
+        return ConstantValue{facts->virtualMethod};
+      case 4:
+        return ConstantValue{facts->mutableReceiver};
+      case 5:
+        return ConstantValue{facts->publicAccess};
+      default:
+        return std::nullopt;
+      }
+    default:
+      return second && *second < facts->parameterNames.size()
+                 ? std::optional(ConstantValue{facts->parameterNames[*second]})
+                 : std::nullopt;
+    }
+  }
+  case IntrinsicKind::MetaConstructorParameterCount:
+  case IntrinsicKind::MetaConstructorParameterName: {
+    const std::optional<MetaConstructorFacts> facts =
+        index ? metaConstructorFacts(subject, *index) : std::nullopt;
+    if (!facts) {
+      return std::nullopt;
+    }
+    if (intrinsic == IntrinsicKind::MetaConstructorParameterCount) {
+      return unsignedConstant(facts->parameterTypes.size());
+    }
+    return second && *second < facts->parameterNames.size()
+               ? std::optional(ConstantValue{facts->parameterNames[*second]})
+               : std::nullopt;
+  }
+  case IntrinsicKind::MetaDeclarationLine: {
+    const std::optional<std::uint64_t> line =
+        metaDeclarationLine(subject, index.value_or(99), second.value_or(0));
+    return line ? std::optional(unsignedConstant(*line)) : std::nullopt;
+  }
+  case IntrinsicKind::MetaDeclarationFile:
+    return ConstantValue{metaDeclarationFile(subject)};
   case IntrinsicKind::MetaEnumeratorName:
   case IntrinsicKind::MetaEnumeratorValue:
   case IntrinsicKind::MetaPayloadCount:
@@ -7059,6 +7161,59 @@ auto SemanticVisitor::Impl::metaQueryFailure(
   case IntrinsicKind::MetaTypeTrait:
     return {"GTI-S2019", "Unknown reflection trait selector " +
                              std::to_string(index.value_or(0)) + "."};
+  case IntrinsicKind::MetaMethodName:
+  case IntrinsicKind::MetaMethodTrait:
+  case IntrinsicKind::MetaMethodParameterCount:
+  case IntrinsicKind::MetaParameterName: {
+    const std::optional<MetaMethodFacts> facts =
+        metaMethodFacts(subject, index.value_or(0));
+    if (!facts) {
+      return {"GTI-S2111",
+              "Method index " + std::to_string(index.value_or(0)) +
+                  " is out of range for '" + typeSpelling(subject) +
+                  "', which has " +
+                  std::to_string(metaMethodDeclarations(subject).size()) +
+                  " method(s)."};
+    }
+    if (intrinsic == IntrinsicKind::MetaMethodTrait) {
+      return {"GTI-S2019", "Unknown method trait selector " +
+                               std::to_string(second.value_or(0)) + "."};
+    }
+    return {"GTI-S2111",
+            "Parameter index " + std::to_string(second.value_or(0)) +
+                " is out of range for method '" + facts->name + "' of '" +
+                typeSpelling(subject) + "', which has " +
+                std::to_string(facts->parameterTypes.size()) +
+                " parameter(s)."};
+  }
+  case IntrinsicKind::MetaConstructorParameterCount:
+  case IntrinsicKind::MetaConstructorParameterName: {
+    const std::optional<MetaConstructorFacts> facts =
+        metaConstructorFacts(subject, index.value_or(0));
+    const ClassInfo *owner =
+        subject.kind == SemanticType::Class ? classInfo(subject) : nullptr;
+    if (!facts) {
+      return {"GTI-S2111",
+              "Constructor index " + std::to_string(index.value_or(0)) +
+                  " is out of range for '" + typeSpelling(subject) +
+                  "', which has " +
+                  std::to_string(
+                      owner == nullptr ? 0 : owner->constructors.size()) +
+                  " declared constructor(s)."};
+    }
+    return {"GTI-S2111", "Parameter index " +
+                             std::to_string(second.value_or(0)) +
+                             " is out of range for constructor " +
+                             std::to_string(index.value_or(0)) + " of '" +
+                             typeSpelling(subject) + "', which has " +
+                             std::to_string(facts->parameterTypes.size()) +
+                             " parameter(s)."};
+  }
+  case IntrinsicKind::MetaDeclarationLine:
+    return {"GTI-S2111", "No reflected declaration of kind " +
+                             std::to_string(index.value_or(0)) + " at index " +
+                             std::to_string(second.value_or(0)) + " for '" +
+                             typeSpelling(subject) + "'."};
   default:
     return {"GTI-S2111", "Field index " + std::to_string(index.value_or(0)) +
                              " is out of range for '" + typeSpelling(subject) +
@@ -7168,6 +7323,9 @@ auto SemanticVisitor::Impl::metaIntrinsicConstant(
     types = 2;
     indices = call.intrinsic == IntrinsicKind::MetaFieldAttribute ? 1 : 0;
   } else {
+    return std::nullopt;
+  }
+  if (call.typeArguments.empty()) {
     return std::nullopt;
   }
   if (call.typeArguments.size() != types ||
@@ -7658,8 +7816,12 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
+  if (intrinsic == IntrinsicKind::MetaConstruct) {
+    analyzeMetaConstructCall(expr);
+    return;
+  }
   if (intrinsic >= IntrinsicKind::MetaFieldCount &&
-      intrinsic <= IntrinsicKind::MetaArgumentCount) {
+      intrinsic <= IntrinsicKind::MetaDeclarationFile) {
     analyzeMetaIntrinsicCall(expr, declaration);
     bindIntrinsicCallDeclaration(expr, declaration);
     return;

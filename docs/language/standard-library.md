@@ -189,8 +189,11 @@ The current implemented foundation includes:
   `type()`, `get()` and `get_mut()`, declared attributes
   (`has_attribute<A>()`, `attribute<A>()`, `attributes()`),
   `enumerators_of<E>()`/`alternatives_of<E>()` with payload fields,
-  `bases_of<T>()`, `arguments_of<T>()` and the `std::meta::reflectable<T>`
-  concept, consumed by `constexpr for`; see
+  `bases_of<T>()`, `arguments_of<T>()`, the `std::meta::reflectable<T>`
+  concept, `methods_of<T>()`/`operators_of<T>()`/`constructors_of<T>()` with
+  parameter metaobjects and source lines, and structural construction
+  `std::meta::construct<T, E, Producer>(producer)`, consumed by
+  `constexpr for`; see
   [compile-time iteration and reflection](static-semantics.md#312-compile-time-iteration-and-reflection); and
 
 - `<std/panic>` source-defined raw and formatted terminal reporting through
@@ -279,7 +282,8 @@ The current implemented foundation includes:
 - `<std/algorithm>` value-returning `min`, `max`, and `clamp`, and structural
   input-iterator `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, and
   `count_if`, exact-value `find` and `count`, and returned-callable `for_each`,
-  plus `binary_search`, bounds, subsequence and repeated-value search,
+  plus `partition_point`, default/comparator `binary_search` and bounds,
+  subsequence and repeated-value search,
   adjacent search, extrema, sortedness, bounded sequence comparison, and
   prefix comparison. Structural whole-range predicates, `contains`, `count`,
   `fill`, `replace`, and `replace_if` accept nominal ranges and fixed arrays.

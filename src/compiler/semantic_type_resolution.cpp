@@ -1469,7 +1469,18 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   std::vector<RejectedConstructorArgument> rejectedArguments;
   std::vector<RejectedConstructorInference> rejectedInferences;
   std::optional<ConstraintFailure> rejectedConstraint;
-  for (const ConstructorInfo &constructor : owner.constructors) {
+  // std::meta::construct selects the generated designated constructor, which
+  // ordinary positional construction never considers.
+  std::vector<const ConstructorInfo *> candidates;
+  if (selectingDesignatedConstructor && owner.reversedDesignatedConstructor) {
+    candidates.push_back(&*owner.reversedDesignatedConstructor);
+  } else {
+    for (const ConstructorInfo &constructor : owner.constructors) {
+      candidates.push_back(&constructor);
+    }
+  }
+  for (const ConstructorInfo *candidatePointer : candidates) {
+    const ConstructorInfo &constructor = *candidatePointer;
     const std::size_t fixedCount =
         constructor.parameterPack && !constructor.parameterTypes.empty()
             ? constructor.parameterTypes.size() - 1
@@ -1857,7 +1868,8 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
       diagnostic.hints.emplace_back(
           "Constructor calls do not perform implicit conversions; convert "
           "an argument explicitly with syntax such as 'uint64_t(value)'.");
-      for (const ConstructorInfo &candidate : owner.constructors) {
+      for (const ConstructorInfo *candidatePointer : candidates) {
+        const ConstructorInfo &candidate = *candidatePointer;
         if (candidate.declaration != nullptr &&
             (isCompilerTrustedRequester(paren) || !candidate.compilerPrivate)) {
           diagnostic.related.push_back(

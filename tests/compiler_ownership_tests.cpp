@@ -85,9 +85,11 @@ int main() {
 )");
   expect(frontend.canGenerateCode(),
          "ownership metadata source should pass the frontend");
-  expect(frontend.semantics.bindingCount() == 7,
+  // Six source bindings plus the struct's generated designated constructor
+  // parameter and its reversed sibling's tag and field parameters.
+  expect(frontend.semantics.bindingCount() == 9,
          "the semantic model should retain six source bindings and the "
-         "struct's generated designated-construction parameter");
+         "struct's generated designated-construction parameters");
 
   const auto *identity = dynamic_cast<const lang::FunctionDecl *>(
       frontend.program.declarations().at(1).get());

@@ -73,16 +73,20 @@ The earlier historical regression in #169 is not considered fully recovered mere
 this one cause improves. Follow-on RT-2 through RT-10 need their individual
 prerequisites and measured clients; they are not added to this implementation.
 
-## Active: Compile-Time Reflection, Phase 2 Delivered (2026-10-11)
+## Compile-Time Reflection Delivered (2026-10-11)
 
-The owner accepted [`reflection.md`](reflection.md) with its decisions. Phase 1
-(`constexpr for`, type and field metaobjects, reflected field access) and
-phase 2 (declared attributes with constant arguments, `[[reflect_private]]`,
-`std::meta::reflectable`, enumerator/payload, base and generic-argument
-metaobjects, three fixture clients) are implemented. Phase 3 (structural
-construction, callable reflection, decoding) is next; after it, reflection
-reaches a JSON library as `std::experimental::json`, a verification gate
-after which `std::json` is deprecated. The campaign touches the parser,
+The owner accepted [`reflection.md`](reflection.md) with its decisions. All
+three phases are implemented: phase 1 (`constexpr for`, type and field
+metaobjects, reflected field access), phase 2 (declared attributes with
+constant arguments, `[[reflect_private]]`, `std::meta::reflectable`,
+enumerator/payload, base and generic-argument metaobjects, three fixture
+clients) and phase 3 (`std::meta::construct`, method/constructor/parameter
+metaobjects, source locations, budget hardening). Reflection is no longer
+"later breadth" in the roadmap; what remains restricted (invocation through
+metaobjects, static-field metaobjects, runtime reflection, source generation,
+layout) is recorded in the alignment ledger. Next: `std::experimental::json`
+as the verification gate, after which `std::json` is deprecated, then the
+parked `lsp-lazy-bodies` task. The campaign touches the parser,
 semantic analysis (declaration-stage attribute evaluation, folded queries,
 aliases), HIR lowering and the trusted standard library; its one MIR change
 materialises direct-initialized temporaries before projection and its one
@@ -2718,7 +2722,7 @@ analysis, HIR, MIR, and the backend.
   A terminal wrapper is not completion. This remains M-FAIL-01/M-BACK-02 work,
   not a change to source-language validity.
 
-- **Shared failure cleanup (Gitea #222), delivered in 0.399.4:**
+- **Shared failure cleanup (Gitea #222), delivered in 0.401.1:**
   - Function and lambda bodies emit each distinct failure-cleanup suffix once,
     as a continuation record entered by `ContinueFailure`; see
     [MIR](../architecture/mir.md#shared-failure-cleanup).
@@ -2726,7 +2730,7 @@ analysis, HIR, MIR, and the backend.
     owners before.
   - The `stdlib_surface_json` fixture's generated C++ fell from 33.5 MB to
     4.3 MB, and its native `-O3` build from 153 s to 7.7 s; see
-    [verification](../architecture/verification.md#shared-failure-cleanup-0399-4).
+    [verification](../architecture/verification.md#shared-failure-cleanup-0401-1).
 
   **Remaining:**
   - Constructor, field-initializer, destructor, module and hosted-startup
@@ -7505,10 +7509,18 @@ consumer, and release refreshes remain outstanding for the full campaign.
   `all_of`, `any_of`, `none_of`, `count_if`, and `for_each`; `fill` uses the
   mutable exact-element relation. Symbolic range carriers are replaced by
   concrete protocol identities or fixed-array plans before HIR/MIR.
+- **Implemented ordered-query composition:** the source-defined slice adds
+  `partition_point` and comparator `lower_bound`/`upper_bound`/`binary_search`
+  over exact homogeneous keys, preserving checked cursor loans and one owned
+  repeatable callback in ordinary GTI. Example 139 demonstrates custom-record
+  ordering. Callback failure, exact returned-owner rejection, and allocation/
+  traversal-cost fixtures cover the same rules with unrelated cursors.
 - **Remaining scope:** indexed element move-out; structural complete-range
   relations for `transform`, `reverse`, and `sort`; and further
-  iterator/sentinel overloads behind a
-  demonstrated subrange client. Iterator-pair in-place spellings remain
+  iterator/sentinel overloads behind a demonstrated subrange client.
+  Forward-list traversal, heterogeneous search keys/projections and indirect
+  binary callable relations remain separate prerequisites, not compiler
+  exceptions for these APIs. Iterator-pair in-place spellings remain
   excluded because `begin_mut()` and `end()` from one container overlap by
   design; semantics now diagnoses that conflict before MIR, while read-only
   methods on a parameter-held mutable cursor are supported. Iterator
