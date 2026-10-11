@@ -229,7 +229,7 @@ int main() {
         lang::verifyHirProgramPlans(frontend.semantics, forged);
     expect(mutated && std::any_of(checked.errors.begin(), checked.errors.end(),
                                   [](const auto &error) {
-                                    return error.find("class result alias") !=
+                                    return error.find("object result alias") !=
                                            std::string::npos;
                                   }),
            "an existing-object copy/move cannot be forged into a fresh-result "
@@ -279,7 +279,7 @@ int main() {
       lang::verifyHirProgramPlans(frontend.semantics, forgedCall);
   expect(mutated && std::any_of(checked.errors.begin(), checked.errors.end(),
                                 [](const auto &error) {
-                                  return error.find("class result alias") !=
+                                  return error.find("object result alias") !=
                                          std::string::npos;
                                 }),
          "an observable ordinary factory cannot be erased as a construction "
@@ -477,7 +477,7 @@ int main() {
     expect(mutated &&
                std::any_of(verified.errors.begin(), verified.errors.end(),
                            [](const auto &error) {
-                             return error.find("class result alias") !=
+                             return error.find("object result alias") !=
                                     std::string::npos;
                            }),
            "true nominal/dependent factory erasure requires actual concrete "

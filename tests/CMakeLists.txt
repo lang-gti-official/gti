@@ -925,6 +925,11 @@ add_test(NAME plain_call_member_initializer_runtime
                  "${PROJECT_SOURCE_DIR}/tests/plain_call_member_initializer_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(plain_call_member_initializer_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME class_conditional_join_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/class_conditional_join_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(class_conditional_join_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_class_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"
