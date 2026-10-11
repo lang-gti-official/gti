@@ -203,7 +203,10 @@ class Window:
             pid = json.loads(owner.read_text()).get("pid")
         except (OSError, ValueError):
             pid = None
-        if pid_alive(pid) and self._age(path) <= MUTEX_STALE_SECONDS:
+        # mkdir publishes the lock before owner.json can be written. A peer
+        # must not reclaim that initialization gap as a dead owner. Likewise a
+        # live owner remains authoritative even if its critical section is slow.
+        if pid_alive(pid) or (pid is None and self._age(path) <= MUTEX_STALE_SECONDS):
             return
         stale = path.with_name(f"lock.stale-{uuid.uuid4().hex[:8]}")
         try:

@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -41,6 +42,14 @@ def load_build_window():
 
 
 build_window = load_build_window()
+
+
+def load_remote_runner():
+    path = Path(__file__).resolve().with_name("remote_runner.py")
+    spec = importlib.util.spec_from_file_location("gti_remote_runner", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class WorkflowError(RuntimeError):
@@ -388,12 +397,13 @@ class Workflow:
         self.save(state, "active")
         return self.checkpoint(task)
 
-    def verify(self, task, checks):
+    def verify(self, task, checks, remote=False):
         """Record the attempt under the lock, run the checks in a build-window suite slot, then record the result.
 
         The metadata lock is held only while task records change, so a peer's
         `start`, `status`, `checkpoint` or `cleanup` never waits on validation.
-        The checks themselves hold one `suite` slot of the shared build window.
+        Local checks hold one `suite` slot. Remote plans acquire their build/
+        suite slots on the configured host through remote_runner, not here.
         """
         with self.lock():
             state = self.load(task)
@@ -407,19 +417,59 @@ class Workflow:
                 raise WorkflowError("main advanced; reconcile before verification")
             if state.get("published_head") != head:
                 raise WorkflowError("Checkpoint the current head before verification")
-            if not isinstance(checks, list) or not checks or any(not isinstance(c, list) or not c or
+            runner = load_remote_runner() if remote else None
+            if remote:
+                try:
+                    runner.validate_steps(checks)
+                except runner.RunnerError as error:
+                    raise WorkflowError(str(error)) from error
+            elif not isinstance(checks, list) or not checks or any(not isinstance(c, list) or not c or
                                  any(not isinstance(a, str) or not a for a in c) for c in checks):
                 raise WorkflowError("Checks must be a nonempty JSON array of argv arrays")
             state.pop("verified", None)
             self.save(state, "verifying")
+        remote_evidence = None
         try:
-            with self.window.acquire("suite", [sys.executable, __file__, "verify", task],
-                                     worktree=str(root), checks=checks):
-                for command in checks:
-                    result = subprocess.run(command, cwd=root, check=False)
-                    if result.returncode:
+            if remote:
+                # No laptop suite slot: it performs only snapshot/transport.
+                # The remote worker owns the same authoritative window there.
+                destination = self.state_dir / "remote-results" / task / uuid.uuid4().hex
+                with tempfile.TemporaryDirectory(prefix="gti-remote-verification-") as temporary:
+                    plan = Path(temporary) / "steps.json"
+                    plan.write_text(json.dumps(checks))
+                    try:
+                        code = runner.main(["--repo", str(root), "run", "--steps-file", str(plan),
+                                            "--results", str(destination)])
+                    except (runner.RunnerError, OSError, ValueError) as error:
                         self.record(task, "verifying", "blocked")
-                        raise WorkflowError("Validation failed; correct it and verify again")
+                        raise WorkflowError(str(error)) from error
+                if code:
+                    self.record(task, "verifying", "blocked")
+                    raise WorkflowError(f"Remote validation failed ({code}); inspect {destination}")
+                try:
+                    report = json.loads((destination / "report.json").read_text())
+                except (OSError, ValueError) as error:
+                    self.record(task, "verifying", "blocked")
+                    raise WorkflowError("Remote validation report is missing or unreadable") from error
+                if (not isinstance(report, dict) or not isinstance(report.get("source"), dict)
+                        or not isinstance(report.get("final_source"), dict)
+                        or report.get("state") != "passed" or report.get("exit_code") != 0
+                        or report.get("source", {}).get("head") != head
+                        or report.get("source", {}).get("status") != ""
+                        or report["final_source"].get("head") != head
+                        or report["final_source"].get("status") != ""):
+                    self.record(task, "verifying", "blocked")
+                    raise WorkflowError("Remote evidence does not match the clean published head")
+                remote_evidence = {"directory": str(destination), "id": report["id"],
+                                   "snapshot_sha256": report["source"]["snapshot_sha256"]}
+            else:
+                with self.window.acquire("suite", [sys.executable, __file__, "verify", task],
+                                     worktree=str(root), checks=checks):
+                    for command in checks:
+                        result = subprocess.run(command, cwd=root, check=False)
+                        if result.returncode:
+                            self.record(task, "verifying", "blocked")
+                            raise WorkflowError("Validation failed; correct it and verify again")
         except build_window.WindowError as error:
             self.record(task, "verifying", "active")
             raise WorkflowError(str(error)) from error
@@ -431,6 +481,8 @@ class Workflow:
                 self.save(state, "active")
                 raise WorkflowError("Head or main changed during validation; reconcile and verify again")
             state["verified"] = {"head": head, "base": base, "checks": checks, "at": self.now()}
+            if remote_evidence is not None:
+                state["verified"]["remote"] = remote_evidence
             self.save(state, "ready")
             return state
 
@@ -664,7 +716,9 @@ def main():
         sub.add_parser(name).add_argument("task")
     verify = sub.add_parser("verify")
     verify.add_argument("task")
-    verify.add_argument("--checks-file", required=True)
+    verification = verify.add_mutually_exclusive_group(required=True)
+    verification.add_argument("--checks-file")
+    verification.add_argument("--remote-steps-file", help="remote_runner exact-argv plan; uses the remote build window")
     finish = sub.add_parser("finish")
     finish.add_argument("task")
     finish.add_argument("--body-file", required=True)
@@ -679,7 +733,8 @@ def main():
         workflow = Workflow(args.repo)
         if args.command == "verify":
             # verify takes the metadata lock itself, only around record changes.
-            result = workflow.verify(args.task, json.loads(Path(args.checks_file).read_text()))
+            result = workflow.verify(args.task, json.loads(Path(args.remote_steps_file or args.checks_file).read_text()),
+                                     remote=bool(args.remote_steps_file))
             print(json.dumps(result, indent=2))
             return 0
         with workflow.lock():
