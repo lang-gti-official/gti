@@ -1,0 +1,54 @@
+#include <std/string>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+  uint64_t forward_traversal_now_ns();
+  void forward_traversal_observe(uint64_t checksum);
+  void forward_traversal_report(uint64_t length, uint64_t elapsed,
+                               uint64_t allocations, uint64_t checksum);
+}
+
+uint64_t traverse_text(std::string_view& text, std::size_t rounds) {
+  mut uint64_t checksum = 0;
+  auto end = text.end();
+  for (mut std::size_t round = 0; round < rounds; round++) {
+    mut auto cursor = text.begin();
+    while (cursor != end) { checksum += uint64_t(*cursor); ++cursor; }
+  }
+  return checksum;
+}
+int measured_text(std::string_view& text) {
+  std::size_t rounds = 20000;
+  adoption_count_begin();
+  uint64_t start = forward_traversal_now_ns();
+  uint64_t checksum = traverse_text(text, rounds);
+  uint64_t elapsed = forward_traversal_now_ns() - start;
+  adoption_count_end();
+  uint64_t allocations = adoption_allocations();
+  if (allocations != uint64_t(0) || checksum != uint64_t(97) * text.size() * rounds) { return 1; }
+  forward_traversal_observe(checksum);
+  forward_traversal_report(text.size(), elapsed, allocations, checksum);
+  return 0;
+}
+int main() {
+  mut std::string small{};
+  mut std::string large{};
+  for (mut std::size_t index = 0; index < std::size_t(256); index++) {
+    large.push_back('a');
+    if (index < std::size_t(128)) { small.push_back('a'); }
+  }
+  auto small_view = small.view();
+  auto large_view = large.view();
+  [[discard]] traverse_text(small_view, std::size_t(100));
+  [[discard]] traverse_text(large_view, std::size_t(100));
+  for (mut int32_t round = 0; round < 5; round++) {
+    if (round % 2 == 0) {
+      if (measured_text(small_view) != 0 || measured_text(large_view) != 0) { return 2; }
+    } else {
+      if (measured_text(large_view) != 0 || measured_text(small_view) != 0) { return 3; }
+    }
+  }
+  return 0;
+}

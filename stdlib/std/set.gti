@@ -22,8 +22,8 @@ class set_insert_iterator<K> {
   mut map_mut_iterator<K, bool> cursor;
 public:
   set_insert_iterator(map_mut_iterator<K, bool> cursor) : cursor(std::move(cursor)) {}
-  K& operator*() { return this.cursor->first; }
-  K& operator->() { return this.cursor->first; }
+  K& operator*() { return this.cursor.key(); }
+  K& operator->() { return this.cursor.key(); }
   void operator++() mut { ++this.cursor; }
   void operator--() mut { --this.cursor; }
   bool operator!=(map_sentinel end) { return this.cursor != end; }

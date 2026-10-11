@@ -2363,6 +2363,9 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
       symbolicRangeMemberReturnType(rangeType, "begin_mut").has_value();
   if (rangeType != SemanticType::Unknown &&
       rangeType.kind != SemanticType::Array &&
+      !(rangeType.kind == SemanticType::StringView &&
+        textViewMemberFactory("begin").has_value() &&
+        textViewMemberFactory("end").has_value()) &&
       rangeType.kind != SemanticType::Class && !symbolicReadRange) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2083", DiagnosticPhase::Semantics, stmt.colon(),
@@ -2474,7 +2477,11 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
                                 : 0,
              .ownsRangeTemporary = owner != nullptr &&
                                    owner->type.kind != SemanticType::Reference,
-             .expectedPayloadProjection = expectedPayloadProjection});
+             .expectedPayloadProjection = expectedPayloadProjection,
+             .nonBorrowingEndpoint =
+                 endFunction != 0 && sentinel != nullptr &&
+                 sentinel->type.kind != SemanticType::Reference &&
+                 !typeTraits(sentinel->type).containsBorrowedState});
 }
 
 auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
@@ -7330,7 +7337,8 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
     return;
   }
   if (objectType.kind == SemanticType::StringView) {
-    if (expr.name().lexeme == "size" || expr.name().lexeme == "empty") {
+    if (expr.name().lexeme == "size" || expr.name().lexeme == "empty" ||
+        textViewMemberFactory(expr.name().lexeme).has_value()) {
       if (!analyzingCallCallee) {
         report(expr.name(),
                "Function names must be called; function values are not "

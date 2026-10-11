@@ -125,6 +125,10 @@ struct ResolvedRangeIterationInfo {
   // complete expected root; this flag preserves the bounded projection
   // identity without admitting a general retained nested reference.
   bool expectedPayloadProjection = false;
+  // The selected zero-argument read-only endpoint returns a value with no
+  // retained reference or stored-owner dependency. This permits MIR to park a
+  // fresh hidden mutable cursor while evaluating that exact endpoint.
+  bool nonBorrowingEndpoint = false;
 };
 
 struct SemanticConditionalLoanEnds {
@@ -1099,6 +1103,68 @@ struct ResolvedCallInfo {
   // this invocation. The full expression retains ownership of each value.
   std::vector<std::size_t> ephemeralBorrowArguments;
   std::vector<CallableArgumentBoundary> callableArguments;
+  // Trusted builtin-member forwarding normalizes the written receiver into
+  // the first ordinary source-function argument. The AST still owns it; all
+  // consumers must use resolvedCallArgument/count rather than written indices.
+  const ExprPtr *argumentReceiver = nullptr;
+};
+
+[[nodiscard]] inline bool
+validResolvedCallArguments(const Call &call, const ResolvedCallInfo *resolved) {
+  if (resolved == nullptr || resolved->argumentReceiver == nullptr)
+    return true;
+  const auto *member = exprAs<Get>(call.callee().get());
+  return member != nullptr && resolved->argumentReceiver == &member->object() &&
+         resolved->function != 0 && resolved->declaration != nullptr &&
+         resolved->intrinsic == IntrinsicKind::None &&
+         resolved->dispatch == CallDispatch::Static &&
+         resolved->receiverMode == CallReceiverMode::None;
+}
+
+[[nodiscard]] inline std::size_t
+resolvedCallArgumentCount(const Call &call, const ResolvedCallInfo *resolved) {
+  return validResolvedCallArguments(call, resolved)
+             ? call.arguments().size() + (resolved != nullptr &&
+                                          resolved->argumentReceiver != nullptr)
+             : 0;
+}
+
+[[nodiscard]] inline const ExprPtr *
+resolvedCallArgument(const Call &call, const ResolvedCallInfo *resolved,
+                     std::size_t index) {
+  if (!validResolvedCallArguments(call, resolved))
+    return nullptr;
+  if (resolved != nullptr && resolved->argumentReceiver != nullptr) {
+    if (index == 0)
+      return resolved->argumentReceiver;
+    --index;
+  }
+  return index < call.arguments().size() ? &call.arguments()[index] : nullptr;
+}
+
+// Non-owning argument view shared by effects/provenance queries. Neither
+// normalization nor a query copies/reanalyzes a source expression.
+class ResolvedCallArguments {
+public:
+  ResolvedCallArguments() = default;
+  ResolvedCallArguments(std::span<const ExprPtr> arguments)
+      : written_(arguments) {}
+  ResolvedCallArguments(const ExprList &arguments) : written_(arguments) {}
+  ResolvedCallArguments(const Call &call, const ResolvedCallInfo *resolved)
+      : call_(&call), resolved_(resolved) {}
+  [[nodiscard]] std::size_t size() const {
+    return call_ ? resolvedCallArgumentCount(*call_, resolved_)
+                 : written_.size();
+  }
+  [[nodiscard]] const ExprPtr &operator[](std::size_t index) const {
+    return call_ ? *resolvedCallArgument(*call_, resolved_, index)
+                 : written_[index];
+  }
+
+private:
+  const Call *call_ = nullptr;
+  const ResolvedCallInfo *resolved_ = nullptr;
+  std::span<const ExprPtr> written_;
 };
 
 // A lexical unsafe raw dereference returned under an explicit declaration

@@ -1192,6 +1192,304 @@ int main() {
          "cleanup-provider regression exercises early ancestor retirement");
 }
 
+void checkInlineRangeProxyPhysicalLifetime() {
+  const auto frontend = lang::Frontend().analyze(
+      "inline-range-proxy-mir.gti", R"gti(
+class End {
+public:
+  End() {}
+};
+class Projection {
+  Buffer& source;
+public:
+  Projection(Buffer& source) : source(source) {}
+  int& read() { return this.source.read(); }
+};
+class Cursor {
+  mut Projection projection;
+  mut int position = 0;
+public:
+  Cursor(Buffer& source) : projection(Projection(source)) {}
+  Projection& operator*() { return this.projection; }
+  void operator++() mut { this.position++; }
+  bool operator!=(End end) { return this.position < 2; }
+};
+class MutableProjection {
+  mut Buffer& source;
+public:
+  MutableProjection(mut Buffer& source) : source(source) {}
+  int& read() { return this.source.read(); }
+  mut int& write() mut { return this.source.write(); }
+};
+class MutableCursor {
+  mut MutableProjection projection;
+  mut int position = 0;
+public:
+  MutableCursor(mut Buffer& source) : projection(MutableProjection(source)) {}
+  MutableProjection& operator*() { return this.projection; }
+  mut MutableProjection& operator*() mut { return this.projection; }
+  void operator++() mut { this.position++; }
+  bool operator!=(End end) { return this.position < 2; }
+};
+class Buffer {
+  mut int number = 4;
+public:
+  Buffer() {}
+  int& read() { return this.number; }
+  mut int& write() mut { return this.number; }
+  Cursor begin() { return Cursor(this); }
+  MutableCursor begin_mut() mut { return MutableCursor(this); }
+  End end() { return End(); }
+};
+int inspect(Buffer& source) {
+  mut int total = 0;
+  for (auto& element : source) {
+    for (auto& inner : source) { total += element.read(); }
+  }
+  return total;
+}
+int main() {
+  mut Buffer buffer{};
+  int original = inspect(buffer);
+  for (mut auto& element : buffer) { element.write() += 1; }
+  return original + buffer.read() - 22;
+}
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "inline readonly/exclusive proxies retain ordinary owning ranges "
+         "and borrowed helper parameters");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  std::size_t checked = 0;
+  std::size_t siblingCursorChecks = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &range : body.rangeIterations) {
+      const auto *element = body.findLoan(range.elementLoan);
+      const auto *cursor = element == nullptr
+                               ? nullptr
+                               : body.findLoan(element->storedDependency);
+      expect(element != nullptr && cursor != nullptr &&
+                 element->kind == lang::MirLoanKind::CallResult &&
+                 element->source == range.iterator && element->parent == 0 &&
+                 cursor->kind == lang::MirLoanKind::Stored &&
+                 cursor->parent == range.rangeLoan,
+             "proxy referent, physical cursor and traversal authority are "
+             "separate checked identities");
+      if (element == nullptr || cursor == nullptr)
+        continue;
+      ++checked;
+      const auto reject = [&](const lang::MirProgram &malformed,
+                              const std::string &reason) {
+        const auto *instance = malformed.findFunctionInstance(function.id);
+        expect(instance != nullptr &&
+                   !lang::verifyMirBody(instance->body, function.id).valid(),
+               reason);
+        expect(!lang::verifyMirProgram(malformed).valid(), reason);
+      };
+      for (int mutation = 0; mutation < 6; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &changed = instance->body;
+        switch (mutation) {
+        case 0:
+          changed.loans[element->id - 1].storedDependency = 0;
+          break;
+        case 1:
+          changed.loans[element->id - 1].source = range.rangeCarrier;
+          break;
+        case 2:
+          changed.loans[cursor->id - 1].parent = 0;
+          break;
+        case 3:
+          changed.loans[element->id - 1].escapes = true;
+          break;
+        case 4:
+          changed.loans[cursor->id - 1].carriers.clear();
+          break;
+        case 5:
+          changed.loans[element->id - 1].access =
+              range.elementAccess == lang::AccessMode::ReadOnly
+                  ? lang::AccessMode::Mutable
+                  : lang::AccessMode::ReadOnly;
+          break;
+        }
+        reject(malformed,
+               "forged proxy range origins, authority and escape fail closed");
+      }
+      for (const auto &other : body.rangeIterations) {
+        if (other.id == range.id || other.elementAccess != range.elementAccess)
+          continue;
+        const auto *otherElement = body.findLoan(other.elementLoan);
+        const auto *otherCursor =
+            otherElement == nullptr
+                ? nullptr
+                : body.findLoan(otherElement->storedDependency);
+        if (otherCursor == nullptr)
+          continue;
+        auto wrongCursor = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            wrongCursor.findFunctionInstance(function.id));
+        instance->body.loans[element->id - 1].storedDependency =
+            otherCursor->id;
+        reject(wrongCursor,
+               "a proxy cannot substitute another live same-type cursor shell");
+        auto wrongProducer = frontend.mir;
+        instance = const_cast<lang::MirFunctionInstance *>(
+            wrongProducer.findFunctionInstance(function.id));
+        instance->body.loans[element->id - 1].producedBy =
+            otherElement->producedBy;
+        reject(wrongProducer,
+               "a proxy cannot substitute another same-type element producer");
+        ++siblingCursorChecks;
+      }
+      bool earlyEndChecked = false;
+      for (const auto &block : body.blocks) {
+        const auto selected = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) {
+              return instruction.kind == lang::MirInstructionKind::Call &&
+                     instruction.loan == element->id;
+            });
+        if (selected == block.instructions.end())
+          continue;
+        auto malformed = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &changed = instance->body;
+        lang::MirInstructionId last = 0;
+        for (const auto &candidate : changed.blocks)
+          for (const auto &instruction : candidate.instructions)
+            last = std::max(last, instruction.id);
+        auto &instructions = changed.blocks[block.id - 1].instructions;
+        instructions.insert(instructions.begin() +
+                                (selected - block.instructions.begin()),
+                            {.id = last + 1,
+                             .kind = lang::MirInstructionKind::EndBorrow,
+                             .loan = cursor->id});
+        reject(malformed,
+               "a physical cursor cannot retire before proxy publication");
+        earlyEndChecked = true;
+      }
+      expect(earlyEndChecked,
+             "proxy regression exercises premature physical cursor retirement");
+      if (range.endpointParking) {
+        const auto &parking = *range.endpointParking;
+        for (int mutation = 0; mutation < 12; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *instance = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          auto &changed = instance->body;
+          auto &inventory =
+              *changed.rangeIterations[range.id - 1].endpointParking;
+          const auto instruction =
+              [&](lang::MirInstructionId id) -> lang::MirInstruction & {
+            for (auto &block : changed.blocks)
+              for (auto &candidate : block.instructions)
+                if (candidate.id == id)
+                  return candidate;
+            std::abort();
+          };
+          switch (mutation) {
+          case 0:
+            instruction(parking.park).kind =
+                lang::MirInstructionKind::RestoreRangeCursor;
+            break;
+          case 1:
+            instruction(parking.restore).kind =
+                lang::MirInstructionKind::ParkRangeCursor;
+            break;
+          case 2:
+            instruction(parking.park).loan = range.rangeLoan;
+            break;
+          case 3:
+            inventory.cursor = range.rangeLoan;
+            instruction(parking.park).loan = range.rangeLoan;
+            instruction(parking.restore).loan = range.rangeLoan;
+            for (auto id : parking.failureRestores)
+              instruction(id).loan = range.rangeLoan;
+            break;
+          case 4:
+            instruction(parking.park).hirValue = parking.endValue + 1;
+            break;
+          case 5:
+            instruction(parking.restore).hirStatement = range.coreLoop;
+            break;
+          case 6:
+            inventory.beginCall = parking.endCall;
+            break;
+          case 7:
+            inventory.endReceiver = parking.beginCall;
+            break;
+          case 8:
+            instruction(parking.endReceiver).callInputKind =
+                lang::HirCallInputKind::MutableBorrow;
+            instruction(parking.endReceiver).operands.front().kind =
+                lang::MirOperandKind::BorrowWrite;
+            break;
+          case 9:
+            instruction(parking.endCall).borrowOrigin =
+                lang::BorrowOriginKind::Receiver;
+            break;
+          case 10:
+            instruction(parking.park).rawMemoryAccess = true;
+            break;
+          case 11:
+            inventory.restore = parking.park;
+            break;
+          }
+          reject(malformed, "forged range parking authority, endpoint identity "
+                            "and restoration fail closed");
+        }
+        for (auto failedRestore : parking.failureRestores) {
+          auto malformed = frontend.mir;
+          auto *instance = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          for (auto &block : instance->body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.id == failedRestore)
+                instruction.kind = lang::MirInstructionKind::EndBorrow;
+          reject(malformed, "failed endpoint restores its cursor before any "
+                            "cleanup or retirement");
+        }
+        auto earlyCursorUse = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            earlyCursorUse.findFunctionInstance(function.id));
+        for (auto &block : instance->body.blocks) {
+          const auto receiver =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const auto &instruction) {
+                             return instruction.id == parking.endReceiver;
+                           });
+          if (receiver == block.instructions.end())
+            continue;
+          lang::MirInstructionId last = 0;
+          for (const auto &candidate : instance->body.blocks)
+            for (const auto &instruction : candidate.instructions)
+              last = std::max(last, instruction.id);
+          block.instructions.insert(
+              receiver, {.id = last + 1,
+                         .kind = lang::MirInstructionKind::EndBorrow,
+                         .loan = parking.cursor});
+          break;
+        }
+        reject(earlyCursorUse, "parked cursor cannot be used or destroyed "
+                               "before the endpoint completes");
+      }
+    }
+  }
+  expect(
+      checked == 3,
+      "owning inline-proxy fixture exercises shared and exclusive range loans");
+  expect(siblingCursorChecks == 2,
+         "nested shared traversal exercises exact same-type cursor identities");
+}
+
 } // namespace
 
 int main() {
@@ -1204,5 +1502,6 @@ int main() {
   checkConditionalParentReborrowMutation();
   checkTemporaryCursorRetainedOwnerDependencies();
   checkTemporaryCursorCleanupProviderLifetime();
+  checkInlineRangeProxyPhysicalLifetime();
   return failures == 0 ? 0 : 1;
 }

@@ -32,6 +32,10 @@ public:
   R& second() {
     return this.source.second(this.current_position);
   }
+  paired_span_element<L, R> at(size_t position) {
+    gti_internal::index_bounds_check(position, this.size());
+    return paired_span_element<L, R>(this.source, position);
+  }
   // Every observation remains checked by the source view. Cursors establish
   // their inclusive base-position bounds before changing this coordinate.
   void select(size_t position) mut { this.current_position = position; }
@@ -69,17 +73,28 @@ public:
     return this.element;
   }
   paired_span_element<L, R>& operator->() { return *this; }
+  // An indexed proxy owns only checked borrowing state. It does not change
+  // the cursor's cached coordinate or copy either underlying element.
+  paired_span_element<L, R> operator[](ptrdiff_t offset) {
+    mut size_t position = detail::checked_iterator_position(this.current_position,
+        size_t(0), this.element.size(), offset, Reverse != 0);
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position,
+          size_t(0), this.element.size(), ptrdiff_t(-1));
+    }
+    return this.element.at(position);
+  }
   void operator++() mut { this.advance(ptrdiff_t(1)); }
   void operator--() mut { this.advance(ptrdiff_t(1), true); }
   void operator+=(ptrdiff_t offset) mut { this.advance(offset); }
   void operator-=(ptrdiff_t offset) mut { this.advance(offset, true); }
   ptrdiff_t operator-(paired_span_sentinel sentinel) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(sentinel.position()); }
-    return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(sentinel.position(), this.current_position); }
+    return detail::checked_iterator_difference(this.current_position, sentinel.position());
   }
   ptrdiff_t operator-(paired_span_iterator<L, R, Reverse>& other) {
-    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(other.current_position); }
-    return ptrdiff_t(other.current_position) - ptrdiff_t(this.current_position);
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(other.current_position, this.current_position); }
+    return detail::checked_iterator_difference(this.current_position, other.current_position);
   }
   bool operator!=(paired_span_sentinel sentinel) {
     return this.current_position != sentinel.position();

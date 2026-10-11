@@ -26,6 +26,9 @@ mut auto cursor = pairs.begin();
         "readonly-second": "(*cursor).second() = 99; return 0;",
         "cursor-child": "std::paired_span<int, int>::value_type& entry = *cursor; ++cursor; return entry.first();",
         "cursor-element-child": "int& value = (*cursor).first(); ++cursor; return value;",
+        "indexed-first-invalidation": "auto entry = cursor[std::ptrdiff_t(1)]; left.clear(); return entry.first();",
+        "indexed-second-invalidation": "auto entry = cursor[std::ptrdiff_t(1)]; right.clear(); return entry.second();",
+        "indexed-readonly-first": "auto entry = cursor[std::ptrdiff_t(1)]; entry.first() = 99; return 0;",
     }
     return {name: headers + "int main() { " + setup + body + " }\n" for name, body in bodies.items()}
 
@@ -33,7 +36,7 @@ mut auto cursor = pairs.begin();
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=pathlib.Path)
-    parser.add_argument("--fixture", action="append", choices=("paired_span_iterator_completion", "paired_span_iterator_bounds"))
+    parser.add_argument("--fixture", action="append", choices=("paired_span_iterator_completion", "paired_span_iterator_bounds", "paired_span_iterator_cost"))
     parser.add_argument("--mode", action="append", choices=[mode[0] for mode in MODES])
     parser.add_argument("--jobs", type=positive_jobs, default=configured_jobs())
     parser.add_argument("--no-negative", action="store_true")
@@ -44,7 +47,7 @@ def main():
     environment = dict(os.environ, GTI_STDLIB_PATH=str(repository / "stdlib"),
                        ASAN_OPTIONS="halt_on_error=1", UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     modes = [mode for mode in MODES if not options.mode or mode[0] in options.mode]
-    fixtures_to_run = options.fixture or ("paired_span_iterator_completion", "paired_span_iterator_bounds")
+    fixtures_to_run = options.fixture or ("paired_span_iterator_completion", "paired_span_iterator_bounds", "paired_span_iterator_cost")
     with tempfile.TemporaryDirectory(prefix="gti-paired-iterator-") as directory:
         output = pathlib.Path(directory)
 
@@ -53,7 +56,7 @@ def main():
             executable = output / f"{fixture}-{label}"
             command = [str(compiler), str(fixtures / f"{fixture}.gti"), *flags,
                        "--progress=never", "--keep-cpp", "-o", str(executable)]
-            if fixture == "paired_span_iterator_completion":
+            if fixture != "paired_span_iterator_bounds":
                 native = [*native, str(fixtures / "stdlib_adoption_allocation_counts.cpp")]
             if native:
                 command += ["--", *native]
@@ -64,11 +67,11 @@ def main():
 
         def observe(case):
             fixture, label, executable = case
-            if fixture == "paired_span_iterator_completion":
+            if fixture != "paired_span_iterator_bounds":
                 result = subprocess.run([str(executable)], env=environment, capture_output=True, text=True, timeout=30)
                 assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (fixture, label, result)
             else:
-                for count, code in enumerate(("GTI-R0016", "GTI-R0016", "GTI-R0007", "GTI-R0016", "GTI-R0016", "GTI-R0016")):
+                for count, code in enumerate(("GTI-R0016", "GTI-R0016", "GTI-R0007", "GTI-R0016", "GTI-R0016", "GTI-R0016", "GTI-R0007", "GTI-R0016", "GTI-R0016")):
                     result = subprocess.run([str(executable), *("argument" for _ in range(count))],
                                             env=environment, capture_output=True, text=True, timeout=30)
                     assert result.returncode == 70 and result.stdout == "", (fixture, label, count, result)

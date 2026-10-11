@@ -15,7 +15,7 @@ int main() {
     auto copy = backwards;
     backwards += std::ptrdiff_t(2);
     if (*first != 'a' || *backwards != 'b' || *copy != 'd') { return 1; }
-    if (backwards - text.crend() != std::ptrdiff_t(2)) { return 2; }
+    if (backwards - text.crend() != std::ptrdiff_t(-2)) { return 2; }
   }
 
   // An exclusive subview grants writable characters, not permission to grow
@@ -59,6 +59,8 @@ int main() {
     if ((*backwards).second() != "gamma") { return 7; }
     ++backwards;
     if ((*backwards).first() != 20 || (*backwards).second() != "beta") { return 8; }
+    auto selected = backwards[std::ptrdiff_t(1)];
+    if (selected.first() != 10 || selected.second() != "alpha") { return 11; }
   }
 
   std::process_resource process{};

@@ -556,6 +556,12 @@ enum class MirInstructionKind {
   // enclosing representation stays live but disarmed/empty, including on
   // failure. RHS ownership is untouched until the success-path Assign.
   CleanupBeforeAssign,
+  // Compile-time-only permission transitions for the exact read-only endpoint
+  // of a structural mutable range. They do not start/end a lifetime or release
+  // resources. Verification binds them to the range inventory and both Invoke
+  // continuations before a backend may erase them.
+  ParkRangeCursor,
+  RestoreRangeCursor,
   Count,
 };
 
@@ -960,6 +966,20 @@ struct MirValueUse {
   friend bool operator==(const MirValueUse &, const MirValueUse &) = default;
 };
 
+struct MirRangeEndpointParking {
+  MirLoanId cursor = 0;
+  HirValueId endValue = 0;
+  MirInstructionId beginCall = 0;
+  MirInstructionId endCall = 0;
+  MirInstructionId endReceiver = 0;
+  MirInstructionId park = 0;
+  MirInstructionId restore = 0;
+  std::vector<MirInstructionId> failureRestores;
+
+  friend bool operator==(const MirRangeEndpointParking &,
+                         const MirRangeEndpointParking &) = default;
+};
+
 struct MirRangeIteration {
   std::size_t id = 0;
   HirStatementId hirStatement = 0;
@@ -988,6 +1008,7 @@ struct MirRangeIteration {
   std::uint64_t arrayLength = 0;
   bool ownsRangeTemporary = false;
   bool expectedPayloadProjection = false;
+  std::optional<MirRangeEndpointParking> endpointParking;
 
   friend bool operator==(const MirRangeIteration &,
                          const MirRangeIteration &) = default;

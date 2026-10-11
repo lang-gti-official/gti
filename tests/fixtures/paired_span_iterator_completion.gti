@@ -53,7 +53,7 @@ int main() {
   --first;
   if ((*first).first() != 20 || (*first).second() != "two" || (*copy).first() != 10) { return 4; }
   first -= std::ptrdiff_t(1);
-  if (first - pairs.end() != std::ptrdiff_t(2)) { return 5; }
+  if (first - pairs.end() != std::ptrdiff_t(-2)) { return 5; }
   auto tail = pairs.subspan(std::size_t(1), std::size_t(1));
   mut auto last = tail.end_iterator();
   --last;
@@ -62,7 +62,7 @@ int main() {
   require_pair_proxy(pairs.rbegin());
   mut auto reverse = pairs.crbegin();
   auto reverse_copy = reverse;
-  if ((*reverse).first() != 20 || (*reverse).second() != "two" || reverse - pairs.crend() != std::ptrdiff_t(2)) { return 10; }
+  if ((*reverse).first() != 20 || (*reverse).second() != "two" || reverse - pairs.crend() != std::ptrdiff_t(-2)) { return 10; }
   if (reverse->first() != 20 || reverse->second() != "two") { return 15; }
   ++reverse;
   if ((*reverse).first() != 10 || (*reverse_copy).first() != 20) { return 11; }

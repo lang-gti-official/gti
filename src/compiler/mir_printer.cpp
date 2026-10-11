@@ -270,7 +270,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v98 valid=" << program.valid() << '\n';
+    output << "mir-v99 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -787,7 +787,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v81\n";
+    output << "mir-body-v82\n";
     body(value, 0);
   }
 
@@ -1837,7 +1837,25 @@ private:
              << item.exitBlock << " extent=" << item.arrayLength
              << " owns-temporary=" << item.ownsRangeTemporary
              << " expected-payload-projection="
-             << item.expectedPayloadProjection << '\n';
+             << item.expectedPayloadProjection;
+      if (item.endpointParking) {
+        const auto &parking = *item.endpointParking;
+        output << " endpoint-parking=loan" << parking.cursor
+               << " end-hir=" << parking.endValue
+               << " begin-inst=" << parking.beginCall
+               << " end-inst=" << parking.endCall
+               << " receiver-inst=" << parking.endReceiver
+               << " park-inst=" << parking.park
+               << " restore-inst=" << parking.restore << " failure-restores=[";
+        for (std::size_t index = 0; index < parking.failureRestores.size();
+             ++index) {
+          if (index != 0)
+            output << ',';
+          output << parking.failureRestores[index];
+        }
+        output << ']';
+      }
+      output << '\n';
     }
     output << " values " << value.values.size() << '\n';
     for (const MirValue &item : value.values) {

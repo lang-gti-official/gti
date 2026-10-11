@@ -29,6 +29,14 @@ another owner loan. Queue adapters and ownership/result/guard objects are not
 automatically ranges. Fallible directory streams retain their explicit
 recoverable `next()` contract; they must not silently become infallible cursors.
 
+This campaign explicitly supersedes the early positive-remaining-distance
+meaning of `iterator - sentinel`. Subtraction uses conventional signed
+left-minus-right coordinates, including reverse traversal. `distance` retains
+its counted forward meaning. Source-defined checked arithmetic subtracts
+unsigned coordinates before conversion, accepts the minimum signed result,
+and rejects an unrepresentable difference before native conversion. Large
+absolute positions do not make a small representable difference invalid.
+
 Delivery requires positive category/algorithm composition checks, independent
 shared-cursor copies, noncopyable exclusive cursors, owner invalidation/escape
 rejections, empty/exhausted and signed-offset failures, deterministic cleanup,
@@ -38,10 +46,18 @@ C++20/C++23 optimization and sanitizer matrices, and zero-allocation traversal
 controls. Runnable examples, corpus/census registration and the reviewed stdlib
 surface manifest accompany the completed implementation.
 
-Current source checkpoints cover the listed nominal container families;
-string-view iteration, associative whole-entry key integrity, and remaining
-paired/resource lifetime-lowering failures are still prerequisites. Partial
-focused passes do not establish campaign completion or shipped support.
+Current source checkpoints cover the listed nominal container families.
+Shared/exclusive contiguous traversal, sparse/lane traversal, paired proxy
+traversal and unrelated two-owner inline proxies have focused native/sanitizer
+evidence. Associative mutation now uses source-defined mapped-value projections
+instead of replaceable entries, with key/owner/access bypass negatives.
+Remaining prerequisites are native cleanup-bearing exclusive proxy endpoint
+publication and the general value-yielding readable-iterator profile required
+by counted text views. Text views must read through their existing checked byte
+operation, not reinterpret native `char` storage as GTI-character references.
+Final cross-phase/corpus/census, whole container matrices and integration remain
+required. Partial focused passes do not establish campaign completion or
+shipped support.
 
 The prerequisite order for the remaining dynamic-view and foundational
 range-algorithm work is maintained in

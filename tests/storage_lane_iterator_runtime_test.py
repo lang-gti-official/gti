@@ -4,9 +4,11 @@
 import os
 import pathlib
 import re
+import statistics
 import subprocess
 import sys
 import tempfile
+import time
 
 
 def run(command, *, timeout=180):
@@ -66,9 +68,45 @@ def reject_invalid(compiler, root):
     print(f"storage/lane iteration: {len(cases)} invalid owner/access cases rejected", flush=True)
 
 
+def measure_traversal(compiler, fixtures, root):
+    binary = root / "storage-lane-cost"
+    started = time.monotonic()
+    built = run([str(compiler), str(fixtures / "storage_lane_iterator_cost.gti"),
+                 "--std", "c++23", "-O3", "--keep-cpp", "-o", str(binary), "--",
+                 str(fixtures / "stdlib_adoption_allocation_counts.cpp"),
+                 str(fixtures / "storage_lane_iterator_cost.cpp")])
+    assert built.returncode == 0, (built.stdout, built.stderr)
+    build_seconds = time.monotonic() - started
+    completed = run([str(binary)], timeout=30)
+    assert completed.returncode == 0 and completed.stderr == "", completed
+    observations = {(family, length): [] for family, lengths in
+                    ((1, (128, 256)), (2, (128, 256)), (3, (8, 16))) for length in lengths}
+    lines = completed.stdout.splitlines()
+    assert len(lines) == 30, completed.stdout
+    for line in lines:
+        family, length, nanoseconds, allocations, checksum = map(int, line.split())
+        assert (family, length) in observations and nanoseconds > 0 and allocations == 0, line
+        expected = (4 * (length // 4) * (length // 4 - 1) * 20000 if family == 1
+                    else length * (length - 1) * 20000 if family == 2
+                    else 2 * length * 20000)
+        assert checksum == expected, line
+        observations[(family, length)].append(nanoseconds)
+    assert all(len(samples) == 5 for samples in observations.values()), observations
+    for family, lengths, label in ((1, (128, 256), "sparse slots"),
+                                   (2, (128, 256), "arena prefix"),
+                                   (3, (8, 16), "SIMD lanes")):
+        small = statistics.median(observations[(family, lengths[0])])
+        large = statistics.median(observations[(family, lengths[1])])
+        print(f"{label}: {lengths[0]}={small}ns, {lengths[1]}={large}ns, "
+              f"ratio={large / small:.3f}; 0 traversal allocations", flush=True)
+    print(f"storage/lane cost: binary={binary.stat().st_size} bytes, "
+          f"C++={binary.with_suffix('.gti.cpp').stat().st_size} bytes, "
+          f"build={build_seconds:.3f}s; bounded observations, no speedup claim", flush=True)
+
+
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: storage_lane_iterator_runtime_test.py <optimized-gti>")
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--cost-only"):
+        raise SystemExit("usage: storage_lane_iterator_runtime_test.py <optimized-gti> [--cost-only]")
     repository = pathlib.Path(__file__).resolve().parent.parent
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     compiler = pathlib.Path(sys.argv[1]).resolve()
@@ -77,9 +115,12 @@ def main():
              for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
     modes.append(("sanitized", ["--std", "c++23", "-O1", "--",
                                 "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    if len(sys.argv) == 3:
+        modes = []
     with tempfile.TemporaryDirectory(prefix="gti-storage-lane-iteration-") as directory:
         root = pathlib.Path(directory)
-        reject_invalid(compiler, root)
+        if len(sys.argv) == 2:
+            reject_invalid(compiler, root)
         for name, flags in modes:
             for fixture in ("storage_lane_iterator_completion", "storage_lane_iterator_failure"):
                 binary = root / f"{fixture}-{name}"
@@ -98,6 +139,7 @@ def main():
                         assert re.search(rf"runtime error\[{code}\]:", failed.stderr), (name, argc, failed.stderr)
                         assert "AddressSanitizer" not in failed.stderr and "UndefinedBehaviorSanitizer" not in failed.stderr, failed.stderr
                 print(f"{fixture}: {name} passed", flush=True)
+        measure_traversal(compiler, fixtures, root)
 
 
 if __name__ == "__main__":

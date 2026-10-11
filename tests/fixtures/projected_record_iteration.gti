@@ -1,0 +1,35 @@
+// This projection rule is an ordinary library API, not dictionary-name magic.
+struct Record {
+  int identity;
+  mut int payload;
+  Record(int identity, int payload) : identity(identity), payload(payload) {}
+};
+
+class RecordProjection {
+  mut Record& owner;
+public:
+  RecordProjection(mut Record& owner) : owner(owner) {}
+  int& key() { return this.owner.identity; }
+  mut int& mapped() mut { return this.owner.payload; }
+};
+
+class RecordCursor {
+  mut RecordProjection projection;
+public:
+  RecordCursor(mut Record& owner) : projection(RecordProjection(owner)) {}
+  mut RecordProjection& operator*() mut { return this.projection; }
+  mut RecordProjection& operator->() mut { return *this; }
+};
+
+int main() {
+  mut Record original{1,10};
+  {
+    mut RecordCursor cursor{original};
+    cursor->mapped() = 20;
+    if (cursor->key() != 1 || (*cursor).mapped() != 20) { return 1; }
+  }
+  // Immutable fields do not ban whole-object assignment of ordinary owners.
+  original = Record(2,30);
+  if (original.identity != 2 || original.payload != 30) { return 2; }
+  return 0;
+}

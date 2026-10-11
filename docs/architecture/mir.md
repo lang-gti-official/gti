@@ -255,7 +255,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v98`/`mir-body-v81`,
+The combined deterministic serialization is currently `mir-v99`/`mir-body-v82`,
 with `lowered-program-v17` declaration metadata. It retains exact concrete
 integral and payload enum identities, including their type/value arguments,
 alternative fields and lifecycle facts. Version 95 also records
@@ -2786,14 +2786,38 @@ loan, child element loan, condition/body/increment/cleanup blocks, and
 owned-temporary drop. A fixed-array plan ties its dynamic index place to that
 inventory rather than claiming general indexed-place disjointness. A
 structural mutable plan carries the exclusive parent through the
-compiler-generated iterator returned by `begin_mut()`; mutable dereference
-creates only the named child. Lowering ends descendants child-first before
+source iterator returned by `begin_mut()`. An inline reference proxy keeps
+three distinct identities: traversal authority, the producer-owned stored
+cursor dependency, and the dereference call-result loan protecting cursor
+storage. A projected accessor retains that actual returned address, not a
+field appended to the coarse range owner. Nested shared loops cannot reattach
+physical cursor/element bindings to a reused semantic owner loan. External
+stored-reference-field dereferences remain a separate ordinary projection
+shape; borrowed element type alone does not select the inline-proxy profile.
+Lowering ends descendants child-first before
 increment and on `continue`, `break`, `return`, normal cleanup, and failure
 cleanup. An escaping owned temporary is impossible because its drop follows
 the final parent loan on every path. Every owned temporary with lexical drop
 names its exact obligation, whose cleanup type is the owner's type; that
 includes passive cleanup, where the class has no source destructor and no
 field needing cleanup.
+
+For a fresh hidden exclusive cursor, a zero-argument read-only endpoint may
+need the range shell while the cursor retains its exclusive child dependency.
+Semantics/HIR explicitly prove that the selected endpoint returns a value with
+no reference or stored borrow. `MirRangeEndpointParking` then binds the exact
+begin call, endpoint receiver stage/call, cursor, source range, and
+`ParkRangeCursor`/`RestoreRangeCursor` instruction identities. Parking suspends
+permission, not lifetime: the cursor and its retained dependencies cannot be
+used, transferred or retired. The only permitted intervening instructions are
+that exact read-borrow receiver stage and static endpoint call. Restore is
+immediate after a nonfailing call or first on both Invoke continuations, before
+sentinel publication or failure cleanup. The prior loan states are restored
+before a cursor destructor can access its owner. Arbitrary control-flow edges,
+extra operations, borrowing sentinels, forged origins and missing restores
+fail closed. Ordinary independently written endpoint calls gain no such
+permission. These instructions are loan-schedule optimizer barriers with no
+runtime state; backends only erase their verified neutral representation.
 
 The M-OWN-04 read-only plan additionally names one
 `expectedPayloadExtraction`. Verification requires an exact `ExpectedValue`

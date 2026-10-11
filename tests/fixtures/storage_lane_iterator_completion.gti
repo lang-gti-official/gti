@@ -97,10 +97,13 @@ int prefix_arena() {
   {
     require_random(values.begin());
     mut auto back = values.end_iterator();
+    auto first = values.begin();
+    if (back - first != std::ptrdiff_t(3) || first - back != std::ptrdiff_t(-3)) { return 29; }
     --back;
     if (*back != 30 || back[std::ptrdiff_t(-2)] != 10) { return 22; }
     back -= std::ptrdiff_t(2);
-    if (*back != 10 || back - values.end() != std::ptrdiff_t(3)) { return 23; }
+    if (*back != 10 || back - values.end() != std::ptrdiff_t(-3) ||
+        std::distance(values.begin(), values.end()) != std::ptrdiff_t(3)) { return 23; }
   }
   for (mut int& value : values) { value *= 2; }
   {
@@ -114,10 +117,12 @@ int prefix_arena() {
   {
     require_random(values.rbegin());
     mut auto reverse = values.crbegin();
+    auto beginning = reverse;
     if (*reverse != 61 || reverse[std::ptrdiff_t(1)] != 41 ||
-        reverse - values.rend() != std::ptrdiff_t(3)) { return 26; }
+        reverse - values.rend() != std::ptrdiff_t(-3)) { return 26; }
     reverse += std::ptrdiff_t(2);
-    if (*reverse != 20) { return 27; }
+    if (*reverse != 20 || reverse - beginning != std::ptrdiff_t(2) ||
+        beginning - reverse != std::ptrdiff_t(-2)) { return 27; }
     mut auto write = values.rbegin_mut();
     write[std::ptrdiff_t(1)] = 42;
     *write = 62;
@@ -196,10 +201,13 @@ int lanes() {
   {
     require_random(values.begin());
     mut auto end = values.end_iterator();
+    auto first = values.begin();
+    if (end - first != std::ptrdiff_t(4) || first - end != std::ptrdiff_t(-4)) { return 63; }
     --end;
     if (*end != 2.0 || end[std::ptrdiff_t(-3)] != 2.0) { return 50; }
     end -= std::ptrdiff_t(3);
-    if (end - values.cend() != std::ptrdiff_t(4)) { return 51; }
+    if (end - values.cend() != std::ptrdiff_t(-4) ||
+        std::distance(values.begin(), values.end()) != std::ptrdiff_t(4)) { return 51; }
   }
   for (mut float& value : values) { value += 1.0; }
   {
@@ -212,10 +220,12 @@ int lanes() {
   {
     require_random(values.rbegin());
     mut auto reverse = values.crbegin();
+    auto beginning = reverse;
     if (*reverse != 4.0 || reverse[std::ptrdiff_t(2)] != 5.0 ||
-        reverse - values.rend() != std::ptrdiff_t(4)) { return 56; }
+        reverse - values.rend() != std::ptrdiff_t(-4)) { return 56; }
     reverse += std::ptrdiff_t(4);
-    if (reverse != values.crend()) { return 57; }
+    if (reverse != values.crend() || reverse - beginning != std::ptrdiff_t(4) ||
+        beginning - reverse != std::ptrdiff_t(-4)) { return 57; }
     --reverse;
     if (*reverse != 3.0) { return 58; }
   }
@@ -241,8 +251,11 @@ int lanes() {
   {
     require_random(mask.rbegin());
     mut auto reverse = mask.rbegin();
+    auto beginning = reverse;
+    if (reverse - mask.rend() != std::ptrdiff_t(-4)) { return 64; }
     reverse += std::ptrdiff_t(4);
-    if (reverse != mask.rend()) { return 60; }
+    if (reverse != mask.rend() || reverse - beginning != std::ptrdiff_t(4) ||
+        beginning - reverse != std::ptrdiff_t(-4)) { return 60; }
     --reverse;
     if (!*reverse) { return 61; }
   }

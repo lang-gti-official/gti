@@ -3205,6 +3205,7 @@ private:
         range.arrayLength = resolved->arrayLength;
         range.ownsRangeTemporary = resolved->ownsRangeTemporary;
         range.expectedPayloadProjection = resolved->expectedPayloadProjection;
+        range.nonBorrowingEndpoint = resolved->nonBorrowingEndpoint;
       }
       range.owner = bindingFor(rangeFor->ownerBinding());
       range.rangeCarrier = bindingFor(rangeFor->rangeBinding());
@@ -4987,6 +4988,7 @@ private:
         // its type-name expression would create an untyped, semantically
         // unrecorded HIR operand beside the exact constructor target.
         if (construction == nullptr &&
+            (resolved == nullptr || resolved->argumentReceiver == nullptr) &&
             model.findExpression(*call->callee()) != nullptr) {
           lowerOperand(call->callee());
         }
@@ -5006,8 +5008,11 @@ private:
           receiver = lowerImplicitReceiver(body);
         }
       }
-      for (const ExprPtr &argument : call->arguments()) {
-        lowerOperand(argument);
+      if (!validResolvedCallArguments(*call, resolved))
+        lifecycleValid = false;
+      for (std::size_t index = 0;
+           index < resolvedCallArgumentCount(*call, resolved); ++index) {
+        lowerOperand(*resolvedCallArgument(*call, resolved, index));
       }
     } else if (const auto *conditional = exprAs<ConditionalExpr>(raw)) {
       kind = HirValueKind::Conditional;
@@ -5376,6 +5381,8 @@ private:
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && exprAs<Get>(call->callee().get()) != nullptr &&
         model.typeOf(*call->callee()).kind != SemanticType::FunctionItem &&
+        (model.findCall(*call) == nullptr ||
+         model.findCall(*call)->argumentReceiver == nullptr) &&
         !value.operands.empty()) {
       const HirValue *callee = body.findValue(value.operands.front());
       if (callee != nullptr && callee->kind == HirValueKind::MemberAccess &&
@@ -5969,7 +5976,8 @@ private:
         (model.findOperator(*call) == nullptr ||
          model.findOperator(*call)->kind == OverloadedOperator::Call) &&
         model.findLambdaCall(*call) == nullptr &&
-        value.parameterTypes.size() >= call->arguments().size() &&
+        value.parameterTypes.size() >=
+            resolvedCallArgumentCount(*call, model.findCall(*call)) &&
         value.parameterTypes.size() <= value.operands.size()) {
       const std::size_t argumentCount = value.parameterTypes.size();
       const bool exactOperands = argumentCount <= value.operands.size();
@@ -5985,10 +5993,11 @@ private:
                               : std::span<const std::size_t>{
                                     resolved->ephemeralBorrowArguments};
       const std::optional<std::vector<HirCallArgument>> plannedArguments =
-          exactOperands ? orderedArguments(arguments, value.parameterTypes,
-                                           body, call->arguments().size(),
-                                           ephemeralBorrowArguments)
-                        : std::nullopt;
+          exactOperands
+              ? orderedArguments(arguments, value.parameterTypes, body,
+                                 resolvedCallArgumentCount(*call, resolved),
+                                 ephemeralBorrowArguments)
+              : std::nullopt;
       const ResolvedOperatorInfo *resolvedOperator = model.findOperator(*call);
       const FunctionInfo *resolvedTarget =
           resolved == nullptr || resolved->function == 0

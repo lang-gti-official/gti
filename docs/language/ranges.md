@@ -24,17 +24,16 @@ movement and destruction cannot invalidate a live view.
 
 `begin_mut()` supports mutable range-for; `begin()`/`end()` support read-only
 iteration. A retained iterator protects both the physical carrier and its
-stored owner dependency. No public type name grants borrowing permission;
-ordinary user-defined single-owner carriers follow the same rules.
+stored owner dependencies. No public type name grants borrowing permission;
+ordinary user-defined carriers follow the same rules.
 
 See [composable I/O](io.md#composable-buffered-io) for `std::byte_buffer` and
 byte-slice transports.
 
 ## Range protocol
 
-Status: current through the bounded L-RANGE-03 single-owner view release,
-M-OWN-04 named Expected-payload range loans, and the L-RANGE-04
-iterator/sentinel plus complete-range algorithm cluster
+The iterator/sentinel and complete-range contracts below describe GTI's own
+checked traversal model, not native C++ iterator requirements.
 
 GTI range iteration is structural. The compiler does not recognize
 `std::range`, `std::array`, `std::vector`, or any other public library name.
@@ -42,10 +41,10 @@ The implemented range-loan layer supports two compiler-verified strategies:
 direct indexed traversal of a fixed array and the exact member protocol below
 for a nominal class. Both strategies support read-only iteration and bounded
 mutable element iteration.
-Iterators and sentinels may be self-contained values, or an imported
-standard-library iterator may use the confined one-owner contract to retain a
-read-only checked storage borrow or the compiler-generated mutable range
-capability.
+Iterators and sentinels may be self-contained values or source-defined checked
+carriers. A cursor can retain shared or exclusive references and nested owner
+dependencies through the ordinary stored-reference rules. The physical cursor
+and range shells remain distinct from the external storage they protect.
 
 ```gti
 for (T value : range) {
@@ -278,7 +277,7 @@ under the iterator concepts. Iterator-pair APIs remain available when a client
 already owns non-overlapping endpoints; forming `begin_mut()` and `end()`
 independently from one owner is still rejected because their loans overlap.
 
-## Single-owner spans and text views
+## Spans and text views
 
 `std::span<T>` is an ordinary source-defined, read-only range over one checked
 source prefix owner. `std::vector<T>::as_span()` and
@@ -301,9 +300,11 @@ which the owner may be mutated, moved, or dropped. While it is live, every
 overlapping owner mutation or movement is rejected. Empty dynamic views follow
 the same rules and carry a zero length without requiring an element address.
 
-The bounded release deliberately excludes mutable views, multiple owners,
-nested borrowed-state storage, reassignment, and field/global/static storage.
-A dynamic text view cannot be formed from temporary storage or escape a local
+Dynamic text-view values deliberately exclude reassignment and
+field/global/static storage. This is a restriction of the counted builtin
+value's tracked dynamic origin, not a ban on source-defined mutable spans,
+multi-owner carriers, or nested stored references. A dynamic text view cannot
+be formed from temporary storage or escape a local
 owner. A `std::string_view` parameter is conservatively treated as potentially
 dynamic inside the callee; it may be inspected or returned through one exact
 read-only parameter summary, but it cannot be retained in another storage
@@ -334,7 +335,12 @@ public library name:
   write contract that keeps one exclusive cursor over a whole range;
 - `std::sized_sentinel_for<S, I>` composes `sentinel_for` with read-only
   `std::ptrdiff_t I::operator-(S&)` or `std::ptrdiff_t I::operator-(S)` with
-  copyable `S`, the signed distance from the iterator to the sentinel.
+  copyable `S`. Subtraction follows conventional left-minus-right traversal
+  coordinates: a forward iterator before its end has a negative difference;
+  reverse coordinates count in the reverse direction. `std::distance(first,
+  last)` separately counts forward increments and remains positive for a
+  reachable later sentinel. A difference outside `ptrdiff_t` raises defined
+  invalid-container-argument failure rather than narrowing or overflowing.
 
 `<std/numeric>` additionally defines `std::accumulates_into<I, T>`, whose first
 version proves that read-only dereferencing `I` returns a checked reference to
@@ -430,11 +436,11 @@ MIR control flow, and replaceable-backend call targets. It is enough for
 self-contained iterators and sentinels, including generic virtual operator
 contracts.
 
-Source-defined container iterators may retain one read-only or mutable owner
-reference through GTI's confined stored-reference class contract. Constructor
+Source-defined container iterators retain read-only or mutable owner
+references through GTI's stored-reference class contract. Constructor
 and method results carry the owner dependency through semantics, HIR, and MIR.
 A free function or static factory may now return a cursor or view derived from
-one eligible read-only parameter. The single dependency survives ordinary calls,
+one eligible read-only parameter. The dependencies survive ordinary calls,
 concrete generic carrier relays, explicit moves, returns, and drops. An
 iterator explicitly created before an ordinary source `while`, body-first
 `do`/`while`, or classic `for` stays active across backedges and ends at the

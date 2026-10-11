@@ -86,6 +86,8 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
                     .mayTrap = true,
                     .dropsValue = true,
                     .invokesUserCode = true}, // CleanupBeforeAssign.
+    MirEffectTraits{.dependsOnLoan = true},   // ParkRangeCursor.
+    MirEffectTraits{.dependsOnLoan = true},   // RestoreRangeCursor.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -466,6 +468,8 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "allocate-object",
     "initialize-base",
     "cleanup-before-assign",
+    "park-range-cursor",
+    "restore-range-cursor",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({

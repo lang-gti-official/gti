@@ -1864,6 +1864,46 @@ moduleDataOnlyInitialization(const MirProgram &program,
              : nullptr;
 }
 
+// Verification owns the endpoint interval and its loan-flow transitions. The
+// backend erases only its exact neutral records, each claimed by one range
+// inventory; an unclaimed marker or additional executable metadata fails
+// closed rather than being treated as a generic no-op.
+[[nodiscard]] bool exactRangeEndpointMarker(const MirBody &body,
+                                            const MirInstruction &instruction) {
+  if ((instruction.kind != MirInstructionKind::ParkRangeCursor &&
+       instruction.kind != MirInstructionKind::RestoreRangeCursor) ||
+      !instruction.loan || !body.findLoan(*instruction.loan))
+    return false;
+  std::size_t claims = 0;
+  for (const auto &range : body.rangeIterations) {
+    if (!range.endpointParking)
+      continue;
+    const auto &parking = *range.endpointParking;
+    const auto selected =
+        instruction.kind == MirInstructionKind::ParkRangeCursor
+            ? static_cast<std::size_t>(parking.park == instruction.id)
+            : static_cast<std::size_t>(parking.restore == instruction.id) +
+                  static_cast<std::size_t>(std::count(
+                      parking.failureRestores.begin(),
+                      parking.failureRestores.end(), instruction.id));
+    if (!selected)
+      continue;
+    const MirInstruction canonical{.id = instruction.id,
+                                   .kind = instruction.kind,
+                                   .hirValue = parking.endValue,
+                                   .hirStatement = range.hirStatement,
+                                   .loan = parking.cursor};
+    if (selected != 1 || instruction != canonical || parking.cursor == 0 ||
+        parking.endValue == 0 || range.hirStatement == 0 ||
+        body.findLoan(parking.cursor)->kind != MirLoanKind::Stored ||
+        body.findLoan(parking.cursor)->entry ||
+        body.findLoan(parking.cursor)->access != AccessMode::Mutable)
+      return false;
+    ++claims;
+  }
+  return claims == 1;
+}
+
 [[nodiscard]] const MirInstruction *findInstruction(const MirBody &body,
                                                     MirInstructionId id) {
   if (id == 0) {
@@ -2420,9 +2460,9 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
 // the physical formal shell and that shell's external dependency. Publishing
 // the reference field binds the same native parameter; it does not copy the
 // external referent or grant the field ownership of the formal's lifetime.
-[[nodiscard]] bool
-sharedPhysicalParameterLoan(const MirBody &body, const MirLoan &shell,
-                            const MirPlace &source) {
+[[nodiscard]] bool sharedPhysicalParameterLoan(const MirBody &body,
+                                               const MirLoan &shell,
+                                               const MirPlace &source) {
   if (source.root != MirPlaceRootKind::Binding || source.binding == 0 ||
       !source.projections.empty() ||
       source.type.kind != SemanticType::Reference ||
@@ -3951,8 +3991,121 @@ constructorFieldMoveInitialize(const MirBody &body, MirValueId id) {
 // exact entry-block Move/Initialize pair so body emission can erase those two
 // records only when no user instruction can observe a different order. The
 // first pair is independently safe. A later pair requires either the exact
-// passive scalar prefix proved below or an all-owned initializer list, with
+// passive scalar prefix proved below or an owned/scalar initializer list, with
 // its complete prologue checked by cppMirOwnedParameterFieldBindings().
+[[nodiscard]] bool passiveParameterFieldType(const MirProgram &program,
+                                             const SemanticType &type) {
+  const auto kind = cppMirExpectedTypeRepresentation(type);
+  return kind && (*kind == CppMirTypeRepresentationKind::Scalar ||
+                  (*kind == CppMirTypeRepresentationKind::Enum &&
+                   program.findPayloadEnum(type) == nullptr));
+}
+
+// A scalar sibling remains in the executable MIR body. This witness only
+// proves its exact, effect-free source-parameter Load/publication/boundary
+// triple beside native moved-field initializers; it never invents a C++ field
+// initializer or pulls a computed argument ahead of another operation.
+[[nodiscard]] std::optional<CppMirCopyParameterFieldBinding>
+passiveParameterFieldSibling(const MirProgram &program,
+                             const MirConstructorInstance &constructor,
+                             std::size_t initializerIndex) {
+  const auto &body = constructor.body;
+  const auto *owner = program.findClassInstance(constructor.owner);
+  const auto *entry = body.findBlock(body.entry);
+  if (!owner || !entry || initializerIndex >= constructor.initializers.size() ||
+      initializerIndex >= owner->declaredFields.size())
+    return std::nullopt;
+  const auto &initializer = constructor.initializers[initializerIndex];
+  const auto &field = owner->declaredFields[initializerIndex];
+  if (initializer.kind != ConstructorInitializerTargetKind::Field ||
+      initializer.ownedParameter || initializer.storesReference ||
+      initializer.generatedDefault || initializer.arguments.size() != 1 ||
+      initializer.arguments.front() == 0 || initializer.field != field.symbol ||
+      initializer.targetType != field.type ||
+      field.dropKind != DropKind::Trivial || field.requiresActiveCleanup ||
+      !passiveParameterFieldType(program, field.type))
+    return std::nullopt;
+  std::optional<CppMirCopyParameterFieldBinding> selected;
+  for (std::size_t index = 0; index + 2 < entry->instructions.size(); ++index) {
+    const auto &load = entry->instructions[index];
+    if (load.hirValue != initializer.arguments.front() || !load.result)
+      continue;
+    const auto &initialize = entry->instructions[index + 1];
+    const auto &boundary = entry->instructions[index + 2];
+    const auto *source = load.operands.size() == 1
+                             ? body.findPlace(load.operands.front().place)
+                             : nullptr;
+    const auto *destination = initialize.destination
+                                  ? body.findPlace(*initialize.destination)
+                                  : nullptr;
+    const auto *value = body.findValue(*load.result);
+    const auto expression =
+        std::find_if(body.fullExpressions.begin(), body.fullExpressions.end(),
+                     [&](const auto &candidate) {
+                       return candidate.id == boundary.fullExpressionEnd;
+                     });
+    if (selected || load.kind != MirInstructionKind::Load || load.destination ||
+        load.receiver || load.operands.size() != 1 ||
+        load.operands.front().kind != MirOperandKind::Copy ||
+        load.operands.front().type != field.type ||
+        load.info.type != field.type ||
+        load.info.traits.drop != DropKind::Trivial ||
+        load.info.traits.containsBorrowedState || !load.lifecycle.empty() ||
+        !load.localFailureSites.empty() || !load.definedFailure.empty() ||
+        !source || source->root != MirPlaceRootKind::Binding ||
+        !source->projections.empty() || !source->initiallyAvailable ||
+        source->type != field.type || !value || value->definition != load.id ||
+        value->definitionBlock != entry->id ||
+        value->sourceValue != load.hirValue || value->info != load.info ||
+        initialize.kind != MirInstructionKind::Initialize ||
+        initialize.result || initialize.receiver ||
+        initialize.hirValue != load.hirValue ||
+        initialize.constructorInitializer != initializerIndex + 1 ||
+        initialize.operands.size() != 1 ||
+        initialize.operands.front().kind != MirOperandKind::Value ||
+        initialize.operands.front().value != *load.result ||
+        initialize.operands.front().type != field.type ||
+        initialize.info.type != field.type || !initialize.lifecycle.empty() ||
+        !initialize.localFailureSites.empty() ||
+        !initialize.definedFailure.empty() || !destination ||
+        destination->root != MirPlaceRootKind::This ||
+        destination->projections.size() != 1 ||
+        destination->projections.front().kind != MirProjectionKind::Field ||
+        destination->projections.front().field != field.symbol ||
+        destination->type != field.type || destination->initiallyAvailable ||
+        boundary.kind != MirInstructionKind::Lifecycle || boundary.result ||
+        boundary.destination || boundary.receiver ||
+        !boundary.operands.empty() || !boundary.lifecycle.empty() ||
+        !boundary.localFailureSites.empty() ||
+        !boundary.definedFailure.empty() || boundary.fullExpressionEnd == 0 ||
+        boundary.cleanupBoundaryEnd != 0 ||
+        expression == body.fullExpressions.end() ||
+        expression->constructorInitializer != initializerIndex + 1 ||
+        expression->roots != initializer.arguments ||
+        nonRootRecordUses(body, *load.result).size() != 1)
+      return std::nullopt;
+    const auto parameter =
+        std::find(constructor.parameterBindings.begin(),
+                  constructor.parameterBindings.end(), source->binding);
+    const auto parameterIndex = static_cast<std::size_t>(
+        parameter - constructor.parameterBindings.begin());
+    if (parameter == constructor.parameterBindings.end() ||
+        parameterIndex >= constructor.parameterTypes.size() ||
+        constructor.parameterTypes[parameterIndex] != field.type)
+      return std::nullopt;
+    selected =
+        CppMirCopyParameterFieldBinding{.initializer = initializerIndex,
+                                        .field = field.symbol,
+                                        .parameter = parameterIndex,
+                                        .sourcePlace = source->id,
+                                        .loadedValue = *load.result,
+                                        .loadInstruction = load.id,
+                                        .initializeInstruction = initialize.id,
+                                        .boundaryInstruction = boundary.id};
+  }
+  return selected;
+}
+
 [[nodiscard]] const MirConstructorInitializer *
 ownedParameterFieldInitializer(const MirProgram &program, const MirBody &body,
                                HirConstructorInstanceId constructorId,
@@ -4176,14 +4329,18 @@ ownedParameterFieldInitializer(const MirProgram &program, const MirBody &body,
   };
   if (referencePrefix())
     return matched;
-  // Multiple owned initializers receive a complete ordered-prefix proof in
+  // Owned/scalar initializers receive a complete ordered-prefix proof in
   // cppMirOwnedParameterFieldBindings. A singleton has no such later proof:
   // its prefix must already be one of the exact effect-free forms above.
   return constructor->initializers.size() > 1 &&
                  std::all_of(constructor->initializers.begin(),
                              constructor->initializers.end(),
-                             [](const MirConstructorInitializer &initializer) {
-                               return initializer.ownedParameter.has_value();
+                             [&](const MirConstructorInitializer &initializer) {
+                               return initializer.ownedParameter.has_value() ||
+                                      (!initializer.storesReference &&
+                                       !initializer.generatedDefault &&
+                                       passiveParameterFieldType(
+                                           program, initializer.targetType));
                              })
              ? matched
              : nullptr;
@@ -14305,14 +14462,24 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
       binding.initializer >= owner.declaredFields.size() ||
       !owner.bases.empty() || !owner.structuralBases.empty())
     return false;
+  std::size_t offset = 0;
   for (std::size_t index = 0; index <= binding.initializer; ++index) {
     const auto move =
         std::find_if(moves->begin(), moves->end(), [&](const auto &candidate) {
           return candidate.initializer == index;
         });
-    const auto offset = index * 5;
-    if (move == moves->end() ||
-        move->field != owner.declaredFields[index].symbol || move->fieldDrop ||
+    if (move == moves->end()) {
+      const auto scalar =
+          passiveParameterFieldSibling(program, constructor, index);
+      if (!scalar || entry->instructions.size() < offset + 3 ||
+          entry->instructions[offset].id != scalar->loadInstruction ||
+          entry->instructions[offset + 1].id != scalar->initializeInstruction ||
+          entry->instructions[offset + 2].id != scalar->boundaryInstruction)
+        return false;
+      offset += 3;
+      continue;
+    }
+    if (move->field != owner.declaredFields[index].symbol || move->fieldDrop ||
         move->valueDrop || move->fieldTransferInstruction ||
         !failureConstructorPassiveBoundField(
             program, owner.declaredFields[index], true) ||
@@ -14346,6 +14513,7 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
         expression->constructorInitializer != index + 1 ||
         expression->roots != constructor.initializers[index].arguments)
       return false;
+    offset += 5;
   }
   return true;
 }
@@ -24541,6 +24709,8 @@ private:
     case MirInstructionKind::CleanupBeforeAssign:
     case MirInstructionKind::ActivateBorrow:
     case MirInstructionKind::EndBorrow:
+    case MirInstructionKind::ParkRangeCursor:
+    case MirInstructionKind::RestoreRangeCursor:
     case MirInstructionKind::Lifecycle:
       if (instruction.info.type != SemanticType::Unknown) {
         requireType(instruction.info.type, block.id, instruction.id);
@@ -24857,7 +25027,9 @@ private:
           "destination and cleanup schedule");
     }
     if (instruction.kind == MirInstructionKind::Borrow ||
-        instruction.kind == MirInstructionKind::EndBorrow) {
+        instruction.kind == MirInstructionKind::EndBorrow ||
+        instruction.kind == MirInstructionKind::ParkRangeCursor ||
+        instruction.kind == MirInstructionKind::RestoreRangeCursor) {
       requireCapability(CppMirEmissionCapabilityKind::Borrow, block.id,
                         instruction.id);
     }
@@ -25043,6 +25215,8 @@ CppMirEmissionEncoding classifyCppMirInstructionKind(MirInstructionKind kind) {
   case MirInstructionKind::Assign:
   case MirInstructionKind::Move:
   case MirInstructionKind::Lifecycle:
+  case MirInstructionKind::ParkRangeCursor:
+  case MirInstructionKind::RestoreRangeCursor:
     return CppMirEmissionEncoding::RepresentedByMir;
   case MirInstructionKind::Borrow:
   case MirInstructionKind::ActivateBorrow:
@@ -35903,7 +36077,7 @@ private:
           (storedValueReturnLoanProducer(facts.body, *loan) != nullptr ||
            returnLoanErasedByConstruct(facts.body, *loan) ||
            returnLoanErasedByClassSsaSlot(program, representations, facts.body,
-                                        *loan))) {
+                                          *loan))) {
         writeIndent();
         output << "// GTI MIR stored-value return loan " << loan->id
                << " publishes in the returned class value\n";
@@ -36038,6 +36212,18 @@ private:
     if (instruction.kind == MirInstructionKind::EndBorrow) {
       output << "// GTI MIR end-borrow loan "
              << (instruction.loan ? *instruction.loan : 0) << "\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::ParkRangeCursor ||
+        instruction.kind == MirInstructionKind::RestoreRangeCursor) {
+      // These verified loan-flow markers schedule only the acquisition of
+      // the endpoint beside an exclusive cursor. They do not destroy, copy,
+      // rebind or allocate any runtime object.
+      output << "// GTI MIR "
+             << (instruction.kind == MirInstructionKind::ParkRangeCursor
+                     ? "park"
+                     : "restore")
+             << " range cursor loan " << *instruction.loan << "\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Drop &&
@@ -47190,8 +47376,9 @@ plainConstructedFieldTarget(const MirProgram &program,
         // publication and must use the same shell proof as field binding.
         const bool sharedPhysicalFormal =
             formal && sharedPhysicalParameterLoan(body, *loan, *source);
-        if (!loan || (loan->kind != MirLoanKind::Stored && !exclusiveFormal &&
-                      !sharedPhysicalFormal) ||
+        if (!loan ||
+            (loan->kind != MirLoanKind::Stored && !exclusiveFormal &&
+             !sharedPhysicalFormal) ||
             (loan->access != AccessMode::ReadOnly && !exclusiveFormal &&
              !transferred) ||
             (!requiredEnds.contains(loan->id) && !formal) ||
@@ -49738,27 +49925,30 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
          .valueDrop = valueDropId,
          .fieldDrop = fieldDropId});
   }
-  const bool multipleOwnedInitializers =
-      constructor.initializers.size() > 1 &&
-      std::all_of(constructor.initializers.begin(),
-                  constructor.initializers.end(),
-                  [](const MirConstructorInitializer &initializer) {
-                    return initializer.ownedParameter.has_value();
-                  });
-  if (multipleOwnedInitializers) {
+  const bool completeOwnedScalarInitializers =
+      constructor.initializers.size() > 1 && !bindings.empty() &&
+      std::all_of(
+          constructor.initializers.begin(), constructor.initializers.end(),
+          [&](const MirConstructorInitializer &initializer) {
+            return initializer.ownedParameter.has_value() ||
+                   (!initializer.storesReference &&
+                    !initializer.generatedDefault &&
+                    passiveParameterFieldType(program, initializer.targetType));
+          });
+  if (completeOwnedScalarInitializers) {
     // Moving several initializer expressions into the native C++ member
     // initializer list is exact only for a complete, field-ordered prologue.
     // No body computation may sit between the pairs: that would be reordered
     // after every native member initializer. Drop records for lexical
     // parameters and metadata-only boundaries are the only extra records.
     const MirBlock *entry = constructor.body.findBlock(constructor.body.entry);
-    if (bindings.size() != constructor.initializers.size() ||
-        constructor.body.blocks.size() != 1 || entry == nullptr ||
+    if (constructor.body.blocks.size() != 1 || entry == nullptr ||
         entry->terminator.kind != MirTerminatorKind::Return ||
         !constructor.body.failureRecords.empty() ||
         owner->declaredFields.size() != constructor.initializers.size()) {
       return std::nullopt;
     }
+    std::vector<CppMirCopyParameterFieldBinding> scalarSiblings;
     std::size_t previousInitialize = 0;
     for (std::size_t initializerIndex = 0;
          initializerIndex < constructor.initializers.size();
@@ -49768,8 +49958,17 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
                        [&](const CppMirOwnedParameterFieldBinding &candidate) {
                          return candidate.initializer == initializerIndex;
                        });
-      if (binding == bindings.end() ||
-          binding->field != owner->declaredFields[initializerIndex].symbol) {
+      if (binding == bindings.end()) {
+        const auto scalar = passiveParameterFieldSibling(program, constructor,
+                                                         initializerIndex);
+        if (!scalar || (previousInitialize != 0 &&
+                        scalar->loadInstruction <= previousInitialize))
+          return std::nullopt;
+        previousInitialize = scalar->initializeInstruction;
+        scalarSiblings.push_back(*scalar);
+        continue;
+      }
+      if (binding->field != owner->declaredFields[initializerIndex].symbol) {
         return std::nullopt;
       }
       const auto move =
@@ -49796,16 +49995,24 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
           binding->initializeInstruction != 0 ? initialize->id : move->id;
     }
     for (const MirInstruction &instruction : entry->instructions) {
-      const bool named = std::any_of(
-          bindings.begin(), bindings.end(),
-          [&](const CppMirOwnedParameterFieldBinding &binding) {
-            return instruction.id == binding.moveInstruction ||
-                   instruction.id == binding.initializeInstruction ||
-                   (binding.fieldTransferInstruction != 0 &&
-                    instruction.id == binding.fieldTransferInstruction) ||
-                   (binding.dropInstruction != 0 &&
-                    instruction.id == binding.dropInstruction);
-          });
+      const bool named =
+          std::any_of(
+              bindings.begin(), bindings.end(),
+              [&](const CppMirOwnedParameterFieldBinding &binding) {
+                return instruction.id == binding.moveInstruction ||
+                       instruction.id == binding.initializeInstruction ||
+                       (binding.fieldTransferInstruction != 0 &&
+                        instruction.id == binding.fieldTransferInstruction) ||
+                       (binding.dropInstruction != 0 &&
+                        instruction.id == binding.dropInstruction);
+              }) ||
+          std::any_of(scalarSiblings.begin(), scalarSiblings.end(),
+                      [&](const auto &binding) {
+                        return instruction.id == binding.loadInstruction ||
+                               instruction.id ==
+                                   binding.initializeInstruction ||
+                               instruction.id == binding.boundaryInstruction;
+                      });
       const bool metadataBoundary =
           instruction.kind == MirInstructionKind::Lifecycle &&
           !instruction.result && !instruction.destination &&
@@ -53434,6 +53641,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             return false;
           }
         }
+        continue;
+      case MirInstructionKind::ParkRangeCursor:
+      case MirInstructionKind::RestoreRangeCursor:
+        if (!exactRangeEndpointMarker(body, instruction))
+          return false;
         continue;
       case MirInstructionKind::Drop: {
         if (sharedOwnerValueDrop(program_, body, instruction)) {

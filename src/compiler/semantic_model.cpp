@@ -708,6 +708,17 @@ SemanticModel::canPresent(SourceUnitId requester,
   if (isCompilerPrivateType(occurrence.type)) {
     return false;
   }
+  if (occurrence.selectedCall && occurrence.selectedCall->argumentReceiver) {
+    // A normalized builtin member is public syntax over a private source
+    // implementation. Only its exact trusted declaration is presentable via
+    // this occurrence; ordinary private names remain hidden.
+    const auto *function = findFunction(occurrence.selectedCall->function);
+    const auto *unit =
+        function ? sourceGraph.findUnit(function->sourceUnit) : nullptr;
+    if (unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+        unit->standardLibraryName == "std/string_view")
+      return true;
+  }
   const SymbolRecord *symbol = semanticDatabase.findSymbol(occurrence.symbol);
   return symbol == nullptr || canPresent(requester, *symbol, sourceGraph);
 }

@@ -1331,7 +1331,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             range->incrementFunction == semantic->incrementFunction)) &&
           range->ownsRangeTemporary == semantic->ownsRangeTemporary &&
           range->expectedPayloadProjection ==
-              semantic->expectedPayloadProjection;
+              semantic->expectedPayloadProjection &&
+          (genericSemantic ||
+           range->nonBorrowingEndpoint == semantic->nonBorrowingEndpoint);
       const bool exactStructure =
           source != nullptr && range != nullptr && statement.body &&
           body.findStatement(*statement.body) != nullptr &&
@@ -1396,8 +1398,16 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             sourceValue->borrowAccess == AccessMode::ReadOnly &&
             owner != nullptr &&
             owner->info.type.kind == SemanticType::Reference));
+      const auto *endpoint = range ? body.findValue(range->end) : nullptr;
+      const bool exactEndpointResult =
+          range && (!range->nonBorrowingEndpoint ||
+                    (endpoint && endpoint->info.type == range->sentinelType &&
+                     endpoint->info.type.kind != SemanticType::Reference &&
+                     !endpoint->info.traits.containsBorrowedState &&
+                     endpoint->borrowOrigin == BorrowOriginKind::None));
       if (!exactSemantic || !exactStructure || !exactLoans || !exactStrategy ||
-          !exactOwner || !exactExpectedPayloadProjection) {
+          !exactOwner || !exactExpectedPayloadProjection ||
+          !exactEndpointResult) {
         result.errors.emplace_back(
             "range HIR plan differs from semantic owner/loan/protocol facts");
       }

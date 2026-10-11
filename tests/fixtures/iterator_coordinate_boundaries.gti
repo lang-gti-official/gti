@@ -1,0 +1,20 @@
+#include <std/detail/iterator>
+
+int main() {
+  std::size_t maximum = std::size_t(18446744073709551615);
+  std::size_t signed_maximum = std::size_t(9223372036854775807);
+  std::ptrdiff_t minimum = std::ptrdiff_t(-9223372036854775807) - std::ptrdiff_t(1);
+  if (std::detail::checked_iterator_difference(maximum, maximum) != 0) { return 1; }
+  if (std::detail::checked_iterator_difference(maximum, maximum - std::size_t(3)) != 3) { return 2; }
+  if (std::detail::checked_iterator_difference(maximum - std::size_t(3), maximum) != -3) { return 3; }
+  if (std::detail::checked_iterator_difference(signed_maximum, std::size_t(0)) !=
+      std::ptrdiff_t(9223372036854775807)) { return 4; }
+  if (std::detail::checked_iterator_difference(std::size_t(0), signed_maximum + std::size_t(1)) != minimum) { return 5; }
+  if (std::detail::checked_iterator_position(maximum, std::size_t(0), maximum,
+      minimum) != signed_maximum) { return 6; }
+  if (std::detail::checked_iterator_position(std::size_t(0), std::size_t(0), maximum,
+      minimum, true) != signed_maximum + std::size_t(1)) { return 7; }
+  if (std::detail::checked_iterator_element(maximum, maximum - std::size_t(3), maximum,
+      std::ptrdiff_t(1), true) != maximum - std::size_t(2)) { return 8; }
+  return 0;
+}

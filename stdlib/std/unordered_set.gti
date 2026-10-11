@@ -20,8 +20,8 @@ class unordered_set_insert_iterator<K> {
   mut unordered_map_mut_iterator<K, bool> cursor;
 public:
   unordered_set_insert_iterator(unordered_map_mut_iterator<K, bool> cursor) : cursor(std::move(cursor)) {}
-  K& operator*() { return this.cursor->first; }
-  K& operator->() { return this.cursor->first; }
+  K& operator*() { return this.cursor.key(); }
+  K& operator->() { return this.cursor.key(); }
   void operator++() mut { ++this.cursor; }
   bool operator!=(unordered_map_sentinel end) { return this.cursor != end; }
   bool operator==(unordered_map_sentinel& end) { return this.cursor == end; }

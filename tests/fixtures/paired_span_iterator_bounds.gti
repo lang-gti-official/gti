@@ -20,6 +20,20 @@ int main(int argc, std::vector<std::string> argv) {
     reverse += std::ptrdiff_t(2);
     return (*reverse).second();
   }
+  if (argc == 7) {
+    auto selected = current[std::ptrdiff_t(2)];
+    return selected.first();
+  }
+  if (argc == 8) {
+    auto reverse = pairs.rbegin();
+    auto selected = reverse[std::ptrdiff_t(3)];
+    return selected.second();
+  }
+  if (argc == 9) {
+    auto reverse = pairs.rbegin();
+    auto selected = reverse[std::ptrdiff_t(2)];
+    return selected.first();
+  }
   auto tail = pairs.subspan(std::size_t(1), std::size_t(1));
   mut auto limited = tail.begin();
   limited -= std::ptrdiff_t(1);

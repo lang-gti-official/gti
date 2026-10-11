@@ -297,6 +297,17 @@ contain a default expression. The placeholder deliberately avoids reprinting
 source expressions while exposing optionality consistently in hover, outline,
 and signature help; the protocol layer does not infer defaults from arity.
 
+Builtin counted-view members implemented by trusted source factories preserve
+one compiler-selected call identity. `ResolvedCallInfo::argumentReceiver`
+normalizes the written receiver into argument zero for semantic effects and
+HIR's ordinary ordered source call; it does not duplicate the receiver or
+invent a backend member operation. The compiler's shared argument-access
+queries fail closed for a foreign AST receiver identity. Hover, completion and
+signature help present the public member name and written arguments, omitting
+the private source factory's injected receiver. Normalization remains inside
+the immutable frontend snapshot; the LSP protocol adapter performs no
+name-based dispatch or argument-index repair.
+
 The checked integer functions are ordinary `<std/numeric>` declarations.
 Hover, definition, and completion therefore consume the same selected overload
 and source-unit records as other standard-library functions; the protocol layer

@@ -47,7 +47,7 @@ int main() {
     --end; if (end->first != 2) { return 11; }
     ++end; if (end->first != 3) { return 12; }
   }
-  { mut auto write = tree.end_mut(); --write; write->second = 33; }
+  { mut auto write = tree.end_mut(); --write; write->mapped() = 33; }
   int three = 3;
   if (tree.at(three) != 33) { return 13; }
 

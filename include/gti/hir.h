@@ -336,6 +336,7 @@ struct HirRangeIteration {
   std::uint64_t arrayLength = 0;
   bool ownsRangeTemporary = false;
   bool expectedPayloadProjection = false;
+  bool nonBorrowingEndpoint = false;
 
   friend bool operator==(const HirRangeIteration &,
                          const HirRangeIteration &) = default;
