@@ -86,11 +86,17 @@ prerequisites and measured clients; they are not added to this implementation.
 ## Scoped concurrency and composable shared jobs (2026-10-11)
 
 **State:** the public APIs and production execution paths are implemented in
-PR #20; focused native, semantic/IR, failure, editor and sanitizer checks pass.
-Whole-goal completion still requires the final reconciled-head full suite,
-installed consumption and performance evidence. The owner requested both scoped parallel borrowing and the
-shared-state/callable composition improvements. This is one delivery goal,
-not completion of either item through its prerequisite alone.
+PR #20 for 0.404.0, reconciled with reflected JSON 0.403.0. All 51 combined-head
+integration gates pass, including native/sanitizer, editor, installed-consumer
+and complete corpus checks. Clean-head runtime, allocation, code-size and
+build-memory evidence passes; the final reconciled-source full suite remains
+in progress. See [the acceptance record](../architecture/verification.md#scoped-concurrency-04040).
+The owner requested both scoped parallel borrowing and shared-state/callable
+composition. This is one delivery goal, not completion of either item through
+its prerequisite alone.
+
+The checkpoint chronology below records earlier development states; current
+acceptance is stated above and in the verification record.
 
 Nested failure-path composition now passes its focused Release regression
 (`run-0bb60840f66f490f8d1dae0f8f922a5d`): an incoming reference-field borrow
