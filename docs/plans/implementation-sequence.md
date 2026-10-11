@@ -129,7 +129,7 @@ workflow determine task scope and integration.
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
 | Native import `C-08B` | ready for a bounded language/import slice | Native scalar, recursive pointer and indirect-call identities delivered. Introduce true foreign-storage identity and unsafe loads/stores, then import actual external variables; retain TLS/volatile exclusions until specified. |
-| `L-CONST-01` extension | ready to select one execution profile | Use the staged verified-MIR executor and semantic query timing. Select one missing mutable-reference, pack, owning/sum or operator profile with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
+| `L-CONST-01` extension | mutable-builder profile implemented; further profiles ready to select | Checked mutable references, void helpers, non-consuming mutable methods/operators and explicit constructor-body writes use staged verified MIR. Select the remaining enum/Expected operation migration, stored-reference, pack, owning/sum or operator profile with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | lazy trusted-body prerequisite met | Body-order/demand facts and editor-scoped HIR exist. Demand/memoize trusted body facts, apply the same scope to completion and measure diagnostics/latency. Cross-snapshot semantic reuse follows only if simpler steps leave it necessary. See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
 | `RT-2` through `RT-10` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. |
 | Shared failure-cleanup tails (`M-FAIL-01`) | ready to define and implement one bounded record-flow profile | Reuse verified obligations and block-parameter machinery; carry the original failure record across each incoming edge before sharing an exact cleanup suffix. Prove record/phase/drop identity, secondary-failure behavior and linear growth on synthetic owners, then validate the JSON client's generated-size/native-build costs. The preserved measurements below are a baseline, not fresh current-head results. |
@@ -370,7 +370,7 @@ the canonical [library contract](../language/standard-library.md).
 | Nested owner-tied text relay, shared multi-origin carriers, checked exclusive access, storage shift/relocation, and source-defined explicit cloning. Multi-owner projections remain conservative. | Remove duplicate URL view backing; retain owner invalidation. Precise range projection and proxy iteration remain separate work. | `L-UP-02`, `L-UP-16`; [relay fixture](../../tests/fixtures/text_owner_relay.gti). |
 | Exact operation/comparator concepts, bounded ordinary-method requirements, exact class specialization, exact argument-bearing read/mut member requirements, dependent compound concept arguments, constrained heterogeneous call-pack elements, and attributable contract diagnostics. Static queries, general expression requirements, reference packs, and conditional operators are not implemented. | Source-defined public formatter customization and ordinary read/write protocols now use these facts; conditional indexing remains separate. | `L-UP-04`, `L-UP-13/15`; [concepts](../language/concepts.md). |
 | Constructor-local type packs, final-field construction and the retained borrowed forward-list reproducer have passing current-head evidence. Source sparse storage already emplaces immovable elements at final addresses; optional publication still transfers a completed payload. | Close the remaining pack acceptance matrix, adopt direct map-node emplacement, then extend inline-slot publication. Do not rebuild the delivered sparse-storage path. | `L-UP-10/11/12/18`; [current probes](../architecture/verification.md#documentation-reconciliation-capability-probes-2026-10-11). |
-| Staged verified-MIR constant evaluation supports passive records, constructors, read-only methods, fixed arrays and literal-backed text. Allocation, owning aggregates, general Expected/payload execution, packs and mutable receivers are outside the completed profile; the older bounded checked-integer constant-result family already exists. | Add eligible pure chrono observers now. Automatic literal-format checking still needs a general call-site contract. | `L-UP-06/14`; [`L-CONST-01`](#l-const-01-remaining-bounded-compile-time-programming). |
+| Staged verified-MIR constant evaluation supports passive records, explicit constructors, read-only and non-consuming mutable methods, checked references, void helpers, fixed arrays and literal-backed text. Allocation, stored borrows, owning aggregates, enum/Expected MIR operations and packs remain outside that profile; older enum and bounded checked-integer constant results retain their compatibility evaluation. | Add eligible pure chrono observers and passive table builders now. Automatic literal-format checking still needs a general call-site contract. | `L-UP-06/14`; [`L-CONST-01`](#l-const-01-remaining-bounded-compile-time-programming). |
 | Exact function items, source-defined owning callable erasure, modules, panic/caller tracking, managed threads, atomic order tags and mutex guards are implemented within documented bounds. | Do not schedule these as absent. Measure callback erasure costs; preserve host error and concurrency policies. Modules do not require a global include-to-import rewrite. | [callable checkpoint](#l-call-02-source-defined-owning-function-wrappers), [concurrency](../language/concurrency.md), [module contract](../language/programs-and-targets.md). |
 | Typed feature-interaction generation, differential configurations, metamorphic renaming and bounded reduction are available. | Add composition cases for each adoption; single-feature tests alone do not close a row. | [verification](../architecture/verification.md#failure-capture-and-opt-in-fuzzing). |
 
@@ -8182,7 +8182,7 @@ consumer, and release refreshes remain outstanding for the full campaign.
 - **Implemented scope:** The existing evaluator admits concrete non-pack type
   and `uint64_t` value-generic calls, exact scoped enums, concrete fixed arrays,
   fully initialized structural class/struct values, ordinary constexpr
-  constructors, and read-only instance methods. Constants retain exact
+  constructors, and read-only or mutable instance methods. Constants retain exact
   declaration/type/value identity through semantics and required HIR/MIR data;
   the backend only materializes an already-proven value. One shared 4096-step
   budget and 64-call-depth limit cover recursive/default aggregate work.
@@ -8237,8 +8237,8 @@ consumer, and release refreshes remain outstanding for the full campaign.
   Checked read-only reference parameters, local bindings, and returned
   projections now execute through ordinary MIR loans, with immutable referent
   observations and no persisted constant references. `std::array::at`, `front`,
-  and `back` and an unrelated record exercise the same boundary; mutable and
-  stored-reference facilities remain excluded. A game-engine-like asset table
+  and `back` and an unrelated record exercise the same boundary; stored-reference
+  facilities remain excluded, while mutable references are extended below. A game-engine-like asset table
   now composes literal-path inspection, passive record construction, fixed-array
   storage and checked reference traversal, with staged execution counts and
   six native parity configurations. Passive array constructor failure proofs
@@ -8250,7 +8250,7 @@ consumer, and release refreshes remain outstanding for the full campaign.
   execute through MIR, including nested nominal call-operator invocation.
   `std::array::operator[]` and unrelated math records exercise the same rules;
   no operator body is added to the legacy AST evaluator. Arrow/contextual-bool
-  operators and mutable/consuming receivers remain outside this slice.
+  operators and consuming receivers remain outside this slice.
   Declaration-owned default
   schedules remain migration
   work for library clients. Generated native construction is not proof of const
@@ -8310,10 +8310,34 @@ consumer, and release refreshes remain outstanding for the full campaign.
   step/call-depth limits, and compile-time/runtime differential evidence. Its
   plan must say how overlapping AST execution is removed or subsumed rather
   than accepting two permanent meanings.
-- **Remaining scope:** Mutable/stored references, allocation, receiver mutation,
+- **Mutable constexpr builders (2026-10-11, implemented):**
+  Checked mutable references, `void` helpers, non-consuming mutable methods and
+  operators, and constructor-body edits after explicit field initialization now
+  execute the same canonical verified MIR. Executor-local locations retain live
+  origins, access, once-formed index paths and storage generations across calls;
+  immutable aggregate backing still preserves independent value copies. No
+  reference or host address persists in `ConstantValue`. Ordinary lifetime,
+  access and loan rules remain authoritative, including the single mutable
+  return-origin restriction and full-expression temporary receiver lifetime.
+  Source-defined mutable `std::array` accessors and `fill` exercise this rule
+  alongside unrelated records and exact generic owners. Existing reflection
+  expansion and `get_mut` compose with these builders without a new reflection
+  evaluator or metadata surface. Mutation-capable closures cannot fall back to
+  AST execution after an unsupported MIR operation. Example
+  `142-constexpr-builders.gti` demonstrates engine budget/curve preparation and
+  runtime parity. Focused positive, negative, malformed-MIR, shared-budget and
+  tooling evidence is tracked in the verification document; this does not claim
+  allocation, stored borrows, every constructor schedule or complete constexpr
+  support.
+- **Remaining scope:** Existing ordinary-enum and checked-integer `expected`
+  profiles need MIR value/operation migration before joining mutable builders.
+  That prerequisite must preserve exact enum identity, checked-result state,
+  shared budgets and compile-time/runtime parity rather than extend AST
+  mutation. Stored references, constructor reference parameters,
+  declaration-default/in-place constructor schedules, allocation,
   payload enums, unions, inherited or cleanup-owning aggregates, generic packs,
-  arrow/contextual-bool operators, consuming receivers, and polymorphism remain excluded. Do
-  not widen exact qualified specialization into partial specialization as a
+  arrow/contextual-bool operators, consuming receivers, and polymorphism remain
+  excluded. Do not widen exact qualified specialization into partial specialization as a
   side effect.
 - **Initial exit gate:** met by positive/negative identity and limit tests plus
   an O0/O3 and C++20/C++23 runtime-parity matrix whose result is independent of

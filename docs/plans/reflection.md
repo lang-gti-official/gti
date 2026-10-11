@@ -1,8 +1,9 @@
 # Compile-Time Semantic Reflection Plan
 
-Status: phases 1 and 2 are implemented (`constexpr for`, `<std/meta>` types,
+Status: phases 1–3 are implemented (`constexpr for`, `<std/meta>` types,
 fields and access, declared attributes, enum/base/generic metadata and the
-fixture clients); phase 3 remains proposed. The phase-2 implementation was
+fixture clients, structural construction and callable/source metadata).
+The phase-2 implementation was
 integrated on 2026-10-11 through GitHub PR #2. Current language
 behavior is documented in [`docs/language/`](../language/index.md); the
 authoritative compiler structures named below are described in
@@ -112,7 +113,7 @@ runtime reflection exists.
 | Class and struct fields in declaration order, exact type, access, static versus instance | `ClassInfo::fields`, `ClassInfo::members`, `FieldInfo` | none for enumeration |
 | Concrete generic identity (primary plus arguments) | class specialization catalog, `ConcreteClassId`, concrete reanalysis | none |
 | Type and value generic parameters | `GenericParameterInfo` (`value`, `pack`), `CompileTimeValue` (`uint64_t` domain only) | metaobject value domain |
-| Declaration attributes | declared attribute types, typed constant arguments, resolved declaration/field attribute facts, compiler/native contracts | phase-2 declaration and field queries implemented; callable metadata is phase 3 |
+| Declaration attributes | declared attribute types, typed constant arguments, resolved declaration/field attribute facts, compiler/native contracts | declaration/field queries and phase-3 callable metadata implemented |
 | Constant evaluation, budgets, located failures | `mir_constant_evaluator`, staged executor, 4096-step and 64-depth limits | reflected constant-query kernels implemented; broader executor profiles remain separate work |
 | Compile-time selection with discarded branches | `if constexpr`, `ConditionalStmt::activeBranch`, `constexpr for` expansion | finite type-pack iteration implemented; nested-budget hardening remains a phase-3 gate |
 | Projected field places, borrow lifetime, mutability, access checks | body analysis, loan flow, place authority (`place-and-ownership-state.md`) | reflected read/mutable projections implemented; owner identity and receiver-effects defects remain tracked below |
