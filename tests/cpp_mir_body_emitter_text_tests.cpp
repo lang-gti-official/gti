@@ -3102,7 +3102,7 @@ int main() {
 // value has no exact uninitialized publication".)
 void testCleanupFreeExpectedClassMoveSlot() {
   const lang::FrontendResult frontend =
-      analyze("cpp-mir-expected-class-move.gti", R"(
+      analyzeWithStandardLibrary("cpp-mir-expected-class-move.gti", R"(
 #include <std/utility>
 
 struct point {
