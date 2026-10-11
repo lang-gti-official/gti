@@ -255,6 +255,13 @@ layer.
    Diagnostics inside library bodies that the open file instantiates are
    still produced because those instances are reached.
 
+   Artifact builds gained a different trusted-library HIR scope in 0.399.3
+   (`lowerLibraryReachableOnly`, commit `514b7554`): application/package units
+   are lowered completely and unreached compiler-trusted HIR declarations are
+   skipped. This is delivered compiler work, not a remaining editor-scope
+   task. Neither option makes trusted semantic body analysis lazy; `gti check`
+   retains complete lowering.
+
    The same measurement found a far larger cost next to it: with
    `raw-pointer-audit = "warn"` in the project profile, one analysis of the
    eight-include file took 41 s (trusted bodies 19 s, HIR 17 s). The audit is

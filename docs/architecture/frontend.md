@@ -134,9 +134,12 @@ reachable from the program roots; see
 `lowerLibraryReachableOnly`. HIR still lowers the entry unit and every
 application or package unit completely, but lowers compiler-trusted
 declarations only when the roots reach them. `gti check` keeps complete HIR
-lowering. An imported or included library therefore costs HIR lowering,
-optimization and emission only for what the program uses. It still costs
-semantic analysis of every body it declares.
+lowering. Unreached compiler-trusted bodies therefore avoid HIR lowering;
+application and dependency-package bodies do not gain that exemption.
+Optimization and executable emission use the reached artifact prefix, with
+the retained declaration/physical-carrier dependencies documented in HIR and
+backend contracts. Imported trusted units still cost semantic analysis of
+every body they declare.
 
 ### Reusable lexical and parsed units
 
