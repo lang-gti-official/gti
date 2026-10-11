@@ -71,7 +71,7 @@ def main():
                 result = subprocess.run([str(executable)], env=environment, capture_output=True, text=True, timeout=30)
                 assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (fixture, label, result)
             else:
-                for count, code in enumerate(("GTI-R0016", "GTI-R0016", "GTI-R0007", "GTI-R0016", "GTI-R0016", "GTI-R0016", "GTI-R0007", "GTI-R0016", "GTI-R0016")):
+                for count, code in enumerate(("GTI-R0016", "GTI-R0016", "GTI-R0007", "GTI-R0016", "GTI-R0016", "GTI-R0016", "GTI-R0007", "GTI-R0016", "GTI-R0016", "GTI-R0016", "GTI-R0016", "GTI-R0016")):
                     result = subprocess.run([str(executable), *("argument" for _ in range(count))],
                                             env=environment, capture_output=True, text=True, timeout=30)
                     assert result.returncode == 70 and result.stdout == "", (fixture, label, count, result)

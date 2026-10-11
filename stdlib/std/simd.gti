@@ -42,10 +42,10 @@ public:
     return this.owner.at(selected);
   }
   void operator++() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N);
   }
   void operator--() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N);
   }
   void operator+=(ptrdiff_t offset) mut {
     this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
@@ -97,10 +97,10 @@ public:
     return this.owner.at(selected);
   }
   void operator++() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N);
   }
   void operator--() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N);
   }
   void operator+=(ptrdiff_t offset) mut {
     this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
@@ -135,10 +135,10 @@ public:
     return this.owner.at(selected);
   }
   void operator++() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N);
   }
   void operator--() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N);
   }
   void operator+=(ptrdiff_t offset) mut {
     this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
@@ -190,10 +190,10 @@ public:
     return this.owner.at(selected);
   }
   void operator++() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N);
   }
   void operator--() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N);
   }
   void operator+=(ptrdiff_t offset) mut {
     this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);

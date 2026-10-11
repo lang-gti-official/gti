@@ -85,12 +85,12 @@ public:
   }
   T& operator->() { return *this; }
   void operator++() mut {
-    this.position = detail::checked_iterator_position(
-        this.position, size_t(0), this.slots.length(), ptrdiff_t(1), Reverse != 0);
+    this.position = detail::checked_iterator_step<Reverse>(
+        this.position, size_t(0), this.slots.length());
   }
   void operator--() mut {
-    this.position = detail::checked_iterator_position(
-        this.position, size_t(0), this.slots.length(), ptrdiff_t(-1), Reverse != 0);
+    this.position = detail::checked_iterator_step<Reverse, 1>(
+        this.position, size_t(0), this.slots.length());
   }
   void operator+=(ptrdiff_t offset) mut {
     this.position = detail::checked_iterator_position(
@@ -155,12 +155,12 @@ public:
   T& operator->() { return *this; }
   mut T& operator->() mut { return *this; }
   void operator++() mut {
-    this.position = detail::checked_iterator_position(
-        this.position, size_t(0), this.slots.length(), ptrdiff_t(1), Reverse != 0);
+    this.position = detail::checked_iterator_step<Reverse>(
+        this.position, size_t(0), this.slots.length());
   }
   void operator--() mut {
-    this.position = detail::checked_iterator_position(
-        this.position, size_t(0), this.slots.length(), ptrdiff_t(-1), Reverse != 0);
+    this.position = detail::checked_iterator_step<Reverse, 1>(
+        this.position, size_t(0), this.slots.length());
   }
   void operator+=(ptrdiff_t offset) mut {
     this.position = detail::checked_iterator_position(

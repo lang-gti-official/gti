@@ -55,6 +55,17 @@ class paired_span_iterator<std::storage_element L, std::storage_element R, uint6
     this.element.select(selected);
     this.current_position = position;
   }
+
+  void advance_one<uint64_t Decrement = 0>() mut {
+    size_t position = detail::checked_iterator_step<Reverse, Decrement>(
+        this.current_position, size_t(0), this.element.size());
+    mut size_t selected = position;
+    if constexpr (Reverse != 0) {
+      if (position != size_t(0)) { selected = position - size_t(1); }
+    }
+    this.element.select(selected);
+    this.current_position = position;
+  }
 public:
   paired_span_iterator(paired_span<L, R>& source, size_t position)
       : element(paired_span_element<L, R>(source, position)), current_position(position) {
@@ -84,8 +95,8 @@ public:
     }
     return this.element.at(position);
   }
-  void operator++() mut { this.advance(ptrdiff_t(1)); }
-  void operator--() mut { this.advance(ptrdiff_t(1), true); }
+  void operator++() mut { this.advance_one<>(); }
+  void operator--() mut { this.advance_one<1>(); }
   void operator+=(ptrdiff_t offset) mut { this.advance(offset); }
   void operator-=(ptrdiff_t offset) mut { this.advance(offset, true); }
   ptrdiff_t operator-(paired_span_sentinel sentinel) {

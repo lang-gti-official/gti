@@ -2,6 +2,21 @@
 // an element. Validate before changing state, including the minimum signed
 // offset, without converting the owner's full size to a signed integer.
 namespace std::detail {
+// One-step movement has no dynamic signed offset to decode. A forward step
+// requires begin <= position < end; a backward step requires
+// begin < position <= end. These checks also prove that the following ordinary
+// checked addition/subtraction cannot overflow/underflow before publication.
+// Reverse and Decrement are compile-time cursor policies, not runtime flags.
+size_t checked_iterator_step<uint64_t Reverse = 0, uint64_t Decrement = 0>(
+    size_t position, size_t begin, size_t end) {
+  if constexpr ((Reverse != 0) != (Decrement != 0)) {
+    gti_internal::require_container_argument(begin < position && position <= end);
+    return position - size_t(1);
+  }
+  gti_internal::require_container_argument(begin <= position && position < end);
+  return position + size_t(1);
+}
+
 size_t checked_iterator_position(size_t position, size_t begin, size_t end,
                                  ptrdiff_t offset, bool subtract = false) {
   gti_internal::require_container_argument(begin <= position && position <= end);

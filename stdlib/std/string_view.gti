@@ -28,12 +28,12 @@ public:
     return this.view[selected];
   }
   void operator++() mut {
-    this.current_position = checked_iterator_position(this.current_position, size_t(0),
-                                                      this.view.size(), ptrdiff_t(1), Reverse != 0);
+    this.current_position = checked_iterator_step<Reverse>(
+        this.current_position, size_t(0), this.view.size());
   }
   void operator--() mut {
-    this.current_position = checked_iterator_position(this.current_position, size_t(0),
-                                                      this.view.size(), ptrdiff_t(1), Reverse == 0);
+    this.current_position = checked_iterator_step<Reverse, 1>(
+        this.current_position, size_t(0), this.view.size());
   }
   void operator+=(ptrdiff_t offset) mut {
     this.current_position = checked_iterator_position(this.current_position, size_t(0),
