@@ -4986,7 +4986,8 @@ private:
         // A resolved type construction has no runtime callee value. Retaining
         // its type-name expression would create an untyped, semantically
         // unrecorded HIR operand beside the exact constructor target.
-        if (model.findExpression(*call->callee()) != nullptr) {
+        if (construction == nullptr &&
+            model.findExpression(*call->callee()) != nullptr) {
           lowerOperand(call->callee());
         }
         // An implicit receiver exists only for an unqualified call that

@@ -316,7 +316,7 @@
       }
     },
     "023-direct-initialization.gti": {
-      "declarations": 124,
+      "declarations": 125,
       "bodies": 39,
       "generated_items": 4,
       "generated_kinds": {
@@ -1726,7 +1726,7 @@
       }
     },
     "119-runtime-object-layout.gti": {
-      "declarations": 443,
+      "declarations": 444,
       "bodies": 57,
       "generated_items": 24,
       "generated_kinds": {
@@ -1786,7 +1786,7 @@
       }
     },
     "123-native-c-scalars.gti": {
-      "declarations": 97,
+      "declarations": 98,
       "bodies": 13,
       "generated_items": 3,
       "generated_kinds": {
@@ -1996,7 +1996,7 @@
       }
     },
     "137-declared-attributes.gti": {
-      "declarations": 1029,
+      "declarations": 1099,
       "bodies": 188,
       "generated_items": 116,
       "generated_kinds": {
@@ -2010,7 +2010,22 @@
         "concrete_instance_adapter": 84
       }
     },
-    "138-ordered-search.gti": {
+    "138-structural-construction.gti": {
+      "declarations": 1095,
+      "bodies": 185,
+      "generated_items": 107,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 15,
+        "callable_adapter": 10,
+        "lifecycle_cleanup": 5,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 75
+      }
+    },
+    "139-ordered-search.gti": {
       "declarations": 892,
       "bodies": 137,
       "generated_items": 92,
@@ -2027,8 +2042,8 @@
     }
   },
   "totals": {
-    "declarations": 65079,
-    "bodies": 12210,
-    "generated_items": 6462
+    "declarations": 66247,
+    "bodies": 12395,
+    "generated_items": 6569
   }
 }

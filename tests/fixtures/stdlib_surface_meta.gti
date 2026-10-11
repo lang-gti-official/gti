@@ -12,6 +12,17 @@ struct Player {
 
 enum class color { red = 1, green = 2 };
 
+enum class fail { nope };
+struct fixed_producer {
+  expected<std::meta::field_type<T, I>, fail> produce<T, uint64_t I>(std::meta::field<T, I> field) mut {
+    if constexpr (std::meta::type_of<std::meta::field_type<T, I>>().is_bool()) {
+      return false;
+    } else {
+      return std::meta::field_type<T, I>(5);
+    }
+  }
+};
+
 int main() {
   Player player = {.health = uint32_t(7), .alive = false};
   mut uint64_t checksum = 0;
@@ -38,5 +49,11 @@ int main() {
     }
   }
   if (tagged != 1 || std::meta::type_of<color>().enumerator_count() != uint64_t(2)) { return 8; }
+  mut fixed_producer source{};
+  mut auto built = std::meta::construct<Player, fail, fixed_producer>(source);
+  if (!built) { return 9; }
+  Player made = std::move(built).value();
+  if (made.health != 5 || made.alive) { return 10; }
+  if (std::meta::type_of<Player>().method_count() != uint64_t(0) || std::meta::type_of<Player>().line() == uint64_t(0)) { return 11; }
   return 0;
 }
