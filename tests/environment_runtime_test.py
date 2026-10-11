@@ -4,8 +4,10 @@
 import os
 import pathlib
 import subprocess
+import statistics
 import sys
 import tempfile
+import time
 
 from native_symbol_spelling import native_spelling
 
@@ -86,6 +88,18 @@ def main():
         rejected = run([compiler, dangling, "--emit-cpp", "-o", scratch / "bad.cpp"],
                        environment, status=65)
         assert "borrow" in rejected.stderr.lower(), rejected.stderr
+        benchmark = scratch / "benchmark"
+        started = time.perf_counter()
+        run([compiler, root / "tests/fixtures/environment_lookup_benchmark.gti",
+             "--std", "c++23", "-O3", "-o", benchmark], environment)
+        build_seconds = time.perf_counter() - started
+        times = []
+        for _ in range(5):
+            started = time.perf_counter()
+            run([benchmark], dict(environment, GTI_ENV_BENCH="sample-value"), output="")
+            times.append(time.perf_counter() - started)
+        print(f"100000 owned lookups: median {statistics.median(times):.6f}s; "
+              f"build {build_seconds:.3f}s; executable {benchmark.stat().st_size} bytes")
     print("owned environment lookup, module, example, target and lifetime contracts passed")
 
 

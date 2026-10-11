@@ -13,14 +13,26 @@
 // Deterministically exercise both name-copy and snapshot allocation failure.
 // The flag is enabled only during one lookup, after all readers have joined.
 std::atomic<bool> failAllocation{false};
+std::atomic<unsigned> allocationCalls{0};
 void *operator new(std::size_t size) {
+  allocationCalls.fetch_add(1);
   if (failAllocation.load())
     throw std::bad_alloc{};
   if (void *pointer = std::malloc(size == 0 ? 1 : size))
     return pointer;
   throw std::bad_alloc{};
 }
+void *operator new(std::size_t size, const std::nothrow_t &) noexcept {
+  try {
+    return ::operator new(size);
+  } catch (...) {
+    return nullptr;
+  }
+}
 void operator delete(void *pointer) noexcept { std::free(pointer); }
+void operator delete(void *pointer, const std::nothrow_t &) noexcept {
+  std::free(pointer);
+}
 void operator delete(void *pointer, std::size_t) noexcept {
   std::free(pointer);
 }
@@ -75,23 +87,32 @@ int main() {
 #else
   constexpr auto name = "GTI_ENV_NATIVE";
   expect(unsetenv(name) == 0, "remove test variable");
+  const auto beforeMissing = allocationCalls.load();
   expect(gti_rt_environment_get_v1(view(name), &result) ==
                  GTI_ENVIRONMENT_OK_V1 &&
              result == 0,
          "missing is successful and has no snapshot allocation");
+  expect(allocationCalls.load() == beforeMissing,
+         "short missing lookup must not allocate native storage");
   expect(setenv(name, "", 1) == 0, "set empty test value");
+  const auto beforeEmpty = allocationCalls.load();
   expect(gti_rt_environment_get_v1(view(name), &result) ==
                  GTI_ENVIRONMENT_OK_V1 &&
              result != 0 && text(result).empty(),
          "present empty is distinct from missing");
+  expect(allocationCalls.load() == beforeEmpty + 1,
+         "metadata and empty bytes must use one native allocation");
   gti_rt_environment_snapshot_destroy_v1(result);
 
   const std::string value{"native bytes \xff\xc3\xa9"};
   expect(setenv(name, value.c_str(), 1) == 0, "set byte-preserving value");
+  const auto beforePresent = allocationCalls.load();
   expect(gti_rt_environment_get_v1(view(name), &result) ==
                  GTI_ENVIRONMENT_OK_V1 &&
              result != 0 && text(result) == value,
          "snapshot must preserve non-UTF-8 native bytes");
+  expect(allocationCalls.load() == beforePresent + 1,
+         "metadata and nonempty bytes must use one native allocation");
   int64_t second = 0;
   expect(gti_rt_environment_get_v1(view(name), &second) ==
                  GTI_ENVIRONMENT_OK_V1 &&
