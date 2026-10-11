@@ -1556,7 +1556,8 @@ return value. The guard stays as a backstop: a shape with no exact
 publication rejects body emission rather than emitting native code that cannot
 compile.
 
-A whole cleanup-free Expected binding moved into a new binding, as in
+A whole cleanup-free placement Expected binding (one whose success
+alternative is a class) moved into a new binding, as in
 `auto moved = std::move(original);`, is constructed the same way. MIR gives the
 moved value no drop and no lifecycle event, only the source's ownership
 transition, and the adjacent `Initialize` activates the new binding's own drop,
@@ -1565,6 +1566,16 @@ slot from the source, and the `Initialize` emits nothing more. The moved-from
 source keeps its own binding drop and is destroyed at its scope exit, as after
 a copy. An owning Expected moves through its value drop and the `Initialize`'s
 `Reparent` instead.
+
+A copy into a new binding, as in `auto copy = original;`, takes the same route
+at its `Load`. MIR's copy of a whole binding has no defined failure, lifecycle
+event or value drop, and the adjacent `Initialize` activates the new binding's
+own drop. The `Load` copy-constructs the new binding's lifetime slot from the
+source, and each binding keeps its own drop. This serves a byte-preserving
+native-record payload and any cleanup-free class success payload alike. A
+scalar-success Expected, even one with a class error, keeps its ordinary
+carrier for both copies and moves, so its bindings stay ordinary locals that
+other assignments and observations already handle.
 
 The slot also serves an Expected call result that initializes a constructor
 field as that field's selected member initializer, immediately after the
