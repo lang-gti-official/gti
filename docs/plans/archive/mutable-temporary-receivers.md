@@ -4,6 +4,14 @@ Status: Direct-receiver Slice A implemented in GTI 0.294.0;
 `M-TEMP-ARG-01`, the one-call read-only argument follow-on, is implemented in
 GTI 0.297.0.
 
+This archived record describes the original bounded deliveries, not the full
+current temporary vocabulary. Later work admits additional operator and
+stable-owner-dependent receiver/argument profiles. Its "outside this slice"
+lists remain evidence of the earlier bounds, not permanent language bans;
+use [static semantics](../../language/static-semantics.md) and
+[ownership](../../language/ownership-and-lifetimes.md) for current permission,
+origins, full-expression lifetime and escape rules.
+
 ## Summary
 
 GTI allows a fresh, self-contained class-value temporary to serve as the

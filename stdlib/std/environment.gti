@@ -1,0 +1,91 @@
+// <std/environment> — owned read-only process environment observation.
+// No host buffer escapes. Mutation through unsafe native code must exclude
+// concurrent environment access; safe GTI provides no environment mutation.
+
+#if target.os == "windows"
+#error "std/environment is not yet available on Windows."
+#endif
+#if target.os == "unknown"
+#error "std/environment requires a supported POSIX target."
+#endif
+
+#include <std/string>
+#include <std/optional>
+#include <std/memory>
+
+namespace gti_internal {
+namespace environment_runtime {
+extern "C" {
+uint32_t gti_rt_environment_get_v1(text_view name, int64_t* snapshot);
+uint64_t gti_rt_environment_snapshot_size_v1(int64_t snapshot);
+const void* gti_rt_environment_snapshot_data_v1(int64_t snapshot);
+void gti_rt_environment_snapshot_destroy_v1(int64_t snapshot);
+}
+}
+
+// A temporary unique native copy. Ordinary MIR cleanup also releases it if
+// constructing the public string fails. No process-environment loan survives.
+[[no_transfer, no_share]] class environment_snapshot {
+  int64_t handle;
+public:
+  environment_snapshot(int64_t value) : handle(value) {}
+  environment_snapshot(environment_snapshot& other) = delete;
+  environment_snapshot(environment_snapshot&& other) = default;
+  ~environment_snapshot() {
+    environment_runtime::gti_rt_environment_snapshot_destroy_v1(this.handle);
+  }
+  std::string_view view() {
+    unsafe {
+      const void* address = environment_runtime::gti_rt_environment_snapshot_data_v1(this.handle);
+      const char* characters = std::typed_address<char>(address);
+      return std::assume_string_view(
+          characters,
+          environment_runtime::gti_rt_environment_snapshot_size_v1(this.handle),
+          this);
+    }
+  }
+};
+}
+
+namespace std {
+namespace environment {
+
+/// Lookup errors. A missing variable is an empty optional, not an error.
+enum class errc {
+  invalid_name,
+  unsupported,
+  out_of_memory,
+};
+
+/// Copies one current environment value, preserving its native bytes.
+/// An empty name, '=' or an embedded NUL returns invalid_name. Names are
+/// case-sensitive on POSIX. Present empty values produce an engaged optional.
+/// The owned result remains valid after later queries or environment changes.
+expected<std::optional<std::string>, errc> get(std::string_view name) {
+  if (name.empty()) {
+    return unexpected(errc::invalid_name);
+  }
+  for (mut std::size_t index = 0; index < name.size(); index++) {
+    if (name[index] == '\0' || name[index] == '=') {
+      return unexpected(errc::invalid_name);
+    }
+  }
+
+  mut int64_t handle = 0;
+  mut uint32_t status = 0;
+  unsafe {
+    status = gti_internal::environment_runtime::gti_rt_environment_get_v1(
+        name, &handle);
+  }
+  if (status == uint32_t(1)) { return unexpected(errc::invalid_name); }
+  if (status == uint32_t(2)) { return unexpected(errc::unsupported); }
+  if (status != uint32_t(0)) { return unexpected(errc::out_of_memory); }
+  if (handle == int64_t(0)) { return std::optional<std::string>(); }
+
+  auto snapshot = gti_internal::environment_snapshot(handle);
+  std::string value = std::string(snapshot.view());
+  return std::optional<std::string>(std::move(value));
+}
+
+}
+}

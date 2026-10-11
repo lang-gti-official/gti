@@ -3945,6 +3945,81 @@ int main() {
          "no Expected should value-initialize an ordinary local");
 }
 
+void testOwningExpectedFieldPublication() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-owning-expected-field.gti", R"(
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() {}
+};
+
+expected<counted, int32_t> make_counted(bool ok) {
+  if (ok) { return counted(5); }
+  return unexpected(int32_t(2));
+}
+
+expected<counted, int32_t> make_checked(int32_t value) {
+  return counted(value + 1);
+}
+
+struct box {
+  expected<counted, int32_t> plain;
+  expected<counted, int32_t> checked;
+  box(bool ok) : plain(make_counted(ok)), checked(make_checked(6)) {}
+};
+
+int main() {
+  box held{true};
+  return held.plain.value().number + held.checked.value().number - 12;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the owning Expected field fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string retire =
+      ".destroy(); // end transferred Expected field representation\n";
+  std::size_t publications = 0;
+  bool checkedProducer = false;
+  for (std::size_t at = text.find(retire); at != std::string::npos;
+       at = text.find(retire, at + retire.size())) {
+    const std::size_t slotStart = text.rfind("__gti_mir_p_", at);
+    const std::string slot = text.substr(slotStart, at - slotStart);
+    const std::size_t declared =
+        text.rfind("::gti_internal::backend::mir_lifetime_slot<std::expected<"
+                   "::__gti_program::counted, std::int32_t>> " +
+                       slot + ";",
+                   at);
+    const std::size_t moved =
+        text.rfind("::gti_internal::backend::construct_representation_at(std::"
+                   "addressof(",
+                   at);
+    if (declared == std::string::npos || moved == std::string::npos ||
+        text.find(", std::move(" + slot + ".get()));", moved) > at ||
+        text.rfind("std::destroy_at(std::addressof(", moved) < declared)
+      continue;
+    ++publications;
+    checkedProducer = checkedProducer ||
+                      text.find(slot + ".mark_constructed();", declared) < at;
+  }
+  expect(publications >= 2 && checkedProducer,
+         "each owning Expected field should be constructed in place from its "
+         "result's lifetime slot, including after a checked producer, and "
+         "the slot should retire without a semantic drop");
+  expect(text.find("std::expected<::__gti_program::counted, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no Expected should value-initialize an ordinary local");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -4132,6 +4207,7 @@ constexpr NamedTest kTests[] = {
     {"testExpectedFieldAndJoinPublication",
      testExpectedFieldAndJoinPublication},
     {"testOwnedArgumentMemberInitializer", testOwnedArgumentMemberInitializer},
+    {"testOwningExpectedFieldPublication", testOwningExpectedFieldPublication},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",

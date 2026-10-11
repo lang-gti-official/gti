@@ -3,6 +3,12 @@
 Status: Implemented for GTI 0.294.0. Canonical syntax and semantics now live in
 `docs/language/grammar.ebnf` and `docs/language/static-semantics.md`.
 
+This is the completed proposal record. "Should", "proposed", "eventually" and
+implementation instructions below retain their design-time meaning; they do
+not imply that field groups are still missing. Current borrowed-field and
+generic rules may extend that checkpoint and must be read from the canonical
+language contracts rather than inferred from its historical negative list.
+
 ## Summary
 
 GTI should allow a class or struct to place consecutive direct instance fields

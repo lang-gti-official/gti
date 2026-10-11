@@ -1,0 +1,29 @@
+#include <std/environment>
+#include <std/string>
+
+int main() {
+  auto missing = std::environment::get("GTI_ENVIRONMENT_MISSING_7d4c9f3e");
+  if (!missing || missing.value().has_value()) { return 1; }
+
+  auto empty_name = std::environment::get("");
+  if (empty_name || empty_name.error() != std::environment::errc::invalid_name) {
+    return 2;
+  }
+  auto equals = std::environment::get("GTI_ENVIRONMENT=value");
+  if (equals || equals.error() != std::environment::errc::invalid_name) {
+    return 3;
+  }
+  auto nul = std::environment::get("PATH\0SUFFIX");
+  if (nul || nul.error() != std::environment::errc::invalid_name) { return 4; }
+
+  // PATH is commonly present; absence is legitimate too. Retain a lookup
+  // across a second one, proving there is no next-query invalidation.
+  auto first = std::environment::get("PATH");
+  auto second = std::environment::get("PATH");
+  if (!first || !second) { return 5; }
+  if (first.value().has_value() != second.value().has_value()) { return 6; }
+  if (first.value().has_value()) {
+    if (first.value().value().view() != second.value().value().view()) { return 7; }
+  }
+  return 0;
+}
