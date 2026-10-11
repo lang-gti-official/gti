@@ -137,13 +137,16 @@ is a separate future decision with its own ADR, not an incremental drift.
   recovery never crosses an LLVM frame, and the LSP's guarded callback
   catches its own exceptions and returns the outcome as data rather than
   unwinding through `CrashRecoveryContext`.
-- **Crash handling.** Every tool entry point installs
-  `lang::installCrashHandlers` first, so LLVM fatal errors and allocation
-  failures report deterministically instead of aborting silently.
+- **Crash handling.** Tool entry points should install
+  `lang::installCrashHandlers` first; the CLI and LSP currently do so, making
+  LLVM fatal errors and allocation failures report rather than abort silently.
   `lang::runGuarded` must only ever wrap work that holds no lock and touches
   no shared state, so that a stack restore which skips destructors cannot
-  strand a mutex. The LSP satisfies this by guarding analysis alone and
-  publishing afterwards; see
+  strand a mutex. The LSP keeps protocol publication and `stateMutex` outside
+  the guard, but analysis uses a shared `FrontendCache` whose lookup/store
+  methods lock inside it. The 2026-10-11 audit therefore withdraws the claim
+  that its entire callback is shared-state/lock-free: cache fault recovery
+  remains unproved and in-process recovery remains best-effort. See
   [`docs/architecture/lsp.md`](../architecture/lsp.md).
 - **Flags.** LLVM's exported compile flags (notably `-fno-rtti`) are never
   imported onto GTI targets; LLVM headers are included as `SYSTEM`.

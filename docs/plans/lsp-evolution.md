@@ -23,15 +23,16 @@ table is removed. Current scope, snapshot invalidation and conservative limits
 are recorded in the canonical LSP architecture document. This does not provide
 workspace-wide references/rename or a persistent project index.
 
-### 0. Make the crash boundary state-safe - implemented
+### 0. Isolate protocol publication — implemented; shared-cache fault safety remains
 
 `runIsolatedAnalysis` now guards only analysis and snapshot construction. It
 catches all C++ exceptions inside the callback and returns them as
-`GuardedAnalysis` state, so none crosses an LLVM frame, and it holds no lock
-and touches no shared state, so a stack restore cannot strand `stateMutex`.
+`GuardedAnalysis` state, so none crosses an LLVM frame. `stateMutex` is not held
+by that guarded callback, so a stack restore there cannot strand the protocol
+publication lock.
 `publishAnalysis` performs generation checks, diagnostic publication, request
-rejection, and every other shared-state mutation outside the crash-recovery
-context. `lsp_protocol` covers the recovery path with
+rejection, and protocol-state mutation outside the crash-recovery context.
+`lsp_protocol` covers ordinary failed-input recovery with
 `test_worker_survives_failed_analysis`, which drives repeated failing analyses
 through the worker and then requires ordinary analysis and a semantic request
 to still succeed.
@@ -43,11 +44,21 @@ exhausted, including completion's independent frontend analysis. The protocol
 regression then edits and formats the same document, proving that the
 analysis and completion workers and shared state remain usable.
 
-What remains is the stronger guarantee, not the state-safety one: in-process
-recovery cannot undo heap damage that occurred before a fatal signal. Moving
-analysis to a subprocess and treating process termination as the recovery
-boundary is the option if that is ever required. Do not broaden the current
-guard around more protocol or stateful work.
+The 2026-10-11 source audit found that guarded analysis still calls the shared
+frontend cache, whose lookup/store operations own a mutex. Recovery from a
+signal during those operations can skip unlocking or leave an incomplete cache
+update. The existing missing-include and depth-limit tests do not establish
+signal-fault safety. The current boundary is best-effort, not generally
+state-safe, and in-process recovery also cannot undo heap damage.
+
+The next recovery slice must choose a lock/state-safe cache seam or worker
+process isolation before promising continued operation after a compiler fault.
+Acceptance needs isolated fault-injection cases at cache access/update and
+ordinary analysis, proving no stranded worker/lock, no partial snapshot
+publication, stale-request rejection and subsequent healthy queries. Measure
+latency/memory impact against current parsed-unit reuse; process isolation is
+not permission to duplicate semantics or discard cache identity contracts.
+Do not broaden the guard around protocol or additional stateful work.
 
 ### 1. Retain documentation comments and declaration extents - hover, completion, and signature help implemented
 
