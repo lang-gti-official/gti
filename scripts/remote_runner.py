@@ -69,10 +69,13 @@ def validate_connection(config):
     if not isinstance(config, dict) or set(config) - fields:
         raise RunnerError("runner connection has unknown fields")
     host = config.get("host")
-    if not isinstance(host, str) or not host or host.startswith("-") or any(c.isspace() or c == "\0" for c in host):
+    if (not isinstance(host, str) or not host or host.startswith("-")
+            or any(c.isspace() or c == "\0" for c in host)):
         raise RunnerError("provide an SSH alias or user@host; SSH/Tailscale authentication must already work")
     root = config.get("root", "")
-    if not isinstance(root, str) or not root.startswith("/") or ".." in PurePosixPath(root).parts or PurePosixPath(root).name != "gti-remote-runner" or "\0" in root:
+    if (not isinstance(root, str) or not root.startswith("/")
+            or ".." in PurePosixPath(root).parts
+            or PurePosixPath(root).name != "gti-remote-runner" or "\0" in root):
         raise RunnerError("remote root must be absolute, without '..', and end in gti-remote-runner")
     python = config.get("python")
     if not isinstance(python, str) or not python or "\0" in python:
@@ -99,6 +102,7 @@ def load_settings(path):
             settings["hosts"]["mini"].update(saved)
             if saved["host"] != HOSTS["mini"]["host"] and "platform" not in saved:
                 settings["hosts"]["mini"].pop("platform", None)
+            validate_connection(settings["hosts"]["mini"])
         else:
             if saved.get("schema") != SETTINGS_SCHEMA or not isinstance(saved.get("hosts"), dict):
                 raise RunnerError("unsupported runner settings schema")
@@ -114,9 +118,12 @@ def load_settings(path):
 
 def save_connection(path, name, config, make_default=False):
     from build_window import Window
+    if not isinstance(name, str) or not HOST_NAME.fullmatch(name):
+        raise RunnerError("invalid named runner settings")
     path.parent.mkdir(parents=True, exist_ok=True)
     # Serialize only metadata updates, never network calls or validation runs.
-    with Window(path.parent / "settings-window", slots={"suite": 1}, poll=0.1).acquire("suite", ["remote-runner", "configure"]):
+    window = Window(path.parent / "settings-window", slots={"suite": 1}, poll=0.1)
+    with window.acquire("suite", ["remote-runner", "configure"]):
         settings = load_settings(path)
         settings["hosts"][name] = validate_connection(config)
         if make_default:
@@ -128,9 +135,11 @@ def select_connection(args, settings, local, run_id=None):
     record = local / "runs" / (run_id + ".json") if run_id else None
     if record and record.exists():
         saved = read_json(record)
-        if not isinstance(saved, dict) or saved.get("schema") != SETTINGS_SCHEMA or saved.get("id") != run_id:
+        if (not isinstance(saved, dict) or saved.get("schema") != SETTINGS_SCHEMA
+                or saved.get("id") != run_id):
             raise RunnerError("saved run connection identity mismatch")
-        if not isinstance(saved.get("runner"), str) or not HOST_NAME.fullmatch(saved["runner"]) or "connection" not in saved:
+        if (not isinstance(saved.get("runner"), str) or not HOST_NAME.fullmatch(saved["runner"])
+                or "connection" not in saved):
             raise RunnerError("saved run connection is incomplete")
         name, config = saved["runner"], validate_connection(saved["connection"])
         # A changed default/environment must not redirect a detached run.
@@ -140,7 +149,8 @@ def select_connection(args, settings, local, run_id=None):
             if getattr(args, key) is not None and getattr(args, key) != config.get(key):
                 raise RunnerError(f"{run_id} has a recorded {key}; connection overrides would redirect its evidence")
         return name, config
-    name = args.runner if args.runner is not None else os.environ.get("GTI_REMOTE_RUNNER") or settings["default"]
+    name = (args.runner if args.runner is not None
+            else os.environ.get("GTI_REMOTE_RUNNER") or settings["default"])
     if not HOST_NAME.fullmatch(name):
         raise RunnerError("runner name must use letters, digits, '-' or '_'")
     if name not in settings["hosts"] and not (args.host or os.environ.get("GTI_REMOTE_HOST")):
@@ -155,6 +165,9 @@ def select_connection(args, settings, local, run_id=None):
 
 
 def record_connection(local, run_id, name, config):
+    if not isinstance(name, str) or not HOST_NAME.fullmatch(name):
+        raise RunnerError("invalid run's named runner")
+    validate_connection(config)
     directory = local / "runs"
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / (valid_id(run_id) + ".json")
@@ -369,10 +382,6 @@ def default_steps(request):
     llvm = llvm_directory()
     if llvm:
         configure.append("-DLLVM_DIR=" + llvm)
-    if platform.system() == "Linux":
-        for language, executable in (("C", "clang"), ("CXX", "clang++")):
-            if not os.environ.get("CC" if language == "C" else "CXX") and shutil.which(executable):
-                configure.append(f"-DCMAKE_{language}_COMPILER={shutil.which(executable)}")
     configure.extend(request["cmake_args"])
     build = ["cmake", "--build", "{build}", "--parallel", str(jobs)]
     if request["targets"]:
@@ -845,7 +854,14 @@ def main(argv=None):
         states = {}
         for name, config in settings["hosts"].items():
             try:
-                states[name] = connection(validate_connection(config), "status")
+                observed = connection(validate_connection(config), "status")
+                states[name] = {key: observed.get(key) for key in
+                                ("root", "platform", "machine", "cpus", "slots", "window")}
+                states[name]["active_runs"] = [
+                    {key: run.get(key) for key in ("id", "state", "phase")}
+                    for run in observed.get("runs", []) if run["state"] not in TERMINAL]
+                states[name]["retained_results"] = sum(
+                    run["state"] in TERMINAL for run in observed.get("runs", []))
             except (RunnerError, OSError, ValueError) as error:
                 states[name] = {"error": str(error)}
         print(json.dumps(states, indent=2))
@@ -884,8 +900,8 @@ def main(argv=None):
             write_json(temporary / "request.json", request)
             packet = temporary / "upload.tar"
             with tarfile.open(packet, "w") as archive:
-                for name in ("head.bundle", "source.tar", "request.json"):
-                    archive.add(temporary / name, arcname=name, recursive=False)
+                for filename in ("head.bundle", "source.tar", "request.json"):
+                    archive.add(temporary / filename, arcname=filename, recursive=False)
                 add_bytes(archive, "remote_runner.py", source_code().encode())
                 add_bytes(archive, "build_window.py", (Path(__file__).parent / "build_window.py").read_bytes())
             record_connection(local, run_id, name, config)
