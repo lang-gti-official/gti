@@ -332,7 +332,8 @@ object. These restrictions keep source validity in semantics and preserve the
 same owner and transfer facts in HIR and verified MIR. The C++ backend only
 represents the already-verified counted view and does not infer its lifetime.
 
-`<std/string_view>` (also included by `<std/string>`) supplies source-defined
+`<std/string_view>` and its `std.string_view` module (also included by
+`<std/string>`) supply source-defined
 counted-text cursors. Member `begin/end`, `cbegin/cend`, `rbegin/rend`,
 `crbegin/crend`, common-position endpoints, and positioned cursor factories
 retain a checked reference to the view shell and its dynamic owner, if any.

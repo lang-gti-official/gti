@@ -37,6 +37,10 @@ int main() {
   { mut auto end = chain.end_iterator(); --end; if (*end != 3) { return 8; } }
   { mut auto write = chain.end_mut(); --write; --write; *write = 42; }
   { mut auto read = chain.begin(); ++read; if (*read != 42) { return 9; } }
+  { mut auto first = chain.begin(); mut auto copy = first; ++copy;
+    if (*first != 1 || *copy != 42 || first == copy) { return 18; }
+    --copy; if (copy != first) { return 19; }
+  }
 
   mut std::map<int, int> tree{};
   [[discard]] tree.insert(3, 30);
@@ -50,15 +54,41 @@ int main() {
   { mut auto write = tree.end_mut(); --write; write->mapped() = 33; }
   int three = 3;
   if (tree.at(three) != 33) { return 13; }
+  { mut auto first = tree.begin(); mut auto copy = first; ++copy;
+    if (first->first != 1 || copy->first != 2 || first == copy) { return 20; }
+    --copy; if (copy != first) { return 21; }
+  }
 
   std::set<int> keys = {3, 1, 2};
   { mut auto end = keys.end_iterator(); --end; if (*end != 3) { return 14; }
     --end; if (*end != 2) { return 15; }
   }
+  { mut auto first = keys.begin(); mut auto copy = first; ++copy;
+    if (*first != 1 || *copy != 2 || first == copy) { return 22; }
+    --copy; if (copy != first) { return 23; }
+  }
   mut std::unordered_map<int, int> hash{};
   [[discard]] hash.insert(1, 2);
-  { auto end = hash.end_iterator(); if (end != hash.end()) { return 16; } }
-  std::unordered_set<int> hash_keys = {1, 2};
-  { auto end = hash_keys.end_iterator(); if (end != hash_keys.end()) { return 17; } }
+  [[discard]] hash.insert(3, 4);
+  { auto end = hash.end_iterator(); if (end != hash.end() || !(end == hash.end())) { return 16; } }
+  { mut auto first = hash.begin(); mut auto copy = first;
+    int first_key = first->first; ++copy;
+    if (first->first != first_key || copy->first == first_key || first == copy) { return 24; }
+  }
+  { auto end = hash.end(); mut auto write = hash.begin_mut();
+    if (write == end) { return 25; } ++write; ++write;
+    if (!(write == end)) { return 26; }
+  }
+  mut std::unordered_set<int> hash_keys = {1, 2};
+  { auto end = hash_keys.end_iterator(); if (end != hash_keys.end() || !(end == hash_keys.end())) { return 17; } }
+  { mut auto first = hash_keys.begin(); mut auto copy = first;
+    int first_key = *first; ++copy;
+    if (*first != first_key || *copy == first_key || first == copy) { return 27; }
+  }
+  { auto end = hash_keys.end(); mut auto duplicate = hash_keys.insert(1);
+    if (duplicate.second || duplicate.first == end) { return 28; }
+    ++duplicate.first; ++duplicate.first;
+    if (!(duplicate.first == end)) { return 29; }
+  }
   return 0;
 }
