@@ -1484,6 +1484,13 @@ active cleanup, and host/runtime calls remain outside this constant-execution
 profile. Calls requiring these new mutation rules cannot retry an unsupported
 MIR operation in the compatibility AST evaluator.
 
+These new mutation rules require values supported by the MIR constant profile.
+Ordinary enum values and checked-integer `expected` results retain their older
+compatibility evaluation, but are not yet usable in mutable constexpr builders,
+including as fields. Migrating those values and operations to MIR is a
+prerequisite; admitting their declarations does not guarantee every call can
+execute as a required constant.
+
 Completed free constexpr functions may also transform fully initialized passive
 structural records supplied by value: copy into a mutable local, mutate fields
 (including nested records and fixed arrays), and return the independent value.

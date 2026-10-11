@@ -8328,11 +8328,15 @@ consumer, and release refreshes remain outstanding for the full campaign.
   tooling evidence is tracked in the verification document; this does not claim
   allocation, stored borrows, every constructor schedule or complete constexpr
   support.
-- **Remaining scope:** Stored references, constructor reference parameters,
+- **Remaining scope:** Existing ordinary-enum and checked-integer `expected`
+  profiles need MIR value/operation migration before joining mutable builders.
+  That prerequisite must preserve exact enum identity, checked-result state,
+  shared budgets and compile-time/runtime parity rather than extend AST
+  mutation. Stored references, constructor reference parameters,
   declaration-default/in-place constructor schedules, allocation,
   payload enums, unions, inherited or cleanup-owning aggregates, generic packs,
-  arrow/contextual-bool operators, consuming receivers, and polymorphism remain excluded. Do
-  not widen exact qualified specialization into partial specialization as a
+  arrow/contextual-bool operators, consuming receivers, and polymorphism remain
+  excluded. Do not widen exact qualified specialization into partial specialization as a
   side effect.
 - **Initial exit gate:** met by positive/negative identity and limit tests plus
   an O0/O3 and C++20/C++23 runtime-parity matrix whose result is independent of
