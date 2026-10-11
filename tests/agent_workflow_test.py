@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise task lifecycle with real disposable Git repositories and a fake Gitea."""
+"""Exercise task lifecycle with real disposable Git repositories, a fake GitHub API and a Gitea mirror."""
 
 import importlib.util
 import json
@@ -21,30 +21,42 @@ git = module.git
 Error = module.WorkflowError
 
 
-class Gitea:
+class GitHub:
+    """The subset of GitHub's REST/GraphQL surface the helper uses, with GitHub's response shapes."""
+
     def __init__(self, remote):
         self.remote = remote
         self.prs = []
-        self.rules = []
+        self.rule = None
         self.merge_payload = None
         self.reject_merge = False
         self.lose_create_response = False
         self.lose_close_response = False
         self.before_merge = None
+        self.ready_calls = []
 
-    def request(self, method, path, payload=None):
-        if path.startswith("/branch_protections"):
+    def request(self, method, path, payload=None, url=None):
+        if path == "/branches/main/protection":
             if method == "GET":
-                return self.rules
-            self.rules = [{**(self.rules[0] if self.rules else {}), **payload}]
-            return self.rules[0]
+                return self.rule
+            self.rule = {
+                "required_status_checks": payload["required_status_checks"],
+                "enforce_admins": {"enabled": payload["enforce_admins"]},
+                "required_pull_request_reviews": payload["required_pull_request_reviews"],
+                "allow_force_pushes": {"enabled": payload["allow_force_pushes"]},
+                "allow_deletions": {"enabled": payload["allow_deletions"]},
+                "required_linear_history": {"enabled": payload["required_linear_history"]},
+                "required_conversation_resolution": {"enabled": payload["required_conversation_resolution"]}}
+            return self.rule
         if path.startswith("/pulls?"):
-            return self.prs
+            # The list view carries merged_at, never `merged`.
+            return [{k: v for k, v in pr.items() if k != "merged"} for pr in self.prs]
         if path == "/pulls":
             head = git(self.remote, "rev-parse", "refs/heads/" + payload["head"])
-            pr = {**payload, "number": len(self.prs) + 1,
-                  "html_url": "https://example.invalid/pulls/1", "state": "open",
-                  "draft": True, "merged": False,
+            number = len(self.prs) + 1
+            pr = {**payload, "number": number, "node_id": f"PR_{number}",
+                  "html_url": f"https://example.invalid/pull/{number}", "state": "open",
+                  "draft": bool(payload.get("draft")), "merged": False, "merge_commit_sha": None,
                   "head": {"ref": payload["head"], "sha": head,
                            "repo": {"full_name": module.REPOSITORY}},
                   "base": {"ref": "main", "repo": {"full_name": module.REPOSITORY}}}
@@ -60,26 +72,29 @@ class Gitea:
             return pr.copy()
         if method == "PATCH":
             pr.update(payload)
-            if "title" in payload:
-                pr["draft"] = payload["title"].startswith("WIP:")
             if self.lose_close_response and payload.get("state") == "closed":
                 self.lose_close_response = False
                 raise Error("simulated lost close response")
             return pr
-        if path.endswith("/merge"):
+        if method == "PUT" and path.endswith("/merge"):
             self.merge_payload = payload
             if self.before_merge:
                 self.before_merge()
             base = git(self.remote, "rev-parse", "main")
             head = pr["head"]["sha"]
-            if self.reject_merge or payload["head_commit_id"] != head or git(self.remote, "merge-base", "--is-ancestor", base, head, check=False).returncode:
+            if (self.reject_merge or payload["sha"] != head or payload["merge_method"] != "merge"
+                    or git(self.remote, "merge-base", "--is-ancestor", base, head, check=False).returncode):
                 raise Error("server rejected pending checks or outdated branch")
             tree = git(self.remote, "rev-parse", head + "^{tree}")
             commit = git(self.remote, "commit-tree", tree, "-p", base, "-p", head, "-m", "merge task")
             git(self.remote, "update-ref", "refs/heads/main", commit)
             pr.update(merged=True, state="closed", merge_commit_sha=commit)
-            return None
+            return {"merged": True, "sha": commit}
         raise AssertionError((method, path, payload))
+
+    def ready(self, pr):
+        self.ready_calls.append(pr["number"])
+        self.prs[pr["number"] - 1]["draft"] = False
 
 
 class Lifecycle(unittest.TestCase):
@@ -100,7 +115,10 @@ class Lifecycle(unittest.TestCase):
         git(self.primary, "add", ".")
         git(self.primary, "commit", "-m", "initial")
         git(self.primary, "push", "-u", "origin", "main")
-        self.api = Gitea(self.remote)
+        self.mirror = self.root / "mirror.git"
+        subprocess.run(["git", "init", "--bare", str(self.mirror)], check=True, capture_output=True)
+        git(self.primary, "remote", "add", module.MIRROR_REMOTE, str(self.mirror))
+        self.api = GitHub(self.remote)
         self.env = unittest.mock.patch.dict(os.environ)
         self.env.start()
         for name in list(os.environ):
@@ -150,8 +168,16 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(state["phase"], "synced")
         self.assertEqual((self.primary / "base.txt").read_text(), "user edit\n")
         self.assertTrue((self.primary / "feature.txt").is_file())
-        self.assertFalse(self.api.merge_payload["force_merge"])
-        self.assertEqual(self.api.merge_payload["head_commit_id"], state["verified"]["head"])
+        self.assertEqual(self.api.merge_payload["merge_method"], "merge")
+        self.assertEqual(self.api.merge_payload["sha"], state["verified"]["head"])
+        self.assertEqual(self.api.ready_calls, [1])
+        self.assertFalse(self.api.prs[0]["draft"])
+        # The Gitea backup follows every integration.
+        self.assertEqual(git(self.mirror, "rev-parse", "main"), git(self.remote, "rev-parse", "main"))
+        self.assertEqual(state["mirror"]["remote"], module.MIRROR_REMOTE)
+        self.assertTrue(state["mirror"]["pushed"])
+        self.assertIsNone(state["mirror"]["error"])
+        self.assertEqual(git(self.primary, "ls-remote", str(self.mirror), "refs/heads/codex/*"), "")
         self.flow.cleanup("task")
         self.assertFalse(self.worktree.exists())
         self.assertEqual(git(self.primary, "ls-remote", "origin", "refs/heads/" + self.branch), "")
@@ -260,14 +286,53 @@ class Lifecycle(unittest.TestCase):
             self.flow.cleanup("task")
 
     def test_protection_preserves_reviews_and_statuses(self):
-        self.api.rules = [{"rule_name": "main", "required_approvals": 2,
-                           "enable_status_check": True, "status_check_contexts": ["Native toolchain"]}]
+        self.api.rule = {"required_status_checks": {"strict": False, "contexts": ["Native toolchain"]},
+                         "enforce_admins": {"enabled": False},
+                         "required_pull_request_reviews": {"required_approving_review_count": 2,
+                                                           "dismiss_stale_reviews": True},
+                         "allow_force_pushes": {"enabled": True}, "allow_deletions": {"enabled": False}}
         result = self.flow.protection(True)
-        self.assertEqual(result["required_approvals"], 2)
-        self.assertEqual(result["status_check_contexts"], ["Native toolchain"])
-        self.assertTrue(result["enable_status_check"])
-        self.assertFalse(result["enable_push"])
-        self.assertTrue(result["block_on_outdated_branch"])
+        self.assertEqual(result["required_pull_request_reviews"]["required_approving_review_count"], 2)
+        self.assertTrue(result["required_pull_request_reviews"]["dismiss_stale_reviews"])
+        self.assertEqual(result["required_status_checks"], {"strict": True, "contexts": ["Native toolchain"]})
+        self.assertTrue(result["enforce_admins"]["enabled"])
+        self.assertFalse(result["allow_force_pushes"]["enabled"])
+        self.assertFalse(result["allow_deletions"]["enabled"])
+        self.api.rule = None
+        with self.assertRaisesRegex(Error, "protection --configure"):
+            self.flow.protection()
+        self.api.rule = {**self.flow.protection(True), "enforce_admins": {"enabled": False}}
+        with self.assertRaisesRegex(Error, "protection --configure"):
+            self.flow.protection()
+
+    def test_sync_reports_a_missing_or_failing_mirror_without_blocking(self):
+        git(self.primary, "remote", "remove", module.MIRROR_REMOTE)
+        self.ready()
+        state = self.flow.finish("task", "description")
+        self.assertEqual(state["phase"], "synced")
+        self.assertIsNone(state["mirror"]["remote"])
+        self.assertFalse(state["mirror"]["pushed"])
+        self.assertIn(module.MIRROR_REMOTE, state["mirror"]["error"])
+
+    def test_legacy_gitea_record_steps_aside_for_adoption(self):
+        old = self.root / "old"
+        git(self.primary, "worktree", "add", "-b", "codex/old", str(old), "main")
+        self.flow.file("old").write_text(json.dumps({
+            "schema": 1, "task": "old", "title": "Old task", "branch": "codex/old",
+            "worktree": str(old), "base": git(self.primary, "rev-parse", "main"),
+            "phase": "active", "pr": 7, "pr_url": "https://git.example/pulls/7"}))
+        with self.assertRaisesRegex(Error, "predates the GitHub move"):
+            self.flow.load("old")
+        records = {s["task"]: s for s in self.flow.status()}
+        self.assertEqual(records["old"]["remote_state"], "legacy-gitea")
+        self.assertEqual(self.api.prs, [])
+        with self.assertRaisesRegex(Error, "start --adopt"):
+            self.flow.start("old", "Old task", old, "codex/old")
+        state = self.flow.start("old", "Old task", old, "codex/old", adopt=True)
+        self.assertEqual(state["host"], "github")
+        self.assertEqual(state["phase"], "active")
+        self.assertTrue((self.flow.state_dir / "old.legacy-gitea.json").is_file())
+        self.assertTrue(git(self.primary, "ls-remote", "origin", "refs/heads/codex/old"))
 
     def test_lock_ownership_and_scope_guards(self):
         with self.flow.lock():
@@ -284,6 +349,11 @@ class Lifecycle(unittest.TestCase):
             self.flow.checkpoint("task", "broad", ["."])
         with self.assertRaisesRegex(Error, "canonical"):
             module.Workflow(self.primary, self.api)
+        git(self.primary, "remote", "set-url", "origin", module.CANONICAL)
+        with self.assertRaisesRegex(Error, "Gitea mirror"):
+            module.Workflow(self.primary, self.api)
+        git(self.primary, "remote", "set-url", module.MIRROR_REMOTE, module.MIRROR)
+        module.Workflow(self.primary, self.api)
 
     def test_literal_pathspecs_do_not_commit_unrelated_files(self):
         self.start()

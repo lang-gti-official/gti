@@ -1,0 +1,51 @@
+name: Mirror to Gitea
+
+# GitHub is the authoritative host; the self-hosted Gitea instance keeps a
+# backup copy of main and the tags. The local workflow helper mirrors after
+# every integration, so this job is a second, independent path that needs
+# the GITEA_MIRROR_TOKEN repository secret (a Gitea token with write access
+# to gti-lang/gti). Without the secret, or when the Gitea host is not
+# reachable from GitHub's runners, the job reports that and succeeds.
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - '**'
+  workflow_dispatch:
+
+concurrency:
+  group: gitea-mirror
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    name: Mirror main and tags
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out GTI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Push main and tags to the Gitea backup
+        shell: bash
+        env:
+          GITEA_MIRROR_TOKEN: ${{ secrets.GITEA_MIRROR_TOKEN }}
+          GITEA_MIRROR_URL: https://git.internal.howetotech.dev/gti-lang/gti.git
+        run: |
+          if [[ -z "${GITEA_MIRROR_TOKEN}" ]]; then
+            echo "GITEA_MIRROR_TOKEN is not configured; the local workflow helper mirrors main after each integration."
+            exit 0
+          fi
+          mirror="${GITEA_MIRROR_URL/https:\/\//https://gti-mirror:${GITEA_MIRROR_TOKEN}@}"
+          if ! git ls-remote --exit-code --heads "${mirror}" main >/dev/null 2>&1; then
+            echo "The Gitea mirror is not reachable from this runner; the local workflow helper remains the mirror path."
+            exit 0
+          fi
+          git push --force "${mirror}" refs/heads/main:refs/heads/main 'refs/tags/*:refs/tags/*'

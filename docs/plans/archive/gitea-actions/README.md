@@ -2,7 +2,7 @@
 
 > **Archived.** These workflows ran on the self-hosted Gitea instance until
 > 2026-10-11, when its single runner could no longer carry the full suite's
-> workload. CI hosting moves to the `gti-lang` GitHub organization; Gitea
+> workload. CI hosting moved to the `gti-lang-official` GitHub organization; Gitea
 > remains a repository mirror and backup. Nothing in this directory executes,
 > and the text below describes the setup as it was. The replacement GitHub
 > Actions workflows should inherit the resource budgets, sanitizer preflight,

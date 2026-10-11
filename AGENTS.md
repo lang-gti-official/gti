@@ -49,6 +49,11 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
 - Explicit requests such as "PR only", "leave local", "do not merge", or
   "review first" override automatic integration. Read-only reviews/discussions
   do not authorize implementation or publication. Installation remains opt-in.
+- GitHub (`gti-lang-official/gti`, remote `origin`) is the canonical host for
+  branches, pull requests, issues, CI and releases. The self-hosted Gitea
+  repository (remote `gitea`) is a backup mirror of `main` and the tags that
+  the helper's `sync` pushes after every integration; never open PRs or
+  issues there.
 - Begin from current canonical `origin/main` in a clean task-specific branch
   and worktree. Publish the branch immediately; create a draft PR after the
   first meaningful checkpoint. Commit and push coherent checkpoints before
@@ -64,7 +69,7 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   harness fixture) and single-file compiles run directly. `verify` takes a
   suite slot itself; `build_window.py --status` shows who holds the slots.
 - Use `scripts/agent_workflow.py` for lifecycle operations. Reconcile upstream,
-  validate the resulting head/base, and merge only through Gitea PRs. Respect
+  validate the resulting head/base, and merge only through GitHub PRs. Respect
   required checks/reviews. No direct pushes to `main`, rewritten shared history,
   or administrative bypasses. The owner authorizes the helper's `protection
   --configure` to establish this PR-only/up-to-date rule; preserve existing
@@ -120,10 +125,9 @@ one-off implementation-note or redesign files when an existing category fits.
 ## Release Channels And VERSION
 
 Two channels publish this repository, and they answer different questions.
-The Gitea release workflow that published them is archived as of 2026-10-11
-(`docs/plans/archive/gitea-actions/`); neither channel publishes until the
-replacement GitHub Actions release workflow in the `gti-lang` organization
-exists. The `VERSION` rule below is unchanged by that gap.
+Both publish from the GitHub release workflow (`.github/workflows/release.yml`)
+of the canonical repository `gti-lang-official/gti`, for Linux x64 and Apple
+Silicon; the Gitea mirror publishes nothing.
 
 - **Nightly** republishes one rolling `nightly` release per commit on `main`.
   It is automatic, replaces its own assets, and needs no `VERSION` change.
