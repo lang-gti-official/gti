@@ -2817,6 +2817,7 @@ stateProvenExpectedExtraction(const MirBody &body,
     };
     switch (branch.kind) {
     case MirTerminatorKind::Goto:
+    case MirTerminatorKind::ContinueFailure:
       countIncoming(branch.target);
       break;
     case MirTerminatorKind::Branch:
@@ -5256,6 +5257,7 @@ invokeProducerBlock(const MirBody &body, const MirInstruction &producer);
     bool valid = false;
     switch (term.kind) {
     case MirTerminatorKind::Goto:
+    case MirTerminatorKind::ContinueFailure:
       valid = self(self, term.target, failure, destroyed);
       break;
     case MirTerminatorKind::Branch:
@@ -11629,6 +11631,7 @@ isHostedStartupArgumentIndexAdvance(const MirBody &body,
     case MirTerminatorKind::TerminateCleanupFailure:
       continue;
     case MirTerminatorKind::Goto:
+    case MirTerminatorKind::ContinueFailure:
       pending.push_back(current->terminator.target);
       continue;
     case MirTerminatorKind::Branch:
@@ -25298,6 +25301,7 @@ CppMirEmissionEncoding classifyCppMirTerminatorKind(MirTerminatorKind kind) {
   case MirTerminatorKind::PropagateFailure:
   case MirTerminatorKind::ContainFailure:
   case MirTerminatorKind::TerminateCleanupFailure:
+  case MirTerminatorKind::ContinueFailure:
     return CppMirEmissionEncoding::NeedsCopiedRepresentation;
   case MirTerminatorKind::None:
     return CppMirEmissionEncoding::Invalid;
@@ -26345,6 +26349,7 @@ returnMoveDefinitionByScan(const MirBody &body, MirValueId value) {
     }
     const MirTerminator &edge = candidate->terminator;
     if (edge.kind == MirTerminatorKind::Goto ||
+        edge.kind == MirTerminatorKind::ContinueFailure ||
         edge.kind == MirTerminatorKind::Branch ||
         edge.kind == MirTerminatorKind::Invoke) {
       out.push_back(edge.target);
@@ -31553,7 +31558,8 @@ public:
                 return false;
               if (block.terminator.kind !=
                       MirTerminatorKind::PropagateFailure &&
-                  block.terminator.kind != MirTerminatorKind::Goto)
+                  block.terminator.kind != MirTerminatorKind::Goto &&
+                  block.terminator.kind != MirTerminatorKind::ContinueFailure)
                 return true;
               if (!block.terminator.targetArguments.empty() ||
                   !block.terminator.successLifecycle.empty())
@@ -33140,8 +33146,14 @@ public:
       writeIndent();
       output << plannedBlock.label << ": {\n";
       ++indentation;
+      const MirFailureRecord *entered =
+          block->failureParameter == 0
+              ? nullptr
+              : facts.body.findFailureRecord(block->failureParameter);
       if (cleanupContextRequired && block->activeFailure != 0 &&
-          block->failureParameter == block->activeFailure) {
+          block->failureParameter == block->activeFailure &&
+          entered != nullptr &&
+          entered->kind == MirFailureRecordKind::Producer) {
         writeIndent();
         // Verification proves this is the unique primary entry and every
         // continuation retains it until propagation or emergency termination.
@@ -43280,6 +43292,11 @@ private:
     }
     switch (terminator.kind) {
     case MirTerminatorKind::Goto:
+    // Entering a shared continuation is an ordinary jump: the incoming
+    // failure stays in the invocation's single failure record, which the
+    // producer wrote before its parameter block, and the cleanup context
+    // activated there spans the shared suffix.
+    case MirTerminatorKind::ContinueFailure:
       emitEdgeArguments(block, terminator.target, terminator.targetArguments, 0,
                         facts);
       emitControlFlowTransfer(block, terminator.target, 0, controlFlow);
@@ -46080,6 +46097,7 @@ cppMirBasePreparation(const MirProgram &program,
         return std::nullopt;
     switch (block->terminator.kind) {
     case MirTerminatorKind::Goto:
+    case MirTerminatorKind::ContinueFailure:
       pending.push_back(block->terminator.target);
       break;
     case MirTerminatorKind::Invoke:
@@ -52815,6 +52833,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           bool reaches = false;
           switch (edge.kind) {
           case MirTerminatorKind::Goto:
+          case MirTerminatorKind::ContinueFailure:
             reaches = edge.target == next;
             break;
           case MirTerminatorKind::Branch:
@@ -56970,6 +56989,25 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     case MirTerminatorKind::Goto:
     case MirTerminatorKind::Unreachable:
       continue;
+    case MirTerminatorKind::ContinueFailure: {
+      // A shared cleanup suffix is entered only from primary cleanup and
+      // only at its own continuation entry; the verifier proves the joined
+      // ownership and loan state compatible with every shared drop.
+      const MirFailureRecord *continuation =
+          body.findFailureRecord(block.terminator.failureRecord);
+      const MirBlock *entry =
+          continuation == nullptr
+              ? nullptr
+              : body.findBlock(continuation->parameterBlock);
+      if (block.activeFailure == 0 || continuation == nullptr ||
+          continuation->kind != MirFailureRecordKind::Continuation ||
+          entry == nullptr || entry->id != block.terminator.target ||
+          entry->failureParameter != continuation->id ||
+          entry->activeFailure != continuation->id) {
+        return false;
+      }
+      continue;
+    }
     case MirTerminatorKind::Exit:
       if (address.kind != MirBodyKind::Module || block.terminator.value ||
           block.terminator.returnLoan ||
