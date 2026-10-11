@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main() -> int:
@@ -24,7 +25,7 @@ def main() -> int:
     completed = subprocess.run(
         [sys.executable, str(script), "run", "--smoke", "--keep-going", "--seed", "20261003",
          "--gti", str(Path(gti).absolute()), "--cxx", cxx, "--out", str(output / "run")],
-        capture_output=True, text=True, timeout=540, check=False,
+        capture_output=True, text=True, timeout=scaled(540), check=False,
     )
     print(completed.stdout, end="")
     print(completed.stderr, end="", file=sys.stderr)

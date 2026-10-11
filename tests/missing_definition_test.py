@@ -8,6 +8,7 @@ import tempfile
 
 from lsp_smoke_test import LspSession, lsp_position
 from lsp_project_facts_test import diagnostics_for, open_document
+from harness_timeouts import scaled
 
 
 def main():
@@ -22,7 +23,7 @@ def main():
                     [compiler, str(fixtures / f"{name}.gti"), *mode, "--cxx",
                      str(root / "no-native-compiler"), "--progress=never",
                      "--color=never", "-o", str(root / name)],
-                    capture_output=True, text=True, timeout=90)
+                    capture_output=True, text=True, timeout=scaled(90))
                 text = rejected.stdout + rejected.stderr
                 assert rejected.returncode == 65, (name, mode, rejected)
                 assert "GTI-S2106" in text and "has no definition" in text, text
@@ -39,7 +40,7 @@ def main():
             'manifest-version = 1\n[package]\nname = "closure"\nversion = "0.1.0"\n'
             '[targets.app]\nkind = "executable"\nroot = "src/main.gti"\n')
         checked = subprocess.run([compiler, "check", "--progress=never", "--color=never"],
-                                 cwd=root, capture_output=True, text=True, timeout=90)
+                                 cwd=root, capture_output=True, text=True, timeout=scaled(90))
         assert checked.returncode == 65 and "GTI-S2106" in checked.stderr, checked
         mapper = """namespace traits {
 class Mapper<T> {
@@ -73,15 +74,15 @@ public:
             path.write_text(text)
             checked = subprocess.run(
                 [compiler, "check", "--progress=never", "--color=never"],
-                cwd=root, capture_output=True, text=True, timeout=90)
+                cwd=root, capture_output=True, text=True, timeout=scaled(90))
             assert checked.returncode == 0, (name, checked)
             executable = root / name
             built = subprocess.run(
                 [compiler, str(path), "--progress=never", "--color=never",
-                 "-o", str(executable)], capture_output=True, text=True, timeout=90)
+                 "-o", str(executable)], capture_output=True, text=True, timeout=scaled(90))
             assert built.returncode == 0, (name, built)
             ran = subprocess.run([str(executable)], capture_output=True,
-                                 text=True, timeout=10)
+                                 text=True, timeout=scaled(10))
             assert ran.returncode == 0, (name, ran)
         path.write_text(source)
         session = LspSession(lsp)

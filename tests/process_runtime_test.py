@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 from native_symbol_spelling import native_spelling
+from harness_timeouts import scaled
 
 
 def run(command: list[str], environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -18,7 +19,7 @@ def run(command: list[str], environment: dict[str, str] | None = None) -> subpro
         env=environment,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=scaled(180),
         check=False,
     )
     if result.returncode != 0:

@@ -12,6 +12,7 @@ import threading
 import time
 import unittest
 import unittest.mock
+from harness_timeouts import scaled
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("agent_workflow", ROOT / "scripts/agent_workflow.py")
@@ -452,7 +453,7 @@ class Lifecycle(unittest.TestCase):
             self.assertTrue(self.api.prs[-1]["head"]["ref"] == "codex/other")
         finally:
             wait.write_text("go\n")
-            thread.join(timeout=20)
+            thread.join(timeout=scaled(20))
         self.assertEqual(result["state"]["phase"], "ready")
         self.assertEqual(self.flow.window.holders("suite"), [])
 

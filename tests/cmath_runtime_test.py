@@ -7,10 +7,11 @@ import sys
 import tempfile
 
 from native_symbol_spelling import native_spelling
+from harness_timeouts import scaled
 
 
 def run(command):
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=scaled(120))
     if result.returncode:
         raise AssertionError(
             f"{command!r}: exit {result.returncode}\n{result.stdout}{result.stderr}"

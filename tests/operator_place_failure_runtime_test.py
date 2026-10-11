@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -15,7 +16,7 @@ def main():
                 binary = pathlib.Path(temporary) / f"{standard}-{level}"
                 built = subprocess.run([str(compiler), str(source), "--std", standard,
                                         f"-{level}", "-o", str(binary)],
-                                       capture_output=True, text=True, timeout=120)
+                                       capture_output=True, text=True, timeout=scaled(120))
                 assert built.returncode == 0, (standard, level, built.stdout, built.stderr)
                 for arguments, output, code in (
                     ((), "row\ncell\naccess guard\nrhs\nguard\n", "GTI-R0002"),
@@ -25,7 +26,7 @@ def main():
                     (("x", "x", "x", "x"), "named cell\naccess guard\nguard\n", "GTI-R0007"),
                 ):
                     result = subprocess.run([str(binary), *arguments], capture_output=True,
-                                            text=True, timeout=30)
+                                            text=True, timeout=scaled(30))
                     assert result.returncode == 70 and result.stdout == output, (
                         standard, level, arguments, result)
                     assert code in result.stderr and "Internal compiler error" not in result.stderr, result

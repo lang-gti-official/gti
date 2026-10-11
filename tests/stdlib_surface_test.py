@@ -15,6 +15,7 @@ import tempfile
 from typing import Any
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from harness_timeouts import scaled
 
 
 SCHEMA = "gti-stdlib-surface-v1"
@@ -324,7 +325,7 @@ def run_case(
             env=environment,
             text=True,
             capture_output=True,
-            timeout=300,
+            timeout=scaled(300),
             check=False,
         )
         expected = case["expected"]
@@ -349,7 +350,7 @@ def run_case(
             input=case.get("stdin", ""),
             text=True,
             capture_output=True,
-            timeout=120,
+            timeout=scaled(120),
             check=False,
         )
         actual = (executed.returncode, executed.stdout, executed.stderr)

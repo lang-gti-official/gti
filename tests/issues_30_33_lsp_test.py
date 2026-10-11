@@ -7,6 +7,7 @@ import sys
 import tempfile
 
 from lsp_smoke_test import LspSession, lsp_position
+from harness_timeouts import scaled
 
 
 def run(compiler, server, root):
@@ -27,7 +28,7 @@ int main() { auto result = relay(); return result ? 1 : 0; }
     path.write_text(source)
     built = subprocess.run([compiler, str(path), "--emit-cpp", "--color=never",
                             "-o", str(root / "rejected.cpp")],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=scaled(30))
     assert built.returncode == 65 and "GTI-S2003" in built.stderr, built
     assert "Cannot copy error payload" in built.stderr and "GTI-B0001" not in built.stderr, built
     assert not (root / "rejected.cpp").exists()

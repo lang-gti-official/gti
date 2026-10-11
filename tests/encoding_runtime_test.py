@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main() -> int:
@@ -52,7 +53,7 @@ def main() -> int:
                 command,
                 capture_output=True,
                 text=True,
-                timeout=180,
+                timeout=scaled(180),
                 env=environment,
                 check=False,
             )
@@ -65,7 +66,7 @@ def main() -> int:
                 [str(binary)],
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=scaled(60),
                 env=environment,
                 check=False,
             )

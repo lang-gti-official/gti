@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 SOURCE = r"""
@@ -329,7 +330,7 @@ int main(int argc, std::vector<std::string> argv) {
 """
 
 
-def run(command: list[str], environment: dict[str, str], timeout: int = 120):
+def run(command: list[str], environment: dict[str, str], timeout: int = scaled(120)):
     return subprocess.run(command, text=True, capture_output=True, check=False,
                           env=environment, timeout=timeout)
 

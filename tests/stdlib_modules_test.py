@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from case_jobs import configured_jobs, run_cases
+from harness_timeouts import scaled
 
 
 def interface(name):
@@ -39,7 +40,7 @@ def main():
                               encoding="utf-8")
             result = subprocess.run(
                 [str(compiler), str(source), "--emit-mir", "-o", os.devnull],
-                capture_output=True, text=True, env=environment, timeout=300)
+                capture_output=True, text=True, env=environment, timeout=scaled(300))
             assert result.returncode == 0, result.stdout + result.stderr
 
         run_cases([(name, name) for name in modules], check, configured_jobs())

@@ -11,6 +11,7 @@ import argparse
 import pathlib
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 SOURCES = (
@@ -44,7 +45,7 @@ def main() -> None:
                 result = subprocess.run(
                     [str(compiler), str(source), "--emit-cpp", "-o", str(output),
                      f"--raw-pointer-audit={mode}"],
-                    capture_output=True, text=True, timeout=300)
+                    capture_output=True, text=True, timeout=scaled(300))
                 assert result.returncode == 0, (relative, mode, result.stderr)
                 assert "error[" not in result.stderr, (relative, mode, result.stderr)
                 emitted[mode] = output.read_bytes()

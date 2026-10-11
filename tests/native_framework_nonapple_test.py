@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -34,8 +35,8 @@ def main():
             '}\n')
         executable = root / "framework"
         subprocess.run([sys.argv[2], "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror",
-                        str(harness), "-o", str(executable)], check=True, timeout=60)
-        subprocess.run([str(executable)], check=True, timeout=10)
+                        str(harness), "-o", str(executable)], check=True, timeout=scaled(60))
+        subprocess.run([str(executable)], check=True, timeout=scaled(10))
     print("Non-Apple framework branch: strict compilation and conservative bypass passed")
 
 

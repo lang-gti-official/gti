@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -49,7 +50,7 @@ def main():
         for index, (standard, level, extra) in enumerate(modes):
             cpp, binary = scratch / f"{index}.cpp", scratch / f"{index}"
             emitted = subprocess.run([str(emitter), str(cpp), standard, level],
-                                     capture_output=True, text=True, timeout=120)
+                                     capture_output=True, text=True, timeout=scaled(120))
             assert emitted.returncode == 0, (emitted.stdout, emitted.stderr)
             built = subprocess.run([str(cxx), f"-std={standard}", f"-{level}",
                                     "-fno-fast-math", "-ffp-contract=off",
@@ -58,11 +59,11 @@ def main():
                                     "-I" + str(root / "vendor/expected_lite/include"),
                                     str(cpp), str(runtime), "-pthread", *extra,
                                     "-o", str(binary)],
-                                   capture_output=True, text=True, timeout=120)
+                                   capture_output=True, text=True, timeout=scaled(120))
             assert built.returncode == 0, (built.stdout, built.stderr)
             for arguments, code, output, error in cases:
                 run = subprocess.run([str(binary), *arguments], env=env,
-                                     capture_output=True, text=True, timeout=30)
+                                     capture_output=True, text=True, timeout=scaled(30))
                 assert (run.returncode, run.stdout, run.stderr) == (code, output, error), (
                     standard, level, extra, arguments, run)
             print(f"source sparse storage: {standard} {level} {extra} passed", flush=True)

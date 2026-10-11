@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 from http.server import ThreadingHTTPServer
+from harness_timeouts import scaled
 
 
 OUTPUTS = {
@@ -40,7 +41,7 @@ def main():
                         built = subprocess.run(
                             [str(compiler), str(root / "examples" / name), "--std", standard,
                              level, "-o", str(binary)], capture_output=True, text=True,
-                            timeout=240, env=environment)
+                            timeout=scaled(240), env=environment)
                         assert built.returncode == 0, (name, standard, built.stdout, built.stderr)
                         cases = [([], 0, output)]
                         if name == "093-http-json-client.gti":
@@ -56,13 +57,13 @@ def main():
                             ]
                         for args, status, expected in cases:
                             result = subprocess.run([str(binary), *args], capture_output=True,
-                                                    text=True, timeout=15, env=environment)
+                                                    text=True, timeout=scaled(15), env=environment)
                             assert (result.returncode, result.stdout, result.stderr) == (status, expected, ""), (
                                 name, standard, args, result.returncode, result.stdout, result.stderr)
                         print(f"PASS {name} {standard} {level}", flush=True)
         finally:
             server.shutdown()
-            worker.join(timeout=5)
+            worker.join(timeout=scaled(5))
 
 
 if __name__ == "__main__":

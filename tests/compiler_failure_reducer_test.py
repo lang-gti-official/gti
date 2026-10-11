@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 FAILURES: list[str] = []
@@ -23,7 +24,7 @@ def check(condition: bool, label: str, detail: str = "") -> None:
         print(f"FAIL {label}" + (f"\n     {detail}" if detail else ""))
 
 
-def run(*arguments: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+def run(*arguments: str, timeout: int = scaled(300)) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, *arguments],
         capture_output=True,

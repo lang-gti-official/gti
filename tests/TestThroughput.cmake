@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/TestTimeouts.cmake")
+
 # One suite occupies exactly its bounded case-worker allocation in CTest.
 # This is test orchestration only; no case, mode, assertion or timeout is removed.
 set(GTI_TEST_CASE_JOBS "2" CACHE STRING "Bounded workers per parallel test suite")
@@ -83,16 +85,6 @@ if(Python3_Interpreter_FOUND)
       "GTI_TEST_CASE_JOBS=${gti_suite_jobs}")
     set_tests_properties("${suite}" PROPERTIES PROCESSORS "${gti_suite_jobs}")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "bounded-case-workers")
-    # Fresh CTest trees give unknown tests zero cost. Without a hint, one-slot
-    # tests can keep filling the budget while compound suites wait for enough
-    # slots, pushing the largest matrices into the tail. Use the unchanged
-    # suite timeout as a conservative ordering hint, not a measured duration.
-    get_test_property("${suite}" TIMEOUT gti_case_timeout)
-    if(gti_case_timeout GREATER 1)
-      set_tests_properties("${suite}" PROPERTIES COST "${gti_case_timeout}")
-    else()
-      set_tests_properties("${suite}" PROPERTIES COST 1)
-    endif()
   endforeach()
   foreach(suite IN LISTS gti_heavy_case_suites)
     if(NOT suite IN_LIST gti_parallel_case_suites)
@@ -121,19 +113,6 @@ if(Python3_Interpreter_FOUND)
     expected_transform_error_runtime 85
     pack_parameter_runtime 85
     simd_runtime 85)
-  list(LENGTH gti_long_gate_costs gti_long_gate_count)
-  math(EXPR gti_long_gate_last "${gti_long_gate_count} - 1")
-  foreach(index RANGE 0 ${gti_long_gate_last} 2)
-    list(GET gti_long_gate_costs ${index} gti_long_gate)
-    math(EXPR gti_cost_index "${index} + 1")
-    list(GET gti_long_gate_costs ${gti_cost_index} gti_long_gate_cost)
-    if(NOT TEST "${gti_long_gate}")
-      message(FATAL_ERROR "Long gate is not registered: ${gti_long_gate}")
-    endif()
-    if(NOT gti_long_gate IN_LIST gti_parallel_case_suites)
-      set_tests_properties("${gti_long_gate}" PROPERTIES COST "${gti_long_gate_cost}")
-    endif()
-  endforeach()
   add_test(NAME test_case_jobs
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/case_jobs_test.py")
   add_test(NAME test_throughput_registration
@@ -170,3 +149,36 @@ foreach(suite IN LISTS gti_throughput_tests)
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "end-to-end")
   endif()
 endforeach()
+
+# Every test is registered. Scale their timeouts for the host, then derive the
+# ordering hints from the scaled values so a hint keeps its meaning (one
+# conservative duration on this host) at every scale.
+gti_scale_test_timeouts()
+if(Python3_Interpreter_FOUND)
+  foreach(suite IN LISTS gti_parallel_case_suites)
+    # Fresh CTest trees give unknown tests zero cost. Without a hint, one-slot
+    # tests can keep filling the budget while compound suites wait for enough
+    # slots, pushing the largest matrices into the tail. Use the unchanged
+    # suite timeout as a conservative ordering hint, not a measured duration.
+    get_test_property("${suite}" TIMEOUT gti_case_timeout)
+    if(gti_case_timeout GREATER 1)
+      set_tests_properties("${suite}" PROPERTIES COST "${gti_case_timeout}")
+    else()
+      set_tests_properties("${suite}" PROPERTIES COST 1)
+    endif()
+  endforeach()
+  list(LENGTH gti_long_gate_costs gti_long_gate_count)
+  math(EXPR gti_long_gate_last "${gti_long_gate_count} - 1")
+  foreach(index RANGE 0 ${gti_long_gate_last} 2)
+    list(GET gti_long_gate_costs ${index} gti_long_gate)
+    math(EXPR gti_cost_index "${index} + 1")
+    list(GET gti_long_gate_costs ${gti_cost_index} gti_long_gate_cost)
+    if(NOT TEST "${gti_long_gate}")
+      message(FATAL_ERROR "Long gate is not registered: ${gti_long_gate}")
+    endif()
+    if(NOT gti_long_gate IN_LIST gti_parallel_case_suites)
+      math(EXPR gti_long_gate_cost "${gti_long_gate_cost} * ${GTI_TEST_TIMEOUT_SCALE}")
+      set_tests_properties("${gti_long_gate}" PROPERTIES COST "${gti_long_gate_cost}")
+    endif()
+  endforeach()
+endif()

@@ -8,8 +8,9 @@ import subprocess
 import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
+from harness_timeouts import scaled
 
-def run(command, *, timeout=300):
+def run(command, *, timeout=scaled(300)):
     result = subprocess.run(command, text=True, capture_output=True,
                             timeout=timeout, env=dict(os.environ,
                                 ASAN_OPTIONS="halt_on_error=1",
@@ -106,7 +107,7 @@ def main():
                 built = run(command)
                 assert built[0] == 0, (command, built)
                 for arguments, expected in outcomes:
-                    actual = run([str(binary), *arguments], timeout=30)
+                    actual = run([str(binary), *arguments], timeout=scaled(30))
                     assert actual == expected, (label, standard, level, arguments, expected, actual)
                 print(f"{label}: {standard} {level} {native or 'native'} passed", flush=True)
     return 0

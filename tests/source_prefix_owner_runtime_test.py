@@ -9,6 +9,7 @@ import tempfile
 
 from lambda_pack_invocation_runtime_test import main as runtime_matrix
 from allocation_abort_runtime_test import ABORT_STATUS
+from harness_timeouts import scaled
 
 
 if __name__ == "__main__":
@@ -123,7 +124,7 @@ if __name__ == "__main__":
                 result = subprocess.run(
                     [str(compiler), str(source), "--emit-mir", "-o", str(artifact),
                      f"--raw-pointer-audit={audit}", "--progress", "never"],
-                    capture_output=True, text=True, timeout=60)
+                    capture_output=True, text=True, timeout=scaled(60))
                 assert result.returncode == 65, (name, audit, result)
                 assert re.search(pattern, result.stderr), (name, audit, result.stderr)
                 assert "GTI-B0001" not in result.stderr, (name, audit, result.stderr)
@@ -136,7 +137,7 @@ if __name__ == "__main__":
             artifact = Path(temporary) / f"{name}.mir"
             result = subprocess.run(
                 [str(compiler), str(source), "--emit-mir", "-o", str(artifact),
-                 "--progress", "never"], capture_output=True, text=True, timeout=60)
+                 "--progress", "never"], capture_output=True, text=True, timeout=scaled(60))
             assert result.returncode == 0, (name, result.stderr)
             lowered = artifact.read_text()
             assert ("intrinsic=object-relocate-range " in lowered) == bulk, name

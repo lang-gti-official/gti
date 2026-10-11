@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as successful_cases
+from harness_timeouts import scaled
 
 
 def main():
@@ -42,10 +43,10 @@ def main():
             if native:
                 command += ["--", *native]
             result = subprocess.run(command, capture_output=True, text=True,
-                                    timeout=120, env=environment)
+                                    timeout=scaled(120), env=environment)
             assert result.returncode == 0, (label, result.stdout, result.stderr)
             result = subprocess.run([str(executable)], capture_output=True, text=True,
-                                    timeout=30, env=environment)
+                                    timeout=scaled(30), env=environment)
             assert result.returncode == 70 and result.stdout == "cleaned\n", (label, result)
             assert re.fullmatch(r".+:\d+: runtime error\[GTI-R0006\]: "
                                 r"numeric_conversion_out_of_range in numeric_cast\n",

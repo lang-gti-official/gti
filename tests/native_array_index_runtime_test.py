@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 DECLARATIONS = r'''
@@ -68,7 +69,7 @@ int main() {
 
 def run(command):
     return subprocess.run([str(part) for part in command], text=True,
-                          capture_output=True, timeout=120)
+                          capture_output=True, timeout=scaled(120))
 
 
 def checked(command):

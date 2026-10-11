@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 FAILURES: list[str] = []
@@ -178,7 +179,7 @@ def main() -> int:
         script = root / "scripts/debug/decline_census.py"
         missing_baseline = subprocess.run(
             [sys.executable, str(script), "--update"],
-            capture_output=True, text=True, timeout=30, check=False)
+            capture_output=True, text=True, timeout=scaled(30), check=False)
         check(missing_baseline.returncode == 2
               and "--update requires --baseline" in missing_baseline.stderr,
               "baseline updates require an explicit target",
@@ -187,7 +188,7 @@ def main() -> int:
         missing_corpus = subprocess.run(
             [sys.executable, str(script), "--compiler", str(stub),
              "--corpus", str(temp / "missing")],
-            capture_output=True, text=True, timeout=30, check=False)
+            capture_output=True, text=True, timeout=scaled(30), check=False)
         check(missing_corpus.returncode == 2
               and "corpus directory not found" in missing_corpus.stderr,
               "missing corpus roots fail instead of silently contributing "
@@ -201,7 +202,7 @@ def main() -> int:
         incomplete = subprocess.run(
             [sys.executable, str(script), "--compiler", str(broken),
              "--baseline", str(incomplete_baseline), "--update"],
-            capture_output=True, text=True, timeout=30, check=False)
+            capture_output=True, text=True, timeout=scaled(30), check=False)
         check(incomplete.returncode == 1
               and "refusing to update" in incomplete.stdout
               and not incomplete_baseline.exists(),

@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from harness_timeouts import scaled
 
 
 def run_fixture(compiler, filename, negatives, marker,
@@ -53,7 +54,7 @@ def run_fixture(compiler, filename, negatives, marker,
             binary = root / f"{source.stem}-{label}"
             built = subprocess.run([str(compiler), str(source), *flags, "-o", str(binary),
                                     "--", str(native), *extra], capture_output=True,
-                                   text=True, timeout=120, env=environment)
+                                   text=True, timeout=scaled(120), env=environment)
             return (label, source, expected, built, binary)
 
         completed = {}
@@ -63,7 +64,7 @@ def run_fixture(compiler, filename, negatives, marker,
             label, source, expected, built, binary = value
             assert built.returncode == 0, (label, source, built.stdout, built.stderr)
             result = subprocess.run([str(binary)], capture_output=True, text=True,
-                                    timeout=30, env=environment)
+                                    timeout=scaled(30), env=environment)
             assert (result.returncode, result.stdout, result.stderr) == expected, (
                 label, source, result)
             completed[label] = completed.get(label, 0) + 1

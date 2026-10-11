@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+from harness_timeouts import scaled
 
 
 def identity(seed: int) -> bytes:
@@ -56,7 +57,7 @@ def environment(extra=None):
 
 def invoke(helper: str, mode: str, extra=None) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run([helper, mode], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          env=environment(extra), timeout=10)
+                          env=environment(extra), timeout=scaled(10))
 
 
 def expect(
@@ -125,7 +126,7 @@ def test_colour(helper: str) -> None:
         master, slave = pty.openpty()
         try:
             result = subprocess.run(
-                [helper, mode], env=environment(extra), timeout=10,
+                [helper, mode], env=environment(extra), timeout=scaled(10),
                 stdout=subprocess.PIPE if terminal_stderr else slave,
                 stderr=slave if terminal_stderr else subprocess.PIPE)
             chunks = []

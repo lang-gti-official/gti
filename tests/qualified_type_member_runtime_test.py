@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -17,11 +18,11 @@ def main():
                 built = subprocess.run(
                     [str(compiler), str(source), "--std", standard,
                      f"-{optimization}", "-o", str(output)],
-                    capture_output=True, text=True, timeout=180,
+                    capture_output=True, text=True, timeout=scaled(180),
                 )
                 assert built.returncode == 0, built.stdout + built.stderr
                 executed = subprocess.run(
-                    [str(output)], capture_output=True, text=True, timeout=30,
+                    [str(output)], capture_output=True, text=True, timeout=scaled(30),
                 )
                 assert executed.returncode == 0, executed.stderr
                 assert executed.stdout == "15\nlayer released\nlayer released\n", executed

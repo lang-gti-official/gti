@@ -12,6 +12,7 @@ import argparse
 import subprocess
 import tempfile
 from pathlib import Path
+from harness_timeouts import scaled
 
 
 def emit(gti: str, source: Path, output: Path, mode: str) -> None:
@@ -19,7 +20,7 @@ def emit(gti: str, source: Path, output: Path, mode: str) -> None:
         [gti, str(source), mode, "--progress", "never", "-o", str(output)],
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=scaled(120),
     )
     if result.returncode != 0:
         raise SystemExit(

@@ -13,6 +13,7 @@ import threading
 import time
 import unittest
 from unittest import mock
+from harness_timeouts import scaled
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/build_window.py"
@@ -81,7 +82,7 @@ class BuildWindow(unittest.TestCase):
             time.sleep(0.3)
             self.assertEqual(acquired, [])
             released = time.monotonic()
-        thread.join(timeout=5)
+        thread.join(timeout=scaled(5))
         self.assertEqual(len(acquired), 1)
         self.assertGreaterEqual(acquired[0][1], released)
         waiter.release(acquired[0][0])
@@ -93,7 +94,7 @@ class BuildWindow(unittest.TestCase):
     def test_timeout_reports_who_holds_the_slots(self):
         with self.window().acquire("suite", ["ctest", "--test-dir", "build"]):
             with self.assertRaisesRegex(Error, r"timed out .* suite slot \(1/1 held\): pid \d+ .*ctest --test-dir build"):
-                self.window(timeout=0.2).take("suite", ["ctest"])
+                self.window(timeout=scaled(0.2)).take("suite", ["ctest"])
         self.assertEqual(self.files("suite"), [])
 
     def test_reclaims_slot_of_exited_owner(self):
@@ -101,7 +102,7 @@ class BuildWindow(unittest.TestCase):
         stale = self.dir / "suite" / "stale.json"
         stale.write_text(json.dumps({"pid": exited_pid(), "time": "earlier", "kind": "suite",
                                      "command": ["ctest", "--old"]}))
-        window = self.window(timeout=2)
+        window = self.window(timeout=scaled(2))
         self.assertEqual(window.holders("suite"), [])  # listing never reclaims
         self.assertTrue(stale.exists())
         with window.acquire("suite", ["ctest", "--new"]) as path:
@@ -114,24 +115,24 @@ class BuildWindow(unittest.TestCase):
         live = self.dir / "suite" / "live.json"
         live.write_text(json.dumps({"pid": os.getpid(), "time": "now", "kind": "suite", "command": ["ctest"]}))
         with self.assertRaisesRegex(Error, "timed out"):
-            self.window(timeout=0.2).take("suite", ["ctest"])
+            self.window(timeout=scaled(0.2)).take("suite", ["ctest"])
         self.assertTrue(live.exists())
 
     def test_counts_from_defaults_environment_and_flags(self):
-        window = self.window(timeout=0.1)
+        window = self.window(timeout=scaled(0.1))
         self.assertEqual(window.slots, {"suite": 1, "build": 2})
         with window.acquire("build", ["a"]), window.acquire("build", ["b"]):
             with self.assertRaisesRegex(Error, r"\(2/2 held\)"):
                 window.take("build", ["c"])
         os.environ[module.ENV_PREFIX + "BUILD_SLOTS"] = "3"
         os.environ[module.ENV_PREFIX + "SUITE_SLOTS"] = "2"
-        window = self.window(timeout=0.1)
+        window = self.window(timeout=scaled(0.1))
         self.assertEqual(window.slots, {"suite": 2, "build": 3})
         with window.acquire("build", ["a"]), window.acquire("build", ["b"]), window.acquire("build", ["c"]):
             self.assertEqual(len(self.files("build")), 3)
         with window.acquire("suite", ["a"]), window.acquire("suite", ["b"]):
             self.assertEqual(len(self.files("suite")), 2)
-        explicit = self.window(timeout=0.1, slots={"build": 1})
+        explicit = self.window(timeout=scaled(0.1), slots={"build": 1})
         self.assertEqual(explicit.slots, {"suite": 2, "build": 1})
         with explicit.acquire("build", ["a"]):
             with self.assertRaisesRegex(Error, r"\(1/1 held\)"):
@@ -150,7 +151,7 @@ class BuildWindow(unittest.TestCase):
         mutex = self.dir / "lock"
         mutex.mkdir(parents=True)
         (mutex / "owner.json").write_text(json.dumps({"pid": exited_pid(), "time": "earlier"}))
-        with self.window(timeout=2).acquire("build", ["cmake"]):
+        with self.window(timeout=scaled(2)).acquire("build", ["cmake"]):
             pass
         self.assertFalse(mutex.exists())
         self.assertTrue(any("reclaimed the window mutex" in m for m in self.messages))
@@ -206,7 +207,7 @@ class BuildWindow(unittest.TestCase):
         self.assertEqual(len(self.files("suite")), 1)
         time.sleep(0.2)
         os.killpg(process.pid, signal.SIGINT)
-        _, stderr = process.communicate(timeout=20)
+        _, stderr = process.communicate(timeout=scaled(20))
         self.assertNotEqual(process.returncode, 0, stderr)
         self.assertEqual(self.files("suite"), [])
         self.assertFalse((self.dir / "lock").exists())

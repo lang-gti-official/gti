@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 PRELUDE = """#include <std/vector>
@@ -74,12 +75,12 @@ def main():
                            f"-{level}", "--progress", "never", "-o", str(output)]
                 command += ["--emit-cpp"] if args.emit_only else ["--", "-fno-elide-constructors"]
                 compiled = subprocess.run(command, env=env, text=True,
-                                          capture_output=True, timeout=120)
+                                          capture_output=True, timeout=scaled(120))
                 if compiled.returncode:
                     return f"FAIL {name} {standard}/{level}\n{compiled.stdout}{compiled.stderr}"
                 if not args.emit_only:
                     result = subprocess.run([str(output)], text=True,
-                                            capture_output=True, timeout=30)
+                                            capture_output=True, timeout=scaled(30))
                     if result.returncode or result.stdout or result.stderr:
                         return f"FAIL {name} execution: {result}"
             return None

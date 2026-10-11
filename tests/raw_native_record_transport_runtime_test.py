@@ -7,11 +7,12 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command):
     result = subprocess.run([str(item) for item in command], capture_output=True,
-                            text=True, timeout=120)
+                            text=True, timeout=scaled(120))
     assert result.returncode == 0, (command, result.stdout, result.stderr)
     return result
 
@@ -65,7 +66,7 @@ def main():
         rejected = subprocess.run(
             [str(compiler), str(expired), "--raw-pointer-audit=strict",
              "--emit-cpp", "-o", str(work / "rejected.cpp")],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, timeout=scaled(120))
         assert rejected.returncode == 65, (
             "strict auditing must reject unknown erased access to expired storage",
             rejected.returncode, rejected.stdout, rejected.stderr)

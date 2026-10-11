@@ -11,13 +11,14 @@ import sys
 import tempfile
 
 from sanitizer_support import SKIP_RETURN_CODE, thread_sanitizer_enabled
+from harness_timeouts import scaled
 
 
 def execute(
     command: list[str],
     *,
     environment: dict[str, str] | None = None,
-    timeout: int = 300,
+    timeout: int = scaled(300),
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from harness_timeouts import scaled
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -59,7 +60,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_bytes(201, marker.encode() + b":" + body)
 
 
-def run(command: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
+def run(command: list[str], timeout: int = scaled(120)) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise AssertionError(
@@ -250,9 +251,9 @@ def main() -> None:
                 binary = output / f"http-{optimization}"
                 run(
                     [str(compiler), str(source), f"-{optimization}", "-o", str(binary)],
-                    timeout=180,
+                    timeout=scaled(180),
                 )
-                result = run([str(binary)], timeout=60)
+                result = run([str(binary)], timeout=scaled(60))
                 if result.stdout or result.stderr:
                     raise AssertionError(f"unexpected HTTP fixture output: {result!r}")
     finally:
@@ -260,8 +261,8 @@ def main() -> None:
         https_server.shutdown()
         http_server.server_close()
         https_server.server_close()
-        http_thread.join(timeout=10)
-        https_thread.join(timeout=10)
+        http_thread.join(timeout=scaled(10))
+        https_thread.join(timeout=scaled(10))
 
 
 if __name__ == "__main__":

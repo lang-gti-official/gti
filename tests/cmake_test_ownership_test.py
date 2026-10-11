@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from harness_timeouts import scaled
 
 
 def fail(message: str) -> None:
@@ -88,10 +89,10 @@ def main() -> None:
             build = source / release
             subprocess.run(["cmake", "-S", str(source), "-B", str(build),
                             f"-DGTI_RELEASE_BUILD={release}"], check=True,
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=scaled(30))
             result = subprocess.run(
                 ["ctest", "--test-dir", str(build), "--show-only=json-v1"],
-                check=True, capture_output=True, text=True, timeout=30,
+                check=True, capture_output=True, text=True, timeout=scaled(30),
             )
             for test in json.loads(result.stdout)["tests"]:
                 properties = {item["name"]: item["value"]
@@ -123,10 +124,10 @@ def main() -> None:
             build = source / f"lsp-{enabled}"
             subprocess.run(["cmake", "-S", str(source), "-B", str(build),
                             f"-DENABLE_LSP={enabled}"], check=True,
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=scaled(30))
             result = subprocess.run(
                 ["ctest", "--test-dir", str(build), "--show-only=json-v1"],
-                check=True, capture_output=True, text=True, timeout=30,
+                check=True, capture_output=True, text=True, timeout=scaled(30),
             )
             names = [test["name"] for test in json.loads(result.stdout)["tests"]]
             expected_names = ["structural_relocation_lsp", "extensible_formatting_lsp",

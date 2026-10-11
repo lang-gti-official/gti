@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
+from harness_timeouts import scaled
 
 
 def reject_invalid_sources(compiler: pathlib.Path) -> None:
@@ -74,7 +75,7 @@ int main() { std::unordered_map<Key, int, std::hash<Key>, Equal> values{}; retur
             path.write_text(prefix + body)
             result = subprocess.run(
                 [str(compiler), str(path), "--emit-mir", "-o", str(root / f"{name}.mir")],
-                capture_output=True, text=True, timeout=60, check=False,
+                capture_output=True, text=True, timeout=scaled(60), check=False,
             )
             assert result.returncode == 65 and "error[GTI-S" in result.stderr, (
                 name, result.returncode, result.stdout, result.stderr)

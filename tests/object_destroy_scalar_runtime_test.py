@@ -6,6 +6,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -28,10 +29,10 @@ def main():
                 [str(compiler), str(fixtures / "object_destroy_scalar.gti"),
                  "--std", standard, f"-{level}", "-o", str(binary), "--",
                  str(fixtures / "object_destroy_scalar_native.cpp"), *flags],
-                capture_output=True, text=True, timeout=120, env=environment)
+                capture_output=True, text=True, timeout=scaled(120), env=environment)
             assert build.returncode == 0, (label, build.stdout, build.stderr)
             run = subprocess.run([str(binary)], capture_output=True, text=True,
-                                 timeout=30, env=environment)
+                                 timeout=scaled(30), env=environment)
             assert (run.returncode, run.stdout, run.stderr) == (0, "", ""), (label, run)
             print(f"raw scalar destruction: {label} passed", flush=True)
 

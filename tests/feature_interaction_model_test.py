@@ -20,6 +20,7 @@ from debug.feature_interaction_model import (
 )
 from debug import feature_interactions as runner
 from debug import capture_compiler_failure as capture
+from harness_timeouts import scaled
 
 
 class ModelTests(unittest.TestCase):
@@ -140,7 +141,7 @@ class DecisionTests(unittest.TestCase):
 
     def probe(self, name="probe"):
         return runner.probe(self.case, "gti", "c++", self.root / name,
-                            variant="original", configuration=("O0", "c++23"), timeout=1)
+                            variant="original", configuration=("O0", "c++23"), timeout=scaled(1))
 
     def test_success_and_retained_oracle_disagreement(self):
         with patch.object(runner, "run_process", self.fake_commands([self.case.oracle()] * 2)):

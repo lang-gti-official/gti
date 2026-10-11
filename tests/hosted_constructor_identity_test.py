@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as runtime_matrix
+from harness_timeouts import scaled
 
 
 def main():
@@ -23,7 +24,7 @@ def main():
             result = subprocess.run(
                 [str(compiler), "run", "app", "--profile", profile,
                  "--progress=never", "--", "one", "two"],
-                cwd=root / "consumer", capture_output=True, text=True, timeout=120)
+                cwd=root / "consumer", capture_output=True, text=True, timeout=scaled(120))
             assert result.returncode == 0, (profile, result.stdout, result.stderr)
             assert result.stdout == expected[1], (profile, result.stdout)
             progress = result.stderr.splitlines()

@@ -14,6 +14,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 INTEGERS = {
     "int8_t": ["-128", "-1", "0", "7", "127"],
@@ -117,11 +118,11 @@ def main() -> int:
         for level in ("O0", "O3"):
             executable = root / f"format-matrix-{level}"
             built = subprocess.run([str(compiler), str(source), f"-{level}", "-o", str(executable)],
-                                   text=True, capture_output=True, timeout=600)
+                                   text=True, capture_output=True, timeout=scaled(600))
             if built.returncode != 0:
                 sys.stderr.write(built.stdout + built.stderr)
                 return 1
-            ran = subprocess.run([str(executable)], text=True, capture_output=True, timeout=120)
+            ran = subprocess.run([str(executable)], text=True, capture_output=True, timeout=scaled(120))
             if ran.returncode != 0 or ran.stdout != expected:
                 got = ran.stdout.splitlines()
                 want = expected.splitlines()

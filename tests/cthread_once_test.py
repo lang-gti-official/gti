@@ -9,6 +9,7 @@ import tempfile
 
 from cthread_mutex_test import run
 from sanitizer_support import thread_sanitizer_enabled
+from harness_timeouts import scaled
 
 
 def execute(binary, status, stdout):
@@ -17,7 +18,7 @@ def execute(binary, status, stdout):
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
                        TSAN_OPTIONS="halt_on_error=1:abort_on_error=1")
     result = subprocess.run([str(binary)], capture_output=True, text=True,
-                            timeout=120, env=environment)
+                            timeout=scaled(120), env=environment)
     if (result.returncode != status or result.stdout != stdout or
             (status == 70 and ("GTI-R0002" not in result.stderr or
                               "cthread_once_failure" not in result.stderr)) or

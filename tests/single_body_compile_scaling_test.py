@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from harness_timeouts import scaled
 
 PRELUDE = """#include <std/format>
 #include <std/string>
@@ -101,12 +102,12 @@ def main() -> int:
             sources[name] = directory / f"{name}.gti"
             sources[name].write_text(program(repetitions))
 
-        base = fastest(compiler, sources["base"], timeout=300)
-        small = fastest(compiler, sources["small"], timeout=300)
+        base = fastest(compiler, sources["base"], timeout=scaled(300))
+        small = fastest(compiler, sources["small"], timeout=scaled(300))
         # A superlinear regression is reported as a timeout instead of
         # stalling the suite for many minutes.
         large = fastest(compiler, sources["large"],
-                        timeout=max(300.0, 40.0 * small))
+                        timeout=scaled(max(300.0, 40.0 * small)))
 
     small_body = max(small - base, MINIMUM_BODY_SECONDS)
     large_body = max(large - base, 0.0)

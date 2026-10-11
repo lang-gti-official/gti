@@ -5,9 +5,10 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 def invoke(command):
-    return subprocess.run(command, capture_output=True, text=True, timeout=120)
+    return subprocess.run(command, capture_output=True, text=True, timeout=scaled(120))
 
 def main():
     compiler, source, cxx = sys.argv[1:4]

@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import sys
+from harness_timeouts import scaled
 
 
 # The Windows CRT's abort exit code is 3; POSIX subprocess reports SIGABRT.
@@ -19,7 +20,7 @@ def main():
         expected = (b"" if mode in ("closed", "broken_pipe") else
                     report.replace(b"allocation.gti:17", b"<runtime>:0")
                     if mode == "invalid" else report)
-        result = subprocess.run([helper, mode], capture_output=True, timeout=10,
+        result = subprocess.run([helper, mode], capture_output=True, timeout=scaled(10),
                                 env=dict(os.environ, GTI_COLOR="never"))
         assert (result.returncode, result.stdout, result.stderr) == (ABORT_STATUS, b"B", expected), (
             mode, result)

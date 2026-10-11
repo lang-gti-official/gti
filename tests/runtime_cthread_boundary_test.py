@@ -6,12 +6,13 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def execute(command, expected=0, *, environment=None):
     result = subprocess.run(
         [str(part) for part in command], capture_output=True, text=True,
-        timeout=60, env=environment,
+        timeout=scaled(60), env=environment,
     )
     if result.returncode != expected or result.stdout or result.stderr:
         raise AssertionError(

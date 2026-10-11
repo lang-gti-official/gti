@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -21,13 +22,13 @@ def main():
                 binary = pathlib.Path(directory) / f"unsafe-{standard}-{level}"
                 command = [str(compiler), str(source), f"-{level}", "--std", standard,
                            "--keep-cpp", "-o", str(binary)]
-                built = subprocess.run(command, capture_output=True, text=True, timeout=120)
+                built = subprocess.run(command, capture_output=True, text=True, timeout=scaled(120))
                 assert built.returncode == 0, (command, built.stdout, built.stderr)
                 cpp = binary.with_suffix(".gti.cpp").read_text()
                 assert "// GTI verified-MIR body:" in cpp
                 for arguments in ([], ["fail"]):
                     result = subprocess.run([str(binary), *arguments], capture_output=True,
-                                            text=True, timeout=30)
+                                            text=True, timeout=scaled(30))
                     stderr = (f"unsafe_function.gti:{failure_line}: runtime error[GTI-R0002]: "
                               "division_by_zero in integer_division\n") if arguments else ""
                     assert (result.returncode, result.stdout, result.stderr) == (
@@ -37,9 +38,9 @@ def main():
                 example_binary = binary.with_name(binary.name + "-members")
                 example_command = [str(compiler), str(example), f"-{level}", "--std", standard,
                                    "-o", str(example_binary)]
-                built = subprocess.run(example_command, capture_output=True, text=True, timeout=120)
+                built = subprocess.run(example_command, capture_output=True, text=True, timeout=scaled(120))
                 assert built.returncode == 0, (example_command, built.stdout, built.stderr)
-                result = subprocess.run([str(example_binary)], capture_output=True, text=True, timeout=30)
+                result = subprocess.run([str(example_binary)], capture_output=True, text=True, timeout=scaled(30))
                 assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), result
                 print(f"unsafe members example: {standard} {level} passed", flush=True)
 

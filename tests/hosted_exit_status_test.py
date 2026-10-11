@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as runtime_matrix
+from harness_timeouts import scaled
 
 
 def main():
@@ -33,7 +34,7 @@ def main():
             tested = subprocess.run(
                 [str(compiler), "test", "--profile", profile,
                  "--progress=never", "--color=never"], cwd=project,
-                capture_output=True, text=True, timeout=120)
+                capture_output=True, text=True, timeout=scaled(120))
             assert tested.returncode == 1, (profile, tested)
             text = tested.stdout + tested.stderr
             assert "Failed counts-failures" in text, text
@@ -42,10 +43,10 @@ def main():
         built = subprocess.run(
             [str(compiler), str(fixtures / "hosted_exit_status_owned.gti"),
              "-O3", "-o", str(binary)], capture_output=True, text=True,
-            timeout=120)
+            timeout=scaled(120))
         assert built.returncode == 0, built.stderr
         failed = subprocess.run([str(binary), *("x",) * 8],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, timeout=scaled(30))
         assert failed.returncode == 70, failed
         assert failed.stdout == "cleanup\n", failed.stdout
         assert "GTI-R0002" in failed.stderr, failed.stderr

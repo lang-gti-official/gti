@@ -8,11 +8,12 @@ import platform
 import shutil
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command, environment, expected_status=0):
     result = subprocess.run(command, env=environment, capture_output=True,
-                            text=True, timeout=180)
+                            text=True, timeout=scaled(180))
     assert result.returncode == expected_status, (command, result.stdout, result.stderr)
     return result
 

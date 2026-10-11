@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 EXPECTED = "named 42 7\n/hello/world.txt\nnamed\n"
@@ -13,7 +14,7 @@ EXPECTED = "named 42 7\n/hello/world.txt\nnamed\n"
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        command, text=True, capture_output=True, timeout=300, check=False
+        command, text=True, capture_output=True, timeout=scaled(300), check=False
     )
 
 

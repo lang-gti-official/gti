@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
+from harness_timeouts import scaled
 
 
 def reject_invalid_sources(compiler: pathlib.Path) -> None:
@@ -138,7 +139,7 @@ int main() { mut int value = 1; Bad bad{value}; bad.write(); return 0; }
             profile = ["--execution-profile", "concurrent"] if name == "nested-lifecycle-guard" else []
             result = subprocess.run(
                 [str(compiler), str(path), *profile, "--emit-mir", "-o", str(root / f"{name}.mir")],
-                capture_output=True, text=True, timeout=60, check=False,
+                capture_output=True, text=True, timeout=scaled(60), check=False,
             )
             assert result.returncode == 65 and f"error[{expected_codes[name]}]" in result.stderr, (
                 name, result.returncode, result.stdout, result.stderr)

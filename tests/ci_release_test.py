@@ -11,11 +11,12 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command, cwd, success=True):
     result = subprocess.run(command, cwd=cwd, capture_output=True, text=True,
-                            timeout=30, check=False)
+                            timeout=scaled(30), check=False)
     assert (result.returncode == 0) == success, (
         command, result.returncode, result.stdout, result.stderr)
     return result.stdout.strip()

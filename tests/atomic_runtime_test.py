@@ -9,9 +9,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
-def execute(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+def execute(command: list[str], *, timeout: int = scaled(300)) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         command,
         capture_output=True,
@@ -32,7 +33,7 @@ def expect_overflow(command: list[str]) -> None:
         command,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=scaled(300),
         check=False,
     )
     if (

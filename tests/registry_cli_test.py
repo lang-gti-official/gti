@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import urllib.parse
+from harness_timeouts import scaled
 
 GTI = pathlib.Path(sys.argv[1]).resolve()
 LSP = pathlib.Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None
@@ -93,7 +94,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def run(args, cwd, env, success=True, fragment=None):
-    result = subprocess.run([str(GTI), *args], cwd=cwd, env=env, text=True, capture_output=True, timeout=120)
+    result = subprocess.run([str(GTI), *args], cwd=cwd, env=env, text=True, capture_output=True, timeout=scaled(120))
     output = result.stdout + result.stderr
     assert (result.returncode == 0) == success, (args, result.returncode, output)
     assert "Internal compiler error" not in output, output

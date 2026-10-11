@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
+from harness_timeouts import scaled
 
 def run(command):
     environment = os.environ.copy()
@@ -15,7 +16,7 @@ def run(command):
     for variable in ("ASAN_OPTIONS", "UBSAN_OPTIONS"):
         previous = environment.get(variable, "")
         environment[variable] = (previous + ":" if previous else "") + "halt_on_error=1"
-    return subprocess.run(command, capture_output=True, text=True, timeout=120,
+    return subprocess.run(command, capture_output=True, text=True, timeout=scaled(120),
                           env=environment)
 
 

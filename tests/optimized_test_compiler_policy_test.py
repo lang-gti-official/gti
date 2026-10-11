@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from harness_timeouts import scaled
 
 
 def fail(message: str) -> None:
@@ -23,7 +24,7 @@ def configure(
         ["cmake", "-S", str(source), "-B", str(build), *definitions],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=scaled(30),
     )
     if succeeds and result.returncode != 0:
         fail(f"configuration unexpectedly failed:\n{result.stdout}{result.stderr}")

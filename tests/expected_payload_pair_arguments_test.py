@@ -7,6 +7,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main
+from harness_timeouts import scaled
 
 
 if __name__ == "__main__":
@@ -16,7 +17,7 @@ if __name__ == "__main__":
         result = subprocess.run(
             [str(pathlib.Path(sys.argv[1]).resolve()), str(rejected), "--emit-cpp",
              "-o", str(pathlib.Path(temporary) / "rejected.cpp")],
-            text=True, capture_output=True, timeout=120)
+            text=True, capture_output=True, timeout=scaled(120))
         assert result.returncode != 0 and "GTI-S2018" in result.stderr, result
         assert "GTI-B0001" not in result.stderr, result
 

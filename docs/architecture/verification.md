@@ -4871,13 +4871,32 @@ compile job because its bundled LLVM/Clang units compile beside GTI's largest
 units, the native CI build 2048 MiB, and the ASan/UBSan build 3072 MiB per
 compile job and 4096 MiB per test worker, since an instrumented compiler
 suite grows several times larger than its plain run (six workers on a 12 GiB
-runner had the ownership suite OOM-killed). The sanitizer job also gives
-tests without their own `TIMEOUT` an hour (`ctest --timeout 3600`) and runs
-the emitter's preflight, text, lifecycle, census and corpus-protocol checks
-rather than the whole generated-C++ corpus, and omits `failure_metadata`:
-both exceeded an hour under ASan on the 6-core runner and remain the plain
-native job's gates. Runner provisioning and timeouts
-remain external policy; the helper prints the processors and memory it saw so
+runner had the ownership suite OOM-killed). The plain native job states
+3072 MiB per test worker as well, four workers on that runner: a compound
+suite's worker compiles the generated C++ of the largest standard-library
+fixtures, and six of them thrashed the machine (a 38-second developer-host
+compile exceeded its 600-second case timeout). The compound suites'
+`PROCESSORS` reservations still cover the six processors. The sanitizer job
+also gives tests without their own `TIMEOUT` an hour (`ctest --timeout 3600`)
+and runs the emitter's preflight, text, lifecycle, census and corpus-protocol
+checks rather than the whole generated-C++ corpus, and omits
+`failure_metadata`: both exceeded an hour under ASan on the 6-core runner and
+remain the plain native job's gates. The native job configures
+`GTI_TEST_TIMEOUT_SCALE=4` (see [Host timeout scale](#host-timeout-scale)).
+
+One runner hosts every job of a run on the same six processors and 12 GiB,
+and each heavy job budgets the whole machine, so the workflow orders its jobs
+instead of letting them share it. The formatting and release-version checks
+finish in about a minute and a failure in either means the head must change,
+so they gate the native job (`needs`). The native job gates the sanitizer
+job, which then runs whatever the native result (`if: always()`) so a native
+test failure still yields the sanitizer signal; running the two together
+doubled the load and starved the native suite into harness timeouts. The
+Tree-sitter job stays independent until its grammar check is green again, at
+which point it joins the native job's gates. How many runs act_runner executes
+at once is runner configuration outside the repository; the budgets assume one
+run at a time, and overlapping runs slow each other. Runner provisioning
+remains external policy; the helper prints the processors and memory it saw so
 a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution
 is an explicit host capability controlled by
@@ -5856,6 +5875,54 @@ The per-suite default remains two for smaller hosts. Higher values are a
 resource choice, not permission to change timeouts or assert fewer outcomes.
 If other builds share the host, reduce the outer budget or rerun a timed-out
 gate unchanged under a controlled load; never convert the failure to a pass.
+
+### Host timeout scale
+
+Every harness and CTest timeout is a developer-host value that separates a
+hang from a slow compile. A slower host states its factor instead of loosening
+those values. `GTI_TEST_TIMEOUT_SCALE` is a CMake cache setting (default `1`,
+a positive integer; `tests/TestTimeouts.cmake`). After the last test is
+registered it multiplies every `TIMEOUT` property, fixes the scaled CTest
+default (`DART_TESTING_TIMEOUT`, 1500 seconds) on tests that have none when the
+scale exceeds one, and exports `GTI_TEST_TIMEOUT_SCALE=<n>` into every test's
+environment; the compound-suite and long-gate `COST` hints derive from the
+scaled values, so start order is unchanged. The fuzzer smoke test applies the
+same function in its own directory. Python harnesses pass every subprocess
+wait through `scaled()` from the shared `tests/harness_timeouts.py`, which
+reads that variable (unset or empty means one). A standalone run names the
+factor itself:
+
+```sh
+GTI_TEST_TIMEOUT_SCALE=2 python3 tests/json_stdlib_test.py build/gti
+```
+
+The `harness_timeouts` gate checks the scale contract (unset, empty, valid and
+invalid values), censuses `tests/*.py` through the AST so no call keyword or
+parameter default fixes a numeric `timeout=` again and every `scaled()` caller
+imports the shared helper, and configures a scratch CMake project against the
+module at scale 1 and 3: a stated timeout triples, an unstated one receives the
+scaled default only above scale 1, an existing `ENVIRONMENT` keeps its entries,
+the exported value reaches the test process, and `0` or a word fails
+configuration. `test_throughput_registration` requires the export on every
+registered test and rejects an inventory that drops it.
+
+CI uses `4` for the native job. Evidence from runs 719 and 735 (2026-10-10 and
+2026-10-11) on the 6-core/12 GiB runner while the sanitizer job built beside
+the suite: the json surface compiled at `-O0` in 38 seconds on the developer
+host and exceeded its 600-second case timeout there; its `-O3` compile takes
+226 seconds locally against the same 600-second timeout, so it exceeds that
+limit on any host three times slower even uncontended; a sanitized
+`arena_placement` compile took 1.3 seconds locally and exceeded 120 seconds;
+`lambda_pack_invocation_runtime` took 51 seconds locally and 200 to 360
+seconds. The two largest ratios are memory thrash under two concurrent jobs,
+which the job ordering and four test workers above remove; the factor absorbs
+the remaining per-core and GCC gap. It is scheduling metadata: it changes no
+case, assertion or observation, and is never a reason to raise a
+developer-host timeout. Re-measure it after a full green run; the lowest factor
+that passes is the right one. A partial CI selection was rejected because this
+runner is the only Linux/GCC/libstdc++ signal and full CI runs every registered
+test; a larger runner remains an infrastructure option that would lower the
+factor.
 
 Local samples on 2026-10-07 use one Release compiler binary with AppleClang 21
 and system LLVM 22.1.8 on a 12-core/32-GiB macOS arm64 host. The unchanged

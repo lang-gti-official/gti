@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -22,16 +23,16 @@ def main():
             built_c = subprocess.run(
                 [os.environ.get("CC", "cc"), "-std=c17", level, *flags,
                  "-c", str(fixtures / "call_result_native_records.c"), "-o", str(native)],
-                capture_output=True, text=True, timeout=60)
+                capture_output=True, text=True, timeout=scaled(60))
             assert built_c.returncode == 0, (built_c.stdout, built_c.stderr)
             built = subprocess.run(
                 [str(compiler), str(fixtures / "call_result_native_records.gti"),
                  "--std", standard, level, "--keep-cpp", "-o", str(binary),
                  "--", "-fno-elide-constructors", str(native), *flags],
-                capture_output=True, text=True, timeout=120)
+                capture_output=True, text=True, timeout=scaled(120))
             assert built.returncode == 0, (standard, level, built.stdout, built.stderr)
             ran = subprocess.run(
-                [str(binary)], capture_output=True, text=True, timeout=20,
+                [str(binary)], capture_output=True, text=True, timeout=scaled(20),
                 env=dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
                          UBSAN_OPTIONS="halt_on_error=1"))
             assert (ran.returncode, ran.stdout, ran.stderr) == (0, "", ""), ran

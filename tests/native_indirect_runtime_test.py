@@ -6,11 +6,12 @@ import os
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command):
     result = subprocess.run([str(part) for part in command], capture_output=True,
-                            text=True, timeout=180)
+                            text=True, timeout=scaled(180))
     if result.returncode != 0:
         raise RuntimeError(f"{command}\n{result.stdout}\n{result.stderr}")
     return result
@@ -50,7 +51,7 @@ def main():
                  "--std", standard, f"-{level}", "-o", failure_binary,
                  "--", "-fno-elide-constructors", *sanitizers])
             failure = subprocess.run([str(failure_binary)], capture_output=True,
-                                     text=True, timeout=180)
+                                     text=True, timeout=scaled(180))
             assert failure.returncode == 70, failure
             assert failure.stdout == "target cleanup\n", failure
             assert "native callback failure" in failure.stderr, failure

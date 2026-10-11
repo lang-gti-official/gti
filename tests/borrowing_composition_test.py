@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
+from harness_timeouts import scaled
 
 
 def reject_invalid_sources(compiler: pathlib.Path) -> None:
@@ -118,7 +119,7 @@ int main() { int a = 1; int b = 2; auto view = bad(a, b, true); return view.sum(
             path.write_text(prefix + source)
             result = subprocess.run(
                 [str(compiler), str(path), "--emit-mir", "-o", str(directory / f"{name}.mir")],
-                capture_output=True, text=True, timeout=60, check=False,
+                capture_output=True, text=True, timeout=scaled(60), check=False,
             )
             assert result.returncode == 65 and f"error[{expected_codes[name]}]" in result.stderr, (
                 name, result.returncode, result.stdout, result.stderr)
@@ -159,10 +160,10 @@ int main() {
                 executable = directory / f"{name}-{level}"
                 built = subprocess.run([str(compiler), str(path), f"-{level}",
                                         "-o", str(executable)],
-                                       capture_output=True, text=True, timeout=120)
+                                       capture_output=True, text=True, timeout=scaled(120))
                 assert built.returncode == 0, (name, level, built.stderr)
                 result = subprocess.run([str(executable)], capture_output=True,
-                                        text=True, timeout=30)
+                                        text=True, timeout=scaled(30))
                 assert result.returncode == 70 and result.stdout == "cleaned\n", (name, level, result)
                 assert re.fullmatch(r".+:\d+: runtime error\[GTI-R0007\]: index_out_of_bounds in .+\n",
                                     result.stderr), (name, level, result.stderr)
@@ -230,10 +231,10 @@ int main() {
                 executable = directory / f"{name}-{level}"
                 built = subprocess.run(
                     [str(compiler), str(path), f"-{level}", "--std", standard,
-                     "-o", str(executable)], capture_output=True, text=True, timeout=120)
+                     "-o", str(executable)], capture_output=True, text=True, timeout=scaled(120))
                 assert built.returncode == 0, (name, level, built.stdout, built.stderr)
                 result = subprocess.run([str(executable)], capture_output=True,
-                                        text=True, timeout=30)
+                                        text=True, timeout=scaled(30))
                 assert result.returncode == 70 and result.stdout == output, (name, level, result)
                 assert result.stderr == (
                     f'{path.name}:{line}: runtime error[GTI-R0017]: panic: "{message}"\n'

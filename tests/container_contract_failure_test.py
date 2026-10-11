@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -63,7 +64,7 @@ public:
             source = root / "invalid.gti"
             source.write_text(f"int main() {{ {expression}; return 0; }}")
             result = subprocess.run([str(compiler), str(source), "--emit-mir", "-o", str(root / "invalid.mir")],
-                                    capture_output=True, text=True, timeout=90, env=environment)
+                                    capture_output=True, text=True, timeout=scaled(90), env=environment)
             assert result.returncode == 65 and "GTI-S" in result.stderr and "GTI-B0001" not in result.stderr, result
         for name, (statement, code, category, detail) in cases.items():
             source = root / f"{name}.gti"
@@ -74,9 +75,9 @@ public:
                 command = [str(compiler), str(source), *flags, "-o", str(executable)]
                 if native:
                     command += ["--", *native]
-                result = subprocess.run(command, capture_output=True, text=True, timeout=120, env=environment)
+                result = subprocess.run(command, capture_output=True, text=True, timeout=scaled(120), env=environment)
                 assert result.returncode == 0, (name, label, result.stdout, result.stderr)
-                result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=30, env=environment)
+                result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=scaled(30), env=environment)
                 assert result.returncode == (70 if code else 0) and result.stdout == "cleaned\n", (name, label, result)
                 if code:
                     assert re.fullmatch(rf".+:\d+: runtime error\[GTI-R{code:04d}\]: {category} in {detail}\n", result.stderr), result.stderr

@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 PROBE = r"""
@@ -64,7 +65,7 @@ int main() {
 
 def run(command):
     result = subprocess.run(list(map(str, command)), capture_output=True,
-                            text=True, timeout=180)
+                            text=True, timeout=scaled(180))
     if result.returncode != 0:
         raise AssertionError((command, result.returncode, result.stdout, result.stderr))
     return result
@@ -111,7 +112,7 @@ def main():
     run([thread_probe, "stored"])
     for mutation in ("code", "site", "message", "descriptor", "third", "body"):
         result = subprocess.run([thread_probe, mutation], capture_output=True,
-                                text=True, timeout=30)
+                                text=True, timeout=scaled(30))
         expected = (3, 0xC0000409, 0xC0000409 - (1 << 32)) if os.name == "nt" else (
             -signal.SIGABRT,)
         assert result.returncode in expected, (mutation, result)

@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
+from harness_timeouts import scaled
 
 
 def reject_bad_contracts(compiler: pathlib.Path) -> None:
@@ -51,7 +52,7 @@ int main() { int32_t key = 1; if (invoke(Bad(), key, key)) { return 0; } return 
             path.write_text(source)
             result = subprocess.run(
                 [str(compiler), str(path), "--emit-mir", "-o", str(root / f"{name}.mir")],
-                capture_output=True, text=True, timeout=60, check=False,
+                capture_output=True, text=True, timeout=scaled(60), check=False,
             )
             assert result.returncode == 65 and "error[GTI-S2029]" in result.stderr, (
                 name, result.returncode, result.stdout, result.stderr)

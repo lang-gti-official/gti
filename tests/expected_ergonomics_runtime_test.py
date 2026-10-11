@@ -7,11 +7,12 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command, environment):
     return subprocess.run(command, text=True, capture_output=True,
-                          env=environment, timeout=120)
+                          env=environment, timeout=scaled(120))
 
 
 def main():

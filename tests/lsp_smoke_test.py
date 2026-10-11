@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from harness_timeouts import scaled
 
 
 def frame(message):
@@ -115,7 +116,7 @@ class LspSession:
         self.process.stdin.write(frame(message))
         self.process.stdin.flush()
 
-    def receive_until(self, predicate, timeout=10):
+    def receive_until(self, predicate, timeout=scaled(10)):
         deadline = time.monotonic() + timeout
         received = []
         while time.monotonic() < deadline:
@@ -162,7 +163,7 @@ class LspSession:
         self.send({"jsonrpc": "2.0", "id": 99, "method": "shutdown", "params": None})
         self.receive_until(lambda message: message.get("id") == 99)
         self.send({"jsonrpc": "2.0", "method": "exit", "params": None})
-        self.process.wait(timeout=5)
+        self.process.wait(timeout=scaled(5))
         if self.process.returncode != 0:
             raise AssertionError(
                 f"gti_lsp exited with {self.process.returncode}: "
@@ -759,7 +760,7 @@ def test_analysis_pool_runs_one_analysis_per_document(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == last_version,
-            timeout=60,
+            timeout=scaled(60),
         )
         assert not has_error_diagnostics(final["params"])
         session.close()
@@ -3990,7 +3991,7 @@ def test_io_tooling_boundary(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
             and not has_error_diagnostics(message["params"]),
-            timeout=20,
+            timeout=scaled(20),
         )
 
         scope = source.index("std::fopen") + len("std::")
@@ -4059,7 +4060,7 @@ def test_io_tooling_boundary(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2,
-            timeout=20,
+            timeout=scaled(20),
         )["params"]["diagnostics"]
         private = next(
             diagnostic
@@ -8482,7 +8483,7 @@ def test_protocol_input_validation(executable):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
-            timeout=5,
+            timeout=scaled(5),
         )
         assert process.returncode == 0, process.stderr.decode(errors="replace")
         assert b"uncaught exception" not in process.stderr
@@ -8493,7 +8494,7 @@ def test_protocol_input_validation(executable):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
-        timeout=5,
+        timeout=scaled(5),
     )
     assert malformed.returncode == 0, malformed.stderr.decode(errors="replace")
     assert decode_messages(malformed.stdout)[0]["error"]["code"] == -32700
@@ -8510,7 +8511,7 @@ def test_protocol_input_validation(executable):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
-        timeout=5,
+        timeout=scaled(5),
     )
     assert invalid_utf8.returncode == 0, invalid_utf8.stderr.decode(
         errors="replace"
@@ -8938,7 +8939,7 @@ def test_dependency_reanalysis_refreshes_tokens_only_when_changed(
         )
         open_document(session, dependency_uri, dependency_source)
         open_document(session, entry_uri, entry_source)
-        assert_no_message(session, is_refresh, timeout=0.5)
+        assert_no_message(session, is_refresh, timeout=scaled(0.5))
 
         use = lsp_position(entry_source, entry_source.index("shared_counter;"))
 
@@ -8968,14 +8969,14 @@ def test_dependency_reanalysis_refreshes_tokens_only_when_changed(
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == entry_uri
         )
-        assert_no_message(session, is_refresh, timeout=1.0)
+        assert_no_message(session, is_refresh, timeout=scaled(1.0))
         assert root_tokens(3) == held
 
         # The global becomes mutable, so the root's use loses `readonly`.
         session.send(full_change(dependency_uri, 3, "mut int shared_counter = 1;\n"))
-        refresh = session.receive_until(is_refresh, timeout=10)
+        refresh = session.receive_until(is_refresh, timeout=scaled(10))
         session.send({"jsonrpc": "2.0", "id": refresh["id"], "result": None})
-        assert_no_message(session, is_refresh, timeout=0.5)
+        assert_no_message(session, is_refresh, timeout=scaled(0.5))
         changed = root_tokens(4)
         assert not changed[(use["line"], use["character"])]["modifiers"] & 4, changed
 
@@ -8987,7 +8988,7 @@ def test_dependency_reanalysis_refreshes_tokens_only_when_changed(
             and message["params"]["uri"] == entry_uri
             and message["params"].get("version") == 2
         )
-        assert_no_message(session, is_refresh, timeout=0.5)
+        assert_no_message(session, is_refresh, timeout=scaled(0.5))
     finally:
         session.close()
 
@@ -9023,7 +9024,7 @@ def test_update_debounce_coalesces_edits(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == last_version,
-            timeout=30,
+            timeout=scaled(30),
         )
         assert not has_error_diagnostics(final["params"]), final
 
@@ -9069,7 +9070,7 @@ AUDIT_SOURCE = (
 )
 
 
-def publication_for(session, uri, version, timeout=30):
+def publication_for(session, uri, version, timeout=scaled(30)):
     return session.receive_until(
         lambda message: message.get("method") == "textDocument/publishDiagnostics"
         and message["params"]["uri"] == uri
@@ -9189,7 +9190,7 @@ def test_raw_pointer_audit_waits_for_quiet_or_save(executable, root):
             session,
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics",
-            timeout=0.5,
+            timeout=scaled(0.5),
         )
         session.send(
             {
@@ -9263,7 +9264,7 @@ def test_editor_hir_scope_follows_open_file(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == library_uri
             and bool(message["params"]["diagnostics"]),
-            timeout=0.5,
+            timeout=scaled(0.5),
         )
 
         reaching = entry_source.replace("return 0;", "return lib_only();")
@@ -10716,7 +10717,7 @@ def main():
         stderr=subprocess.PIPE,
         check=False,
         text=True,
-        timeout=5,
+        timeout=scaled(5),
     )
     assert version.returncode == 0, version.stderr
     assert version.stdout.strip() == f"gti_lsp {expected_version}"
@@ -10726,7 +10727,7 @@ def main():
         stderr=subprocess.PIPE,
         check=False,
         text=True,
-        timeout=5,
+        timeout=scaled(5),
     )
     assert invalid_profile.returncode == 64
     assert "must be single-threaded or concurrent" in invalid_profile.stderr
@@ -11033,7 +11034,7 @@ def main():
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
-            timeout=15,
+            timeout=scaled(15),
         )
     if process.returncode != 0:
         raise AssertionError(

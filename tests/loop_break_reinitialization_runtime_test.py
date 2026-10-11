@@ -5,10 +5,11 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command):
-    completed = subprocess.run(command, capture_output=True, text=True, timeout=90)
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=scaled(90))
     if completed.returncode != 0:
         raise AssertionError(f"{command}: {completed.returncode}\n{completed.stdout}\n{completed.stderr}")
     return completed

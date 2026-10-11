@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 FAILURE_CLEANUP_SOURCE = """\
@@ -47,7 +48,7 @@ def execute(
     command: list[str],
     *,
     expected: int = 0,
-    timeout: int = 300,
+    timeout: int = scaled(300),
 ) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         command,
@@ -142,7 +143,7 @@ def main() -> int:
             standard="c++23",
             optimization="-O3",
         )
-        result = execute([str(failure_binary)], expected=70, timeout=30)
+        result = execute([str(failure_binary)], expected=70, timeout=scaled(30))
         failure_line = source_line(FAILURE_CLEANUP_SOURCE, "int32_t failed =")
         expected_error = (
             f"mutex_failure_cleanup.gti:{failure_line}: runtime error[GTI-R0002]: "

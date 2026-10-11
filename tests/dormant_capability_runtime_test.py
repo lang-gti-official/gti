@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from harness_timeouts import scaled
 
 PROFILES = ("single-threaded", "concurrent")
 
@@ -110,7 +111,7 @@ def main():
             built = subprocess.run(
                 [str(compiler), str(path), "--execution-profile", profile,
                  "--std", standard, "-O0", "-o", str(binary)],
-                capture_output=True, text=True, timeout=300)
+                capture_output=True, text=True, timeout=scaled(300))
             if built.returncode != 0 or not binary.is_file():
                 raise AssertionError(
                     f"{stem} did not build\nstdout: {built.stdout}\n"
@@ -120,7 +121,7 @@ def main():
         def execute_case(compiled):
             stem, binary = compiled
             result = subprocess.run([str(binary)], capture_output=True,
-                                    text=True, timeout=30)
+                                    text=True, timeout=scaled(30))
             if (result.returncode, result.stdout, result.stderr) != (0, "", ""):
                 raise AssertionError(
                     f"{stem} exited {result.returncode}\n"

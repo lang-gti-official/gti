@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def inventory(build):
@@ -22,7 +23,7 @@ def inventory(build):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
         result = subprocess.run(["ctest", "--test-dir", str(root), "--show-only=json-v1"],
-                                capture_output=True, text=True, timeout=60, check=True)
+                                capture_output=True, text=True, timeout=scaled(60), check=True)
         tests = json.loads(result.stdout)["tests"]
         for test in tests:
             for prop in test["properties"]:
@@ -55,6 +56,10 @@ def verify(tests, repository):
         labels = properties.get("LABELS", [])
         if "coverage-full" not in labels or properties.get("DISABLED"):
             raise AssertionError(f"{test['name']}: omitted from full coverage")
+        scales = [value.split("=", 1)[1] for value in properties.get("ENVIRONMENT", [])
+                  if value.startswith("GTI_TEST_TIMEOUT_SCALE=")]
+        if len(scales) != 1 or not scales[0].isdigit() or int(scales[0]) < 1:
+            raise AssertionError(f"{test['name']}: harness timeouts are not scaled with CTest's")
         if "feedback-fast" in labels:
             feedback.add(test["name"])
         files = {pathlib.Path(arg).name for arg in test.get("command", [])}
@@ -95,7 +100,7 @@ def verify_cold_ordering():
             'set_tests_properties(largest PROPERTIES PROCESSORS 2 COST 200)\n')
         build = root / "build"
         subprocess.run(["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja"],
-                       capture_output=True, text=True, timeout=30, check=True)
+                       capture_output=True, text=True, timeout=scaled(30), check=True)
         first, second = inventory(build), inventory(build)
         if first != second:
             raise AssertionError("scratch discovery changes the registered inventory")
@@ -105,7 +110,7 @@ def verify_cold_ordering():
             if properties["WORKING_DIRECTORY"] != str(expected):
                 raise AssertionError("inventory lost the default or explicit working directory")
         result = subprocess.run(["ctest", "--test-dir", str(build), "--parallel", "2"],
-                                capture_output=True, text=True, timeout=30, check=True)
+                                capture_output=True, text=True, timeout=scaled(30), check=True)
         starts = re.findall(r"Start\s+\d+:\s+(\S+)", result.stdout)
         if starts[:2] != ["largest", "compound"] or set(starts) != {
                 "small_first", "small_second", "compound", "largest"}:
@@ -118,7 +123,7 @@ def main():
     clients = verify(tests, repository)
     for target_name, mutation in ((name, kind)
                                  for name in ("stdlib_surface", "generic_payload_enum_runtime")
-                                 for kind in ("allocation", "full", "disabled", "cost")):
+                                 for kind in ("allocation", "full", "disabled", "cost", "scale")):
         changed = copy.deepcopy(tests)
         target = next(test for test in changed if test["name"] == target_name)
         properties = target["properties"]
@@ -130,6 +135,11 @@ def main():
                     prop["value"].remove("coverage-full")
         elif mutation == "disabled":
             properties.append({"name": "DISABLED", "value": True})
+        elif mutation == "scale":
+            for prop in properties:
+                if prop["name"] == "ENVIRONMENT":
+                    prop["value"] = [value for value in prop["value"]
+                                     if not value.startswith("GTI_TEST_TIMEOUT_SCALE=")]
         else:
             properties.append({"name": "COST", "value": 0})
         try:

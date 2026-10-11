@@ -83,6 +83,14 @@ jobs:
   build-and-test:
     name: Native toolchain
     runs-on: ubuntu-latest
+    # The formatting and release-version checks finish in about a minute and
+    # a failure in either means the commit must change, so the hours this job
+    # would spend on the single runner are not spent on that head. The
+    # Tree-sitter job is not a gate while its grammar drift stays red; add it
+    # here once it is green.
+    needs:
+      - formatting
+      - release-version
 
     steps:
       - name: Check out GTI
@@ -94,6 +102,12 @@ jobs:
           GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
           GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
           GTI_MEMORY_PER_JOB_MIB: 2048
+          # A CTest worker running a compound suite compiles generated C++
+          # for the largest standard-library fixtures; six such workers on
+          # the 12 GiB runner thrashed (a 38-second developer-host compile
+          # exceeded 600 seconds). Four workers still cover the processors
+          # through the suites' PROCESSORS reservations.
+          GTI_MEMORY_PER_TEST_MIB: 3072
         run: bash scripts/configure_ci_resources.sh
 
       - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang
@@ -138,10 +152,18 @@ jobs:
       - name: Configure
         # This Docker runner executes ASan/UBSan but cannot host TSAN's shadow
         # mapping. A compatible dedicated runner should leave TSAN enabled.
+        # Test timeouts are sized for a developer host; this runner's cores
+        # and GCC run the same compiles several times slower (the json
+        # surface at -O3 takes 226 seconds locally against a 600-second
+        # case timeout), so every CTest and harness timeout is scaled here
+        # rather than loosened in the tree. The factor is measured against
+        # a full run, not a correctness setting; see
+        # docs/architecture/verification.md.
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_TIMEOUT_SCALE=4
 
       - name: Check native driver compilation before the full build
         run: >-
@@ -207,6 +229,14 @@ jobs:
   compiler-sanitizers:
     name: Compiler sanitizers
     runs-on: ubuntu-latest
+    # One runner hosts every job of a run on the same six processors and
+    # 12 GiB. Both heavy jobs size their compile and test parallelism for the
+    # whole machine, so running them together doubled the load and starved
+    # the native suite into harness timeouts. Run this job after the native
+    # job finishes, passed or failed, so each gets the machine it budgeted; a
+    # native job skipped by its own gates skips this one too.
+    needs: build-and-test
+    if: ${{ needs['build-and-test'].result == 'success' || needs['build-and-test'].result == 'failure' }}
 
     steps:
       - name: Check out GTI

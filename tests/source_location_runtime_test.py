@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(
@@ -18,7 +19,7 @@ def run(
         command,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=scaled(180),
         env=environment,
         check=False,
     )

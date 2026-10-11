@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 EXPECTED_RECORDS = {
@@ -102,7 +103,7 @@ def main() -> None:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
-            timeout=300,
+            timeout=scaled(300),
         )
         require(
             completed.returncode == 0,

@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -14,7 +15,7 @@ def main():
     environment = dict(os.environ, GTI_STDLIB_PATH=str(repository / "stdlib"))
 
     def run(command):
-        return subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        return subprocess.run(command, env=environment, capture_output=True, text=True, timeout=scaled(120))
 
     with tempfile.TemporaryDirectory(prefix="gti-string-errors-") as directory:
         root = pathlib.Path(directory)

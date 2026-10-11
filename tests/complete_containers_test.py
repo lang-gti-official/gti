@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
+from harness_timeouts import scaled
 
 
 def reject_invalid(compiler):
@@ -75,7 +76,7 @@ int main() {{
             source = root / f"{name}.gti"
             source.write_text(f"#include <std/{header}>\n" + body)
             result = subprocess.run([str(compiler), str(source), "--emit-mir", "-o", str(root / "out.mir")],
-                                    capture_output=True, text=True, timeout=60)
+                                    capture_output=True, text=True, timeout=scaled(60))
             assert result.returncode == 65 and f"error[{code}]" in result.stderr, (name, result.stderr)
             assert "GTI-B0001" not in result.stderr, (name, result.stderr)
     print(f"containers: {len(cases)} invalid ownership cases rejected", flush=True)
@@ -89,20 +90,20 @@ def cleanup_matrix(compiler):
             for level in ("O0", "O1", "O3"):
                 binary = pathlib.Path(directory) / f"cleanup-{standard}-{level}"
                 built = subprocess.run([str(compiler), str(source), "--std", standard, f"-{level}", "-o", str(binary)],
-                                       capture_output=True, text=True, timeout=120)
+                                       capture_output=True, text=True, timeout=scaled(120))
                 assert built.returncode == 0, (standard, level, built.stderr)
                 for arguments in ([], ["fail"], ["fail", "deque"]):
-                    result = subprocess.run([str(binary), *arguments], capture_output=True, text=True, timeout=30)
+                    result = subprocess.run([str(binary), *arguments], capture_output=True, text=True, timeout=scaled(30))
                     assert sorted(map(int, result.stdout.splitlines())) == list(range(1, 11)), result
                     if arguments:
                         assert result.returncode == 70 and re.search(r"runtime error\[GTI-R0002\]: division_by_zero", result.stderr), result
                     else:
                         assert result.returncode == 0 and not result.stderr, result
                 built = subprocess.run([str(compiler), str(bounds), "--std", standard, f"-{level}", "-o", str(binary)],
-                                       capture_output=True, text=True, timeout=120)
+                                       capture_output=True, text=True, timeout=scaled(120))
                 assert built.returncode == 0, (standard, level, built.stderr)
                 for count in range(9):
-                    result = subprocess.run([str(binary), *(["bounds"] * count)], capture_output=True, text=True, timeout=30)
+                    result = subprocess.run([str(binary), *(["bounds"] * count)], capture_output=True, text=True, timeout=scaled(30))
                     code = "GTI-R0016" if count in (5, 6) else "GTI-R0007"
                     assert result.returncode == 70 and result.stdout == "99\n" and f"runtime error[{code}]" in result.stderr, result
         print("containers: normal and constructor-failure cleanup matrix passed", flush=True)

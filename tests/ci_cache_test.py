@@ -7,6 +7,7 @@ import pathlib
 import shutil
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def values(path):
@@ -37,7 +38,7 @@ def main():
             output = root / f"environment-{index}"
             environment.update(GITEA_ENV=str(output), GTI_CACHE_DIRECTORY=directory)
             result = subprocess.run([bash, str(script)], env=environment,
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, timeout=scaled(10))
             if index:
                 assert result.returncode != 0, result
                 assert not output.exists(), "invalid cache setup wrote runner state"
@@ -55,7 +56,7 @@ def main():
         output = root / "missing-launcher"
         environment.update(GITEA_ENV=str(output), GTI_CACHE_DIRECTORY=str(root / "cache"))
         result = subprocess.run([bash, str(script)], env=environment,
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=scaled(10))
         assert result.returncode != 0 and not output.exists()
 
         if args.ccache:
@@ -64,7 +65,7 @@ def main():
             output = root / "real-environment"
             environment.update(GITEA_ENV=str(output), GTI_CACHE_DIRECTORY=str(root / "real-cache"))
             subprocess.run([bash, str(script)], env=environment, check=True,
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True, timeout=scaled(10))
             environment.update(values(output))
             header = root / "value.h"
             source = root / "value.cpp"
@@ -76,7 +77,7 @@ def main():
                 subprocess.run([str(args.ccache.resolve()), args.cxx, optimization,
                                 "-std=c++20", "-c", str(source), "-o", str(artifact)],
                                env=environment, check=True, capture_output=True,
-                               text=True, timeout=60)
+                               text=True, timeout=scaled(60))
                 return artifact.read_bytes()
 
             cold = compile()
@@ -86,7 +87,7 @@ def main():
             compile("-O0")
             stats = subprocess.run([str(args.ccache.resolve()), "--print-stats"],
                                    env=environment, check=True, capture_output=True,
-                                   text=True, timeout=10)
+                                   text=True, timeout=scaled(10))
             counts = dict(line.split() for line in stats.stdout.splitlines())
             assert (int(counts.get("direct_cache_hit", 0)) +
                     int(counts.get("preprocessed_cache_hit", 0))) >= 1, stats.stdout

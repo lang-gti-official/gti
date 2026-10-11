@@ -10,6 +10,7 @@ import tempfile
 from sanitizer_support import thread_sanitizer_enabled
 
 from native_symbol_spelling import native_spelling
+from harness_timeouts import scaled
 
 
 def run(command):
@@ -18,7 +19,7 @@ def run(command):
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
                        TSAN_OPTIONS="halt_on_error=1:abort_on_error=1")
     result = subprocess.run([str(part) for part in command], capture_output=True,
-                            text=True, timeout=120, env=environment)
+                            text=True, timeout=scaled(120), env=environment)
     if result.returncode != 0 or result.stderr:
         raise AssertionError(f"{command!r}: {result.returncode}\n"
                              f"stdout={result.stdout!r}\nstderr={result.stderr!r}")

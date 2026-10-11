@@ -6,10 +6,11 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command):
-    return subprocess.run(command, capture_output=True, text=True, timeout=120)
+    return subprocess.run(command, capture_output=True, text=True, timeout=scaled(120))
 
 
 def require_build(command):

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from harness_timeouts import scaled
 
 
 def assert_neutral_native_detail(output):
@@ -67,7 +68,7 @@ def main():
         def run(arguments, expected=0, extra=None):
             result = subprocess.run([gti, *arguments], cwd=root,
                                     env=env | (extra or {}), capture_output=True,
-                                    text=True, timeout=60)
+                                    text=True, timeout=scaled(60))
             assert result.returncode == expected, (arguments, result.stdout, result.stderr)
             return result
 
@@ -231,7 +232,7 @@ def live_native_probe(gti, root, env):
                 release.touch()
             if process.poll() is not None and not ready:
                 break
-        stdout, _ = process.communicate(timeout=5)
+        stdout, _ = process.communicate(timeout=scaled(5))
         text = b"".join(chunks).decode(errors="replace")
         assert observed and process.returncode == 23, (process.returncode, text)
         assert "\x1b[2K" in text and "\x1b[1;" not in text
@@ -258,7 +259,7 @@ def live_native_probe(gti, root, env):
             [sys.executable, str(capture), "capture", "--gti", gti,
              "--source", str(root / "main.gti"), "--out", str(bundle)],
             cwd=root, env=probe_env | {"GTI_CXX": str(shim)},
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, timeout=scaled(60))
         assert captured.returncode == 0, (captured.stdout, captured.stderr)
         record = json.loads((bundle / "manifest.json").read_text())
         assert record["signature"]["kind"] == "native-toolchain", record
@@ -285,7 +286,7 @@ def live_native_probe(gti, root, env):
             '[targets.app]\nkind = "executable"\nroot = "main.gti"\n')
         rejected = subprocess.run(
             [gti, "build", "--cxx", str(shim), "--progress=never"],
-            cwd=application, env=probe_env, capture_output=True, text=True, timeout=60)
+            cwd=application, env=probe_env, capture_output=True, text=True, timeout=scaled(60))
         assert rejected.returncode == 65, (rejected.stdout, rejected.stderr)
         assert "warning[GTI-S2096]" in rejected.stderr
         assert "error[GTI-B2003]" in rejected.stderr
@@ -296,7 +297,7 @@ def live_native_probe(gti, root, env):
         release.touch()
         if process.poll() is None:
             process.kill()
-        process.wait(timeout=5)
+        process.wait(timeout=scaled(5))
         os.close(master)
 
 

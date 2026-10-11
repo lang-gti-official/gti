@@ -7,11 +7,12 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(arguments, environment):
     result = subprocess.run([str(argument) for argument in arguments], env=environment,
-                            capture_output=True, text=True, timeout=180)
+                            capture_output=True, text=True, timeout=scaled(180))
     if result.returncode:
         raise AssertionError(f"{arguments}:\n{result.stdout}\n{result.stderr}")
     return result.stdout

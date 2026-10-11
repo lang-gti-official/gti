@@ -10,6 +10,7 @@ import tempfile
 from sanitizer_support import thread_sanitizer_enabled
 
 from native_symbol_spelling import native_spelling
+from harness_timeouts import scaled
 
 
 def execute(command, expected=0, stdout=None, failure=False):
@@ -17,7 +18,7 @@ def execute(command, expected=0, stdout=None, failure=False):
     environment["ASAN_OPTIONS"] = "halt_on_error=1:abort_on_error=1"
     environment["UBSAN_OPTIONS"] = "halt_on_error=1:print_stacktrace=1"
     environment["TSAN_OPTIONS"] = "halt_on_error=1:abort_on_error=1"
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120,
+    result = subprocess.run(command, capture_output=True, text=True, timeout=scaled(120),
                             env=environment)
     if (result.returncode != expected or (stdout is not None and result.stdout != stdout) or
             (failure and ("GTI-R0002" not in result.stderr or

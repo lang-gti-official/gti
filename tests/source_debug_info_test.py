@@ -9,11 +9,12 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(argv, cwd, *, ok=True):
     result = subprocess.run([str(arg) for arg in argv], cwd=cwd,
-                            capture_output=True, text=True, timeout=90)
+                            capture_output=True, text=True, timeout=scaled(90))
     if ok and result.returncode:
         raise AssertionError(f"{argv}:\n{result.stdout}\n{result.stderr}")
     return result
@@ -52,7 +53,7 @@ def debugger(argv, cwd):
                 chunks.append(chunk)
             elif process.poll() is not None:
                 break
-        process.wait(timeout=5)
+        process.wait(timeout=scaled(5))
         output = b"".join(chunks).decode(errors="replace")
         return subprocess.CompletedProcess(argv, process.returncode, output, "")
     finally:

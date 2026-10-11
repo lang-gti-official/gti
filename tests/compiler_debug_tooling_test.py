@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 FAILURES: list[str] = []
 
@@ -41,7 +42,7 @@ def check(condition: bool, label: str, detail: str = "") -> None:
 def run_tool(script: Path, *arguments: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(script), *arguments],
-        capture_output=True, text=True, timeout=600, check=False)
+        capture_output=True, text=True, timeout=scaled(600), check=False)
 
 
 def manifest_of(bundle: Path) -> dict:

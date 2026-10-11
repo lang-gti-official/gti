@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -32,11 +33,11 @@ def main():
                     binary = directory / f"{spelling}-{standard}-{level}"
                     command = [str(compiler), str(path), "--std", f"c++{standard}",
                                f"-O{level}", "-o", str(binary), "--", "-fno-elide-constructors"]
-                    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+                    result = subprocess.run(command, capture_output=True, text=True, timeout=scaled(120))
                     assert result.returncode == 0, (command, result)
                     for count, (status, output) in enumerate(expected):
                         result = subprocess.run([str(binary), *(["case"] * count)],
-                                                capture_output=True, text=True, timeout=30)
+                                                capture_output=True, text=True, timeout=scaled(30))
                         assert (result.returncode, result.stdout) == (status, output), result
                         if status:
                             assert "GTI-R0017" in result.stderr and "required borrowed resource" in result.stderr, result
@@ -51,20 +52,20 @@ def main():
                 binary = directory / "example"
                 result = subprocess.run([str(compiler), str(example), "--std", f"c++{standard}",
                                          f"-O{level}", "-o", str(binary)],
-                                        capture_output=True, text=True, timeout=120)
+                                        capture_output=True, text=True, timeout=scaled(120))
                 assert result.returncode == 0, result
-                result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30)
+                result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=scaled(30))
                 assert (result.returncode, result.stdout, result.stderr) == (0, "read\nwrite\n", ""), result
                 fixture = root / "tests/fixtures/local_reference_lambdas.gti"
                 binary = directory / "lambdas"
                 result = subprocess.run([str(compiler), str(fixture), "--std", f"c++{standard}",
                                          f"-O{level}", "-o", str(binary), "--", "-fno-elide-constructors"],
-                                        capture_output=True, text=True, timeout=120)
+                                        capture_output=True, text=True, timeout=scaled(120))
                 assert result.returncode == 0, result
                 for args, status, output in (([], 0, "5\n7\n9\n90\n"),
                                              (["fail"], 70, "5\n7\n90\n")):
                     result = subprocess.run([str(binary), *args], capture_output=True,
-                                            text=True, timeout=30)
+                                            text=True, timeout=scaled(30))
                     assert (result.returncode, result.stdout) == (status, output), result
                     if status:
                         assert "GTI-R0002" in result.stderr and "division_by_zero" in result.stderr, result

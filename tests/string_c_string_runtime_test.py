@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command):
@@ -17,7 +18,7 @@ def run(command):
         list(map(str, command)),
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=scaled(180),
         env=environment,
     )
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def package(root, name, target, message):
@@ -39,13 +40,13 @@ def main():
         def run(arguments, expected=0, cwd=tool, extra=None):
             result = subprocess.run([gti, *arguments], cwd=cwd,
                                     env=env | (extra or {}), capture_output=True,
-                                    text=True, timeout=120)
+                                    text=True, timeout=scaled(120))
             assert result.returncode == expected, (arguments, result.stdout, result.stderr)
             return result
 
         def program(path):
             return subprocess.run([str(path)], capture_output=True, text=True,
-                                  timeout=30).stdout
+                                  timeout=scaled(30)).stdout
 
         help_text = run(["--help"]).stdout
         assert "gti install [target]" in help_text and "gti uninstall <name>" in help_text
@@ -95,7 +96,7 @@ def main():
         homeless = dict(env)
         homeless.pop("HOME")
         result = subprocess.run([gti, "install", "--list"], cwd=root, env=homeless,
-                                capture_output=True, text=True, timeout=60)
+                                capture_output=True, text=True, timeout=scaled(60))
         assert result.returncode == 64 and "--root" in result.stderr, result
 
         # Ownership: a file install did not place, or a program from another

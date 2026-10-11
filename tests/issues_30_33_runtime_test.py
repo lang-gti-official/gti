@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -37,13 +38,13 @@ def main():
             built = subprocess.run([str(compiler), str(source), "--std", standard,
                                     level, "--keep-cpp", "-o", str(binary), "--",
                                     str(source.with_suffix(".cpp")), *flags],
-                                   capture_output=True, text=True, timeout=120)
+                                   capture_output=True, text=True, timeout=scaled(120))
             assert built.returncode == 0, built
             for mode, (output, marker, reason) in enumerate(cases):
                 env = dict(os.environ, GTI_ISSUE_MODE=str(mode), GTI_COLOR="never",
                            ASAN_OPTIONS="halt_on_error=1", UBSAN_OPTIONS="halt_on_error=1")
                 ran = subprocess.run([str(binary)], env=env, capture_output=True,
-                                     text=True, timeout=20)
+                                     text=True, timeout=scaled(20))
                 assert ran.stdout == output, (mode, ran)
                 if marker is None:
                     assert ran.returncode == 0 and not ran.stderr, ran

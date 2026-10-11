@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 MARKER = "GTI verified-MIR body"
 MARKER_PATTERN = re.compile(
@@ -76,7 +77,7 @@ def census(gti: Path, root: Path) -> dict[str, int | None]:
                 ],
                 cwd=root,
                 capture_output=True,
-                timeout=180,
+                timeout=scaled(180),
                 check=False,
                 env=env,
             )

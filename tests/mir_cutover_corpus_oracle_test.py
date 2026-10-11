@@ -28,6 +28,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 CONFIGURATIONS = (("O0", "c++20"), ("O3", "c++23"))
@@ -105,7 +106,7 @@ def build_and_run(gti: Path, root: Path, scratch: Path, source: Path,
         str(executable),
     ]
     try:
-        built = run(command, cwd=root, env=env, timeout=240)
+        built = run(command, cwd=root, env=env, timeout=scaled(240))
     except (OSError, subprocess.TimeoutExpired) as error:
         return CaseResult(source.name, optimization, standard, frozenset(),
                           frozenset(), -1, "", "", f"build failed: {error}")
@@ -126,7 +127,7 @@ def build_and_run(gti: Path, root: Path, scratch: Path, source: Path,
     markers = frozenset((kind, owner) for _, kind, owner in rows)
 
     try:
-        executed = run([str(executable)], cwd=root, env=env, timeout=15)
+        executed = run([str(executable)], cwd=root, env=env, timeout=scaled(15))
     except (OSError, subprocess.TimeoutExpired) as error:
         return CaseResult(source.name, optimization, standard, markers, rows,
                           -1, "", "", f"execution failed: {error}")

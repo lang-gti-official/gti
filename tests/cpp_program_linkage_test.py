@@ -5,11 +5,12 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command):
     result = subprocess.run([str(arg) for arg in command], text=True,
-                            capture_output=True, timeout=120)
+                            capture_output=True, timeout=scaled(120))
     if result.returncode:
         raise RuntimeError(f"{command}\n{result.stdout}{result.stderr}")
     return result

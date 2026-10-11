@@ -8,6 +8,7 @@ import tempfile
 
 from lsp_smoke_test import LspSession
 from lsp_project_facts_test import diagnostics_for, initialize, open_document
+from harness_timeouts import scaled
 
 
 CODE = "GTI-S2094"
@@ -45,7 +46,7 @@ def main():
 
         def run(*args, cwd=root, error=False):
             result = subprocess.run([compiler, *map(str, args)], cwd=cwd,
-                                    text=True, capture_output=True, timeout=90)
+                                    text=True, capture_output=True, timeout=scaled(90))
             output = result.stdout + result.stderr
             assert (result.returncode != 0) == error, output
             return output

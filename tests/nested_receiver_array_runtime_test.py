@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -26,14 +27,14 @@ def main():
                 [str(compiler), str(source), "--std", standard, level,
                  "--keep-cpp", "-o", str(binary), "--",
                  str(source.with_suffix(".cpp")), *native_flags],
-                capture_output=True, text=True, timeout=120)
+                capture_output=True, text=True, timeout=scaled(120))
             assert built.returncode == 0, (built.stdout, built.stderr)
             for mode, site in enumerate((None, "matrix-read", "matrix-write",
                                          "grid-read", "grid-read", "grid-write", "grid-write")):
                 environment = dict(os.environ, GTI_TEST_ARRAY_MODE=str(mode),
                                    ASAN_OPTIONS="halt_on_error=1", UBSAN_OPTIONS="halt_on_error=1")
                 ran = subprocess.run([str(binary)], env=environment, capture_output=True,
-                                     text=True, timeout=20)
+                                     text=True, timeout=scaled(20))
                 assert ran.stdout == "2\n1\n", (mode, ran)
                 if site is None:
                     assert ran.returncode == 0 and ran.stderr == "", ran

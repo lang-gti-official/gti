@@ -5,6 +5,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -22,7 +23,7 @@ def main():
 
     def run(command):
         return subprocess.run(list(map(str, command)), env=environment, text=True,
-                              capture_output=True, timeout=180)
+                              capture_output=True, timeout=scaled(180))
 
     with tempfile.TemporaryDirectory(prefix="gti-container-collection-") as directory:
         root = pathlib.Path(directory)

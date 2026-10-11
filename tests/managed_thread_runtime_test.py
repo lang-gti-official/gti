@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 SUCCESS_SOURCE = """\
@@ -430,7 +431,7 @@ def execute(
         cwd=cwd,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=scaled(300),
         check=False,
     )
     if result.returncode != expected:

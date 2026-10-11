@@ -7,6 +7,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main
+from harness_timeouts import scaled
 
 
 if __name__ == "__main__":
@@ -15,7 +16,7 @@ if __name__ == "__main__":
         emitted = pathlib.Path(temporary) / "adapters.cpp"
         result = subprocess.run([str(pathlib.Path(sys.argv[1]).resolve()),
                                  str(fixture), "--emit-cpp", "-o", str(emitted)],
-                                capture_output=True, text=True, timeout=120)
+                                capture_output=True, text=True, timeout=scaled(120))
         assert result.returncode == 0, (result.stdout, result.stderr)
         text = emitted.read_text()
         packet_layout = text.index("struct Packet {")

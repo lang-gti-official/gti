@@ -6,6 +6,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -40,10 +41,10 @@ def main():
             if native_flags or native_inputs:
                 command += ["--", *native_flags, *native_inputs]
             build = subprocess.run(command, env=environment, capture_output=True,
-                                   text=True, timeout=300)
+                                   text=True, timeout=scaled(300))
             assert build.returncode == 0, (mode, build.stdout, build.stderr)
             run = subprocess.run([str(executable)], cwd=work, env=environment,
-                                 capture_output=True, text=True, timeout=60)
+                                 capture_output=True, text=True, timeout=scaled(60))
             assert (run.returncode, run.stdout, run.stderr) == (0, "", ""), (mode, run)
             assert not (work / "fs-work").exists()
             assert not (work / "fs-keep").exists()

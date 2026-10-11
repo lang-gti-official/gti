@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -20,19 +21,19 @@ def main():
             built = subprocess.run(
                 [compiler, str(fixture), "--std", standard, f"-{level}",
                  "--keep-cpp", "-o", str(binary), "--", *flags],
-                capture_output=True, text=True, timeout=180)
+                capture_output=True, text=True, timeout=scaled(180))
             assert built.returncode == 0, built.stdout + built.stderr
             assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
-            run = subprocess.run([str(binary)], capture_output=True, text=True, timeout=20)
+            run = subprocess.run([str(binary)], capture_output=True, text=True, timeout=scaled(20))
             assert (run.returncode, run.stdout, run.stderr) == (0, "", ""), (
                 standard, level, flags, run.returncode, run.stdout, run.stderr)
             failed_binary = pathlib.Path(temporary) / f"clone-failure-{index}"
             built_failure = subprocess.run(
                 [compiler, str(fixture.with_name("generic_clone_failure.gti")),
                  "--std", standard, f"-{level}", "-o", str(failed_binary), "--", *flags],
-                capture_output=True, text=True, timeout=180)
+                capture_output=True, text=True, timeout=scaled(180))
             assert built_failure.returncode == 0, built_failure.stdout + built_failure.stderr
-            failed = subprocess.run([str(failed_binary)], capture_output=True, text=True, timeout=20)
+            failed = subprocess.run([str(failed_binary)], capture_output=True, text=True, timeout=scaled(20))
             assert (failed.returncode, failed.stdout) == (
                 70, "1\n2\n3\n101\n11\n102\n-11\n-3\n-2\n-1\n"), (
                     standard, level, flags, failed.returncode, failed.stdout, failed.stderr)

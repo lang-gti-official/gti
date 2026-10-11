@@ -7,6 +7,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as native_matrix
+from harness_timeouts import scaled
 
 
 PASSIVE = """
@@ -677,7 +678,7 @@ def check_rejections(compiler, root):
         path.write_text(source)
         result = subprocess.run([str(compiler), str(path), "--emit-cpp", "-o",
                                  str(root / f"reject-{name}.cpp")],
-                                text=True, capture_output=True, timeout=120)
+                                text=True, capture_output=True, timeout=scaled(120))
         if (result.returncode == 0 or code not in result.stderr or
                 message not in result.stderr.lower() or "GTI-B000" in result.stderr):
             raise AssertionError((name, "expected source diagnostic", code,

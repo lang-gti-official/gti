@@ -20,6 +20,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 INJECTED_TOKEN = b"//gti-fuzz-injected-failure"
 FAILURES: list[str] = []
@@ -37,7 +38,7 @@ def run(argv: list[str], env: dict | None = None) -> subprocess.CompletedProcess
     merged = dict(os.environ)
     if env:
         merged.update(env)
-    return subprocess.run(argv, capture_output=True, text=True, timeout=300,
+    return subprocess.run(argv, capture_output=True, text=True, timeout=scaled(300),
                           check=False, env=merged)
 
 

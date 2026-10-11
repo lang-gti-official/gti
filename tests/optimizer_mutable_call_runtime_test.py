@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 PRELUDE = """#include <std/string>
@@ -61,10 +62,10 @@ def main():
                     built = subprocess.run(
                         [str(compiler), str(source), "--std", standard,
                          f"-{level}", "-o", str(executable)],
-                        capture_output=True, text=True, timeout=120, check=False)
+                        capture_output=True, text=True, timeout=scaled(120), check=False)
                     assert built.returncode == 0, (label, built.stdout, built.stderr)
                     result = subprocess.run([str(executable)], capture_output=True,
-                                            text=True, timeout=30, check=False)
+                                            text=True, timeout=scaled(30), check=False)
                     assert (result.returncode, result.stdout) == (70, "cleaned\n"), (
                         label, result.returncode, result.stdout, result.stderr)
                     expected = (rf"{re.escape(source.name)}:{failure_line}: runtime "

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from unittest.mock import patch
+from harness_timeouts import scaled
 
 
 def require(condition: bool, message: str, detail: str = "") -> None:
@@ -50,7 +51,7 @@ def main() -> int:
         ],
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=scaled(300),
         check=False,
     )
     require(
@@ -102,7 +103,7 @@ def main() -> int:
                     str(cxx),
                     output,
                     full=False,
-                    timeout=60,
+                    timeout=scaled(60),
                     verbose=False,
                     artifacts_root=artifacts,
                     injected_mismatch=mismatch,

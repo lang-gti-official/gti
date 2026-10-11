@@ -41,4 +41,6 @@ if(BUILD_TESTING)
   )
   set_tests_properties(fuzzer_smoke PROPERTIES TIMEOUT 600
                       LABELS "coverage-full;end-to-end")
+  include("${PROJECT_SOURCE_DIR}/tests/TestTimeouts.cmake")
+  gti_scale_test_timeouts()
 endif()

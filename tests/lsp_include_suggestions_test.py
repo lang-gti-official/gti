@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from lsp_smoke_test import LspSession, has_error_diagnostics, lsp_position
+from harness_timeouts import scaled
 
 
 def run(executable, root):
@@ -50,7 +51,7 @@ root = "src/main.gti"
         return session.receive_until(lambda msg:
             msg.get("method") == "textDocument/publishDiagnostics"
             and msg["params"].get("uri") == uri
-            and predicate(msg["params"]), timeout=20)["params"]
+            and predicate(msg["params"]), timeout=scaled(20))["params"]
 
     def include_diagnostic(publication):
         return next((d for d in publication["diagnostics"]

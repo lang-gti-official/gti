@@ -10,11 +10,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command: list[str], environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, env=environment, capture_output=True, text=True,
-                          timeout=180, check=False)
+                          timeout=scaled(180), check=False)
 
 
 def success(result: subprocess.CompletedProcess[str], label: str) -> None:

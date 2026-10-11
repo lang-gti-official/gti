@@ -7,6 +7,7 @@ import sys
 import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
+from harness_timeouts import scaled
 
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
@@ -21,7 +22,7 @@ def main():
                 command = [str(compiler), str(fixtures / "existing_value_allocation_failure.gti"),
                            "--std", standard, "-" + level, "--keep-cpp", "-o", str(binary),
                            "--", str(fixtures / "unique_scalar_allocation_fault.cpp")]
-                built = subprocess.run(command, capture_output=True, text=True, timeout=120)
+                built = subprocess.run(command, capture_output=True, text=True, timeout=scaled(120))
                 assert built.returncode == 0, (command, built.stdout, built.stderr)
                 representation = binary.with_suffix(".gti.cpp").read_text()
                 assert "mir_object_allocation_v1<::__gti_program::Owner>" in representation
@@ -32,7 +33,7 @@ def main():
                          f"<std/memory>:{site}: runtime error[GTI-R0011]: "
                          "allocation_failure in unique_owner\n"))):
                     observed = subprocess.run([str(binary), *arguments],
-                                              capture_output=True, text=True, timeout=30)
+                                              capture_output=True, text=True, timeout=scaled(30))
                     assert (observed.returncode, observed.stdout, observed.stderr) == expected, (
                         standard, level, observed, expected)
     print("Existing-value allocation: 8 exact success/failure cleanup observations passed")

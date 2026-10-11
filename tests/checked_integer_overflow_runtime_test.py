@@ -16,6 +16,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 TYPES = {
     "int8": ("int8_t", 8, True),
@@ -154,7 +155,7 @@ def operator_cases(bits: int, signed: bool) -> list[tuple[str, int, int, int]]:
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, text=True, capture_output=True, check=False, timeout=120)
+    return subprocess.run(command, text=True, capture_output=True, check=False, timeout=scaled(120))
 
 
 def main() -> int:

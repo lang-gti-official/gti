@@ -6,6 +6,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -41,11 +42,11 @@ def main():
             command = [str(arguments.compiler.resolve()), str(fixture), "--std",
                        f"c++{standard}", f"-O{level}", "-o", str(binary), "--", *native]
             built = subprocess.run(command, text=True, capture_output=True,
-                                   env=environment, timeout=120)
+                                   env=environment, timeout=scaled(120))
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             for mode, status, output, location in cases:
                 result = subprocess.run([str(binary), *(["case"] * mode)], text=True,
-                                        capture_output=True, env=environment, timeout=30)
+                                        capture_output=True, env=environment, timeout=scaled(30))
                 assert (result.returncode, result.stdout) == (status, output), (
                     standard, level, mode, result)
                 if location is None:
@@ -61,10 +62,10 @@ def main():
                                f"c++{standard}", f"-O{level}", "-o", str(example_binary),
                                "--", *native]
             built = subprocess.run(example_command, text=True, capture_output=True,
-                                   env=environment, timeout=120)
+                                   env=environment, timeout=scaled(120))
             assert built.returncode == 0, (example_command, built.stdout, built.stderr)
             result = subprocess.run([str(example_binary)], text=True, capture_output=True,
-                                    env=environment, timeout=30)
+                                    env=environment, timeout=scaled(30))
             assert (result.returncode, result.stdout, result.stderr) == (0, "login\n", ""), result
 
 

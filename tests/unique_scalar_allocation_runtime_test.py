@@ -7,9 +7,10 @@ import sys
 import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
+from harness_timeouts import scaled
 
 def run(command):
-    return subprocess.run(command, capture_output=True, text=True, timeout=120)
+    return subprocess.run(command, capture_output=True, text=True, timeout=scaled(120))
 
 
 def main():

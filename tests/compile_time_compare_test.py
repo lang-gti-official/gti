@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -15,7 +16,7 @@ def main():
                    '--baseline-gti', compiler, '--cxx', native,
                    '--output', str(output), '--workload', 'vector-checked-loop',
                    '--optimization', '2', '--runs', '1', '--warmup', '0']
-        subprocess.run(command, check=True, timeout=180)
+        subprocess.run(command, check=True, timeout=scaled(180))
         report = json.loads((output / 'report.json').read_text())
         assert report['schema'] == 1
         assert report['runs'] == 1 and report['warmup'] == 0
@@ -33,12 +34,12 @@ def main():
             assert samples[0]['argv']
         assert all(value['sha256'] for value in row['sources'].values())
         original = (output / 'report.json').read_bytes()
-        refused = subprocess.run(command, capture_output=True, timeout=20)
+        refused = subprocess.run(command, capture_output=True, timeout=scaled(20))
         assert refused.returncode != 0
         assert b'output must be a new directory' in refused.stderr
         assert (output / 'report.json').read_bytes() == original
         invalid = subprocess.run(command + ['--runs', '0'], capture_output=True,
-                                 timeout=20)
+                                 timeout=scaled(20))
         assert invalid.returncode != 0
         assert b'runs must be positive' in invalid.stderr
     return 0

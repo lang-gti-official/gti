@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 from typing import Any, Iterator
+from harness_timeouts import scaled
 
 
 EXPECTED_RECORD = "GTI-BENCH-1 digest:00000000135e33a6 work-units:2400000000"
@@ -47,7 +48,7 @@ def run(
     cwd: Path,
     expected: int = 0,
     environment: dict[str, str] | None = None,
-    timeout: float = 300.0,
+    timeout: float = scaled(300.0),
 ) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(
         command,
@@ -1364,7 +1365,7 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
             f"{name} version command was not recorded exactly",
         )
         version = run(
-            expected_command, repository, environment=identity_environment, timeout=30
+            expected_command, repository, environment=identity_environment, timeout=scaled(30)
         )
         require(
             identity["version_output"] == (version.stdout + version.stderr).strip(),

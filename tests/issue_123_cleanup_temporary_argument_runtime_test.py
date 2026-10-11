@@ -5,11 +5,12 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        command, text=True, capture_output=True, timeout=180, check=False
+        command, text=True, capture_output=True, timeout=scaled(180), check=False
     )
 
 

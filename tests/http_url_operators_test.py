@@ -7,6 +7,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main
+from harness_timeouts import scaled
 
 
 def check_rejections():
@@ -51,7 +52,7 @@ int main() {
             path.write_text(prefix + body + "return 0;\n}\n")
             result = subprocess.run([str(Path(sys.argv[1]).resolve()), str(path), "--emit-mir",
                                      "-o", str(Path(temporary) / f"{name}.mir")],
-                                    text=True, capture_output=True, timeout=60)
+                                    text=True, capture_output=True, timeout=scaled(60))
             assert result.returncode != 0 and "error[GTI-S" in result.stderr, (name, result)
             assert "GTI-B0001" not in result.stderr, (name, result.stderr)
 

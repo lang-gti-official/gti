@@ -9,10 +9,11 @@ import tempfile
 from sanitizer_support import thread_sanitizer_enabled
 
 from native_symbol_spelling import native_spelling
+from harness_timeouts import scaled
 
 
 def execute(command, *, quiet=False):
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=scaled(120))
     if result.returncode != 0 or (quiet and (result.stdout or result.stderr)):
         raise AssertionError(
             f"{command!r}: exit={result.returncode}\n"

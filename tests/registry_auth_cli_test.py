@@ -14,6 +14,7 @@ import tempfile
 import threading
 import re
 import urllib.parse
+from harness_timeouts import scaled
 
 GTI = pathlib.Path(sys.argv[1]).resolve()
 MODEL = pathlib.Path(sys.argv[2]).resolve()
@@ -152,7 +153,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def run(args, env, cwd, text=None, success=True, fragment=None):
     result = subprocess.run([str(GTI), *args], env=env, cwd=cwd, input=text,
-                            text=True, capture_output=True, timeout=30)
+                            text=True, capture_output=True, timeout=scaled(30))
     output = result.stdout + result.stderr
     assert (result.returncode == 0) == success, (args, result.returncode, output)
     assert SECRET not in output, output
@@ -181,7 +182,7 @@ def terminal_checks(env, root, cancellation):
         assert not termios.tcgetattr(slave)[3] & termios.ECHO
         os.write(master, b"fixture-secret")
         process.send_signal(cancellation)
-        assert process.wait(timeout=10) != 0
+        assert process.wait(timeout=scaled(10)) != 0
         assert termios.tcgetattr(slave)[3] & termios.ECHO == original[3] & termios.ECHO
         while select.select([master], [], [], 0)[0]:
             output += os.read(master, 8192)
@@ -217,7 +218,7 @@ def password_terminal(env, root, username="fixtureuser", password="fixture-passw
                 process.send_signal(cancel[1])
                 break
             os.write(master, value.encode() + b"\n")
-        status = process.wait(timeout=30)
+        status = process.wait(timeout=scaled(30))
         while select.select([master], [], [], 0)[0]:
             output += os.read(master, 8192)
         assert (status == 0) == success, (status, output)
@@ -263,7 +264,7 @@ def main():
                    GTI_TEST_REGISTRY_AUTH_TOKEN="", NO_COLOR="1")
         try:
             result = subprocess.run([str(MODEL), "--adapter"], env=env, cwd=root,
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, timeout=scaled(30))
             assert result.returncode == 0, result.stdout + result.stderr
             assert SECRET not in result.stdout + result.stderr
             assert len(server.deleted_names) == 7, "rollback malformed, broad, forged, save/owner denial and uncertain issuance"

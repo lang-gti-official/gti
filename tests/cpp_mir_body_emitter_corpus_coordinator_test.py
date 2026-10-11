@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 FieldValue = int | str
@@ -133,7 +134,7 @@ def run_coordinator(coordinator: Path, stub: Path, root: Path,
         text=True,
         capture_output=True,
         check=False,
-        timeout=30,
+        timeout=scaled(30),
     )
 
 

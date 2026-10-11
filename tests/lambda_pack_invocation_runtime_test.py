@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from harness_timeouts import scaled
 
 
 def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
@@ -50,7 +51,7 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
             if native_arguments:
                 command += ["--", *native_arguments]
             built = subprocess.run(command, capture_output=True, text=True,
-                                   timeout=120, env=environment)
+                                   timeout=scaled(120), env=environment)
             if built.returncode != 0:
                 raise AssertionError((name, label, built.stdout, built.stderr))
             return name, label, binary
@@ -62,7 +63,7 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
                 raise ValueError(f"{name} has no execution observations")
             for arguments, expected in runs:
                 result = subprocess.run([str(binary), *arguments], capture_output=True, text=True,
-                                        timeout=30, env=environment,
+                                        timeout=scaled(30), env=environment,
                                         input=(stdin_by_name or {}).get(name))
                 if (result.returncode, result.stdout, result.stderr) != expected:
                     raise AssertionError((name, label, result))

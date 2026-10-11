@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from lsp_smoke_test import LspSession, lsp_position
+from harness_timeouts import scaled
 
 
 def run(compiler, server, root):
@@ -29,7 +30,7 @@ int main() {
             path.write_text(text)
         result = subprocess.run([compiler, str(path), "--emit-cpp", f"--color={color}"],
                                 cwd=root, text=True,
-                                capture_output=True, timeout=30)
+                                capture_output=True, timeout=scaled(30))
         assert result.returncode == 65, result
         return result.stderr
 

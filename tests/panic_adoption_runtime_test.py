@@ -6,6 +6,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -65,7 +66,7 @@ def main():
                        level, "--keep-cpp", "-o", str(binary), "--",
                        str(fixtures / "panic_adoption_io.cpp"), *native]
             built = subprocess.run(command, capture_output=True, text=True,
-                                   env=environment, timeout=180)
+                                   env=environment, timeout=scaled(180))
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
             for mode, status, stdout, stderr in cases:
@@ -78,13 +79,13 @@ def main():
                     try:
                         ran = subprocess.run(command, stdout=write_fd,
                                              stderr=subprocess.PIPE, text=True,
-                                             env=environment, timeout=20)
+                                             env=environment, timeout=scaled(20))
                     finally:
                         os.close(write_fd)
                     actual_stdout = ""
                 else:
                     ran = subprocess.run(command, capture_output=True, text=True,
-                                         env=environment, timeout=20)
+                                         env=environment, timeout=scaled(20))
                     actual_stdout = ran.stdout
                 assert (ran.returncode, actual_stdout, ran.stderr) == (status, stdout, stderr), (
                     name, mode, ran.returncode, actual_stdout, ran.stderr, stderr)

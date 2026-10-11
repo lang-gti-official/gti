@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -21,7 +22,7 @@ def main():
     implementation = source / "src/compiler/optimization/coverage.cpp"
     baseline = subprocess.run(
         command + ["-I" + str(source / "include"), str(implementation)],
-        text=True, capture_output=True, timeout=90,
+        text=True, capture_output=True, timeout=scaled(90),
     )
     if baseline.returncode:
         raise AssertionError("unmodified coverage gate must compile:\n" + baseline.stderr)
@@ -49,7 +50,7 @@ def main():
                 probe = subprocess.run(
                     command + ["-I" + str(overlay), "-I" + str(source / "include"),
                                str(implementation)],
-                    text=True, capture_output=True, timeout=90,
+                    text=True, capture_output=True, timeout=scaled(90),
                 )
                 target.unlink()
                 if probe.returncode == 0 or not re.search(

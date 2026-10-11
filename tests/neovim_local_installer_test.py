@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from unittest import mock
+from harness_timeouts import scaled
 
 
 def rejected(operation):
@@ -38,7 +39,7 @@ def real_toolchain_smoke(installer, toolchain):
                           'std::println("local terminal activation works");\nreturn 0;\n}\n')
         binary = root / "hello"
         subprocess.run([commands / "gti", source, "-o", binary], check=True,
-                       capture_output=True, text=True, env=environment, timeout=120)
+                       capture_output=True, text=True, env=environment, timeout=scaled(120))
         result = subprocess.run([binary], check=True, capture_output=True,
                                 text=True, env=environment)
         assert result.stdout.strip() == "local terminal activation works", result

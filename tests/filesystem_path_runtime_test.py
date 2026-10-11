@@ -16,6 +16,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 EXPECTED = "filesystem path: all checks passed"
 
@@ -34,7 +35,7 @@ def main() -> int:
             [str(gti), str(fixture), "-o", str(binary)],
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=scaled(300),
             check=False,
         )
         if build.returncode != 0:
@@ -43,7 +44,7 @@ def main() -> int:
             return 1
 
         run = subprocess.run(
-            [str(binary)], capture_output=True, text=True, timeout=300,
+            [str(binary)], capture_output=True, text=True, timeout=scaled(300),
             check=False
         )
         output = run.stdout + run.stderr

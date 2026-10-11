@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command):
@@ -13,7 +14,7 @@ def run(command):
     environment["ASAN_OPTIONS"] = "halt_on_error=1"
     environment["UBSAN_OPTIONS"] = "halt_on_error=1:print_stacktrace=1"
     return subprocess.run(command, capture_output=True, text=True,
-                          timeout=120, env=environment)
+                          timeout=scaled(120), env=environment)
 
 
 def report(fixture, line):

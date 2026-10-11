@@ -10,11 +10,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command, environment):
     return subprocess.run(command, capture_output=True, text=True,
-                          env=environment, timeout=120)
+                          env=environment, timeout=scaled(120))
 
 
 def main():

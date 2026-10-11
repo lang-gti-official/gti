@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -25,13 +26,13 @@ def main():
                     [str(compiler), str(source), "--std", standard, level,
                      "--keep-cpp", "-o", str(binary), "--",
                      str(fixtures / "passive_record_oracle.cpp"), *native_flags],
-                    capture_output=True, text=True, timeout=120)
+                    capture_output=True, text=True, timeout=scaled(120))
                 assert built.returncode == 0, (fixture, standard, level, built.stdout, built.stderr)
                 for failure in ([0] if fixture == "passive_callable_records" else [0, 1]):
                     environment = dict(os.environ, GTI_TEST_RECORD_MODE=str(failure),
                                        ASAN_OPTIONS="halt_on_error=1", UBSAN_OPTIONS="halt_on_error=1")
                     ran = subprocess.run([str(binary)], env=environment, capture_output=True,
-                                         text=True, timeout=20)
+                                         text=True, timeout=scaled(20))
                     if failure:
                         marker = ("late-argument-failure" if fixture == "temporary_operator_records"
                                   else "error-constructor-failure")

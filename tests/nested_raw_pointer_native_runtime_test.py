@@ -6,11 +6,12 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command, environment):
     result = subprocess.run([str(value) for value in command], capture_output=True,
-                            text=True, timeout=120, env=environment)
+                            text=True, timeout=scaled(120), env=environment)
     assert result.returncode == 0, (command, result.stdout, result.stderr)
     return result
 

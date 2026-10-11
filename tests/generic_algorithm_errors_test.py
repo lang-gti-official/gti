@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -45,7 +46,7 @@ def main():
             path = root / f"{name}.gti"
             path.write_text(headers + source + "\n")
             checked = subprocess.run([str(compiler), str(path), "--emit-mir", "-o", str(root / "invalid.mir")],
-                                     env=environment, capture_output=True, text=True, timeout=60)
+                                     env=environment, capture_output=True, text=True, timeout=scaled(60))
             assert checked.returncode == 65 and "error[GTI-S" in checked.stderr, (name, checked)
             assert "GTI-B0001" not in checked.stderr, (name, checked.stderr)
             if name == "copy-owner":
@@ -53,11 +54,11 @@ def main():
         for level in ("O0", "O3"):
             binary = root / level
             build = subprocess.run([str(compiler), str(repository / "tests/fixtures/algorithm_failure.gti"),
-                                    f"-{level}", "-o", str(binary)], env=environment, capture_output=True, text=True, timeout=120)
+                                    f"-{level}", "-o", str(binary)], env=environment, capture_output=True, text=True, timeout=scaled(120))
             assert build.returncode == 0, build
             for count in range(4):
                 result = subprocess.run([str(binary), *(["fail"] * count)], env=environment,
-                                        capture_output=True, text=True, timeout=30)
+                                        capture_output=True, text=True, timeout=scaled(30))
                 assert result.returncode == 70 and result.stdout == "99\n", (count, result)
                 assert "runtime error[GTI-R" in result.stderr, result
     print(f"generic algorithms: {len(negatives)} semantic rejections and eight failure cleanups passed")

@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from harness_timeouts import scaled
 
 # Peak resident memory one optimized compile of these fixtures may reach. This
 # is a regression guard, not a benchmark. Before the SCCP solver shared
@@ -23,7 +24,7 @@ from case_jobs import configured_jobs, positive_jobs, run_cases
 PEAK_RESIDENT_LIMIT_BYTES = 6 * 1024 ** 3
 
 
-def run(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+def run(command: list[str], *, timeout: int = scaled(300)) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         text=True,
@@ -110,11 +111,11 @@ def main() -> int:
                 artifact = output / f"{source.stem}-{standard}-{optimization[1:]}"
                 compiled = run(
                     [gti, str(source), "--std", standard, optimization,
-                     "-o", str(artifact)], timeout=600
+                     "-o", str(artifact)], timeout=scaled(600)
                 )
             else:
                 artifact = output / "json-expected-value-backend-bug"
-                compiled = run([gti, str(source), "-O0", "-o", str(artifact)], timeout=60)
+                compiled = run([gti, str(source), "-O0", "-o", str(artifact)], timeout=scaled(60))
             return (case, compiled, artifact, peak)
 
         def observe(value):
@@ -135,7 +136,7 @@ def main() -> int:
                 return
             if kind == "native":
                 require_success(compiled, f"native {source_name} {standard} {optimization}")
-                executed = run([str(artifact)], timeout=30)
+                executed = run([str(artifact)], timeout=scaled(30))
                 require_success(executed, f"run {source_name} {standard} {optimization}")
                 expected = (
                     'demo\n{"name":"demo","private":true,"count":42,"items":["one",2]}\n'

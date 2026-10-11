@@ -5,10 +5,11 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command, expected=0):
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=scaled(120))
     assert result.returncode == expected, (command, result)
     return result
 

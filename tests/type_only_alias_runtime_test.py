@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -18,9 +19,9 @@ def main():
                     binary = pathlib.Path(temporary) / f"{fixture}-{standard}-{optimization}"
                     command = [str(compiler), str(source), "--std", standard,
                                optimization, "-o", str(binary)]
-                    built = subprocess.run(command, capture_output=True, text=True, timeout=120)
+                    built = subprocess.run(command, capture_output=True, text=True, timeout=scaled(120))
                     assert built.returncode == 0, (command, built.stdout, built.stderr)
-                    ran = subprocess.run([str(binary)], capture_output=True, text=True, timeout=20)
+                    ran = subprocess.run([str(binary)], capture_output=True, text=True, timeout=scaled(20))
                     assert (ran.returncode, ran.stdout, ran.stderr) == (0, "", ""), ran
                     print(f"{standard} {optimization}: {fixture} passed", flush=True)
 

@@ -1676,6 +1676,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/scripts/configure_ci_resources.sh"
   )
   add_test(
+    NAME harness_timeouts
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/harness_timeouts_test.py"
+  )
+  add_test(
     NAME ci_cache
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/ci_cache_test.py"

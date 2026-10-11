@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -36,7 +37,7 @@ def main():
                                GTI_CONFIGURED_TEST_JOBS=test_jobs,
                                GITEA_ENV=str(output), PATH=str(commands))
             result = subprocess.run([bash, str(script)], env=environment,
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, timeout=scaled(10))
             if expected is None:
                 assert result.returncode != 0, result
                 assert not output.exists(), "invalid input wrote runner state"
@@ -56,7 +57,7 @@ def main():
             environment.update(GTI_CONFIGURED_JOBS="", GTI_CONFIGURED_TEST_JOBS="",
                                GITEA_ENV=str(output))
             subprocess.run([bash, str(script)], env=environment, check=True,
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True, timeout=scaled(10))
             assert output.read_text() == "GTI_JOBS=1\nGTI_TEST_JOBS=1\n"
 
         detector.unlink()
@@ -69,13 +70,13 @@ def main():
             output = root / command
             environment["GITEA_ENV"] = str(output)
             subprocess.run([bash, str(script)], env=environment, check=True,
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True, timeout=scaled(10))
             assert output.read_text() == "GTI_JOBS=8\nGTI_TEST_JOBS=8\n"
             detector.unlink()
         output = root / "no-detector"
         environment["GITEA_ENV"] = str(output)
         subprocess.run([bash, str(script)], env=environment, check=True,
-                       capture_output=True, text=True, timeout=10)
+                       capture_output=True, text=True, timeout=scaled(10))
         assert output.read_text() == "GTI_JOBS=1\nGTI_TEST_JOBS=1\n"
 
         # Memory caps only the detected compile default, only when the
@@ -98,7 +99,7 @@ def main():
                                GTI_MEMORY_PER_JOB_MIB=per_job, GTI_MEMINFO=str(meminfo),
                                GITEA_ENV=str(output))
             result = subprocess.run([bash, str(script)], env=environment, check=True,
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, timeout=scaled(10))
             assert output.read_text() == f"GTI_JOBS={expected[0]}\nGTI_TEST_JOBS={expected[1]}\n", result
             assert "7812 MiB" in result.stdout, result.stdout
         environment.update(GTI_CONFIGURED_JOBS="")
@@ -106,7 +107,7 @@ def main():
             output = root / f"memory-invalid-{per_job}"
             environment.update(GTI_MEMORY_PER_JOB_MIB=per_job, GITEA_ENV=str(output))
             result = subprocess.run([bash, str(script)], env=environment,
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, timeout=scaled(10))
             assert result.returncode != 0 and not output.exists(), per_job
         # CTest workers have their own budget, independent of compile jobs.
         for index, (per_job, per_test, test_jobs, expected) in enumerate((
@@ -119,18 +120,18 @@ def main():
             environment.update(GTI_MEMORY_PER_JOB_MIB=per_job, GTI_MEMORY_PER_TEST_MIB=per_test,
                                GTI_CONFIGURED_TEST_JOBS=test_jobs, GITEA_ENV=str(output))
             result = subprocess.run([bash, str(script)], env=environment, check=True,
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, timeout=scaled(10))
             assert output.read_text() == f"GTI_JOBS={expected[0]}\nGTI_TEST_JOBS={expected[1]}\n", result
         environment.update(GTI_MEMORY_PER_TEST_MIB="many", GITEA_ENV=str(root / "memory-test-invalid"))
         result = subprocess.run([bash, str(script)], env=environment,
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=scaled(10))
         assert result.returncode != 0 and "GTI_MEMORY_PER_TEST_MIB" in result.stderr
         environment.update(GTI_MEMORY_PER_TEST_MIB="", GTI_CONFIGURED_TEST_JOBS="")
         output = root / "memory-unreadable"
         environment.update(GTI_MEMORY_PER_JOB_MIB="2048", GTI_MEMINFO=str(root / "absent"),
                            GITEA_ENV=str(output))
         result = subprocess.run([bash, str(script)], env=environment, check=True,
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=scaled(10))
         assert output.read_text() == "GTI_JOBS=12\nGTI_TEST_JOBS=12\n"
         assert "unknown MiB" in result.stdout, result.stdout
     print("CI available-CPU defaults, memory caps, overrides, and detection fallbacks passed")

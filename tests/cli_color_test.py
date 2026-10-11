@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -28,7 +29,7 @@ def main():
             if args and (args[0] in ["build", "check", "run", "test"] or args[0].endswith(".gti")):
                 args = [args[0], "--progress=never", *args[1:]]
             result = subprocess.run([compiler, *args], cwd=root, env=env | (extra or {}),
-                                    capture_output=True, text=True, timeout=60)
+                                    capture_output=True, text=True, timeout=scaled(60))
             assert result.returncode == status, (args, result.stdout, result.stderr)
             return result
 
@@ -112,15 +113,15 @@ def main():
                     result = subprocess.run(
                         [compiler, *args], cwd=root, env=env | (extra or {}),
                         stdout=slave if terminal_stdout else subprocess.PIPE,
-                        stderr=slave, timeout=60)
+                        stderr=slave, timeout=scaled(60))
                     assert result.returncode == status
                     finished.set()
-                    reader.join(timeout=5)
+                    reader.join(timeout=scaled(5))
                     assert not reader.is_alive(), "terminal reader did not finish"
                     return b"".join(chunks).decode(), result.stdout
                 finally:
                     finished.set()
-                    reader.join(timeout=5)
+                    reader.join(timeout=scaled(5))
                     os.close(slave)
                     os.close(master)
 

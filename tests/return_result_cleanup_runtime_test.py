@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -37,12 +38,12 @@ def main():
             if native:
                 command += ["--", *native]
             built = subprocess.run(command, capture_output=True, text=True,
-                                   timeout=120, env=environment)
+                                   timeout=scaled(120), env=environment)
             assert built.returncode == 0, (label, built.stdout, built.stderr)
             for count, wanted in enumerate(expected):
                 run = subprocess.run([str(binary), *(["fail"] * count)],
                                      capture_output=True, text=True,
-                                     timeout=30, env=environment)
+                                     timeout=scaled(30), env=environment)
                 assert (run.returncode, run.stdout, run.stderr) == wanted, (
                     label, count, run, wanted)
             print(f"return-result cleanup: {label} passed", flush=True)

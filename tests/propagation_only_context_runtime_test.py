@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -32,12 +33,12 @@ def main():
         for name, flags in modes:
             binary = Path(directory) / name
             built = subprocess.run([str(compiler), str(source), "-o", str(binary), *flags],
-                                   capture_output=True, text=True, timeout=120,
+                                   capture_output=True, text=True, timeout=scaled(120),
                                    env=environment)
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             for arguments, expected in cases:
                 result = subprocess.run([str(binary), *arguments], capture_output=True,
-                                        text=True, timeout=30, env=environment)
+                                        text=True, timeout=scaled(30), env=environment)
                 assert (result.returncode, result.stdout, result.stderr) == expected, (
                     name, arguments, result)
             print(f"Propagation context: {name} passed", flush=True)

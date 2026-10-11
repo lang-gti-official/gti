@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
+from harness_timeouts import scaled
 
 if __name__ == "__main__":
     fixtures = pathlib.Path(__file__).parent / "fixtures"
@@ -37,7 +38,7 @@ if __name__ == "__main__":
                 result = subprocess.run(
                     [str(compiler), str(source), "--emit-mir", "-o", str(artifact),
                      f"--raw-pointer-audit={audit}", "--progress", "never"],
-                    capture_output=True, text=True, timeout=60)
+                    capture_output=True, text=True, timeout=scaled(60))
                 assert result.returncode == 65, (name, audit, result)
                 assert re.search(pattern, result.stderr), (name, audit, result.stderr)
                 assert "GTI-B0001" not in result.stderr, (name, audit, result.stderr)
@@ -59,7 +60,7 @@ if __name__ == "__main__":
                 result = subprocess.run(
                     [str(compiler), str(source), "--emit-mir", "-o", str(artifact),
                      f"--raw-pointer-audit={audit}", "--progress", "never"],
-                    capture_output=True, text=True, timeout=60)
+                    capture_output=True, text=True, timeout=scaled(60))
                 expected = 65 if audit == "strict" else 0
                 assert result.returncode == expected, (name, audit, result.stderr)
                 if audit != "off":
@@ -78,7 +79,7 @@ if __name__ == "__main__":
             result = subprocess.run(
                 [str(compiler), str(source), "--emit-mir", "-o", str(artifact),
                  f"--raw-pointer-audit={audit}", "--progress", "never"],
-                capture_output=True, text=True, timeout=60)
+                capture_output=True, text=True, timeout=scaled(60))
             assert result.returncode == 0, (audit, result.stderr)
             assert not re.search(re.escape(source.name) + r":\d+:\d+: .*GTI-S210[123]", result.stderr), result.stderr
             print(f"PASS text address static/null witnesses/{audit}", flush=True)

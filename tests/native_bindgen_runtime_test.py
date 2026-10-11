@@ -7,11 +7,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+from harness_timeouts import scaled
 
 
 def run(command, cwd=None):
     result = subprocess.run([str(part) for part in command], cwd=cwd,
-                            capture_output=True, text=True, timeout=180)
+                            capture_output=True, text=True, timeout=scaled(180))
     assert result.returncode == 0, (command, result.stdout, result.stderr)
     return result
 

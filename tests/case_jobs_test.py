@@ -16,6 +16,7 @@ import case_jobs
 import generic_payload_enum_runtime_test as payload_matrix
 import lambda_pack_invocation_runtime_test as matrix
 import stdlib_surface_test as surface
+from harness_timeouts import scaled
 
 
 class CaseJobsTests(unittest.TestCase):
@@ -46,7 +47,7 @@ class CaseJobsTests(unittest.TestCase):
             with lock:
                 active += 1
                 peak = max(peak, active)
-            barrier.wait(timeout=5)
+            barrier.wait(timeout=scaled(5))
             if value % 2 == 0:
                 time.sleep(0.01)
             with lock:

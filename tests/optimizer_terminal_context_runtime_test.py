@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main():
@@ -45,10 +46,10 @@ def main():
                 path.write_text(text)
                 binary = root / f"{case}-{name}"
                 built = subprocess.run([str(compiler), str(path), "-o", str(binary), *flags],
-                                       capture_output=True, text=True, timeout=120, env=environment)
+                                       capture_output=True, text=True, timeout=scaled(120), env=environment)
                 assert built.returncode == 0, (name, case, built.stdout, built.stderr)
                 result = subprocess.run([str(binary)], capture_output=True, text=True,
-                                        timeout=30, env=environment)
+                                        timeout=scaled(30), env=environment)
                 assert (result.returncode, result.stdout, result.stderr) == expected, (name, case, result)
             print(f"Terminal contexts: {name} passed ({len(cases)} cases)", flush=True)
 

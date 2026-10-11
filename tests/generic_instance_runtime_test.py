@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from harness_timeouts import scaled
 
 
 def main() -> int:
@@ -27,11 +28,11 @@ def main() -> int:
                     built = subprocess.run([
                         str(compiler), str(source), "--std", standard,
                         f"-{optimization}", "--progress", "never", "-o", str(target),
-                    ], capture_output=True, text=True, timeout=90)
+                    ], capture_output=True, text=True, timeout=scaled(90))
                     if built.returncode:
                         print(built.stdout + built.stderr, file=sys.stderr)
                         return 1
-                    ran = subprocess.run([str(target)], capture_output=True, text=True, timeout=10)
+                    ran = subprocess.run([str(target)], capture_output=True, text=True, timeout=scaled(10))
                     expected_failure = source in failures
                     valid = (ran.returncode == 70 and
                              ran.stdout == "earlier constructed\nearlier dropped\n" and
