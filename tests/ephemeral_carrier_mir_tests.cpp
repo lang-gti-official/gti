@@ -1719,96 +1719,112 @@ int main() {
   char unrelated = 'b';
   char& decoy = unrelated;
 )gti";
-  for (const auto *body :
-       {"char owner = 'a'; char& value = owner; Guard guard{value}; return 0;",
-        "Sequence sequence{}; for (char& value : sequence) { "
-        "Guard guard{value}; break; } return 0;"}) {
-    const auto frontend = lang::Frontend().analyze(
-        "readonly-local-cleanup-guard.gti", prefix + body + "}");
-    expect(frontend.canGenerateCode(),
-           "cleanup guard retains an ordinary or iteration-local readonly "
-           "reference through its exact checked parent");
-    if (!frontend.canGenerateCode()) {
-      for (const auto &diagnostic : frontend.diagnostics)
-        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
-      continue;
-    }
-    bool checked = false;
-    for (const auto &function : frontend.mir.functionInstances()) {
-      if (function.entryKind == lang::ProgramEntryKind::None)
+  for (const bool panicDestructor : {false, true})
+    for (const auto *body :
+         {"char owner = 'a'; char& value = owner; Guard guard{value}; return "
+          "0;",
+          "Sequence sequence{}; for (char& value : sequence) { "
+          "Guard guard{value}; break; } return 0;"}) {
+      std::string source = prefix + body + "}";
+      if (panicDestructor) {
+        const std::string arithmetic =
+            "~Guard() { int check = 1 / (this.value == 'a' ? 1 : 0); }";
+        source.replace(source.find(arithmetic), arithmetic.size(),
+                       "~Guard() { if (this.value != 'a') "
+                       "std::panic(\"bad referent\"); }");
+        source.insert(0, "#include <std/panic>\n");
+      }
+      const auto frontend = lang::Frontend().analyze(
+          "readonly-local-cleanup-guard.gti", source,
+          panicDestructor
+              ? std::vector<std::filesystem::path>{standardLibraryPrelude()}
+              : std::vector<std::filesystem::path>{},
+          {}, {standardLibraryRoot()});
+      expect(frontend.canGenerateCode(),
+             "cleanup guard retains an ordinary or iteration-local readonly "
+             "reference through its exact checked parent");
+      if (!frontend.canGenerateCode()) {
+        for (const auto &diagnostic : frontend.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
         continue;
-      for (const auto &guard : function.body.loans) {
-        const auto *parent = function.body.findLoan(guard.parent);
-        if (guard.kind != lang::MirLoanKind::Stored || !guard.lifecycleBound ||
-            !parent || parent->kind != lang::MirLoanKind::Local)
+      }
+      bool checked = false;
+      for (const auto &function : frontend.mir.functionInstances()) {
+        if (function.entryKind == lang::ProgramEntryKind::None)
           continue;
-        expect(guard.access == lang::AccessMode::ReadOnly &&
-                   parent->access == lang::AccessMode::ReadOnly &&
-                   guard.storedDependency == parent->storedDependency &&
-                   !guard.entry && !guard.escapes,
-               "cleanup guard preserves exact readonly ancestry and "
-               "independent external dependency");
-        const auto decoy =
-            std::find_if(function.body.loans.begin(), function.body.loans.end(),
-                         [&](const auto &loan) {
-                           return loan.kind == lang::MirLoanKind::Local &&
-                                  loan.id != parent->id &&
-                                  loan.access == lang::AccessMode::ReadOnly &&
-                                  loan.parent == 0 &&
-                                  loan.source != parent->source;
-                         });
-        expect(decoy != function.body.loans.end(),
-               "cleanup guard proof has an unrelated same-typed reference");
-        if (decoy == function.body.loans.end())
-          continue;
-        bool foundProducer = false;
-        for (const auto &block : function.body.blocks) {
-          for (const auto &instruction : block.instructions) {
-            if (instruction.kind != lang::MirInstructionKind::Construct ||
-                instruction.loan != guard.id)
-              continue;
-            foundProducer = true;
-            for (int mutation = 0; mutation < 4; ++mutation) {
-              auto malformed = frontend.mir;
-              auto *changed = const_cast<lang::MirFunctionInstance *>(
-                  malformed.findFunctionInstance(function.id));
-              auto &loan = changed->body.loans[guard.id - 1];
-              if (mutation == 0) {
-                loan.parent = decoy->id;
-              } else if (mutation == 1) {
-                loan.source = decoy->source;
-              } else if (mutation == 2) {
-                loan.access = lang::AccessMode::Mutable;
-              } else {
-                auto &instructions =
-                    changed->body.blocks[block.id - 1].instructions;
-                const auto producer =
-                    std::find_if(instructions.begin(), instructions.end(),
-                                 [&](const auto &candidate) {
-                                   return candidate.id == instruction.id;
-                                 });
-                lang::MirInstructionId freshId = 1;
-                for (const auto &candidateBlock : changed->body.blocks)
-                  for (const auto &candidate : candidateBlock.instructions)
-                    freshId = std::max(freshId, candidate.id + 1);
-                instructions.insert(
-                    producer, {.id = freshId,
-                               .kind = lang::MirInstructionKind::EndBorrow,
-                               .loan = parent->id});
+        for (const auto &guard : function.body.loans) {
+          const auto *parent = function.body.findLoan(guard.parent);
+          if (guard.kind != lang::MirLoanKind::Stored ||
+              !guard.lifecycleBound || !parent ||
+              parent->kind != lang::MirLoanKind::Local)
+            continue;
+          expect(guard.access == lang::AccessMode::ReadOnly &&
+                     parent->access == lang::AccessMode::ReadOnly &&
+                     guard.storedDependency == parent->storedDependency &&
+                     !guard.entry && !guard.escapes,
+                 "cleanup guard preserves exact readonly ancestry and "
+                 "independent external dependency");
+          const auto decoy =
+              std::find_if(function.body.loans.begin(),
+                           function.body.loans.end(), [&](const auto &loan) {
+                             return loan.kind == lang::MirLoanKind::Local &&
+                                    loan.id != parent->id &&
+                                    loan.access == lang::AccessMode::ReadOnly &&
+                                    loan.parent == 0 &&
+                                    loan.source != parent->source;
+                           });
+          expect(decoy != function.body.loans.end(),
+                 "cleanup guard proof has an unrelated same-typed reference");
+          if (decoy == function.body.loans.end())
+            continue;
+          bool foundProducer = false;
+          for (const auto &block : function.body.blocks) {
+            for (const auto &instruction : block.instructions) {
+              if (instruction.kind != lang::MirInstructionKind::Construct ||
+                  instruction.loan != guard.id)
+                continue;
+              foundProducer = true;
+              for (int mutation = 0; mutation < 4; ++mutation) {
+                auto malformed = frontend.mir;
+                auto *changed = const_cast<lang::MirFunctionInstance *>(
+                    malformed.findFunctionInstance(function.id));
+                auto &loan = changed->body.loans[guard.id - 1];
+                if (mutation == 0) {
+                  loan.parent = decoy->id;
+                } else if (mutation == 1) {
+                  loan.source = decoy->source;
+                } else if (mutation == 2) {
+                  loan.access = lang::AccessMode::Mutable;
+                } else {
+                  auto &instructions =
+                      changed->body.blocks[block.id - 1].instructions;
+                  const auto producer =
+                      std::find_if(instructions.begin(), instructions.end(),
+                                   [&](const auto &candidate) {
+                                     return candidate.id == instruction.id;
+                                   });
+                  lang::MirInstructionId freshId = 1;
+                  for (const auto &candidateBlock : changed->body.blocks)
+                    for (const auto &candidate : candidateBlock.instructions)
+                      freshId = std::max(freshId, candidate.id + 1);
+                  instructions.insert(
+                      producer, {.id = freshId,
+                                 .kind = lang::MirInstructionKind::EndBorrow,
+                                 .loan = parent->id});
+                }
+                expect(!lang::verifyMirProgram(malformed).valid(),
+                       "cleanup guard cannot substitute its selected parent or "
+                       "source, escalate access, or retire its parent early");
               }
-              expect(!lang::verifyMirProgram(malformed).valid(),
-                     "cleanup guard cannot substitute its selected parent or "
-                     "source, escalate access, or retire its parent early");
             }
           }
+          expect(foundProducer,
+                 "cleanup guard's checked constructor owns its lifecycle loan");
+          checked = true;
         }
-        expect(foundProducer,
-               "cleanup guard's checked constructor owns its lifecycle loan");
-        checked = true;
       }
+      expect(checked, "cleanup guard regression exercises exact parent proof");
     }
-    expect(checked, "cleanup guard regression exercises exact parent proof");
-  }
 }
 
 } // namespace

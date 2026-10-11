@@ -5483,6 +5483,22 @@ private:
     return id;
   }
 
+  [[nodiscard]] bool exactReadonlyCleanupParent(const HirValue &value,
+                                                MirLoanId origin) const {
+    const auto contract = retainedInitializerLoans.find(value.id);
+    const auto *retained = contract == retainedInitializerLoans.end()
+                               ? nullptr
+                               : source.findLoan(contract->second);
+    const auto *selected = output.findLoan(origin);
+    if (!retained || !retained->lifecycleBound || retained->parent == 0 ||
+        retained->access != AccessMode::ReadOnly ||
+        value.borrowAccess != AccessMode::ReadOnly || !selected ||
+        selected->access != AccessMode::ReadOnly)
+      return false;
+    const auto parent = semanticLoans.find(retained->parent);
+    return parent != semanticLoans.end() && parent->second == origin;
+  }
+
   [[nodiscard]] static DefinedFailureOperation
   localDefinedFailure(const HirValue *value) {
     DefinedFailureOperation operation;
@@ -6429,6 +6445,7 @@ private:
         const bool derivedOriginCarrier =
             kind == MirLoanKind::Stored &&
             (parentAccess == AccessMode::Mutable ||
+             exactReadonlyCleanupParent(value, originLoan) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
               isLifecycleBoundBorrowCarrier(value.info.type)) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
@@ -7106,24 +7123,9 @@ private:
       // reference keeps that exact parent alive until its own drop. This is
       // the semantic retained-loan contract, not permission to invent ancestry
       // from an overlapping source place (or from the constructor spelling).
-      const auto retainedContract = retainedInitializerLoans.find(value.id);
-      const auto *retained = retainedContract == retainedInitializerLoans.end()
-                                 ? nullptr
-                                 : source.findLoan(retainedContract->second);
-      const auto resolvedParent = retained && retained->parent != 0
-                                      ? semanticLoans.find(retained->parent)
-                                      : semanticLoans.end();
-      const auto *selectedParent = output.findLoan(originLoan);
-      const bool exactReadonlyCleanupParent =
-          retained && retained->lifecycleBound &&
-          retained->access == AccessMode::ReadOnly &&
-          value.borrowAccess == AccessMode::ReadOnly && selectedParent &&
-          selectedParent->access == AccessMode::ReadOnly &&
-          resolvedParent != semanticLoans.end() &&
-          resolvedParent->second == originLoan;
       if (originLoan != 0 && originLoan <= output.loans.size() &&
           (output.loans[originLoan - 1].access == AccessMode::Mutable ||
-           exactReadonlyCleanupParent ||
+           exactReadonlyCleanupParent(value, originLoan) ||
            (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
             output.loans[originLoan - 1].entry &&
             isLifecycleBoundBorrowCarrier(value.info.type)))) {
