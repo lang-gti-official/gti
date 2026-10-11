@@ -1957,7 +1957,7 @@ code that grows with returns times owners.
 lowering emits that body with one chain per failure edge. If a program lowered
 with shared cleanup fails program verification, the program is lowered again
 unshared. The corpus differential in
-[verification](verification.md#shared-failure-cleanup-0401-1) triggers
+[verification](verification.md#shared-failure-cleanup-0401-7) triggers
 neither.
 
 Program verification also requires each function, constructor, destructor and
@@ -2300,8 +2300,13 @@ Their terminal operation remains part of the verified MIR body rather than an
 alternate source-tree authority. A prepared argument handed to an ordinary
 call is not an unarmed subobject transfer. Its `PreparedParameter` obligation
 remains caller-owned until invocation; the ordered-call verifier binds its
-single `TransferOut` to that exact call. Constructors and field-initializer
-bodies retain failure routing across these calls. The status-constructor
+single `TransferOut` to that exact call. Nor is a completed owning result
+passed directly as a by-value argument of a call or ordinary constructor, with
+no prepared-parameter shell: the place its `Value` obligation drops is exactly
+one of that invocation's value operands, and the callee owns it before it can
+fail. A member initializer such as `held(holder(make(ok)))` therefore keeps
+the constructor's failure routing. Constructors and field-initializer bodies
+retain failure routing across these calls. The status-constructor
 representation also admits the existing class-result argument staging slots:
 if a later argument fails, their ordinary MIR drops run before completed-field
 rollback, with the same secondary-failure edges as in function bodies.

@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Shared failure cleanup (0.401.1)
+## Shared failure cleanup (0.401.7)
 
 Function and lambda bodies now emit each distinct failure-cleanup suffix once,
 as a continuation record entered by `ContinueFailure`; see
