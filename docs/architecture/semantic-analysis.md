@@ -295,6 +295,14 @@ retain unresolved facts on possible raw-bearing destinations. Function,
 constructor, destructor and lambda declaration analysis saves and restores
 namespace raw-flow state: checking a body is never execution of its writes.
 
+Class static fields are the same program storage. Their declarations live in
+the sealed class catalog, so body analysis copies each one into value flow,
+keyed by its declaration as its place identity is, when the catalog is
+sealed. Qualified and in-class unqualified accesses, root-place resolution,
+call-write import, query-worker input seeding and the declaration save/restore
+all use that copy, so raw writes never mutate the catalog that query workers
+share.
+
 Lambda/deferred calls currently have no exact write substitution; they weakly
 mark raw globals and mutable raw-bearing actuals unresolved. Lambda captures
 retain their raw fields using capture-binding projections in the ordinary

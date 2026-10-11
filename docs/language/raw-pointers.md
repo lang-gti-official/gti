@@ -245,7 +245,9 @@ carrier as their owner. Raw-bearing expected mapper outputs currently retain
 an unresolved-source fact; inert transport remains permitted.
 
 Source setters also preserve known pointer facts written into globals and
-checked/raw formal destinations, including constructor writes. Merely checking
+checked/raw formal destinations, including constructor writes. Class static
+fields are globals for this purpose, whether a write names them qualified or
+from inside their own class. Merely checking
 an uncalled function, constructor, destructor, or lambda does not execute its
 global writes. An exact unconditional ordinary-function setter/reset can replace
 old facts; constructor, conditional, or ambiguous write effects conservatively
