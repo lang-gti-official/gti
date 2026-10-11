@@ -7534,6 +7534,19 @@ auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
         types.push_back(member->second.symbol.type);
       };
       if (reversed) {
+        // A leading tag keeps the reversed signature distinct from the
+        // designated one for every field list (a single field or a
+        // palindromic type sequence would otherwise redeclare it).
+        Token tag = owner.name;
+        tag.kind = TokenKind::IDENTIFIER;
+        tag.lexeme = "__gti_reversed_tag";
+        tag.generated = true;
+        Token boolKeyword = owner.name;
+        boolKeyword.kind = TokenKind::BOOL;
+        boolKeyword.lexeme = "bool";
+        boolKeyword.generated = true;
+        parameters.emplace_back(TypeRef(boolKeyword), tag);
+        types.push_back(SemanticType::Bool);
         for (auto entry = owner.fields.rbegin(); entry != owner.fields.rend();
              ++entry) {
           describe(*entry);
@@ -7580,7 +7593,8 @@ auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
                            .owner = owner.id,
                            .declaration = declaration.get(),
                            .parameterTypes = std::move(types),
-                           .requiredParameterCount = owner.fields.size()};
+                           .requiredParameterCount =
+                               owner.fields.size() + (reversed ? 1 : 0)};
       constructorGenericParameters.emplace(declaration.get(),
                                            std::vector<GenericParameterInfo>{});
       ClassLifecycleInfo lifecycle =

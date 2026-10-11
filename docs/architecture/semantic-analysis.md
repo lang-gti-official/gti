@@ -722,8 +722,10 @@ the field list with the compiler-private `meta_construct<T>(values...)` at
 the base. Since a GTI call can only extend a parameter pack at its front, the
 library prepends each produced value and the compiler selects a second
 generated constructor, `ClassInfo::reversedDesignatedConstructor`, whose
-parameters are in reverse field order while its initializers stay in
-declaration order (`registerDesignatedConstructors` generates both).
+parameters are a leading `bool` tag and the fields in reverse order while its
+initializers stay in declaration order (`registerDesignatedConstructors`
+generates both; the tag keeps the two signatures distinct for a single field
+or a palindromic type sequence).
 `analyzeMetaConstructCall` resolves the call through
 `analyzeConstructorCall` with `selectingDesignatedConstructor` set, so the
 generated constructor is the only candidate and ordinary argument, ownership
