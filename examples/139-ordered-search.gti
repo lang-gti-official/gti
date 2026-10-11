@@ -1,0 +1,43 @@
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+// Tasks have no operator<: the application chooses their search order.
+struct Task {
+  int priority;
+  int queue_id;
+};
+
+struct PriorityOrder {
+  bool operator()(Task& left, Task& right) {
+    return left.priority > right.priority;
+  }
+};
+
+int main() {
+  mut std::vector<Task> tasks = {
+    {.priority = 2, .queue_id = 10},
+    {.priority = 5, .queue_id = 20},
+    {.priority = 1, .queue_id = 30},
+    {.priority = 5, .queue_id = 40}
+  };
+  std::sort(tasks, PriorityOrder());
+
+  // The sorted range is also partitioned into urgent and ordinary tasks.
+  // These read-only results protect tasks from mutation while they are used.
+  auto ordinary = std::partition_point(tasks.begin(), tasks.end(),
+      [](Task& task) -> bool { return task.priority >= 5; });
+  std::print("urgent jobs: ");
+  std::println(std::distance(tasks.begin(), ordinary));
+
+  // Search with the same order used for sorting. Equivalence is determined
+  // by the comparator, not queue_id or an element's equality operator.
+  Task key = {.priority = 5, .queue_id = 0};
+  auto first = std::lower_bound(tasks.begin(), tasks.end(), key, PriorityOrder());
+  auto after = std::upper_bound(tasks.begin(), tasks.end(), key, PriorityOrder());
+  std::print("jobs at priority 5: ");
+  std::println(std::distance(first, after));
+  std::println(std::binary_search(tasks.begin(), tasks.end(), key, PriorityOrder())
+      ? "priority found" : "priority missing");
+  return 0;
+}

@@ -432,6 +432,15 @@ owners instead of requiring a retained nullable traversal borrow. Clear and
 destruction drain nodes iteratively. No public container name has compiler
 recognition.
 
+Ordered-query composition remains ordinary source policy in `<std/algorithm>`:
+`partition_point` and comparator bounds/binary search compose the existing
+forward-iterator, sentinel, exact-element and repeatable-callable constraints.
+They carry the original first cursor's checked owner dependency and retain one
+callback through the query, including failure cleanup. They introduce no
+intrinsic, runtime service or public-name compiler recognition; application
+records without native ordering and independent owner-tied cursors use the
+same implementations.
+
 ## Compiler-Private Capabilities
 
 The fixed-lane arithmetic capability is declared only by the physical trusted

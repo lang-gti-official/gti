@@ -1,0 +1,104 @@
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/string>
+
+mut int payload_drops = 0;
+mut int callback_drops = 0;
+mut int last_calls = 0;
+
+// Ordering comes only from the caller's comparator. This owning record has
+// neither language copying nor an operator<.
+class Record {
+  std::string text;
+  int key;
+public:
+  Record(int key) : text(std::string("owned")), key(key) {}
+  Record(Record& other) = delete;
+  Record(Record&& other) = default;
+  ~Record() { payload_drops++; }
+  int value() { return this.key; }
+};
+
+class Stop {
+  std::size_t length;
+public:
+  Stop(std::size_t length) : length(length) {}
+  std::size_t position() { return this.length; }
+};
+
+class Cursor {
+  Series& owner;
+  mut std::size_t index;
+public:
+  Cursor(Series& owner, std::size_t index) : owner(owner), index(index) {}
+  Record& operator*() { return this.owner.at(this.index); }
+  void operator++() mut { this.index++; }
+  bool operator!=(Stop& end) { return this.index != end.position(); }
+  bool operator!=(Cursor& other) { return this.index != other.index; }
+};
+
+// No std iterator/range wrapper: this application owns its complete protocol.
+class Series {
+  Record data[5] = {Record(1), Record(2), Record(2), Record(4), Record(7)};
+public:
+  Series() {}
+  Record& at(std::size_t index) { return this.data[index]; }
+  Cursor begin() { return Cursor(this, std::size_t(0)); }
+  Stop end() { return Stop(std::size_t(5)); }
+};
+
+class Ordering {
+  std::string owned = std::string("callback");
+  mut int calls = 0;
+public:
+  Ordering() {}
+  Ordering(Ordering& other) = delete;
+  Ordering(Ordering&& other) = default;
+  ~Ordering() { callback_drops++; last_calls = this.calls; }
+  bool operator()(Record& left, Record& right) mut {
+    this.calls++;
+    return left.value() < right.value();
+  }
+};
+
+class Partition {
+  std::string owned = std::string("predicate");
+  int limit;
+  mut int calls = 0;
+public:
+  Partition(int limit) : limit(limit) {}
+  Partition(Partition& other) = delete;
+  Partition(Partition&& other) = default;
+  ~Partition() { callback_drops++; last_calls = this.calls; }
+  bool operator()(Record& value) mut {
+    this.calls++;
+    return value.value() < this.limit;
+  }
+};
+
+int main() {
+  {
+    Series values{};
+    Record key{2};
+    Ordering lower_order{};
+    auto lower = std::lower_bound(values.begin(), values.end(), key, std::move(lower_order));
+    if ((*lower).value() != 2 || callback_drops != 1 || last_calls < 1 || last_calls > 3) { return 1; }
+    if (std::distance(values.begin(), lower) != 1) { return 2; }
+    auto upper = std::upper_bound(values.begin(), values.end(), key, Ordering());
+    if ((*upper).value() != 4 || callback_drops != 2 || last_calls > 3) { return 3; }
+    if (!std::binary_search(values.begin(), values.end(), key, Ordering()) || callback_drops != 3 || last_calls > 5) { return 4; }
+    Partition partition{4};
+    auto boundary = std::partition_point(values.begin(), values.end(), std::move(partition));
+    if ((*boundary).value() != 4 || callback_drops != 4 || last_calls < 1 || last_calls > 3) { return 5; }
+    auto end = std::partition_point(values.begin(), values.end(), Partition(100));
+    Stop sentinel = values.end();
+    if (end != sentinel || callback_drops != 5) { return 6; }
+    Stop empty_end{std::size_t(0)};
+    auto empty = std::partition_point(values.begin(), empty_end, Partition(4));
+    if (empty != empty_end || callback_drops != 6 || last_calls != 0) { return 8; }
+    if (std::binary_search(values.begin(), empty_end, key, Ordering()) ||
+        callback_drops != 7 || last_calls != 0) { return 9; }
+  }
+  if (payload_drops != 6 || callback_drops != 7) { return 7; }
+  return 0;
+}
