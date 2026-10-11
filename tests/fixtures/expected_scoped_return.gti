@@ -4,6 +4,7 @@
 // An Expected call result returned while other locals still need cleanup:
 // directly (`return first(h);`), bound and moved, and from inside a loop.
 // The success alternative is a passive class or an enum; the error is an enum.
+// A lambda returns either payload kind as a by-value argument.
 // Stage 2 fails in a cleanup that runs after the returned result exists.
 
 mut int32_t stage = 0;
@@ -157,5 +158,13 @@ int main(int argc, std::vector<std::string> argv) {
   std::vector<int32_t> j = {};
   std::println(role_code(role_lambda(std::move(i))));
   std::println(role_code(role_lambda(std::move(j))));
+  auto point_lambda = [](std::vector<int32_t> values) -> expected<point, errc> {
+    mut holder h{std::move(values)};
+    return point_first(h);
+  };
+  std::vector<int32_t> k = {7, 1};
+  std::vector<int32_t> l = {};
+  std::println(point_code(point_lambda(std::move(k))));
+  std::println(point_code(point_lambda(std::move(l))));
   return 0;
 }
