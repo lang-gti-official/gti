@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Expected results of callable invocations (0.402.9)
+## Expected results of callable invocations (0.402.10)
 
 - **Defect.** A lambda returning `expected<point, errc>`, where `point` has no
   default constructor, could not be called as a by-value argument, as in
