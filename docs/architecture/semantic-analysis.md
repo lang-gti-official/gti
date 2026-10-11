@@ -443,7 +443,7 @@ trait simply because a wrapper's name appeared earlier in a query.
 
 `ClassLifecycleInfo::generatedDefaultBaseConstructor` records the exact base
 constructor selected for the bounded executable generated-default family:
-nongeneric owners/bases, no derived instance fields or destructor, and an
+nongeneric owners/bases, no derived instance fields, and an
 exact zero-parameter source base constructor. Construction carries ordinary
 constructor-failure propagation; HIR consumes this identity rather than
 reselecting a constructor. Independently, `generatedDefaultFieldInitializers`
@@ -514,11 +514,13 @@ declaration-level environment (program scope, namespace path, open class
 scopes, declaration-level loan flow) is rebuilt from them whenever they change
 under a paused body.
 
-A few facts are produced only by a callee's body analysis. Today the only one
-is whether a function returns a moved by-value parameter, which decides what a
-by-value borrow-carrier result (an iterator returned by a generic `find`, for
+A callee-body fact demanded by this lexical walk is whether a function returns
+a moved by-value parameter, which decides what a by-value borrow-carrier result
+(an iterator returned by a generic `find`, for
 example) borrows from. A consumer of such a fact asks for the body through
-`ensureBodyAnalyzed` instead of reading whatever the walk has produced so far:
+`ensureBodyAnalyzed` instead of reading whatever the walk has produced so far.
+Other body-dependent facts, such as raw access/effect summaries and staged
+constant execution, use their separately described isolated query services:
 
 - when the walk has not reached the callee, the caller's body-local state is
   set aside, the walk advances through every intervening declaration in order,
@@ -774,8 +776,9 @@ concrete empty packs, while symbolic forwarding retains the source pack's
 identity. Repeated and explicitly supplied deductions must agree. A generic
 type pack need not introduce a named value parameter when a formal metadata
 pattern binds it; concrete instances still retain one flat generic argument
-list for reanalysis, constraints, and HIR identity. This does not add class
-pattern selection or overload ranking.
+list for reanalysis, constraints, and HIR identity. This pack matcher does not
+rank overloads or select patterned class definitions; the separate exact
+pattern/receiver-family selector described below owns that decision.
 
 Headerless signature-first patterned-primary syntax is retained separately in
 `ClassDecl::genericArgumentPatterns()`. It is not flattened into AST generic
@@ -800,7 +803,8 @@ by their owning declaration rather than a shared family spelling, including
 during alias dependency resolution. Exact concrete specialization keys use the
 selected definition's ID and public arguments. HIR, MIR, backend representation,
 and language queries consume that selection without selecting a family again.
-There is no pattern ranking. See `L-CALL-02` for remaining wrapper gates.
+There is no pattern ranking. `L-CALL-02` records the delivered source-defined
+owning wrapper clients and their supported boundaries.
 
 Class type packs reuse the generic parameter identity and `TypePack`
 substitution representation. `TypeRef::packExpansion` distinguishes a type-list
@@ -891,8 +895,9 @@ Mutable field groups are source-only declaration containers. Member collection
 recurses through the active group items with the surrounding access state,
 registering every child as an ordinary mutable direct field in textual order.
 The semantic model records no group symbol. Its retained origin is used only to
-attach related information when an existing field restriction, such as the
-read-only stored-reference rule, is triggered by inherited group mutability.
+attach related information when an existing field/access restriction is
+triggered by inherited group mutability. Mutable stored-reference fields are
+supported under their ordinary exact binding and exclusive-loan rules.
 
 Static assertions are analyzed as compile-time obligations rather than body
 operations. The semantic model records `Passed`, `Failed`, or `Deferred` by AST
@@ -919,9 +924,10 @@ first-visit deduplication, and excludes inactive compile-time branches. Namespac
 globals and non-generic static fields then enter the plan in source order. Each
 storage step has an explicit `DataOnly` or `Initializer` role: implicit zero
 initialization and exactly materializable `constexpr` data are data-only, while
-an executable source initializer owns an initializer step. Generic-class
-static storage remains concrete-instance HIR state and is deliberately outside
-this program-wide plan.
+an executable source initializer owns an initializer step. Ordinary generic
+class static fields remain rejected; they do not have a separate implemented
+per-instance storage plan. The admitted collection-protocol static hooks are
+functions, not generic program storage.
 
 A use of later program storage is permitted only when the frontend records an
 exact representable constant substitution for that expression. Reads, writes,
@@ -974,11 +980,12 @@ written declaration-default state remains available unchanged.
 `SemanticAnalysisSeal` binds the stable `Program` snapshot, full `TargetInfo`,
 active-statement preorder, and exact ordered source-graph/prelude provenance.
 HIR copies that seal and must match the same program and target before
-lowering. The general ordered-expression work is still incomplete: active
-ordered child roles and some transient-loan endpoints remain M-EXEC-01 work,
-and the analyzer therefore retains conservative borrow restrictions for
-families whose MIR schedule is not yet representable. Accepted bodies never
-fall back to an earlier executable authority.
+lowering. Admitted executable families now use their ordered MIR stages and
+frontend-selected loan endpoints; M-EXEC-01 is not a pending whole-program
+cutover. A new composition must extend the applicable schedule and verifier
+before acceptance. Existing conservative restrictions identify unsupported
+semantic/representation profiles, not permission to fall back to an earlier
+executable authority.
 
 Ordinary call/construction exclusivity follows the implemented ordered-input
 schedule: a completed mutation in an earlier operand does not conflict with a
@@ -1029,14 +1036,21 @@ The `TargetInfo` supplied before analysis also carries the one GTI-owned scalar
 `TargetDataLayout`. `Frontend` rejects an unsupported value before constructing
 `SemanticVisitor`, so compile-time branch selection, HIR lowering, optimization,
 and backend generation all observe the same normalized facts. The semantic
-model does not query native C++ or LLVM layout. Ordinary class layout remains
-absent; a valid `[[c_abi]] struct` is the one bounded aggregate category whose
-source-order field offsets, size, and ABI alignment semantics compute and
-retain in `ClassTypeInfo`. A `[[c_opaque]] struct Name;` instead records one
+model does not query native C++ or LLVM for the source `sizeof`/`alignof`
+contract. Those constant queries admit target scalars, integral enums, passive
+unions, valid `[[c_abi]]` records and supported fixed arrays, not ordinary
+class representation layout. Native record source-order offsets/size/alignment
+and passive-union size/alignment are retained in `ClassTypeInfo`.
+Separately, `runtimeObjectLayoutType` validates complete concrete object types
+for the declaration-bound object-size/alignment operations behind
+`std::layout_of<T>()`. That implemented runtime representation query admits
+ordinary classes and other supported carriers; it is not a compile-time or
+stable foreign-layout promise. A `[[c_opaque]] struct Name;` instead records one
 incomplete nominal `ClassId` with no layout or lifecycle. Semantic type
-validation confines that identity to a one-level raw-pointer pointee; extern-C
-and native-record validation admit the pointer while continuing to reject the
-handle by value.
+validation confines that identity behind raw-pointer indirection at any
+supported recursive pointer depth. Extern-C and native-record validation admit
+those pointers while continuing to reject the handle by value or an operation
+requiring its hidden representation.
 
 Floating expression facts distinguish `SemanticType::Float` (binary32) from
 `SemanticType::Double` (binary64). Semantics owns literal width, common numeric
@@ -1074,9 +1088,11 @@ type-resolution diagnostic without a second layout error. No host or LLVM
 layout query participates.
 
 Native-record validation accepts only non-generic passive structs with public
-instance fields drawn from the fixed-width scalar, nested valid native-record,
-and one-level raw-pointer families. It rejects methods, lifecycle declarations,
-bases, access sections, statics, empty and recursive-by-value records, and
+instance fields drawn from fixed-width and target-C scalars, `bool`, nested
+valid native records, named native callbacks, recursive admitted raw pointers,
+and positive concrete fixed arrays of admitted field elements. It rejects
+methods, lifecycle declarations, bases, access sections, statics, empty and
+recursive-by-value records, and
 cleanup-owning or symbolic fields with `GTI-S2064`. The resulting immutable
 layout is also the authority used by `extern "C"` signature validation and by
 recursive unsafe-call classification when a record contains a raw pointer.
@@ -1115,13 +1131,17 @@ traits, so unavailable copies retain the normal ownership diagnostic before
 HIR.
 
 The same declaration-time analysis admits a direct owning-enum field in an
-ordinary concrete non-generic class or struct with no polymorphism, native
-layout, stored-reference policy, or compiler-private capability. Its
+ordinary concrete class or struct, including a concrete generic owner, with no
+polymorphism, native layout, stored-reference policy, or compiler-private
+capability. Its
 structurally folded class lifecycle then owns containment transport rather than
-a payload-enum-specific call exception. The shared check continues to reject
-generic or polymorphic callable families, methods and constructors declared by
-a generic owner, native/runtime/operator boundaries, captures, arrays,
-recursive containment, and other wrapper-shaped transport. A top-level
+a payload-enum-specific call exception. Ordinary generic functions, methods and
+constructors use that same direct transport contract. The shared check retains
+the excluded polymorphic, native/runtime and operator boundaries, direct
+captures, fixed arrays and direct result-carrier alternatives. A nominal type
+argument alone is not a contained-ownership edge; its actual fields and
+lifecycle decide containment, while recursively unsupported shapes remain
+rejected. A top-level
 checked-reference parameter does not contain or transfer the referent and
 remains valid for exhaustive tag inspection.
 
@@ -1308,10 +1328,11 @@ it must resolve a non-void, non-reference, non-borrowing, non-lambda value befor
 HIR copies the exact signatures. This is not inference from the enclosing
 return type or backend representation. Tooling labels unresolved declaration
 requirements as deferred rather than presenting an unknown type as exact.
-Raw pointers
-remain non-owning values under their ordinary language rules, and the current
-`std::string_view` denotes static literal storage; the callable boundary does
-not reclassify either as ownership. `auto` cannot infer a result through an
+Raw pointers remain non-owning values under their ordinary language rules.
+`std::string_view` may denote static literal storage or retain an owner
+dependency; accepting the type does not erase an expression's tracked borrow
+or permit its escape. The callable boundary does not reclassify either as
+ownership. `auto` cannot infer a result through an
 otherwise unknown generic callable, and reference, tracked borrowed-state, and
 lambda-identity results remain rejected.
 
@@ -1351,11 +1372,9 @@ distinct symbols and are not part of the callable contract.
 non-escaping booleans in semantics. Concrete generic reanalysis substitutes
 symbolic result and parameter types before validating the selected target, so
 a symbolic `T` requirement cannot leak into a concrete `int32_t` instance.
-`Owned` is produced for a free function's direct immutable by-value type
-parameter when every reachable valued return moves that exact parameter into
-the same-type result, or when its one-statement body returns a construction
-whose sole exact generic field is initialized by the constructor's matching
-parameter move. An exact same-type return may instead coexist with a
+The earlier exact-return/one-field construction transport shapes remain
+ordinary clients of the general owned entry rule below, not its exclusive
+body syntax. An exact same-type return may coexist with a
 `Confined` contract when that parameter has repeatable signatures, no
 forwarding edges, and mutable access only when declared `mut`. A callable
 argument at either transporting boundary must use explicit `std::move`, remain
@@ -1387,14 +1406,17 @@ move-only-element move rule. Each copied element gets a fresh prepared lifetime;
 moving any move-only element consumes the source pack. Ordinary call arguments
 still require explicit closure transfer and reject borrowed/raw capture state.
 Callable-reference parameters, general native template shape composition, and
-fully general allocation and failure cleanup through erased owners remain
-incomplete. This does not claim that
-public owning wrappers are implemented.
+additional erased allocation/failure profiles remain separate extensions.
+The supported public `function`/`move_only_function` wrappers are implemented
+in ordinary `<std/functional>` source with their exact signature families,
+ownership, dispatch and cleanup evidence; this boundary is not a claim that
+those clients are still missing.
 
 Contextual namespace-function selection deduces ordinary fixed arguments and
 the final value pack before comparing a confined invocation signature.
 Substitution precedes `concreteCallArguments` expansion; forwarded elements
-use the same value/read-only-reference matching as ordinary pack invocation.
+use the same value/read-only/mutable-reference matching as ordinary pack
+invocation.
 An effect-free function name may defer its own selection without postponing
 later typed arguments. Effectful contextual producers still defer their suffix,
 and concrete HIR/MIR retain source-order call-input stages. An open forwarding
@@ -1446,8 +1468,8 @@ The expression records a function occurrence for hover and definition, the
 exact target, and read-callable capability. Its zero-state type is trivial,
 transfer-capable, and share-capable. Ordinary value rules allow storage,
 copy-capture, generic fields, and exact results without closure cleanup.
-Function-item calls expand concrete value/read-only-reference packs under
-ordinary argument matching. A callee-producing expression still evaluates
+Function-item calls expand concrete value/read-only/mutable-reference packs
+under ordinary argument matching. A callee-producing expression still evaluates
 before the arguments even though its selected function identity is static.
 
 Parenthesized construction resumes deferred value arguments in source order
@@ -1521,10 +1543,11 @@ mutable-place operations.
 
 `freshTemporaryReceiverValue` extends that receiver assessment, but not
 `freshTemporaryValue`'s separate temporary-argument contract, to direct
-ordinary GTI construction/calls producing a class with one proven stable
-stored dependency. It reuses `storedBorrowDependencies`, the resolved producer
+ordinary GTI construction/calls producing a class with a nonempty proven stable
+stored-dependency set. It reuses `storedBorrowDependencies`, the resolved producer
 summary, and the existing stable-storage query. Native, virtual, unresolved,
-multi-origin, or temporary-owner production fails closed. The selected method
+or temporary-owner production fails closed. Multiple proven stable origins
+do not themselves reject the immediate receiver. The selected method
 cannot export a reference, tracked borrowed result, or untracked pointer-like
 result. The stored dependency retains its producer-established access mode;
 mutating the carrier shell never upgrades a shared external-owner loan.
@@ -1690,10 +1713,11 @@ this policy and suppresses a duplicate `GTI-S2060`. The single-threaded profile
 bypasses only the concurrent check. No backend or public wrapper spelling
 participates.
 
-Static members of generic classes remain unconditionally rejected by
-`GTI-S2039` because qualified generic member paths are not represented. The
-concurrent-policy path suppresses a redundant `GTI-S2060` only under that
-existing rejection. Lifting the generic-static restriction must remove the
+Ordinary static members of generic classes remain rejected by `GTI-S2039`,
+apart from exact registered collection-protocol hooks. Implemented qualified
+generic type-member paths do not establish a general static callable/storage
+contract. The concurrent-policy path suppresses a redundant `GTI-S2060` only
+under that existing rejection. Lifting the generic-static restriction must remove the
 suppression and apply the same immutable/share-capable rule to each concrete
 generic static identity.
 
@@ -1717,7 +1741,8 @@ relation drives projected move state, loan overlap, branch joins, and loop
 backedge checks. A private `SemanticPlace` remains only as analysis-time source
 recovery and is converted to the shared value before it becomes durable
 semantic data. Raw addresses and opaque results still receive no guessed
-provenance.
+checked-loan provenance; optional raw auditing retains separate origin
+evidence without manufacturing checked references or lifetime guarantees.
 
 Plain member assignment records the same exact `Reinitialize` event as local
 and indexed assignment, including the field's previous availability. Checked
@@ -1929,11 +1954,12 @@ The failure-metadata builder interns exact frontend origin records into
 artifact-local sites, including the two hosted-plan operations below. The
 generated hosted startup invokes the source-graph initialization plan through
 the merged verified `Module/0` body inside the hosted containment boundary; a
-no-entry artifact uses the separately verified initialization guard. Remaining
-trusted host origins, broader function-effect refinement,
-double-failure control flow, and task/callback/embedding containment remain
-M-FAIL-01 / M-EXEC-01 work; generated integrity helpers are not a second
-source-body authority.
+no-entry artifact uses the separately verified initialization guard. Hosted
+containment, same-thread callback firewalls, managed-task handoff/re-raise,
+and double-cleanup-failure records are implemented for their admitted families.
+Remaining trusted host origins, broader function-effect refinement, embedding
+activation and foreign-thread callback containment require their own evidence;
+generated integrity helpers are not a second source-body authority.
 
 For an owned-argument entry, `HostedProgramEntryPlan` records the exact source
 entry, canonical vector/string constructors, append target, source unit, and
@@ -1945,8 +1971,9 @@ remain on the exact vector constructor, string constructor, and append callee
 records; the adapter does not re-site them. The stable
 `allocation_failure/hosted_arguments` detail is reserved but currently has no
 producer. HIR copies this plan as data. A backend may not rediscover any target,
-origin, or anchor, and generated executable hosted-startup HIR/MIR remains a
-later cutover stage.
+origin, or anchor. `MirLowerer::lowerHostedStartup` builds the executable
+hosted-startup body from that retained plan; this is an implemented verified
+MIR schedule, not a future backend-to-MIR cutover.
 
 M-LIFE-01 adds the v1 restriction on cleanup-owning namespace globals and
 static fields after the existing more-specific unique-owner, storage, and
@@ -1959,8 +1986,9 @@ obligations; this does not define global shutdown.
 
 ## Bounded Aggregate Constant Evaluation
 
-Semantics owns the `L-CONST-01` bounded evaluator extension. Recursive
-constant nodes retain exact scoped-enum, array, class, generic type, and value-
+Semantics owns eligibility and results of the `L-CONST-01` bounded constant
+queries; the staged verified-MIR profile owns execution for its admitted
+bodies. Recursive constant nodes retain exact scoped-enum, array, class, generic type, and value-
 argument identity; declaration spelling and emitted C++ types are never used as
 substitutes for those identities. One execution context carries concrete
 generic substitutions, automatic values, and an optional read-only receiver

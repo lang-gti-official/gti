@@ -66,9 +66,9 @@ public:
   }
 };
 
-// This mutable storage dependency is an ephemeral standard-library carrier.
-// Semantics permits it only when the compiler-generated range iterator keeps
-// it on the range's exclusive loan; ordinary local storage remains rejected.
+// This cursor retains one exclusive source-owner dependency. Local storage
+// and by-value algorithm transport keep that same checked loan; copying or
+// overlapping owner access is rejected. Range-for adds its traversal loans.
 class vector_mut_iterator<std::storage_element T> {
   mut std::detail::prefix_owner<T>& data;
   mut size_t current_position;

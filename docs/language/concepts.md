@@ -96,7 +96,7 @@ below; this does not introduce class-level trailing `requires` syntax.
 
 A generic free function, non-polymorphic method, or ordinary generic
 constructor may append a bounded requirements clause after its parameter list
-and receiver `mut` qualifier, when present. For a constructor the clause comes
+and receiver `mut` or `&&` qualifier, when present. For a constructor the clause comes
 before its initializer-list colon:
 
 ```gti
@@ -408,9 +408,11 @@ The current structural capability set is intentionally small:
 - `scales_by<T, Scalar>` requires public read-only `T operator*(Scalar)`
   returning an owned domain value for that exact scalar type;
 - `read_callable<F, A, R>`, `mut_callable<F, A, R>`, and
-  `once_callable<F, A, R>` require one exact public unary `operator()` whose
+  `once_callable<F, A, R>` require one exact unary callable signature whose
   result is the owned, non-borrowed `R` and whose readable argument is either
-  `A` or `A&`. The receiver must respectively be read-only, repeatable
+  `A` or `A&`. Nominal targets provide a public `operator()`; exact lambdas
+  and eligible GTI function items provide their selected signature. The
+  invocation capability is respectively read-only, repeatable
   read-only/mutable, or usable once through owned access;
 - the corresponding `read_binary_callable`, `mut_binary_callable`, and
   `once_binary_callable` relationships name two exact readable arguments;
@@ -601,8 +603,10 @@ read/mutable receiver in HIR and MIR. The contract also carries one independent
 exact moved-return proof, so the callable may be invoked repeatedly and then
 returned without changing the confined boundary. Callers must transfer a named
 callable with `std::move`, and its stored state must not contain references,
-tracked borrows, or raw pointers. Public algorithm names and emitted C++
-overloads grant no capability.
+tracked borrows, or raw pointers. Eligible zero-state GTI function items also
+satisfy the exact callable relationship and may be retained from the result;
+their declaration identity and signature survive ordinary generic transport.
+Public algorithm names and emitted C++ overloads grant no capability.
 
 `std::invoke_once` is the consuming counterpart:
 
@@ -624,9 +628,11 @@ arbitrary expression requirements, negation, associated types, value
 constraints, concept or partial specialization, constraint subsumption,
 constraint-based overload ordering, conditionally available operators,
 constrained polymorphic contracts, or unrestricted compile-time reflection.
-Variadic callable relations, generic `operator()` requirements, and function
-items or function pointers in public callable relations are also outside the
-current bounded surface.
+Variadic callable relations, generic `operator()` requirements and native
+function pointers in these public callable relations remain outside the
+current bounded surface. Eligible namespace-scope GTI function items are
+supported; an unresolved overload set still needs one exact context, and
+unsafe/native/generic declarations do not automatically become stored items.
 
 Add a new source concept when existing facts can express the contract. Add a
 new private compiler capability only when semantic analysis must answer a

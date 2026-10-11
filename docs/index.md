@@ -159,10 +159,9 @@ than mixed into the active queue.
 
 - [Dependency-ordered implementation sequence](plans/implementation-sequence.md)
   — the sole prompt-sized work queue, prerequisites, status, and exit gates;
-  retains the completed runtime-performance campaign baseline and owns the
-  resumed queue, including the
+  distinguishes the current ready queue from dated campaign evidence, including the
   [general object-lifetime and source-defined storage brief](plans/implementation-sequence.md#s-alloc-06-general-object-lifetimes-and-source-defined-storage)
-  and its follow-on
+  and delivered
   [source-defined process allocation phase](plans/implementation-sequence.md#s-alloc-07-source-defined-process-allocation-over-native-byte-providers)
 - [Systems-readiness roadmap](plans/roadmap-to-1.0.md) — capability outcomes
   and the soft, revisable path to a full-featured 1.0
@@ -171,7 +170,8 @@ than mixed into the active queue.
 - [Concurrency and memory-model proposal](plans/concurrency-memory-model.md)
   — remaining implementation work under the policy accepted by ADR 008
 - [Callable ownership and escape contract](plans/callable-ownership-and-escape.md)
-  — implemented local move capture and the remaining owned-escape boundary
+  — delivered confined/owned callables, move capture and owning read/mut/once
+  wrappers; remaining borrowed escape and inline consuming profiles
 - [Place identity and ownership-state authority](plans/place-and-ownership-state.md)
   — implemented identity/state foundations and remaining aggregate, failure,
   and provenance work
@@ -179,12 +179,13 @@ than mixed into the active queue.
 - [Build and package system](plans/build-system.md)
 - [Iterator and range completion](plans/iterators-and-ranges.md)
 - [Native bindings import](plans/native-bindings-import.md) — the
-  C-first `gti bindgen` plan: current bounded C17/LP64/LLP64 import, its
-  scalable libclang migration, and the later C++/build-integration gates
+  C-first `gti bindgen` plan: implemented bounded C17/LP64/LLP64 libclang
+  import and manifest integration; remaining foreign storage and C++ import
 - [LSP evolution](plans/lsp-evolution.md)
 - [Compile-time semantic reflection](plans/reflection.md) — three-phase
-  proposal for metaobjects, `constexpr for`, attributes, enums, structural
-  construction, with the open questions each phase must answer
+  campaign: metaobjects, `constexpr for`, attributes and enum/base/generic
+  queries delivered in phases 1/2; construction, decoding and callable
+  metadata remain in phase 3
 - [Performance tooling](plans/performance-tooling.md)
 - [Archived plan records](plans/archive/README.md) — completed delivery plans,
   migrations, and historical checkpoints retained without presenting them as

@@ -1,0 +1,118 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// A constructor's expected<T, E> field initialized directly from a call whose
+// payload owns resources. The call's result is published into the field in
+// place, without value-initializing the Expected; a later member's failure
+// rolls the field back, so the payload is destroyed exactly once.
+mut int32_t destroyed = 0;
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() { destroyed += 1; }
+};
+
+// A payload that reports its own destruction.
+class traced {
+public:
+  int32_t number;
+  traced(int32_t number) : number(number) {}
+  ~traced() { std::println(this.number); }
+};
+
+struct named_value {
+  std::string text;
+  named_value(std::string text) : text(std::move(text)) {}
+};
+
+struct code_value {
+  int32_t code;
+  code_value(int32_t code) : code(code) {}
+};
+
+expected<counted, int32_t> make_counted(bool ok) {
+  if (ok) { return counted(5); }
+  return unexpected(int32_t(2));
+}
+
+expected<named_value, int32_t> make_named(bool ok) {
+  if (ok) { return named_value(std::string("payload")); }
+  return unexpected(int32_t(6));
+}
+
+expected<named_value, code_value> make_coded(bool ok) {
+  if (ok) { return named_value(std::string("coded")); }
+  return unexpected(code_value(9));
+}
+
+// A producer that can fail.
+expected<counted, int32_t> make_checked(int32_t value) {
+  return counted(value + 1);
+}
+
+expected<traced, int32_t> make_traced(int32_t number) {
+  return traced(number);
+}
+
+struct box {
+  expected<counted, int32_t> item;
+  expected<named_value, int32_t> named;
+  expected<named_value, code_value> coded;
+  box(bool ok)
+      : item(make_counted(ok)), named(make_named(ok)), coded(make_coded(!ok)) {}
+};
+
+struct checked_box {
+  expected<counted, int32_t> item;
+  checked_box(int32_t value) : item(make_checked(value)) {}
+};
+
+// A later member can fail after the owning field was published.
+struct failing_box {
+  expected<traced, int32_t> item;
+  int32_t sum;
+  failing_box(int32_t value) : item(make_traced(4)), sum(value + 1) {}
+};
+
+int32_t read_box(bool ok) {
+  box held{ok};
+  if (held.item) {
+    return held.item.value().number +
+           int32_t(held.named.value().text.size()) + held.coded.error().code;
+  }
+  return held.item.error() + held.named.error() +
+         int32_t(held.coded.value().text.size());
+}
+
+int32_t check(bool yes) {
+  bool no = !yes;
+  if (read_box(yes) != 21 || destroyed != 1) { return 1; }
+  if (read_box(no) != 13 || destroyed != 1) { return 2; }
+  checked_box checked{6};
+  if (checked.item.value().number != 7) { return 3; }
+  failing_box fine{1};
+  if (fine.item.value().number != 4 || fine.sum != 2) { return 4; }
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    total += read_box(index != 1);
+  }
+  if (total != 21 + 13 + 21 || destroyed != 3) { return 5; }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) {
+    checked_box failing{2147483647};
+    return failing.item.value().number;
+  }
+  if (argc == 3) {
+    failing_box failing{2147483647};
+    return failing.sum;
+  }
+  int32_t status = check(argc > 0);
+  std::println(destroyed);
+  return status;
+}

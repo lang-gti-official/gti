@@ -14,13 +14,13 @@ The backend-authority campaign's
 per-release record lives in
 [`implementation-sequence.md`](../implementation-sequence.md).
 
-This document records where the compiler currently sits against
-[`roadmap-to-1.0.md`](../roadmap-to-1.0.md). The roadmap remains the durable
-capability and release plan; the operational dependency queue lives in
-[`implementation-sequence.md`](../implementation-sequence.md). This checkpoint is
-the shorter evidence ledger that future passes should update when they complete
-or materially unblock a milestone. The grammar and semantic specification
-remain authoritative for shipped language behavior.
+This document records the historical checkpoint above, not today's compiler.
+Its "current", "next", "remaining" and milestone statements are scoped to
+that checkpoint and must not be used to reopen delivered foundations.
+[`roadmap-to-1.0.md`](../roadmap-to-1.0.md) now owns the durable capability goals;
+[`implementation-sequence.md`](../implementation-sequence.md) owns current
+operational ordering. Update those and canonical architecture/language
+contracts as new work lands; preserve this checkpoint's original evidence.
 
 ## Current Position
 
@@ -1352,7 +1352,7 @@ users are gone. Completion of all remaining `M-EXEC-01` work is not a global
 prerequisite. Unrelated
 executable language and optimizer breadth do not pre-empt that campaign.
 
-This checkpoint records evidence rather than duplicating that queue. Every
-future pass should update its row in the implementation sequence, this file's
-implemented evidence, and the affected canonical architecture/language
-documents in the same change.
+This archived checkpoint records historical evidence rather than duplicating
+the current queue. Future work updates the implementation sequence and affected
+canonical architecture/language documents, not this checkpoint's historical
+counts, limitations or unfinished-at-the-time rows.
