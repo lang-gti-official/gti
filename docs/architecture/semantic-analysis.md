@@ -443,7 +443,7 @@ trait simply because a wrapper's name appeared earlier in a query.
 
 `ClassLifecycleInfo::generatedDefaultBaseConstructor` records the exact base
 constructor selected for the bounded executable generated-default family:
-nongeneric owners/bases, no derived instance fields or destructor, and an
+nongeneric owners/bases, no derived instance fields, and an
 exact zero-parameter source base constructor. Construction carries ordinary
 constructor-failure propagation; HIR consumes this identity rather than
 reselecting a constructor. Independently, `generatedDefaultFieldInitializers`

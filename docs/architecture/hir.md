@@ -325,7 +325,7 @@ Owning expected initialization preserves the payload and completed wrapper as
 distinct lifetime identities for MIR transfer and rollback.
 
 The existing bounded generated-derived family also has explicit body-local
-execution: a nongeneric derived class with no instance fields or destructor,
+execution: a nongeneric derived class with no instance fields,
 whose nongeneric state-bearing base selects an exact zero-parameter source
 constructor. `ClassLifecycleInfo::generatedDefaultBaseConstructor` supplies the
 semantic selection. HIR discovers that base and records a source-free
