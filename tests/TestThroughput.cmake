@@ -35,6 +35,7 @@ if(Python3_Interpreter_FOUND)
     dormant_capability_runtime
     expected_class_argument_runtime expected_class_assignment_runtime
     expected_class_return_runtime expected_constructor_return_runtime
+    expected_field_and_join_runtime
     expected_temporary_observation_runtime
     expected_filesystem_prerequisites_runtime expected_passive_publication_runtime
     expected_payload_pair_arguments_runtime expected_payload_pending_cleanup_runtime

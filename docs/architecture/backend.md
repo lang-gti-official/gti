@@ -1489,10 +1489,24 @@ ordinary SSA local would value-initialize the native wrapper and invent that
 construction, so the declaration fails closed instead, as for a fixed array
 whose element class has none. A failure-free producer, whose plain call
 returns the Expected by value, therefore constructs a staged slot from that
-return value. A shape with no exact publication rejects body emission rather
-than emitting native code that cannot compile. Two such temporaries joined by
-a conditional before their use, and an Expected field initialized directly from
-a call, are currently in that position.
+return value. The guard stays as a backstop: a shape with no exact
+publication rejects body emission rather than emitting native code that cannot
+compile.
+
+The slot also serves an Expected call result that initializes a constructor
+field as that field's selected member initializer, immediately after the
+producer succeeds. The constructor initializer metadata must name exactly that
+field and the producer's value. As for a cleanup-free class result, the field's
+empty representation ends and the field is constructed from the moved wrapper.
+Two cleanup-free Expected call results joined by a conditional publish into the
+join's conditional temporary. MIR gives that temporary no drop, so each
+producer constructs it directly. A failure-free call does this immediately
+before its Initialize, and a checked call on the Invoke success edge leading to
+the Initialize. Grouping the join's transport, as in
+`(ok ? a() : b()).has_value()`, names the same storage, so a state test,
+extraction or by-value consumer reads the join directly. Before each
+publication, the previous representation is retired, which keeps a loop from
+constructing the storage twice. The last one ends at scope exit.
 
 The same representation-only slot serves a cleanup-free call temporary that
 is observed once in place. The single use is either the state test

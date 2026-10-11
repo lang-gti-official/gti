@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.400.5 — `expected` results in member initializers and conditionals
+
+- A constructor's `expected<T, E>` field can now be initialized directly from
+  a call, as in `box(bool ok) : item(make_item(ok)) {}`, when `T` is a class
+  that needs no cleanup, including one without a default constructor. Such
+  programs used to report GTI-B0001.
+- Two such `expected` results joined by a conditional can now be used
+  directly: `(ok ? make_item(true) : make_item(false)).has_value()`, its
+  `.value()` and `.error()`, passing it by value, binding it, returning it,
+  and nesting conditionals, in loops and with callers that can fail. These
+  also used to report GTI-B0001.
+- Still reporting GTI-B0001: an `expected` field initialized from a call when
+  the payload owns resources, such as a `std::string` field.
+
 ## 0.400.4 — Assigning a construction whose constructor can fail
 
 - Assigning a construction to an existing variable, as in

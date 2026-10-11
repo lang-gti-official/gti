@@ -3359,9 +3359,8 @@ int main() {
 // field. The success class has no default constructor: a failure-free
 // producer constructs the staged slot, the construction moves its wrapper and
 // the slot retires right after. A cleanup-owning payload keeps MIR's
-// value-rooted transfer slot. A shape with no exact publication still fails
-// closed rather than value-initializing the Expected. (Regression: GitHub
-// issue #6 emitted a default-constructed std::expected<Item, E> local.)
+// value-rooted transfer slot. (Regression: the former gti-lang-official issue
+// #6 emitted a default-constructed std::expected<Item, E> local.)
 void testExpectedClassArgumentReturnedConstruction() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-expected-class-returned-construction.gti", R"(
@@ -3475,53 +3474,6 @@ int main() {
              text.find(".take()", owned) < text.find('\n', owned),
          "a returned construction consuming a cleanup-owning Expected should "
          "take it from MIR's value-rooted transfer slot");
-
-  // Two temporaries joined by a conditional before their state test have no
-  // exact uninitialized publication yet; the join must fail closed.
-  const lang::FrontendResult observed =
-      analyze("cpp-mir-expected-class-joined-temporary.gti", R"(
-struct item_value {
-  int32_t number;
-  item_value(int32_t number) : number(number) {}
-};
-
-expected<item_value, int32_t> make_item(bool ok) {
-  if (ok) { return item_value(7); }
-  return unexpected(int32_t(3));
-}
-
-bool observe(bool ok) {
-  return (ok ? make_item(true) : make_item(false)).has_value();
-}
-
-int main() { return observe(true) ? 0 : 1; }
-)");
-  expect(observed.canGenerateCode(),
-         "the joined Expected temporary should pass the frontend");
-  if (!observed.canGenerateCode()) {
-    return;
-  }
-  const lang::CppMirBodyEmissionMap rows(buildRows(observed, observed.mir));
-  std::size_t rejected = 0;
-  for (const lang::MirFunctionInstance &function :
-       observed.mir.functionInstances()) {
-    if (function.definitionKind != lang::MirDefinitionKind::Source)
-      continue;
-    const auto plan =
-        lang::CppMirBodyEmitter(observed.mir, rows)
-            .buildPlan({lang::MirBodyKind::Function, function.id});
-    const auto &issues = plan.analysis().issues;
-    rejected +=
-        !plan.admitted() &&
-        std::any_of(issues.begin(), issues.end(), [](const auto &issue) {
-          return issue.detail.find("invent success default construction") !=
-                 std::string::npos;
-        });
-  }
-  expect(rejected == 1,
-         "a joined Expected temporary with no exact publication should fail "
-         "closed instead of value-initializing its payload: " +
-             std::to_string(rejected) + " rejected");
 }
 
 // A cleanup-free Expected<Class, E> call temporary read once by its state test
@@ -3799,6 +3751,97 @@ int main() {
          "a failure-free construction should keep the fused assignment");
 }
 
+// A cleanup-free Expected<Class, E> call result initializing a constructor
+// field is staged and moved into the field's storage after its empty
+// representation ends. Two such temporaries joined by a conditional publish
+// into the join's own storage, which each publication first retires, and the
+// grouped join reads that storage directly. Neither value-initializes the
+// Expected. (Regression: both reported GTI-B0001.)
+void testExpectedFieldAndJoinPublication() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-expected-field-and-join.gti", R"(
+struct item_value {
+  int32_t number;
+  item_value(int32_t number) : number(number) {}
+};
+
+expected<item_value, int32_t> make_item(bool ok) {
+  if (ok) { return item_value(7); }
+  return unexpected(int32_t(3));
+}
+
+struct box {
+  expected<item_value, int32_t> item;
+  box(bool ok) : item(make_item(ok)) {}
+};
+
+bool observe(bool ok) {
+  return (ok ? make_item(true) : make_item(false)).has_value();
+}
+
+int main() {
+  box held{true};
+  return held.item.value().number + (observe(false) ? 1 : 0) - 7;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the Expected field and join fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string rearm =
+      ".destroy_if_engaged(); // retire the previous join representation\n";
+  std::size_t publications = 0;
+  std::string join;
+  for (std::size_t at = text.find(rearm); at != std::string::npos;
+       at = text.find(rearm, at + rearm.size())) {
+    const std::size_t slotStart = text.rfind("__gti_mir_p_", at);
+    const std::string slot = text.substr(slotStart, at - slotStart);
+    const std::size_t next = text.find_first_not_of(' ', at + rearm.size());
+    const std::string publish =
+        slot + ".construct_from([&]() { return ::__gti_program::__gti_fn_";
+    if (text.compare(next, publish.size(), publish) != 0)
+      continue;
+    ++publications;
+    join = slot;
+  }
+  expect(publications == 2 && !join.empty() &&
+             text.find("mir_lifetime_slot<std::expected<::__gti_program::item_"
+                       "value, std::int32_t>, true> " +
+                       join + ";") != std::string::npos &&
+             text.find(join + ".get().has_value();") != std::string::npos,
+         "both join arms should publish into the join's storage after "
+         "retiring it, and the grouped join should read that storage");
+  const std::string field =
+      "::gti_internal::backend::construct_representation_at(std::addressof("
+      "__gti_mir_p_";
+  const std::size_t constructed = text.find(field);
+  const std::size_t moved =
+      constructed == std::string::npos
+          ? std::string::npos
+          : text.find(", std::move(__gti_mir_v_", constructed);
+  const std::size_t slotStart =
+      moved == std::string::npos ? std::string::npos : moved + 12;
+  const std::string slot =
+      slotStart == std::string::npos
+          ? std::string()
+          : text.substr(slotStart, text.find(".get()", slotStart) - slotStart);
+  expect(!slot.empty() &&
+             text.find(slot + ".construct_from([&]() { return ::__gti_program::"
+                              "__gti_fn_") != std::string::npos &&
+             text.find(slot + ".destroy();", moved) != std::string::npos,
+         "the field initializer should move a staged result into the field");
+  expect(text.find("std::expected<::__gti_program::item_value, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no Expected should value-initialize an ordinary local");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -3983,6 +4026,8 @@ constexpr NamedTest kTests[] = {
     {"testOwningTemporaryFieldView", testOwningTemporaryFieldView},
     {"testRaisingConstructionAssignmentSlot",
      testRaisingConstructionAssignmentSlot},
+    {"testExpectedFieldAndJoinPublication",
+     testExpectedFieldAndJoinPublication},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",
