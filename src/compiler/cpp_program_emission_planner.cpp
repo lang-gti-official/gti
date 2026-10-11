@@ -7448,6 +7448,12 @@ public:
       output << '(';
       if (valueBearing) {
         output << "box->result.construction_address(), ";
+      } else if (cppFunctionHasFailureResultChannel(loweredProgram,
+                                                   *declaration)) {
+        // A class-bound generic result keeps its uniform output parameter
+        // even when this concrete task returns void. Use the same signature
+        // contract as ordinary calls and wrappers, not only the result type.
+        output << "static_cast<void *>(nullptr), ";
       }
       output << "&failure);\n";
       if (valueBearing) {

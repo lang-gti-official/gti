@@ -18,7 +18,28 @@ public:
   int operator()() mut { this.value += 1; return this.value; }
 };
 
+struct VoidRead { void operator()() {} };
+struct VoidMut { void operator()() mut {} };
+struct VoidOnce { void operator()() && {} };
+
 int main() {
+  // Generic result erasure retains a uniform failure ABI even for void.
+  std::transfer_function<void()> void_read{VoidRead()};
+  auto void_read_started = std::thread::start(std::move(void_read));
+  if (!void_read_started) return 16;
+  mut auto void_read_worker = std::move(void_read_started).value();
+  if (!void_read_worker.join()) return 17;
+  std::transfer_function<void() mut> void_mut{VoidMut()};
+  auto void_mut_started = std::thread::start(std::move(void_mut));
+  if (!void_mut_started) return 18;
+  mut auto void_mut_worker = std::move(void_mut_started).value();
+  if (!void_mut_worker.join()) return 19;
+  std::transfer_function<void() &&> void_once{VoidOnce()};
+  auto void_once_started = std::thread::start(std::move(void_once));
+  if (!void_once_started) return 20;
+  mut auto void_once_worker = std::move(void_once_started).value();
+  if (!void_once_worker.join()) return 21;
+
   mut std::transfer_function<int()> read{};
   if (!read.empty()) return 10;
   read.replace([]() -> int { return 1; });
