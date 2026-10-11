@@ -4273,6 +4273,61 @@ int main() { return pick(true).number + pick_counted(true).number - 4; }
          "no join value or storage should value-initialize an ordinary local");
 }
 
+void testShortCircuitOwnedFieldView() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-short-circuit-field-view.gti", R"(
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() {}
+};
+
+counted make_counted(int32_t number) { return counted(number); }
+
+bool check(bool skip) { return skip || make_counted(5).number == 5; }
+
+int main() { return check(false) ? 0 : 1; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the short-circuit field view fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // The call constructs its owning result in the conditional temporary, and
+  // the field is read from that temporary in place.
+  const std::string declaration =
+      "::gti_internal::backend::mir_lifetime_slot<::__gti_program::counted> "
+      "__gti_mir_p_";
+  const std::size_t declared = text.find(declaration);
+  const std::size_t nameStart = declared == std::string::npos
+                                    ? std::string::npos
+                                    : declared + declaration.size() - 12;
+  const std::string temporary =
+      nameStart == std::string::npos
+          ? std::string()
+          : text.substr(nameStart, text.find(';', nameStart) - nameStart);
+  const std::size_t constructed =
+      temporary.empty()
+          ? std::string::npos
+          : text.find(temporary + ".construct_from([&]() { return "
+                                  "::__gti_program::__gti_fn_");
+  expect(constructed != std::string::npos &&
+             text.find(" = " + temporary + ".get().number;", constructed) !=
+                 std::string::npos,
+         "the owning result should construct in its conditional temporary "
+         "and its field should be read from that temporary");
+  expect(text.find("::__gti_program::counted __gti_mir_v_") ==
+             std::string::npos,
+         "the viewed result should not declare an ordinary local");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -4464,6 +4519,7 @@ constexpr NamedTest kTests[] = {
     {"testCommaDenotesRightOperandObject", testCommaDenotesRightOperandObject},
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
+    {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",

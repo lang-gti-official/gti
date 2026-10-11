@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.402.8 — Field reads of temporaries inside `&&`, `||` and conditionals
+
+- A field of a temporary whose class has a destructor or owns resources can
+  now be read inside the right operand of `&&` or `||`, or inside a
+  conditional arm, as in `ok || make_tracked(5).number == 5`,
+  `ok ? make_tracked(5).number : 0` or `ok || make_named().text.size() == 3`.
+  The temporary exists only when its operand runs and is destroyed exactly
+  once, including when a later operand fails. Such programs used to report
+  GTI-B0001.
+- Still reporting GTI-B0001: reading a field of an owning `expected` payload
+  in those positions, as in `ok || make_named(true).value().text.size() == 7`.
+
 ## 0.402.6 — Class-valued conditionals
 
 - A conditional whose arms are class values that need no cleanup, such as
