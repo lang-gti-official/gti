@@ -265,7 +265,7 @@ def candidate_checks(paths: list[str], groups: dict[str, list[str]]) -> list[Che
         checks.append(
             Check(
                 "build-release",
-                "python3 scripts/build_window.py --kind suite -- ctest --test-dir build --output-on-failure",
+                "python3 scripts/build_window.py --kind suite -- ctest --test-dir build -j 12 --test-load 12 --output-on-failure",
                 "build, packaging, or release behavior can affect the full matrix; a whole suite holds a build-window slot",
             )
         )

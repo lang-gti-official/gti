@@ -82,10 +82,18 @@ one-minute test to seventeen minutes and made timing-sensitive LSP tests
 flake, so every worktree and session of a repository shares one window:
 
 ```sh
-python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 6
+python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12
 python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8
 python3 scripts/build_window.py --status
 ```
+
+A suite may use every core of this 12-core host, but `--test-load 12` stops
+CTest from starting another test while the load average is at or above twelve.
+An idle host therefore runs the suite at full width, and the suite backs off
+while the window's builds or other sessions' work load the machine. CTest
+charges a multi-worker case suite its reserved processors against `-j`; at
+`-j 6` those reservations, not test durations, bounded the full suite's wall
+time.
 
 A `suite` slot wraps a whole or broad CTest run or a standalone harness
 matrix; a `build` slot wraps a whole `cmake --build`. Focused checks (`ctest
@@ -107,8 +115,10 @@ slot kind has its own subdirectory, `suite/` or `build/`, and each holder owns
 one JSON file there named `<pid>-<token>.json` recording `pid`, `time`, `kind`,
 `command` (argv), `cwd` and, for helper validation, the `worktree` and
 `checks`. The count-and-claim step is serialized by a short `lock` directory
-with its own `owner.json`; it is held for milliseconds and reclaimed when its
-owner has exited or it is older than a minute.
+with its own `owner.json`; it is normally held for milliseconds and reclaimed
+when its owner has exited. A live owner is never reclaimed because of age;
+an absent/unreadable owner gets a one-minute initialization grace period before
+reclamation, so peers cannot steal the gap between `mkdir` and owner publication.
 
 Acquisition polls with a bounded sleep. While waiting it prints, on standard
 error, which processes hold the slots, with their pids, start times and
@@ -123,10 +133,142 @@ cooperating agents, not a security boundary. Owner liveness uses
 dependencies, so there a slot is never reclaimed automatically; `--status`
 reports the recorded owner and the file to delete by hand.
 
-`verify` acquires a `suite` slot around its checks and records them in the
+Local `verify --checks-file` acquires a `suite` slot around its checks and records them in the
 slot file, so helper validation and ad hoc suite runs queue behind each
 other. Builds that the checks need should be run beforehand through a `build`
 slot. The environment variables above apply to the helper too.
+
+## Mac mini remote runs
+
+`scripts/remote_runner.py` is repository automation, not a second compiler or
+driver. It sends a disposable source snapshot to a trusted SSH account, runs
+exact build/test argument vectors, and brings evidence back. It requires
+Python 3.9+, Git and SSH locally; the Mini additionally needs CMake, Ninja and
+the repository's native build dependencies. SSH keys and host-key verification
+must already work; the wrapper does not change SSH configuration. The current
+host is `lukeh@192.168.0.53`.
+
+From any task worktree, configure once (settings are shared in the Git common
+directory, not committed):
+
+```sh
+python3 scripts/remote_runner.py --host lukeh@192.168.0.53 configure
+python3 scripts/remote_runner.py run --target gti_runtime_failure_tests --ctest-regex '^runtime_failure_boundary$'
+```
+
+For a compiler feature, build the compiler and applicable test targets in the
+**same run**; binaries do not persist for a later run. For example:
+
+```sh
+python3 scripts/remote_runner.py run --target gti --target gti_optimizer_tests --ctest-regex '^optimizer_foundation$'
+python3 scripts/remote_runner.py run --full-suite --detach
+python3 scripts/remote_runner.py status
+python3 scripts/remote_runner.py status run-<32-hex-digits>
+python3 scripts/remote_runner.py fetch run-<32-hex-digits>
+python3 scripts/remote_runner.py cancel run-<32-hex-digits>
+```
+
+Omit `--target` to build all targets. `--ctest-regex` and `--full-suite` are
+exclusive; zero matching tests is an error. Default CMake configuration is
+`Release`; `--build-type` also accepts `RelWithDebInfo` and `MinSizeRel`.
+The configured cache is checked before building. Extra options use
+`--cmake-arg=-DNAME=value`. The wrapper prepends Homebrew's bin directory and
+automatically supplies the Homebrew LLVM directory when present. The remote
+Python defaults to `/opt/homebrew/bin/python3` (`--python` overrides it).
+Global options precede the subcommand. `--repo` selects another worktree;
+`--host`/`--root`, or `GTI_REMOTE_HOST`/`GTI_REMOTE_ROOT`, override saved settings.
+
+All wrapper runs use one host-wide window at
+`/private/tmp/gti-remote-runner/window`, **not** their isolated Git directories.
+The authoritative `build_window.Window` implements two build slots and one
+suite slot. Configure/build take build slots; test steps take suite slots.
+Builds default to half the host's CPUs per build, while CTest can use all CPUs
+but uses `--test-load` to back off under concurrent load. `--jobs` and
+`--test-jobs` override command parallelism, not slot counts. On a dedicated
+Mini, `--jobs 12` can use its full 12-core build capacity. Agents should inspect
+`status` before increasing parallelism. Manual heavy commands on this Mini
+must use the **same directory and counts**:
+
+```sh
+GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind build -- cmake --build build-release -j 6
+GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12
+```
+
+The snapshot contains tracked working files and nonignored untracked files,
+including edits and deletions. Ignored build trees and Git configuration/hooks
+are not copied; `.env` and `.env.*` working files are excluded. **Committed
+history is transferred in a Git bundle and is not redacted**: do not use this
+runner with secrets in history or other nonignored source files. Symlinks,
+submodules, special files and snapshots above 512 MiB are rejected rather than
+silently building different sources. The runner detects edits during snapshot
+creation; retry once edits settle. Evidence records original HEAD, working-tree
+status, a hash of the exact snapshot, commands, elapsed time and exit status.
+Submitting an uncommitted snapshot is useful during iteration but does not
+replace the lifecycle's exact head/base validation before integration.
+
+`run` normally waits and fetches automatically, returning the build/test exit
+status. `--detach` prints the run ID immediately. The worker survives SSH/client
+disconnection; reconnect with `status`/`fetch`. Ctrl-C requests cancellation.
+Cancellation and the default three-hour deadline (including window waits,
+overridable with `--timeout` in seconds) stop the command process group before
+releasing its slot and cleaning its files. Commands must not intentionally
+daemonize into an unrelated process group; this is trusted build automation,
+not a sandbox for arbitrary untrusted programs.
+
+Results default to `<git common dir>/gti-remote-runner/results/<run-id>/`;
+`--results <directory>` overrides the location. They include `report.json`,
+`request.json`, command/worker logs and CTest's `Testing/` evidence. Logs are
+bounded to 32 MiB total, at most 8 MiB per file, keeping the tail;
+`truncation.json` identifies truncated files. Binaries are not exported. Fetch
+validates/extracts locally **before** deleting remote evidence. A failed fetch
+leaves remote results retrievable; it never overwrites existing local results.
+
+Every run uses a marked directory below
+`/private/tmp/gti-remote-runner/runs/run-<32-hex-digits>`. Source, build, upload
+and staging files are deleted **before completion**, on success, failure,
+timeout and cancellation. Only a small result bundle, state and worker scripts
+remain until fetching; fetching deletes the whole run directory. Unfetched
+results expire after 24 hours. Each remote action sweeps only marked inactive
+runs; after a crash/reboot, it also recovers abandoned uploads/workers after a
+60-second launch grace period. Active workers/recorded children are never
+swept. Crash recovery is serialized across agents. Cleanup is not a scheduled
+background service: following a power loss or SIGKILL, the next runner command
+performs recovery. Use `clean` to trigger that sweep; `clean <run-id>` explicitly
+discards a finished run's results without fetching. It refuses active runs and
+cleanup errors. Unmarked/pre-existing directories and other users' worktrees
+are never deleted. Small shared connection/window metadata intentionally stays.
+
+For non-CMake harnesses or custom multi-step validation, `--steps-file` replaces
+the default configure/build/test sequence with a JSON array such as:
+
+```json
+[
+  {"name":"configure","kind":"build","cwd":"source","argv":["cmake","-S","{source}","-B","{build}","-G","Ninja","-DCMAKE_BUILD_TYPE=Release","-DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm"]},
+  {"name":"build","kind":"build","cwd":"source","argv":["cmake","--build","{build}","--target","gti","--parallel","6"]},
+  {"name":"fixture","kind":"suite","cwd":"source","argv":["python3","tests/my_fixture.py","{build}/gti"]}
+]
+```
+
+These are argument arrays, not shell strings; `{source}` and `{build}` are
+substituted with isolated absolute paths. Commands run in the indicated
+directory. Custom plans remain responsible for optimized GTI compilers,
+correct test inputs and evidence. Do not nest `agent_workflow verify` or another
+`build_window` acquisition for the same slot inside a step: the wrapper already
+holds that slot. To validate a published task through the normal PR lifecycle
+without occupying a laptop suite slot, use:
+
+```sh
+python3 scripts/agent_workflow.py verify <task> --remote-steps-file /absolute/path/plan.json
+```
+
+The helper submits that plan through the runner, retains results under its
+local task metadata, and checks success and source identity before binding
+validation to the clean published head and current upstream base. Remote HEAD
+and Git status are recorded again after checks, before cleanup; a plan that
+changes source cannot validate the published commit. Changes to
+either head/base still invalidate evidence. Failed remote runs cannot authorize
+integration. Publication still uses `agent_workflow finish` after reviewing the
+retrieved evidence; the remote worker never publishes or installs.
 
 ## Integration and validation
 

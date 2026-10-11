@@ -7,7 +7,7 @@ under the Git common directory. A `suite` slot wraps a whole CTest run and a
 compiles do not need a slot. Acquisition waits with a bounded poll and reports
 who holds the slots; a slot whose owner has exited is reclaimed automatically.
 
-    python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 6
+    python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12
     python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8
     python3 scripts/build_window.py --status
 
@@ -203,7 +203,10 @@ class Window:
             pid = json.loads(owner.read_text()).get("pid")
         except (OSError, ValueError):
             pid = None
-        if pid_alive(pid) and self._age(path) <= MUTEX_STALE_SECONDS:
+        # mkdir publishes the lock before owner.json can be written. A peer
+        # must not reclaim that initialization gap as a dead owner. Likewise a
+        # live owner remains authoritative even if its critical section is slow.
+        if pid_alive(pid) or (pid is None and self._age(path) <= MUTEX_STALE_SECONDS):
             return
         stale = path.with_name(f"lock.stale-{uuid.uuid4().hex[:8]}")
         try:
