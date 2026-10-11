@@ -42,6 +42,24 @@ before the campaign can satisfy runtime acceptance. Full corpus/census,
 unfiltered production, platform and final integration-bound checks remain
 required independently of this candidate evidence.
 
+The Ubuntu-8 pre-repair snapshot of `e8208096` builds all Release targets with
+GCC 14/LLVM 21 and passes 14 of its 18 selected iterator gates. Its recorded
+dirty status is confined to an in-progress installed-consumer test, not the
+compiler/library/runtime source closure. Contiguous and paired-span positive
+and cost builds, plus the sparse/lane and mapped-value cost builds, encounter
+GNU multiple-definition errors: the direct native command places the runtime
+archive before the allocation-counting fixture, so it extracts `memory.cpp`
+before seeing the fixture's seven replacement memory exports. One contiguous
+sanitizer build also reaches its existing timeout under concurrent load.
+The test linker must put the complete oracle before the runtime archive,
+without changing the driver's escape-hatch ordering or weakening allocation
+observations; those four gates and the timed-out case still require fresh
+Linux validation. Raw run results are retained under
+`.git/gti-remote-runner/results/run-cdee818d5b664c72ab51ca5b57ead28f/`, with the
+otherwise temporary native diagnostics captured separately at
+`/private/tmp/gti-linux-iterator-native-evidence.txt`. This failed pre-repair
+run is not final platform acceptance.
+
 ## Expected returns across scope cleanup (0.402.4)
 
 - **Defects.** Three verified programs stopped at the C++ backend with
