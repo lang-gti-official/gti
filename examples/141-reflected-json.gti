@@ -1,0 +1,62 @@
+// Reflected JSON: `<std/experimental/json>` encodes and decodes any
+// reflectable struct from its fields alone. No codec, no field list, no
+// constructor: keys come from the declared names (or a `name` attribute),
+// values from the field types, and decoding builds the struct through
+// `std::meta::construct`, so a half-decoded object never exists.
+#include <std/experimental/json>
+#include <std/string>
+#include <std/vector>
+
+enum class severity { info, warning, failure };
+
+struct location {
+  std::string file = std::string("");
+  uint32_t line = 0;
+};
+
+struct report {
+  [[std::experimental::json::name("msg")]]
+  std::string message = std::string("");
+  severity level = severity::info;
+  location where{};
+  std::vector<uint32_t> related = std::vector<uint32_t>();
+  [[std::experimental::json::ignore]]
+  uint64_t cache_key = 0;
+};
+
+int main() {
+  std::vector<uint32_t> related = {12, 40};
+  report first = {.message = std::string("unused binding \"x\""),
+                  .level = severity::warning,
+                  .where = {.file = std::string("main.gti"), .line = uint32_t(7)},
+                  .related = std::move(related),
+                  .cache_key = uint64_t(99)};
+
+  std::string text = std::experimental::json::encode(first);
+  std::print(text.view());
+  std::print("\n");
+
+  mut auto parsed = std::experimental::json::decode<report>(text.view());
+  if (!parsed) {
+    std::print(std::experimental::json::describe(parsed.error().code));
+    std::print("\n");
+    return 1;
+  }
+  report back = std::move(parsed).value();
+  std::print(back.where.file.view());
+  std::print(":");
+  std::print(std::to_string(float(back.where.line)).view());
+  std::print(" ");
+  std::print(back.message.view());
+  std::print("\n");
+
+  // Failures carry the kind and the byte offset where decoding stopped.
+  mut auto broken = std::experimental::json::decode<report>("{\"msg\":\"m\",\"level\":\"loud\"}");
+  if (!broken) {
+    std::print(std::experimental::json::describe(broken.error().code));
+    std::print(" at ");
+    std::print(std::to_string(float(broken.error().offset)).view());
+    std::print("\n");
+  }
+  return 0;
+}
