@@ -1,5 +1,31 @@
 # Compiler Verification
 
+## Record-published field initializers under optimization (0.398.5)
+
+- **Defect.** A literal-backed `std::string_view` field default read back
+  empty at `-O1` and above, both directly and through a by-reference read. The
+  generated default constructor's MIR carries no `Initialize` for the field:
+  the constructor record publishes it from the literal's MIR value, which has
+  no MIR use, and `dead-unused-computations` removed the literal. The
+  emitted constructor then wrote the field from a default-constructed value.
+  A user-written constructor with the same default member initializer, an
+  explicit `name("Ada")` mem-initializer, and a nested record with its own
+  text-view default all failed the same way.
+- **Rule.** `mirRecordPublishedConstructorInitializer` names the values a
+  constructor record publishes from. The canonical dead-instruction rewrite
+  refuses them, so the editor, the pass and coherence replay agree; the pass
+  reports the retained value as a missed candidate; and the C++ emitter's
+  publication predicate now calls the same query.
+- **Regression tests.** `optimizer_initializer_publication_runtime` builds
+  and runs the four programs above at O0, O1 and O3, requires identical
+  output at every level, and reads each optimization report: no applied
+  dead-computation transformation touches a constructor body, and O1/O3
+  carry the retained remark. `testRecordPublishedInitializerRetained` in
+  `optimizer_tests` locates the unstaged literal, proves the rewrite refuses
+  it and leaves MIR byte-identical, and checks the O1 pipeline keeps the
+  literal without a transformation record. Every program fails before this
+  change at O1 and O3.
+
 ## Backend crash fixes for #212–#214 (0.397.9)
 
 - **Regression programs.** `issues_212_214_regressions` builds and runs five

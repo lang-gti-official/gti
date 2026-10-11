@@ -1966,6 +1966,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(optimizer_mutable_call_runtime PROPERTIES TIMEOUT 240)
   add_test(
+    NAME optimizer_initializer_publication_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/optimizer_initializer_publication_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(optimizer_initializer_publication_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME container_swap_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/container_swap_runtime_test.py"
