@@ -1,0 +1,184 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// A construction consuming an Expected<Class, E> by value and published
+// directly by its Return or into a constructor field. The success class has
+// no default constructor, so nothing may value-initialize the Expected: a
+// cleanup-free argument is staged in representation-only storage and moved
+// into the construction, which publishes at its exact MIR destination.
+struct item_value {
+  int32_t number;
+  item_value(int32_t number) : number(number) {}
+};
+
+// A cleanup-free class error alternative without a default constructor.
+struct code_value {
+  int32_t code;
+  code_value(int32_t code) : code(code) {}
+};
+
+// An owning payload keeps MIR's value drop and its transfer slot.
+struct named_value {
+  std::string text;
+  named_value(std::string text) : text(std::move(text)) {}
+};
+
+// A failure-free producer returns the Expected by value.
+expected<item_value, int32_t> make_item() { return item_value(7); }
+
+expected<item_value, int32_t> make_item_if(bool ok) {
+  if (ok) { return item_value(7); }
+  return unexpected(int32_t(3));
+}
+
+expected<item_value, code_value> make_coded(bool ok) {
+  if (ok) { return item_value(4); }
+  return unexpected(code_value(9));
+}
+
+expected<named_value, int32_t> make_named(bool ok) {
+  if (ok) { return named_value(std::string("payload")); }
+  return unexpected(int32_t(6));
+}
+
+int32_t bump(int32_t value) { return value + 1; }
+
+struct item_holder {
+  int32_t number;
+  item_holder(expected<item_value, int32_t> item)
+      : number(item ? item.value().number : 100 + item.error()) {}
+};
+
+struct between_holder {
+  int32_t number;
+  between_holder(int32_t before, expected<item_value, int32_t> item,
+                 int32_t after)
+      : number(item ? before * item.value().number + after
+                    : before + after - item.error()) {}
+};
+
+struct coded_holder {
+  int32_t number;
+  coded_holder(expected<item_value, code_value> item)
+      : number(item ? item.value().number * 2 : 100 + item.error().code) {}
+};
+
+// A constructed owner with a destructor publishes the same way.
+class tracked_holder {
+public:
+  int32_t number;
+  tracked_holder(expected<item_value, int32_t> item)
+      : number(item ? item.value().number : 100 + item.error()) {}
+  ~tracked_holder() {}
+};
+
+struct named_holder {
+  int32_t size;
+  named_holder(expected<named_value, int32_t> item)
+      : size(item ? int32_t(item.value().text.size()) : 100 + item.error()) {}
+};
+
+// Reads the value unconditionally, so the error state raises.
+struct strict_holder {
+  int32_t number;
+  strict_holder(expected<item_value, int32_t> item)
+      : number(item.value().number) {}
+};
+
+item_holder hold_item() { return item_holder(make_item()); }
+
+item_holder hold_item_if(bool ok) { return item_holder(make_item_if(ok)); }
+
+between_holder hold_between(bool ok) {
+  return between_holder(3, make_item_if(ok), 4);
+}
+
+// A later argument fails after the staged result was published.
+between_holder hold_failing() {
+  return between_holder(1, make_item_if(true), bump(2147483647));
+}
+
+coded_holder hold_coded(bool ok) { return coded_holder(make_coded(ok)); }
+
+tracked_holder hold_tracked(bool ok) {
+  return tracked_holder(make_item_if(ok));
+}
+
+named_holder hold_named(bool ok) { return named_holder(make_named(ok)); }
+
+strict_holder hold_strict(bool ok) { return strict_holder(make_item_if(ok)); }
+
+// A named binding copied or moved into the returned construction.
+item_holder hold_copied(bool ok) {
+  expected<item_value, int32_t> local = make_item_if(ok);
+  return item_holder(local);
+}
+
+item_holder hold_moved(bool ok) {
+  expected<item_value, int32_t> local = make_item_if(ok);
+  return item_holder(std::move(local));
+}
+
+// Member initializers publish each construction into its field.
+struct item_owner {
+  item_holder held;
+  coded_holder coded;
+  item_owner(bool ok)
+      : held(item_holder(make_item_if(ok))),
+        coded(coded_holder(make_coded(ok))) {}
+};
+
+struct strict_owner {
+  strict_holder held;
+  strict_owner(bool ok) : held(strict_holder(make_item_if(ok))) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  bool yes = argc > 0;
+  bool no = !yes;
+  if (argc == 2) {
+    strict_holder failing = hold_strict(no);
+    return failing.number;
+  }
+  if (argc == 3) {
+    between_holder failing = hold_failing();
+    return failing.number;
+  }
+  if (argc == 4) {
+    strict_owner failing{no};
+    return failing.held.number;
+  }
+  if (hold_item().number != 7) { return 1; }
+  if (hold_item_if(yes).number != 7) { return 2; }
+  if (hold_item_if(no).number != 103) { return 3; }
+  if (hold_between(yes).number != 25) { return 4; }
+  if (hold_between(no).number != 4) { return 5; }
+  if (hold_coded(yes).number != 8) { return 6; }
+  if (hold_coded(no).number != 109) { return 7; }
+  tracked_holder tracked = hold_tracked(yes);
+  if (tracked.number != 7) { return 8; }
+  tracked_holder tracked_error = hold_tracked(no);
+  if (tracked_error.number != 103) { return 9; }
+  if (hold_named(yes).size != 7) { return 10; }
+  if (hold_named(no).size != 106) { return 11; }
+  if (hold_strict(yes).number != 7) { return 12; }
+  if (hold_copied(yes).number != 7) { return 13; }
+  if (hold_copied(no).number != 103) { return 14; }
+  if (hold_moved(yes).number != 7) { return 15; }
+  if (hold_moved(no).number != 103) { return 16; }
+  item_owner owner{yes};
+  if (owner.held.number != 7 || owner.coded.number != 8) { return 17; }
+  item_owner owner_error{no};
+  if (owner_error.held.number != 103 || owner_error.coded.number != 109) {
+    return 18;
+  }
+  strict_owner strict{yes};
+  if (strict.held.number != 7) { return 19; }
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    total += hold_item_if(index != 1).number;
+  }
+  if (total != 117) { return 20; }
+  return 0;
+}
