@@ -1,0 +1,82 @@
+#include <std/string>
+#include <std/vector>
+
+// A callable value invocation returns Expected<Class, E> whose success class
+// has no default constructor. The result passes by value to a function or a
+// constructor, is observed or extracted once, or is discarded. Each shape
+// publishes the invocation result into its own uninitialized storage; none
+// default-constructs the success alternative.
+
+enum class errc { bad, missing };
+
+struct point {
+  int32_t x;
+  int32_t y;
+  point(int32_t x, int32_t y) : x(x), y(y) {}
+};
+
+struct boxed {
+  expected<point, errc> inner;
+  boxed(expected<point, errc> inner) : inner(std::move(inner)) {}
+};
+
+int32_t point_code(expected<point, errc> result) {
+  if (!result) { return result.error() == errc::missing ? -1 : -2; }
+  return result.value().x * 10 + result.value().y;
+}
+
+int32_t combine(expected<point, errc> result, int32_t extra) {
+  return point_code(std::move(result)) + extra;
+}
+
+int32_t later(int32_t value) { return value + 1; }
+
+int32_t apply<F>(F make, int32_t v) { return point_code(make(v)); }
+
+int main(int argc, std::vector<std::string> argv) {
+  auto make = [](int32_t v) -> expected<point, errc> {
+    if (v == 0) { return unexpected(errc::missing); }
+    if (v < 0) { return unexpected(errc::bad); }
+    return point(v, 2);
+  };
+  auto divide = [](int32_t v) -> expected<point, errc> {
+    return point(84 / v, v);
+  };
+  if (argc == 2) {
+    // The invocation's result already exists when a later argument raises.
+    std::println(combine(make(7), later(int32_t(2147483647))));
+    return 0;
+  }
+  if (argc == 3) {
+    // The invocation itself raises before it publishes any result.
+    std::println(point_code(divide(argc - 3)));
+    return 0;
+  }
+  std::println(point_code(make(7)));
+  std::println(point_code(make(0)));
+  std::println(point_code(make(-1)));
+
+  boxed built{make(3)};
+  std::println(built.inner.value().x);
+  boxed failed{make(0)};
+  std::println(failed.inner.has_value() ? 1 : 0);
+
+  if (make(4)) { std::println(4); }
+  if (!make(0)) { std::println(0); }
+  std::println(make(5).value().y);
+  std::println(make(-1).error() == errc::bad ? 1 : 0);
+  [[discard]] make(6);
+
+  int32_t offset = 3;
+  auto shifted = [offset](int32_t v) -> expected<point, errc> {
+    if (v == 0) { return unexpected(errc::missing); }
+    return point(v + offset, offset);
+  };
+  std::println(point_code(shifted(1)));
+  std::println(point_code(shifted(0)));
+  std::println(apply(make, 8));
+  std::println(apply(shifted, 2));
+
+  std::println(point_code(divide(2)));
+  return 0;
+}
