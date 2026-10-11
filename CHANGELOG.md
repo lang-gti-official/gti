@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.399.4 — Returning `expected` results across scope cleanup
+
+- A function that returns an `expected<T, E>` call result while
+  another local still needs cleanup now builds. This covers
+  `return parse(input);` and `mut auto r = parse(input); return std::move(r);`
+  when `T` is a struct or an `enum`, including inside a loop. These programs
+  previously stopped with internal compiler error `GTI-B0001`.
+
 ## 0.399.3 — Faster builds that include standard-library units
 
 - `gti build`, `gti run` and C++ emission no longer lower standard-library
