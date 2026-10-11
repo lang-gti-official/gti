@@ -643,6 +643,11 @@ by adding an alias, even when its result and argument have the same class type.
 This includes nominal call operators and dependent branches whose primary model
 has no selected-call record: concrete construction provenance remains required.
 Grouping an explicit move stays transparent without making that move fresh.
+A parenthesized lambda whose type, category, access and traits equal its
+operand's creates no second closure either. Lowering returns the operand's
+value and records the wrapper in `HirBody::sourceAliases`, so a binding,
+argument, copy or immediate call of `(lambda)` consumes the producer's own
+closure value, as lambda-call callees and expected mappers already did.
 
 MIR consequently receives the same actual producer and initialization/loan/drop
 schedule as the unwrapped expression. It verifies those executable operations
