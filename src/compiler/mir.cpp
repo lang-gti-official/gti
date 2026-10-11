@@ -2205,28 +2205,7 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner) {
 }
 
 [[nodiscard]] MirLoanId dependencyAuthority(const MirBody &body,
-                                            MirPlaceId sourceId) {
-  const auto *source = body.findPlace(sourceId);
-  if (source == nullptr)
-    return 0;
-  if (source->root == MirPlaceRootKind::Loan)
-    return source->loan;
-  if (source->root != MirPlaceRootKind::Binding)
-    return 0;
-  // Canonical source places intentionally erase a reference's local spelling.
-  // A reference formal nevertheless has one unambiguous entry permission for
-  // that binding. Ordinary local storage is not such a permission, and a
-  // borrowed carrier's opaque external dependency is not its physical shell.
-  for (const auto &candidate : body.loans) {
-    const auto *origin = body.findPlace(candidate.source);
-    if (candidate.entry && candidate.kind == MirLoanKind::Parameter &&
-        origin != nullptr && origin->root == MirPlaceRootKind::Binding &&
-        origin->binding == source->binding && origin->projections.empty() &&
-        origin->type.kind == SemanticType::Reference)
-      return candidate.id;
-  }
-  return 0;
-}
+                                            MirPlaceId sourceId);
 
 // A composed stored value can retain independently borrowed inputs. Its
 // primary parent does not enclose the other referents: each Loan-rooted
@@ -2447,6 +2426,53 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                      [&](const auto &dependency) {
                        return permits(dependency.source, dependency.access);
                      });
+}
+
+[[nodiscard]] MirLoanId dependencyAuthority(const MirBody &body,
+                                            MirPlaceId sourceId) {
+  const auto *source = body.findPlace(sourceId);
+  if (source == nullptr)
+    return 0;
+  MirLoanId authority = 0;
+  if (source->root == MirPlaceRootKind::Loan) {
+    authority = source->loan;
+  } else if (source->root == MirPlaceRootKind::Binding) {
+    // Canonical source places can erase a reference formal's spelling.
+    for (const auto &candidate : body.loans) {
+      const auto *origin = body.findPlace(candidate.source);
+      if (candidate.entry && candidate.kind == MirLoanKind::Parameter &&
+          origin != nullptr && origin->root == MirPlaceRootKind::Binding &&
+          origin->binding == source->binding && origin->projections.empty() &&
+          origin->type.kind == SemanticType::Reference) {
+        authority = candidate.id;
+        break;
+      }
+    }
+  }
+  const auto *shell = body.findLoan(authority);
+  const auto *external =
+      shell == nullptr ? nullptr : body.findLoan(shell->storedDependency);
+  if (external != nullptr && abstractStoredEntry(body, *external)) {
+    // A physical carrier reference is not the authority for a projection
+    // through its stored reference field. The exact declared field path
+    // inherits the external entry instead, so a copied/returned view need not
+    // keep that temporary carrier reference alive. Owned fields and whole
+    // shells retain the physical authority; ordinary reborrows without this
+    // explicit dependency edge retain their immediate loan too.
+    std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindings;
+    const auto *shellOrigin = body.findPlace(shell->source);
+    if (shellOrigin != nullptr &&
+        shellOrigin->root == MirPlaceRootKind::Binding &&
+        shellOrigin->projections.empty() &&
+        shellOrigin->type.kind == SemanticType::Reference)
+      bindings.emplace(shellOrigin->binding, std::vector<MirLoanId>{shell->id});
+    const MirLoanState inactive(body.loans.size(), MirLoanFlowState::Inactive);
+    if (loanPermitsPlace(body, *external,
+                         canonicalPlace(body, sourceId, bindings, inactive),
+                         AccessMode::ReadOnly, bindings, inactive))
+      return external->id;
+  }
+  return authority;
 }
 
 [[nodiscard]] MirVerificationResult verifyMirLoanFlow(const MirBody &body,

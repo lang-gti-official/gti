@@ -11,6 +11,16 @@ namespace {
 std::atomic<std::uint64_t> allocations{0};
 }
 
+// Match the global delete replacement for ordinary host-library allocations
+// too, without counting them. Otherwise libstdc++'s worker launch allocation
+// is made by native operator new and incorrectly released through free under
+// ASan; that would be an instrumentation mismatch, not a GTI runtime defect.
+void *operator new(std::size_t size) {
+  if (void *address = std::malloc(size == 0 ? 1 : size))
+    return address;
+  throw std::bad_alloc();
+}
+
 void *operator new(std::size_t size, const std::nothrow_t &) noexcept {
   allocations.fetch_add(1, std::memory_order_relaxed);
   return std::malloc(size == 0 ? 1 : size);
