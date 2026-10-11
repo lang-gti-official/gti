@@ -1217,6 +1217,22 @@ the Expected envelope. No default constructor or result-drop obligation is
 invented. These representation choices preserve the verified Invoke and
 cleanup schedule.
 
+A cleanup-free `Expected<Class, E>` source-call result whose only use is the
+body's Return may also cross executable scope cleanup, including a fallible
+drop of another local. Every class alternative has a generated, inactive
+destructor and every other alternative is scalar or an integral enum, so MIR
+gives the result neither a drop nor a value-rooted place. The transformed
+callee constructs it in a representation-only lifetime slot, MIR's cleanup
+runs in order, and the Return moves it into the caller's placement storage. A
+cleanup failure leaves only that cleanup-free representation for the slot to
+retire. A call with nothing but inert records before its Return keeps the
+direct placement into the caller's storage instead.
+
+An Expected whose success payload is an enum with a boundary row (an
+integral enum, or a payload enum whose variants hold only passive movable
+fields) crosses the transformed failure ABI exactly like a scalar payload:
+through the ordinary typed out-parameter that the caller value-initializes.
+
 An exact moved-Expected return likewise publishes directly into the caller's
 result storage. This applies when its class payload is cleanup-free but lacks
 a default constructor: the unused SSA identity must not declare a second,
@@ -1867,11 +1883,14 @@ the destination and cleanup remain checked. Native virtual boundary bridges
 placement-construct class results in uninitialized storage instead of first
 default-constructing an object and overwriting it.
 
-An unused cleanup-free nominal result also receives uninitialized output
-storage for a transformed call. Selection requires no SSA uses, value-rooted
-places, semantic result-drop obligation, borrowed state, or active cleanup;
-the class must have generated destruction. On success the emitter marks and
-immediately retires that representation, permitting repeated calls in a loop.
+An unused cleanup-free nominal or Expected result also receives
+uninitialized output storage, from a transformed or a failure-free source call,
+such as `[[discard]] make_value()` or a comma's discarded left operand.
+Selection requires no SSA uses, value-rooted places, semantic result-drop
+obligation, borrowed state, or active cleanup; the class must have generated
+destruction. A transformed call marks that representation on success and a
+failure-free call constructs it from its returned value; either retires it
+immediately, permitting repeated calls in a loop.
 Failure leaves the storage uninitialized and follows the existing MIR failure
 edge. This is not a substitute for the MIR cleanup schedule of an owning or
 destructor-bearing result.

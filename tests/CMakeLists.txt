@@ -865,6 +865,11 @@ add_test(NAME expected_class_return_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_return_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_class_return_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_scoped_return_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_scoped_return_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_scoped_return_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_class_argument_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_argument_runtime_test.py"
@@ -905,6 +910,11 @@ add_test(NAME owning_expected_field_runtime
                  "${PROJECT_SOURCE_DIR}/tests/owning_expected_field_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(owning_expected_field_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME comma_class_results_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/comma_class_results_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(comma_class_results_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_class_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"

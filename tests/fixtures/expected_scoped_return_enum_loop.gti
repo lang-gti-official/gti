@@ -1,0 +1,29 @@
+#include <std/string>
+#include <std/vector>
+enum class errc { bad, missing };
+enum class role { player, npc };
+struct holder {
+  std::vector<int32_t> values;
+  holder(std::vector<int32_t> values) : values(std::move(values)) {}
+  holder(holder& other) = delete;
+};
+expected<role, errc> first(holder& h) {
+  if (h.values.size() == std::size_t(0)) { return unexpected(errc::missing); }
+  return role::npc;
+}
+expected<role, errc> bound(holder& h) {
+  for (auto& v : h.values) {
+    if (v == 7) {
+      mut auto result = first(h);
+      return std::move(result);
+    }
+  }
+  return unexpected(errc::bad);
+}
+int main() {
+  std::vector<int32_t> a = {7};
+  holder h{std::move(a)};
+  mut auto x = bound(h);
+  if (!x) { return 1; }
+  return x.value() == role::npc ? 0 : 2;
+}

@@ -1323,6 +1323,15 @@ SemanticModel::findConstruction(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findConstruction(expression);
 }
 
+const Binary *SemanticModel::builtinComma(const Expr &expression) const {
+  const auto *binary = exprAs<Binary>(&expression);
+  return binary != nullptr && binary->oper().kind == TokenKind::COMMA &&
+                 binary->right() != nullptr &&
+                 findOperator(expression) == nullptr
+             ? binary
+             : nullptr;
+}
+
 bool SemanticModel::isFreshClassResult(const Expr &expression) const {
   const auto *info = findExpression(expression);
   if (info == nullptr || info->type.kind != SemanticType::Class ||
@@ -1330,6 +1339,8 @@ bool SemanticModel::isFreshClassResult(const Expr &expression) const {
     return false;
   if (const auto *group = exprAs<Grouping>(&expression))
     return isFreshClassResult(*group->expression());
+  if (const auto *comma = builtinComma(expression))
+    return isFreshClassResult(*comma->right());
   if (const auto *construction = findConstruction(expression))
     return construction->constructedType == info->type;
   if (const auto *operation = findOperator(expression))
@@ -1348,11 +1359,20 @@ bool SemanticModel::isFreshClassResult(const Expr &expression) const {
 
 const Expr *
 SemanticModel::directInitializationSource(const Expr &expression) const {
+  // A grouping, or a comma after evaluating its left operand, denotes its
+  // operand's object value itself: no second object, copy or obligation.
+  const auto *info = findExpression(expression);
+  const bool objectValue = info != nullptr &&
+                           info->category == ValueCategory::Value &&
+                           (info->type.kind == SemanticType::Class ||
+                            info->type.kind == SemanticType::Expected);
   if (const auto *group = exprAs<Grouping>(&expression)) {
-    const auto *info = findExpression(expression);
-    if (info != nullptr && info->type.kind == SemanticType::Class &&
-        info->category == ValueCategory::Value)
+    if (objectValue)
       return group->expression().get();
+  }
+  if (const auto *comma = builtinComma(expression)) {
+    if (objectValue)
+      return comma->right().get();
   }
   const auto *construction = findConstruction(expression);
   if (construction == nullptr || !construction->directInitialization)
