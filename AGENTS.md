@@ -67,7 +67,16 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   by every worktree and session on the machine, so concurrent agents stop
   stacking full suites on each other. Focused tests (`ctest -R '^name$'`, one
   harness fixture) and single-file compiles run directly. `verify` takes a
-  suite slot itself; `build_window.py --status` shows who holds the slots.
+  local suite slot itself; `verify --remote-steps-file <plan.json>` instead uses
+  the configured remote host's window. `build_window.py --status` shows local
+  holders and `remote_runner.py status` shows remote holders.
+- Offload heavy validation with `python3 scripts/remote_runner.py run ...`.
+  Configure the shared SSH connection once; the wrapper snapshots the selected
+  worktree, uses the Mac mini's shared build window, retrieves logs/results,
+  and removes remote source/build trees even after failures or cancellation.
+  Use `--detach`, `status` and `fetch` for asynchronous work. Follow the
+  [remote-runner contract](docs/architecture/agent-workflow.md#mac-mini-remote-runs);
+  do not leave ad hoc clones or builds on the Mini.
 - Use `scripts/agent_workflow.py` for lifecycle operations. Reconcile upstream,
   validate the resulting head/base, and merge only through GitHub PRs. Respect
   required checks/reviews. No direct pushes to `main`, rewritten shared history,
