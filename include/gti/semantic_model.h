@@ -356,6 +356,21 @@ enum class IntrinsicKind {
   MetaPayloadName,
   MetaBaseCount,
   MetaArgumentCount,
+  // Callable metadata: methods (including operators and static methods) in
+  // declaration order, constructors in declaration order, their parameters.
+  MetaMethodCount,
+  MetaMethodName,
+  // <T, I, Trait>: 0 static, 1 operator, 2 constexpr, 3 virtual, 4 mutable
+  // receiver, 5 public.
+  MetaMethodTrait,
+  MetaMethodParameterCount,
+  MetaParameterName,
+  MetaConstructorCount,
+  MetaConstructorParameterCount,
+  MetaConstructorParameterName,
+  // <T, Kind, I>: 0 type, 1 field, 2 enumerator, 3 method, 4 constructor.
+  MetaDeclarationLine,
+  MetaDeclarationFile,
   // Attribute value access: semantics records the attribute's constant on the
   // call and aliases it to a construction of the attribute struct.
   MetaFieldAttribute,
@@ -364,6 +379,9 @@ enum class IntrinsicKind {
   // denotes and aliases the call to it.
   MetaFieldGet,
   MetaFieldGetMut,
+  // Structural construction: semantics selects the subject's designated
+  // constructor for the call's arguments, so the call is a construction.
+  MetaConstruct,
   SimdAdd,
   SimdSubtract,
   SimdMultiply,
