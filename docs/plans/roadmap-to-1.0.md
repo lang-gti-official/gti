@@ -661,6 +661,14 @@ or a second template metaprogramming language merely to describe them.
   applies them after exact inference, and carries their complete canonical
   identity into concrete reanalysis. Do not widen exact specialization into
   partial or constraint-selected specialization as a side effect.
+- Compile-time reflection is delivered as the public `<std/meta>` library
+  over compiler-private operations: `constexpr for` over compile-time
+  sequences, type/field/enumerator/method/constructor/parameter metaobjects,
+  declared attributes with constant arguments, `[[reflect_private]]` and
+  `std::meta::reflectable`, and structural construction through the
+  designated-construction model. Queries fold to constants and leave no
+  run-time representation; invocation through metaobjects, runtime
+  reflection, source generation and layout are not part of it.
 
 This is library-enabling work, especially for constants and generic API
 ergonomics, but it is not allowed to block the owner-tied container and
@@ -998,7 +1006,9 @@ building the GTI compiler.
 - mutable, reference, nested, inherited, or partial-move structured bindings
   whose copy/borrow/move behavior is not represented by the current
   hidden-owner and projected-place model;
-- coroutines, generators, and reflection;
+- coroutines, generators, runtime reflection and source generation
+  (compile-time reflection over declarations is delivered; see the
+  bounded compile-time programming section);
 - unrestricted manual allocation/lifetime policy, varargs, packing/bit-fields,
   and freestanding execution beyond the bounded systems-readiness clients;
 - binary modules, separate compilation, and a stable native GTI ABI.

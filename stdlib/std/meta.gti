@@ -32,6 +32,17 @@ uint64_t meta_payload_count<E, uint64_t I>();
 std::string_view meta_payload_name<E, uint64_t I, uint64_t P>();
 uint64_t meta_base_count<T>();
 uint64_t meta_argument_count<T>();
+uint64_t meta_method_count<T>();
+std::string_view meta_method_name<T, uint64_t I>();
+bool meta_method_trait<T, uint64_t I, uint64_t Trait>();
+uint64_t meta_method_parameter_count<T, uint64_t I>();
+std::string_view meta_parameter_name<T, uint64_t I, uint64_t P>();
+uint64_t meta_constructor_count<T>();
+uint64_t meta_constructor_parameter_count<T, uint64_t I>();
+std::string_view meta_constructor_parameter_name<T, uint64_t I, uint64_t P>();
+uint64_t meta_declaration_line<T, uint64_t Kind, uint64_t I>();
+std::string_view meta_declaration_file<T>();
+T meta_construct<T, Values...>(Values... values);
 @compiler_constraint("meta_reflectable") concept meta_reflectable_capability<T>;
 }
 
@@ -101,6 +112,37 @@ public:
 /// instance `T`; empty for a non-generic type.
 @compiler_type("meta_argument_list") struct argument_list<T> {};
 
+/// The first element type of a non-empty `list`, and the `list` of the rest:
+/// computed types that let generic code peel a sequence one element at a time.
+@compiler_type("meta_list_first") struct list_first<L> {};
+@compiler_type("meta_list_rest") struct list_rest<L> {};
+
+/// `list<method<T, 0>, ...>` over the methods of `T` in declaration order:
+/// operators and static methods included, constructors and destructors not.
+@compiler_type("meta_method_list") struct method_list<T> {};
+
+/// The subset of `method_list<T>` whose methods are overloaded operators.
+@compiler_type("meta_operator_list") struct operator_list<T> {};
+
+/// `list<parameter<T, I, 0>, ...>` over the parameters of method `I`.
+@compiler_type("meta_parameter_list") struct parameter_list<T, uint64_t I> {};
+
+/// The exact type of parameter `P` of method `I` of `T`.
+@compiler_type("meta_parameter_type") struct parameter_type<T, uint64_t I, uint64_t P> {};
+
+/// The exact return type of method `I` of `T`.
+@compiler_type("meta_return_type") struct return_type<T, uint64_t I> {};
+
+/// `list<constructor<T, 0>, ...>` over the declared constructors of `T`.
+@compiler_type("meta_constructor_list") struct constructor_list<T> {};
+
+/// `list<constructor_parameter<T, I, 0>, ...>` over constructor `I`'s
+/// parameters.
+@compiler_type("meta_constructor_parameter_list") struct constructor_parameter_list<T, uint64_t I> {};
+
+/// The exact type of parameter `P` of constructor `I` of `T`.
+@compiler_type("meta_constructor_parameter_type") struct constructor_parameter_type<T, uint64_t I, uint64_t P> {};
+
 /// Satisfied when every instance field of `T` is readable through
 /// reflection: `T` is a struct or class whose instance fields are all public,
 /// or one declared `[[reflect_private]]`.
@@ -154,6 +196,80 @@ public:
   constexpr uint64_t argument_count() { return gti_internal::meta_argument_count<T>(); }
   /// The type arguments of `T`, as a `list` of `type` metaobjects.
   constexpr argument_list<T> arguments() { return argument_list<T>(); }
+  /// The number of methods declared by `T` (operators and static methods
+  /// included; constructors and destructors not).
+  constexpr uint64_t method_count() { return gti_internal::meta_method_count<T>(); }
+  /// The methods of `T`, as a `list` of `method` metaobjects.
+  constexpr method_list<T> methods() { return method_list<T>(); }
+  /// The overloaded operators of `T`, as a `list` of `method` metaobjects.
+  constexpr operator_list<T> operators() { return operator_list<T>(); }
+  /// The number of constructors `T` declares (generated ones excluded).
+  constexpr uint64_t constructor_count() { return gti_internal::meta_constructor_count<T>(); }
+  /// The declared constructors of `T`, as a `list` of `constructor`
+  /// metaobjects.
+  constexpr constructor_list<T> constructors() { return constructor_list<T>(); }
+  /// The source line of the declaration of `T`; 0 when the frontend retains
+  /// none.
+  constexpr uint64_t line() { return gti_internal::meta_declaration_line<T, 0, 0>(); }
+  /// The source file of the declaration of `T`, as the compiler names it.
+  constexpr std::string_view file() { return gti_internal::meta_declaration_file<T>(); }
+};
+
+/// Describes parameter `P` of method `I` of `T`.
+@compiler_type("meta_parameter") struct parameter<T, uint64_t I, uint64_t P> {
+public:
+  constexpr parameter() {}
+  constexpr std::string_view name() { return gti_internal::meta_parameter_name<T, I, P>(); }
+  constexpr uint64_t index() { return P; }
+  constexpr type<parameter_type<T, I, P>> type() {
+    return std::meta::type<parameter_type<T, I, P>>();
+  }
+};
+
+/// Describes method `I`, in declaration order, of `T`: metadata only.
+/// Invocation through a metaobject is a separate capability.
+@compiler_type("meta_method") struct method<T, uint64_t I> {
+public:
+  constexpr method() {}
+  /// The declared name, or the operator spelling (`operator+`).
+  constexpr std::string_view name() { return gti_internal::meta_method_name<T, I>(); }
+  constexpr uint64_t index() { return I; }
+  constexpr bool is_static() { return gti_internal::meta_method_trait<T, I, 0>(); }
+  constexpr bool is_operator() { return gti_internal::meta_method_trait<T, I, 1>(); }
+  constexpr bool is_constexpr() { return gti_internal::meta_method_trait<T, I, 2>(); }
+  constexpr bool is_virtual() { return gti_internal::meta_method_trait<T, I, 3>(); }
+  /// Whether the method takes its receiver mutably.
+  constexpr bool is_mutating() { return gti_internal::meta_method_trait<T, I, 4>(); }
+  constexpr bool is_public() { return gti_internal::meta_method_trait<T, I, 5>(); }
+  constexpr uint64_t parameter_count() { return gti_internal::meta_method_parameter_count<T, I>(); }
+  constexpr parameter_list<T, I> parameters() { return parameter_list<T, I>(); }
+  constexpr type<return_type<T, I>> result() {
+    return std::meta::type<return_type<T, I>>();
+  }
+  constexpr uint64_t line() { return gti_internal::meta_declaration_line<T, 3, I>(); }
+};
+
+/// Describes parameter `P` of constructor `I` of `T`.
+@compiler_type("meta_constructor_parameter") struct constructor_parameter<T, uint64_t I, uint64_t P> {
+public:
+  constexpr constructor_parameter() {}
+  constexpr std::string_view name() { return gti_internal::meta_constructor_parameter_name<T, I, P>(); }
+  constexpr uint64_t index() { return P; }
+  constexpr type<constructor_parameter_type<T, I, P>> type() {
+    return std::meta::type<constructor_parameter_type<T, I, P>>();
+  }
+};
+
+/// Describes declared constructor `I` of `T`: metadata only.
+@compiler_type("meta_constructor") struct constructor<T, uint64_t I> {
+public:
+  constexpr constructor() {}
+  constexpr uint64_t index() { return I; }
+  constexpr uint64_t parameter_count() { return gti_internal::meta_constructor_parameter_count<T, I>(); }
+  constexpr constructor_parameter_list<T, I> parameters() {
+    return constructor_parameter_list<T, I>();
+  }
+  constexpr uint64_t line() { return gti_internal::meta_declaration_line<T, 4, I>(); }
 };
 
 /// Describes payload field `P` of enumerator `I` of the payload enum `E`.
@@ -185,6 +301,8 @@ public:
   constexpr uint64_t payload_count() { return gti_internal::meta_payload_count<E, I>(); }
   /// The payload fields, as a `list` of `payload_field` metaobjects.
   constexpr payload_list<E, I> payload_fields() { return payload_list<E, I>(); }
+  /// The source line of the enumerator's declaration.
+  constexpr uint64_t line() { return gti_internal::meta_declaration_line<E, 2, I>(); }
 };
 
 /// Describes instance field `I`, in declaration order, of `T`.
@@ -215,6 +333,8 @@ public:
   A attribute<A>();
   /// The attribute types applied to this field, as a `list`.
   constexpr field_attributes<T, I> attributes() { return field_attributes<T, I>(); }
+  /// The source line of the field's declaration.
+  constexpr uint64_t line() { return gti_internal::meta_declaration_line<T, 1, I>(); }
 };
 
 /// The instance fields of `T`, in declaration order.
@@ -238,6 +358,39 @@ constexpr base_list<T> bases_of<T>() { return base_list<T>(); }
 
 /// The type arguments of a generic instance `T`, as `type` metaobjects.
 constexpr argument_list<T> arguments_of<T>() { return argument_list<T>(); }
+
+/// The methods and declared constructors of `T`, as metaobjects.
+constexpr method_list<T> methods_of<T>() { return method_list<T>(); }
+constexpr operator_list<T> operators_of<T>() { return operator_list<T>(); }
+constexpr constructor_list<T> constructors_of<T>() { return constructor_list<T>(); }
+
+namespace detail {
+/// Produces the fields in declaration order, peeling `Remaining` (a `list` of
+/// field metaobjects) one element at a time and prepending each value to the
+/// collected pack (a pack grows only at its front), so the compiler-private
+/// construction receives the values last field first.
+expected<T, E> construct_fields<T, E, Producer, Remaining, Values...>(
+    mut Producer& producer, Values... collected) {
+  if constexpr (std::meta::type<Remaining>().argument_count() == uint64_t(0)) {
+    return gti_internal::meta_construct<T>(collected...);
+  } else {
+    auto produced = ?producer.produce(list_first<Remaining>());
+    return construct_fields<T, E, Producer, list_rest<Remaining>>(
+        producer, std::move(produced), collected...);
+  }
+}
+}
+
+/// Structural construction: `producer.produce(field)` yields
+/// `expected<field_type, E>` for every instance field of `T` in declaration
+/// order, and the values construct one `T` under ordinary initialization.
+/// The first failure stops production and is returned; values produced so
+/// far are cleaned up by the ordinary rollback. `T` must be eligible for
+/// designated construction (`GTI-S2118` otherwise); constructors and
+/// invariants are never bypassed.
+expected<T, E> construct<T, E, Producer>(mut Producer& producer) {
+  return detail::construct_fields<T, E, Producer, field_list<T>>(producer);
+}
 
 constexpr type<T> type_of<T>() { return type<T>(); }
 constexpr std::string_view name_of<T>() { return gti_internal::meta_type_name<T>(); }
