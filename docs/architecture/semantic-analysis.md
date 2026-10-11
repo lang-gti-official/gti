@@ -2092,7 +2092,10 @@ unchanged. Constructor-body edits require the canonical explicit field-write
 schedule. Unsupported executed operations in a mutation-capable staged closure
 are authoritative failures, not an invitation to retry a value-copy AST
 interpretation. The failure is mapped back through HIR to the executing source
-expression, including helpers in another unit. Existing reflection expansion
+expression, including helpers in another unit.
+An AST compatibility caller cannot independently stage a mutable callee: its
+snapshots do not retain writable origins. The enclosing body must run as MIR.
+Existing reflection expansion
 and metadata resolution precede this service and are not reimplemented here.
 Constructor reference parameters, declaration-default/in-place constructor
 schedules and stored-reference carriers retain their earlier boundaries.

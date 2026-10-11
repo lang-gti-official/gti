@@ -11753,6 +11753,25 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
         "invalid parameter list.");
   }
 
+  // An AST compatibility frame owns value snapshots, not MIR constant-cell
+  // origins. Staging only its mutable callee would lose writes to that caller.
+  // Execute the whole enclosing body as MIR or reject; a successful isolated
+  // callee evaluation is not permission to copy-interpret a checked mutation.
+  const bool mutableOrigin =
+      function.receiverMutability() == ReceiverMutability::Mutable ||
+      std::any_of(function.parameters().begin(), function.parameters().end(),
+                  [&](const Parameter &parameter) {
+                    const auto type = typeOf(parameter);
+                    return type.kind == SemanticType::Reference &&
+                           type.referenceAccess == AccessMode::Mutable;
+                  });
+  if (context.callDepth != 0 && mutableOrigin) {
+    return constexprFailure(
+        callSite, ConstantEvaluationFailure::UnsupportedExpression,
+        "Mutable constexpr calls require their enclosing body to execute as "
+        "verified MIR, not an AST compatibility frame.");
+  }
+
   if (auto staged = executeStagedConstexpr(&function, arguments, substitution,
                                            receiver, callSite, context)) {
     return std::move(*staged);
