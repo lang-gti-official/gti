@@ -104,17 +104,6 @@ def main() -> None:
         "toolchain installer is not pinned to canonical Gitea releases",
     )
 
-    ci = text(root, ".gitea/workflows/ci.yml")
-    expect(
-        "GTI_HEAD_SHA: ${{ gitea.sha }}" in ci
-        and "GITHUB_SHA" not in ci
-        and "npm run test:source-text" in ci
-        and "--target gti_docgen" in ci
-        and "cmp build/documentation-index.json" in ci
-        and "working-directory: reference" not in ci
-        and "pnpm" not in ci,
-        "CI lost Gitea revision, Tree-sitter, or compiler-documentation authority",
-    )
     expect(
         not any(relative.startswith("reference/") for relative in tracked),
         "the website must live only in gti-lang/gti-reference, not compiler source",
@@ -130,85 +119,27 @@ def main() -> None:
         and "Repository Ownership And Migration" in reference_ownership,
         "the standalone website's ownership/migration rationale is undocumented",
     )
-    release = text(root, ".gitea/workflows/release.yml")
-    expect(
-        not (root / ".gitea/workflows/nightly.yml").exists(),
-        "nightly and stable must reuse one bundled build, not duplicate workflows",
-    )
-    nightly = release.split("  publish-nightly:\n", 1)[-1]
-    expect(
-        "branches:\n      - main" in release
-        and "git push --force origin refs/tags/nightly" in nightly
-        and "admit-nightly" in nightly
-        and "group: gti-nightly-publication" in nightly,
-        "nightly is not driven from authoritative Gitea main",
-    )
-    upload = nightly.find("uses: https://gitea.com/actions/gitea-release-action@")
-    prune = nightly.find("python3 scripts/sync_gitea_release_assets.py")
-    expect(
-        0 <= upload < prune,
-        "nightly must upload current assets before pruning stale assets",
-    )
-
-    expect(
-        "branches:\n      - main" in release
-        and "scripts/resolve_release_source.py source" in release
-        and "if: needs.metadata.outputs.stable == 'true'" in release
-        and "tag_name: ${{ needs.metadata.outputs.tag }}" in release
-        and "managed_thread_runtime_test.py" in release
-        and "atomic_runtime_test.py" in release,
-        "stable release is not owned by VERSION changes on Gitea main",
-    )
-    expect(
-        "-DCMAKE_BUILD_TYPE=Debug" not in ci
-        and "-DCMAKE_BUILD_TYPE=RelWithDebInfo" in ci
-        and '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"' in ci,
-        "compiler sanitizer CI must test an optimized compiler with symbols",
-    )
-    for workflow, contents in (
-        ("ci.yml", ci),
-        ("release.yml", release),
+    # Gitea Actions are archived (2026-10-11): the self-hosted runner could not
+    # carry the suite, and CI hosting moves to the gti-lang GitHub
+    # organization. The record stays readable; nothing under .gitea executes.
+    gitea_files = [path for path in tracked if path.startswith(".gitea/")]
+    expect(not gitea_files, f"archived Gitea Actions metadata remains live: {gitea_files}")
+    for relative in (
+        "docs/plans/archive/gitea-actions/README.md",
+        "docs/plans/archive/gitea-actions/workflows/ci.yml",
+        "docs/plans/archive/gitea-actions/workflows/release.yml",
     ):
-        expect(
-            "bash scripts/configure_ci_resources.sh" in contents
-            and "vars.GTI_TEST_JOBS" in contents
-            and "_NPROCESSORS_ONLN" not in contents
-            and 'ctest' in contents
-            and '--parallel "${GTI_TEST_JOBS}"' in contents,
-            f"workflow lost explicit compile/test resource budgets: {workflow}",
-        )
-        expect(
-            "runs-on: ubuntu-latest" in contents and "ubuntu-24.04" not in contents,
-            f"workflow lost its floating Ubuntu runner label: {workflow}",
-        )
-        expect(
-            "scripts/check_ci_sanitizers.py --sanitizer address,undefined" in contents
-            and "-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF" in contents
-            and "--sanitizer thread" not in contents,
-            f"workflow lost required ASan/UBSan preflight or explicit TSAN "
-            f"capability policy: {workflow}",
-        )
-        actions = ACTION_USE.findall(contents)
-        expect(actions, f"Gitea workflow has no auditable action uses: {workflow}")
-        for action, revision in actions:
-            expect(
-                action.startswith("https://gitea.com/"),
-                f"Gitea workflow action is not fully qualified: {workflow}: {action}",
-            )
-            expect(
-                re.fullmatch(r"[0-9a-f]{40}", revision) is not None,
-                f"Gitea workflow action is not commit-pinned: "
-                f"{workflow}: {action}@{revision}",
-            )
+        expect((root / relative).is_file(), f"archived Gitea workflow record is missing: {relative}")
     expect(
-        (root / ".gitea" / "ISSUE_TEMPLATE" / "bug_report.md").is_file(),
-        "Gitea issue template is missing",
+        "archived 2026-10-11" in text(root, "docs/plans/archive/gitea-actions/README.md"),
+        "the archived Gitea Actions record does not say it is archived",
     )
-
+    readme_badges = re.findall(r"actions/workflows/\S+/badge\.svg", readme)
+    expect(not readme_badges, f"README advertises archived workflow status: {readme_badges}")
     version_check = text(root, "scripts/check_release_version.py")
     expect(
-        '".gitea/workflows/release.yml"' in version_check,
-        "release-version policy does not classify the Gitea release workflow",
+        ".gitea/" not in version_check,
+        "release-version policy still classifies an archived Gitea workflow as shipped",
     )
     for skill in (
         ".codex/skills/finish-release/SKILL.md",

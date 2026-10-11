@@ -34,3 +34,6 @@ debugging and fuzzing tools cite that established path.
 - [Mutable temporary receivers](mutable-temporary-receivers.md)
 - [Read-only receiver diagnostic precision](read-only-receiver-diagnostics.md)
 - [Static assertions](static-assertions.md)
+- [Gitea Actions workflows](gitea-actions/README.md), archived 2026-10-11 when CI
+  hosting moved to the `gti-lang` GitHub organization; the earlier
+  [GitHub Actions workflows](github-actions/) they replaced sit beside them

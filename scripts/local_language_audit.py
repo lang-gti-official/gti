@@ -696,11 +696,11 @@ def verify_workflow_isolation() -> None:
         "local_language_audit.py",
         "local-language-audit",
     )
-    checked = [
-        REPOSITORY_ROOT / "CMakeLists.txt",
-        REPOSITORY_ROOT / ".gitea" / "workflows" / "ci.yml",
-        REPOSITORY_ROOT / ".gitea" / "workflows" / "release.yml",
-    ]
+    # Whatever host runs the workflows, the optional audit stays out of them.
+    # The Gitea workflows are archived; GitHub Actions are the planned host.
+    checked = [REPOSITORY_ROOT / "CMakeLists.txt"]
+    for host in (".gitea", ".github"):
+        checked.extend(sorted((REPOSITORY_ROOT / host / "workflows").glob("*.yml")))
     for path in checked:
         text = path.read_text(encoding="utf-8")
         found = [reference for reference in forbidden_references if reference in text]
@@ -708,7 +708,7 @@ def verify_workflow_isolation() -> None:
             raise AuditFailure(
                 f"optional local audit is wired into {path}: {', '.join(found)}"
             )
-    print("PASS optional audit is absent from CMake, CI, and release workflows")
+    print("PASS optional audit is absent from CMake and every hosted workflow")
 
 
 def parse_arguments() -> argparse.Namespace:

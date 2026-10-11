@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Exercise exact release/channel admission and shared-build workflow contracts."""
+"""Exercise exact release/channel admission and shared release packaging.
+
+The Gitea workflows that drove them are archived under
+docs/plans/archive/gitea-actions/; the scripts and CMake they called remain
+the contracts a replacement workflow must satisfy.
+"""
 
 from __future__ import annotations
 
@@ -19,46 +24,6 @@ def run(command, cwd, success=True):
     assert (result.returncode == 0) == success, (
         command, result.returncode, result.stdout, result.stderr)
     return result.stdout.strip()
-
-
-def workflow_contract(root):
-    release = (root / ".gitea/workflows/release.yml").read_text()
-    ci = (root / ".gitea/workflows/ci.yml").read_text()
-    assert not (root / ".gitea/workflows/nightly.yml").exists(), "duplicate bundled workflow"
-    assert "branches:\n      - main" in release and "paths:" not in release
-    assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"
-    assert release.count('run: cmake --build build --config Release --parallel "${GTI_JOBS}"') == 1
-    assert release.count("name: Test build tree") == 1, "channels must share full CTest"
-    assert release.count("name: Test installed toolchain") == 1
-    assert "cancel-in-progress: false" in release
-    assert "group: toolchain-${{ gitea.sha }}" in release, "new main must not cancel stable"
-    package = release.split("  package:\n", 1)[1].split("  publish-stable:\n", 1)[0]
-    stable = release.split("  publish-stable:\n", 1)[1].split("  publish-nightly:\n", 1)[0]
-    nightly = release.split("  publish-nightly:\n", 1)[1]
-    assert "if: needs.metadata.outputs.stable == 'true'" in stable
-    assert "refs/tags/${GTI_RELEASE_TAG}" in stable and "--force origin refs/tags/" not in stable
-    assert package.index("-DGTI_OUTPUT_DIR=${{ gitea.workspace }}/dist/stable") < package.index("-DGTI_CHANNEL=nightly")
-    assert "path: dist/stable/*" in package and "path: dist/nightly/*" in package
-    assert 'mktemp -d "${GTI_RUNNER_TEMP}/gti-stage.XXXXXXXX"' in package
-    assert package.count("-DGTI_STAGE_DIR=${{ env.GTI_STAGE_DIRECTORY }}") == 2
-    assert "-DGTI_BUILD_ID=${{ needs.metadata.outputs.sha }}" in package
-    assert "group: gti-nightly-publication" in nightly
-    assert nightly.index("Download nightly archive") < nightly.index("admit-nightly") < nightly.index("git tag --force nightly")
-    assert nightly.count("if: steps.admission.outputs.publish == 'true'") == 3
-    assert nightly.index("Publish nightly release") < nightly.index("scripts/sync_gitea_release_assets.py")
-    assert "documentation-index:" not in ci, "documentation must reuse the native compiler"
-    assert "build/gti_docgen --stdlib stdlib" in ci
-    for contents, profiles in ((ci, ("native", "sanitizers")), (release, ("release",))):
-        assert contents.count("bash scripts/configure_ci_cache.sh") == len(profiles)
-        assert contents.count("actions/cache/restore@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2") == len(profiles)
-        assert contents.count("actions/cache/save@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2") == len(profiles)
-        assert contents.count("if: always() && steps.cache.outputs.cache-primary-key") == len(profiles)
-        assert "ccache --show-stats" in contents and "save-always:" not in contents
-        for profile in profiles:
-            prefix = f"gti-ccache-v1-${{{{ runner.os }}}}-${{{{ runner.arch }}}}-{profile}-"
-            assert prefix in contents
-        assert "path: ${{ env.CCACHE_DIR }}" in contents
-        assert "CMakeFiles/gti_driver.dir/src/driver/build.cpp.o" in contents
 
 
 def source_contract(root):
@@ -211,11 +176,10 @@ def main():
     parser.add_argument("--cmake", type=pathlib.Path)
     args = parser.parse_args()
     root = args.root.resolve()
-    workflow_contract(root)
     source_contract(root)
     if args.cmake:
         archive_contract(root, args.cmake.resolve())
-    print("Shared release build, exact source/version/tag checks, and stale-nightly admission passed")
+    print("Exact source/version/tag checks, stale-nightly admission, and shared release packaging passed")
 
 
 if __name__ == "__main__":
