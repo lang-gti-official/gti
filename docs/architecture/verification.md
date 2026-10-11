@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Record-published field initializers under optimization (0.398.5)
+## Record-published field initializers under optimization (0.398.6)
 
 - **Defect.** A literal-backed `std::string_view` field default read back
   empty at `-O1` and above, both directly and through a by-reference read. The
