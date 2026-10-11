@@ -338,6 +338,10 @@
       "suite": "text"
     },
     {
+      "name": "testOwnedArgumentMemberInitializer",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },

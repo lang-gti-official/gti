@@ -1467,9 +1467,15 @@ transformed result retires the moved-from representation right after it. A
 plain Return leaves that retirement to the representation slot's scope exit,
 since nothing executes after the return. A class value reaches a constructor
 parameter through MIR's prepared-parameter place instead, so only the Expected
-wrapper, which MIR gives no place, uses this consumer. MIR lowering
-separately rejects an owning Expected payload consumed by a member-initializer
-construction.
+wrapper, which MIR gives no place, uses this consumer. An owning Expected
+result consumed by a member-initializer construction, as in
+`held(holder(make(ok)))`, keeps its value-rooted transfer slot instead: the
+member's constructor takes the slot's wrapper as its by-value argument, and
+the constructor field's result slot admits that construction because its only
+lifecycle event hands the argument's own value drop to the constructor, as a
+prepared argument would. A failed producer leaves the slot unconstructed, and
+a failing member constructor already owns its parameter, so the result is
+destroyed exactly once on every path.
 
 A cleanup-free class construction whose constructor can fail, consumed by one
 adjacent `Assign` into an existing binding, uses the same representation-only

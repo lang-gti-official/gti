@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.400.6 — Member initializers taking owning `expected` results
+
+- A member initializer that constructs its field from an `expected<T, E>`
+  call result whose payload owns resources, as in
+  `outer(bool ok) : held(holder(make_named(ok))) {}` with a `std::string` in
+  the payload, now builds. The result is moved into the member's constructor
+  and destroyed exactly once, including when that constructor or a later
+  member fails. Such constructors used to fail MIR verification with
+  GTI-B0001.
+
 ## 0.400.5 — `expected` results in member initializers and conditionals
 
 - A constructor's `expected<T, E>` field can now be initialized directly from
