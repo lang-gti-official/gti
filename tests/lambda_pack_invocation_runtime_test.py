@@ -52,7 +52,17 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
             built = subprocess.run(command, capture_output=True, text=True,
                                    timeout=120, env=environment)
             if built.returncode != 0:
-                raise AssertionError((name, label, built.stdout, built.stderr))
+                # Keep the compiler's saved reason in detached-run evidence,
+                # rather than leaving only a temporary remote path in the log.
+                details = ""
+                prefix = "gti: backend diagnostics saved at "
+                for line in built.stderr.splitlines():
+                    if line.startswith(prefix):
+                        try:
+                            details += pathlib.Path(line[len(prefix):]).read_text()
+                        except OSError as error:
+                            details += f"Could not read backend diagnostics: {error}\n"
+                raise AssertionError((name, label, built.stdout, built.stderr, details))
             return name, label, binary
 
         def execute_fixture(compiled):

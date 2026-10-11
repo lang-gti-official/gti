@@ -43,6 +43,54 @@ interface move_function_target<R, Args...> {
   R invoke(Args... args);
 };
 
+// Capability-qualified erasure retains a proof about every possible target.
+// It does not grant concurrent invocation: these interfaces require transfer
+// only, and implementations prove it through their ordinary captured fields.
+[[transfer]] interface transfer_function_target<R, Args...> {
+  R invoke(Args... args);
+};
+
+class transfer_function_model<std::transferable Callable, R, Args...>
+    : public transfer_function_target<R, Args...> {
+  Callable callable;
+public:
+  transfer_function_model(Callable value) : callable(std::move(value)) {}
+  R invoke(Args... args) override { return this.callable(args...); }
+};
+
+[[transfer]] interface mut_transfer_function_target<R, Args...> {
+  R invoke(Args... args) mut;
+};
+
+class mut_transfer_function_model<std::transferable Callable, R, Args...>
+    : public mut_transfer_function_target<R, Args...> {
+  mut Callable callable;
+public:
+  mut_transfer_function_model(Callable value) : callable(std::move(value)) {}
+  R invoke(Args... args) mut override { return this.callable(args...); }
+};
+
+[[transfer]] interface once_transfer_function_target<R, Args...> {
+  R operator()(Args... args) &&;
+};
+
+class once_transfer_function_model<std::transferable Callable, R, Args...>
+    : public once_transfer_function_target<R, Args...> {
+  mut Callable callable;
+public:
+  once_transfer_function_model(Callable value) : callable(std::move(value)) {}
+  R operator()(Args... args) && override { return std::move(this.callable)(args...); }
+};
+
+std::unique_ptr<once_transfer_function_target<R, Args...>>
+make_once_transfer_function_target<R, std::transferable Callable, Args...>(
+    Callable callable, function_signature<R(Args...) &&>& signature) {
+  auto model = std::make_unique<once_transfer_function_model<Callable, R, Args...>>(
+      std::move(callable));
+  return std::upcast_unique<once_transfer_function_target<R, Args...>,
+      once_transfer_function_model<Callable, R, Args...>>(std::move(model));
+}
+
 class move_function_model<Callable, R, Args...> : public move_function_target<R, Args...> {
   Callable callable;
 public:
@@ -120,6 +168,60 @@ public:
 }
 
 namespace std {
+  /// A move-only owned callback whose erased target remains transferable.
+  /// Transfer does not grant concurrent invocation or shared mutation. Small
+  /// eligible repeatable targets use the same inline slot as ordinary functions.
+  class transfer_function<R(Args...)> {
+    mut std::inline_polymorphic<gti_internal::transfer_function_target<R, Args...>, 32, 8> target{};
+  public:
+    transfer_function() {}
+    transfer_function<std::transferable Callable>(Callable callable) {
+      this.target.replace(gti_internal::transfer_function_model<Callable, R, Args...>(std::move(callable)));
+    }
+    bool empty() { return !this.target.has_value(); }
+    void reset() mut { this.target.reset(); }
+    void replace<std::transferable Callable>(Callable callable) mut {
+      this.target.replace(gti_internal::transfer_function_model<Callable, R, Args...>(std::move(callable)));
+    }
+    R operator()(Args... args) { return this.target.get().invoke(args...); }
+  };
+
+  /// A transferable callback with exclusive, repeatable invocation.
+  class transfer_function<R(Args...) mut> {
+    mut std::inline_polymorphic<gti_internal::mut_transfer_function_target<R, Args...>, 32, 8> target{};
+  public:
+    transfer_function() {}
+    transfer_function<std::transferable Callable>(Callable callable) {
+      this.target.replace(gti_internal::mut_transfer_function_model<Callable, R, Args...>(std::move(callable)));
+    }
+    bool empty() { return !this.target.has_value(); }
+    void reset() mut { this.target.reset(); }
+    void replace<std::transferable Callable>(Callable callable) mut {
+      this.target.replace(gti_internal::mut_transfer_function_model<Callable, R, Args...>(std::move(callable)));
+    }
+    R operator()(Args... args) mut { return this.target.get().invoke(args...); }
+  };
+
+  /// A transferable callback invoked once through consuming access. Like the
+  /// ordinary once-callable owner, its target is boxed so consuming projection
+  /// uses the existing unique-owner lifetime contract.
+  class transfer_function<R(Args...) &&> {
+    mut std::unique_ptr<gti_internal::once_transfer_function_target<R, Args...>> target = nullptr;
+  public:
+    transfer_function() {}
+    transfer_function<std::transferable Callable>(Callable callable) {
+      gti_internal::function_signature<R(Args...) &&> signature{};
+      this.target = gti_internal::make_once_transfer_function_target(std::move(callable), signature);
+    }
+    bool empty() { return this.target == nullptr; }
+    void reset() mut { this.target.reset(); }
+    void replace<std::transferable Callable>(Callable callable) mut {
+      gti_internal::function_signature<R(Args...) &&> signature{};
+      this.target = gti_internal::make_once_transfer_function_target(std::move(callable), signature);
+    }
+    R operator()(Args... args) && { return std::move(*this.target)(args...); }
+  };
+
   /// Own a callback invoked once through consuming access. An explicit clone
   /// creates another independently consumable target before invocation.
   class function<R(Args...) &&> {

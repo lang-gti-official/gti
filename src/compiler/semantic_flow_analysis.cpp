@@ -2153,6 +2153,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             DefinedFailureDetail::MutexLock);
           break;
         case IntrinsicKind::ThreadJoin:
+        case IntrinsicKind::ThreadScope:
           operation.propagation = FailurePropagationKind::TaskJoin;
           break;
         case IntrinsicKind::ThreadAutoJoin:

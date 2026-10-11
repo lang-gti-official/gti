@@ -1768,6 +1768,21 @@ private:
     return 0;
   }
 
+  [[nodiscard]] MirLoanId lifecycleLoanForPlace(const MirPlace &place) const {
+    if (place.root != MirPlaceRootKind::Binding)
+      return 0;
+    if (!place.projections.empty()) {
+      const auto found = packEntryLoans.find(place.id);
+      const auto *loan = found == packEntryLoans.end()
+                             ? nullptr
+                             : output.findLoan(found->second);
+      return loan != nullptr && loan->lifecycleBound && !loan->escapes
+                 ? loan->id
+                 : MirLoanId{0};
+    }
+    return lifecycleLoanForBinding(place.binding);
+  }
+
   [[nodiscard]] MirTemporaryCarrierDependency
   temporaryReceiverCarrier(const MirPlace &place) const {
     const auto carrier = findMirTemporaryCarrierDependency(output, place);
@@ -2000,10 +2015,7 @@ private:
         valid = false;
         continue;
       }
-      const MirLoanId lifecycleLoan =
-          place->root == MirPlaceRootKind::Binding
-              ? lifecycleLoanForBinding(place->binding)
-              : 0;
+      const MirLoanId lifecycleLoan = lifecycleLoanForPlace(*place);
       (void)appendFailureCleanupDrop(
           obligation, *drop,
           ExpressionInfo{.type = place->type,
@@ -2649,10 +2661,7 @@ private:
         valid = false;
         continue;
       }
-      const MirLoanId lifecycleLoan =
-          place->root == MirPlaceRootKind::Binding
-              ? lifecycleLoanForBinding(place->binding)
-              : 0;
+      const MirLoanId lifecycleLoan = lifecycleLoanForPlace(*place);
       (void)appendFailureCleanupDrop(
           entry.obligation, obligation->place,
           ExpressionInfo{.type = place->type,
@@ -3375,7 +3384,12 @@ private:
       }
     }
 
-    const MirPlaceId place = appendPlace(std::move(lowered));
+    const bool packElement =
+        lowered.projections.size() == 1 &&
+        lowered.projections.front().kind == MirProjectionKind::PackElement;
+    const MirPlaceId place = packElement
+                                 ? appendPackElementPlace(std::move(lowered))
+                                 : appendPlace(std::move(lowered));
     semanticLoanPlaces.emplace(loan.semanticLoan, place);
     return place;
   }
@@ -5841,6 +5855,7 @@ private:
     std::optional<MirOperand> sourceReceiver;
     std::optional<HirValueId> sourceReceiverValue;
     std::vector<MirOperand> sourceArguments;
+    std::vector<MirLoanId> argumentDependencies;
     std::vector<MirDropObligationId> preparedParameterDrops;
     std::vector<MirLoanId> temporaryArgumentLoans;
     sourceArguments.reserve(arguments.size());
@@ -6018,6 +6033,7 @@ private:
             argument.kind != HirCallInputKind::ReadTemporaryBorrow,
             argument.defaultArgument);
         call.operands.push_back(std::move(prepared.operand));
+        argumentDependencies.push_back(loanForValue(argument.value));
         if (prepared.loan != 0) {
           temporaryArgumentLoans.push_back(prepared.loan);
         }
@@ -6096,7 +6112,8 @@ private:
       const auto appendPreparedArgument =
           [&](HirValueId sourceValue, const SemanticType &parameter,
               HirCallInputKind kind, MirOperand sourceOperand,
-              MirDropObligationId movedBindingDrop = 0) {
+              MirDropObligationId movedBindingDrop = 0,
+              MirLoanId dependency = 0) {
             const std::size_t parameterIndex = call.operands.size();
             sourceArguments.push_back(sourceOperand);
             PreparedCallInput prepared = prepareCallInput(
@@ -6105,6 +6122,7 @@ private:
                 std::move(sourceOperand), true, false, movedBindingDrop);
             call.parameterTypes.push_back(parameter);
             call.operands.push_back(std::move(prepared.operand));
+            argumentDependencies.push_back(dependency);
             if (prepared.parameterDrop != 0) {
               preparedParameterDrops.push_back(prepared.parameterDrop);
             }
@@ -6146,7 +6164,8 @@ private:
                   : argumentOperand(input->id, parameter);
           preparedCallArgumentFailure = enclosingFailure;
           appendPreparedArgument(input->id, parameter, *kind,
-                                 std::move(sourceArgument));
+                                 std::move(sourceArgument), 0,
+                                 loanForValue(input->id));
           continue;
         }
 
@@ -6297,6 +6316,9 @@ private:
               std::move(sourceArgument),
               !borrowed && expansion.kind == HirCallInputKind::MoveValue
                   ? dropObligationForLocalPlace(output.findPlace(elementPlace))
+                  : 0,
+              packEntryLoans.contains(elementPlace)
+                  ? packEntryLoans.at(elementPlace)
                   : 0);
         }
         emittedValues.insert(input->id);
@@ -6311,6 +6333,7 @@ private:
                        : findValue(arguments[index])->info.type);
         call.parameterTypes.push_back(parameter);
         call.operands.push_back(argumentOperand(arguments[index], parameter));
+        argumentDependencies.push_back(loanForValue(arguments[index]));
         if (terminated()) {
           return;
         }
@@ -6698,6 +6721,39 @@ private:
                                         FailurePropagationKind::Constructor,
                                         value.constructorTarget)
                                   : FailurePropagationKind::None;
+    }
+    if (value.intrinsic == IntrinsicKind::ThreadScope) {
+      if (value.scopedThreadTasks.size() != call.operands.size() ||
+          argumentDependencies.size() != call.operands.size()) {
+        valid = false;
+      } else {
+        for (std::size_t index = 0; index < call.operands.size(); ++index) {
+          const auto *adapter =
+              program.findThreadTaskAdapter(value.scopedThreadTasks[index]);
+          const auto loan =
+              adapter != nullptr && !adapter->scopeDependencies.empty()
+                  ? argumentDependencies[index]
+                  : MirLoanId{0};
+          if (adapter == nullptr || !adapter->scoped ||
+              (!adapter->scopeDependencies.empty() && loan == 0))
+            valid = false;
+          if (const auto *entry = output.findLoan(loan);
+              entry != nullptr && entry->entry &&
+              entry->kind == MirLoanKind::Stored) {
+            // Entry contracts name reference-field paths relative to the
+            // owned carrier (including an exact pack element). Materialize
+            // those typed places so verification can replay each referent.
+            const auto contract = *entry;
+            (void)projectBorrowFields(contract.source,
+                                      contract.designatedFields);
+            for (const auto &dependency : contract.additionalDependencies)
+              (void)projectBorrowFields(contract.source,
+                                        dependency.designatedFields);
+          }
+          call.scopedThreadTasks.push_back(
+              {.adapter = value.scopedThreadTasks[index], .dependency = loan});
+        }
+      }
     }
     if (!value.callPlan && !expandsPack) {
       for (std::size_t index = 0; index < arguments.size(); ++index) {
@@ -9843,9 +9899,7 @@ private:
         cleanup.push_back(obligation);
       }
       const MirLoanId lifecycleLoan =
-          place != nullptr && place->root == MirPlaceRootKind::Binding
-              ? lifecycleLoanForBinding(place->binding)
-              : 0;
+          place != nullptr ? lifecycleLoanForPlace(*place) : 0;
       (void)appendNormalDrop(
           obligation, *drop,
           place == nullptr ? ExpressionInfo{}

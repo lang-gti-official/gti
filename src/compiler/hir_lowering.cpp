@@ -5488,9 +5488,26 @@ private:
         lifecycleValid = false;
       } else {
         value.packExpansionElements.reserve(value.info.type.arguments.size());
-        for (const SemanticType &element : value.info.type.arguments) {
+        for (std::size_t index = 0; index < value.info.type.arguments.size();
+             ++index) {
+          const SemanticType &element = value.info.type.arguments[index];
           const SemanticTypeTraits traits =
               instanceProvider->traitsFor(element);
+          const bool storedEntry =
+              element.kind == SemanticType::Class &&
+              std::any_of(model.loans().begin(), model.loans().end(),
+                          [&](const SemanticLoanInfo &loan) {
+                            return loan.entry &&
+                                   loan.kind == SemanticLoanKind::StoredValue &&
+                                   loan.place.root == value.symbol &&
+                                   !loan.place.receiver &&
+                                   loan.place.projections.size() == 1 &&
+                                   loan.place.projections.front().kind ==
+                                       PlaceProjectionKind::ConstantIndex &&
+                                   loan.place.projections.front().index ==
+                                       index &&
+                                   !loan.designatedFields.empty();
+                          });
           HirCallInputKind inputKind = HirCallInputKind::Value;
           if (element.kind == SemanticType::Reference) {
             inputKind = element.referenceAccess == AccessMode::Mutable
@@ -5500,11 +5517,13 @@ private:
             inputKind = HirCallInputKind::Value;
           } else if ((element.kind == SemanticType::Class ||
                       element.kind == SemanticType::Lambda) &&
-                     !traits.containsBorrowedState && traits.copyable) {
+                     (!traits.containsBorrowedState || storedEntry) &&
+                     traits.copyable) {
             inputKind = HirCallInputKind::CopyValue;
           } else if ((element.kind == SemanticType::Class ||
                       element.kind == SemanticType::Lambda) &&
-                     !traits.containsBorrowedState && traits.movable) {
+                     (!traits.containsBorrowedState || storedEntry) &&
+                     traits.movable) {
             inputKind = HirCallInputKind::MoveValue;
           } else {
             lifecycleValid = false;
@@ -5617,6 +5636,62 @@ private:
               qualifyBorrowPlace(*value.borrowPlace, body.placeDomain);
         }
         value.callableArguments = resolved->callableArguments;
+        if (resolved->intrinsic == IntrinsicKind::ThreadScope) {
+          ensurePlaceDomain(body);
+          if (resolved->scopedThreadTasks.size() !=
+              resolved->parameterTypes.size())
+            lifecycleValid = false;
+          for (std::size_t index = 0;
+               index < resolved->scopedThreadTasks.size(); ++index) {
+            const auto &task = resolved->scopedThreadTasks[index];
+            const auto &taskType = task.shape.taskType;
+            const auto &entry = task.shape.entry;
+            std::optional<HirFunctionInstanceId> functionTarget;
+            std::optional<HirLambdaId> lambdaTarget;
+            if (entry.function != 0 && entry.lambda == 0) {
+              if (const auto *target =
+                      baseModel->findFunction(entry.function)) {
+                const auto instance =
+                    enqueueFunction(*target,
+                                    taskType.kind == SemanticType::Class
+                                        ? taskType.arguments
+                                        : std::vector<SemanticType>{},
+                                    taskType.kind == SemanticType::Class
+                                        ? taskType.valueArguments
+                                        : std::vector<CompileTimeValue>{},
+                                    {}, {}, SemanticType::Void, {});
+                if (instance != 0)
+                  functionTarget = instance;
+              }
+            } else if (entry.lambda != 0 && entry.function == 0) {
+              if (const auto target = lambdaTargets.find(entry.lambda);
+                  target != lambdaTargets.end())
+                lambdaTarget = target->second;
+            }
+            if (functionTarget.has_value() == lambdaTarget.has_value()) {
+              lifecycleValid = false;
+              continue;
+            }
+            HirThreadTaskAdapter adapter{
+                .id = output.program.threadTasks.size() + 1,
+                .taskType = taskType,
+                .spawnValue = value.id,
+                .functionTarget = functionTarget,
+                .lambdaTarget = lambdaTarget,
+                .targetInvocation = entry.capability,
+                .invocation = CallableInvocationCapability::Once,
+                .scoped = true,
+                .scopeArgument = index,
+                .scopeDependencies = task.dependencies};
+            for (auto &dependency : adapter.scopeDependencies)
+              dependency.place =
+                  qualifyPlace(dependency.place, body.placeDomain);
+            value.scopedThreadTasks.push_back(adapter.id);
+            output.program.threadTasks.push_back(std::move(adapter));
+          }
+          value.synchronization.kind =
+              SynchronizationOperationKind::ThreadScope;
+        }
         if (resolved->intrinsic == IntrinsicKind::ThreadSpawn &&
             resolved->parameterTypes.size() == 2 &&
             resolved->parameterTypes[1] != SemanticType::Unknown &&

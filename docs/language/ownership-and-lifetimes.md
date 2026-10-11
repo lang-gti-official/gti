@@ -528,11 +528,18 @@ A mutable local loan may be reborrowed into a distinct mutable or read-only
 child loan. The child may itself be reborrowed, and a read-only child may gain
 ordinary read-only aliases of its own loan identity. A read-only loan cannot be
 upgraded into a mutable child. While any child remains active, its mutable
-parent remains live but suspended: reading, writing, moving, or borrowing
-through an overlapping part of the parent or owner place is rejected. Known-
+parent remains live but suspended: exclusive access, moving, or replacing
+an overlapping part of the parent or owner place is rejected. An ordinary
+reference without a stored-carrier dependency can still provide read-only
+access and further shared children while every overlapping child access is
+read-only. This revises the earlier blanket suspended-parent rejection;
+an exclusive child still rejects overlapping reads. Reading a borrowed
+carrier's physical shell does not itself authorize operations on its hidden
+exclusive dependencies. Known-
 disjoint named-field projections remain usable through that parent, and
-multiple children may coexist only when their stable places are known to be
-disjoint. Ending a child reactivates its parent only when no other active child
+multiple children may coexist when their accesses are shared or their stable
+places are known to be disjoint. Ending a child reactivates exclusive access
+through its parent only when no other active child
 remains, so the whole parent may be used again after the final child's proven
 endpoint. Nested children end from the inside out.
 
@@ -834,6 +841,11 @@ No source lifetime parameters are introduced. Constructor parameter bindings
 and unambiguous direct return expressions establish field-wise origin maps.
 A factory may reorder its parameters or bind several shared fields to one
 parameter; unused parameters do not become result dependencies. Ordinary
+local carriers may compose shared and exclusive references from independent
+reference parameters, including through nested carrier constructors. Those
+parameters provide the initial permissions, not competing loans; the resulting
+carrier still excludes conflicting use of each referent until its own borrow
+ends. A live overlapping child borrow is not exempted by this rule. Ordinary
 accessors and operators preserve the selected stored field's permission and
 origin rather than using the carrier's first dependency. Caller metadata is
 checked against the callee's actual returned origins before backend entry.
@@ -1226,6 +1238,12 @@ types describe invocation arguments, not stored borrowed state. The existing
 managed-thread boundary retains its once-task contract. None of this exposes a
 native address or allows an unsafe function to become a safe callable.
 
+Contextual function names can also fill individual positions in a generic
+parameter pack, including after a fixed parameter or another pack element.
+Each name retains its own exact nominal identity. An unconstrained pack still
+requires one eligible unambiguous function; its position does not provide an
+overload preference or permit an unsafe function to become safe.
+
 ### Shared Ownership
 
 `std::shared_ptr<T>` uses explicit `clone()` to add a strong owner of the same
@@ -1264,8 +1282,11 @@ Shared handles can cross threads only when `T` is both transfer-capable and
 share-capable: another thread can perform the last release. Atomic reference
 counts do not make the pointee's ordinary mutable methods safe. Synchronized
 read-receiver APIs such as `atomic<T>` retain their own checked permission.
-The current non-transferable mutex storage does not gain cross-thread transfer
-permission merely by being allocated behind a shared handle.
+A mutex derives both transfer and sharing from its payload's transfer
+capability: the lock serializes payload access, and the payload may ultimately
+be destroyed on another thread. Consequently a shared mutex owner can cross
+threads when its payload transfers. A lock guard remains non-transferable;
+neither allocation nor shared reference counting overrides thread affinity.
 
 Shared ownership does not solve cycles. Weak observation remains incomplete;
 strong ownership cycles must be avoided.

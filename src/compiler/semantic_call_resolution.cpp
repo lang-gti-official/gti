@@ -827,24 +827,24 @@ auto SemanticVisitor::Impl::hasPackExpansion(
 
 auto SemanticVisitor::Impl::appendConcreteCallArgument(
     const SemanticType &type, const ExprPtr &expression,
-    std::vector<AnalyzedCallArgument> &result) const -> bool {
+    std::vector<AnalyzedCallArgument> &result,
+    std::vector<std::size_t> packPath) const -> bool {
   if (type.kind != SemanticType::TypePack) {
-    result.push_back({.type = type, .expression = &expression});
+    result.push_back({.type = type,
+                      .expression = &expression,
+                      .forwardedPackElement = !packPath.empty(),
+                      .packPath = std::move(packPath)});
     return true;
   }
   if (!type.concretePack) {
     return false;
   }
-  for (const SemanticType &element : type.arguments) {
-    if (element.kind == SemanticType::TypePack) {
-      if (!appendConcreteCallArgument(element, expression, result)) {
-        return false;
-      }
-    } else {
-      result.push_back({.type = element,
-                        .expression = &expression,
-                        .forwardedPackElement = true});
-    }
+  for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+    auto path = packPath;
+    path.push_back(index);
+    if (!appendConcreteCallArgument(type.arguments[index], expression, result,
+                                    std::move(path)))
+      return false;
   }
   return true;
 }

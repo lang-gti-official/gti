@@ -261,6 +261,38 @@ struct ResolvedThreadTaskEntry {
                          const ResolvedThreadTaskEntry &) = default;
 };
 
+// A type-level prerequisite for a confined, join-all worker boundary. This is
+// not permission to spawn: the invocation must additionally retain the actual
+// origin loans and prove joining before any normal/failure continuation. A
+// successful query never changes the type's ordinary transfer/share traits.
+struct ScopedThreadTaskDependency {
+  std::vector<SymbolId> fields;
+  SemanticType reference = SemanticType::Unknown;
+
+  friend bool operator==(const ScopedThreadTaskDependency &,
+                         const ScopedThreadTaskDependency &) = default;
+};
+
+struct ScopedThreadTaskShape {
+  SemanticType taskType = SemanticType::Unknown;
+  ResolvedThreadTaskEntry entry;
+  std::vector<ScopedThreadTaskDependency> dependencies;
+
+  friend bool operator==(const ScopedThreadTaskShape &,
+                         const ScopedThreadTaskShape &) = default;
+};
+
+// One consumed task of a synchronous join-all invocation. The dependencies
+// name the existing checked places, not a second concurrency provenance map.
+// Their endpoint is the enclosing call's completion (including failure).
+struct ResolvedScopedThreadTask {
+  ScopedThreadTaskShape shape;
+  std::vector<SemanticLoanDependency> dependencies;
+
+  friend bool operator==(const ResolvedScopedThreadTask &,
+                         const ResolvedScopedThreadTask &) = default;
+};
+
 struct CallableParameterContract {
   std::size_t parameterIndex = 0;
   GenericParameterId genericParameter = 0;
@@ -423,6 +455,7 @@ enum class IntrinsicKind {
   TextViewFromAddress,
   CStringFromAddress,
   RequireAllocation,
+  ThreadScope,
   Count,
 };
 
@@ -1093,6 +1126,7 @@ struct ResolvedCallInfo {
   bool tracksCaller = false;
   SynchronizationOperation synchronization;
   std::optional<ResolvedThreadTaskEntry> threadTaskEntry;
+  std::vector<ResolvedScopedThreadTask> scopedThreadTasks;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;

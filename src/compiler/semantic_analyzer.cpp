@@ -55,6 +55,11 @@ SemanticVisitor::enumTypeFor(const SemanticType &type) const {
   return impl->enumTypeFor(type);
 }
 
+std::optional<ScopedThreadTaskShape>
+SemanticVisitor::scopedThreadTaskShapeFor(const SemanticType &type) {
+  return impl->scopedThreadTaskShapeFor(type);
+}
+
 SemanticInstanceAnalysis SemanticVisitor::analyzeFunctionInstance(
     FunctionId functionId, const std::vector<SemanticType> &classTypeArguments,
     const std::vector<CompileTimeValue> &classValueArguments,

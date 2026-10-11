@@ -566,10 +566,34 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         }
         const SemanticType item = SemanticType::functionItemType(
             candidate.id, candidate.returnType, candidate.parameterTypes);
-        if (index >= target.parameterTypes.size() ||
-            !inferOuter(inferOuter, target.parameterTypes[index], item,
-                        substitution)) {
-          continue;
+        if (target.parameterPack && index >= fixedParameterCount(target)) {
+          // A contextual name supplies one concrete pack element, not a new
+          // formal parameter. Preserve the other independently deduced items
+          // and account for preceding expanded source arguments.
+          const GenericParameterInfo *pack = packGenericParameter(target);
+          if (pack == nullptr)
+            continue;
+          auto found = substitution.types.find(pack->id);
+          if (found == substitution.types.end() ||
+              found->second.kind != SemanticType::TypePack ||
+              !found->second.concretePack)
+            continue;
+          std::vector<SemanticType> preceding;
+          for (std::size_t before = fixedParameterCount(target); before < index;
+               ++before)
+            SemanticType::appendExpandedArgument(preceding,
+                                                 analysis.types[before]);
+          if (preceding.size() >= found->second.arguments.size())
+            continue;
+          SemanticType &element = found->second.arguments[preceding.size()];
+          if (element != SemanticType::Unknown && element != item)
+            continue;
+          element = item;
+        } else {
+          if (index >= target.parameterTypes.size() ||
+              !inferOuter(inferOuter, target.parameterTypes[index], item,
+                          substitution))
+            continue;
         }
         matches.emplace_back(&candidate, std::move(substitution));
       }

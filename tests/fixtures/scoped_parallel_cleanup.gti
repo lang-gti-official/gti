@@ -1,0 +1,28 @@
+#include <std/thread>
+#include <std/memory>
+
+// The audited destructor touches only this task's checked exclusive referent.
+[[unsafe_transfer]] class Finish {
+  mut int& target;
+  std::unique_ptr<int> ticket;
+public:
+  Finish(mut int& target) : target(target), ticket(std::make_unique<int>(1)) {}
+  void operator()() mut { this.target = 10; }
+  ~Finish() { if (this.ticket) this.target += 1; }
+};
+
+[[unsafe_transfer]] class Consume {
+  mut int& target;
+  std::unique_ptr<int> ticket;
+public:
+  Consume(mut int& target) : target(target), ticket(std::make_unique<int>(1)) {}
+  void operator()() && { this.target = 20; }
+  ~Consume() { if (this.ticket) this.target += 1; }
+};
+
+int main() {
+  mut int first = 0;
+  mut int second = 0;
+  if (!std::parallel_invoke(Finish(first), Consume(second))) return 1;
+  return first == 11 && second == 21 ? 0 : 2;
+}
