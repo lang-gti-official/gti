@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Expected results of callable invocations (0.402.7)
+## Expected results of callable invocations (0.402.8)
 
 - **Defect.** A lambda returning `expected<point, errc>`, where `point` has no
   default constructor, could not be called as a by-value argument, as in
@@ -72,6 +72,8 @@
   fails the same way when this tree is rebuilt with `origin/main`'s emitter
   and MIR sources: `GTI-B0001`, "Expected value has no exact uninitialized
   publication" in `main`. That is an upstream regression, outside this change.
+  0.402.7 fixes it: a cleanup-free Expected moved into a new binding now
+  constructs that binding at the `Move`.
 - **Pre-existing gap left out.** A lambda returning `Expected<Class, E>`
   whose class has no default constructor, called as a by-value argument
   (`code(lam(a))`), emits a default-constructed native `expected`. The native
