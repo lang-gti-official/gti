@@ -132,6 +132,10 @@
         "named": true
       },
       {
+        "type": "constexpr_for_statement",
+        "named": true
+      },
+      {
         "type": "continue_statement",
         "named": true
       },
@@ -1006,6 +1010,16 @@
           }
         ]
       },
+      "compiler_binding": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "compiler_type_binding",
+            "named": true
+          }
+        ]
+      },
       "forward_declaration": {
         "multiple": false,
         "required": false,
@@ -1193,6 +1207,22 @@
     "named": true,
     "fields": {
       "capability": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "compiler_type_binding",
+    "named": true,
+    "fields": {
+      "binding": {
         "multiple": false,
         "required": true,
         "types": [
@@ -1606,6 +1636,42 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "constexpr_for_statement",
+    "named": true,
+    "fields": {
+      "binding": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "range_for_declaration",
+            "named": true
+          }
+        ]
+      },
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "statement",
+            "named": true
+          }
+        ]
+      },
+      "sequence": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
             "named": true
           }
         ]
@@ -5704,6 +5770,10 @@
   },
   {
     "type": "compiler_constraint",
+    "named": false
+  },
+  {
+    "type": "compiler_type",
     "named": false
   },
   {
