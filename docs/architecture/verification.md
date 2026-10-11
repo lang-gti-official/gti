@@ -67,6 +67,18 @@ not evidence of final integration or full release acceptance:
   The earlier all-target Release build (`run-967b1ba839284d39bb429e8ee0bef1d1`)
   passed, but this nested regression stopped its subsequent validation before
   installed consumption or the full suite. Those gates must run again.
+- The unfiltered Release sweep on `c73297c1` exposed a composed-reference
+  regression: an additional external field was attributed to the temporary
+  physical reference instead of its abstract external entry. Snapshot
+  `d0344a83ff947406ba509671443530717eb4da66700c07056641a87d2550d83c`
+  (`run-1bd2bb435f6146a1a646b88f28454615`) repairs the authority selection and
+  passes borrowing composition semantics, cleanup-bound borrows/mutations,
+  scoped semantic/backend controls, the complete ordinary-borrowing native
+  matrix and all five scoped fixtures at C++23 O3. Further final-head gates
+  remain required. The Linux allocation oracle also needs matched ordinary
+  `new`/`delete` replacements: replacing delete alone misclassified libstdc++'s
+  uncounted worker allocation under ASan. This is a test-instrumentation repair,
+  not an allocation-mismatch suppression or a production allocator change.
 
 The remaining acceptance includes the extended nested-source native matrix, current-head
 ownership/backend/corpus controls, installed consumption, runtime/allocation/

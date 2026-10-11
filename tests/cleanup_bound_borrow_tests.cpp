@@ -97,6 +97,14 @@ void negative(const std::string &name, const std::string &source,
 } // namespace
 
 int main() {
+  {
+    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures/borrowing_composition.gti";
+    std::ifstream input(fixture);
+    positive(
+        "forwarded external fields do not retain a temporary carrier shell",
+        std::string{std::istreambuf_iterator<char>(input), {}});
+  }
   const std::string projectedGuard = R"gti(
 class MutGuard {
   mut int& target;

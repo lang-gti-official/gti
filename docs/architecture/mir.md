@@ -404,6 +404,14 @@ argument place identical to the child's recorded origin. A different field,
 carrier shell, read-only authority for a mutable child, or merely overlapping
 place cannot satisfy the proof. This rule applies equally to ordinary methods
 and nested scoped jobs; it does not grant the parent any cleanup ownership.
+For a composed result's additional dependencies, a projection through the exact
+reference field of a borrowed carrier retains that carrier's abstract external
+entry, not its temporary physical reference. Canonicalization keeps the formal's
+leading reference dereference separate from the stored field's dereference.
+Whole-carrier access and owned-field projections still retain the physical
+loan, and a direct reborrow without the explicit stored-dependency edge keeps
+its immediate parent. Verification rejects ending the external entry before
+its forwarded fields, even when the physical reference has already ended.
 Cleanup-bound nominal carriers are classified from concrete borrowed-state and
 active-cleanup facts, independently of the trusted mutex capability. Exact
 by-value entries own a binding drop; owning call/constructor publications own

@@ -1737,6 +1737,55 @@ int main() { mut int first = 7; mut int second = 9;
          "projected entry mutations exercise a distinct receiver field");
 }
 
+void checkForwardedExternalFieldRetention() {
+  const auto control = analyze("forwarded external field retention", R"gti(
+struct Pair {
+  int& first;
+  int& second;
+  Pair(int& first, int& second) : first(first), second(second) {}
+  int sum() { return this.first + this.second; }
+};
+Pair forward(Pair pair) { return pair; }
+int observe(Pair& pair) { return forward(pair).sum(); }
+int main() { int first = 20; int second = 22; Pair pair{first, second};
+  return observe(pair) - 42;
+}
+)gti");
+  if (!control)
+    return;
+  bool checked = false;
+  for (const auto &function : control->functionInstances()) {
+    for (const auto &child : function.body.loans) {
+      const auto *source = function.body.findPlace(child.source);
+      if (child.entry || child.kind != lang::MirLoanKind::Stored ||
+          child.additionalDependencies.empty() || !source ||
+          source->root != lang::MirPlaceRootKind::Binding ||
+          source->projections.size() != 3)
+        continue;
+      for (const auto &entry : function.body.loans) {
+        const auto *origin = function.body.findPlace(entry.source);
+        if (!entry.entry || entry.kind != lang::MirLoanKind::Stored ||
+            entry.designatedFields.empty() || !origin ||
+            origin->binding != source->binding)
+          continue;
+        const auto externalEnd = loanEnd(function.body, entry.id);
+        const auto childEnd = loanEnd(function.body, child.id);
+        if (!externalEnd || !childEnd)
+          continue;
+        auto forged = *control;
+        const BodyKey key{lang::MirBodyKind::Function, function.id};
+        expect(moveBefore(body(forged, key), *externalEnd, *childEnd),
+               "external-field mutation moves its exact entry endpoint");
+        rejected(forged,
+                 "forwarded fields retain their external owner after shell end",
+                 "is ended before its child reborrow");
+        checked = true;
+      }
+    }
+  }
+  expect(checked, "forwarded fields exercise an abstract external entry");
+}
+
 } // namespace
 
 int main() {
@@ -1818,6 +1867,7 @@ int main() {
   checkFactoryCarrierAndDestructor();
   checkSharedOriginFieldIdentities();
   checkProjectedEntryConstruction();
+  checkForwardedExternalFieldRetention();
   if (failures == 0)
     std::cout << mutations << " cleanup-bound proof mutations rejected\n";
   return failures == 0 ? 0 : 1;
