@@ -1522,6 +1522,27 @@ transfer analysis. A direct fresh class construction is accepted by the same
 owned-value rule as a fresh lambda; a named task still requires one explicit
 move.
 
+### Scoped-task type prerequisites
+
+`SemanticVisitor::scopedThreadTaskShapeFor` is an internal preparation query,
+not executable scoped-thread admission. It selects an exact safe `void()` task
+entry and enumerates every supported stored reference as a resolved field path
+with its exact reference access/type. It reuses structural capability analysis
+with a confined boundary: a shared reference requires ordinary referent sharing,
+and an exclusive reference requires ordinary referent transfer. Nominal nested
+carriers and concrete generic substitution use the existing stored-dependency
+path machinery. Ordinary transfer/share traits are unchanged. Owning erasure,
+shared owners and synchronization storage retain their existing owned contracts;
+the scoped query does not let those facilities hide borrowed dependencies.
+
+The query preserves thread-affinity and unaudited-cleanup denials. Even an unsafe
+positive assertion on the task cannot remove the separate requirements on its
+checked referents. Missing dependency paths reject the shape rather than losing
+the borrow. This result has no origin places, endpoint, or joining proof and
+cannot authorize a spawn alone: source-call admission, invocation loan mapping,
+verified MIR child accesses/join-all cleanup, and production adapters remain
+implementation work. The public owned-thread boundary above is unchanged.
+
 ## Temporary Value Call Capabilities
 
 Resolved ordinary method calls and class `operator()` calls retain a

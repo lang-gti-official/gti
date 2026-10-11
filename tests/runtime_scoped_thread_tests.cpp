@@ -121,6 +121,47 @@ void testJoinAllBeforeFailure() {
          "all child accesses finish before any worker failure is returned");
 }
 
+struct Emergency {
+  gti_failure_emergency_v2 failure{};
+  gti_failure_artifact_descriptor_v1 primaryArtifact{};
+  gti_failure_artifact_descriptor_v1 secondaryArtifact{};
+};
+
+void failWithEmergency(void *opaque) {
+  auto &context = *static_cast<Emergency *>(opaque);
+  gti_runtime_detail::run_managed_task_adapter([&] {
+    gti_rt_failure_terminate_cleanup_v2(
+        &context.failure, &context.primaryArtifact, &context.secondaryArtifact);
+  });
+}
+
+void testCleanupEmergencyJoinAll() {
+  const auto primary = failure(7), secondary = failure(8);
+  Emergency emergency{.failure = {GTI_FAILURE_ABI_VERSION_V2, 0, primary.record,
+                                  secondary.record},
+                      .primaryArtifact = primary.artifact,
+                      .secondaryArtifact = secondary.artifact};
+  int value = 0, destroyed = 0;
+  Borrowed successful{value, destroyed};
+  const gti_thread_scoped_task_v1 tasks[] = {{failWithEmergency, &emergency},
+                                             {writeBorrowed, &successful}};
+  gti_thread_state_v1 *scratch[2]{};
+  const auto result = gti_rt_thread_scope_v1(tasks, scratch, 2);
+  expect(result.started == 2 && result.failed_worker == 0 &&
+             result.worker.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1 &&
+             result.worker.failure_kind ==
+                 GTI_THREAD_WORKER_FAILURE_CLEANUP_V1 &&
+             std::memcmp(&result.worker.cleanup_failure, &emergency.failure,
+                         sizeof(emergency.failure)) == 0 &&
+             result.worker.primary_artifact == &emergency.primaryArtifact &&
+             result.worker.secondary_artifact == &emergency.secondaryArtifact,
+         "scope preserves both emergency records and descriptor identities");
+  expect(value == 42 && destroyed == 0 && scratch[0] == nullptr &&
+             scratch[1] == nullptr,
+         "cleanup emergency still joins siblings before returning borrowed "
+         "access");
+}
+
 void testPartialCreation() {
   int value = 0, notStarted = 0, destroyed = 0;
   Borrowed first{value, destroyed}, last{notStarted, destroyed};
@@ -209,6 +250,7 @@ int main(int argc, char **argv) {
   }
   testBorrowedPublication();
   testJoinAllBeforeFailure();
+  testCleanupEmergencyJoinAll();
   testPartialCreation();
   testNestedAndEmpty();
   return failures == 0 ? 0 : 1;

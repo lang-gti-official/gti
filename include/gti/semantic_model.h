@@ -251,6 +251,27 @@ struct ResolvedThreadTaskEntry {
                          const ResolvedThreadTaskEntry &) = default;
 };
 
+// A type-level prerequisite for a confined, join-all worker boundary. This is
+// not permission to spawn: the invocation must additionally retain the actual
+// origin loans and prove joining before any normal/failure continuation. A
+// successful query never changes the type's ordinary transfer/share traits.
+struct ScopedThreadTaskDependency {
+  std::vector<SymbolId> fields;
+  SemanticType reference = SemanticType::Unknown;
+
+  friend bool operator==(const ScopedThreadTaskDependency &,
+                         const ScopedThreadTaskDependency &) = default;
+};
+
+struct ScopedThreadTaskShape {
+  SemanticType taskType = SemanticType::Unknown;
+  ResolvedThreadTaskEntry entry;
+  std::vector<ScopedThreadTaskDependency> dependencies;
+
+  friend bool operator==(const ScopedThreadTaskShape &,
+                         const ScopedThreadTaskShape &) = default;
+};
+
 struct CallableParameterContract {
   std::size_t parameterIndex = 0;
   GenericParameterId genericParameter = 0;
