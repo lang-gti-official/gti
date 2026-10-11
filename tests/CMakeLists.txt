@@ -969,6 +969,11 @@ add_test(NAME owning_conditional_join_runtime
                  "${PROJECT_SOURCE_DIR}/tests/owning_conditional_join_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(owning_conditional_join_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_payload_short_circuit_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_payload_short_circuit_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_payload_short_circuit_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_class_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"

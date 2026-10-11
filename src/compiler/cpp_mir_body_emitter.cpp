@@ -22286,6 +22286,103 @@ valueRootedClassPrvalueAssignmentSlot(
   return nullptr;
 }
 
+struct ConditionalExpectedPayloadView {
+  const MirInstruction *call = nullptr;
+  const MirPlace *receiverSlot = nullptr;
+  const MirPlace *payloadSlot = nullptr;
+
+  [[nodiscard]] explicit operator bool() const { return call != nullptr; }
+};
+
+// Inside a short-circuit operand or a conditional arm, an owning Expected call
+// result lives in its conditional temporary. A checked extraction of one class
+// alternative that is read only through field views moves that alternative
+// into the extraction's own conditional temporary on its Invoke success edge.
+// MIR's conditional Drops then destroy the payload and the moved-from Expected
+// exactly once, and its failure edges destroy the Expected alone.
+[[nodiscard]] ConditionalExpectedPayloadView
+conditionalExpectedPayloadView(const MirProgram &program,
+                               const CppMirBodyEmissionMap &representations,
+                               const MirBody &body, MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
+      value->info.category != ValueCategory::Value ||
+      !value->info.traits.movable)
+    return {};
+  const MirInstruction *call = findInstruction(body, value->definition);
+  if (call == nullptr || call->kind != MirInstructionKind::Call ||
+      !call->result || *call->result != valueId || call->destination ||
+      !call->receiver || !call->operands.empty() || call->functionTarget ||
+      call->constructorTarget || call->lambdaTarget || call->bodyTarget ||
+      call->callableInvocation || !call->callableArguments.empty() ||
+      (call->intrinsic != IntrinsicKind::ExpectedValue &&
+       call->intrinsic != IntrinsicKind::ExpectedError) ||
+      call->receiver->kind != MirOperandKind::Value ||
+      call->receiver->value == 0 ||
+      call->receiver->type.kind != SemanticType::Expected ||
+      call->receiver->type.arguments.size() != 2 ||
+      call->receiver->type
+              .arguments[call->intrinsic == IntrinsicKind::ExpectedValue ? 0
+                                                                         : 1] !=
+          value->info.type ||
+      call->dispatch != CallDispatch::Static ||
+      call->dispatchOwner != call->receiver->type ||
+      call->info.type != value->info.type ||
+      call->localFailureSites.size() != 1 ||
+      call->definedFailure.localOrigins.size() != 1 ||
+      call->definedFailure.propagation != FailurePropagationKind::None ||
+      !call->lifecycle.empty() || !call->successResultDrop ||
+      call->successResultDestination)
+    return {};
+  const MirPlace *payloadSlot =
+      conditionalTemporaryViewedResult(program, representations, body, valueId);
+  if (payloadSlot == nullptr)
+    return {};
+  // The receiver is a call result whose own obligation is held by a distinct
+  // conditional temporary, armed by its Invoke success edge or, for a
+  // failure-free call, by the call's own Initialize. The extraction is its
+  // only use; the receiver's slot proof audits the rest of that temporary.
+  const MirValue *receiver = body.findValue(call->receiver->value);
+  const MirInstruction *producer =
+      receiver == nullptr ? nullptr
+                          : findInstruction(body, receiver->definition);
+  const MirDropObligation *receiverDrop = nullptr;
+  if (producer != nullptr && producer->successResultDrop) {
+    receiverDrop = body.findDropObligation(*producer->successResultDrop);
+  } else if (producer != nullptr) {
+    for (const MirLifecycleEvent &event : producer->lifecycle)
+      if (event.kind == MirLifecycleEventKind::Initialize &&
+          event.source == 0 && event.target != 0)
+        receiverDrop = body.findDropObligation(event.target);
+  }
+  const MirPlace *receiverSlot =
+      receiverDrop == nullptr ? nullptr : body.findPlace(receiverDrop->place);
+  const std::vector<MirValueUse> uses = receiver == nullptr
+                                            ? std::vector<MirValueUse>{}
+                                            : body.usesOf(receiver->id);
+  if (receiver == nullptr || receiver->info.type != call->receiver->type ||
+      receiver->info.category != ValueCategory::Value || producer == nullptr ||
+      producer->kind != MirInstructionKind::Call || !producer->result ||
+      *producer->result != receiver->id || receiverDrop == nullptr ||
+      receiverDrop->kind != MirDropObligationKind::Value ||
+      receiverDrop->initiallyActive ||
+      receiverDrop->dropType.type != receiver->info.type ||
+      !callSuccessActivates(body, *producer, receiverDrop->id) ||
+      receiverSlot == nullptr ||
+      receiverSlot->root != MirPlaceRootKind::Temporary ||
+      receiverSlot->temporary == 0 || !receiverSlot->projections.empty() ||
+      receiverSlot->type != receiver->info.type ||
+      receiverSlot->initiallyAvailable || receiverSlot == payloadSlot ||
+      receiver->sourceValue == 0 ||
+      receiverSlot->sourceValue != receiver->sourceValue ||
+      receiverDrop->value != receiver->sourceValue || uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionReceiver ||
+      uses.front().instruction != call->id)
+    return {};
+  return {
+      .call = call, .receiverSlot = receiverSlot, .payloadSlot = payloadSlot};
+}
+
 struct ValueRootedPlacementCallResultSlot {
   const MirValue *value = nullptr;
   const MirInstruction *producer = nullptr;
@@ -22527,6 +22624,16 @@ valueRootedPlacementCallResultSlot(const MirProgram &program,
         expectedOwnedClassExtractionReceiverSlot(body, valueId) == slot &&
         ownedExpectedClassExtractionProducer(body, *consumer->result).call ==
             consumer) {
+      ++stateTests;
+      continue;
+    }
+    // Under short circuiting, a checked class extraction read only through
+    // field views moves its alternative out of the conditional temporary.
+    if (consumer != nullptr && conditionalTemporary && consumer->result &&
+        use.kind == MirValueUseKind::InstructionReceiver &&
+        conditionalExpectedPayloadView(program, representations, body,
+                                       *consumer->result)
+                .receiverSlot == slot) {
       ++stateTests;
       continue;
     }
@@ -42101,6 +42208,21 @@ private:
         output << ", &__gti_mir_v_" << *instruction.result << ");\n";
         return;
       }
+      if (const ConditionalExpectedPayloadView view =
+              instruction.result ? conditionalExpectedPayloadView(
+                                       program, representations, facts.body,
+                                       *instruction.result)
+                                 : ConditionalExpectedPayloadView{}) {
+        output << "__gti_mir_failure_status_" << instruction.id << " = "
+               << (instruction.intrinsic == IntrinsicKind::ExpectedValue
+                       ? "::gti_internal::backend::mir_expected_value_move_v1"
+                       : "::gti_internal::backend::mir_expected_error_move_v1")
+               << '(';
+        emitStoragePlaceValue(facts, *view.receiverSlot);
+        output << ", &__gti_mir_p_"
+               << canonicalSlotPlaceId(facts.body, *view.payloadSlot) << ");\n";
+        return;
+      }
       const DirectExpectedClassExtraction directExtraction =
           instruction.result ? directExpectedClassExtraction(
                                    program, facts.body, *instruction.result)
@@ -56042,8 +56164,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                              instruction);
           const bool viewSsa = staged == nullptr &&
                                ssaTextViewObserverReceiver(body, instruction);
-          const bool fieldReadExtraction = temporaryFieldReadExtraction(
-              program_, representations_, body, instruction);
+          const bool fieldReadExtraction =
+              temporaryFieldReadExtraction(program_, representations_, body,
+                                           instruction) ||
+              (failureForm && instruction.result &&
+               invokePairedInstruction(body, instruction.id) &&
+               conditionalExpectedPayloadView(program_, representations_, body,
+                                              *instruction.result));
           if ((viewPlace == nullptr && ownedExtraction == nullptr &&
                !directExtraction && !scalarSsa && !viewSsa &&
                !fieldReadExtraction) ||
