@@ -20732,13 +20732,18 @@ transformedFailureCallee(const MirProgram &program,
 [[nodiscard]] const MirInstruction *
 returnConstructDefinition(const MirBody &body, MirValueId value);
 
+[[nodiscard]] bool constructionPublishesIntoAssignmentSlot(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const MirBody &body, const MirInstruction &construct);
+
 // A construction consuming a by-value argument publishes its own result at an
 // exact MIR destination: MIR's staged or published class slot, a constructor
-// field's result slot, or the transformed or plain result of the Return that
-// consumes it. Each form spells the construction once, at that destination.
-[[nodiscard]] bool
-constructionPublishesResult(const MirProgram &program, const MirBody &body,
-                            const MirInstruction &construct) {
+// field's result slot, the transformed or plain result of the Return that
+// consumes it, or the representation-only slot an adjacent Assign moves into
+// an existing binding. Each form spells the construction once, there.
+[[nodiscard]] bool constructionPublishesResult(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const MirBody &body, const MirInstruction &construct) {
   return construct.result &&
          (stagedClassResultForSource(body, *construct.result).producer ==
               &construct ||
@@ -20747,7 +20752,9 @@ constructionPublishesResult(const MirProgram &program, const MirBody &body,
           constructorFieldResultSlot(program, body, *construct.result)
                   .producer == &construct ||
           (returnConstructDefinition(body, *construct.result) == &construct &&
-           body.returnType == construct.info.type));
+           body.returnType == construct.info.type) ||
+          constructionPublishesIntoAssignmentSlot(program, representations,
+                                                  body, construct));
 }
 
 // A successfully published owning result can supply one exact by-value
@@ -20814,7 +20821,7 @@ constructionPublishesResult(const MirProgram &program, const MirBody &body,
         target->parameterTypes != consumer->parameterTypes ||
         owner->type != consumer->info.type ||
         !failureConstructorBoundaryEligible(program, *target) ||
-        !constructionPublishesResult(program, body, *consumer))
+        !constructionPublishesResult(program, representations, body, *consumer))
       return nullptr;
   } else if (consumer->kind == MirInstructionKind::Call) {
     const auto *target =
@@ -28918,8 +28925,9 @@ cleanupFreeExpectedClassAlternatives(const MirProgram &program,
 // place instead, so only the Expected wrapper, which MIR gives no place, uses
 // this consumer.
 [[nodiscard]] const MirInstruction *classSsaConstructorArgumentConsumer(
-    const MirProgram &program, const MirBody &body, const MirValue &value,
-    const MirInstruction &producer, const MirValueUse &use) {
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const MirBody &body, const MirValue &value, const MirInstruction &producer,
+    const MirValueUse &use) {
   const MirInstruction *consumer =
       use.kind == MirValueUseKind::InstructionOperand
           ? findInstruction(body, use.instruction)
@@ -28947,7 +28955,7 @@ cleanupFreeExpectedClassAlternatives(const MirProgram &program,
          failureConstructorBoundaryEligible(program, *target)) ||
         (consumer->definedFailure.empty() &&
          !target->mayRaiseDefinedFailure)) ||
-      !constructionPublishesResult(program, body, *consumer) ||
+      !constructionPublishesResult(program, representations, body, *consumer) ||
       !classSsaArgumentReachesConsumer(body, value, producer, *consumer, use))
     return nullptr;
   return consumer;
@@ -29211,7 +29219,7 @@ classSsaLifetimeSlot(const MirProgram &program,
                 .consumer = consumer,
                 .consumerKind = ClassSsaSlotConsumerKind::CallArgument};
       if (const auto *construction = classSsaConstructorArgumentConsumer(
-              program, body, *value, *producer, uses.front()))
+              program, representations, body, *value, *producer, uses.front()))
         return {.value = value,
                 .producer = producer,
                 .consumer = construction,
@@ -29258,11 +29266,11 @@ classSsaLifetimeSlot(const MirProgram &program,
         uses.size() == 1 ? classSsaCallArgumentConsumer(program, body, *value,
                                                         *producer, uses.front())
                          : nullptr;
-    const auto *construction =
-        uses.size() == 1 && consumer == nullptr
-            ? classSsaConstructorArgumentConsumer(program, body, *value,
-                                                  *producer, uses.front())
-            : nullptr;
+    const auto *construction = uses.size() == 1 && consumer == nullptr
+                                   ? classSsaConstructorArgumentConsumer(
+                                         program, representations, body, *value,
+                                         *producer, uses.front())
+                                   : nullptr;
     if (consumer == nullptr)
       consumer = construction;
     const auto *assignment =
@@ -29384,7 +29392,7 @@ classSsaLifetimeSlot(const MirProgram &program,
       producer->operands.empty() && producer->callableArguments.empty() &&
       producer->localFailureSites.empty() &&
       producer->definedFailure.propagation == FailurePropagationKind::None;
-  const bool directConstructionProducer =
+  const bool directConstructionShape =
       value != nullptr && producer != nullptr && constructor != nullptr &&
       constructedOwner != nullptr &&
       producer->kind == MirInstructionKind::Construct && producer->result &&
@@ -29414,13 +29422,51 @@ classSsaLifetimeSlot(const MirProgram &program,
       constructedOwner->type == value->info.type &&
       producer->info == value->info && !producer->preparedParameterDrop &&
       !producer->successResultDrop && !producer->successResultDestination &&
-      producer->lifecycle.empty() && producer->fullExpressionEnd == 0 &&
+      producer->fullExpressionEnd == 0 &&
       !producer->earlyExitFullExpressionEnd &&
       producer->cleanupBoundaryEnd == 0 &&
       (producer->definedFailure.propagation == FailurePropagationKind::None ||
        failureConstructorBoundaryEligible(program, *constructor) ||
        terminallyContainedPlainConstructor(program, representations,
                                            *producer));
+  const bool directConstructionProducer =
+      directConstructionShape && producer->lifecycle.empty();
+  // A construction assigned to an existing binding may also consume owning
+  // arguments: its only lifecycle events transfer each such operand's own
+  // value drop into the constructor, once and unconditionally. Only the
+  // assignment proof below admits it.
+  const bool transferringConstructionProducer =
+      directConstructionShape && !producer->lifecycle.empty() &&
+      std::all_of(producer->lifecycle.begin(), producer->lifecycle.end(),
+                  [&](const MirLifecycleEvent &event) {
+                    return event.kind == MirLifecycleEventKind::TransferOut &&
+                           event.source != 0 && event.target == 0 &&
+                           !event.conditional && !event.failureCleanup &&
+                           std::count_if(
+                               producer->operands.begin(),
+                               producer->operands.end(),
+                               [&](const MirOperand &operand) {
+                                 const MirValue *argument =
+                                     operand.kind == MirOperandKind::Value
+                                         ? body.findValue(operand.value)
+                                         : nullptr;
+                                 const MirDropObligation *argumentDrop =
+                                     argument == nullptr
+                                         ? nullptr
+                                         : uniqueValueDrop(body, argument->id,
+                                                           argument->info.type);
+                                 return argumentDrop != nullptr &&
+                                        argumentDrop->id == event.source;
+                               }) == 1;
+                  });
+  // A construction that can fail and that the fused assignment does not spell
+  // publishes on its success edge before the Assign moves it in. Every
+  // construction the fused assignment already spells keeps that route.
+  const bool raisingAssignedConstruction =
+      (directConstructionProducer || transferringConstructionProducer) &&
+      producer->definedFailure.propagation ==
+          FailurePropagationKind::Constructor &&
+      !classFreshAssignmentFusion(program, representations, body, *producer);
   const MirPlace *moveSource =
       producer != nullptr && producer->kind == MirInstructionKind::Move &&
               producer->operands.size() == 1 &&
@@ -29459,8 +29505,8 @@ classSsaLifetimeSlot(const MirProgram &program,
       (value->info.type.kind != SemanticType::Class && !cleanupFreeArray) ||
       value->info.category != ValueCategory::Value || producer == nullptr ||
       (callee == nullptr && !defaultConstructionProducer &&
-       !directConstructionProducer && !directMoveProducer &&
-       !temporaryExtractionProducer) ||
+       !directConstructionProducer && !raisingAssignedConstruction &&
+       !directMoveProducer && !temporaryExtractionProducer) ||
       !producer->result || *producer->result != valueId ||
       producer->info.type != value->info.type ||
       (callee != nullptr && callee->returnType != value->info.type) ||
@@ -29834,14 +29880,21 @@ classSsaLifetimeSlot(const MirProgram &program,
               .consumer = consumer,
               .consumerKind = ClassSsaSlotConsumerKind::PayloadOperand};
     }
-    if (consumer == nullptr ||
-        classSsaCallArgumentConsumer(program, body, *value, *producer, use) !=
-            consumer)
-      return {};
-    return {.value = value,
-            .producer = producer,
-            .consumer = consumer,
-            .consumerKind = ClassSsaSlotConsumerKind::CallArgument};
+    // A construction moved into an existing binding by one adjacent Assign
+    // takes the shared assignment proof below, as a call result does.
+    const bool assignedConstruction =
+        raisingAssignedConstruction && consumer != nullptr &&
+        consumer->kind == MirInstructionKind::Assign;
+    if (!assignedConstruction) {
+      if (consumer == nullptr ||
+          classSsaCallArgumentConsumer(program, body, *value, *producer, use) !=
+              consumer)
+        return {};
+      return {.value = value,
+              .producer = producer,
+              .consumer = consumer,
+              .consumerKind = ClassSsaSlotConsumerKind::CallArgument};
+    }
   }
 
   // A value-root place or drop obligation would make this semantic storage;
@@ -29996,7 +30049,7 @@ classSsaLifetimeSlot(const MirProgram &program,
     const MirValue *result =
         consumer->result ? body.findValue(*consumer->result) : nullptr;
     if (cleanupFreeArray ||
-        (callee == nullptr &&
+        (callee == nullptr && !raisingAssignedConstruction &&
          (!defaultConstructionProducer ||
           classInstance->defaultConstructor != SpecialMemberStatus::Generated ||
           !passiveConstructorFieldInitializers(
@@ -30098,6 +30151,19 @@ copiedExpectedBindingSlot(const MirProgram &program,
          (slot.consumerKind == ClassSsaSlotConsumerKind::Return ||
           slot.consumerKind == ClassSsaSlotConsumerKind::CallArgument ||
           slot.consumerKind == ClassSsaSlotConsumerKind::ConstructorArgument);
+}
+
+// The construction publishes into the representation-only slot that one
+// adjacent Assign moves into an existing binding.
+[[nodiscard]] bool constructionPublishesIntoAssignmentSlot(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const MirBody &body, const MirInstruction &construct) {
+  if (!construct.result)
+    return false;
+  const ClassSsaLifetimeSlot slot =
+      classSsaLifetimeSlot(program, representations, body, *construct.result);
+  return slot.producer == &construct &&
+         slot.consumerKind == ClassSsaSlotConsumerKind::Assignment;
 }
 
 // A cleanup-free Expected temporary read once by this scalar extraction. Its
@@ -38851,6 +38917,8 @@ private:
           (constructionSlot.consumerKind ==
                ClassSsaSlotConsumerKind::FieldRead ||
            constructionSlot.consumerKind ==
+               ClassSsaSlotConsumerKind::Assignment ||
+           constructionSlot.consumerKind ==
                ClassSsaSlotConsumerKind::CallArgument ||
            constructionSlot.consumerKind ==
                ClassSsaSlotConsumerKind::UnexpectedReturn ||
@@ -38923,6 +38991,8 @@ private:
             constructionSlot.producer == &instruction &&
             (constructionSlot.consumerKind ==
                  ClassSsaSlotConsumerKind::FieldRead ||
+             constructionSlot.consumerKind ==
+                 ClassSsaSlotConsumerKind::Assignment ||
              constructionSlot.consumerKind ==
                  ClassSsaSlotConsumerKind::CallArgument ||
              constructionSlot.consumerKind ==
@@ -52840,6 +52910,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               (constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::FieldRead ||
                constructionSlot.consumerKind ==
+                   ClassSsaSlotConsumerKind::Assignment ||
+               constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::CallArgument ||
                constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::UnexpectedReturn ||
@@ -52901,6 +52973,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (constructionSlot.producer == &instruction &&
               (constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::FieldRead ||
+               constructionSlot.consumerKind ==
+                   ClassSsaSlotConsumerKind::Assignment ||
                constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::CallArgument ||
                constructionSlot.consumerKind ==

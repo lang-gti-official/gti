@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.400.4 — Assigning a construction whose constructor can fail
+
+- Assigning a construction to an existing variable, as in
+  `h = holder(6)`, now builds when the constructor can fail, for any
+  arguments. Such assignments used to report GTI-B0001, while a constructor
+  that cannot fail already worked. A failed construction leaves the variable
+  unchanged and stops with its runtime error.
+- This includes constructions from a call's `expected<T, E>` result, as in
+  `h = holder(make_item())`, whether `T` needs no cleanup or owns resources.
+  The consumed payload is destroyed exactly once.
+
 ## 0.400.3 — Reading a field of a temporary that owns resources
 
 - A field of a temporary class value can now be read directly when the class
