@@ -1727,10 +1727,10 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   add_test(
-    NAME gitea_release_asset_sync
+    NAME release_asset_sync
     COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/gitea_release_asset_sync_test.py"
-            "${PROJECT_SOURCE_DIR}/scripts/sync_gitea_release_assets.py"
+            "${PROJECT_SOURCE_DIR}/tests/release_asset_sync_test.py"
+            "${PROJECT_SOURCE_DIR}/scripts/sync_release_assets.py"
   )
   add_test(
     NAME mir_census_regression

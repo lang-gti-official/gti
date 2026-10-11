@@ -151,14 +151,15 @@ package does not load a downstream LLVM package.
 
 ## Published Toolchain Channels
 
-Gitea is the Git, tag, workflow, and release authority. Release archives
-are downloaded by the plugin from `https://git.internal.howetotech.dev`.
-The plugin uses a full HTTPS Git URL, not GitHub-style owner/repository shorthand.
-Archive shapes
-exist for Linux x64, Linux arm64, and macOS arm64, but an archive is published
-only by a configured native runner job. The current workflow packages the
-native platform of the runner claiming `ubuntu-latest`; adding another
-advertised binary platform requires a statically labelled native package job.
+GitHub (`gti-lang-official/gti`) is the Git, tag, workflow, and release
+authority; the self-hosted Gitea repository is a backup mirror and publishes
+nothing. Release archives are downloaded by the plugin from
+`https://github.com/gti-lang-official/gti/releases/download/<tag>/<asset>`.
+The plugin uses a full HTTPS Git URL, not owner/repository shorthand. Archive
+shapes exist for Linux x64, Linux arm64, and macOS arm64, but an archive is
+published only by a configured native runner job. The release workflow
+packages `linux-x64` on `ubuntu-latest` and `darwin-arm64` on `macos-15`;
+Linux arm64 has no package job.
 Version `v0.299.0` is the final historical macOS x64 toolchain; source
 compilation can still target or run on Intel macOS when its prerequisites are
 supplied locally.
@@ -214,7 +215,7 @@ at normal process priority. `--jobs N` overrides the job count; the dry-run and
 normal output both report the selected parallelism.
 
 A single toolchain-release workflow builds, tests, stages, and smoke-tests each
-Gitea `main` commit once with bundled LLVM/Clang. That verified stage supplies
+GitHub `main` commit once per platform with bundled LLVM/Clang. That verified stage supplies
 nightly and, when `VERSION` changes, stable archives. Stable is archived before
 the nightly `BUILD_ID` stamp; the two channels retain separate artifact names.
 The stable publication job owns the matching immutable tag and versioned
@@ -223,10 +224,10 @@ move a stable tag to another commit. New main commits do not cancel stable
 publication.
 
 The `nightly` release is one mutable channel whose tag and `BUILD_ID` advance
-to each admitted Gitea `main` commit. Nightly publication is serialized and
+to each admitted GitHub `main` commit. Nightly publication is serialized and
 checks current remote main before changing the tag; a superseded build skips
 publication. Its publication step uploads the complete current asset set before a
-Gitea API pass removes any asset not produced by that build. This exact
+GitHub API pass (`scripts/sync_release_assets.py`) removes any asset not produced by that build. This exact
 synchronization keeps retired platform archives from surviving a successful
 rolling publication while preserving current archives if upload is
 interrupted.

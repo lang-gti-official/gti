@@ -34,7 +34,7 @@ def main():
             environment = os.environ.copy()
             environment.update(GTI_CONFIGURED_JOBS=jobs,
                                GTI_CONFIGURED_TEST_JOBS=test_jobs,
-                               GITEA_ENV=str(output), PATH=str(commands))
+                               GITHUB_ENV=str(output), PATH=str(commands))
             result = subprocess.run([bash, str(script)], env=environment,
                                     capture_output=True, text=True, timeout=10)
             if expected is None:
@@ -54,7 +54,7 @@ def main():
             detector.write_text(f"#!/bin/sh\n{body}\n")
             output = root / f"fallback-{index}"
             environment.update(GTI_CONFIGURED_JOBS="", GTI_CONFIGURED_TEST_JOBS="",
-                               GITEA_ENV=str(output))
+                               GITHUB_ENV=str(output))
             subprocess.run([bash, str(script)], env=environment, check=True,
                            capture_output=True, text=True, timeout=10)
             assert output.read_text() == "GTI_JOBS=1\nGTI_TEST_JOBS=1\n"
@@ -67,13 +67,13 @@ def main():
                                 'printf "8\\n"\n')
             detector.chmod(0o755)
             output = root / command
-            environment["GITEA_ENV"] = str(output)
+            environment["GITHUB_ENV"] = str(output)
             subprocess.run([bash, str(script)], env=environment, check=True,
                            capture_output=True, text=True, timeout=10)
             assert output.read_text() == "GTI_JOBS=8\nGTI_TEST_JOBS=8\n"
             detector.unlink()
         output = root / "no-detector"
-        environment["GITEA_ENV"] = str(output)
+        environment["GITHUB_ENV"] = str(output)
         subprocess.run([bash, str(script)], env=environment, check=True,
                        capture_output=True, text=True, timeout=10)
         assert output.read_text() == "GTI_JOBS=1\nGTI_TEST_JOBS=1\n"
@@ -96,7 +96,7 @@ def main():
             output = root / f"memory-{index}"
             environment.update(GTI_CONFIGURED_JOBS=jobs, GTI_CONFIGURED_TEST_JOBS="",
                                GTI_MEMORY_PER_JOB_MIB=per_job, GTI_MEMINFO=str(meminfo),
-                               GITEA_ENV=str(output))
+                               GITHUB_ENV=str(output))
             result = subprocess.run([bash, str(script)], env=environment, check=True,
                                     capture_output=True, text=True, timeout=10)
             assert output.read_text() == f"GTI_JOBS={expected[0]}\nGTI_TEST_JOBS={expected[1]}\n", result
@@ -104,7 +104,7 @@ def main():
         environment.update(GTI_CONFIGURED_JOBS="")
         for per_job in ("0", "-1", "lots"):
             output = root / f"memory-invalid-{per_job}"
-            environment.update(GTI_MEMORY_PER_JOB_MIB=per_job, GITEA_ENV=str(output))
+            environment.update(GTI_MEMORY_PER_JOB_MIB=per_job, GITHUB_ENV=str(output))
             result = subprocess.run([bash, str(script)], env=environment,
                                     capture_output=True, text=True, timeout=10)
             assert result.returncode != 0 and not output.exists(), per_job
@@ -117,18 +117,18 @@ def main():
         )):
             output = root / f"memory-test-{index}"
             environment.update(GTI_MEMORY_PER_JOB_MIB=per_job, GTI_MEMORY_PER_TEST_MIB=per_test,
-                               GTI_CONFIGURED_TEST_JOBS=test_jobs, GITEA_ENV=str(output))
+                               GTI_CONFIGURED_TEST_JOBS=test_jobs, GITHUB_ENV=str(output))
             result = subprocess.run([bash, str(script)], env=environment, check=True,
                                     capture_output=True, text=True, timeout=10)
             assert output.read_text() == f"GTI_JOBS={expected[0]}\nGTI_TEST_JOBS={expected[1]}\n", result
-        environment.update(GTI_MEMORY_PER_TEST_MIB="many", GITEA_ENV=str(root / "memory-test-invalid"))
+        environment.update(GTI_MEMORY_PER_TEST_MIB="many", GITHUB_ENV=str(root / "memory-test-invalid"))
         result = subprocess.run([bash, str(script)], env=environment,
                                 capture_output=True, text=True, timeout=10)
         assert result.returncode != 0 and "GTI_MEMORY_PER_TEST_MIB" in result.stderr
         environment.update(GTI_MEMORY_PER_TEST_MIB="", GTI_CONFIGURED_TEST_JOBS="")
         output = root / "memory-unreadable"
         environment.update(GTI_MEMORY_PER_JOB_MIB="2048", GTI_MEMINFO=str(root / "absent"),
-                           GITEA_ENV=str(output))
+                           GITHUB_ENV=str(output))
         result = subprocess.run([bash, str(script)], env=environment, check=True,
                                 capture_output=True, text=True, timeout=10)
         assert output.read_text() == "GTI_JOBS=12\nGTI_TEST_JOBS=12\n"
