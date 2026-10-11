@@ -35,11 +35,14 @@
   bound and loop returns for both payload kinds on success and error paths,
   plus an enum-payload lambda. Its last stage fails inside a guard destructor
   after the result exists, and the test expects the defined failure.
-- **Suites.** 92 MIR, emitter, census, snapshot, `expected`, failure and
-  cleanup CTests pass locally in Release, including
-  `cpp_mir_body_emitter_corpus`; no census baseline changes. The full
-  616-test suite passes on the Mac mini, apart from `source_debug_lldb`: that
-  session cannot attach a debugger, and the test passes locally.
+- **Suites.** On the final merged head, 99 MIR, emitter, census, snapshot,
+  `expected`, failure and cleanup CTests pass locally in Release, including
+  `cpp_mir_body_emitter_corpus`. No census baseline changes. 628 of the 630
+  full-suite tests pass on the Mac mini. `source_debug_lldb` cannot attach a
+  debugger in that session and passes locally. `raw_record_containers_runtime`
+  fails the same way when this tree is rebuilt with `origin/main`'s emitter
+  and MIR sources: `GTI-B0001`, "Expected value has no exact uninitialized
+  publication" in `main`. That is an upstream regression, outside this change.
 - **Pre-existing gap left out.** A lambda returning `Expected<Class, E>`
   whose class has no default constructor, called as a by-value argument
   (`code(lam(a))`), emits a default-constructed native `expected`. The native
