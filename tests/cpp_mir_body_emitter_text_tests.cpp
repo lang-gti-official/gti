@@ -4455,6 +4455,74 @@ int main() { return check(false) ? 0 : 1; }
          "the viewed result should not declare an ordinary local");
 }
 
+void testOwningConditionalJoinConsumers() {
+  const auto frontend =
+      analyzeWithStandardLibrary("cpp-mir-owning-conditional-join.gti", R"gti(
+#include <std/utility>
+
+mut int32_t destroyed = 0;
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() { destroyed += 1; }
+};
+
+counted make_counted(int32_t number) { return counted(number); }
+
+int32_t read(bool ok) { return (ok ? make_counted(1) : make_counted(2)).number; }
+
+int32_t assign(bool ok) {
+  mut counted target = make_counted(0);
+  target = ok ? make_counted(3) : make_counted(4);
+  return target.number;
+}
+
+counted pick(bool ok) {
+  counted local = make_counted(5);
+  return ok ? std::move(local) : make_counted(6);
+}
+
+int main() { return read(true) + assign(true) + pick(true).number - 9; }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "the owning conditional join fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // A value moved out of the owning join is its temporary: a field is read
+  // there in place, and an assignment move-assigns from it.
+  const std::string alias = " denotes its owning conditional temporary\n";
+  bool readInPlace = false;
+  for (std::size_t at = text.find(alias); at != std::string::npos;
+       at = text.find(alias, at + 1)) {
+    const std::size_t line = at + alias.size();
+    const std::size_t end = text.find('\n', line);
+    readInPlace |= end != std::string::npos &&
+                   text.substr(line, end - line).find(".get().number;") !=
+                       std::string::npos;
+  }
+  expect(readInPlace,
+         "a field of an owning conditional should be read from its temporary");
+  expect(text.find(".get() = std::move(__gti_mir_p_") != std::string::npos,
+         "assigning an owning conditional should move-assign from its "
+         "temporary");
+  // A returned join keeps the result in its temporary until the moved
+  // local's fallible cleanup has run, then publishes it.
+  expect(text.find("construct_representation_at(__gti_mir_out_result, "
+                   "__gti_mir_p_") != std::string::npos &&
+             text.find(".take());\n      return true;") != std::string::npos,
+         "a returned owning conditional should publish from its temporary at "
+         "Return");
+}
+
 void testBranchTemporaryCallResultIsNotDiscarded() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-branch-temporary-result.gti", R"(
@@ -4713,6 +4781,7 @@ constexpr NamedTest kTests[] = {
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
     {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},
+    {"testOwningConditionalJoinConsumers", testOwningConditionalJoinConsumers},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",
