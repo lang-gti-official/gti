@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.402.6 — Class-valued conditionals
+
+- A conditional whose arms are class values that need no cleanup, such as
+  `ok ? make_value(1) : make_value(2)`, now builds when it is bound,
+  returned, passed by value, read through a field, assigned, nested in
+  another conditional, or used as a member initializer. Each arm may be a
+  call, including one that can fail, a construction, a copy of a local, or
+  another conditional. These used to report GTI-B0001.
+- A conditional whose arms have destructors no longer stops at run time with
+  "verified MIR lifetime slot escaped without Drop" when it is returned from a
+  function or used as a member initializer. It is destroyed exactly once.
+- Still reporting GTI-B0001: reading a field of, assigning, or nesting a
+  conditional whose arms have destructors, and such a conditional with an arm
+  that moves a local.
+
 ## 0.402.5 — Member initializers from calls that cannot fail
 
 - A constructor field can now be initialized directly from a call that cannot
