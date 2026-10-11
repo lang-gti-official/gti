@@ -18832,7 +18832,10 @@ expectedClassResultDestinationSlot(const MirProgram &program,
 
 // A copy has no intermediate value-drop to reparent. Construct its sole
 // binding directly at the Load, retaining the distinct source and destination
-// lexical drops and the destination's ordinary Initialize event.
+// lexical drops and the destination's ordinary Initialize event. This serves a
+// byte-preserving native-record success payload and, equally, any cleanup-free
+// Expected<Class, E>: a separate SSA local would have to value-initialize the
+// success alternative, a construction the source program does not perform.
 [[nodiscard]] const MirPlace *
 expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
                             MirValueId valueId) {
@@ -18842,8 +18845,9 @@ expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
   if (value == nullptr || value->info.type.kind != SemanticType::Expected ||
       value->info.type.arguments.size() != 2 || !value->info.traits.copyable ||
       value->info.traits.drop != DropKind::Lexical ||
-      !cppRequiresIndirectValueTransport(program,
-                                         value->info.type.arguments.front()) ||
+      (!cppRequiresIndirectValueTransport(program,
+                                          value->info.type.arguments.front()) &&
+       !cleanupFreeExpectedClassAlternatives(program, value->info.type)) ||
       load == nullptr || load->kind != MirInstructionKind::Load ||
       load->result != valueId || load->destination || load->receiver ||
       load->operands.size() != 1 ||

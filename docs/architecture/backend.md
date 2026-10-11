@@ -1552,6 +1552,13 @@ source keeps its own binding drop and is destroyed at its scope exit, as after
 a copy. An owning Expected moves through its value drop and the `Initialize`'s
 `Reparent` instead.
 
+A copy into a new binding, as in `auto copy = original;`, takes the same route
+at its `Load`. MIR's copy of a whole binding has no defined failure, lifecycle
+event or value drop, and the adjacent `Initialize` activates the new binding's
+own drop. The `Load` copy-constructs the new binding's lifetime slot from the
+source, and each binding keeps its own drop. This serves a byte-preserving
+native-record payload and any cleanup-free class payload alike.
+
 The slot also serves an Expected call result that initializes a constructor
 field as that field's selected member initializer, immediately after the
 producer succeeds. The constructor initializer metadata must name exactly that
