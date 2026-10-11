@@ -1,5 +1,27 @@
 # Compiler Verification
 
+## Owned environment observation
+
+`environment_runtime_boundary` covers native counted-name validation, missing
+versus present empty values, arbitrary native bytes, independent snapshots
+surviving serial replacement/removal, concurrent read-only lookup, and
+deterministic name/snapshot allocation failure. Allocation instrumentation
+requires zero native allocations for a short missing name and exactly one
+combined metadata/byte allocation for a present value. `environment_c_header`
+independently compiles and links the header as C17.
+
+`environment_runtime` builds the public source API, its `std.environment`
+module and runnable configuration example at O0/O3 under C++20/C++23. It checks
+controlled empty, spaced, Unicode and 16-KiB values, movement of returned
+owners, verified-MIR/native cleanup witnesses, sanitizer execution, Windows
+import rejection and a rejected view escaping a local returned string owner.
+It also reports runtime and executable/build costs for 100,000 successful
+owned lookups at O3. This is a new-service cost measurement, not a speedup
+comparison to a borrowed libc pointer. `macos_installed_runtime` checks the
+new module and runtime symbols from a relocated install without repository
+overrides. Existing process, filesystem and I/O boundaries remain separate
+regression gates.
+
 ## Record-published field initializers under optimization (0.399.1)
 
 - **Defect.** A literal-backed `std::string_view` field default read back
