@@ -4840,6 +4840,27 @@ private:
                                        classValueArguments, body);
       }
     }
+    // Grouping does not create another closure environment. A parenthesized
+    // lambda with its operand's exact type, category, access and traits is
+    // that operand's value, as lambda calls and expected mappers already
+    // treat it, so every lambda consumer sees the producer itself.
+    if (const auto *grouping = exprAs<Grouping>(&expression)) {
+      const ExpressionInfo *outer = model.findExpression(expression);
+      const ExpressionInfo *inner =
+          grouping->expression() ? model.findExpression(*grouping->expression())
+                                 : nullptr;
+      if (outer != nullptr && inner != nullptr &&
+          outer->type.kind == SemanticType::Lambda && *outer == *inner) {
+        const std::optional<HirValueId> id =
+            lowerExpression(grouping->expression(), model, classArguments,
+                            classValueArguments, body);
+        if (id) {
+          body.sourceAliases.push_back({.source = &expression, .value = *id});
+          output.program.sourceValueIds[&expression].push_back(*id);
+        }
+        return id;
+      }
+    }
     const Expr *raw = &expression;
     HirValueKind kind = HirValueKind::Literal;
     std::vector<HirValueId> operands;

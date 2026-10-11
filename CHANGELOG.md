@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.398.7 — Returning a construction built from an `expected`
+## 0.398.8 — Returning a construction built from an `expected`
 
 - A construction from a by-value `expected<T, E>` argument can now be returned
   directly or used as a member initializer, as in
@@ -25,6 +25,13 @@ for what minor and patch releases mean.
   emitting C++ that the native compiler rejects. Assigning such a
   construction to an existing variable still reports GTI-B0001, and so does a
   member initializer whose `expected` payload owns resources.
+
+## 0.398.7 — Parenthesized lambdas
+
+- A lambda wrapped in parentheses, such as `auto f = ([]() { ... });`,
+  `run(([]() { ... }))` or `auto g = (f);`, now compiles and runs exactly like
+  the unparenthesized lambda. Such programs used to stop with an internal
+  compiler error (GTI-B0001).
 
 ## 0.398.4 — Raw-pointer audit tracks class static fields
 
