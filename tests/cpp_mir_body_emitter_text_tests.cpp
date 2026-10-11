@@ -3094,6 +3094,71 @@ int main() {
          "ordinary SSA local");
 }
 
+// Moving a cleanup-free Expected<Class, E> binding into a new binding
+// constructs the new binding's lifetime slot from the moved source at the
+// Move; the adjacent Initialize only activates the binding's drop. The
+// success payload has no default constructor, so no value-initialized
+// Expected local may exist. (Regression: the move raised GTI-B0001 "Expected
+// value has no exact uninitialized publication".)
+void testCleanupFreeExpectedClassMoveSlot() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-expected-class-move.gti", R"(
+#include <std/utility>
+
+struct point {
+  mut int32_t x;
+  mut int32_t y;
+};
+
+expected<point, int32_t> make_point(int32_t x) {
+  point made = {.x = x, .y = x + 1};
+  return made;
+}
+
+int main() {
+  mut auto first = make_point(3);
+  auto moved = std::move(first);
+  return moved.value().y - 4;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the cleanup-free Expected move fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string marker =
+      "// GTI MIR moved cleanup-free Expected initializes p";
+  const std::size_t initialized = text.find(marker);
+  expect(initialized != std::string::npos,
+         "the moved binding's Initialize should only activate its drop");
+  if (initialized == std::string::npos) {
+    return;
+  }
+  const std::size_t idStart = initialized + marker.size();
+  const std::string destination =
+      "__gti_mir_p_" + text.substr(idStart, text.find('\n', idStart) - idStart);
+  const std::size_t declared =
+      text.find("::gti_internal::backend::mir_lifetime_slot<std::expected<"
+                "::__gti_program::point, std::int32_t>> " +
+                destination + ";");
+  const std::size_t constructed = text.rfind(
+      destination + ".construct(std::move(__gti_mir_p_", initialized);
+  expect(declared != std::string::npos && constructed != std::string::npos &&
+             declared < constructed &&
+             text.find('\n', constructed) == text.rfind('\n', initialized),
+         "the Move should construct the new binding's lifetime slot from the "
+         "moved source immediately before its Initialize");
+  expect(text.find("std::expected<::__gti_program::point, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no Expected should value-initialize an ordinary local");
+}
+
 // Every other source replacing a whole Expected<Class, E> binding spells the
 // native wrapper's own assignment after MIR's replacement cleanup, with no
 // value-initialized Expected local. A cleanup-free copy, move, Unexpected and
@@ -4119,6 +4184,160 @@ int main() { return use_owned() + use_plain() - 5; }
          "no class result should value-initialize an ordinary local");
 }
 
+void testPlainCallMemberInitializer() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-plain-call-member-initializer.gti", R"(
+struct plain_value {
+  int32_t number;
+  plain_value(int32_t number) : number(number) {}
+};
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() {}
+};
+
+plain_value make_plain(int32_t number) { return plain_value(number); }
+counted make_counted(int32_t number) { return counted(number); }
+
+struct owner {
+  plain_value plain;
+  counted owned;
+  owner(int32_t number)
+      : plain(make_plain(number)), owned(make_counted(number)) {}
+};
+
+int main() {
+  owner both{2};
+  return both.plain.number + both.owned.number - 4;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the plain-call member initializer fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const auto slotNamed = [&](const std::string &declaration) {
+    const std::size_t at = text.find(declaration);
+    if (at == std::string::npos)
+      return std::string();
+    const std::size_t start = at + declaration.size();
+    return text.substr(start, text.find(';', start) - start);
+  };
+  // The cleanup-free result constructs in representation-only storage, then
+  // replaces the field's empty representation.
+  const std::string plain = slotNamed(
+      "::gti_internal::backend::mir_lifetime_slot<::__gti_program::plain_"
+      "value, true> ");
+  const std::size_t plainCall =
+      plain.empty() ? std::string::npos
+                    : text.find(plain + ".construct_from([&]() { return "
+                                        "::__gti_program::__gti_fn_");
+  expect(plainCall != std::string::npos &&
+             text.find("construct_representation_at(std::addressof(__gti_mir_"
+                       "p_",
+                       plainCall) <
+                 text.find(", std::move(" + plain + ".get()));", plainCall),
+         "a failure-free call's cleanup-free result should construct the "
+         "field in place from its representation-only slot");
+  // The owning result constructs in its lifetime slot and moves into the
+  // field, whose rollback MIR then owns.
+  const std::string owned = slotNamed(
+      "::gti_internal::backend::mir_lifetime_slot<::__gti_program::counted> ");
+  const std::size_t ownedCall =
+      owned.empty() ? std::string::npos
+                    : text.find(owned + ".construct_from([&]() { return "
+                                        "::__gti_program::__gti_fn_");
+  expect(ownedCall != std::string::npos &&
+             text.find(" = std::move(" + owned + ".get());", ownedCall) !=
+                 std::string::npos,
+         "a failure-free call's owning result should move from its slot into "
+         "the field");
+  expect(text.find("::__gti_program::plain_value __gti_mir_v_") ==
+                 std::string::npos &&
+             text.find("::__gti_program::counted __gti_mir_v_") ==
+                 std::string::npos,
+         "no class result should value-initialize an ordinary local");
+}
+
+void testClassConditionalJoinConsumers() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-class-conditional-join.gti", R"(
+struct plain_value {
+  int32_t number;
+  plain_value(int32_t number) : number(number) {}
+};
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() {}
+};
+
+plain_value make_plain(int32_t number) { return plain_value(number); }
+counted make_counted(int32_t number) { return counted(number); }
+
+plain_value pick(bool ok) { return ok ? make_plain(1) : make_plain(2); }
+
+counted pick_counted(bool ok) {
+  return ok ? make_counted(3) : make_counted(4);
+}
+
+int main() { return pick(true).number + pick_counted(true).number - 4; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the class conditional join fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // Both call arms publish into the cleanup-free join's storage; the joined
+  // value moves into its own staged slot and the join's representation ends.
+  const std::string retire = ".destroy(); // end moved join representation\n";
+  const std::size_t retired = text.find(retire);
+  const std::size_t joinStart = retired == std::string::npos
+                                    ? std::string::npos
+                                    : text.rfind("__gti_mir_p_", retired);
+  const std::string join = joinStart == std::string::npos
+                               ? std::string()
+                               : text.substr(joinStart, retired - joinStart);
+  std::size_t armPublications = 0;
+  for (std::size_t at = join.empty() ? std::string::npos
+                                     : text.find(join + ".construct_from(");
+       at != std::string::npos && at < retired;
+       at = text.find(join + ".construct_from(", at + 1))
+    ++armPublications;
+  expect(armPublications == 2 &&
+             text.rfind(".construct(std::move(" + join + ".get()));",
+                        retired) != std::string::npos,
+         "both call arms should publish into the join's storage, and the "
+         "returned value should move from it before the join retires");
+  // An owning returned join ends its moved-from storage at the transfer.
+  expect(text.find(".destroy(); // GTI MIR returned temporary transfer-out") !=
+             std::string::npos,
+         "an owning conditional returned from a plain body should retire its "
+         "moved-from join storage at the transfer");
+  expect(text.find("::__gti_program::plain_value __gti_mir_v_") ==
+                 std::string::npos &&
+             text.find("::__gti_program::plain_value __gti_mir_p_") ==
+                 std::string::npos,
+         "no join value or storage should value-initialize an ordinary local");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -4308,10 +4527,14 @@ constexpr NamedTest kTests[] = {
     {"testOwnedArgumentMemberInitializer", testOwnedArgumentMemberInitializer},
     {"testOwningExpectedFieldPublication", testOwningExpectedFieldPublication},
     {"testCommaDenotesRightOperandObject", testCommaDenotesRightOperandObject},
+    {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
+    {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",
      testCleanupFreeExpectedClassAssignmentSlot},
+    {"testCleanupFreeExpectedClassMoveSlot",
+     testCleanupFreeExpectedClassMoveSlot},
     {"testExpectedClassReplacementSources",
      testExpectedClassReplacementSources},
     {"testOwningExpectedReplacementSources",
