@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v99`, `mir-body-v82`).
+instruction, body, and caller-assignment facts (`mir-v100`, `mir-body-v83`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -277,8 +277,31 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v99`/`mir-body-v82`,
-with `lowered-program-v17` declaration metadata. Version 99 records each
+The combined deterministic serialization is currently `mir-v100`/`mir-body-v83`,
+with `lowered-program-v17` declaration metadata. Version 100/body 83 adds exact
+scoped-task adapter/loan groups and each adapter's scoped operand identity.
+The private synchronous `ThreadScope` call consumes each exact task once and
+retains its checked dependency loan through the operation's normal and failure
+continuations. Program verification replays the operand's actual origins,
+field paths, access modes, structural scoped eligibility and exact callable
+entry. Body verification requires all task loans live and rejects overlapping
+exclusive sibling accesses. Neither an empty group nor borrowed transport
+changes the ordinary owned-thread contract. Concrete generic and pack forwarding
+preserve each task's exact entry origins, including multiple reference fields
+and repeated types. The production backend emits the complete group through
+the scoped runtime service; the source-defined `parallel_invoke` wrapper maps
+its recoverable status after join-all and cleanup. Cleanup-bound borrowed pack
+elements retain separate lifecycle loans through their exact element drops or
+owned handoff. Whole-binding identity alone is insufficient to discharge a
+different element's obligation.
+
+Fresh-value transport distinguishes lexical loan lifetime from active object
+cleanup. A freshly constructed borrowed carrier can have no destructor work
+or cleanup slot. Its unique SSA consumption remains required, and the concrete
+class's independently verified active-cleanup fact controls whether a slot is
+necessary. Absence of a drop instruction alone never proves trivial cleanup.
+
+Version 99 records each
 failure record's kind, producer or shared-cleanup continuation, and adds the
 `ContinueFailure` terminator; see
 [shared failure cleanup](#shared-failure-cleanup). It retains exact concrete
@@ -324,7 +347,7 @@ from actual alternative fields; nominal generic metadata does not become a
 stored component. Missing exact rows remain invalid rather than granting a
 storage or capability exemption.
 
-The combined serialization is `mir-v99`/`lowered-program-v17`, preserving
+The combined serialization is `mir-v100`/`lowered-program-v17`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,
@@ -391,6 +414,22 @@ loan or the caller's cleanup ownership. In particular, borrowing a guard does
 not acquire its lock-release obligation. Local bindings of stored referents
 retain their concrete reference-field dereference; semantic overlap identities
 are not substituted for executable projection chains.
+Constructing a cleanup-owning child from an incoming carrier's reference field
+uses that same abstract entry as its parent authority. A concrete field borrow
+need not be spelled as a `Loan` operand: verification requires an active entry,
+its exact declared reference-field/dereference path, sufficient access, and an
+argument place identical to the child's recorded origin. A different field,
+carrier shell, read-only authority for a mutable child, or merely overlapping
+place cannot satisfy the proof. This rule applies equally to ordinary methods
+and nested scoped jobs; it does not grant the parent any cleanup ownership.
+For a composed result's additional dependencies, a projection through the exact
+reference field of a borrowed carrier retains that carrier's abstract external
+entry, not its temporary physical reference. Canonicalization keeps the formal's
+leading reference dereference separate from the stored field's dereference.
+Whole-carrier access and owned-field projections still retain the physical
+loan, and a direct reborrow without the explicit stored-dependency edge keeps
+its immediate parent. Verification rejects ending the external entry before
+its forwarded fields, even when the physical reference has already ended.
 Cleanup-bound nominal carriers are classified from concrete borrowed-state and
 active-cleanup facts, independently of the trusted mutex capability. Exact
 by-value entries own a binding drop; owning call/constructor publications own
@@ -1258,6 +1297,16 @@ dependency. A cleanup-bound construction from one shared input retains that
 input's ancestry while recording the full result map. Multi-input composition
 does not invent a common parent. Independent mutations reject missing or
 collapsed result paths and premature release of the guarded pair.
+When an additional concrete dependency originates through an independent
+reference-formal entry or an explicit loan-rooted place, it retains that
+input's authority separately from the primary parent. Canonicalizing a source
+place does not erase the formal's entry permission. Body verification checks
+the secondary input's liveness, containment and access at publication, retains
+it in the lifetime/ancestry graph, rejects cycles and child-before-input release,
+and continues to check every protected place for conflicting access. It does
+not require unrelated inputs to fit inside the first parent's storage. The
+ordinary primary reborrow and its suspension/reactivation remain represented;
+escaping publications keep their separate transfer contract.
 Returning the carrier or its exact stored referent publishes a fresh escaping
 `Return` loan through one `Borrow` operand that names that entry loan. A carrier
 return also names the exact SSA value loaded or moved from one of that loan's
@@ -1748,6 +1797,13 @@ A `MirBody` owns:
   referent. Forwarding stages the exact loan, not a borrow of the whole pack.
   Verification checks per-element coverage, access, non-escape and source
   identity; normal and failure exits retire the entry capabilities;
+- each borrowed class element of a concrete formal pack has a `StoredValue`
+  entry loan over its exact `PackElement` place, with all resolved field paths
+  and access modes. Projecting its referents appends the ordinary field and
+  dereference projections to that element, not to the whole pack. Forwarding
+  reuses the canonical element place and its loan; copying stages an independent
+  carrier while moving consumes only the carrier shell. Whole-program checks
+  independently replay field paths and reject missing or substituted origins;
 - typed lexical/value drop obligations and per-instruction initialize, move,
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
@@ -2531,8 +2587,9 @@ Cleanup-free results retain the normal no-value-drop convention, while the
 moved-from cleanup-free parameter still has its harmless lexical lifetime.
 The original construction expression supplies result provenance and the
 full-expression boundary. No native constructor lookup or new escape rule is
-introduced; borrowed-state pack elements remain outside the existing by-value
-pack contract.
+introduced. Borrowed class elements use their exact stored entry loans under
+the same carrier copy/move contract; this does not admit untracked borrowed
+closures or manufacture dependencies from representation.
 
 An active-cleanup nominal receiver's `Move` initializes its existing Value
 obligation from the source binding. Its `CallInput(Receiver, MoveValue)` aliases
@@ -2769,12 +2826,17 @@ child loan linked to one mutable parent. Producing the child suspends the
 parent; `EndBorrow` for a child reactivates it only when no other active child
 remains. Nested chains apply the same transition recursively. Known-disjoint
 sibling-field children may coexist, and a suspended parent may still be used
-through a known-disjoint projection. A read-only child of a parent that
+through a known-disjoint projection. An ordinary reference without a stored
+carrier dependency may also lend and read shared access while all overlapping
+child accesses are read-only. Local and call-result shared children use the
+same rule in either creation order; any overlapping mutable dependency still
+excludes that access. A read-only child of a parent that
 grants no mutation over the child's place shares access with every
 overlapping read-only sibling, whatever the parent's loan kind; reborrowing a
 payload of one read-only matched-enum binding therefore coexists with the
-other read-only payload bindings. Verification rejects direct or
-overlapping use of a suspended parent, a read-only-to-mutable transition, or
+other read-only payload bindings. Verification rejects overlapping exclusive
+use of a suspended parent, reads overlapping an exclusive child, a
+read-only-to-mutable transition, or
 inconsistent active/suspended state at a CFG join. The precise place model for
 this slice is limited to stable roots with named-field and checked-dereference
 projections; it does not claim indexed, raw, or opaque provenance.
@@ -3147,7 +3209,7 @@ part of the hosted schedule; it does not discover lifecycle from public wrapper
 names. The detached declaration/adapter contract is serialized as
 `lowered-program-v9`.
 
-`mir-v99`/`lowered-program-v17` retain `ProcessMemoryRuntimeOperation` on the
+`mir-v100`/`lowered-program-v17` retain `ProcessMemoryRuntimeOperation` on the
 exact private native declarations of the process allocator's runtime ABI
 (`std/memory`'s `gti_internal::runtime` block): the native size and address
 alignment queries, the POSIX pointer-size/`ENOMEM`/`EINVAL` queries, POSIX

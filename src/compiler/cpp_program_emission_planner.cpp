@@ -308,6 +308,7 @@ public:
           switch (instruction.intrinsic) {
           case IntrinsicKind::ThreadHandleEmpty:
           case IntrinsicKind::ThreadSpawn:
+          case IntrinsicKind::ThreadScope:
           case IntrinsicKind::ThreadJoinable:
           case IntrinsicKind::ThreadJoin:
           case IntrinsicKind::ThreadAutoJoin:
@@ -4347,9 +4348,9 @@ public:
       case SemanticType::SharedPointer:
         return;
       case SemanticType::Class: {
-        // The declaration-bound optional capability stores its exact value
-        // inline even though it has no source fields. Its payload layout must
-        // precede every containing class, unlike pointer-backed storage.
+        // These declaration-bound capabilities embed their exact value even
+        // though they have no source fields. Payload layout must precede every
+        // containing class, unlike pointer-backed storage.
         const auto capability = std::find_if(
             mir.classInstances().begin(), mir.classInstances().end(),
             [&](const MirClassInstance &candidate) {
@@ -4357,7 +4358,9 @@ public:
                      (candidate.compilerCapability ==
                           CompilerCapabilityTypeKind::OptionalStorage ||
                       candidate.compilerCapability ==
-                          CompilerCapabilityTypeKind::UninitializedStorage);
+                          CompilerCapabilityTypeKind::UninitializedStorage ||
+                      candidate.compilerCapability ==
+                          CompilerCapabilityTypeKind::MutexStorage);
             });
         if (capability != mir.classInstances().end()) {
           for (const SemanticType &argument : type.arguments) {
@@ -4767,11 +4770,11 @@ public:
           }
           const MirBodyAddress source{.kind = MirBodyKind::Function,
                                       .owner = instance->id};
-          return std::any_of(mir.threadTaskAdapters().begin(),
-                             mir.threadTaskAdapters().end(),
-                             [&](const MirThreadTaskAdapter &adapter) {
-                               return adapter.sourceBody == source;
-                             });
+          return std::any_of(
+              mir.threadTaskAdapters().begin(), mir.threadTaskAdapters().end(),
+              [&](const MirThreadTaskAdapter &adapter) {
+                return adapter.sourceBody == source && !adapter.scoped;
+              });
         });
   }
 
@@ -7440,12 +7443,19 @@ public:
       if (functionItem) {
         emitTargetName(true);
       } else {
-        emitThreadTaskReceiver(adapter.targetInvocation, valueBearing);
+        emitThreadTaskReceiver(adapter.targetInvocation,
+                               valueBearing || adapter.scoped);
         output << '.' << cppMirFailureSiblingSpelling(name);
       }
       output << '(';
       if (valueBearing) {
         output << "box->result.construction_address(), ";
+      } else if (cppFunctionHasFailureResultChannel(loweredProgram,
+                                                    *declaration)) {
+        // A class-bound generic result keeps its uniform output parameter
+        // even when this concrete task returns void. Use the same signature
+        // contract as ordinary calls and wrappers, not only the result type.
+        output << "static_cast<void *>(nullptr), ";
       }
       output << "&failure);\n";
       if (valueBearing) {
@@ -7468,7 +7478,8 @@ public:
     if (functionItem) {
       emitTargetName(false);
     } else {
-      emitThreadTaskReceiver(adapter.targetInvocation, valueBearing);
+      emitThreadTaskReceiver(adapter.targetInvocation,
+                             valueBearing || adapter.scoped);
       output << '.' << name;
     }
     output << "()";
@@ -7505,6 +7516,49 @@ public:
       output << "template <>\n"
                 "struct managed_thread_task_adapter<"
              << adapter.id << "> final {\n";
+      if (adapter.scoped) {
+        if (valueBearing)
+          throw std::logic_error("scoped task has a non-void result");
+        output << "  template <typename Task>\n"
+                  "  static void entry(void *raw) noexcept {\n"
+                  "    auto *box = static_cast<managed_scoped_task_box<Task> "
+                  "*>(raw);\n"
+                  "    ::gti_runtime_detail::run_managed_task_adapter([&] {\n"
+                  "      ::gti_failure_record_v2 failure{};\n";
+        if (functionTarget != nullptr) {
+          emitThreadTaskFunctionCall(adapter, *functionTarget);
+        } else {
+          output << "      if constexpr (requires { "
+                    "std::move(box->task.get())(&failure); }) {\n"
+                    "        if (!std::move(box->task.get())(&failure))\n"
+                    "          "
+                    "::gti_runtime_detail::handoff_managed_worker_failure(\n"
+                    "              failure, "
+                    "&__gti_failure_artifact_descriptor_v1);\n"
+                    "      } else {\n"
+                    "        read_only_receiver(box->task.get())();\n"
+                    "      }\n";
+        }
+        output
+            << "    });\n  }\n\n"
+               "  template <typename Task>\n"
+               "  static bool cleanup(mir_lifetime_slot<Task, true> &value,\n"
+               "      ::gti_failure_record_v2 *failure, bool unwinding) {\n";
+        const auto cleanup = mirUniqueCleanupType(mir, adapter.taskType);
+        if (cleanup && cleanup->requiresActiveCleanup) {
+          output << "    return value.destroy_cleanup_with_failure(failure, "
+                    "false, unwinding,\n"
+                    "        [](auto &element, ::gti_failure_record_v2 "
+                    "*record, bool unwinding) { return "
+                 << cppMirCleanupValueExpression(mir, *cleanup, "element",
+                                                 "record", "unwinding")
+                 << "; });\n";
+        } else {
+          output << "    value.destroy_if_engaged();\n    return true;\n";
+        }
+        output << "  }\n};\n\n";
+        continue;
+      }
       const auto emitCleanupHelper = [&](std::string_view name,
                                          const SemanticType &type, bool slot) {
         const auto cleanup = mirUniqueCleanupType(mir, type);

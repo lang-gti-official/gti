@@ -82,6 +82,23 @@ typedef struct gti_thread_value_join_result_v2 {
   gti_thread_result_abandon_v1 abandon_result;
 } gti_thread_value_join_result_v2;
 
+/* A synchronous scope borrows its task contexts. It does not destroy or retain
+ * them. The caller supplies distinct scratch slots; no task-box or handle-array
+ * allocation is needed in addition to the native workers' own state. */
+typedef struct gti_thread_scoped_task_v1 {
+  gti_thread_task_entry_v1 entry;
+  void *context;
+} gti_thread_scoped_task_v1;
+
+typedef struct gti_thread_scope_result_v1 {
+  uint32_t abi_version;
+  gti_thread_spawn_status_v1 spawn_status;
+  uint64_t started;
+  /* UINT64_MAX when no worker failed; otherwise the first failing input. */
+  uint64_t failed_worker;
+  gti_thread_join_result_v2 worker;
+} gti_thread_scope_result_v1;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -134,6 +151,29 @@ gti_rt_thread_join_value_v1(gti_thread_state_v1 **state);
 gti_thread_join_result_v2 gti_rt_thread_join_v2(gti_thread_state_v1 **state);
 gti_thread_value_join_result_v2
 gti_rt_thread_join_value_v2(gti_thread_state_v1 **state);
+
+/*
+ * Starts tasks in input order, stopping at the first creation error, and joins
+ * every started worker before returning any outcome. All contexts, their
+ * reachable borrows and artifact descriptors must remain live through this
+ * call. The caller proves disjoint/exclusive or synchronized access; this raw
+ * ABI is not itself a source-language borrow proof.
+ *
+ * `scratch` addresses count writable pointer slots, disjoint from tasks and
+ * task-accessible state. Incoming scratch contents are ignored. Every slot is
+ * null on return; no join obligation escapes. Null arrays are allowed for zero
+ * tasks. This call neither destroys contexts nor reports a failure observer.
+ * The first worker failure in input order is retained byte-for-byte, even if
+ * creation of a later task failed. Generated clients propagate that failure
+ * before returning the creation error. Other workers are still joined.
+ *
+ * A native join failure cannot release a borrowed context or transfer its
+ * obligation to quarantine. Such a runtime integrity failure terminates
+ * without unwinding the borrowing caller. It never returns a live worker.
+ */
+gti_thread_scope_result_v1
+gti_rt_thread_scope_v1(const gti_thread_scoped_task_v1 *tasks,
+                       gti_thread_state_v1 **scratch, uint64_t count);
 
 #ifdef __cplusplus
 }

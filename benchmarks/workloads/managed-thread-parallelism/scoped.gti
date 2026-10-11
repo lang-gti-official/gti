@@ -1,0 +1,29 @@
+#include <std/thread>
+#include "kernel.gti"
+
+class partition_job {
+  int32_t row;
+  mut uint64_t& output;
+public:
+  partition_job(int32_t row, mut uint64_t& output) : row(row), output(output) {}
+  void operator()() mut {
+    this.output = render_repeated_partition(this.row, worker_count);
+  }
+};
+
+int main() {
+  mut uint64_t first = uint64_t(0);
+  mut uint64_t second = uint64_t(0);
+  mut uint64_t third = uint64_t(0);
+  mut uint64_t fourth = uint64_t(0);
+  auto joined = std::parallel_invoke(
+      partition_job(0, first), partition_job(1, second),
+      partition_job(2, third), partition_job(3, fourth));
+  if (!joined) return 1;
+  if (first != first_partition_checksum || second != second_partition_checksum ||
+      third != third_partition_checksum || fourth != fourth_partition_checksum) return 2;
+  uint64_t digest = first + second + third + fourth;
+  if (digest != expected_checksum) return 3;
+  print_benchmark_record(digest);
+  return 0;
+}

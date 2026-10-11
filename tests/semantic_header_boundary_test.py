@@ -58,6 +58,9 @@ def main() -> None:
         # Reuses one analyzer to verify snapshot-owned concrete enum rows are
         # cleared; independent Frontend snapshots cannot exercise that reset.
         "tests/generic_enum_declaration_tests.cpp",
+        # Exercises the type-level scoped-task prerequisite query directly,
+        # separately from permission to invoke a join-all source operation.
+        "tests/scoped_thread_semantic_tests.cpp",
     }
     actual: set[str] = set()
     for directory in ("include", "src", "tests"):

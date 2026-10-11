@@ -34,6 +34,7 @@ namespace {
 thread_local gti_thread_state_v1 *activeWorker = nullptr;
 thread_local bool activeTaskObjectCleanup = false;
 thread_local gti_thread_state_v1 *emergencyHandoffWorker = nullptr;
+thread_local uint64_t scopedTestFailureAfter = UINT64_MAX;
 std::atomic<gti::runtime::detail::ThreadTestFault> testFault{
     gti::runtime::detail::ThreadTestFault::None};
 std::mutex quarantineMutex;
@@ -451,6 +452,10 @@ void setThreadTestFault(ThreadTestFault fault) noexcept {
   testFault.store(fault, std::memory_order_release);
 }
 
+void setScopedThreadTestFailureAfter(std::uint64_t starts) noexcept {
+  scopedTestFailureAfter = starts;
+}
+
 } // namespace gti::runtime::detail
 
 extern "C" gti_thread_spawn_result_v1
@@ -732,6 +737,68 @@ gti_rt_thread_join_value_v2(gti_thread_state_v1 **stateAddress) {
 extern "C" gti_thread_join_result_v1
 gti_rt_thread_join_v1(gti_thread_state_v1 **stateAddress) {
   return legacyJoin(gti_rt_thread_join_v2(stateAddress));
+}
+
+extern "C" gti_thread_scope_result_v1
+gti_rt_thread_scope_v1(const gti_thread_scoped_task_v1 *tasks,
+                       gti_thread_state_v1 **scratch, uint64_t count) {
+  gti_thread_scope_result_v1 result{
+      .abi_version = GTI_THREAD_ABI_VERSION_V1,
+      .spawn_status = GTI_THREAD_SPAWN_OK_V1,
+      .started = 0,
+      .failed_worker = UINT64_MAX,
+      .worker = emptyJoinResult(),
+  };
+  if (count == 0)
+    return result;
+  if (scratch == nullptr) {
+    result.spawn_status = GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1;
+    return result;
+  }
+  for (uint64_t index = 0; index < count; ++index)
+    scratch[index] = nullptr;
+  if (tasks == nullptr) {
+    result.spawn_status = GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1;
+    return result;
+  }
+
+  // These contexts remain in caller-owned storage. The managed entry adapter
+  // still contains worker failures, but cleanup of the borrowed context is
+  // deliberately not part of worker completion or creation failure.
+  const auto leaveBorrowedContext = [](void *) {};
+  const auto failAfter = std::exchange(scopedTestFailureAfter, UINT64_MAX);
+  for (uint64_t index = 0; index < count; ++index) {
+    if (index == failAfter) {
+      result.spawn_status = GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
+      break;
+    }
+    const auto spawned = gti_rt_thread_spawn_v1(
+        tasks[index].entry, tasks[index].context, leaveBorrowedContext);
+    if (spawned.status != GTI_THREAD_SPAWN_OK_V1) {
+      result.spawn_status = spawned.status;
+      break;
+    }
+    scratch[index] = spawned.state;
+    ++result.started;
+  }
+
+  for (uint64_t index = 0; index < result.started; ++index) {
+    const auto joined = gti_rt_thread_join_v2(&scratch[index]);
+    if (scratch[index] != nullptr ||
+        (joined.status != GTI_THREAD_JOIN_OK_V1 &&
+         joined.status != GTI_THREAD_JOIN_WORKER_FAILURE_V1)) {
+      // Returning or unwinding here would let caller cleanup invalidate a
+      // context that a live worker may still access. Unlike an owned thread,
+      // a borrowed worker cannot be placed in terminal ownership quarantine.
+      std::terminate();
+    }
+    if (joined.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1 &&
+        result.failed_worker == UINT64_MAX) {
+      result.failed_worker = index;
+      result.worker = joined;
+    }
+  }
+  return result;
 }
 
 extern "C" gti_thread_value_join_result_v1

@@ -652,6 +652,17 @@ struct MirLiteralProvenance {
                          const MirLiteralProvenance &) = default;
 };
 
+// One consumed operand of a synchronous structured task group. A borrowed
+// task retains its existing stored loan through the whole operation, including
+// worker cleanup and join-all before either continuation. No handle escapes.
+struct MirScopedThreadTask {
+  MirThreadTaskAdapterId adapter = 0;
+  MirLoanId dependency = 0;
+
+  friend bool operator==(const MirScopedThreadTask &,
+                         const MirScopedThreadTask &) = default;
+};
+
 struct MirInstruction {
   MirInstructionId id = 0;
   MirInstructionKind kind = MirInstructionKind::Compute;
@@ -734,6 +745,7 @@ struct MirInstruction {
   std::optional<SemanticType> nativeCalleeType;
   std::optional<MirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<MirThreadTaskAdapterId> threadTaskAdapter;
+  std::vector<MirScopedThreadTask> scopedThreadTasks;
   std::optional<HirConstructorInstanceId> constructorTarget;
   // Body-local ObjectAllocation obligation consumed by unique construction,
   // or established by AllocateObject. It is not a source-visible owner value.
@@ -1120,7 +1132,8 @@ struct MirTemporaryCarrierDependency {
 [[nodiscard]] MirTemporaryCarrierDependency
 findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place);
 
-// Includes the loan itself and both physical-parent and stored-owner edges.
+// Includes the loan itself, physical-parent/stored-owner edges, and the
+// independent input authorities retained by composed stored dependencies.
 [[nodiscard]] bool mirLoanRetainsDependency(const MirBody &body, MirLoanId loan,
                                             MirLoanId dependency);
 
@@ -1388,6 +1401,8 @@ struct MirThreadTaskAdapter {
   CallableInvocationCapability invocation = CallableInvocationCapability::Once;
   bool catchesWorkerFailure = true;
   bool catchesNativeExceptions = true;
+  bool scoped = false;
+  std::size_t scopeArgument = 0;
 
   friend bool operator==(const MirThreadTaskAdapter &,
                          const MirThreadTaskAdapter &) = default;

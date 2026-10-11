@@ -1,0 +1,97 @@
+#include <std/functional>
+#include <std/thread>
+#include <std/mutex>
+#include <std/memory>
+#include <std/vector>
+#include <std/utility>
+
+class Once {
+  std::unique_ptr<int> value;
+public:
+  Once(std::unique_ptr<int> value) : value(std::move(value)) {}
+  int operator()() && { return *this.value; }
+};
+
+class Counter {
+  mut int value = 40;
+public:
+  int operator()() mut { this.value += 1; return this.value; }
+};
+
+struct VoidRead { void operator()() {} };
+struct VoidMut { void operator()() mut {} };
+struct VoidOnce { void operator()() && {} };
+
+int main() {
+  // Generic result erasure retains a uniform failure ABI even for void.
+  std::transfer_function<void()> void_read{VoidRead()};
+  auto void_read_started = std::thread::start(std::move(void_read));
+  if (!void_read_started) return 16;
+  mut auto void_read_worker = std::move(void_read_started).value();
+  if (!void_read_worker.join()) return 17;
+  std::transfer_function<void() mut> void_mut{VoidMut()};
+  auto void_mut_started = std::thread::start(std::move(void_mut));
+  if (!void_mut_started) return 18;
+  mut auto void_mut_worker = std::move(void_mut_started).value();
+  if (!void_mut_worker.join()) return 19;
+  std::transfer_function<void() &&> void_once{VoidOnce()};
+  auto void_once_started = std::thread::start(std::move(void_once));
+  if (!void_once_started) return 20;
+  mut auto void_once_worker = std::move(void_once_started).value();
+  if (!void_once_worker.join()) return 21;
+
+  mut std::transfer_function<int()> read{};
+  if (!read.empty()) return 10;
+  read.replace([]() -> int { return 1; });
+  if (read.empty() || read() != 1) return 11;
+  read.reset();
+  if (!read.empty()) return 12;
+  read.replace([]() -> int { return 42; });
+  mut std::thread_result<int> first{};
+  if (!first.start(std::move(read))) return 1;
+  auto first_result = first.join();
+  if (!first_result || first_result.value() != 42) return 2;
+
+  mut std::transfer_function<int() mut> change{Counter()};
+  change.reset();
+  if (!change.empty()) return 13;
+  change.replace(Counter());
+  if (change() != 41) return 3;
+  mut std::thread_result<int> second{};
+  if (!second.start(std::move(change))) return 4;
+  auto second_result = second.join();
+  if (!second_result || second_result.value() != 42) return 5;
+
+  mut std::transfer_function<int() &&> consume{};
+  if (!consume.empty()) return 14;
+  consume.replace(Once(std::make_unique<int>(1)));
+  consume.reset();
+  if (!consume.empty()) return 15;
+  consume.replace(Once(std::make_unique<int>(42)));
+  mut std::thread_result<int> third{};
+  if (!third.start(std::move(consume))) return 6;
+  auto third_result = third.join();
+  if (!third_result || third_result.value() != 42) return 7;
+
+  // Different concrete targets have one queue element type and retain their
+  // transfer contract through an ordinary source-defined container.
+  mut std::vector<std::transfer_function<int() &&>> jobs{};
+  jobs.push_back(std::transfer_function<int() &&>(Once(std::make_unique<int>(20))));
+  jobs.push_back(std::transfer_function<int() &&>([]() -> int { return 22; }));
+  auto shared = std::make_shared<std::mutex<std::vector<std::transfer_function<int() &&>>>>(
+      std::move(jobs));
+  auto worker_state = shared.clone();
+  mut std::thread_result<int> worker{};
+  auto started = worker.start([state = std::move(worker_state)]() -> int {
+    mut auto guard = state->lock();
+    mut auto& pending = guard.get();
+    auto first = std::exchange(pending[std::size_t(0)], std::transfer_function<int() &&>());
+    auto second = std::exchange(pending[std::size_t(1)], std::transfer_function<int() &&>());
+    int a = std::move(first)();
+    int b = std::move(second)();
+    return a + b;
+  });
+  if (!started) return 8;
+  auto completed = worker.join();
+  return completed && completed.value() == 42 ? 0 : 9;
+}
