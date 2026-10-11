@@ -338,6 +338,50 @@ This proof depends on stored/escaping mutable dependencies and complete
 temporary/drop authority. A native thread API called inside `unsafe` does not
 gain this scoped-borrow permission automatically.
 
+#### Scoped-invocation implementation route (2026-10-11)
+
+This is the pending source/compiler part of the scoped-concurrency goal, not
+an available API. The intended first public operation is a synchronous
+variadic `std::parallel_invoke(tasks...)`: all admitted tasks complete before
+it returns or propagates a defined failure. Tasks are ordinary callable values,
+including user-defined carriers of checked references. A carrier owning two
+references, or a reference nested in another carrier, uses the same stored
+dependency paths as an ordinary call. No public class spelling grants thread
+access. Owned `std::thread` entry continues to reject borrowed state.
+
+The scope owns task values and their cleanup; their reachable external places
+remain borrowed. A shared dependency requires sharing of its referent; an
+exclusive dependency requires transfer and prevents conflicting parent or
+sibling access until all children complete. Field and region disjointness
+comes from the existing place/loan model. Transfer/share opt-outs and audited
+native-resource obligations remain effective. Allowing this confined boundary
+must not mark the carrier globally transferable or permit an erased callback
+to hide its dependencies.
+
+Semantics must select each exact callable entry and retain each dependency's
+origin, access and scope endpoint. Concrete HIR preserves the heterogeneous
+task group and its entry identities. MIR needs an explicit combined
+spawn/join scope contract, child accesses and transfer/drop responsibilities
+on both normal and failure edges; it must verify that all external loans end
+only after the group has joined. The backend may erase stack-resident contexts
+only from that verified contract. A source wrapper handles recoverable creation
+status; generated adapters preserve the established defined-failure channel.
+
+The runtime group primitive is implemented independently as a prerequisite.
+It does not yet supply semantic admission, adapter lifetime proofs or source
+cleanup. Integration must account for completed, failed and never-started task
+values separately, including a consuming callable and cleanup that fails while
+a worker failure is pending. Reuse managed-task cleanup adapters rather than
+inventing a separate failure interpreter. Every started child is joined before
+caller-side cleanup can invalidate its referenced storage.
+
+The immediate cost model is one native worker per submitted task, stack task
+descriptors and handle slots, and no extra per-task heap box solely for scoped
+transport. This is scoped parallel execution, not a low-overhead persistent
+worker pool. Validate allocation counts and optimized runtime/code size against
+equivalent spawn/join work; the scope is not a reason to advertise native thread
+creation as cheap enough for fine-grained frame jobs.
+
 ## `mut`, Globals, And Interior Mutability
 
 ### Meaning Of `mut`

@@ -130,6 +130,23 @@ and transferable read/mut/once jobs in C++20/C++23 at O0/O1/O3, no-elide and
 ASan/UBSan modes (24 fixture/mode combinations). This is focused checkpoint
 evidence, not final current-head validation or a TSan/performance claim.
 
+The shared-job checkpoint also corrects generic `void` task entry to retain
+the existing transformed-function result-channel ABI. Snapshot
+`5ccecc13419a96c9b637ba830dcd7d45d3443a7c116106ea6c2695f575a02268`
+passes the 24 native fixture/mode combinations with read/mutable/consuming
+void jobs, both shared-mutex and transfer-function TSan gates, exact inline
+allocation counts, semantic/MIR and erased-storage controls, and compiler-backed
+LSP diagnostics/repair. Example 066 builds/runs at O3 with its expected output;
+its individually measured census is 114 emitted bodies and 741 declarations,
+116 representation bodies and 60 generated items. Only that example's baseline
+and arithmetic totals are updated; the complete corpus remains a final gate.
+Snapshot `2590074e82b8528f362a8bbec6afbed5ee7232cd7a39dff9a7122966f320a57b`
+additionally passes local non-transferable target/replacement controls for all
+three invocation forms of ordinary owning function wrappers. Its separate
+manifest command omitted the required repository argument; the corrected local
+manifest guard passes. These are focused development results, not completion
+of scoped source support or final publication validation.
+
 ## Compile-Time Reflection Delivered (2026-10-11)
 
 The owner accepted [`reflection.md`](reflection.md) with its decisions. All

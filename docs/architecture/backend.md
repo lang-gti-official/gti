@@ -3155,8 +3155,13 @@ the complete program declaration/definition region so the direct target is
 declared before adapter text.
 For an overloaded nominal callable the adapter invokes the already selected
 generated member spelling with its verified read, mutable, or consuming
-receiver; C++ overload resolution is not authority. The backend boxes the
-concrete task only at that boundary and passes an opaque context plus
+receiver; C++ overload resolution is not authority. Its failure call uses the same
+`cppFunctionHasFailureResultChannel` query as ordinary source calls: a
+class-bound generic return keeps its uniform output parameter even when the
+selected instance returns `void`, so that adapter passes a null result slot.
+Concrete non-generic `void` targets retain their no-result-channel signature.
+This is backend ABI agreement, not a different GTI result or task contract.
+The backend boxes the concrete task only at that boundary and passes an opaque context plus
 entry/destroy callbacks to the version-one runtime thread ABI. Creation
 failure destroys the box on the spawning thread exactly once; success invokes
 it once and destroys it on the worker. A typed adapter additionally constructs

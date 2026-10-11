@@ -3792,6 +3792,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>" mutex
     )
     add_test(
+      NAME concurrency_composition_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/concurrency_composition_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(concurrency_composition_lsp PROPERTIES TIMEOUT 120)
+    add_test(
       NAME expected_payload_range_lsp
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>" expected-payload-range

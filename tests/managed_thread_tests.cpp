@@ -917,6 +917,29 @@ int main() {
                hasCode(replacement, "GTI-S2029") &&
                !hasCode(replacement, "GTI-B0001"),
            "replacement cannot weaken an erased transfer contract");
+    const std::string firstCall =
+        suffix == " &&" ? "std::move(first)()" : "first()";
+    const std::string secondCall =
+        suffix == " &&" ? "std::move(second)()" : "second()";
+    const auto local =
+        analyze("local-erased-affine-target.gti",
+                "#include <std/functional>\n[[no_transfer]] struct Task { int "
+                "operator()()" +
+                    suffix + R"( { return 42; } };
+int main() {
+  mut std::function<int())" +
+                    suffix + R"(> first{Task()};
+  mut std::move_only_function<int())" +
+                    suffix + R"(> second{Task()};
+  first.replace(Task());
+  second.replace(Task());
+  return )" + firstCall +
+                    " + " + secondCall + " - 84;\n}\n");
+    if (!local.canGenerateCode())
+      printDiagnostics(local);
+    expect(local.canGenerateCode(),
+           "ordinary read, mutable and consuming erased wrappers retain "
+           "non-transferable local targets and replacement");
   }
   // This is an ordinary interface contract, not a stdlib type-name rule.
   const auto unrelated = analyze("unrelated-transfer-interface.gti", R"(

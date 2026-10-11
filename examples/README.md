@@ -125,7 +125,7 @@ is a teaching helper, not a production server.
 | `063-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
 | `064-restricted-arithmetic-operators.gti` | independently declared read-only arithmetic and mutable compound operators |
 | `065-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |
-| `066-managed-threads.gti` | move-only `std::thread`, owned task transfer, explicit join, and mandatory autojoin |
+| `066-managed-threads.gti` | move-only threads, transfer-qualified erased jobs, shared mutex state, explicit join, and mandatory autojoin |
 | `067-forward-iterators.gti` | copied owner-tied read cursors, temporary end-sentinel loops, `std::next`, and forward-iterator binary search |
 | `068-static-assertions.gti` | package, class-dependent, and block-scope compile-time assertions |
 | `069-mutable-field-groups.gti` | grouped mutable fields inside an otherwise immutable-by-default class |
@@ -536,13 +536,15 @@ layer owners behind `std::vector<std::unique_ptr<Layer>>::const_iterator` and
 `::sentinel`. It uses ordinary range traversal and deterministic object cleanup,
 without naming private implementation iterator types.
 
-## Raw text views with source-owned lifetime witnesses
+## Shared cross-thread jobs
 
 [`066-managed-threads.gti`](066-managed-threads.gti) also demonstrates a
 transfer-qualified erased job carrying an owned shared mutex. The payload is
 accessed only while its scoped guard is live; no global or unchecked pointer
 is needed. A transfer-qualified callable does not grant shared invocation,
 and a mutex containing a thread-affine value stays local.
+
+## Raw text views with source-owned lifetime witnesses
 
 [`133-raw-text-owner-views.gti`](133-raw-text-owner-views.gti) derives counted
 text and zero-terminated views from an unrelated inline byte owner. The unsafe
