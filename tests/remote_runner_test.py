@@ -327,6 +327,293 @@ class RemoteRunner(unittest.TestCase):
         with self.assertRaises(runner.RunnerError):
             runner.remote_action("remove", str(self.root), run_id)
 
+    def test_wrong_remote_platform_fails_before_commands_and_still_cleans_up(self):
+        run_id = self.prepare_inline_worker()
+        path = self.root / "runs" / run_id / "input/request.json"
+        request = runner.read_json(path)
+        request["required_platform"] = "Linux" if runner.platform.system() == "Darwin" else "Darwin"
+        runner.write_json(path, request)
+        self.assertEqual(runner.worker(str(self.root), run_id), 1)
+        report = runner.read_json(self.root / "runs" / run_id / "state.json")
+        self.assertIn("run requires", report["error"])
+        self.assertEqual(report["steps"], [])
+        self.assert_clean(run_id)
+
+    def test_detached_submission_records_host_and_resource_defaults_before_upload(self):
+        local = self.directory / "client"
+        submitted = []
+
+        def submit(config, action, run_id=None, input_path=None, output_path=None):
+            self.assertEqual(action, "submit")
+            saved = runner.read_json(local / "runs" / (run_id + ".json"))
+            self.assertEqual(saved["runner"], "ubuntu-8")
+            self.assertEqual(saved["connection"], config)
+            with tarfile.open(input_path) as archive:
+                submitted.append(json.load(archive.extractfile("request.json")))
+            return {"id": run_id}
+
+        with mock.patch.object(runner, "local_directory", return_value=local), \
+                mock.patch.object(runner, "connection", side_effect=submit), \
+                mock.patch.dict(os.environ, {"GTI_REMOTE_HOST": "", "GTI_REMOTE_ROOT": ""}), \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(runner.main(["--repo", str(self.repo), "--runner", "ubuntu-8",
+                                         "run", "--detach", "--target", "gti"]), 0)
+        self.assertEqual(submitted[0]["runner"], {"name": "ubuntu-8", "host": "root@100.81.111.76"})
+        self.assertEqual(submitted[0]["jobs"], 3)
+        self.assertEqual(submitted[0]["test_jobs"], 6)
+        self.assertEqual(submitted[0]["required_platform"], "Linux")
+        self.assertEqual(submitted[0]["cc"], "/usr/bin/gcc-14")
+        self.assertEqual(submitted[0]["cxx"], "/usr/bin/g++-14")
+
+
+class RunnerConnections(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="gti-runner-connections-")
+        self.local = Path(self.temporary.name).resolve()
+        self.path = self.local / "config.json"
+        self.environment = mock.patch.dict(os.environ, {
+            "GTI_REMOTE_RUNNER": "", "GTI_REMOTE_HOST": "", "GTI_REMOTE_ROOT": ""})
+        self.environment.start()
+
+    def tearDown(self):
+        self.environment.stop()
+        self.temporary.cleanup()
+
+    def args(self, *argv):
+        return runner.parser().parse_args(argv or ["status"])
+
+    def test_three_presets_and_legacy_single_host_migration(self):
+        settings = runner.load_settings(self.path)
+        self.assertEqual(set(settings["hosts"]), {"mini", "ubuntu-6", "ubuntu-8"})
+        self.assertEqual(settings["default"], "mini")
+        old = {"host": "custom-mini", "python": "/usr/local/bin/python3",
+               "root": "/custom/gti-remote-runner"}
+        runner.write_json(self.path, old)
+        settings = runner.load_settings(self.path)
+        name, config = runner.select_connection(self.args(), settings, self.local)
+        self.assertEqual(name, "mini")
+        for key, value in old.items():
+            self.assertEqual(config[key], value)
+        self.assertNotIn("platform", config)
+        self.assertEqual(runner.read_json(self.path), old)  # reads do not migrate on disk
+
+    def test_named_cli_environment_and_default_precedence(self):
+        settings = runner.load_settings(self.path)
+        settings["default"] = "ubuntu-6"
+        self.assertEqual(runner.select_connection(self.args(), settings, self.local)[0], "ubuntu-6")
+        with mock.patch.dict(os.environ, {"GTI_REMOTE_RUNNER": "ubuntu-8"}):
+            self.assertEqual(runner.select_connection(self.args(), settings, self.local)[0], "ubuntu-8")
+            self.assertEqual(runner.select_connection(self.args("--runner", "mini", "status"),
+                                                     settings, self.local)[0], "mini")
+        with mock.patch.dict(os.environ, {"GTI_REMOTE_HOST": "environment-alias"}):
+            config = runner.select_connection(self.args("--runner", "ubuntu-6", "--host", "explicit-alias",
+                                                        "status"), settings, self.local)[1]
+            self.assertEqual(config["host"], "explicit-alias")
+        self.assertEqual(settings["hosts"]["ubuntu-6"]["host"], "root@100.77.66.96")
+
+    def test_configure_preserves_other_hosts_and_only_changes_default_on_request(self):
+        runner.save_connection(self.path, "ubuntu-6", dict(runner.HOSTS["ubuntu-6"], jobs=2))
+        runner.save_connection(self.path, "ubuntu-8", dict(runner.HOSTS["ubuntu-8"], jobs=1))
+        settings = runner.load_settings(self.path)
+        self.assertEqual(settings["default"], "mini")
+        self.assertEqual(settings["hosts"]["ubuntu-6"]["jobs"], 2)
+        self.assertEqual(settings["hosts"]["ubuntu-8"]["jobs"], 1)
+        # Old worktrees still use these flat fields during rolling updates.
+        saved = runner.read_json(self.path)
+        for key in ("host", "root", "python"):
+            self.assertEqual(saved[key], runner.HOSTS["mini"][key])
+        runner.save_connection(self.path, "ubuntu-8", runner.HOSTS["ubuntu-8"], make_default=True)
+        self.assertEqual(runner.load_settings(self.path)["default"], "ubuntu-8")
+        self.assertEqual(runner.read_json(self.path)["host"], runner.HOSTS["ubuntu-8"]["host"])
+
+    def test_cli_configure_validates_os_and_preserves_default(self):
+        with mock.patch.object(runner, "local_directory", return_value=self.local), \
+                mock.patch.object(runner, "connection", return_value={"platform": "Linux"}) as connection, \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(runner.main(["--runner", "ubuntu-8", "configure"]), 0)
+            self.assertEqual(connection.call_args.args[0]["host"], "root@100.81.111.76")
+            self.assertEqual(runner.load_settings(self.path)["default"], "mini")
+            self.assertEqual(runner.main(["--runner", "ubuntu-8", "configure", "--default"]), 0)
+            self.assertEqual(runner.load_settings(self.path)["default"], "ubuntu-8")
+
+    def test_cli_configure_rejects_wrong_os_without_saving(self):
+        with mock.patch.object(runner, "local_directory", return_value=self.local), \
+                mock.patch.object(runner, "connection", return_value={"platform": "Darwin"}):
+            with self.assertRaisesRegex(runner.RunnerError, "platform differs"):
+                runner.main(["--runner", "ubuntu-6", "configure"])
+        self.assertFalse(self.path.exists())
+
+    def test_concurrent_configuration_updates_preserve_every_named_host(self):
+        commands = []
+        for index in range(3):
+            code = ("import sys;sys.path.insert(0," + repr(str(SCRIPT.parent)) + ");"
+                    "import remote_runner as r;"
+                    f"r.save_connection(r.Path({str(self.path)!r}), 'custom-{index}',"
+                    f"dict(r.HOSTS['ubuntu-6'],jobs={index + 1}))")
+            commands.append([sys.executable, "-c", code])
+        processes = [subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                     for argv in commands]
+        for process in processes:
+            out, err = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0, err.decode())
+        settings = runner.load_settings(self.path)
+        for index in range(3):
+            self.assertEqual(settings["hosts"][f"custom-{index}"]["jobs"], index + 1)
+
+    def test_detached_run_uses_origin_after_default_environment_and_profile_change(self):
+        run_id = "run-" + "a" * 32
+        original = dict(runner.HOSTS["ubuntu-6"])
+        runner.record_connection(self.local, run_id, "ubuntu-6", original)
+        settings = runner.load_settings(self.path)
+        settings["default"] = "ubuntu-8"
+        settings["hosts"]["ubuntu-6"]["host"] = "new-address"
+        with mock.patch.dict(os.environ, {"GTI_REMOTE_RUNNER": "mini", "GTI_REMOTE_HOST": "wrong-address",
+                                         "GTI_REMOTE_ROOT": "/wrong/gti-remote-runner"}):
+            for command in ("status", "fetch", "cancel", "clean"):
+                name, config = runner.select_connection(self.args(command, run_id), settings,
+                                                        self.local, run_id)
+                self.assertEqual((name, config), ("ubuntu-6", original))
+        with self.assertRaisesRegex(runner.RunnerError, "belongs to ubuntu-6"):
+            runner.select_connection(self.args("--runner", "ubuntu-8", "fetch", run_id),
+                                     settings, self.local, run_id)
+        with self.assertRaisesRegex(runner.RunnerError, "redirect"):
+            runner.select_connection(self.args("--host", "wrong", "cancel", run_id),
+                                     settings, self.local, run_id)
+        with self.assertRaisesRegex(runner.RunnerError, "overwrite"):
+            runner.record_connection(self.local, run_id, "ubuntu-8", runner.HOSTS["ubuntu-8"])
+
+    def test_legacy_unrecorded_runs_use_the_selected_connection(self):
+        settings = runner.load_settings(self.path)
+        run_id = "run-" + "b" * 32
+        name, config = runner.select_connection(self.args("--runner", "mini", "fetch", run_id),
+                                                settings, self.local, run_id)
+        self.assertEqual(name, "mini")
+        self.assertEqual(config, runner.HOSTS["mini"])
+
+    def test_reject_malformed_settings_connections_names_and_identity(self):
+        for value in ([], {"schema": 99}, {"schema": 2, "hosts": {}, "default": []},
+                      dict(runner.HOSTS["mini"], token="must not be printed"),
+                      {"schema": 2, "hosts": {"bad name": {}}, "default": "mini"}):
+            runner.write_json(self.path, value)
+            with self.assertRaises(runner.RunnerError):
+                runner.load_settings(self.path)
+        for key, value in (("host", "-option"), ("host", "host with space"), ("root", "/"),
+                           ("root", "/tmp/../gti-remote-runner"), ("transport", "unverified"),
+                           ("python", ""), ("jobs", 0), ("test_jobs", True), ("token", "secret")):
+            with self.assertRaises(runner.RunnerError):
+                runner.validate_connection(dict(runner.HOSTS["ubuntu-6"], **{key: value}))
+        self.path.unlink()
+        settings = runner.load_settings(self.path)
+        for name in ("unknown", "bad/name", ""):
+            with self.assertRaises(runner.RunnerError):
+                runner.select_connection(self.args("--runner", name, "status"), settings, self.local)
+        run_id = "run-" + "c" * 32
+        with self.assertRaisesRegex(runner.RunnerError, "invalid run"):
+            runner.record_connection(self.local, run_id, "request.json", runner.HOSTS["mini"])
+        runner.record_connection(self.local, run_id, "mini", runner.HOSTS["mini"])
+        path = self.local / "runs" / (run_id + ".json")
+        record = runner.read_json(path)
+        record["id"] = "run-" + "d" * 32
+        runner.write_json(path, record)
+        with self.assertRaisesRegex(runner.RunnerError, "identity mismatch"):
+            runner.select_connection(self.args("fetch", run_id), settings, self.local, run_id)
+
+    def test_ssh_and_tailscale_transports_keep_noninteractive_host_verification(self):
+        for name in ("mini", "ubuntu-6"):
+            config = runner.HOSTS[name]
+            with mock.patch.object(runner.subprocess, "run",
+                                   return_value=subprocess.CompletedProcess([], 0, b"{}")) as run:
+                runner.connection(config, "status")
+            argv = run.call_args.args[0]
+            if name == "mini":
+                self.assertEqual(argv[0], "ssh")
+                self.assertIn("--", argv)
+            else:
+                self.assertEqual(argv[:3], ["tailscale", "ssh", config["host"]])
+            self.assertIn("BatchMode=yes", argv)
+            self.assertIn("ConnectTimeout=10", argv)
+            self.assertNotIn("StrictHostKeyChecking=no", argv)
+        with mock.patch.object(runner.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 255, b"")) as run:
+            with self.assertRaisesRegex(runner.RunnerError, "SSH runner action"):
+                runner.connection(runner.HOSTS["ubuntu-6"], "status")
+            self.assertEqual(run.call_count, 1)  # no unverified fallback
+
+    def test_linux_and_macos_window_policy_and_llvm_discovery(self):
+        for system, slots in (("Darwin", {"build": 2, "suite": 1}), ("Linux", {"build": 1, "suite": 1})):
+            with mock.patch.object(runner.platform, "system", return_value=system):
+                self.assertEqual(runner.window_slots(), slots)
+        llvm = self.local / "llvm"
+        llvm.mkdir()
+        (llvm / "LLVMConfig.cmake").write_text("fixture")
+        with mock.patch.object(runner.platform, "system", return_value="Linux"), \
+                mock.patch.object(runner.shutil, "which", return_value="/usr/bin/llvm-config"), \
+                mock.patch.object(runner.subprocess, "run",
+                                  return_value=subprocess.CompletedProcess([], 0, str(llvm) + "\n")) as run:
+            self.assertEqual(runner.llvm_directory(), str(llvm))
+            self.assertEqual(run.call_args.args[0], ["/usr/bin/llvm-config", "--cmakedir"])
+        request = {"build_type": "Release", "cmake_args": [], "targets": ["gti"],
+                   "full_suite": True, "ctest_regex": None, "jobs": 3, "test_jobs": 6}
+        with mock.patch.object(runner.platform, "system", return_value="Linux"), \
+                mock.patch.object(runner, "llvm_directory", return_value=str(llvm)):
+            steps = runner.default_steps(request)
+        self.assertIn("-DLLVM_DIR=" + str(llvm), steps[0]["argv"])
+        self.assertFalse(any("CMAKE_CXX_COMPILER=" in arg for arg in steps[0]["argv"]))
+        self.assertEqual(steps[1]["argv"][4], "3")
+        self.assertIn("6", steps[2]["argv"])
+        request["cmake_args"] = ["-DCMAKE_CXX_COMPILER=/custom/cxx"]
+        request.update(cc="/usr/bin/gcc-14", cxx="/usr/bin/g++-14")
+        with mock.patch.object(runner, "llvm_directory", return_value=None), \
+                mock.patch.dict(os.environ, {"CC": "", "CXX": ""}):
+            configure = runner.default_steps(request)[0]["argv"]
+            self.assertIn("-DCMAKE_C_COMPILER=/usr/bin/gcc-14", configure)
+            self.assertIn("-DCMAKE_CXX_COMPILER=/usr/bin/g++-14", configure)
+            self.assertEqual(configure[-1], "-DCMAKE_CXX_COMPILER=/custom/cxx")
+        with mock.patch.object(runner, "llvm_directory", return_value=None), \
+                mock.patch.dict(os.environ, {"CC": "/env/cc", "CXX": "/env/cxx"}):
+            configure = runner.default_steps(request)[0]["argv"]
+            self.assertFalse(any(arg.endswith("=/usr/bin/gcc-14") or arg.endswith("=/usr/bin/g++-14")
+                                 for arg in configure))
+        config = runner.select_connection(self.args("--runner", "ubuntu-6", "--cc", "/custom/cc",
+                                                     "--cxx", "/custom/cxx", "status"),
+                                          runner.load_settings(self.path), self.local)[1]
+        self.assertEqual((config["cc"], config["cxx"]), ("/custom/cc", "/custom/cxx"))
+
+    def test_platform_selection_rejects_wrong_host_before_snapshot(self):
+        with mock.patch.object(runner, "local_directory", return_value=self.local), \
+                mock.patch.object(runner, "snapshot") as snapshot:
+            with self.assertRaisesRegex(runner.RunnerError, "requires Darwin"):
+                runner.main(["--runner", "ubuntu-6", "run", "--platform", "Darwin"])
+            snapshot.assert_not_called()
+
+    def test_hosts_is_offline_and_status_all_preserves_partial_failures(self):
+        with mock.patch.object(runner, "local_directory", return_value=self.local), \
+                mock.patch.object(runner, "connection") as connection, \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(runner.main(["hosts"]), 0)
+            self.assertEqual(len(json.loads(output.getvalue())["hosts"]), 3)
+            connection.assert_not_called()
+
+        def status(config, action):
+            if config["host"] == runner.HOSTS["mini"]["host"]:
+                raise runner.RunnerError("offline")
+            return {"platform": "Linux", "window": {"build": [], "suite": []}, "runs": [
+                {"id": "active", "state": "running", "phase": "build", "source": {"large": "metadata"}},
+                {"id": "done", "state": "passed", "phase": "finished", "steps": ["long history"]}]}
+
+        with mock.patch.object(runner, "local_directory", return_value=self.local), \
+                mock.patch.object(runner, "connection", side_effect=status), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(runner.main(["status", "--all"]), 1)
+            result = json.loads(output.getvalue())
+        self.assertEqual(result["mini"], {"error": "offline"})
+        self.assertIn("window", result["ubuntu-6"])
+        self.assertIn("window", result["ubuntu-8"])
+        self.assertEqual(result["ubuntu-8"]["active_runs"],
+                         [{"id": "active", "state": "running", "phase": "build"}])
+        self.assertEqual(result["ubuntu-8"]["retained_results"], 1)
+        self.assertNotIn("runs", result["ubuntu-8"])
+
 
 if __name__ == "__main__":
     unittest.main()
