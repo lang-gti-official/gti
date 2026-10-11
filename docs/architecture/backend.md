@@ -1217,6 +1217,22 @@ the Expected envelope. No default constructor or result-drop obligation is
 invented. These representation choices preserve the verified Invoke and
 cleanup schedule.
 
+A cleanup-free `Expected<Class, E>` source-call result whose only use is the
+body's Return may also cross executable scope cleanup, including a fallible
+drop of another local. Every class alternative has a generated, inactive
+destructor and every other alternative is scalar or an integral enum, so MIR
+gives the result neither a drop nor a value-rooted place. The transformed
+callee constructs it in a representation-only lifetime slot, MIR's cleanup
+runs in order, and the Return moves it into the caller's placement storage. A
+cleanup failure leaves only that cleanup-free representation for the slot to
+retire. A call with nothing but inert records before its Return keeps the
+direct placement into the caller's storage instead.
+
+An Expected whose success payload is an enum with a boundary row (an
+integral enum, or a payload enum whose variants hold only passive movable
+fields) crosses the transformed failure ABI exactly like a scalar payload:
+through the ordinary typed out-parameter that the caller value-initializes.
+
 An exact moved-Expected return likewise publishes directly into the caller's
 result storage. This applies when its class payload is cleanup-free but lacks
 a default constructor: the unused SSA identity must not declare a second,
@@ -2162,6 +2178,15 @@ immovable element's address from its constructor onward. Class-call results
 and non-adjacent publication retain the value-rooted lifetime-slot route and
 its separate transfer proof. The ordinary C++ route uses factory construction
 so it never names an undeclared SSA value.
+A class call result can initialize a constructor field as its selected member
+initializer whether or not the callee can fail. A cleanup-free result has no
+obligation. A failure-free call constructs it in representation-only storage
+immediately before the field `Initialize`, and a transformed call does so on
+the Invoke success edge leading to it. The field's empty representation is
+then replaced by the moved value. An owning result from a failure-free call
+arms its value obligation with the call's own `Initialize` event, as a
+failure-free constructor does, and the field `Initialize` reparents it into the
+field's rollback. The value then moves from its lifetime slot into the field.
 If a constructor has no reachable normal `Return`, its initialized fields never
 transfer to a completed object. The field-slot proof permits zero final object
 publications only after recomputing CFG reachability and proving that absence;

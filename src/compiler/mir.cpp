@@ -6394,11 +6394,14 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   // value out-parameter. It therefore has no semantic result drop to arm:
   // the callee publishes only on its successful Invoke edge, after which the
   // value can feed either a direct return or another cleanup-free expression.
-  // Keep this aligned with the backend boundary, which deliberately admits
-  // only scalar/void Expected payloads here; Expected<Class, E> uses the
-  // explicit placement-result contract below instead.
+  // An enum payload is the same passive value; a cleanup-owning payload enum
+  // would instead carry the result drop handled above. Keep this aligned with
+  // the backend boundary, which admits scalar, void and passive enum Expected
+  // payloads here; Expected<Class, E> uses the explicit placement-result
+  // contract below instead.
   const auto passiveExpectedPayload = [](const SemanticType &type) {
     switch (type.kind) {
+    case SemanticType::Enum:
     case SemanticType::Void:
     case SemanticType::Int8:
     case SemanticType::Int16:

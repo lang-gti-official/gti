@@ -30,6 +30,22 @@ for what minor and patch releases mean.
   counted-text iteration. Movement and cursor duplication have separate
   concepts; random access does not imply contiguous storage.
 
+## 0.402.5 — Member initializers from calls that cannot fail
+
+- A constructor field can now be initialized directly from a call that cannot
+  fail, as in `holder(int32_t n) : value(make_value(n)) {}`, whether the class
+  needs no cleanup or has a destructor, and also through a comma, as in
+  `value((log(), make_value(n)))`. If a later member fails, an owning field is
+  destroyed exactly once. Such constructors used to report GTI-B0001.
+
+## 0.402.4 — Returning `expected` results across scope cleanup
+
+- A function that returns an `expected<T, E>` call result while
+  another local still needs cleanup now builds. This covers
+  `return parse(input);` and `mut auto r = parse(input); return std::move(r);`
+  when `T` is a struct or an `enum`, including inside a loop. These programs
+  previously stopped with internal compiler error `GTI-B0001`.
+
 ## 0.402.3 — Comma expressions that yield class values
 
 - A comma expression whose right operand is a class or `expected` value now
