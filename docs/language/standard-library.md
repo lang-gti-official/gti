@@ -556,8 +556,9 @@ for a reviewed next API slice. Such a declaration allows frontend checking but
 is not an implemented library operation: using it in a native build fails to
 link until its GTI body is supplied. Forward-list iteration and weak-owner
 operations remain in that category. Array swap and forward-list emplacement
-have executable implementations; the latter still has unsupported
-borrowed-constructor-pack compositions rather than being merely a declaration.
+have executable implementations. The retained borrowed constructor-pack
+reproducer now passes current O0/O3 execution; its broader acceptance matrix
+remains open rather than requiring an assumed new compiler feature.
 
 The owned program-entry form names the canonical installed
 `std::vector<std::string>` specialization. This exact type identity is part of
@@ -1213,8 +1214,9 @@ The `<std/forward_list>` declaration-only iterator is explicitly move-only and
 read-only.
 Nullable owner-tied traversal and invalidation remain unavailable; iterator
 operations are still bodyless. `emplace_front` has final-field construction and
-cleanup evidence, but borrowed constructor-pack composition is not complete;
-see `L-UP-10` in the implementation sequence. The declaration-only span is
+cleanup evidence, including passing current O0/O3 execution of the retained
+borrowed constructor-pack reproducer. `L-UP-10` tracks its remaining broad
+composition/cleanup acceptance, not a currently failing reproducer. The declaration-only span is
 replaced by the executable `std::span<T>` and `std::mutable_span<T>` surfaces
 above; raw address exposure remains absent.
 

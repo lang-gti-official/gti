@@ -166,6 +166,23 @@ resource lifetimes and the actual supported element contracts.
   still publish explicit compatibility, platform, quality, and support
   commitments.
 
+## Capability Disposition Revision (2026-10-11)
+
+The initial later-breadth examples above are not a current absence list.
+General raw-pointer/conversion/manual-lifetime and source allocation facilities
+have delivered bounded contracts; named modules and source registry workflows
+also exist. Compile-time reflection now has an accepted concrete client campaign:
+phases 1 and 2 are delivered, and phase 3's construction/decoding work is next in
+the [reflection plan](../plans/reflection.md). Reflection is no longer excluded
+from scheduling by its original later-breadth classification. Unrestricted
+runtime reflection, unsafe obligations, unsupported constexpr profiles and
+ordinary GTI binary ABI remain separate questions.
+
+The [current roadmap](../plans/roadmap-to-1.0.md) reconciles these capabilities;
+the operation ledger separates delivered source policy from remaining migration
+candidates. This disposition revision changes planning assertions, not language
+semantics, and does not claim every related profile or acceptance gate complete.
+
 ## Alternatives
 
 - **Keep the fixed pre/post-1.0 split.** Rejected because it made the version

@@ -61,9 +61,11 @@ own declaration symbol rather than the shared overload-set scope entry, and
 the protocol adapter follows the client's declared `documentationFormat`
 exactly as hover follows `contentFormat`.
 
-Generated API documentation and broader standard library documentation remain
-to consume the same value; they must not add a second comment parser or
-documentation store.
+Compiler-generated API documentation now consumes the same symbol-attached
+value through `DocumentationIndex`; its JSON/Markdown projection is delivered.
+Broader documentation coverage remains library/content work, not a second
+comment parser or documentation store. See
+[the documentation architecture](../architecture/reference-documentation.md).
 
 Statement-level declaration extents are implemented: the parser stamps every
 statement funnel result with its first-through-last-token span, and document
@@ -204,17 +206,19 @@ lexical fallbacks are acceptable only when clearly less authoritative.
 
 ## Per-Keystroke Analysis Cost
 
-Status: measured 2026-10-10; recommendation recorded, implementation not
-started. This is the compiler-side half of editor responsiveness. The
+Status: measured 2026-10-10; editor-scoped HIR and background raw-pointer audit
+are implemented. Lazy trusted-body analysis and broader semantic reuse remain
+proposed. This is the compiler-side half of editor responsiveness. The
 protocol-side half (edit-time publication, adaptive debounce, refresh policy)
 is implemented and described in the architecture document.
 
-### Measurement
+### Measured Baseline Before Scope Reduction
 
 Release `gti_lsp` on arm64 macOS, driven by a client-like message flow (open,
 `didChange`, tokens and hover requests) with `GTI_LSP_FRONTEND_TRACE`. Every
-edit re-runs semantic analysis and HIR for every loaded unit; the parse cache
-removes parsing from the picture but nothing else.
+edit in that baseline re-ran semantic analysis and HIR for every loaded unit;
+the parse cache removed parsing from the picture but nothing else. These
+figures establish the motivation, not current per-edit timings after step 1.
 
 | Workload | Units analysed per edit | Per-edit frontend time |
 | --- | ---: | ---: |
@@ -299,10 +303,12 @@ compiler-architecture review applies.
 
 ## Deferred clangd Complexity
 
-Preambles/PCH, compile-command borrowing, macro expansion
-locations, per-file workers, AST LRUs, remote indexes, and
-memory accounting solve C++/clang scale. Adopt none without a measured GTI
-problem. clangd's update debounce was adopted in 0.397.3 after the
+Preambles/PCH, compile-command borrowing, macro expansion locations, per-file
+workers, retained semantic-AST LRUs and remote indexes are not default GTI
+requirements. The implemented bounded lexical/parsed-unit LRU already has
+memory accounting; it does not retain a semantic snapshot. Broader cache or
+index machinery needs an identified GTI latency/coverage problem and an
+identity/invalidation contract. clangd's update debounce was adopted in 0.397.3 after the
 measurement above showed per-keystroke whole-program re-analysis; it is
 described in the architecture document.
 
