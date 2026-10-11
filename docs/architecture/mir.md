@@ -122,28 +122,46 @@ Declaration defaults and nested initializer
 constructor targets remain outside this executor profile. Before execution,
 the profile checks that every explicit field has its exact MIR initialization
 write; a declaration-only initializer must not become a spurious
-uninitialized-constant failure. Read-only constexpr
-methods inspect an exactly typed receiver through ordinary `This` projections,
+uninitialized-constant failure. Read-only and mutable constexpr
+methods use an exactly typed receiver through ordinary `This` projections,
 including nested fields, arrays, and further method calls. Only constructor
-frames may initialize receiver fields; method frames cannot mutate them.
+frames may initialize receiver fields. After those writes, a constructor body
+or mutable method may edit a mutable field under the ordinary loan rules.
 Materialized result receivers read the exact MIR `Value` root; their passive
 storage is retired at the represented move/drop, not reconstructed as a binding
 or kept alive independently of full-expression cleanup.
 Entry string-view dependencies are backed by immutable constant bytes.
-Read-only reference parameters, automatic bindings, and returned projections
-use verified MIR loans and immutable observations of the exact referent value.
-The source loan prevents intervening mutation or movement; no host address or
-reference identity is materialized. Borrow/call instructions publish loan
-observations, reference binding and dereference read them, and `EndBorrow`
-retires the loan. Reacquiring a loan observes the owner's current value, including
-across loop iterations. Source reference-return validation still prevents local
-escape. Reference results are read values at the external constant-service
-boundary, not persistent reference constants. Only a leading checked dereference
-of a read-only reference binding is transparent; arbitrary pointer projections,
-mutable loans, stored-reference carriers, allocation, and runtime calls remain
+Checked read-only and mutable reference parameters, automatic bindings, and
+returned projections use verified MIR loans. An executor-local location retains
+the live frame/root cell, resolved field/index path, referent type, maximum
+access, and storage epoch. Indices are captured at formation, not recomputed
+after a call. Root, reference, receiver and field permissions cannot be elevated
+by an expression's read-access annotation. Ordered borrowed call inputs preserve
+the location through SSA staging; mutable callee writes update the caller's
+cell rather than an argument snapshot. Internal reference results must retain
+a live enclosing-frame origin. Borrow activation and `EndBorrow` retain their
+ordinary reservation/endpoint roles; movement, initialization and drop retire
+the relevant storage generation. No target address or persistent reference
+identity enters `ConstantValue`. Source reference-return validation and ordinary
+MIR verification still prevent local escape and conflicting loans.
+
+Immutable aggregate storage is replaced on writes, so independent copies cannot
+become aliases. Location path traversal/copying and backing aggregate updates
+consume the shared budget. A `void` call completes as a unit result without
+manufacturing a scalar constant. At the external service boundary a reference
+result is its observed value and a mutable input is isolated executor storage.
+Only a leading checked reference-binding dereference is transparent; arbitrary
+pointer projections, stored-reference carriers, allocation, and runtime calls remain
 ineligible. Untaken runtime-only
 calls do not execute. Rewritten/tombstoned instructions and optimizer-produced
 control flow cannot determine constant eligibility.
+
+The existing enum and checked-integer `expected` constant profiles have not yet
+migrated their values and operations to this executor. They retain their
+compatibility evaluation where previously supported, but cannot participate in
+the new mutation-capable MIR profile, including as aggregate fields. This is a
+representation/operation prerequisite, not permission for mutable calls to
+retry the copy-based AST interpreter.
 
 The service returns `ConstantValue` or a failure carrying the concrete body
 address, block, and instruction identity, including constructor failures.

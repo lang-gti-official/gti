@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Scoped concurrency (0.404.0)
+## Scoped concurrency (0.405.0)
 
 ### Reconciled acceptance evidence
 
@@ -20,15 +20,26 @@ the separate local debugger check. The reconciled-source full completion sweep
 failures or skips, plus its all-target build, five scoped O3 fixtures and
 relocated installed O0/O3 consumers. Only `source_debug_lldb` is excluded from
 the remote selection; it passes locally on the same source. Full-suite test
-execution takes 1335.13 seconds, excluding the shared-window wait. The final
-acceptance-documentation commits change no compiler, runtime, library, fixture,
-example or benchmark source from this tested commit; the publication checks
-enforce that exact delta and recheck focused ownership/native controls.
+execution takes 1335.13 seconds, excluding the shared-window wait. Checkpoints
+`3780cc2f` and `d0249752` only record acceptance documentation; they do not
+change executable source from that full-suite/performance snapshot.
 
 The combined 138-example LoweredProgram census measures 71225 declarations,
 12967 bodies and 7073 generated items; the MIR census measures 12956 bodies.
 The reflected-JSON addition and callable-interface inventories were measured
 together rather than accepted by resolving numerical conflicts arbitrarily.
+
+Before integration, main advanced again to `a2abf675` (mutable constexpr
+builders and owning-class conditional publication). Reconciliation preserves
+the scoped implementation and both upstream features, advancing this release
+to 0.405.0. The refreshed 139-example census measures 71903 declarations,
+13018 bodies and 7090 generated items, with 13007 MIR bodies. Only the new
+constexpr-builder example adds inventory. An optimized local build passes
+all 22 constexpr compiler cases, all five scoped O3 fixtures and the new owning
+conditional O3 regression. Final delta validation includes the complete
+constexpr, owning-publication, concurrency, sanitizer, installed and corpus
+families; the earlier 648-check run is not represented as a full run of this
+later upstream snapshot.
 
 Clean-head Linux run `run-007dae38ae1241e49acf4231ecda9bf7` reports exact compiler
 and source identity and conclusive timing quality. GCC 14/C++23 O3 on an
@@ -4083,6 +4094,49 @@ relaxing ordinary negation overflow. The O0/O1/O3, C++20/C++23 differential
 fixture includes nested constant pairs alongside runtime string pairs, catching
 accidental class-wide rather than exact-instance factory emission.
 
+`testConstexprMutation`, `constexpr_mutation_runtime` and
+`constexpr_builders_example` cover mutable reference forwarding, `void` calls,
+constructor-body edits, mutable methods/subscript/call operators, isolated
+copies, once-formed indices, generic owners and reflection-driven field edits.
+Early-only analysis proves that required constants execute staged MIR before
+whole-program HIR, including array extents. Direct executor tests check exact
+results, unit completion without a persisted value, every interrupted scalar
+step budget, shared depth, malformed returned-loan origins/access and erased
+callee eligibility. Frontend negatives retain checked overflow/division,
+resources, runtime-input/call rejection and ordinary loan/lifetime checks.
+An unsupported operation in a mutable constructor closure cannot retry the
+legacy AST execution path. The native gates compare constant and runtime
+execution at O0/O1/O3 under C++20/C++23. The aggregate LSP test now covers
+mutable/void signatures, hover, successful staged evaluation, and an overflow
+diagnostic at the executed helper operator. The existing reflection gates
+remain separate regression controls, not newly implemented reflection.
+
+Exact diagnostic source assertions derive the entry identity through public
+`SourceLoader::load`, including nonexistent virtual fixture paths, so they
+follow the production absolute-path contract on both libc++ and libstdc++.
+Code, phase, message, byte offsets and related-span requirements are unchanged.
+
+The 2026-10-11 local performance control uses a Release compiler built with
+Clang/LLVM 23.1.2 on macOS arm64 (M2 Max), C++23/O3. One program builds the
+four-element integer curve `{1, 4, 9, 16}` with a mutable-reference square
+helper; its control initializes the same array directly. Both consume the
+constant through 50 million checked indexed additions (`index % 4`, expected
+sum 375000000), with identical API/storage/arithmetic contracts. Five samples
+per executable have a 0.02-second wall-time median (the timer rounds to 0.01
+seconds; the first launch of each takes 0.31 seconds). Both have a 31,488-byte
+`__text` section and a 1,753,088-byte maximum resident set. An interposed C++
+`new`/`new[]` counter observes zero allocations between entry to the workload
+and completion in both; that is not a claim about CRT startup, failure paths
+or arbitrary libc allocation. The instrumented text sections are also equal
+(31,704 bytes). Single instrumented build samples are 0.56/0.46 seconds and
+75,104,256/76,464,128 bytes maximum RSS for builder/control. These co-hosted
+samples establish a compact allocation-free successful consumer, not a
+statistically significant compile-time or runtime speedup. Constant construction
+does additional bounded compiler work: location traversal and immutable
+aggregate replacement are charged, and updating an array copies its backing
+elements. Larger tables still have to fit the shared 4096-step budget; this
+feature neither removes runtime checks nor raises that resource bound.
+
 `testConstexprReadOnlyReferences` and `constexpr_readonly_references_runtime`
 cover checked read-only parameters, local bindings, returned field/index
 projections, forwarding, and loan reacquisition after mutation in another loop
@@ -6147,6 +6201,23 @@ are unchanged. Its C++20/O0 and C++23/O3 executions retain the same cleanup
 observations.
 
 ## Development And Completion Cadence
+
+Native allocation/provider test oracles must be linked before the production
+static runtime archive. `tests/native_fixture_build.py` emits the same verified
+GTI artifact and links the explicitly declared test providers first; on GNU
+linkers, passing replacement definitions through direct mode's trailing `--`
+arguments otherwise extracts the production provider too. Ordinary direct-mode
+tests retain their unchanged command path. The helper preserves the selected
+C++ driver spelling, optimization/standard, strict floating-point flags,
+sanitizer options and both phases' failure diagnostics. Its unit gate checks
+those boundaries; runtime allocation/failure/cleanup assertions are unchanged.
+
+Native compiler invocation spelling is likewise distinct from canonical binary
+identity: resolving `clang++` to `clang` changes link-driver selection. Runtime
+and sanitizer harnesses preserve the invocation path. Benchmark tools retain
+the canonical binary for hashes/provenance but execute the selected alias, query
+that alias's version, and check both identities in a GTI build report. The
+benchmark harness includes a symlink regression for this boundary.
 
 `local_reference_inference` pairs explicit and inferred reference programs,
 checking admission and concrete binding/drop facts, HIR owner dependencies and

@@ -840,6 +840,20 @@ native shell where MIR hands its obligation away. In a plain body that staged
 the returned value, that point is the return's transfer-out. Otherwise it is
 the consuming `Initialize` that reparents the obligation into a field. A
 temporary that MIR later drops keeps that drop.
+An owning arm may also move out of a nested owning join, or move a named
+local whose obligation MIR first moves into the arm value; the arm's
+`Initialize` reparents that obligation into the join's. When the join's single
+move is read only through field views, or consumed by one assignment whose
+`Replace` takes the join's obligation, the moved value denotes the join
+temporary. Views read `temporary.get().field`, the assignment move-assigns from
+`temporary.get()`, and MIR's later Drop of the temporary ends the live object
+or its moved-from shell. A returned owning join whose move leaves a pending
+`ReturnResult` on the temporary, because later cleanup such as the moved
+local's Drop can fail, keeps the result there until `Return`. Each arm
+initializes the temporary once, the arms alone enter the move's block, and no
+arm is reachable again after the move. `Return` publishes it with `take()`,
+and a failure-cleanup edge destroys the unpublished temporary through MIR's
+ordinary Drop.
 
 A copy-loaded class result whose only executable use is `Return` also avoids an
 invented default-constructed SSA object. The plain C++ form returns the exact

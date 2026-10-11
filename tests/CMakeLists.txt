@@ -964,6 +964,11 @@ add_test(NAME short_circuit_field_view_runtime
                  "${PROJECT_SOURCE_DIR}/tests/short_circuit_field_view_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(short_circuit_field_view_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME owning_conditional_join_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/owning_conditional_join_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(owning_conditional_join_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_class_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"
@@ -1971,6 +1976,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/stdlib_surface_manifest_test.py"
             "${PROJECT_SOURCE_DIR}"
   )
+  add_test(NAME native_fixture_build
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/native_fixture_build_test.py")
   add_test(
     NAME stdlib_modules
     COMMAND "${Python3_EXECUTABLE}"
@@ -2184,6 +2192,20 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_readonly_references.gti"
+  )
+  add_test(
+    NAME constexpr_mutation_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_mutation.gti"
+  )
+  add_test(
+    NAME constexpr_builders_example
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/examples/142-constexpr-builders.gti"
   )
   add_test(
     NAME constexpr_chrono_runtime

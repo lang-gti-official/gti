@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.404.0 — Scoped parallel borrowing and cross-thread ownership
+## 0.405.0 — Scoped parallel borrowing and cross-thread ownership
 
 - `std::parallel_invoke` runs consumed tasks with checked shared or exclusive
   borrows and joins all started workers before return or failure propagation.
@@ -24,6 +24,29 @@ for what minor and patch releases mean.
 - Unambiguous free-function names can fill generic parameter-pack elements,
   including later elements after ordinary values; deduction retains each
   function's exact identity rather than indexing an unexpanded formal list.
+
+## 0.404.0 — Mutable constexpr value builders
+
+- Pure constexpr helpers may return `void`, edit checked mutable references,
+  and forward owner-bound mutable reference results. Mutable methods and
+  operators, and constructor bodies after explicit field initialization, use
+  the same verified-MIR execution as runtime programs.
+- Mutable `std::array` accessors and `fill` are constexpr-capable. Existing
+  reflection can drive compile-time field edits; it gains no new metadata or
+  expansion rules. See `examples/142-constexpr-builders.gti`.
+- Ordinary access, ownership and loan rules, checked arithmetic and resource
+  limits still apply. This does not admit allocation, stored references,
+  active cleanup or host I/O during constant execution.
+
+## 0.403.1 — Conditionals of classes with destructors
+
+- A conditional whose arms are class values with destructors, such as
+  `ok ? make_tracked(1) : make_tracked(2)`, can now be read through a field,
+  assigned to an existing variable, or nested in another conditional. An arm
+  may also move a local, as in `ok ? std::move(local) : make_tracked(3)`,
+  whether the conditional is bound or returned. The selected object is
+  destroyed exactly once, including when a later operand or the local's
+  cleanup fails. These used to report GTI-B0001.
 
 ## 0.403.0 — Experimental reflected JSON
 
