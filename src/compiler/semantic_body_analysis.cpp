@@ -398,6 +398,11 @@ auto SemanticVisitor::Impl::analyzeConstructorInstance(
       constructor = &*owner.designatedConstructor;
       break;
     }
+    if (owner.reversedDesignatedConstructor &&
+        owner.reversedDesignatedConstructor->id == constructorId) {
+      constructor = &*owner.reversedDesignatedConstructor;
+      break;
+    }
     const auto found =
         std::find_if(owner.constructors.begin(), owner.constructors.end(),
                      [constructorId](const ConstructorInfo &candidate) {
@@ -756,10 +761,14 @@ auto SemanticVisitor::Impl::beginClassBody(const ClassDecl &stmt,
 
 // The work visitClassDecl does after its members.
 auto SemanticVisitor::Impl::endClassBody(const ClassInfo &info) -> void {
-  if (info.designatedConstructor) {
+  for (const std::optional<ConstructorInfo> *generated :
+       {&info.designatedConstructor, &info.reversedDesignatedConstructor}) {
+    if (!*generated) {
+      continue;
+    }
     // Reserve declaration identities for the lowered inventory. Analyze the
     // generated body only when concrete HIR selects it, like an instance.
-    const auto &constructor = *info.designatedConstructor;
+    const auto &constructor = **generated;
     for (std::size_t i = 0; i < constructor.parameterTypes.size(); ++i) {
       const Parameter &parameter = constructor.declaration->parameters()[i];
       const SemanticType &type = constructor.parameterTypes[i];
@@ -985,14 +994,50 @@ auto SemanticVisitor::Impl::analyzeMetaFieldAccess(
     currentType = SemanticType::Unknown;
     return;
   }
+  // The owner argument must satisfy the declared `T&` parameter: the
+  // descriptor names a field of `T`, and a same-named field of another type
+  // is not it (GitHub #5).
+  if (const SemanticType *argumentType =
+          semanticModel.findType(*expr.arguments().front())) {
+    SemanticType actual = *argumentType;
+    if (actual.kind == SemanticType::Reference &&
+        actual.arguments.size() == 1) {
+      actual = actual.arguments.front();
+    }
+    if (actual != SemanticType::Unknown && !containsOpenTypeParameter(actual) &&
+        !isSameOrDerivedClass(actual, owner)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2003", DiagnosticPhase::Semantics,
+          expressionToken(*expr.arguments().front()),
+          "Argument 1 has type '" + typeSpelling(actual) +
+              "' but the field describes '" + typeSpelling(owner) +
+              "'; reflected access takes the described owner.");
+      diagnostic.related.push_back(
+          {tokenSpan(facts->declaration->name()), "Field declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      currentType = SemanticType::Unknown;
+      return;
+    }
+  }
   const Token &anchor = member.name();
   const auto generated = [&](TokenKind kind, std::string lexeme) {
     return Token(kind, std::move(lexeme), std::monostate{}, anchor.position,
                  anchor.line, anchor.source, false, true);
   };
-  auto projection = std::make_shared<Get>(
+  ExprPtr projected = std::make_unique<Get>(
       cloneExpr(*expr.arguments().front()), generated(TokenKind::DOT, "."),
       generated(TokenKind::IDENTIFIER, facts->name));
+  // A receiver with effects (a call producing the metaobject) still runs,
+  // exactly once and before the owner, as the left operand of a comma whose
+  // value and place are the projection (GitHub #4).
+  if (!isEffectFreeMetaReceiver(*member.object())) {
+    // Grouped like the source form `(receiver, owner.field)`: a grouping is a
+    // place expression for lowering, so the projection stays a place.
+    projected = std::make_unique<Grouping>(std::make_unique<Binary>(
+        cloneExpr(*member.object()), generated(TokenKind::COMMA, ","),
+        std::move(projected)));
+  }
+  std::shared_ptr<const Expr> projection = std::move(projected);
   synthesizedExpressions.push_back(projection);
   const Expr &alias = semanticModel.recordExpressionAlias(expr, projection);
   const bool enclosingReflectedAccess = analyzingReflectedFieldAccess;
@@ -1155,6 +1200,142 @@ auto SemanticVisitor::Impl::analyzeMetaAttributeAccess(
   currentType = constructed == SemanticType::Unknown ? constructed : attribute;
 }
 
+auto SemanticVisitor::Impl::isEffectFreeMetaReceiver(
+    const Expr &expression) const -> bool {
+  switch (expression.exprKind()) {
+  case ExprKind::Variable:
+  case ExprKind::This:
+  case ExprKind::QualifiedName:
+  case ExprKind::LiteralExpr:
+    return true;
+  case ExprKind::Grouping:
+    return isEffectFreeMetaReceiver(
+        *static_cast<const Grouping &>(expression).expression());
+  case ExprKind::Get:
+    return isEffectFreeMetaReceiver(
+        *static_cast<const Get &>(expression).object());
+  case ExprKind::Call: {
+    // Default construction of an empty metaobject has no effects.
+    const auto &call = static_cast<const Call &>(expression);
+    const ResolvedConstructionInfo *construction =
+        semanticModel.findConstruction(call);
+    const SemanticType *type = semanticModel.findType(call);
+    return construction != nullptr && call.arguments().empty() &&
+           type != nullptr && type->kind == SemanticType::Class &&
+           type->classId != 0 && type->classId <= classes.size() &&
+           classInfo(type->classId).compilerType != CompilerTypeKind::None;
+  }
+  default:
+    return false;
+  }
+}
+
+// `gti_internal::meta_construct<T>(values...)`: `T` built through its
+// designated constructor from one value per instance field, in declaration
+// order, under ordinary construction, ownership transfer and rollback.
+auto SemanticVisitor::Impl::analyzeMetaConstructCall(const Call &expr) -> void {
+  if (expr.typeArguments().size() != 1) {
+    report(expr.paren(),
+           "std::meta::construct takes the constructed type as its one "
+           "generic argument.",
+           "GTI-S2019");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  validateType(expr.typeArguments().front());
+  const SemanticType subject =
+      selectExactClassSpecialization(typeOf(expr.typeArguments().front()));
+  std::vector<SemanticType> argumentTypes;
+  bool open = containsOpenTypeParameter(subject);
+  for (const ExprPtr &argument : expr.arguments()) {
+    argumentTypes.push_back(analyze(argument));
+    const SemanticType &argumentType = argumentTypes.back();
+    if (argumentType.kind == SemanticType::TypePack) {
+      // A concrete pack lists its element types; only an unexpanded pack
+      // parameter is still symbolic.
+      open = open || !argumentType.concretePack ||
+             std::any_of(argumentType.arguments.begin(),
+                         argumentType.arguments.end(),
+                         [&](const SemanticType &element) {
+                           return containsOpenTypeParameter(element);
+                         });
+    } else {
+      open = open || containsOpenTypeParameter(argumentType);
+    }
+  }
+  if (subject == SemanticType::Unknown) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (open) {
+    // Symbolic: concrete reanalysis selects the construction.
+    currentType = subject;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = subject,
+                               .typeArguments = {subject},
+                               .intrinsic = IntrinsicKind::MetaConstruct});
+    return;
+  }
+  const ClassInfo *owner =
+      subject.kind == SemanticType::Class ? classInfo(subject) : nullptr;
+  if (owner == nullptr || owner->kind != ClassKind::Struct ||
+      !owner->reversedDesignatedConstructor) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2118", DiagnosticPhase::Semantics, expr.paren(),
+        "std::meta::construct<" + typeSpelling(subject) +
+            "> requires a struct eligible for designated construction: public "
+            "value fields, no declared constructors or bases.");
+    diagnostic.hints.emplace_back(
+        "Construct other types through their own constructors; structural "
+        "construction never bypasses them.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  selectingDesignatedConstructor = true;
+  analyzeConstructorCall(expr, subject.classId, subject.arguments,
+                         subject.valueArguments, argumentTypes,
+                         expr.arguments(), expr.paren());
+  selectingDesignatedConstructor = false;
+}
+
+auto SemanticVisitor::Impl::builtinTypeToken(const SemanticType &type,
+                                             const Token &anchor)
+    -> std::optional<Token> {
+  const auto generated = [&](TokenKind kind, std::string lexeme) {
+    return Token(kind, std::move(lexeme), std::monostate{}, anchor.position,
+                 anchor.line, anchor.source, false, true);
+  };
+  switch (type.kind) {
+  case SemanticType::Int8:
+    return generated(TokenKind::INT8, "int8_t");
+  case SemanticType::Int16:
+    return generated(TokenKind::INT16, "int16_t");
+  case SemanticType::Int32:
+    return generated(TokenKind::INT32, "int32_t");
+  case SemanticType::Int64:
+    return generated(TokenKind::INT64, "int64_t");
+  case SemanticType::UInt8:
+    return generated(TokenKind::UINT8, "uint8_t");
+  case SemanticType::UInt16:
+    return generated(TokenKind::UINT16, "uint16_t");
+  case SemanticType::UInt32:
+    return generated(TokenKind::UINT32, "uint32_t");
+  case SemanticType::UInt64:
+    return generated(TokenKind::UINT64, "uint64_t");
+  case SemanticType::Float:
+    return generated(TokenKind::FLOAT, "float");
+  case SemanticType::Double:
+    return generated(TokenKind::DOUBLE, "double");
+  case SemanticType::Bool:
+    return generated(TokenKind::BOOL, "bool");
+  case SemanticType::Char:
+    return generated(TokenKind::CHAR, "char");
+  default:
+    return std::nullopt;
+  }
+}
+
 auto SemanticVisitor::Impl::constantLiteralExpression(
     const ConstantValue &value, const SemanticType &type,
     const Token &anchor) const -> ExprPtr {
@@ -1171,26 +1352,7 @@ auto SemanticVisitor::Impl::constantLiteralExpression(
         std::move(content));
   };
   const auto builtinToken = [&]() -> std::optional<Token> {
-    switch (type.kind) {
-    case SemanticType::Int8:
-      return generated(TokenKind::INT8, "int8_t");
-    case SemanticType::Int16:
-      return generated(TokenKind::INT16, "int16_t");
-    case SemanticType::Int32:
-      return generated(TokenKind::INT32, "int32_t");
-    case SemanticType::Int64:
-      return generated(TokenKind::INT64, "int64_t");
-    case SemanticType::UInt8:
-      return generated(TokenKind::UINT8, "uint8_t");
-    case SemanticType::UInt16:
-      return generated(TokenKind::UINT16, "uint16_t");
-    case SemanticType::UInt32:
-      return generated(TokenKind::UINT32, "uint32_t");
-    case SemanticType::UInt64:
-      return generated(TokenKind::UINT64, "uint64_t");
-    default:
-      return std::nullopt;
-    }
+    return isInteger(type) ? builtinTypeToken(type, anchor) : std::nullopt;
   };
   if (const auto *text = std::get_if<std::string>(&value)) {
     if (type.kind != SemanticType::StringView &&
@@ -5615,6 +5777,52 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   if (calleeType.kind == SemanticType::TypeName) {
     const ResolvedClassArguments genericArguments = resolveClassArguments(
         calleeType.classId, expr.typeArguments(), expr.paren());
+    // A computed compiler type (`std::meta::field_type<T, I>`) may denote a
+    // scalar once its arguments are concrete; the call is then the explicit
+    // conversion that scalar's own name would spell.
+    const SemanticType constructed = selectExactClassSpecialization(
+        SemanticType::classType(calleeType.classId, genericArguments.types,
+                                genericArguments.values));
+    if (constructed.kind == SemanticType::Class && constructed.classId != 0 &&
+        constructed.classId <= classes.size() &&
+        containsOpenTypeParameter(constructed)) {
+      // A computed type whose arguments are still open denotes nothing yet;
+      // concrete reanalysis resolves the call once it does.
+      switch (classInfo(constructed.classId).compilerType) {
+      case CompilerTypeKind::MetaFieldType:
+      case CompilerTypeKind::MetaPayloadType:
+      case CompilerTypeKind::MetaParameterType:
+      case CompilerTypeKind::MetaConstructorParameterType:
+      case CompilerTypeKind::MetaReturnType:
+      case CompilerTypeKind::MetaListFirst:
+      case CompilerTypeKind::MetaListRest:
+        currentType = constructed;
+        return;
+      default:
+        break;
+      }
+    }
+    if (constructed != SemanticType::Unknown &&
+        constructed.kind != SemanticType::Class &&
+        !containsOpenTypeParameter(constructed)) {
+      const std::optional<Token> target =
+          builtinTypeToken(constructed, expr.paren());
+      if (!target || expr.arguments().size() != 1) {
+        report(expr.paren(),
+               "'" + typeSpelling(constructed) +
+                   "' is not a class type; a call constructs a class or "
+                   "converts one value to a numeric type.",
+               "GTI-S2014");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      auto conversion = std::make_shared<Conversion>(
+          TypeRef(*target), expr.paren(), cloneExpr(*expr.arguments().front()));
+      synthesizedExpressions.push_back(conversion);
+      const Expr &alias = semanticModel.recordExpressionAlias(expr, conversion);
+      currentType = analyze(alias);
+      return;
+    }
     // Constructor value parameters infer unambiguous function items as direct
     // braces do. Resume the deferred value tail exactly once, in source order.
     // Array braces still need the selected constructor's contextual type.
