@@ -1504,6 +1504,13 @@ field as that field's selected member initializer, immediately after the
 producer succeeds. The constructor initializer metadata must name exactly that
 field and the producer's value. As for a cleanup-free class result, the field's
 empty representation ends and the field is constructed from the moved wrapper.
+An owning Expected result, such as one whose payload holds a `std::string`,
+reaches its field the same way from its value-rooted slot. The producer's
+success edge may activate only that result's own obligation, and the field's
+`Initialize` must reparent it into the field's construction rollback. After the
+field is constructed from the moved wrapper, the slot's moved-from shell
+retires without a semantic drop, and a later member's failure drains the
+field through MIR's rollback.
 Two cleanup-free Expected call results joined by a conditional publish into the
 join's conditional temporary. MIR gives that temporary no drop, so each
 producer constructs it directly. A failure-free call does this immediately
