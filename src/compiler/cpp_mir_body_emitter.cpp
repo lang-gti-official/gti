@@ -2421,6 +2421,30 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
 // the reference field binds the same native parameter; it does not copy the
 // external referent or grant the field ownership of the formal's lifetime.
 [[nodiscard]] bool
+sharedPhysicalParameterLoan(const MirBody &body, const MirLoan &shell,
+                            const MirPlace &source) {
+  if (source.root != MirPlaceRootKind::Binding || source.binding == 0 ||
+      !source.projections.empty() ||
+      source.type.kind != SemanticType::Reference ||
+      source.type.referenceAccess != AccessMode::ReadOnly ||
+      source.type.arguments.size() != 1 ||
+      source.access != AccessMode::ReadOnly || !source.initiallyAvailable ||
+      shell.kind != MirLoanKind::Parameter || !shell.entry || shell.escapes ||
+      shell.parent != 0 || shell.source != source.id ||
+      shell.access != AccessMode::ReadOnly || shell.storedField != 0 ||
+      shell.producedBy != 0 || !shell.additionalDependencies.empty() ||
+      shell.carriers.size() != 1 || shell.carriers.front() != source.binding)
+    return false;
+  const auto *dependency = body.findLoan(shell.storedDependency);
+  return dependency != nullptr && dependency->kind == MirLoanKind::Stored &&
+         dependency->entry && !dependency->escapes && dependency->parent == 0 &&
+         dependency->storedDependency == 0 && dependency->storedField == 0 &&
+         dependency->producedBy == 0 && dependency->source == source.id &&
+         dependency->access == AccessMode::ReadOnly &&
+         !dependency->designatedFields.empty() && dependency->carriers.empty();
+}
+
+[[nodiscard]] bool
 sharedPhysicalStoredParameter(const MirBody &body,
                               const MirConstructorInitializer &initializer,
                               const MirLoan &stored, const MirPlace &source) {
@@ -2450,15 +2474,8 @@ sharedPhysicalStoredParameter(const MirBody &body,
     return false;
   if (std::count_if(body.loans.begin(), body.loans.end(),
                     [&](const MirLoan &shell) {
-                      return shell.kind == MirLoanKind::Parameter &&
-                             shell.entry && !shell.escapes &&
-                             shell.parent == 0 && shell.source == source.id &&
-                             shell.access == AccessMode::ReadOnly &&
-                             shell.storedDependency == dependency->id &&
-                             shell.storedField == 0 && shell.producedBy == 0 &&
-                             shell.additionalDependencies.empty() &&
-                             shell.carriers.size() == 1 &&
-                             shell.carriers.front() == source.binding;
+                      return shell.storedDependency == dependency->id &&
+                             sharedPhysicalParameterLoan(body, shell, source);
                     }) != 1)
     return false;
   std::size_t publications = 0;
@@ -35883,7 +35900,10 @@ private:
         return;
       }
       if (loan != nullptr &&
-          storedValueReturnLoanProducer(facts.body, *loan) != nullptr) {
+          (storedValueReturnLoanProducer(facts.body, *loan) != nullptr ||
+           returnLoanErasedByConstruct(facts.body, *loan) ||
+           returnLoanErasedByClassSsaSlot(program, representations, facts.body,
+                                        *loan))) {
         writeIndent();
         output << "// GTI MIR stored-value return loan " << loan->id
                << " publishes in the returned class value\n";
@@ -47164,7 +47184,14 @@ plainConstructedFieldTarget(const MirProgram &program,
             loan->access == AccessMode::Mutable &&
             source->type.kind == SemanticType::Reference &&
             source->type.referenceAccess == AccessMode::Mutable;
-        if (!loan || (loan->kind != MirLoanKind::Stored && !exclusiveFormal) ||
+        // The checked shared formal's physical shell is distinct from its
+        // stored external dependency. Both retire on this exact MIR failure
+        // path; admitting its EndBorrow introduces no native cleanup or
+        // publication and must use the same shell proof as field binding.
+        const bool sharedPhysicalFormal =
+            formal && sharedPhysicalParameterLoan(body, *loan, *source);
+        if (!loan || (loan->kind != MirLoanKind::Stored && !exclusiveFormal &&
+                      !sharedPhysicalFormal) ||
             (loan->access != AccessMode::ReadOnly && !exclusiveFormal &&
              !transferred) ||
             (!requiredEnds.contains(loan->id) && !formal) ||
@@ -47526,6 +47553,10 @@ nativeConstructedArguments(const MirProgram &program,
             formalPlace->projections.empty() &&
             formalPlace->type == operand.type && place &&
             formalPlace->binding == place->binding;
+        const bool sharedPhysicalFormal =
+            reference && !mutableReference && referenceLoan && formalPlace &&
+            sharedPhysicalParameterLoan(body, *referenceLoan, *formalPlace) &&
+            place && formalPlace->binding == place->binding;
         std::unordered_set<HirClassInstanceId> visiting;
         const auto *copiedClass =
             uniqueClassInstanceForType(program, operand.type);
@@ -47546,11 +47577,13 @@ nativeConstructedArguments(const MirProgram &program,
                                          : HirCallInputKind::CopyValue)) ||
             (scalarLoad && source.kind != MirOperandKind::Value) ||
             leaf.kind != (reference
-                              ? (mutableReference ? MirOperandKind::Loan
-                                                  : MirOperandKind::BorrowRead)
+                              ? ((mutableReference || sharedPhysicalFormal)
+                                     ? MirOperandKind::Loan
+                                     : MirOperandKind::BorrowRead)
                               : MirOperandKind::Copy) ||
             source.type != operand.type || leaf.type != operand.type ||
-            (mutableReference ? !exclusiveFormal : leaf.loan != 0) ||
+            (mutableReference ? !exclusiveFormal
+                              : (leaf.loan != 0 && !sharedPhysicalFormal)) ||
             (reference ? (operand.type.arguments.size() != 1 ||
                           place->projections.size() != 1 ||
                           place->projections.front().kind !=
