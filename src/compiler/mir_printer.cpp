@@ -270,7 +270,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v98 valid=" << program.valid() << '\n';
+    output << "mir-v99 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -787,7 +787,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v81\n";
+    output << "mir-body-v82\n";
     body(value, 0);
   }
 
@@ -1798,7 +1798,10 @@ private:
     }
     output << " failure-records " << value.failureRecords.size() << '\n';
     for (const MirFailureRecord &item : value.failureRecords) {
-      output << "  fail" << item.id
+      output << "  fail" << item.id << " kind="
+             << (item.kind == MirFailureRecordKind::Continuation
+                     ? "continuation"
+                     : "producer")
              << " hosted-operation=" << item.hostedStartupOperation
              << " producer=bb" << item.producerBlock << ":i"
              << item.producerInstruction << " parameter=bb"

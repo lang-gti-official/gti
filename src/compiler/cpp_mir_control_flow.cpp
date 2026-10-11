@@ -13,6 +13,7 @@ void appendEdges(const MirTerminator &terminator,
   };
   switch (terminator.kind) {
   case MirTerminatorKind::Goto:
+  case MirTerminatorKind::ContinueFailure:
     append(terminator.target, 0);
     return;
   case MirTerminatorKind::Branch:

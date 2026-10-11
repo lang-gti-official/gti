@@ -5,6 +5,10 @@
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <map>
+
 namespace lang {
 
 namespace {
@@ -56,6 +60,9 @@ programConstantLiteral(const ConstantValue &constant) {
 } // namespace
 class MirBodyLowerer {
 public:
+  // Cleared only to lower a program with one cleanup chain per failure edge.
+  bool shareFailureCleanupEnabled = true;
+
   MirBodyLowerer(
       const HirProgram &program, const FailureMetadata &failureMetadata,
       const HirBody &source, MirBodyKind kind, SemanticType returnType,
@@ -399,11 +406,7 @@ public:
         terminate({.kind = MirTerminatorKind::Unreachable});
       }
     }
-    rebuildMirReachability(output);
-    valid = rebuildMirValueUses(output) && valid;
-    valid = validateSourceProvenance() && valid;
-    verification = verifyMirBody(output);
-    valid = verification.valid() && valid;
+    finishFailureCleanupAndVerify();
     return std::move(output);
   }
 
@@ -776,11 +779,12 @@ private:
                : FailurePropagationKind::None;
   }
 
-  [[nodiscard]] FailurePropagationKind
-  normalizedDestructorPropagation(MirDropObligationId obligation) const {
+  // Whether destroying this obligation's value may raise, from its type's
+  // destructor summaries alone.
+  [[nodiscard]] bool destructorMayRaise(MirDropObligationId obligation) const {
     const MirDropObligation *drop = output.findDropObligation(obligation);
     if (drop == nullptr) {
-      return FailurePropagationKind::None;
+      return false;
     }
     bool mayRaise = mirDropHasPolymorphicCleanup(drop->dropType);
     for (const auto target : mirDropDestructorTargets(drop->dropType)) {
@@ -788,12 +792,18 @@ private:
                  target > definedFailureEffects.destructors.size() ||
                  definedFailureEffects.destructors[target - 1];
     }
+    return mayRaise;
+  }
+
+  [[nodiscard]] FailurePropagationKind
+  normalizedDestructorPropagation(MirDropObligationId obligation) const {
     // A moved-from shell is retired without running its destructor, even
     // when the move happened before an invoke split its block.
     const MirBlock *block = output.findBlock(current);
-    return mayRaise && (block == nullptr ||
-                        !mirDropFollowsDefiniteMove(output, invokeContinuations,
-                                                    *block, obligation))
+    return destructorMayRaise(obligation) &&
+                   (block == nullptr ||
+                    !mirDropFollowsDefiniteMove(output, invokeContinuations,
+                                                *block, obligation))
                ? FailurePropagationKind::Destructor
                : FailurePropagationKind::None;
   }
@@ -1629,6 +1639,12 @@ private:
 
   void
   appendFailureCleanupBoundary(std::vector<MirDropObligationId> obligations) {
+    if (PlannedFailureCleanup *plan = planningCleanup()) {
+      if (!obligations.empty()) {
+        plan->steps.push_back({.kind = PlannedCleanupStep::Kind::Boundary});
+      }
+      return;
+    }
     if (obligations.empty()) {
       return;
     }
@@ -1677,6 +1693,34 @@ private:
                                             MirPlaceId destination,
                                             ExpressionInfo info,
                                             bool conditional = false) {
+    if (PlannedFailureCleanup *plan = planningCleanup()) {
+      // Decided here, where the drop's block still leads back to its
+      // producer: a moved-from shell needs no destructor only on paths the
+      // move proof can see.
+      const FailurePropagationKind propagation =
+          normalizedDestructorPropagation(obligation);
+      // A prepared call argument's drop is counted along its own producer's
+      // cleanup chain, so it never moves into a shared suffix.
+      const MirDropObligation *record = output.findDropObligation(obligation);
+      const bool prepared =
+          record != nullptr &&
+          record->kind == MirDropObligationKind::PreparedParameter;
+      plan->steps.push_back(
+          {.kind = PlannedCleanupStep::Kind::Drop,
+           .obligation = obligation,
+           .destination = destination,
+           .info = std::move(info),
+           .conditional = conditional,
+           .propagation = propagation,
+           .fallible = propagation == FailurePropagationKind::Destructor &&
+                       routeFailureEdgesHere(),
+           .contextFree =
+               !prepared &&
+               propagation == (destructorMayRaise(obligation)
+                                   ? FailurePropagationKind::Destructor
+                                   : FailurePropagationKind::None)});
+      return 0;
+    }
     MirInstruction drop{.kind = MirInstructionKind::Drop,
                         .destination = destination,
                         .info = std::move(info),
@@ -1966,6 +2010,318 @@ private:
     appendFailureCleanupBoundary(std::move(cleanup));
   }
 
+  // Shared failure cleanup.
+  //
+  // Function and lambda bodies record each failure edge's cleanup as a plan
+  // of steps at the edge and emit every plan once the body is complete.
+  // Plans that end in the same steps share one emitted copy of that suffix,
+  // a continuation record entered by ContinueFailure edges, so cleanup grows
+  // with distinct cleanup states rather than with failure sites times live
+  // owners. A step is shared only when its meaning does not depend on the
+  // path that reaches it. A suffix is shared only between plans whose loans
+  // left live after cleanup agree, because loan flow state must be equal on
+  // every edge into a block. A plan that shares nothing is emitted exactly
+  // as an unshared chain.
+  [[nodiscard]] bool shareFailureCleanup() const {
+    return shareFailureCleanupEnabled &&
+           (output.kind == MirBodyKind::Function ||
+            output.kind == MirBodyKind::Lambda);
+  }
+
+  struct PlannedCleanupStep {
+    enum class Kind : std::uint8_t { EndBorrow, Drop, Boundary };
+    Kind kind = Kind::EndBorrow;
+    MirLoanId loan = 0;
+    MirDropObligationId obligation = 0;
+    MirPlaceId destination = 0;
+    ExpressionInfo info;
+    bool conditional = false;
+    FailurePropagationKind propagation = FailurePropagationKind::None;
+    // Routes an Invoke and a secondary record for its destructor.
+    bool fallible = false;
+    // False for a drop proved to retire a moved-from shell: the proof walks
+    // back to the drop's producer, which a shared copy cannot repeat.
+    bool contextFree = true;
+  };
+
+  struct PlannedFailureCleanup {
+    MirFailureRecordId record = 0;
+    MirBlockId parameterBlock = 0;
+    std::vector<PlannedCleanupStep> steps;
+    std::vector<MirLoanId> residualLoans;
+  };
+
+  [[nodiscard]] PlannedFailureCleanup *planningCleanup() {
+    return planningFailureCleanup
+               ? &plannedFailureCleanup[*planningFailureCleanup]
+               : nullptr;
+  }
+
+  // Loans still live once this cleanup ends: the active scope loans and
+  // pending publications it does not end.
+  [[nodiscard]] std::vector<MirLoanId>
+  residualCleanupLoans(const PlannedFailureCleanup &plan,
+                       const std::vector<MirLoanId> &ended) const {
+    std::vector<MirLoanId> retired = ended;
+    for (const PlannedCleanupStep &step : plan.steps) {
+      if (step.kind == PlannedCleanupStep::Kind::EndBorrow) {
+        retired.push_back(step.loan);
+      }
+    }
+    std::sort(retired.begin(), retired.end());
+    std::vector<MirLoanId> live;
+    for (const Scope &scope : scopes) {
+      live.insert(live.end(), scope.loans.begin(), scope.loans.end());
+    }
+    if (pendingReturnLoan != 0) {
+      live.push_back(pendingReturnLoan);
+    }
+    live.insert(live.end(), constructorPublishedLoans.begin(),
+                constructorPublishedLoans.end());
+    std::sort(live.begin(), live.end());
+    live.erase(std::unique(live.begin(), live.end()), live.end());
+    std::erase_if(live, [&](MirLoanId loan) {
+      return std::binary_search(retired.begin(), retired.end(), loan);
+    });
+    return live;
+  }
+
+  // Every plan's steps interned by identical suffix. Each plan is a path of
+  // nodes ending at an end node for its residual loans; a node passed by
+  // several plans and entered from more than one predecessor or plan is a
+  // join, and becomes the entry of one shared continuation.
+  struct CleanupSharing {
+    struct Node {
+      bool end = false;
+      bool join = false;
+      std::size_t plan = 0;
+      std::size_t step = 0;
+      std::size_t next = 0;
+      std::size_t passes = 0;
+      std::size_t incoming = 0;
+      MirFailureRecordId continuation = 0;
+      MirBlockId entry = 0;
+    };
+    std::vector<Node> nodes;
+    std::vector<std::size_t> heads;
+    std::size_t joins = 0;
+  };
+
+  [[nodiscard]] CleanupSharing shareCleanupSuffixes(bool share) const {
+    CleanupSharing sharing;
+    sharing.nodes.emplace_back();
+    std::map<std::vector<MirLoanId>, std::size_t> ends;
+    std::unordered_map<std::size_t, std::vector<std::size_t>> interned;
+    const auto sameStep = [](const PlannedCleanupStep &left,
+                             const PlannedCleanupStep &right) {
+      return left.kind == right.kind && left.loan == right.loan &&
+             left.obligation == right.obligation &&
+             left.destination == right.destination &&
+             left.conditional == right.conditional &&
+             left.propagation == right.propagation &&
+             left.fallible == right.fallible && left.info == right.info;
+    };
+    for (std::size_t planIndex = 0; planIndex < plannedFailureCleanup.size();
+         ++planIndex) {
+      const PlannedFailureCleanup &plan = plannedFailureCleanup[planIndex];
+      std::size_t next = 0;
+      if (share) {
+        const auto [found, inserted] =
+            ends.try_emplace(plan.residualLoans, sharing.nodes.size());
+        if (inserted) {
+          sharing.nodes.push_back({.end = true});
+        }
+        next = found->second;
+      } else {
+        next = sharing.nodes.size();
+        sharing.nodes.push_back({.end = true});
+      }
+      for (std::size_t index = plan.steps.size(); index-- > 0;) {
+        const PlannedCleanupStep &step = plan.steps[index];
+        const bool shareable = share && step.contextFree;
+        std::size_t hash = next;
+        for (const std::size_t part :
+             {static_cast<std::size_t>(step.kind), step.loan, step.obligation,
+              step.destination, static_cast<std::size_t>(step.conditional),
+              static_cast<std::size_t>(step.propagation),
+              static_cast<std::size_t>(step.fallible)}) {
+          hash ^= part + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+        }
+        std::size_t node = 0;
+        if (shareable) {
+          for (const std::size_t candidate : interned[hash]) {
+            const CleanupSharing::Node &existing = sharing.nodes[candidate];
+            if (existing.next == next &&
+                sameStep(
+                    plannedFailureCleanup[existing.plan].steps[existing.step],
+                    step)) {
+              node = candidate;
+              break;
+            }
+          }
+        }
+        if (node == 0) {
+          node = sharing.nodes.size();
+          sharing.nodes.push_back(
+              {.plan = planIndex, .step = index, .next = next});
+          if (shareable) {
+            interned[hash].push_back(node);
+          }
+        }
+        next = node;
+      }
+      sharing.heads.push_back(next);
+    }
+    for (const std::size_t head : sharing.heads) {
+      ++sharing.nodes[head].incoming;
+      for (std::size_t node = head; !sharing.nodes[node].end;
+           node = sharing.nodes[node].next) {
+        ++sharing.nodes[node].passes;
+      }
+    }
+    for (std::size_t node = 1; node < sharing.nodes.size(); ++node) {
+      if (!sharing.nodes[node].end) {
+        ++sharing.nodes[sharing.nodes[node].next].incoming;
+      }
+    }
+    for (CleanupSharing::Node &node : sharing.nodes) {
+      node.join = !node.end && node.passes >= 2 && node.incoming >= 2;
+      sharing.joins += node.join ? 1 : 0;
+    }
+    return sharing;
+  }
+
+  // Emits one run of cleanup into the current block: a plan's private
+  // prefix, or a shared continuation from its entry node. A failure-cleanup
+  // boundary closes at each recorded boundary and wherever the run ends, so
+  // no boundary spans a join.
+  void emitCleanupRun(const CleanupSharing &sharing, std::size_t start,
+                      MirFailureRecordId record, bool continuation) {
+    std::vector<MirDropObligationId> group;
+    std::size_t node = start;
+    bool first = continuation;
+    while (!sharing.nodes[node].end && (first || !sharing.nodes[node].join)) {
+      first = false;
+      const CleanupSharing::Node &entry = sharing.nodes[node];
+      const PlannedCleanupStep &step =
+          plannedFailureCleanup[entry.plan].steps[entry.step];
+      switch (step.kind) {
+      case PlannedCleanupStep::Kind::EndBorrow:
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::EndBorrow, .loan = step.loan});
+        break;
+      case PlannedCleanupStep::Kind::Drop: {
+        MirInstruction drop{.kind = MirInstructionKind::Drop,
+                            .destination = step.destination,
+                            .info = step.info,
+                            .lifecycle = {{.kind = MirLifecycleEventKind::Drop,
+                                           .source = step.obligation,
+                                           .conditional = step.conditional,
+                                           .failureCleanup = true}}};
+        drop.definedFailure.propagation = step.propagation;
+        const MirInstructionId instruction =
+            appendInstruction(std::move(drop), true, false);
+        if (instruction != 0 && step.fallible) {
+          const MirBlock *block = currentBlock();
+          appendCleanupFailureControlFlow(
+              instruction, block == nullptr ? 0 : block->activeFailure);
+        }
+        group.push_back(step.obligation);
+        break;
+      }
+      case PlannedCleanupStep::Kind::Boundary:
+        appendFailureCleanupBoundary(std::move(group));
+        group.clear();
+        break;
+      }
+      node = entry.next;
+    }
+    appendFailureCleanupBoundary(std::move(group));
+    if (sharing.nodes[node].end) {
+      terminate({.kind = MirTerminatorKind::PropagateFailure,
+                 .failureRecord = record});
+    } else {
+      terminate({.kind = MirTerminatorKind::ContinueFailure,
+                 .failureRecord = sharing.nodes[node].continuation,
+                 .target = sharing.nodes[node].entry});
+    }
+  }
+
+  void emitPlannedFailureCleanup(CleanupSharing &sharing) {
+    for (CleanupSharing::Node &node : sharing.nodes) {
+      if (!node.join) {
+        continue;
+      }
+      node.entry = appendBlock();
+      node.continuation = output.failureRecords.size() + 1;
+      output.failureRecords.push_back(
+          {.id = node.continuation,
+           .kind = MirFailureRecordKind::Continuation,
+           .parameterBlock = node.entry});
+      output.blocks[node.entry - 1].failureParameter = node.continuation;
+      output.blocks[node.entry - 1].activeFailure = node.continuation;
+    }
+    for (std::size_t index = 1; index < sharing.nodes.size(); ++index) {
+      if (sharing.nodes[index].join) {
+        current = sharing.nodes[index].entry;
+        emitCleanupRun(sharing, index, sharing.nodes[index].continuation, true);
+      }
+    }
+    for (std::size_t planIndex = 0; planIndex < plannedFailureCleanup.size();
+         ++planIndex) {
+      const PlannedFailureCleanup &plan = plannedFailureCleanup[planIndex];
+      const std::size_t head = sharing.heads[planIndex];
+      current = plan.parameterBlock;
+      if (sharing.nodes[head].join) {
+        terminate({.kind = MirTerminatorKind::ContinueFailure,
+                   .failureRecord = sharing.nodes[head].continuation,
+                   .target = sharing.nodes[head].entry});
+      } else {
+        emitCleanupRun(sharing, head, plan.record, false);
+      }
+    }
+  }
+
+  void finishBodyVerification() {
+    rebuildMirReachability(output);
+    valid = rebuildMirValueUses(output) && valid;
+    valid = validateSourceProvenance() && valid;
+    verification = verifyMirBody(output);
+    valid = verification.valid() && valid;
+  }
+
+  // Emits every planned failure cleanup, sharing suffixes, then verifies the
+  // body. Should the shared schedule not verify, the body is lowered again
+  // with one cleanup chain per failure edge, its established form.
+  void finishFailureCleanupAndVerify() {
+    if (plannedFailureCleanup.empty()) {
+      finishBodyVerification();
+      return;
+    }
+    CleanupSharing shared = shareCleanupSuffixes(true);
+    if (shared.joins == 0) {
+      emitPlannedFailureCleanup(shared);
+      finishBodyVerification();
+      return;
+    }
+    MirBody unshared = output;
+    const MirInvokeContinuations continuations = invokeContinuations;
+    const MirInstructionId instruction = nextInstruction;
+    const bool previouslyValid = valid;
+    emitPlannedFailureCleanup(shared);
+    finishBodyVerification();
+    if (verification.valid()) {
+      return;
+    }
+    output = std::move(unshared);
+    invokeContinuations = continuations;
+    nextInstruction = instruction;
+    valid = previouslyValid;
+    CleanupSharing separate = shareCleanupSuffixes(false);
+    emitPlannedFailureCleanup(separate);
+    finishBodyVerification();
+  }
+
   void appendFailureControlFlow(
       MirInstructionId producerInstruction,
       MirDropObligationId successResultDrop,
@@ -2003,6 +2359,11 @@ private:
     terminate(std::move(invoke));
 
     current = failureBlock;
+    if (shareFailureCleanup()) {
+      planningFailureCleanup = plannedFailureCleanup.size();
+      plannedFailureCleanup.push_back(
+          {.record = failureRecord, .parameterBlock = failureBlock});
+    }
     std::vector<MirLoanId> failureEndedLoans = endedLoans;
     // A failed producer publishes no owned carrier. Its provisional loan must
     // retire before the ancestor/resource drain, even when final semantic
@@ -2165,8 +2526,13 @@ private:
             {.kind = MirInstructionKind::EndBorrow, .loan = loan});
       }
     }
-    terminate({.kind = MirTerminatorKind::PropagateFailure,
-               .failureRecord = failureRecord});
+    if (PlannedFailureCleanup *plan = planningCleanup()) {
+      plan->residualLoans = residualCleanupLoans(*plan, failureEndedLoans);
+      planningFailureCleanup.reset();
+    } else {
+      terminate({.kind = MirTerminatorKind::PropagateFailure,
+                 .failureRecord = failureRecord});
+    }
     current = normalBlock;
   }
 
@@ -2367,6 +2733,24 @@ private:
   MirInstructionId appendInstruction(MirInstruction instruction,
                                      bool inheritSourceMetadata = true,
                                      bool routeFailureControlFlow = true) {
+    if (PlannedFailureCleanup *plan = planningCleanup()) {
+      // While a failure edge's cleanup is recorded only loan ends arrive
+      // here; drops and boundary markers have their own recorders.
+      if (instruction.kind != MirInstructionKind::EndBorrow ||
+          !instruction.loan) {
+        valid = false;
+        return 0;
+      }
+      // Program verification justifies ending a lifecycle-bound loan by the
+      // drop or failed producer before it on the same path, so such an end
+      // and everything before it stay with their own failure edge.
+      const MirLoan *loan = output.findLoan(*instruction.loan);
+      plan->steps.push_back(
+          {.kind = PlannedCleanupStep::Kind::EndBorrow,
+           .loan = *instruction.loan,
+           .contextFree = loan == nullptr || !loan->lifecycleBound});
+      return 0;
+    }
     MirBlock *block = currentBlock();
     if (block == nullptr || terminated()) {
       return 0;
@@ -11169,6 +11553,10 @@ private:
   MirInstructionId nextInstruction = 1;
   MirTemporaryId nextTemporary = 1;
   bool valid = true;
+  // Failure cleanup recorded per failure edge, emitted when the body is
+  // complete; see shareFailureCleanup.
+  std::vector<PlannedFailureCleanup> plannedFailureCleanup;
+  std::optional<std::size_t> planningFailureCleanup;
   std::unordered_map<HirValueId, const HirValue *> values;
   std::unordered_map<HirStatementId, const HirStatement *> statements;
   std::unordered_map<HirBindingId, const HirBinding *> bindings;
@@ -11208,6 +11596,8 @@ private:
   std::unordered_map<HirStatementId, LoweredLoopShape> loweredLoops;
 };
 
+thread_local bool MirLowerer::shareFailureCleanup_ = true;
+
 MirBody MirLowerer::lowerBody(
     const HirProgram &program, const FailureMetadata &failureMetadata,
     const HirBody &body, MirBodyKind kind, SemanticType returnType,
@@ -11227,6 +11617,7 @@ MirBody MirLowerer::lowerBody(
                          implicitZeroReturn, function, constructor, lambda,
                          programInitialization, loweredProgramInitialization,
                          constructorOwner, destructor);
+  lowerer.shareFailureCleanupEnabled = shareFailureCleanup_;
   MirBody result = lowerer.lower(prologueValues, initializers);
   result.compilerTrustedSynchronization =
       compilerTrusted &&

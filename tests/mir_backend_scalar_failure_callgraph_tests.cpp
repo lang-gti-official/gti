@@ -140,49 +140,76 @@ recordFor(const lang::MirFunctionInstance &function,
   return found == function.body.failureRecords.end() ? nullptr : &*found;
 }
 
+// The primary cleanup a failure runs: its parameter block onward through
+// ordinary and fallible-drop continuations and any shared cleanup
+// continuations, ending at the propagation. Empty if it never propagates.
+std::vector<const lang::MirBlock *>
+failureCleanupPath(const lang::MirFunctionInstance &function,
+                   const lang::MirFailureRecord &record) {
+  std::vector<const lang::MirBlock *> path;
+  const lang::MirBlock *cursor = function.body.findBlock(record.parameterBlock);
+  while (cursor != nullptr && path.size() <= function.body.blocks.size()) {
+    path.push_back(cursor);
+    const lang::MirTerminator &terminator = cursor->terminator;
+    if (terminator.kind == lang::MirTerminatorKind::PropagateFailure) {
+      return path;
+    }
+    if (terminator.kind != lang::MirTerminatorKind::Goto &&
+        terminator.kind != lang::MirTerminatorKind::Invoke &&
+        terminator.kind != lang::MirTerminatorKind::ContinueFailure) {
+      break;
+    }
+    cursor = function.body.findBlock(terminator.target);
+  }
+  return {};
+}
+
 std::size_t failureCleanupDrops(const lang::MirFunctionInstance &function,
                                 const lang::MirFailureRecord &record) {
-  const lang::MirBlock *cleanup =
-      function.body.findBlock(record.parameterBlock);
-  return cleanup == nullptr
-             ? 0
-             : static_cast<std::size_t>(std::count_if(
-                   cleanup->instructions.begin(), cleanup->instructions.end(),
-                   [](const lang::MirInstruction &instruction) {
-                     return instruction.kind ==
-                                lang::MirInstructionKind::Drop &&
-                            instruction.lifecycle.size() == 1 &&
-                            instruction.lifecycle.front().failureCleanup;
-                   }));
+  std::size_t drops = 0;
+  for (const lang::MirBlock *block : failureCleanupPath(function, record)) {
+    drops += static_cast<std::size_t>(std::count_if(
+        block->instructions.begin(), block->instructions.end(),
+        [](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::Drop &&
+                 instruction.lifecycle.size() == 1 &&
+                 instruction.lifecycle.front().failureCleanup;
+        }));
+  }
+  return drops;
 }
 
 bool exactFailureCleanupDrops(const lang::MirFunctionInstance &function,
                               const lang::MirFailureRecord &record,
                               std::size_t exactDrops) {
-  const lang::MirBlock *cleanup =
-      function.body.findBlock(record.parameterBlock);
-  if (cleanup == nullptr ||
-      failureCleanupDrops(function, record) != exactDrops) {
+  const std::vector<const lang::MirBlock *> path =
+      failureCleanupPath(function, record);
+  if (path.empty() || failureCleanupDrops(function, record) != exactDrops) {
     return false;
   }
   return std::all_of(
-      cleanup->instructions.begin(), cleanup->instructions.end(),
-      [&](const lang::MirInstruction &instruction) {
-        if (instruction.kind != lang::MirInstructionKind::Drop) {
-          return true;
-        }
-        if (instruction.lifecycle.size() != 1 || !instruction.destination) {
-          return false;
-        }
-        const lang::MirLifecycleEvent &event = instruction.lifecycle.front();
-        const lang::MirDropObligation *obligation =
-            function.body.findDropObligation(event.source);
-        return event.kind == lang::MirLifecycleEventKind::Drop &&
-               event.failureCleanup && !event.conditional &&
-               event.target == 0 && obligation != nullptr &&
-               obligation->place == *instruction.destination &&
-               obligation->dropType.destructor.has_value() &&
-               obligation->dropType.requiresActiveCleanup;
+      path.begin(), path.end(), [&](const lang::MirBlock *block) {
+        return std::all_of(
+            block->instructions.begin(), block->instructions.end(),
+            [&](const lang::MirInstruction &instruction) {
+              if (instruction.kind != lang::MirInstructionKind::Drop) {
+                return true;
+              }
+              if (instruction.lifecycle.size() != 1 ||
+                  !instruction.destination) {
+                return false;
+              }
+              const lang::MirLifecycleEvent &event =
+                  instruction.lifecycle.front();
+              const lang::MirDropObligation *obligation =
+                  function.body.findDropObligation(event.source);
+              return event.kind == lang::MirLifecycleEventKind::Drop &&
+                     event.failureCleanup && !event.conditional &&
+                     event.target == 0 && obligation != nullptr &&
+                     obligation->place == *instruction.destination &&
+                     obligation->dropType.destructor.has_value() &&
+                     obligation->dropType.requiresActiveCleanup;
+            });
       });
 }
 
@@ -205,9 +232,7 @@ bool exactFailureEdge(const lang::MirFunctionInstance &function,
          producer->terminator.target != 0 &&
          producer->terminator.elseTarget == record->parameterBlock &&
          cleanup->failureParameter == record->id &&
-         cleanup->terminator.kind ==
-             lang::MirTerminatorKind::PropagateFailure &&
-         cleanup->terminator.failureRecord == record->id &&
+         !failureCleanupPath(function, *record).empty() &&
          exactFailureCleanupDrops(function, *record, exactDrops);
 }
 
@@ -410,7 +435,9 @@ void expectSelected(std::string_view generated,
   expectHiddenFailureAbi(entryDefinition, "__gti_entry__gti_mir_failure(",
                          returnCount(entry));
   expectFailureCleanupBeforeFalse(leafDefinition, 1);
-  expectFailureCleanupBeforeFalse(callerDefinition, 2);
+  // The caller's two failure edges share the owner's cleanup, so one shared
+  // propagation endpoint serves both.
+  expectFailureCleanupBeforeFalse(callerDefinition, 1);
   expectFailureCleanupBeforeFalse(entryDefinition, 1);
   expect(leafDefinition.find("UINT32_C(1)") != std::string_view::npos &&
              leafDefinition.find("UINT32_C(2)") == std::string_view::npos &&
@@ -596,7 +623,7 @@ void testFailureGraph(const std::filesystem::path &fixture) {
                               lang::DefinedFailureDetail::Subtraction, 26, 561,
                               562) == 1,
          "the hosted component should own two exact immutable failure sites");
-  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v98 "),
+  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v99 "),
          "the failure-capable family should consume the verified v24 schema");
 
   const lang::OptimizationPipeline pipeline;
@@ -1017,20 +1044,23 @@ void testMutations(const std::filesystem::path &fixture) {
                         lang::FailurePropagationKind::DirectCall);
     const lang::MirFailureRecord *record =
         call == nullptr ? nullptr : recordFor(*caller, *call);
-    lang::MirBlock *cleanup =
-        record == nullptr || record->parameterBlock == 0 ||
-                record->parameterBlock > caller->body.blocks.size()
-            ? nullptr
-            : &caller->body.blocks[record->parameterBlock - 1];
-    if (cleanup != nullptr) {
-      const auto before = cleanup->instructions.size();
+    std::vector<lang::MirBlockId> path;
+    if (record != nullptr) {
+      for (const lang::MirBlock *block : failureCleanupPath(*caller, *record))
+        path.push_back(block->id);
+    }
+    for (const lang::MirBlockId id : path) {
+      lang::MirBlock &cleanup = caller->body.blocks[id - 1];
+      const auto before = cleanup.instructions.size();
       std::erase_if(
-          cleanup->instructions, [](const lang::MirInstruction &instruction) {
+          cleanup.instructions, [](const lang::MirInstruction &instruction) {
             return instruction.kind == lang::MirInstructionKind::Drop &&
                    instruction.lifecycle.size() == 1 &&
                    instruction.lifecycle.front().failureCleanup;
           });
-      erasedDrop = cleanup->instructions.size() != before;
+      erasedDrop = erasedDrop || cleanup.instructions.size() != before;
+    }
+    if (!path.empty()) {
       (void)lang::rebuildMirValueUses(caller->body);
     }
   }
