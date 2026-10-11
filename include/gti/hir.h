@@ -887,9 +887,15 @@ struct HirLoweringResult {
 // declarations (one source unit's own declarations), only the program roots
 // and that range are seeded and nothing else is lowered: the result holds what
 // the unit's code reaches, and its diagnostics cover only those instances.
+// With `reachablePrefix` and `completeDeclarations`, half-open ranges of
+// top-level declarations, only those ranges are lowered completely after the
+// prefix closes. Any other declaration is lowered only if the prefix reaches
+// it, so its concrete-instance diagnostics are reported only then.
 struct HirLoweringScope {
   bool reachablePrefix = false;
   std::optional<std::pair<std::size_t, std::size_t>> entryDeclarations;
+  std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
+      completeDeclarations;
 };
 
 class HirLowerer {

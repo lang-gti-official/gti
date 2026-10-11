@@ -5971,7 +5971,13 @@ Reachable executable lowering is owned by `testReachableExecutableLowering` in
 - that C declarations and records are kept;
 - that complete lowering is unchanged without the option;
 - that an error in a generic instantiated only by unreachable code is still
-  reported.
+  reported;
+- that with `lowerLibraryReachableOnly`, an unreferenced trusted declaration
+  adds no HIR function instance (`FrontendWorkMetrics::hirFunctionInstances`),
+  while an unreferenced application declaration or trusted entry-unit
+  declaration still does;
+- that unreferenced trusted bodies are still semantically checked;
+- that the emitted program is identical with and without the option.
 
 The census gates measure the reduced artifact inventory:
 
