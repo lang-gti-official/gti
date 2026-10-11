@@ -1191,7 +1191,8 @@ holder fresh() {
   return transfer(holder::one(resource()), 1);
 }
 
-holder direct_fresh_return() {
+holder direct_fresh_return(int32_t divisor) {
+  int32_t checked = int32_t(1) / divisor;
   return holder::one(resource());
 }
 
@@ -3998,9 +3999,13 @@ void testScalarPrefixConstructorStatusAdmission() {
                      lang::FailurePropagationKind::None,
                  "concrete HIR packs must normalize an exact failure-free "
                  "constructor effect");
+          // A caller with no other failure source is itself failure-free and
+          // emits only its plain body; either form constructs in place.
+          const lang::CppMirBodyEmitter emitter(frontend.mir, map);
           const auto emitted =
-              lang::CppMirBodyEmitter(frontend.mir, map)
-                  .emitFailureBodyText(address, "passive-prefix", 1);
+              function.mayRaiseDefinedFailure
+                  ? emitter.emitFailureBodyText(address, "passive-prefix", 1)
+                  : emitter.emitBodyText(address, "passive-prefix", 1);
           expect(emitted.emitted() &&
                      emitted.text.find("construct_representation_at(") !=
                          std::string::npos &&
@@ -4584,20 +4589,24 @@ void testExpectedExtractionStateAdmissionFailsClosed() {
 expected<int32_t, int32_t> first_state = int32_t(7);
 expected<int32_t, int32_t> second_state = int32_t(8);
 
+// Each checked division keeps its body failure-capable, so propagation is
+// admitted through the failure form under test.
 expected<int32_t, int32_t>
-forward(expected<int32_t, int32_t> result) {
+forward(expected<int32_t, int32_t> result, int32_t divisor) {
+  int32_t checked = int32_t(1) / divisor;
   return ?result;
 }
 
-expected<int32_t, int32_t> forward_globals() {
+expected<int32_t, int32_t> forward_globals(int32_t divisor) {
+  int32_t checked = int32_t(1) / divisor;
   bool ignored = second_state.has_value();
   return ?first_state;
 }
 
 int32_t main() {
   expected<int32_t, int32_t> result = int32_t(7);
-  expected<int32_t, int32_t> forwarded = forward(result);
-  expected<int32_t, int32_t> global_forwarded = forward_globals();
+  expected<int32_t, int32_t> forwarded = forward(result, int32_t(1));
+  expected<int32_t, int32_t> global_forwarded = forward_globals(int32_t(1));
   return forwarded.has_value() && global_forwarded.has_value()
              ? forwarded.value() + global_forwarded.value() - int32_t(14)
              : int32_t(1);

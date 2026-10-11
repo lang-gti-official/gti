@@ -13,8 +13,6 @@ int main() {
   std::size_t assignments = 0;
   std::size_t defaultStages = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
-    const lang::MirBodyAddress address{lang::MirBodyKind::Function,
-                                       function.id};
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
         if (instruction.kind == lang::MirInstructionKind::Construct &&
@@ -52,8 +50,7 @@ int main() {
                   if (mutation == 1 && candidate.id == stage->id)
                     candidate.lifecycle.clear();
                 }
-              expect(!lang::CppMirBodyEmitter(malformed, rows)
-                          .supportsFailureBodyText(address),
+              expect(!supportsSelectedBodyText(malformed, rows, function.id),
                      "default construction staging rejects wrong construction "
                      "kind or missing activation");
             }
@@ -68,9 +65,9 @@ int main() {
             destination == nullptr || destination->projections.empty())
           continue;
         ++assignments;
-        expect(lang::CppMirBodyEmitter(frontend.mir, rows)
-                   .supportsFailureBodyText(address),
-               "field assignment bodies admit coherent failure-form text");
+        expect(supportsSelectedBodyText(frontend.mir, rows, function.id),
+               "field assignment bodies admit coherent text in their "
+               "selected form");
         for (int mutation = 0; mutation != 2; ++mutation) {
           auto malformed = frontend.mir;
           auto *changed = const_cast<lang::MirFunctionInstance *>(
@@ -81,8 +78,7 @@ int main() {
             place->projections.back().field = 999999;
           else
             place->type = lang::SemanticType::Unknown;
-          expect(!lang::CppMirBodyEmitter(malformed, rows)
-                      .supportsFailureBodyText(address),
+          expect(!supportsSelectedBodyText(malformed, rows, function.id),
                  "field transport rejects forged concrete field identity/type");
         }
       }

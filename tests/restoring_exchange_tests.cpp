@@ -34,9 +34,7 @@ int main() {
         });
     if (movesArray) {
       ++arrayMoveBodies;
-      expect(lang::CppMirBodyEmitter(shapes.mir, shapeRows)
-                 .supportsFailureBodyText(
-                     {lang::MirBodyKind::Function, function.id}),
+      expect(supportsSelectedBodyText(shapes.mir, shapeRows, function.id),
              "owning array moves retain exact argument/return publication, "
              "including caller bodies and non-default-constructible elements");
     }
@@ -45,9 +43,7 @@ int main() {
         if (call.intrinsic != lang::IntrinsicKind::RestoringExchange)
           continue;
         ++shapeResults;
-        expect(lang::CppMirBodyEmitter(shapes.mir, shapeRows)
-                   .supportsFailureBodyText(
-                       {lang::MirBodyKind::Function, function.id}),
+        expect(supportsSelectedBodyText(shapes.mir, shapeRows, function.id),
                "every eligible restoring result has a production MIR consumer");
         for (const auto &initialize : block.instructions) {
           if (initialize.kind != lang::MirInstructionKind::Initialize ||
@@ -67,9 +63,7 @@ int main() {
                  "restoring result cannot lose its binding publication");
           if (call.info.type.kind == lang::SemanticType::Array) {
             ++arrayPublications;
-            expect(!lang::CppMirBodyEmitter(invalid, shapeRows)
-                        .supportsFailureBodyText(
-                            {lang::MirBodyKind::Function, function.id}),
+            expect(!supportsSelectedBodyText(invalid, shapeRows, function.id),
                    "array result-slot emission independently requires "
                    "publication");
           }
@@ -126,24 +120,42 @@ int main() {
         for (const auto &instruction : block.instructions) {
           if (instruction.kind != lang::MirInstructionKind::Call ||
               instruction.info.type.kind != lang::SemanticType::Array ||
-              !instruction.functionTarget || !instruction.successResultDrop)
+              !instruction.functionTarget)
+            continue;
+          // A failure-capable callee activates its result on the Invoke
+          // success edge; a failure-free callee activates it with the call's
+          // own Initialize.
+          const auto plainActivation = std::find_if(
+              instruction.lifecycle.begin(), instruction.lifecycle.end(),
+              [](const lang::MirLifecycleEvent &event) {
+                return event.kind == lang::MirLifecycleEventKind::Initialize &&
+                       event.source == 0;
+              });
+          const std::optional<lang::MirDropObligationId> resultDrop =
+              instruction.successResultDrop ? instruction.successResultDrop
+              : plainActivation == instruction.lifecycle.end()
+                  ? std::nullopt
+                  : std::optional(plainActivation->target);
+          if (!resultDrop)
             continue;
           ++callPublications;
-          expect(lang::CppMirBodyEmitter(results.mir, rows)
-                     .supportsFailureBodyText(
-                         {lang::MirBodyKind::Function, function.id}),
+          expect(supportsSelectedBodyText(results.mir, rows, function.id),
                  "array call results retain exact production storage through "
                  "their consumers");
           auto invalid = results.mir;
           auto *owner = const_cast<lang::MirFunctionInstance *>(
               invalid.findFunctionInstance(function.id));
           auto *home = owner->body.findBlock(block.id);
-          home->terminator.successLifecycle.clear();
+          if (instruction.successResultDrop) {
+            home->terminator.successLifecycle.clear();
+          } else {
+            for (auto &candidate : home->instructions)
+              if (candidate.id == instruction.id)
+                std::erase(candidate.lifecycle, *plainActivation);
+          }
           expect(!lang::verifyMirProgram(invalid).valid(),
-                 "array call result requires success-edge activation");
-          expect(!lang::CppMirBodyEmitter(invalid, rows)
-                      .supportsFailureBodyText(
-                          {lang::MirBodyKind::Function, function.id}),
+                 "array call result requires its activation");
+          expect(!supportsSelectedBodyText(invalid, rows, function.id),
                  "array result representation independently rejects missing "
                  "activation");
           for (const auto &consumerBlock : function.body.blocks) {
@@ -151,7 +163,7 @@ int main() {
               for (const auto &event : consumer.lifecycle) {
                 if (consumer.kind != lang::MirInstructionKind::Call ||
                     event.kind != lang::MirLifecycleEventKind::TransferOut ||
-                    event.source != *instruction.successResultDrop)
+                    event.source != *resultDrop)
                   continue;
                 ++resultTransfers;
                 auto missing = results.mir;
@@ -164,9 +176,7 @@ int main() {
                     std::erase(candidate.lifecycle, event);
                 expect(!lang::verifyMirProgram(missing).valid(),
                        "direct array argument requires its consumer transfer");
-                expect(!lang::CppMirBodyEmitter(missing, rows)
-                            .supportsFailureBodyText(
-                                {lang::MirBodyKind::Function, function.id}),
+                expect(!supportsSelectedBodyText(missing, rows, function.id),
                        "array result representation rejects untransferred "
                        "consumption");
               }
@@ -201,9 +211,7 @@ int main() {
           continue;
         ++pendingResults;
         expect(
-            lang::CppMirBodyEmitter(arrayFailure.mir, rows)
-                .supportsFailureBodyText(
-                    {lang::MirBodyKind::Function, function.id}),
+            supportsSelectedBodyText(arrayFailure.mir, rows, function.id),
             "pending array result and its rollback have a production consumer");
         auto invalid = arrayFailure.mir;
         auto *owner = const_cast<lang::MirFunctionInstance *>(
@@ -505,9 +513,7 @@ int main() {
                              }))
               continue;
             ++arrayArguments;
-            expect(lang::CppMirBodyEmitter(indexed.mir, rows)
-                       .supportsFailureBodyText(
-                           {lang::MirBodyKind::Function, function.id}),
+            expect(supportsSelectedBodyText(indexed.mir, rows, function.id),
                    "owning array constructor arguments have a complete backend "
                    "proof");
             for (int mutation = 0; mutation != 2; ++mutation) {
@@ -522,9 +528,7 @@ int main() {
               expect(!lang::verifyMirProgram(malformed).valid(),
                      "array argument cannot lose aggregate publication or "
                      "parameter transfer");
-              expect(!lang::CppMirBodyEmitter(malformed, rows)
-                          .supportsFailureBodyText(
-                              {lang::MirBodyKind::Function, function.id}),
+              expect(!supportsSelectedBodyText(malformed, rows, function.id),
                      "backend rejects an array ownership proof loss instead of "
                      "using scalar fallback");
             }

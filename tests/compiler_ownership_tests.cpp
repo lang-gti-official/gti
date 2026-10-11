@@ -3535,16 +3535,26 @@ int main() {
                                             : "static bool __gti_fn_" +
                                                   std::to_string(getInfo->id) +
                                                   "_Get__gti_mir_failure(";
-  expect(
-      !emittedGet.empty() && !emittedFailureGet.empty() &&
-          artifact.contents.find(emittedGet) != std::string::npos &&
-          artifact.contents.find(emittedFailureGet) != std::string::npos &&
-          artifact.contents.find("::__gti_program::Application::app;") !=
-              std::string::npos &&
-          artifact.contents.find("*__gti_mir_out_result = __gti_mir_loan_1;") !=
-              std::string::npos,
-      "the C++ backend should emit the static mutable-reference accessor "
-      "without exposing unsafe syntax at its call sites");
+  // Reading the static pointer cannot fail, so the accessor has only its
+  // plain form, which returns the loaned referent.
+  const std::size_t getBody =
+      getInfo == nullptr
+          ? std::string::npos
+          : artifact.contents.find("Application::__gti_fn_" +
+                                   std::to_string(getInfo->id) + "_Get() {");
+  const std::size_t getReturn =
+      getBody == std::string::npos
+          ? std::string::npos
+          : artifact.contents.find("return *__gti_mir_loan_1;", getBody);
+  expect(!emittedGet.empty() && !emittedFailureGet.empty() &&
+             artifact.contents.find(emittedGet) != std::string::npos &&
+             artifact.contents.find(emittedFailureGet) == std::string::npos &&
+             artifact.contents.find("::__gti_program::Application::app;") !=
+                 std::string::npos &&
+             getReturn != std::string::npos &&
+             getReturn < artifact.contents.find("\n  }", getBody),
+         "the C++ backend should emit the static mutable-reference accessor "
+         "without exposing unsafe syntax at its call sites");
 
   const lang::FrontendResult overlapping =
       lang::Frontend().analyze("overlapping-global-borrow-returns.gti", R"(
@@ -3898,9 +3908,13 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  // Box<int>::get() cannot fail: its plain form returns the exact loaned
+  // referent. The checked prefix read keeps its failure-form loan output.
+  const std::size_t plainGet = artifact.contents.find("_get() const {");
   expect(
-      artifact.contents.find("_get__gti_mir_failure(const std::int32_t **") !=
-              std::string::npos &&
+      plainGet != std::string::npos &&
+          artifact.contents.find("return *__gti_mir_loan_1;", plainGet) <
+              artifact.contents.find("\n  }", plainGet) &&
           concreteBackendSymbols(artifact.contents, "__gti_member_", "get")
                   .size() == 1 &&
           artifact.contents.find("const std::int32_t *__gti_mir_loan_1{};") !=
@@ -6534,13 +6548,19 @@ int main() {
               initializeBlock = &block;
             }
           }
+        // A failure-capable callee continues on its Invoke success edge; a
+        // failure-free one, such as this forwarder, returns in its own block.
+        const bool invokeSuccess =
+            callBlock != nullptr && endBlock != nullptr &&
+            callBlock->terminator.kind == lang::MirTerminatorKind::Invoke &&
+            callBlock->terminator.invokeInstruction == call &&
+            callBlock->terminator.target == endBlock->id;
+        const bool plainSuccess =
+            callBlock != nullptr && callBlock == endBlock && call < end;
         expect(endCount == 1 && call != 0 && end < initialize &&
                    callBlock != nullptr && endBlock != nullptr &&
                    endBlock == initializeBlock &&
-                   callBlock->terminator.kind ==
-                       lang::MirTerminatorKind::Invoke &&
-                   callBlock->terminator.invokeInstruction == call &&
-                   callBlock->terminator.target == endBlock->id,
+                   (invokeSuccess || plainSuccess),
                "each consumed carrier ends exactly once on its call-success "
                "continuation before the returned carrier is initialized");
       }
@@ -10686,15 +10706,12 @@ int main() {
               "__gti_mir_arg_0) : owner(::gti_internal::backend::"
               "mir_empty_state_v1<std::remove_cv_t<decltype(owner)>>()) {") !=
               std::string::npos &&
+          // Resetting to null cannot fail for this owner, so the selected
+          // assignment and its reset call keep their exact plain identities.
           nullArtifact.contents.find(
-              "::__gti_mir_op_assign__gti_mir_failure(std::nullptr_t "
-              "__gti_mir_arg_0") != std::string::npos &&
-          nullArtifact.contents.find("_reset__gti_mir_failure("
-                                     "__gti_mir_failure_record)") !=
-              std::string::npos &&
-          containsMangledFunction(
-              nullArtifact.contents, "::", "reset",
-              "__gti_mir_failure(__gti_mir_failure_record)"),
+              "unique_ptr<::__gti_program::Widget>::operator=(std::nullptr_t "
+              "__gti_mir_arg_0)") != std::string::npos &&
+          containsMangledFunction(nullArtifact.contents, "::", "reset", "();"),
       "the C++ backend should retain source-defined null construction and "
       "assignment identities without a public-type special case");
 
@@ -12553,13 +12570,16 @@ int main() {
          "identity independently of imported library constructor numbering");
   expect(
       !concreteBuffer.empty() && emittedProgram != std::string::npos &&
-          artifact.contents.find("transfer__gti_mir_failure(") !=
-              std::string::npos &&
-          artifact.contents.find("transfer_nested__gti_mir_failure(") !=
-              std::string::npos &&
+          // The failure-free transfers stage the moved parameter in their
+          // returned value's slot and move it out after its source drop.
+          containsMangledFunction(artifact.contents, "", "transfer", "(") &&
+          containsMangledFunction(artifact.contents, "", "transfer_nested",
+                                  "(") &&
           artifact.contents.find(
-              "construct_representation_at(__gti_mir_out_result, "
-              "std::move(__gti_mir_p_1.get()));") != std::string::npos &&
+              "__gti_mir_v_1.construct(std::move(__gti_mir_p_1.get()));") !=
+              std::string::npos &&
+          artifact.contents.find("return std::move(__gti_mir_v_1.get());") !=
+              std::string::npos &&
           artifact.contents.find("mir_prefix_allocate_v1") ==
               std::string::npos &&
           artifact.contents.find("__gti_entry__gti_mir_failure(") !=
@@ -13255,8 +13275,9 @@ int main() {
                  std::string::npos &&
              artifact.contents.find("::operator!=(__gti_mir_v_") !=
                  std::string::npos &&
-             artifact.contents.find(
-                 "___gti_operator_arrow__gti_mir_failure(&__gti_mir_loan_") !=
+             // The field-returning arrow cannot fail and publishes its loan
+             // directly; the checked-index dereference keeps its failure form.
+             artifact.contents.find("___gti_operator_arrow());") !=
                  std::string::npos &&
              artifact.contents.find(
                  "___gti_operator_dereference__gti_mir_failure(&"
@@ -14488,7 +14509,9 @@ int main() {
           "const ::__gti_program::CounterRange *__gti_mir_loan_") !=
           std::string::npos &&
       artifact.contents.find("_begin__gti_mir_failure(") != std::string::npos &&
-      artifact.contents.find("_end__gti_mir_failure(") != std::string::npos &&
+      // Constructing the sentinel cannot fail, so end() is selected plainly.
+      containsMangledFunction(artifact.contents, "CounterRange::", "end",
+                              "()") &&
       artifact.contents.find(".__gti_operator_dereference__gti_mir_failure(") !=
           std::string::npos &&
       artifact.contents.find(

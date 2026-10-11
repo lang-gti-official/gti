@@ -1375,6 +1375,41 @@ source calls publish only on their MIR success edge.
 The field load retires the passive shell before slot reuse, including in loops.
 Transfer consumers still require movability independently.
 
+A failure-free source call has no Invoke edge: MIR activates its result's
+value obligation with the call's own final `Initialize` event, after any
+by-value input it consumed has transferred out. Every result slot that a
+transformed call fills through its construction address on the success edge,
+a failure-free call fills by constructing the slot from its returned prvalue
+(`construct_from`). That covers class staging slots for a replaced binding, a
+by-value call or constructor argument, one field read and a Return, as well as
+a binding initialized from an `Expected<Class, E>` result, value-rooted
+`Expected<Class, E>`, owning-array, owning class and owning payload-enum result
+slots, a short-circuit conditional temporary that the call names as its direct
+destination, and a callable binding. A plain owning-array result has no
+declarable local, so the plain form admits such a call only with one of those
+slots, each of which requires the call's own activation. When nothing
+executable separates the call from its Return, a plain body spells
+`return <call>` and a failure form constructs the caller's result storage from
+the call directly. The staged arguments that call consumed already transferred
+out at the call, so in a plain body their slots end the moved-from
+representation at C++ scope exit, after the returned object is initialized. A
+targetless default construction never takes that route; it spells `return T{}`
+itself.
+When cleanup such as the drop of a moved-from parameter runs between the call
+and the Return, the result stays in its value-rooted slot and the Return takes
+it out. A fallible cleanup in between reparents the result to its return-result
+obligation, and the failure path destroys that slot rather than the caller's
+never-constructed storage. A failure-free call returning a reference binds its
+call-result loan by address in either body form. A plain body returning a moved
+class, callable, owning array or `Expected<Class, E>` value stages it at the
+Move, before any later drop of the moved-from source, and returns it from that
+slot; a moved class value that the Return wraps as the success alternative of
+an `Expected<Class, E>` result is staged the same way. A moved owning payload
+enum already occupies its value-rooted slot. A
+copied class whose source is dropped or overwritten before the Return is copied
+at the Load into a staging slot, while a source still live at the Return is
+copied there directly.
+
 An ordinary cleanup-free construction may instead feed one exact by-value
 parameter of a selected static/free source GTI call. The same uninitialized
 slot preserves construction at its MIR position rather than moving it into

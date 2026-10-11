@@ -7,7 +7,12 @@ public:
   Item(Item&& other) = default;
   ~Item() { destroyed++; }
 };
+// The checked division keeps produce failure-capable, so its temporaries are
+// published on the Invoke success edge. The _failure_free copy of this
+// fixture covers the plain-call publication of the same observers.
+mut int32_t divisor = 1;
 expected<Item, item_error> produce(bool success) {
+  int32_t checked = int32_t(1) / divisor;
   if (success) { return Item(); }
   return unexpected(item_error::unavailable);
 }

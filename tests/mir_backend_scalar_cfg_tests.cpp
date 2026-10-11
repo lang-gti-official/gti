@@ -210,6 +210,9 @@ void expectSelectedDefinitions(std::string_view generated) {
       "cfg_grouped_local",
       "cfg_comma_local",
       "cfg_grouped_condition",
+      // A read through a reference parameter has no failure source, so the
+      // structural failure-freedom proof selects the plain form.
+      "compatibility_reference",
   };
   for (const std::string_view name : selected) {
     expect(functionDefinition(generated, name).find(marker) !=
@@ -223,7 +226,6 @@ void expectSelectedDefinitions(std::string_view generated) {
       "compatibility_checked",
       "compatibility_call_target",
       "compatibility_call",
-      "compatibility_reference",
   };
   constexpr std::string_view failureMarker =
       "// GTI verified-MIR body: scalar-cfg-failure-v1";
@@ -541,14 +543,12 @@ int main() {
              sameBody.find("(*__gti_mir_p_") != std::string_view::npos,
          "a reference parameter should bind its pointer carrier and read "
          "the other object's field through the dereference chain (ADR 018)");
-  // The frontend marks the two call-forwarding members may-raise, so the
-  // admission selector prefers their failure form (0.246.0): the staged
-  // receiver-call vocabulary lives only in the transformed sibling. The
-  // ordinary source name must not regain a terminating boundary wrapper.
+  // The two call-forwarding members call only failure-free members, so the
+  // structural failure-freedom proof selects their plain form, which stages
+  // the same receiver-call vocabulary.
   const std::string_view twinsBody =
-      memberDefinition(artifact.contents, "twins_with__gti_mir_failure");
-  expect(twinsBody.find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
-                 std::string_view::npos &&
+      memberDefinition(artifact.contents, "twins_with");
+  expect(twinsBody.find(marker) != std::string_view::npos &&
              twinsBody.find("stages a borrowed place") !=
                  std::string_view::npos &&
              twinsBody.find("(*this).::__gti_program::") !=
@@ -571,11 +571,9 @@ int main() {
                  std::string::npos,
          "the concrete class's passive initializer bodies should publish "
          "their verified schedule and verified-empty markers");
-  const std::string_view bumpBody =
-      memberDefinition(artifact.contents, "bump__gti_mir_failure");
+  const std::string_view bumpBody = memberDefinition(artifact.contents, "bump");
   expect(
-      bumpBody.find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
-              std::string_view::npos &&
+      bumpBody.find(marker) != std::string_view::npos &&
           bumpBody.find("stages a borrowed place") != std::string_view::npos &&
           bumpBody.find("(*this).::__gti_program::") != std::string_view::npos,
       "a mutable-receiver call should stage its write borrow and spell "
@@ -598,11 +596,10 @@ int main() {
          "body should each carry their family marker exactly once");
 }
 
-// A member access whose object is a local binding rather than `this` reads
-// through a Binding-rooted projected place, which the family does not admit;
-// the graceful HIR gate must keep the body compatible rather than fail
-// closed.
-void testForeignObjectFieldReadStaysCompatibility() {
+// A member access whose object is a by-value parameter rather than `this`
+// reads through that parameter's lifetime slot. The body cannot fail, so its
+// plain form emits the read from verified MIR.
+void testForeignObjectFieldReadEmitsFromMir() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("mir-scalar-cfg-foreign-field.gti", R"(
 class Holder {
@@ -640,10 +637,12 @@ int main() {
   }
   const lang::BackendArtifact artifact = emit(
       frontend, optimized.mir, compatibility, optimized.report.transformations);
-  expect(memberDefinition(artifact.contents, "read_other").find(marker) ==
-             std::string_view::npos,
-         "a field read on a non-receiver object lies outside the family and "
-         "must stay wholly on compatibility emission");
+  const std::string_view readBody =
+      memberDefinition(artifact.contents, "read_other");
+  expect(readBody.find(marker) != std::string_view::npos &&
+             readBody.find(".get().stored;") != std::string_view::npos,
+         "a field read on a by-value parameter object reads through its "
+         "lifetime slot from verified MIR");
 }
 
 // Calls are admitted per body: an eligible call names a static
@@ -1353,7 +1352,7 @@ int main(int argc, char **argv) {
   }
   testSelectedFamily(std::filesystem::path(argv[1]));
   testConcreteMemberSelection();
-  testForeignObjectFieldReadStaysCompatibility();
+  testForeignObjectFieldReadEmitsFromMir();
   testPerBodyCallSelection();
   testGenericOwnerMemberStaysCompatibility();
   testIncoherentSwitchRejected(std::filesystem::path(argv[1]));

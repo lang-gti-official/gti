@@ -1524,17 +1524,19 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact generated =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  // choose_owner cannot fail, so its plain form stages the selected owner
+  // in the returned value's slot exactly where a failure form would publish
+  // into its result storage, then retires the moved-from sources.
   const auto publication = generated.contents.find(
-      "construct_representation_at(__gti_mir_out_result, "
-      "std::move(__gti_mir_p_4.get()));");
+      "__gti_mir_v_4.construct(std::move(__gti_mir_p_4.get()));");
   const auto retirement =
       generated.contents.find("__gti_mir_p_4.destroy();", publication);
   const auto rightCleanup =
       generated.contents.find("__gti_mir_p_3.destroy();", retirement);
   const auto leftCleanup =
       generated.contents.find("__gti_mir_p_2.destroy();", rightCleanup);
-  const auto returnPublication =
-      generated.contents.find("return true;", publication);
+  const auto returnPublication = generated.contents.find(
+      "return std::move(__gti_mir_v_4.get());", publication);
   expect(generated.contents.find("// GTI verified-MIR body: scalar-cfg-v1") !=
                  std::string::npos &&
              generated.contents.find("if (__gti_mir_v_1) {") !=

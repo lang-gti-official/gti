@@ -100,6 +100,19 @@ buildRows(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
   return lang::buildCppMirBodyEmissionMapRows(lowered, standard);
 }
 
+// A function the structural failure-freedom proof accepts has only its plain
+// form; query the body form the function actually selects.
+bool supportsSelectedBodyText(const lang::MirProgram &program,
+                              const lang::CppMirBodyEmissionMap &rows,
+                              lang::HirFunctionInstanceId id) {
+  const lang::MirFunctionInstance *function = program.findFunctionInstance(id);
+  const lang::CppMirBodyEmitter emitter(program, rows);
+  const lang::MirBodyAddress address{lang::MirBodyKind::Function, id};
+  return function != nullptr && (function->mayRaiseDefinedFailure
+                                     ? emitter.supportsFailureBodyText(address)
+                                     : emitter.supportsBodyText(address));
+}
+
 bool hasIssue(const lang::CppMirBodyEmissionAnalysis &analysis,
               lang::CppMirBodyEmissionIssueKind kind) {
   return std::any_of(analysis.issues.begin(), analysis.issues.end(),
