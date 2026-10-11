@@ -6074,6 +6074,53 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
                      })) {
       return destination;
     }
+    // A moved owning conditional arm publishes the same way. Moving out of a
+    // nested owning join hands that inner temporary's own obligation to this
+    // one; moving a named local first moves the local's obligation into the
+    // produced value, which this Initialize then reparents.
+    if (directMove && initialize->lifecycle.size() == 1) {
+      const MirPlace *source =
+          body.findPlace(definition->operands.front().place);
+      const MirLifecycleEvent &reparented = initialize->lifecycle.front();
+      const MirDropObligation *destinationDrop =
+          body.findDropObligation(reparented.target);
+      const MirDropObligation *sourceDrop =
+          body.findDropObligation(reparented.source);
+      const bool exactReparent =
+          source != nullptr && source->type == value->info.type &&
+          source->projections.empty() &&
+          reparented.kind == MirLifecycleEventKind::Reparent &&
+          !reparented.conditional && !reparented.failureCleanup &&
+          destinationDrop != nullptr &&
+          destinationDrop->kind == MirDropObligationKind::Value &&
+          destinationDrop->place == destination->id &&
+          destinationDrop->dropType.type == destination->type &&
+          sourceDrop != nullptr &&
+          sourceDrop->kind == MirDropObligationKind::Value &&
+          sourceDrop->dropType.type == value->info.type &&
+          definition->definedFailure.empty() &&
+          definition->localFailureSites.empty() &&
+          initialize->definedFailure.empty() &&
+          initialize->localFailureSites.empty();
+      const bool nestedJoin =
+          exactReparent && source->root == MirPlaceRootKind::Temporary &&
+          source->temporary != 0 && definition->lifecycle.empty() &&
+          sourceDrop->place == source->id;
+      const MirPlace *sourceValuePlace =
+          sourceDrop == nullptr ? nullptr : body.findPlace(sourceDrop->place);
+      const bool movedLocal =
+          exactReparent && source->root == MirPlaceRootKind::Binding &&
+          source->binding != 0 && definition->lifecycle.size() == 1 &&
+          definition->lifecycle.front().kind == MirLifecycleEventKind::Move &&
+          definition->lifecycle.front().target == sourceDrop->id &&
+          !definition->lifecycle.front().conditional &&
+          !definition->lifecycle.front().failureCleanup &&
+          sourceValuePlace != nullptr &&
+          sourceValuePlace->root == MirPlaceRootKind::Value &&
+          sourceValuePlace->value == valueId;
+      if (nestedJoin || movedLocal)
+        return destination;
+    }
     // A temporary destination is a real slot only when MIR explicitly
     // initializes one produced-value obligation and reparents that obligation
     // into the temporary's own full-expression obligation. This is the shape
@@ -20291,6 +20338,8 @@ ownedExpectedStagedSourceMetadataPlace(const MirBody &body,
 // A conditional owning result has already been constructed in its hidden
 // temporary. The final Move transports that place's identity; its pending
 // ReturnResult must remain there until cleanup succeeds, not in caller storage.
+// The temporary is constructed either once before the Move, or once on each
+// arm of a conditional join whose arms alone enter the Move's block.
 [[nodiscard]] const MirPlace *
 pendingClassTemporaryReturnSlot(const MirBody &body, MirValueId valueId) {
   const MirValue *value = body.findValue(valueId);
@@ -20348,8 +20397,13 @@ pendingClassTemporaryReturnSlot(const MirBody &body, MirValueId valueId) {
   if (!dominance || !dominance->dominates(value->definitionBlock, returned->id))
     return nullptr;
   std::size_t initializers = 0;
+  std::vector<MirBlockId> arms;
   for (const auto &block : body.blocks) {
     bool beforeMove = dominance->dominates(block.id, value->definitionBlock);
+    const bool joinArm = block.id != value->definitionBlock &&
+                         block.terminator.kind == MirTerminatorKind::Goto &&
+                         block.terminator.target == value->definitionBlock &&
+                         block.terminator.targetArguments.empty();
     for (const auto &instruction : block.instructions) {
       if (&instruction == move) {
         beforeMove = false;
@@ -20362,9 +20416,13 @@ pendingClassTemporaryReturnSlot(const MirBody &body, MirValueId valueId) {
               !instruction.lifecycle.front().failureCleanup)
             return nullptr;
         } else if (instruction.kind == MirInstructionKind::Initialize &&
-                   beforeMove && instruction.operands.size() == 1 &&
+                   (beforeMove || joinArm) &&
+                   instruction.operands.size() == 1 &&
                    instruction.operands.front().type == slot->type) {
-          ++initializers;
+          if (beforeMove)
+            ++initializers;
+          else
+            arms.push_back(block.id);
         } else
           return nullptr;
       }
@@ -20379,7 +20437,50 @@ pendingClassTemporaryReturnSlot(const MirBody &body, MirValueId valueId) {
     if (block.terminator.value && block.terminator.value->place == slot->id)
       return nullptr;
   }
-  return initializers == 1 ? slot : nullptr;
+  if (arms.empty())
+    return initializers == 1 ? slot : nullptr;
+  if (initializers != 0 || arms.size() < 2)
+    return nullptr;
+  // Each arm initializes the slot exactly once: arms are the Move block's only
+  // predecessors, each initializes once, and none is reachable again after the
+  // Move.
+  const auto enters = [](const MirBlock &block, MirBlockId target) {
+    return block.terminator.target == target ||
+           block.terminator.elseTarget == target ||
+           std::any_of(block.terminator.switchTargets.begin(),
+                       block.terminator.switchTargets.end(),
+                       [&](const MirSwitchTarget &edge) {
+                         return edge.target == target;
+                       });
+  };
+  std::size_t predecessors = 0;
+  for (const auto &block : body.blocks) {
+    if (!enters(block, value->definitionBlock))
+      continue;
+    ++predecessors;
+    if (std::count(arms.begin(), arms.end(), block.id) != 1)
+      return nullptr;
+  }
+  if (predecessors != arms.size())
+    return nullptr;
+  std::vector<MirBlockId> reached{value->definitionBlock};
+  for (std::size_t index = 0; index < reached.size(); ++index) {
+    const MirBlock *current = body.findBlock(reached[index]);
+    if (current == nullptr)
+      continue;
+    for (const auto &block : body.blocks) {
+      if (enters(*current, block.id) &&
+          std::find(reached.begin(), reached.end(), block.id) == reached.end())
+        reached.push_back(block.id);
+    }
+  }
+  return std::none_of(arms.begin(), arms.end(),
+                      [&](MirBlockId arm) {
+                        return std::find(reached.begin(), reached.end(), arm) !=
+                               reached.end();
+                      })
+             ? slot
+             : nullptr;
 }
 
 [[nodiscard]] const MirDropObligation *
@@ -21835,6 +21936,72 @@ conditionalTemporaryViewStorage(const MirProgram &program,
   return false;
 }
 
+// A value moved out of an owning conditional temporary that keeps its own
+// obligation denotes that temporary when it is read only through field views,
+// or consumed by one Assign whose Replace takes that obligation. MIR's later
+// Drop of the temporary then ends the live object or its moved-from shell.
+[[nodiscard]] const MirPlace *
+owningTemporaryMoveAlias(const MirProgram &program,
+                         const CppMirBodyEmissionMap &representations,
+                         const MirBody &body, MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirInstruction *move =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
+      move == nullptr || move->kind != MirInstructionKind::Move ||
+      !move->result || *move->result != valueId || move->destination ||
+      move->receiver || move->operands.size() != 1 ||
+      move->operands.front().kind != MirOperandKind::Move ||
+      !move->lifecycle.empty() || !move->definedFailure.empty() ||
+      !move->localFailureSites.empty())
+    return nullptr;
+  const MirPlace *temporary = body.findPlace(move->operands.front().place);
+  if (temporary == nullptr || temporary->root != MirPlaceRootKind::Temporary ||
+      temporary->temporary == 0 || !temporary->projections.empty() ||
+      temporary->type != value->info.type || temporary->initiallyAvailable)
+    return nullptr;
+  const MirDropObligation *drop = nullptr;
+  for (const MirDropObligation &candidate : body.dropObligations) {
+    if (candidate.place != temporary->id)
+      continue;
+    if (drop != nullptr || candidate.kind != MirDropObligationKind::Value ||
+        candidate.dropType.type != value->info.type)
+      return nullptr;
+    drop = &candidate;
+  }
+  if (drop == nullptr)
+    return nullptr;
+  std::size_t views = 0;
+  const MirInstruction *assignment = nullptr;
+  for (const MirValueUse &use : body.usesOf(valueId)) {
+    if (use.kind == MirValueUseKind::PlaceRoot) {
+      const MirPlace *view = body.findPlace(use.place);
+      if (view == nullptr ||
+          !ownedResultFieldView(program, representations, body, *value, *view))
+        return nullptr;
+      ++views;
+      continue;
+    }
+    if (use.kind != MirValueUseKind::InstructionOperand ||
+        use.operandIndex != 0 || assignment != nullptr)
+      return nullptr;
+    assignment = findInstruction(body, use.instruction);
+    if (assignment == nullptr ||
+        assignment->kind != MirInstructionKind::Assign ||
+        assignment->operation != MirOperation::Assign ||
+        assignment->operands.size() != 1 ||
+        assignment->operands.front().kind != MirOperandKind::Value ||
+        assignment->operands.front().value != valueId ||
+        assignment->lifecycle.size() != 1 ||
+        assignment->lifecycle.front().kind != MirLifecycleEventKind::Replace ||
+        assignment->lifecycle.front().source != drop->id ||
+        assignment->lifecycle.front().conditional ||
+        assignment->lifecycle.front().failureCleanup)
+      return nullptr;
+  }
+  return (views != 0) != (assignment != nullptr) ? temporary : nullptr;
+}
+
 // The owned result's slot when this place is one of its field views.
 [[nodiscard]] const MirPlace *
 ownedResultFieldViewSlot(const MirProgram &program,
@@ -21844,6 +22011,9 @@ ownedResultFieldViewSlot(const MirProgram &program,
     return nullptr;
   if (const MirPlace *temporary = conditionalTemporaryFieldViewSlot(
           program, representations, body, place))
+    return temporary;
+  if (const MirPlace *temporary =
+          owningTemporaryMoveAlias(program, representations, body, place.value))
     return temporary;
   const ValueRootedClassCallResultSlot owned = valueRootedClassCallResultSlot(
       program, representations, body, place.value);
@@ -34768,6 +34938,14 @@ private:
           return;
         }
       }
+      if (currentBody != nullptr && operand.type.kind == SemanticType::Class) {
+        if (const MirPlace *temporary = owningTemporaryMoveAlias(
+                program, representations, *currentBody, operand.value)) {
+          output << "std::move(__gti_mir_p_"
+                 << canonicalSlotPlaceId(*currentBody, *temporary) << ".get())";
+          return;
+        }
+      }
       if (currentBody != nullptr &&
           operand.type.kind == SemanticType::Expected &&
           observedExpectedSlot(*currentBody, operand.value)) {
@@ -38436,6 +38614,21 @@ private:
       }
       return;
     }
+    // An Assign consuming a value moved out of an owning conditional
+    // temporary move-assigns from that temporary through the destination's
+    // storage; MIR's later Drop of the temporary retires its shell.
+    if (instruction.kind == MirInstructionKind::Assign &&
+        instruction.operands.front().kind == MirOperandKind::Value &&
+        rawDestination != nullptr &&
+        owningTemporaryMoveAlias(program, representations, facts.body,
+                                 instruction.operands.front().value) !=
+            nullptr) {
+      emitStoragePlaceValue(facts, *rawDestination);
+      output << " = ";
+      emitOperand(instruction.operands.front());
+      output << ";\n";
+      return;
+    }
     output << destinationSpelling(facts, *instruction.destination) << " = ";
     if (movedOperand) {
       output << "std::move(";
@@ -38592,7 +38785,7 @@ private:
         (pendingClassTemporaryReturnSlot(facts.body, *instruction.result) ||
          expectedConditionalTransportSlot(facts.body, *instruction.result))) {
       writeIndent();
-      output << "// Expected join transport retains its exact temporary\n";
+      output << "// join transport retains its exact temporary\n";
       return;
     }
     if (instruction.result) {
@@ -39059,6 +39252,14 @@ private:
       writeIndent();
       output << "// field initialization publishes in the member initializer "
                 "list\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Move && instruction.result &&
+        owningTemporaryMoveAlias(program, representations, facts.body,
+                                 *instruction.result) != nullptr) {
+      writeIndent();
+      output << "// move " << *instruction.result
+             << " denotes its owning conditional temporary\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Move && instruction.result &&
@@ -52560,6 +52761,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // conditional temporary it was constructed into.
           conditionalTemporaryViewedResult(program_, representations_, body,
                                            value.id) != nullptr ||
+          // A value moved out of an owning conditional temporary denotes it.
+          owningTemporaryMoveAlias(program_, representations_, body,
+                                   value.id) != nullptr ||
           valueRootedClassMoveFieldSlot(program_, representations_, body,
                                         value.id) ||
           consumedReceiverValueSlot(body, value.id) ||
