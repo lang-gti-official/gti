@@ -83,6 +83,7 @@ namespace mir_dataflow_detail {
   const MirTerminator &terminator = block.terminator;
   switch (terminator.kind) {
   case MirTerminatorKind::Goto:
+  case MirTerminatorKind::ContinueFailure:
     return validEdge(body, terminator.target, terminator.targetArguments);
   case MirTerminatorKind::Branch:
   case MirTerminatorKind::Invoke:
@@ -113,6 +114,7 @@ canonicalEdge(const MirBlock &block, MirBlockId target, std::size_t ordinal) {
   const MirTerminator &terminator = block.terminator;
   switch (terminator.kind) {
   case MirTerminatorKind::Goto:
+  case MirTerminatorKind::ContinueFailure:
     return ordinal == 0 && target == terminator.target;
   case MirTerminatorKind::Branch:
   case MirTerminatorKind::Invoke:
