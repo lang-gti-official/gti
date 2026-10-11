@@ -747,6 +747,58 @@ int main() { mut Holder out{}; Writer writer{&out}; writer.write();
       "completed source-result");
 }
 
+void staticFieldRawWrites() {
+  // A class static field is program storage like a namespace global: direct,
+  // summarized and in-class writes all reach later reads of the same field.
+  const std::string holder = R"(
+#include <std/memory>
+int witness = 7;
+struct Holder {
+  static mut const int* slot = &witness;
+  static void keep(const int* address) { slot = address; }
+  static const int* current() { return slot; }
+};
+)";
+  const std::string setter =
+      "void set() { int gone = 1; Holder::slot = &gone; }\n";
+  const std::string getter = "const int* get() { return Holder::slot; }\n";
+  const std::string use = R"(
+int main() { set(); auto address = get();
+  unsafe { int& value = std::assume_ref(address, witness); return value; } }
+)";
+  for (const bool earlier : {false, true})
+    auditNegative("class static field raw write effects are declaration-order "
+                  "independent",
+                  holder +
+                      (earlier ? setter + getter + use : use + setter + getter),
+                  "scope has ended");
+  auditNegative("a class static field retains an expired direct write",
+                holder + R"(
+int main() { { int gone = 1; Holder::slot = &gone; }
+  auto address = Holder::slot;
+  unsafe { int& value = std::assume_ref(address, witness); return value; } })",
+                "scope has ended");
+  auditNegative("an unqualified static member write reaches its class's reads",
+                holder + R"(
+int main() { { int gone = 1; Holder::keep(&gone); }
+  auto address = Holder::current();
+  unsafe { int& value = std::assume_ref(address, witness); return value; } })",
+                "scope has ended");
+  for (const auto &source : {holder + R"(
+int main() { int value = 7; Holder::slot = &value; auto address = Holder::slot;
+  unsafe { return std::assume_ref(address, value); } })",
+                             holder + R"(
+int main() { set(); Holder::keep(&witness); auto address = Holder::current();
+  unsafe { return std::assume_ref(address, witness); } })" +
+                                 setter}) {
+    const auto result = auditAnalyze(source);
+    if (!result.canGenerateCode())
+      show(result);
+    expect(result.canGenerateCode(),
+           "live and reset class static field raw writes stay usable");
+  }
+}
+
 void sourceRawWrites() {
   const std::string globals = R"(
 #include <std/memory>
@@ -1072,6 +1124,7 @@ int main() {
   rawInvocationBoundaries();
   nestedQuerySymbols();
   sourceRawWrites();
+  staticFieldRawWrites();
   sourceRawWriteControlFlow();
   taggedRawOrigins();
   repeatedSemanticRequest();

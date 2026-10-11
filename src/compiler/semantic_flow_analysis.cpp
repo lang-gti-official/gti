@@ -4565,7 +4565,9 @@ auto SemanticVisitor::Impl::resolveMutable(const Token &name) -> Symbol * {
 
 auto SemanticVisitor::Impl::resolvePlaceSymbol(const Token &name) -> Symbol * {
   if (Symbol *local = resolveMutable(name)) {
-    return local;
+    // Inside its class, an unqualified static member names the same storage
+    // as its qualified spelling.
+    return staticFieldFlowSymbol(*local);
   }
   std::unordered_map<std::string, Symbol> *symbols =
       currentNamespaceSymbolsMutable();
@@ -4689,7 +4691,7 @@ auto SemanticVisitor::Impl::resolveQualifiedPlaceSymbol(const NamePath &path)
     ClassInfo &owner = classInfo(*classId);
     const auto member = owner.members.find(path.last().lexeme);
     return member != owner.members.end() && member->second.symbol.staticMember
-               ? &member->second.symbol
+               ? staticFieldFlowSymbol(member->second.symbol)
                : nullptr;
   }
 
@@ -4703,6 +4705,21 @@ auto SemanticVisitor::Impl::resolveQualifiedPlaceSymbol(const NamePath &path)
   return symbol == symbols->end() || !symbolVisibleNow(symbol->second)
              ? nullptr
              : &symbol->second;
+}
+
+auto SemanticVisitor::Impl::staticFieldFlowSymbol(Symbol &member) -> Symbol * {
+  if (!catalog.sealed ||
+      member.bindingKind != SemanticBindingKind::StaticField ||
+      member.variableDeclaration == nullptr)
+    return &member;
+  // beginBody carries every catalog static field; one first seen later gets
+  // its carrier here. A source-result worker describes the storage as a
+  // symbolic input, exactly as it seeds namespace globals.
+  const auto [found, created] = valueFlow.staticFieldSymbols.try_emplace(
+      member.variableDeclaration, member);
+  if (created && requestSession.collectingRawResult)
+    seedRawStorageInput(found->second);
+  return &found->second;
 }
 
 auto SemanticVisitor::Impl::resolveInitialNamespaceGlobally(
@@ -7783,6 +7800,11 @@ auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
     }
     return nullptr;
   };
+  // A class static field's facts live in its flow-state carrier, not in the
+  // class-scope copy that a member body also has in scope.
+  if (record->staticMember)
+    if (auto *symbol = find(valueFlow.staticFieldSymbols))
+      return symbol;
   for (auto &scope : scopes)
     if (auto *symbol = find(scope))
       return symbol;
@@ -7800,6 +7822,25 @@ auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
     if (auto *symbol = find(bindings))
       return symbol;
   return nullptr;
+}
+
+auto SemanticVisitor::Impl::seedRawStorageInput(Symbol &symbol) -> void {
+  const auto place = placeKey(placeForSymbol(symbol));
+  if (!place.valid())
+    return;
+  symbol.rawPointerOrigins.clear();
+  symbol.rawPointerFields.clear();
+  for (auto path : rawPointerFieldPaths(symbol.type)) {
+    auto input = place;
+    input.projections.insert(input.projections.end(), path.begin(), path.end());
+    RawPointerOrigin origin{.place = std::move(input),
+                            .addressSite = tokenSpan(symbol.declaration),
+                            .parameterPointee = true};
+    if (path.empty() && symbol.type.kind == SemanticType::RawPointer)
+      symbol.rawPointerOrigins.push_back(std::move(origin));
+    else
+      symbol.rawPointerFields.push_back({std::move(path), {std::move(origin)}});
+  }
 }
 
 auto SemanticVisitor::Impl::recordRawResult(const ExprPtr &expression) -> void {
@@ -8067,31 +8108,13 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   // first caller's current value. Direct addresses of globals stay ordinary
   // absolute places; only raw values loaded from their storage are symbolic.
   const auto seedGlobals = [&](auto &bindings) {
-    for (auto &[_, symbol] : bindings) {
-      if (symbol.bindingKind != SemanticBindingKind::GlobalVariable &&
-          symbol.bindingKind != SemanticBindingKind::StaticField)
-        continue;
-      const auto place = worker->placeKey(worker->placeForSymbol(symbol));
-      if (!place.valid())
-        continue;
-      symbol.rawPointerOrigins.clear();
-      symbol.rawPointerFields.clear();
-      for (auto path : worker->rawPointerFieldPaths(symbol.type)) {
-        auto input = place;
-        input.projections.insert(input.projections.end(), path.begin(),
-                                 path.end());
-        RawPointerOrigin origin{.place = std::move(input),
-                                .addressSite = tokenSpan(symbol.declaration),
-                                .parameterPointee = true};
-        if (path.empty() && symbol.type.kind == SemanticType::RawPointer)
-          symbol.rawPointerOrigins.push_back(std::move(origin));
-        else
-          symbol.rawPointerFields.push_back(
-              {std::move(path), {std::move(origin)}});
-      }
-    }
+    for (auto &[_, symbol] : bindings)
+      if (symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
+          symbol.bindingKind == SemanticBindingKind::StaticField)
+        worker->seedRawStorageInput(symbol);
   };
   seedGlobals(worker->valueFlow.namespaceSymbols);
+  seedGlobals(worker->valueFlow.staticFieldSymbols);
   for (auto &[_, bindings] : worker->valueFlow.internalNamespaceSymbols)
     seedGlobals(bindings);
   for (auto &[_, bindings] : worker->valueFlow.visibleNamespaceSymbols)
@@ -8427,6 +8450,13 @@ auto SemanticVisitor::Impl::saveRawProgramStorage()
     save(bindings, RawProgramStorageState::Namespace::Internal, unit);
   for (auto &[unit, bindings] : valueFlow.visibleNamespaceSymbols)
     save(bindings, RawProgramStorageState::Namespace::Visible, unit);
+  for (auto &[declaration, symbol] : valueFlow.staticFieldSymbols)
+    if (!rawPointerFieldPaths(symbol.type).empty())
+      result.push_back({.symbol = &symbol,
+                        .space = RawProgramStorageState::Namespace::StaticField,
+                        .origins = symbol.rawPointerOrigins,
+                        .fields = symbol.rawPointerFields,
+                        .staticField = declaration});
   return result;
 }
 
@@ -8435,6 +8465,14 @@ auto SemanticVisitor::Impl::restoreRawProgramStorage(
   if (!rawAuditEnabled())
     return;
   for (auto &saved : state) {
+    if (saved.space == RawProgramStorageState::Namespace::StaticField) {
+      const auto found = valueFlow.staticFieldSymbols.find(saved.staticField);
+      if (found != valueFlow.staticFieldSymbols.end()) {
+        found->second.rawPointerOrigins = std::move(saved.origins);
+        found->second.rawPointerFields = std::move(saved.fields);
+      }
+      continue;
+    }
     auto *bindings = &valueFlow.namespaceSymbols;
     if (saved.space != RawProgramStorageState::Namespace::Global) {
       auto &spaces = saved.space == RawProgramStorageState::Namespace::Internal
@@ -9366,8 +9404,8 @@ auto SemanticVisitor::Impl::rawPointerOrigins(const Expr *expression)
     if (assignment->oper().kind == TokenKind::EQUAL)
       return rawPointerOrigins(assignment->value());
     const auto *symbol = assignment->path().segments.size() > 1
-                             ? resolveQualified(assignment->path())
-                             : resolve(assignment->name());
+                             ? resolveQualifiedPlaceSymbol(assignment->path())
+                             : resolvePlaceSymbol(assignment->name());
     return symbol ? symbol->rawPointerOrigins : std::vector<RawPointerOrigin>{};
   }
   if (const auto *unary = exprAs<Unary>(expression);
