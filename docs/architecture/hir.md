@@ -28,8 +28,10 @@ does not infer writability from a native C++ call result or inline an accessor
 into its private field.
 
 `HirLowerer` in `include/gti/hir.h` consumes the checked `Program`, target, and
-`SemanticVisitor`/`SemanticModel`. It produces `HirProgram` plus diagnostics.
-Concrete generic validity is obtained through semantic instance reanalysis.
+the immutable `SemanticModel` and narrow `SemanticInstanceProvider`. It
+produces `HirProgram` plus diagnostics. Concrete generic validity is obtained
+through semantic instance reanalysis; the lowerer does not receive the mutable
+semantic-analyzer facade or create its own type/ownership rules.
 Concrete class fields retain that analysis's exact binding type, traits and
 selected initializer, including checked owned value-expression substitution and
 nominal-field defaults. Open-primary lifecycle unavailability is not an explicit
@@ -115,8 +117,9 @@ holds what the entry unit's code reaches and reports only those instances'
 diagnostics. Editor snapshots use it so an open file's instance diagnostics
 match `gti check` for that file's code while library instances nothing in
 the file reaches are left to the library's own check. `gti check` and builds
-never set it; their diagnostics stay complete. The scope is a seeding choice,
-not a semantic one: every lowered instance is lowered exactly as in complete
+never set this entry-only option; artifact builds use the separately described
+trusted-library scope, while `check` retains complete lowering. The scope is a
+seeding choice, not a semantic one: every lowered instance is lowered exactly as in complete
 lowering.
 The frontend lowers the prefix to MIR. The lowered-program declaration
 inventory then omits a non-generic class, function, or constructor that has no
@@ -322,7 +325,7 @@ Owning expected initialization preserves the payload and completed wrapper as
 distinct lifetime identities for MIR transfer and rollback.
 
 The existing bounded generated-derived family also has explicit body-local
-execution: a nongeneric derived class with no instance fields or destructor,
+execution: a nongeneric derived class with no instance fields,
 whose nongeneric state-bearing base selects an exact zero-parameter source
 constructor. `ClassLifecycleInfo::generatedDefaultBaseConstructor` supplies the
 semantic selection. HIR discovers that base and records a source-free
@@ -410,9 +413,10 @@ instances or module-body iteration. Each namespace global and non-generic
 static field has one exact binding in the merged module body. `DataOnly` steps
 have no module statement, value, or executable initializer root. `Initializer`
 steps have one exact statement/root and must retain the nonzero source-backed
-initializer value plus its source plan identity. Static fields of generic
-classes remain in their concrete class instance bodies and are excluded from
-the program-wide plan.
+initializer value plus its source plan identity. Ordinary static fields of
+generic classes are rejected by current semantics and have no accepted
+program-wide initialization contract; excluding them from this plan is not
+evidence of usable per-instance static storage.
 
 An exact frontend-computed program constant becomes a
 `programConstantSubstitution` value carrying the same `ConstantValue`,
@@ -448,10 +452,11 @@ constructor-local arguments on the selected hosted constructors.
 The two adapter-local failure operations are native negative-count validation
 and checked GTI count conversion. Allocation failure remains owned and sited by the exact
 constructor or append callee; `allocation_failure/hosted_arguments` is reserved
-and currently unproduced. This plan is immutable data only. A later M-FAIL-01 /
-M-EXEC-01 cutover must generate the executable hosted-startup HIR/MIR schedule,
-ordered around program initialization and final parameter transfer, without
-re-siting callee failures.
+and currently unproduced. This HIR plan is immutable data. The implemented
+`MirLowerer::lowerHostedStartup` in `mir_hosted_startup_builder.cpp` consumes it
+to produce the executable startup body and operation plan, ordered around
+program initialization and final parameter transfer. Callee failures retain
+their sites; infallible exhaustion uses the aborting path, not caller cleanup.
 
 ## Instance Discovery
 
@@ -537,10 +542,10 @@ copyable local or field creates a fresh owned stage, while moving retains the
 exact source ownership event. This applies to ordinary calls as well as packs;
 the stage, rather than an untracked backend copy, owns argument cleanup.
 Eligible read-only overloaded operators and ordinary immediate methods on a
-semantically admitted single-owner borrowed carrier use
+semantically admitted borrowed carrier use
 `ReadTemporaryBorrow` or `MutableTemporaryBorrow`. HIR preserves the selected
-producer, its stored dependency and access, exact call target, receiver mode,
-and full-expression lifetime; MIR establishes the distinct physical shell loan.
+producer, its complete stored dependency set and access, exact call target,
+receiver mode, and full-expression lifetime; MIR establishes the distinct physical shell loan.
 Already-supported read-only operator observations outside that contract retain
 their ordered `Value` receiver input. HIR gives that source carrier an explicit
 full-expression lifetime slot while retaining its existing dependency loan;
@@ -712,10 +717,12 @@ Eligibility is deliberately narrow: the
 target is concrete and non-intrinsic; argument cardinality exactly matches the
 selected parameters after caller-side default expansion; no pack expansion is
 present; and every
-parameter is either a supported scalar/reference form, an exact class value
-without borrowed state, or the narrowly scheduled borrowed input described
-below. Reusable mutable temporary permission remains confined to
-ordinary methods and reusable `operator()`; consuming value operators also
+parameter is a supported scalar/reference or passive fixed-array form, exact
+class/lambda/owning-enum value, or the scheduled borrowed class input described
+below. Native callback and function-item values retain their exact signatures.
+Each owning role still requires its checked copy/move capability. Reusable
+mutable temporary permission remains confined to ordinary methods and reusable
+`operator()`; consuming value operators also
 receive a temporary stage with exact `Once` capability. Non-borrowing read-only
 operators selected on an admitted fresh temporary also receive a plan so MIR
 does not reconstruct their receiver. Unresolved deferred callables and
@@ -776,9 +783,10 @@ borrowed-view factory result to pass directly to an ordinary helper, without
 weakening ordinary class-value admission.
 This preserves a once-callable requirement even when exact overload selection
 legitimately falls back to a read or mutable target. Ordinary constructors
-require an exact constructor target and at least one parameter;
-generated/default zero-argument construction and copy/move special construction
-remain unscheduled. The plan
+require an exact ordinary constructor target, including an available selected
+source-free generated-default body with zero arguments. Other default and
+special copy/move construction use their separate verified lifecycle schedule,
+not this ordinary-call plan. The plan
 names a function receiver, when present, once and records each argument in
 source order with its exact concrete parameter type. Constructors have no
 receiver. An input role is value, class-copy value, class-move value, read
@@ -808,13 +816,14 @@ its concrete type and selected function-instance identity. An empty pack is an
 explicit fold value with an empty element sequence. HIR neither reopens
 overload resolution nor derives element calls from emitted template behavior.
 
-This bounded invocation-input plan is not yet a complete executable schedule.
-Borrowed-state class values, whole-pack forwarding and general pack expressions
-beyond the bounded fold, unresolved callable calls, operators other than
-`operator()`, special/default construction, conditionals, target-place
-formation, result destinations, and generic static initialization remain
-outside this particular schedule. The source-graph initialization plan is
-separately lowered into the verified `Module/0` MIR body.
+This invocation-input plan is not one uniform representation of every source
+expression. Admitted borrowed class inputs and selected ordinary/value-operator
+calls use it; concrete packs, special lifecycle construction, conditional joins,
+target reservations and result publication also have separate verified MIR
+schedules. Unsupported unresolved calls or ownership shapes gain no execution
+route by lacking a plan. General pack-expression algebra and generic static
+initialization remain completion work. The source-graph initialization plan is
+already lowered into the verified `Module/0` MIR body.
 
 M-LIFE-01 maps each AST full-expression root selected by `SemanticModel` to a
 snapshot-local `HirFullExpressionId`; HIR does not infer endpoints from
@@ -823,17 +832,16 @@ type requires cleanup carry typed `HirDropObligation` records; class records
 retain the exact concrete destructor identity and whether their own declared
 cleanup needs active-drop state. These records describe lifetime and cleanup
 authority, not an evaluation schedule. Under the accepted D-EXEC-01 contract,
-later M-EXEC-01 slices must extend named concrete child roles to the remaining
-expression families, retain destination-materialization intent, and add the
-semantic program-initialization step identity before those families are
-linearized into MIR. HIR does not select source endpoints, repeat borrow
-validity, or infer that vector position alone is sufficient for every
+further slices must extend named concrete child roles to remaining expression
+families and retain destination-materialization intent before MIR linearization.
+Program initialization already retains its semantic step identity. HIR does not
+select source endpoints, repeat borrow validity, or infer that vector position alone is sufficient for every
 expression kind.
 
 An explicitly defaulted default constructor retains its written declaration in
 semantic selection, but HIR uses the same generated lifecycle route as an
-implicit structural default: normally no body target, or the explicit
-source-free generated-base schedule described above when eligible.
+implicit structural default: an exact source-free generated field/base schedule
+when required, otherwise its verified structural lifecycle operation.
 A defaulted destructor creates no `HirDestructorInstance`; only a
 destructor with a source cleanup body has executable HIR and active-drop state.
 
@@ -895,7 +903,7 @@ ordinary method. Its declaration identity selects the body; its concrete class
 and mutable receiver provide the physical place. This entry does not acquire
 another cleanup obligation for the object being destroyed.
 
-For shared multi-path carriers, `HirLoan.additionalDependencies` preserves
+For shared, exclusive and mixed multi-path carriers, `HirLoan.additionalDependencies` preserves
 every semantic owner place or opaque parameter field path in the same concrete
 place domain. Constructor instances retain `borrowParameters`; call values
 retain `borrowArguments`; function instances retain `returnBorrowParameters`.
@@ -954,7 +962,7 @@ insufficient.
 
 Local origins and propagation are separate facts. A checked arithmetic,
 indexing, owner, observer, storage, allocation, or trusted host operation owns
-its local outcome set. A source call or future join merely records that it may
+its local outcome set. A source call or managed join merely records that it may
 propagate an already formed record; it does not acquire a transitive category
 set or replace the origin site. Conservative propagation can later be refined
 by the one function-effect authority without changing this distinction.
@@ -965,7 +973,7 @@ operation may carry several `DefinedFailureOrigin` records because one lowered
 expression can contain distinct detector sites, such as bounds and arithmetic
 checks in an indexed compound assignment. Each origin owns a sorted unique
 outcome set and a snapshot-local `SourceUnitId` plus line/offset anchor. Direct,
-virtual, constructor, callable, and future task-join propagation remain a
+virtual, constructor, callable, and task-join propagation remain a
 separate enum with no transitive category set.
 
 After HIR, the backend-independent failure-metadata builder consumes those

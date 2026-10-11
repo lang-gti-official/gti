@@ -11,6 +11,13 @@
 > semantics and does not make generated C++ text a public compatibility
 > contract.
 
+The activation and resumption instructions below belong to the completed
+2026-08 campaign; they do not impose an active feature-development freeze.
+Its machine, concurrency, hashes and timing comparisons remain historical
+evidence, including the unchanged [baseline data](../compiler-structural-baseline.json).
+Current compiler ownership and delivery rules live in the architecture docs
+and [implementation sequence](../implementation-sequence.md).
+
 ## Outcome
 
 The user-facing outcome is a compiler that can continue adding systems-language

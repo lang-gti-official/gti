@@ -12,14 +12,14 @@ Historical descriptions in the initial decision record their original scope;
 they are not the current implementation contract or a claim of final campaign
 validation.
 
-Direction note (2026-10-09): the owner has accepted two further revisions;
-implementation is in progress on the allocation/container task branch, with
-combined acceptance and integration still outstanding. The
+Delivery update (2026-10-11): the owner-approved revisions below are integrated
+with combined source-prefix/allocation-abort acceptance in 0.397.0. The
 [Rust allocation-failure model](#revision-rust-allocation-failure-model-2026-10-09)
 replaces observable failure for infallible allocation. The
 [raw-buffer sequence representation](#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09)
-is the target for `std::vector`. Until they are integrated, the sections they
-revise remain the shipped contract.
+is implemented for `std::vector` and string storage. The older sections they
+supersede retain the initial decision's rationale, not an alternative shipped
+implementation. Broader allocation families still need their own acceptance.
 
 ## Context
 
@@ -512,8 +512,9 @@ freedom. The one-time unsafe resource binding retains those explicit caller
 obligations. Checked provider/element loans remain mandatory.
 
 The private sparse type, allocation/adoption/access/lifecycle intrinsic family,
-adoption marker and native helper engine are retired. Prefix/optional storage
-remain distinct capabilities with their existing contracts. MIR still owns
+adoption marker and native helper engine are retired. The subsequent prefix
+revision also retires private prefix storage; optional storage remains a
+distinct capability. MIR still owns
 typed lifecycle verification and failure cleanup; the backend implements those
 verified operations. Sparse initialization-set optimization is retired with its
 old intrinsic clients rather than being inferred from new source wrappers.
@@ -611,12 +612,12 @@ which retired the private `gti_internal::prefix_storage<T>` capability.
 - **One check per public operation.** Safe operations check bounds, capacity
   and size overflow once at the API boundary. Internally they use unchecked
   raw access, with failure paths outlined from the successful path.
-- **Unchecked access under `unsafe`.** Following Rust's `get_unchecked`,
-  `get_unchecked_mut`, `as_mut_ptr` and `set_len`, the sequences will gain
-  `unsafe` element access without a bounds check. The caller's obligation is
-  that the index is below `size()`. They may also gain raw data and
+- **Unchecked access under `unsafe`.** The sequences now provide
+  `get_unchecked`/`get_unchecked_mut`-style element access without a bounds
+  check. The caller's obligation is that the index is below `size()`.
+  They may additionally gain raw data and
   length-setting operations for bulk initialization. Span and fixed array
-  gain matching unchecked accessors. These are unsafe APIs; safe APIs keep
+  have matching unchecked accessors. These are unsafe APIs; safe APIs keep
   every check.
 - **Bulk relocation.** Growth relocates a structurally bitwise-relocatable
   element type as one byte copy, as Rust's `ptr::copy_nonoverlapping` does,
