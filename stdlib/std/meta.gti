@@ -20,6 +20,19 @@ std::string_view meta_field_name<T, uint64_t I>();
 bool meta_field_is_public<T, uint64_t I>();
 std::string_view meta_type_name<T>();
 uint64_t meta_type_kind<T>();
+uint64_t meta_field_attribute_count<T, uint64_t I>();
+bool meta_field_has_attribute<T, A, uint64_t I>();
+uint64_t meta_type_attribute_count<T>();
+bool meta_type_has_attribute<T, A>();
+bool meta_type_trait<T, uint64_t Trait>();
+uint64_t meta_enumerator_count<E>();
+std::string_view meta_enumerator_name<E, uint64_t I>();
+E meta_enumerator_value<E, uint64_t I>();
+uint64_t meta_payload_count<E, uint64_t I>();
+std::string_view meta_payload_name<E, uint64_t I, uint64_t P>();
+uint64_t meta_base_count<T>();
+uint64_t meta_argument_count<T>();
+@compiler_constraint("meta_reflectable") concept meta_reflectable_capability<T>;
 }
 
 namespace std {
@@ -63,6 +76,36 @@ public:
 /// declaration order; a computed type like `field_type`.
 @compiler_type("meta_field_list") struct field_list<T> {};
 
+/// `list<A, B, ...>` over the attribute types applied to instance field `I`
+/// of `T`, in application order; a computed type like `field_type`.
+@compiler_type("meta_field_attributes") struct field_attributes<T, uint64_t I> {};
+
+/// `list<A, B, ...>` over the attribute types applied to `T` itself.
+@compiler_type("meta_type_attributes") struct type_attributes<T> {};
+
+/// `list<enumerator<E, 0>, enumerator<E, 1>, ...>` over the enumerators of
+/// `E`, in declaration order; a computed type like `field_list`.
+@compiler_type("meta_enumerator_list") struct enumerator_list<E> {};
+
+/// `list<payload_field<E, I, 0>, ...>` over the payload fields of enumerator
+/// `I` of `E`; empty for an integral enumerator.
+@compiler_type("meta_payload_list") struct payload_list<E, uint64_t I> {};
+
+/// The exact type of payload field `P` of enumerator `I` of `E`.
+@compiler_type("meta_payload_type") struct payload_type<E, uint64_t I, uint64_t P> {};
+
+/// `list<type<B>, ...>` over the direct bases of `T`, in declaration order.
+@compiler_type("meta_base_list") struct base_list<T> {};
+
+/// `list<type<Arg>, ...>` over the type arguments of a generic class or enum
+/// instance `T`; empty for a non-generic type.
+@compiler_type("meta_argument_list") struct argument_list<T> {};
+
+/// Satisfied when every instance field of `T` is readable through
+/// reflection: `T` is a struct or class whose instance fields are all public,
+/// or one declared `[[reflect_private]]`.
+concept reflectable<T> = gti_internal::meta_reflectable_capability<T>;
+
 /// Describes the type `T`.
 @compiler_type("meta_type") struct type<T> {
 public:
@@ -81,6 +124,67 @@ public:
   constexpr bool is_text() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
   /// The number of instance fields when `T` is a struct or class, else 0.
   constexpr uint64_t field_count() { return gti_internal::meta_field_count<T>(); }
+  /// The number of `[[attribute]]` applications on the declaration of `T`.
+  constexpr uint64_t attribute_count() { return gti_internal::meta_type_attribute_count<T>(); }
+  /// Whether the declaration of `T` applies the attribute type `A`.
+  constexpr bool has_attribute<A>() { return gti_internal::meta_type_has_attribute<T, A>(); }
+  /// The constant `A` value the declaration of `T` applies; an error when it
+  /// applies none (test with `has_attribute<A>()` first).
+  A attribute<A>();
+  /// The attribute types applied to `T`, as a `list`.
+  constexpr type_attributes<T> attributes() { return type_attributes<T>(); }
+  /// Whether `T` is an enum whose enumerators carry payload fields.
+  constexpr bool is_payload_enum() { return gti_internal::meta_type_trait<T, 0>(); }
+  /// Whether `T` is an instance of a generic class or enum.
+  constexpr bool is_generic_instance() { return gti_internal::meta_type_trait<T, 1>(); }
+  /// Whether `T` satisfies `reflectable`: every instance field is readable
+  /// through reflection.
+  constexpr bool is_reflectable() { return gti_internal::meta_type_trait<T, 2>(); }
+  /// Whether `T` is a signed fixed-width integer type.
+  constexpr bool is_signed_integral() { return gti_internal::meta_type_trait<T, 3>(); }
+  /// The number of enumerators when `T` is an enum, else 0.
+  constexpr uint64_t enumerator_count() { return gti_internal::meta_enumerator_count<T>(); }
+  /// The enumerators of `T`, as a `list` of `enumerator` metaobjects.
+  constexpr enumerator_list<T> enumerators() { return enumerator_list<T>(); }
+  /// The number of direct bases when `T` is a class, else 0.
+  constexpr uint64_t base_count() { return gti_internal::meta_base_count<T>(); }
+  /// The direct bases of `T`, as a `list` of `type` metaobjects.
+  constexpr base_list<T> bases() { return base_list<T>(); }
+  /// The number of type arguments of a generic instance `T`, else 0.
+  constexpr uint64_t argument_count() { return gti_internal::meta_argument_count<T>(); }
+  /// The type arguments of `T`, as a `list` of `type` metaobjects.
+  constexpr argument_list<T> arguments() { return argument_list<T>(); }
+};
+
+/// Describes payload field `P` of enumerator `I` of the payload enum `E`.
+@compiler_type("meta_payload_field") struct payload_field<E, uint64_t I, uint64_t P> {
+public:
+  constexpr payload_field() {}
+  /// The payload field's declared name.
+  constexpr std::string_view name() { return gti_internal::meta_payload_name<E, I, P>(); }
+  /// The payload field's position within its enumerator.
+  constexpr uint64_t index() { return P; }
+  /// The exact payload field type as a type metaobject.
+  constexpr type<payload_type<E, I, P>> type() {
+    return std::meta::type<payload_type<E, I, P>>();
+  }
+};
+
+/// Describes enumerator `I`, in declaration order, of the enum `E`.
+@compiler_type("meta_enumerator") struct enumerator<E, uint64_t I> {
+public:
+  constexpr enumerator() {}
+  /// The enumerator's declared name.
+  constexpr std::string_view name() { return gti_internal::meta_enumerator_name<E, I>(); }
+  /// The enumerator's position in declaration order.
+  constexpr uint64_t index() { return I; }
+  /// The enumerator as a value of `E`; rejected for a payload enum
+  /// (`GTI-S2117`), whose alternatives are not integer constants.
+  constexpr E value() { return gti_internal::meta_enumerator_value<E, I>(); }
+  /// The number of payload fields; 0 for an integral enumerator.
+  constexpr uint64_t payload_count() { return gti_internal::meta_payload_count<E, I>(); }
+  /// The payload fields, as a `list` of `payload_field` metaobjects.
+  constexpr payload_list<E, I> payload_fields() { return payload_list<E, I>(); }
 };
 
 /// Describes instance field `I`, in declaration order, of `T`.
@@ -102,12 +206,38 @@ public:
   /// called. A private field is accessible only where direct access is.
   field_type<T, I>& get(T& owner);
   mut field_type<T, I>& get_mut(mut T& owner) mut;
+  /// The number of `[[attribute]]` applications on this field.
+  constexpr uint64_t attribute_count() { return gti_internal::meta_field_attribute_count<T, I>(); }
+  /// Whether this field applies the attribute type `A`.
+  constexpr bool has_attribute<A>() { return gti_internal::meta_field_has_attribute<T, A, I>(); }
+  /// The constant `A` value this field applies; an error when it applies
+  /// none (test with `has_attribute<A>()` first).
+  A attribute<A>();
+  /// The attribute types applied to this field, as a `list`.
+  constexpr field_attributes<T, I> attributes() { return field_attributes<T, I>(); }
 };
 
 /// The instance fields of `T`, in declaration order.
 constexpr field_list<T> fields_of<T>() {
   return field_list<T>();
 }
+
+/// The enumerators of `E`, in declaration order.
+constexpr enumerator_list<E> enumerators_of<E>() {
+  return enumerator_list<E>();
+}
+
+/// The alternatives of a payload enum `E`; the same enumerator metaobjects as
+/// `enumerators_of`, named for the payload reading.
+constexpr enumerator_list<E> alternatives_of<E>() {
+  return enumerator_list<E>();
+}
+
+/// The direct bases of `T`, in declaration order, as `type` metaobjects.
+constexpr base_list<T> bases_of<T>() { return base_list<T>(); }
+
+/// The type arguments of a generic instance `T`, as `type` metaobjects.
+constexpr argument_list<T> arguments_of<T>() { return argument_list<T>(); }
 
 constexpr type<T> type_of<T>() { return type<T>(); }
 constexpr std::string_view name_of<T>() { return gti_internal::meta_type_name<T>(); }
@@ -118,6 +248,10 @@ constexpr bool is_integral<T>() { return gti_internal::meta_type_kind<T>() == ui
 constexpr bool is_floating_point<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(7); }
 constexpr bool is_bool<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(8); }
 constexpr bool is_text<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
+constexpr bool is_payload_enum<T>() { return gti_internal::meta_type_trait<T, 0>(); }
+constexpr bool is_generic_instance<T>() { return gti_internal::meta_type_trait<T, 1>(); }
+constexpr bool is_reflectable<T>() { return gti_internal::meta_type_trait<T, 2>(); }
+constexpr bool is_signed_integral<T>() { return gti_internal::meta_type_trait<T, 3>(); }
 
 }
 }

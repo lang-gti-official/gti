@@ -699,7 +699,8 @@ private:
             .polymorphic = info->polymorphic,
             .cAbiRecord = info->cAbiRecord,
             .cOpaqueHandle = info->cOpaqueHandle,
-            .compilerPrivate = info->compilerPrivate};
+            .compilerPrivate = info->compilerPrivate,
+            .reflectPrivate = info->reflectPrivate};
         payload.bases.reserve(info->bases.size());
         for (std::size_t index = 0; index < info->bases.size(); ++index) {
           payload.bases.push_back({.type = info->bases[index].type,

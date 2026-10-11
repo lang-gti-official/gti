@@ -158,6 +158,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   const auto bodyStart = std::chrono::steady_clock::now();
   measureTopLevelStatements = workMetrics != nullptr;
   bodyPhaseActive = true;
+  analyzeDeclarationAttributes();
   indexLexicallyReachableFunctions(program.declarations());
   runLexicalPass(program.declarations());
   measureTopLevelStatements = false;
@@ -994,7 +995,10 @@ auto SemanticVisitor::Impl::analyzeMetaFieldAccess(
       generated(TokenKind::IDENTIFIER, facts->name));
   synthesizedExpressions.push_back(projection);
   const Expr &alias = semanticModel.recordExpressionAlias(expr, projection);
+  const bool enclosingReflectedAccess = analyzingReflectedFieldAccess;
+  analyzingReflectedFieldAccess = true;
   const SemanticType result = analyze(alias);
+  analyzingReflectedFieldAccess = enclosingReflectedAccess;
   const ExpressionInfo *info = semanticModel.findExpression(alias);
   if (mutableAccess && result != SemanticType::Unknown &&
       (info == nullptr || info->category != ValueCategory::Place ||
@@ -1017,6 +1021,303 @@ auto SemanticVisitor::Impl::analyzeMetaFieldAccess(
     semanticModel.recordPlace(expr, *place);
   }
   semanticModel.recordPlaceSelection(expr, nextPlaceSelectionId++);
+}
+
+// `field.attribute<A>()` / `type.attribute<A>()`: the constant object that the
+// declaration's `[[A(...)]]` application denotes. The call carries that
+// constant for compile-time readers and is aliased to a designated
+// construction of `A` from the application's own arguments, so a run-time
+// reader builds the same value through ordinary struct construction.
+auto SemanticVisitor::Impl::analyzeMetaAttributeAccess(
+    const Call &expr, const Get &member, const SemanticType &metaObject,
+    bool typeSubject) -> void {
+  const IntrinsicKind intrinsic = typeSubject
+                                      ? IntrinsicKind::MetaTypeAttribute
+                                      : IntrinsicKind::MetaFieldAttribute;
+  if (!expr.arguments().empty() || expr.typeArguments().size() != 1 ||
+      metaObject.arguments.size() != 1 ||
+      metaObject.valueArguments.size() != (typeSubject ? 0U : 1U)) {
+    report(expr.paren(),
+           "'attribute' takes the attribute type as its one generic argument "
+           "and no call arguments.",
+           "GTI-S2019");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  validateType(expr.typeArguments().front());
+  const SemanticType attribute = typeOf(expr.typeArguments().front());
+  if (attribute == SemanticType::Unknown) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const SemanticType &subject = metaObject.arguments.front();
+  const std::optional<CompileTimeValue> index =
+      typeSubject ? std::nullopt
+                  : std::optional(metaObject.valueArguments.front());
+  const ClassInfo *attributeClass =
+      attribute.kind == SemanticType::Class ? classInfo(attribute) : nullptr;
+  if (!containsOpenTypeParameter(attribute) &&
+      (attributeClass == nullptr || !attributeClass->attributeType)) {
+    report(expr.typeArguments().front().name.last(),
+           "'" + typeSpelling(attribute) + "' is not an attribute type.",
+           "GTI-S2113");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  currentType = attribute;
+  ResolvedCallInfo resolved{.returnType = attribute,
+                            .typeArguments = {subject, attribute},
+                            .intrinsic = intrinsic};
+  if (index) {
+    resolved.valueArguments = {*index};
+  }
+  if (containsOpenTypeParameter(subject) ||
+      containsOpenTypeParameter(attribute) ||
+      (index && index->kind != CompileTimeValue::UInt64)) {
+    semanticModel.record(expr, resolved);
+    return;
+  }
+  const std::vector<ResolvedDeclarationAttribute> *attributes =
+      declarationAttributesOf(subject, index ? std::optional(index->value)
+                                             : std::nullopt);
+  if (attributes == nullptr) {
+    if (index) {
+      report(expr.paren(),
+             "Field index " + std::to_string(index->value) +
+                 " is out of range for '" + typeSpelling(subject) +
+                 "', which has " + std::to_string(metaFieldCount(subject)) +
+                 " instance field(s).",
+             "GTI-S2111");
+    } else {
+      report(expr.paren(),
+             "'" + typeSpelling(subject) + "' has no declaration attributes.",
+             "GTI-S2116");
+    }
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const auto found =
+      std::find_if(attributes->begin(), attributes->end(),
+                   [&](const ResolvedDeclarationAttribute &candidate) {
+                     return candidate.type == attribute.classId;
+                   });
+  if (found == attributes->end() || found->syntax == nullptr) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2116", DiagnosticPhase::Semantics, expr.paren(),
+        (index ? "Field " + std::to_string(index->value) + " of '" : "Type '") +
+            typeSpelling(subject) + "' has no attribute '" +
+            typeSpelling(attribute) + "'.");
+    diagnostic.hints.emplace_back(
+        "Test for the attribute with has_attribute<A>() before reading it.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  semanticModel.record(expr, resolved);
+  semanticModel.recordConstant(expr, found->value);
+
+  // The run-time alias: `A{.field = argument, ...}` over clones of the
+  // application's arguments; omitted fields take their declaration defaults.
+  const Token &anchor = member.name();
+  const auto generated = [&](TokenKind kind, std::string lexeme) {
+    return Token(kind, std::move(lexeme), std::monostate{}, anchor.position,
+                 anchor.line, anchor.source, false, true);
+  };
+  const DeclarationAttribute &syntax = *found->syntax;
+  ExprList arguments;
+  std::vector<Token> designators;
+  arguments.reserve(syntax.arguments.size());
+  designators.reserve(syntax.arguments.size());
+  for (std::size_t position = 0; position < syntax.arguments.size();
+       ++position) {
+    arguments.push_back(cloneExpr(*syntax.arguments[position], 0));
+    if (!syntax.designators.empty()) {
+      designators.push_back(syntax.designators[position]);
+    } else if (position < attributeClass->fields.size() &&
+               attributeClass->fields[position].declaration != nullptr) {
+      designators.push_back(generated(
+          TokenKind::IDENTIFIER,
+          attributeClass->fields[position].declaration->name().lexeme));
+    }
+  }
+  auto construction = std::make_shared<DirectInitializer>(
+      generated(TokenKind::LEFT_BRACE, "{"), std::move(arguments),
+      generated(TokenKind::RIGHT_BRACE, "}"), std::move(designators));
+  synthesizedExpressions.push_back(construction);
+  const Expr &alias = semanticModel.recordExpressionAlias(expr, construction);
+  const std::optional<SemanticType> enclosingType = contextualInitializerType;
+  const Expr *enclosingExpression = contextualInitializerExpression;
+  contextualInitializerType = attribute;
+  contextualInitializerExpression = &alias;
+  const SemanticType constructed = analyze(alias);
+  contextualInitializerType = enclosingType;
+  contextualInitializerExpression = enclosingExpression;
+  currentType = constructed == SemanticType::Unknown ? constructed : attribute;
+}
+
+auto SemanticVisitor::Impl::constantLiteralExpression(
+    const ConstantValue &value, const SemanticType &type,
+    const Token &anchor) const -> ExprPtr {
+  const auto generated = [&](TokenKind kind, std::string lexeme,
+                             Literal literal = std::monostate{}) {
+    return Token(kind, std::move(lexeme), std::move(literal), anchor.position,
+                 anchor.line, anchor.source, false, true);
+  };
+  const auto literal = [&](TokenKind kind, std::string lexeme,
+                           Literal content) -> ExprPtr {
+    Literal copy = content;
+    return std::make_unique<LiteralExpr>(
+        generated(kind, std::move(lexeme), std::move(copy)),
+        std::move(content));
+  };
+  const auto builtinToken = [&]() -> std::optional<Token> {
+    switch (type.kind) {
+    case SemanticType::Int8:
+      return generated(TokenKind::INT8, "int8_t");
+    case SemanticType::Int16:
+      return generated(TokenKind::INT16, "int16_t");
+    case SemanticType::Int32:
+      return generated(TokenKind::INT32, "int32_t");
+    case SemanticType::Int64:
+      return generated(TokenKind::INT64, "int64_t");
+    case SemanticType::UInt8:
+      return generated(TokenKind::UINT8, "uint8_t");
+    case SemanticType::UInt16:
+      return generated(TokenKind::UINT16, "uint16_t");
+    case SemanticType::UInt32:
+      return generated(TokenKind::UINT32, "uint32_t");
+    case SemanticType::UInt64:
+      return generated(TokenKind::UINT64, "uint64_t");
+    default:
+      return std::nullopt;
+    }
+  };
+  if (const auto *text = std::get_if<std::string>(&value)) {
+    if (type.kind != SemanticType::StringView &&
+        type.kind != SemanticType::CString) {
+      return nullptr;
+    }
+    return literal(TokenKind::STRING_LITERAL, "\"" + *text + "\"",
+                   Literal{*text});
+  }
+  if (const auto *flag = std::get_if<bool>(&value)) {
+    if (type != SemanticType::Bool) {
+      return nullptr;
+    }
+    return literal(*flag ? TokenKind::TRUE : TokenKind::FALSE,
+                   *flag ? "true" : "false", Literal{*flag});
+  }
+  if (const auto *character = std::get_if<CharacterLiteral>(&value)) {
+    if (type != SemanticType::Char) {
+      return nullptr;
+    }
+    return literal(TokenKind::CHARACTER_LITERAL,
+                   std::string("'") + static_cast<char>(character->value) + "'",
+                   Literal{*character});
+  }
+  if (const auto *floating = std::get_if<BinaryFloat>(&value)) {
+    if ((type != SemanticType::Float && type != SemanticType::Double) ||
+        (floating->format == BinaryFloatFormat::Binary32) !=
+            (type == SemanticType::Float)) {
+      return nullptr;
+    }
+    return literal(TokenKind::FLOAT_LITERAL, "0.0", Literal{*floating});
+  }
+  if (const auto *integer = std::get_if<ConstantInteger>(&value)) {
+    const std::optional<Token> target = builtinToken();
+    if (!target) {
+      return nullptr;
+    }
+    ExprPtr magnitude =
+        literal(TokenKind::INT_LITERAL, std::to_string(integer->magnitude),
+                Literal{integer->magnitude});
+    if (integer->negative) {
+      magnitude = std::make_unique<Unary>(generated(TokenKind::MINUS, "-"),
+                                          std::move(magnitude));
+    }
+    return std::make_unique<Conversion>(TypeRef(*target),
+                                        generated(TokenKind::LEFT_PAREN, "("),
+                                        std::move(magnitude));
+  }
+  if (const auto *enumerator = std::get_if<ConstantEnum>(&value)) {
+    if (type.kind != SemanticType::Enum || enumerator->enumId == 0 ||
+        enumerator->enumId > enums.size() ||
+        type.enumId != enumerator->enumId) {
+      return nullptr;
+    }
+    const EnumInfo &info = enums[enumerator->enumId - 1];
+    const auto found = std::find_if(
+        info.enumerators.begin(), info.enumerators.end(),
+        [&](const auto &entry) {
+          return entry.second.value.negative == enumerator->value.negative &&
+                 entry.second.value.magnitude == enumerator->value.magnitude;
+        });
+    if (found == info.enumerators.end()) {
+      return nullptr;
+    }
+    std::vector<Token> segments;
+    for (const std::string &scope : info.namespaceScope) {
+      segments.push_back(generated(TokenKind::IDENTIFIER, scope));
+    }
+    segments.push_back(generated(TokenKind::IDENTIFIER, info.name.lexeme));
+    segments.push_back(generated(TokenKind::IDENTIFIER, found->first));
+    return std::make_unique<QualifiedName>(NamePath(std::move(segments)));
+  }
+  return nullptr;
+}
+
+auto SemanticVisitor::Impl::foldAttributeMemberRead(
+    const Get &expr, const SemanticType &objectType) -> bool {
+  const auto *call = exprAs<Call>(expr.object().get());
+  if (call == nullptr || objectType.kind != SemanticType::Class ||
+      expr.name().completion) {
+    return false;
+  }
+  const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+  if (resolved == nullptr ||
+      (resolved->intrinsic != IntrinsicKind::MetaFieldAttribute &&
+       resolved->intrinsic != IntrinsicKind::MetaTypeAttribute)) {
+    return false;
+  }
+  const std::optional<ConstantValue> constant =
+      semanticModel.findConstant(*call);
+  const auto *aggregate =
+      constant ? std::get_if<ConstantAggregateValue>(&*constant) : nullptr;
+  if (aggregate == nullptr || aggregate->value == nullptr) {
+    return false;
+  }
+  const MemberInfo *member = findMember(objectType, expr.name());
+  if (member == nullptr || member->access != AccessModifier::Public ||
+      member->symbol.bindingKind != SemanticBindingKind::Field) {
+    return false;
+  }
+  const SymbolId symbol = toolingSymbolFor(member->symbol);
+  const auto field = std::find_if(aggregate->value->fields.begin(),
+                                  aggregate->value->fields.end(),
+                                  [&](const ConstantAggregateField &candidate) {
+                                    return candidate.symbol == symbol;
+                                  });
+  if (field == aggregate->value->fields.end()) {
+    return false;
+  }
+  ExprPtr spelled =
+      constantLiteralExpression(field->value, member->symbol.type, expr.name());
+  if (spelled == nullptr) {
+    return false;
+  }
+  std::shared_ptr<const Expr> alias = std::move(spelled);
+  synthesizedExpressions.push_back(alias);
+  const Expr &target = semanticModel.recordExpressionAlias(expr, alias);
+  currentType = analyze(target);
+  semanticModel.recordConstant(expr, field->value);
+  semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
+                                  .span = tokenSpan(expr.name()),
+                                  .kind = SemanticOccurrenceKind::Expression,
+                                  .symbol = symbol,
+                                  .roles = OccurrenceRole::Reference,
+                                  .name = expr.name().lexeme,
+                                  .type = member->symbol.type});
+  return true;
 }
 
 auto SemanticVisitor::Impl::visitConditionalStmt(const ConditionalStmt &stmt)
@@ -5171,14 +5472,23 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   if (const auto *member = exprAs<Get>(expr.callee().get())) {
     const SemanticType *objectType = semanticModel.findType(*member->object());
     if (objectType != nullptr && objectType->kind == SemanticType::Class &&
-        objectType->classId != 0 && objectType->classId <= classes.size() &&
-        classInfo(objectType->classId).compilerType ==
-            CompilerTypeKind::MetaField &&
-        (member->name().lexeme == "get" ||
-         member->name().lexeme == "get_mut")) {
-      analyzeMetaFieldAccess(expr, *member, *objectType,
-                             member->name().lexeme == "get_mut");
-      return;
+        objectType->classId != 0 && objectType->classId <= classes.size()) {
+      const CompilerTypeKind metaObject =
+          classInfo(objectType->classId).compilerType;
+      if (metaObject == CompilerTypeKind::MetaField &&
+          (member->name().lexeme == "get" ||
+           member->name().lexeme == "get_mut")) {
+        analyzeMetaFieldAccess(expr, *member, *objectType,
+                               member->name().lexeme == "get_mut");
+        return;
+      }
+      if ((metaObject == CompilerTypeKind::MetaField ||
+           metaObject == CompilerTypeKind::MetaType) &&
+          member->name().lexeme == "attribute") {
+        analyzeMetaAttributeAccess(expr, *member, *objectType,
+                                   metaObject == CompilerTypeKind::MetaType);
+        return;
+      }
     }
   }
 
@@ -6737,6 +7047,9 @@ auto SemanticVisitor::Impl::visitPlaceSetExpr(const PlaceSet &expr) -> void {
 
 auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
   SemanticType objectType = analyzeProjectionBase(expr.object());
+  if (foldAttributeMemberRead(expr, objectType)) {
+    return;
+  }
   if (expr.access().kind == TokenKind::ARROW) {
     objectType =
         arrowTargetType(expr, expr.object(), objectType, expr.access());

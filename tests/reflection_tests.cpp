@@ -249,6 +249,197 @@ int main() {
   expect(formatter.format(formatted) == formatted, "formatting is idempotent");
 }
 
+const std::string kAttributes = R"(#include <std/meta>
+namespace tags {
+[[attribute]] struct key { std::string_view name = ""; };
+[[attribute]] struct skip {};
+[[attribute]] struct width { uint64_t bytes; };
+struct plain { int x = 0; };
+}
+)";
+
+void checkAttributes(const std::filesystem::path &root,
+                     const std::filesystem::path &directory) {
+  // Valid applications: positional, designated, zero-argument, several per
+  // group, and both compile-time and run-time reads.
+  const auto valid =
+      analyzeSource(root, directory, "attributes.gti", kAttributes + R"(
+[[tags::key("player")]]
+struct Player {
+  [[tags::key("display"), tags::skip]]
+  std::string_view name = "";
+  [[tags::width(.bytes = 2)]]
+  uint32_t health = 100;
+};
+int main() {
+  static_assert(std::meta::type_of<Player>().has_attribute<tags::key>());
+  static_assert(std::meta::type_of<Player>().attribute<tags::key>().name == "player");
+  mut uint64_t total = 0;
+  constexpr for (auto field : std::meta::fields_of<Player>()) {
+    total = total + field.attribute_count();
+    if constexpr (field.has_attribute<tags::width>()) {
+      total = total + field.attribute<tags::width>().bytes;
+    }
+    if constexpr (field.has_attribute<tags::skip>()) {
+      std::string_view key = field.attribute<tags::key>().name;
+      if (key != "display") { return 1; }
+    }
+  }
+  return total == 5 ? 0 : 2;
+}
+)");
+  expect(valid.diagnostics.empty(), "attribute applications are accepted");
+
+  const auto invalid =
+      analyzeSource(root, directory, "attributes_invalid.gti", kAttributes + R"(
+struct A {
+  [[tags::plain]] int a = 1;
+  [[tags::key("x"), tags::key("y")]] int b = 2;
+  [[tags::key("x", "y")]] int c = 3;
+  [[tags::width]] int d = 4;
+  [[tags::key(.nope = "k")]] int e = 5;
+  [[tags::key(1)]] int f = 6;
+};
+int main() {
+  constexpr for (auto field : std::meta::fields_of<A>()) {
+    if constexpr (field.index() == uint64_t(0)) {
+      std::string_view k = field.attribute<tags::key>().name;
+    }
+  }
+  return 0;
+}
+)");
+  expect(hasCode(invalid, "GTI-S2113"), "a non-attribute struct is rejected");
+  expect(countCode(invalid, "GTI-S2115") == 1,
+         "a duplicate application is rejected once");
+  expect(countCode(invalid, "GTI-S2114") == 4,
+         "too many, unknown, missing and mistyped arguments are rejected");
+  expect(hasCode(invalid, "GTI-S2116"),
+         "reading an attribute the field does not apply is rejected");
+  const auto payload = analyzeSource(root, directory, "attributes_payload.gti",
+                                     R"(#include <std/meta>
+enum class data { empty, boxed(int32_t item) };
+int main() {
+  constexpr for (auto alt : std::meta::alternatives_of<data>()) {
+    data d = alt.value();
+  }
+  return 0;
+}
+)");
+  expect(hasCode(payload, "GTI-S2117"),
+         "a payload enumerator has no integral value");
+  if (!hasCode(payload, "GTI-S2117")) {
+    for (const lang::Diagnostic &diagnostic : payload.diagnostics) {
+      std::cerr << "  " << diagnostic.code << ": " << diagnostic.message
+                << '\n';
+    }
+  }
+
+  // Attribute types are structs with public value fields and no constructors.
+  const auto shape =
+      analyzeSource(root, directory, "attributes_shape.gti", kAttributes + R"(
+[[attribute]] class owner { public: int x = 0; };
+namespace tags {
+[[attribute]] struct withctor { int x; withctor(int v) : x(v) {} };
+}
+struct B {
+  [[tags::withctor(1)]] int b = 2;
+};
+int main() { return 0; }
+)");
+  expect(countCode(shape, "GTI-S2113") == 2,
+         "[[attribute]] on a class and an attribute type with a constructor "
+         "are rejected");
+
+  // Private fields: inaccessible through reflection unless the owner opts in.
+  const std::string accounts = R"(#include <std/meta>
+class Closed {
+public:
+  int shown = 1;
+private:
+  int hidden = 2;
+};
+[[reflect_private]] class Open {
+public:
+  int shown = 1;
+private:
+  int hidden = 2;
+};
+int total<std::meta::reflectable T>(T& value) {
+  mut int sum = 0;
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    sum = sum + field.get(value);
+  }
+  return sum;
+}
+)";
+  const auto open = analyzeSource(root, directory, "reflect_private.gti",
+                                  accounts + R"(int main() {
+  Open open{};
+  return total(open) - 3;
+}
+)");
+  expect(open.diagnostics.empty(),
+         "[[reflect_private]] admits private fields to reflected access");
+  const auto closed = analyzeSource(root, directory, "reflect_closed.gti",
+                                    accounts + R"(int main() {
+  Closed closed{};
+  return total(closed) - 3;
+}
+)");
+  expect(hasCode(closed, "GTI-S2029"),
+         "a class with private fields does not satisfy std::meta::reflectable");
+  const auto direct =
+      analyzeSource(root, directory, "reflect_direct.gti", accounts + R"(
+int sum_all<T>(T& value) {
+  mut int sum = 0;
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    sum = sum + field.get(value);
+  }
+  return sum;
+}
+int main() {
+  Closed closed{};
+  return sum_all(closed) - 3;
+}
+)");
+  expect(hasCode(direct, "GTI-S2007"),
+         "reflected access to a private field follows direct access rules");
+}
+
+void checkAttributeFormatter() {
+  // Declared attributes share the class-attribute placement: one group per
+  // line before the declaration, kept with it, in the canonical form.
+  const std::string source = R"(namespace tags {
+  [[attribute]] struct key {
+    std::string_view name = "";
+  };
+}
+
+[[tags::key("player")]] struct Player {
+  [[tags::key("display"), tags::skip]] std::string_view name = "";
+  [[tags::key(.name = "hp")]] uint32_t health = 100;
+};
+)";
+  const lang::Formatter formatter;
+  const std::string formatted = formatter.format(source);
+  expect(formatted == source, "declared attributes format as written");
+  if (formatted != source) {
+    std::cerr << "formatted:\n" << formatted;
+  }
+  const std::string split = R"([[tags::key("player")]]
+struct Player {
+  [[tags::key("display"), tags::skip]]
+  std::string_view name = "";
+};
+)";
+  expect(formatter.format(split) == R"([[tags::key("player")]] struct Player {
+  [[tags::key("display"), tags::skip]] std::string_view name = "";
+};
+)",
+         "a split attribute line is joined with its declaration");
+}
+
 } // namespace
 
 int main() {
@@ -261,6 +452,8 @@ int main() {
   checkExpansion(root, directory);
   checkDiagnostics(root, directory);
   checkFormatter();
+  checkAttributes(root, directory);
+  checkAttributeFormatter();
   std::filesystem::remove_all(directory);
   if (failures != 0) {
     std::cerr << failures << " failure(s)\n";
