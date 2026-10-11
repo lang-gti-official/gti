@@ -9,13 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.400.1 — Returning `expected` results across scope cleanup
+## 0.401.1 — Returning `expected` results across scope cleanup
 
 - A function that returns an `expected<T, E>` call result while
   another local still needs cleanup now builds. This covers
   `return parse(input);` and `mut auto r = parse(input); return std::move(r);`
   when `T` is a struct or an `enum`, including inside a loop. These programs
   previously stopped with internal compiler error `GTI-B0001`.
+
+## 0.401.0 — Comparator-ordered search and partition points
+
+- `<std/algorithm>` adds `partition_point` and comparator overloads of
+  `lower_bound`, `upper_bound` and `binary_search`. Applications can discover
+  predicate boundaries or search records without defining `operator<`,
+  including descending orders and move-only records/callbacks. Returned
+  cursors retain checked owner loans; the queries allocate no element storage.
+- Example 139 demonstrates sorting and searching with the same custom order.
 
 ## 0.400.0 — Structural construction and callable reflection
 

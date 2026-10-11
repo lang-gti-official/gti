@@ -1861,6 +1861,18 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(generic_algorithm_breadth PROPERTIES TIMEOUT 600)
   add_test(
+    NAME ordered_search_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/ordered_search_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(
+    ordered_search_runtime
+    PROPERTIES TIMEOUT 600
+               ENVIRONMENT
+                 "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
+  )
+  add_test(
     NAME generic_algorithm_errors
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_errors_test.py"

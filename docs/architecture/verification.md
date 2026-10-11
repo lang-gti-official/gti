@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Expected returns across scope cleanup (0.400.1)
+## Expected returns across scope cleanup (0.401.1)
 
 - **Defects.** Three verified programs stopped at the C++ backend with
   `GTI-B0001` ("outside the complete C++ text vocabulary"). Each returns an
