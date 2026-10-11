@@ -513,7 +513,7 @@ keep their key-based member `find` and `contains`; generic algorithms perform
 linear sequence traversal and do not substitute for tree/hash lookup.
 
 Iterator/sentinel algorithms include `contains`, `is_partitioned`,
-`adjacent_find`, `search`, `search_n`, `find_first_of`, `lower_bound`,
+`partition_point`, `adjacent_find`, `search`, `search_n`, `find_first_of`, `lower_bound`,
 `upper_bound`, `min_element`, `max_element`, `is_sorted`, and
 `is_sorted_until`. `equal`, `starts_with`, and `lexicographical_compare` take
 four endpoints, checking both sequence boundaries. Empty patterns match at
@@ -522,6 +522,40 @@ return that same cursor without dereferencing it. Extrema keep the first
 equivalent element. Bounds require an already sorted sequence, use logarithmic
 comparisons and linear cursor increments. Subsequence search is the ordinary
 quadratic worst-case algorithm, not an allocation-backed optimized search.
+
+`partition_point(first, last, predicate)` returns the first false element in a
+range partitioned into a true prefix and a false suffix, or the exhausted
+cursor when every element satisfies the predicate. It requires a forward
+iterator, an exact sentinel and a repeatable exact-`bool` indirect predicate.
+It makes no predicate calls for an empty range. Input need not be sorted, but
+must be partitioned for that predicate.
+
+`lower_bound`, `upper_bound` and `binary_search` also accept a final comparator:
+`std::lower_bound(first, last, key, compare)`. The comparator receives two
+read-only references to the exact element/key type and returns exactly `bool`;
+it supplies ordering without requiring the element's `operator<`, equality,
+copy construction or assignment. Lower bound partitions on
+`compare(element, key)`; upper bound partitions on `!compare(key, element)`.
+Binary search requires a sequence sorted under the comparator's strict weak
+order and tests equivalence under that order, not element equality. Thus an
+application may search records by one field or use descending order. This
+slice does not supply heterogeneous key types or projections.
+
+These queries retain one owned predicate/comparator, accepting read-callable
+or mutable-callable targets but not consuming once-callables. A named move-only
+target must be explicitly moved; it is not copied or recursively re-created.
+The implementation uses O(log n) predicate/comparator calls (binary search
+adds one final equivalence check), O(n) forward increments and constant
+auxiliary cursor storage, with no query-owned allocations or element copies.
+It currently uses that forward strategy even for random-access cursors.
+Bounds and partition point advance and return the original first cursor,
+preserving its owner dependency. Defined failure in a callback or iterator
+operation performs ordinary deterministic cleanup, including the retained
+callback. The sorted/partitioned preconditions are not dynamically validated;
+all cursor accesses still obey their checked protocol.
+
+See [`examples/138-ordered-search.gti`](../../examples/138-ordered-search.gti)
+for sorting and searching application records with the same custom order.
 
 `copy_if`, `copy_n`, `replace_copy`, `replace_copy_if`, `remove_copy`, and
 `remove_copy_if` write into pre-existing output elements and return `void`,

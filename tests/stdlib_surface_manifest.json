@@ -2,7 +2,7 @@
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
     "stdlib/prelude.gti": "a33aa3f09d625f30f05d937483d0db075649a2037e45e990ae628ce07f28e448",
-    "stdlib/std/algorithm.gti": "086493320ed1a6f40cc2ea35f0497f5bb1e42f96ca0356aadd8341635e683e26",
+    "stdlib/std/algorithm.gti": "c46dc1e269933a154b029b3dd3254aa6335e92cc270cdd17565dc5d369e6a655",
     "stdlib/std/array.gti": "19d4eee0136cd3a66c4a088057d7467de9eac847a4c526104471c43edeb70846",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
@@ -68,6 +68,35 @@
       "id": "algorithm-mutation",
       "mode": "run",
       "source": "tests/fixtures/algorithm_mutation.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-ordered-search",
+      "mode": "run",
+      "source": "tests/fixtures/ordered_search.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-ordered-search-cost",
+      "mode": "run",
+      "source": "tests/fixtures/ordered_search_cost.gti",
+      "native_sources": ["tests/fixtures/stdlib_adoption_allocation_counts.cpp"],
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-ordered-search-example",
+      "mode": "run",
+      "source": "examples/138-ordered-search.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "urgent jobs: 2\njobs at priority 5: 2\npriority found\n", "stderr": ""}
+    },
+    {
+      "id": "algorithm-ordered-search-user-types",
+      "mode": "run",
+      "source": "tests/fixtures/ordered_search_user_types.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -1374,6 +1403,7 @@
         "std::min",
         "std::min_element",
         "std::none_of",
+        "std::partition_point",
         "std::remove_copy",
         "std::remove_copy_if",
         "std::replace",
@@ -1388,9 +1418,9 @@
         "std::transform",
         "std::upper_bound"
       ],
-      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types", "constexpr-library", "algorithm-owned-transform", "algorithm-owned-example", "restoring-indexed", "restoring-order", "restoring-order-example"],
-      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "application-defined and fixed-array predicate/operation/mutable complete-range clients"],
-      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_breadth_test.py", "tests/generic_algorithm_errors_test.py", "stdlib/std/algorithm.gti"]
+      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types", "constexpr-library", "algorithm-ordered-search", "algorithm-ordered-search-cost", "algorithm-ordered-search-example", "algorithm-ordered-search-user-types", "algorithm-owned-transform", "algorithm-owned-example", "restoring-indexed", "restoring-order", "restoring-order-example"],
+      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "application-defined and fixed-array predicate/operation/mutable complete-range clients", "forward cursors with owning unordered records and move-only mutable query callbacks"],
+      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_breadth_test.py", "tests/generic_algorithm_errors_test.py", "tests/ordered_search_runtime_test.py", "tests/fixtures/ordered_search.gti", "tests/fixtures/ordered_search_user_types.gti", "examples/138-ordered-search.gti", "stdlib/std/algorithm.gti"]
     },
     {
       "id": "array.executable",
