@@ -258,8 +258,23 @@ of `tests/fixtures/reflection_construct.gti` and
 this phase. The two reflection defects found by the audit (GitHub #4, dropped
 receiver evaluation; GitHub #5, unchecked owner type) are fixed here.
 Invocation through a metaobject (`invoke`) is not provided (Q16: metadata
-first); static fields, `primary_of<T>()` and a declaration-position type
-spelling (R7) remain open.
+first); static fields and a declaration-position type spelling (R7) remain
+open. `primary_name_of<T>()` answers the primary-template question as a name
+(the JSON gate needed it to recognise `std::vector` fields).
+
+**Acceptance gate (2026-10-11): `std::experimental::json` built end to end**
+over reflection alone (`stdlib/std/experimental/json.gti`, example 141,
+`tests/fixtures/experimental_json.gti`): encoding and decoding through
+`std::meta::construct` with `name`/`ignore` attributes, nested structs,
+vectors, enums, and offset-carrying errors. Missing pieces it found and their
+state: `primary_name_of` (added); a range-for inside a primary-deferred
+`if constexpr` arm was rejected by HIR verification (fixed: verification
+accepts the instance's own plan there); the C++ emitter rejects a function
+that returns an `expected` call result or moved `expected` local with a class
+or enum payload while a dropped local is live (general emitter gap, fixed
+separately; the library binds results before returning them). Still open for
+the deprecation of `std::json`: optional members and `null`, maps, doubles
+with exact lexemes, pretty printing.
 
 Goal: decoding without weakening initialization or ownership, the remaining
 declaration kinds, and the move of reflection from "later breadth" to a

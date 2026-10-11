@@ -1807,7 +1807,7 @@ int later() { return selected(); }
   expect(!failing.semanticValid && failureMetrics.constexprMirExecutions == 1 &&
              failure != nullptr &&
              failure->phase == lang::DiagnosticPhase::Semantics &&
-             failure->primary.source == std::filesystem::weakly_canonical(
+             failure->primary.source == lang::SourceLoader::canonicalPath(
                                             "staged-constant-failure.gti")
                                             .string() &&
              failure->primary.start == failingSource.find('/') &&
@@ -2143,7 +2143,7 @@ int main() {
                           d.phase == lang::DiagnosticPhase::Semantics &&
                           d.message.find("execution-step limit") !=
                               std::string::npos &&
-                          d.primary.source == std::filesystem::weakly_canonical(
+                          d.primary.source == lang::SourceLoader::canonicalPath(
                                                   "shared-constexpr-budget.gti")
                                                   .string() &&
                           d.primary.start == sharedSource.find("++") &&
@@ -2324,7 +2324,7 @@ void testConstexprOperators() {
         [&](const auto &d) {
           return d.code == "GTI-S2057" &&
                  d.phase == lang::DiagnosticPhase::Semantics &&
-                 d.primary.source == std::filesystem::weakly_canonical(
+                 d.primary.source == lang::SourceLoader::canonicalPath(
                                          "constexpr-operator-invalid.gti")
                                          .string() &&
                  d.primary.start == test.source.find(test.marker) &&
@@ -2809,7 +2809,7 @@ void testConstexprReadOnlyReferences() {
                      return d.code == test.code &&
                             d.phase == lang::DiagnosticPhase::Semantics &&
                             d.primary.source ==
-                                std::filesystem::weakly_canonical(
+                                lang::SourceLoader::canonicalPath(
                                     "constexpr-reference-invalid.gti")
                                     .string() &&
                             d.primary.start ==
@@ -2836,7 +2836,7 @@ void testConstexprReadOnlyReferences() {
                          [&](const auto &d) {
                            return d.code == "GTI-S2057" &&
                                   d.primary.source ==
-                                      std::filesystem::weakly_canonical(
+                                      lang::SourceLoader::canonicalPath(
                                           standardLibraryRoot() /
                                           "std/array.gti")
                                           .string() &&
@@ -3436,7 +3436,7 @@ int main() {
                 std::string::npos &&
             diagnostic->phase == lang::DiagnosticPhase::Semantics &&
             diagnostic->primary.source ==
-                std::filesystem::weakly_canonical("constexpr-text-bounds.gti")
+                lang::SourceLoader::canonicalPath("constexpr-text-bounds.gti")
                     .string() &&
             diagnostic->primary.start == source.find(index) &&
             diagnostic->primary.end ==
@@ -4310,7 +4310,7 @@ public:
   const std::filesystem::path left = root / "left.gti";
   const std::filesystem::path right = root / "right.gti";
   const auto canonical = [](const std::filesystem::path &path) {
-    return std::filesystem::weakly_canonical(path).string();
+    return lang::SourceLoader::canonicalPath(path).string();
   };
   const lang::FrontendResult separateUnits = lang::Frontend().analyze(
       entry,
@@ -4820,7 +4820,7 @@ int main() { return selected_value() + local_state(); }
     const std::filesystem::path entry = root / "main.gti";
     const std::filesystem::path dependency = root / "flags.gti";
     const std::string dependencyKey =
-        std::filesystem::weakly_canonical(dependency).string();
+        lang::SourceLoader::canonicalPath(dependency).string();
     const lang::FrontendResult includeOrdered = lang::Frontend().analyze(
         entry,
         "#define BEFORE_INCLUDE\n"

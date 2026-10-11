@@ -1,0 +1,130 @@
+// std::experimental::json end to end: encoding and decoding reflectable
+// structs with nested structs, vectors of scalars and structs, enums, floats,
+// renamed and ignored fields, string escapes, and every error kind.
+#include <std/experimental/json>
+#include <std/string>
+#include <std/vector>
+
+enum class role { player, npc, boss };
+
+struct position {
+  int32_t x = 0;
+  int32_t y = 0;
+};
+
+struct entity {
+  [[std::experimental::json::name("display_name")]]
+  std::string name = std::string("");
+  uint32_t health = 100;
+  uint64_t stamp = 0;
+  float ratio = 1.0;
+  bool alive = true;
+  role kind = role::player;
+  position where{};
+  std::vector<int32_t> scores = std::vector<int32_t>();
+  std::vector<position> path = std::vector<position>();
+  [[std::experimental::json::ignore]]
+  uint64_t session = 0;
+};
+
+bool failed_with(std::string_view text, std::experimental::json::errc code) {
+  mut auto result = std::experimental::json::decode<entity>(text);
+  if (result) {
+    return false;
+  }
+  return result.error().code == code;
+}
+
+int main() {
+  std::vector<int32_t> scores = {10, -2};
+  position first = {.x = 1, .y = 2};
+  position second = {.x = -3, .y = 4};
+  mut std::vector<position> path = std::vector<position>();
+  path.push_back(first);
+  path.push_back(second);
+  entity hero = {.name = std::string("Ada \"the\"\nBrave"),
+                 .health = uint32_t(42),
+                 .stamp = uint64_t(18446744073709551615),
+                 .ratio = 1.5,
+                 .kind = role::boss,
+                 .where = {.x = -3, .y = 7},
+                 .scores = std::move(scores),
+                 .path = std::move(path)};
+  std::string text = std::experimental::json::encode(hero);
+  std::string_view expected_text = "{\"display_name\":\"Ada \\\"the\\\"\\nBrave\",\"health\":42,\"stamp\":18446744073709551615,\"ratio\":1.500000,\"alive\":true,\"kind\":\"boss\",\"where\":{\"x\":-3,\"y\":7},\"scores\":[10,-2],\"path\":[{\"x\":1,\"y\":2},{\"x\":-3,\"y\":4}]}";
+  if (text.view() != expected_text) {
+    std::print(text.view());
+    std::print("\n");
+    return 1;
+  }
+
+  mut auto decoded = std::experimental::json::decode<entity>(text.view());
+  if (!decoded) {
+    std::print(std::experimental::json::describe(decoded.error().code));
+    std::print("\n");
+    return 2;
+  }
+  entity back = std::move(decoded).value();
+  if (back.name.view() != hero.name.view() || back.health != 42 ||
+      back.stamp != uint64_t(18446744073709551615) || !back.alive ||
+      back.kind != role::boss || back.where.x != -3 || back.where.y != 7) {
+    return 3;
+  }
+  if (back.ratio < 1.49 || back.ratio > 1.51 || back.session != 0) {
+    return 4;
+  }
+  if (back.scores.size() != std::size_t(2) || back.scores[std::size_t(1)] != -2 ||
+      back.path.size() != std::size_t(2) || back.path[std::size_t(1)].x != -3 ||
+      back.path[std::size_t(1)].y != 4) {
+    return 5;
+  }
+
+  // Whitespace and member order are free; unknown members are skipped.
+  mut auto spaced = std::experimental::json::decode<position>(" { \"y\" : 5 , \"extra\" : [1, {}] , \"x\" : 4 } ");
+  if (!spaced || spaced.value().x != 4 || spaced.value().y != 5) {
+    return 6;
+  }
+
+  // Every failure names its kind and the offset where decoding stopped.
+  mut auto missing = std::experimental::json::decode<position>("{\"x\": 1}");
+  if (missing || missing.error().code != std::experimental::json::errc::missing_field) {
+    return 7;
+  }
+  mut auto bad_number = std::experimental::json::decode<position>("{\"x\": 1, \"y\": \"no\"}");
+  if (bad_number || bad_number.error().code != std::experimental::json::errc::invalid_number ||
+      bad_number.error().offset != std::size_t(14)) {
+    return 8;
+  }
+  std::string_view valid = "{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":false,\"kind\":\"npc\",\"where\":{\"x\":0,\"y\":0},\"scores\":[],\"path\":[]}";
+  mut auto minimal = std::experimental::json::decode<entity>(valid);
+  if (!minimal || minimal.value().kind != role::npc || minimal.value().alive ||
+      minimal.value().where.x != 0 || minimal.value().path.size() != std::size_t(0)) {
+    return 9;
+  }
+  if (!failed_with("{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":1,\"kind\":\"npc\",\"where\":{\"x\":0,\"y\":0},\"scores\":[],\"path\":[]}",
+                   std::experimental::json::errc::type_mismatch)) {
+    return 10;
+  }
+  if (!failed_with("{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":true,\"kind\":\"king\",\"where\":{\"x\":0,\"y\":0},\"scores\":[],\"path\":[]}",
+                   std::experimental::json::errc::invalid_enumerator)) {
+    return 11;
+  }
+  if (!failed_with("{\"display_name\":\"a\\q\",\"health\":1}", std::experimental::json::errc::invalid_escape)) {
+    return 12;
+  }
+  if (!failed_with("{\"display_name\":\"a\",\"health\":1", std::experimental::json::errc::unexpected_end)) {
+    return 13;
+  }
+  if (!failed_with("{\"display_name\":\"a\" \"health\":1}", std::experimental::json::errc::unexpected_character)) {
+    return 14;
+  }
+  if (!failed_with("{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":true,\"kind\":\"npc\",\"where\":{\"x\":0,\"y\":0},\"scores\":[],\"path\":[]} x",
+                   std::experimental::json::errc::trailing_characters)) {
+    return 15;
+  }
+  if (!failed_with("{\"display_name\":\"a\",\"health\":-1,\"stamp\":2,\"ratio\":0.25,\"alive\":true,\"kind\":\"npc\",\"where\":{\"x\":0,\"y\":0},\"scores\":[],\"path\":[]}",
+                   std::experimental::json::errc::invalid_number)) {
+    return 16;
+  }
+  return 0;
+}

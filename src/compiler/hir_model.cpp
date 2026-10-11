@@ -1251,8 +1251,58 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   }
 
+  // Statements inside a compile-time branch or expansion that the symbolic
+  // primary deferred (a dependent `if constexpr` condition or `constexpr for`
+  // range) have no primary semantic record: concrete reanalysis analyzed them
+  // first. Their HIR plan is verified on its own concrete facts.
+  const auto deferredPrimaryStatements = [&](const HirBody &body) {
+    std::unordered_set<HirStatementId> deferred;
+    const auto visit = [&](auto &self, HirStatementId id) -> void {
+      const HirStatement *statement = body.findStatement(id);
+      if (statement == nullptr || !deferred.insert(id).second) {
+        return;
+      }
+      if (statement->initializer) {
+        self(self, *statement->initializer);
+      }
+      if (statement->body) {
+        self(self, *statement->body);
+      }
+      if (statement->elseBranch) {
+        self(self, *statement->elseBranch);
+      }
+      for (const HirStatementId nested : statement->statements) {
+        self(self, nested);
+      }
+      for (const HirSwitchArm &arm : statement->switchArms) {
+        for (const HirStatementId nested : arm.statements) {
+          self(self, nested);
+        }
+      }
+    };
+    for (const HirStatement &statement : body.statements) {
+      if (statement.kind != HirStatementKind::CompileTimeBranch) {
+        continue;
+      }
+      const auto *ifStatement = stmtAs<IfStmt>(statement.source);
+      const auto *loop = stmtAs<ConstexprForStmt>(statement.source);
+      const bool deferredInPrimary =
+          (ifStatement != nullptr && ifStatement->isConstexpr() &&
+           !semantics.findConstexprBranch(*ifStatement).has_value()) ||
+          (loop != nullptr &&
+           semantics.findConstexprForExpansion(*loop) == nullptr);
+      if (deferredInPrimary) {
+        visit(visit, statement.id);
+      }
+    }
+    return deferred;
+  };
+
   const auto verifyRangeIterations = [&](const HirBody &body,
                                          bool concreteReanalysis = false) {
+    const std::unordered_set<HirStatementId> deferred =
+        concreteReanalysis ? deferredPrimaryStatements(body)
+                           : std::unordered_set<HirStatementId>{};
     for (const HirStatement &statement : body.statements) {
       const auto *source = stmtAs<RangeForStmt>(statement.source);
       if (statement.kind != HirStatementKind::RangeFor) {
@@ -1264,6 +1314,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       }
       const ResolvedRangeIterationInfo *semantic =
           source == nullptr ? nullptr : semantics.findRangeIteration(*source);
+      const bool primaryDeferred =
+          semantic == nullptr && deferred.contains(statement.id);
       const HirRangeIteration *range =
           statement.rangeIteration ? &*statement.rangeIteration : nullptr;
       const auto bindingFor = [&](HirBindingId id) -> const HirBinding * {
@@ -1331,24 +1383,25 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             range->rangeLoan == semantic->rangeLoan &&
             range->elementLoan == semantic->elementLoan));
       const bool exactSemantic =
-          semantic != nullptr && range != nullptr && exactConcreteTypes &&
-          (genericSemantic || range->strategy == semantic->strategy) &&
-          (genericSemantic || (range->rangeType == semantic->rangeType &&
-                               range->iteratorType == semantic->iteratorType &&
-                               range->sentinelType == semantic->sentinelType &&
-                               range->elementType == semantic->elementType &&
-                               range->arrayLength == semantic->arrayLength)) &&
-          range->elementAccess == semantic->elementAccess &&
-          exactLoanProvenance &&
-          (genericSemantic ||
-           (range->beginFunction == semantic->beginFunction &&
-            range->endFunction == semantic->endFunction &&
-            range->compareFunction == semantic->compareFunction &&
-            range->dereferenceFunction == semantic->dereferenceFunction &&
-            range->incrementFunction == semantic->incrementFunction)) &&
-          range->ownsRangeTemporary == semantic->ownsRangeTemporary &&
-          range->expectedPayloadProjection ==
-              semantic->expectedPayloadProjection;
+          (primaryDeferred && range != nullptr && exactConcreteTypes) ||
+          (semantic != nullptr && range != nullptr && exactConcreteTypes &&
+           (genericSemantic || range->strategy == semantic->strategy) &&
+           (genericSemantic || (range->rangeType == semantic->rangeType &&
+                                range->iteratorType == semantic->iteratorType &&
+                                range->sentinelType == semantic->sentinelType &&
+                                range->elementType == semantic->elementType &&
+                                range->arrayLength == semantic->arrayLength)) &&
+           range->elementAccess == semantic->elementAccess &&
+           exactLoanProvenance &&
+           (genericSemantic ||
+            (range->beginFunction == semantic->beginFunction &&
+             range->endFunction == semantic->endFunction &&
+             range->compareFunction == semantic->compareFunction &&
+             range->dereferenceFunction == semantic->dereferenceFunction &&
+             range->incrementFunction == semantic->incrementFunction)) &&
+           range->ownsRangeTemporary == semantic->ownsRangeTemporary &&
+           range->expectedPayloadProjection ==
+               semantic->expectedPayloadProjection);
       const bool exactStructure =
           source != nullptr && range != nullptr && statement.body &&
           body.findStatement(*statement.body) != nullptr &&
