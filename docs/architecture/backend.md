@@ -2145,6 +2145,12 @@ matches each field's distinct obligation, not the instruction's event count.
 A passive class parameter can retain its lexical shell drop without inventing
 a field activation. The prologue still permits only the recorded field moves
 in declaration order, followed by their exact parameter-cleanup schedule.
+A borrowed-carrier parameter such as a text view enters the body carrying its
+caller's dependency as an entry loan, and the prologue ends that loan after
+the parameter's move. The end record has no producer, never escapes, carries
+no lifecycle, failure or boundary metadata, and spells as a comment, so it is
+admitted beside the field moves rather than forcing the generated constructor
+of a designated or positional struct out of the C++ text vocabulary.
 MIR independently proves when a moved parameter's shell retirement cannot
 invoke a source destructor; the backend does not infer this from C++ moves.
 
