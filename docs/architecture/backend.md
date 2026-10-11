@@ -815,6 +815,19 @@ cleanup remain intact. Ordinary constructor-boundary admission still verifies
 the selected constructor. The shared class-publication query is used by both
 transformed constructor admission and emission; recognizing storage in the
 prologue alone is insufficient.
+A passive arm may also be a static source call, publishing plainly or on its
+Invoke success edge, a copy of a named place, or the move out of a nested
+passive join. A nested join is proved on its own, and the nested arm's region
+starts at that inner join's branch block. When a passive join's single move
+reaches neither the binding nor the prepared argument terminal, the moved value
+is staged in its own representation-only slot and the join's representation
+ends right after. That staged slot then serves a return, field read,
+assignment or field initializer exactly as a fresh result's slot does.
+An owning join's synthetic temporary, once a move has emptied it, ends its
+native shell where MIR hands its obligation away. In a plain body that staged
+the returned value, that point is the return's transfer-out. Otherwise it is
+the consuming `Initialize` that reparents the obligation into a field. A
+temporary that MIR later drops keeps that drop.
 
 A copy-loaded class result whose only executable use is `Return` also avoids an
 invented default-constructed SSA object. The plain C++ form returns the exact

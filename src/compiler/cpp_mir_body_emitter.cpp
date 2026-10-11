@@ -30546,7 +30546,7 @@ classSsaLifetimeSlot(const MirProgram &program,
   // field Initialize; a transformed call only on the immediate Invoke success
   // edge, so a failed call leaves the private empty field shell untouched.
   if (consumer && consumer->kind == MirInstructionKind::Initialize &&
-      callee != nullptr &&
+      (callee != nullptr || joinMoveProducer) &&
       fieldInitializerPublication(program, body, *value, *producer,
                                   uses.front()) == consumer &&
       consumer->lifecycle.empty() && !cleanupFreeArray &&
@@ -38884,6 +38884,10 @@ private:
     if (instruction.kind == MirInstructionKind::Move && instruction.result &&
         !payloadEnumConstructorFieldPublication(program, facts.body,
                                                 *instruction.result) &&
+        // A Move staged in representation-only storage keeps that route.
+        classSsaLifetimeSlot(program, representations, facts.body,
+                             *instruction.result)
+                .producer != &instruction &&
         (constructorFieldMoveInitialize(facts.body, *instruction.result) !=
              nullptr ||
          stagedConstructorFieldPublication(program, facts.body, facts.id,
