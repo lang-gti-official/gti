@@ -32845,12 +32845,7 @@ public:
       }
       // Value-initializing an Expected local default-constructs its success
       // alternative. When MIR gives that class no default constructor, the
-      // construction does not exist in the source program either. The
-      // success row's boundary proof still admits the representations whose
-      // value-initialization runs no source construction: a passive C ABI
-      // record value-initializes to its zeroed bytes (the 0.215 prelude
-      // declaration every passive record local already uses), and compiler
-      // capability storage owns its own empty state.
+      // construction does not exist in the source program either.
       if (value.info.type.kind == SemanticType::Expected &&
           value.info.type.arguments.size() == 2) {
         const SemanticType &success = value.info.type.arguments.front();
@@ -32858,13 +32853,8 @@ public:
             success.kind == SemanticType::Class
                 ? uniqueClassInstanceForType(program, success)
                 : nullptr;
-        const CppMirTypeRepresentation *successRow =
-            instance != nullptr
-                ? representationTypeRow(representations, success)
-                : nullptr;
         if (instance != nullptr &&
-            instance->defaultConstructor == SpecialMemberStatus::Deleted &&
-            (successRow == nullptr || !successRow->boundaryConstructible))
+            instance->defaultConstructor == SpecialMemberStatus::Deleted)
           throw std::logic_error(
               "verified MIR Expected value has no exact uninitialized "
               "publication; value-initialization would invent success "
