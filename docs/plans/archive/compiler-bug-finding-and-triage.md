@@ -1,8 +1,10 @@
 # GTI Compiler Bug-Finding And Triage Tooling Proposal
 
-> **Plan status:** Non-canonical implementation proposal. Current verification
-> is documented in
+> **Plan status:** Archived delivery/design record, not an active proposal or
+> current capability inventory. The bounded campaign and its evidence below
+> retain their recorded scope; later interaction tooling is documented in
 > [`docs/architecture/verification.md`](../../architecture/verification.md).
+> Use [the implementation sequence](../implementation-sequence.md) for new work.
 
 Status: the bounded `Q-FUZZ-01A` through `Q-FUZZ-01D` campaign is implemented.
 Capture/replay and resumable reduction have deterministic CTests. Opt-in
