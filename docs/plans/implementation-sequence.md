@@ -2850,49 +2850,33 @@ contracts for exact admitted shapes.
   is not completion; the remaining work concerns MIR/representation, not a
   new restriction on valid source.
 
-- **Shared failure cleanup (Gitea #222, 2026-10-11):** failure cleanup is
-  lowered separately for every failure edge, so a body's size grows
-  quadratically with its live owners. Each failure-capable operation gets its
-  own reverse drop chain over every owner live at that point. Every block of
-  that chain is bound to the edge's failure record (`MirBlock::activeFailure`).
-  Each failure-capable drop in the chain adds a secondary record and a
-  `TerminateCleanupFailure` block. Measured on main `f3f85336` at `-O0`:
-  - A function whose N owning locals are each built by a failure-capable
-    constructor lowers to 1,261 blocks for N = 20 and 4,921 for N = 40.
-  - With an early return after each local, it lowers to 4,861 and 29,721
-    blocks.
-  - `tests/fixtures/stdlib_surface_json.gti`'s 240-line `main` has 146 calls
-    and about 25 returns. It lowers to 31,299 drops in 61,225 blocks, and emits
-    30 MB of the 33.5 MB generated C++ unit. That unit's native `-O3` build
-    takes 117 s on a lightly loaded M2 Max and has passed 300 s under
-    concurrent suite load. The `json` surface case therefore records a
-    600-second build limit instead of the default 300.
+- **Shared failure cleanup (Gitea #222), delivered in 0.402.2:**
+  - Function and lambda bodies emit each distinct failure-cleanup suffix once,
+    as a continuation record entered by `ContinueFailure`; see
+    [MIR](../architecture/mir.md#shared-failure-cleanup).
+  - Failure cleanup is now one drop per owner, against failure sites times
+    owners before.
+  - The `stdlib_surface_json` fixture's generated C++ fell from 33.5 MB to
+    4.3 MB, and its native `-O3` build from 153 s to 7.7 s; see
+    [verification](../architecture/verification.md#shared-failure-cleanup-0402-2).
 
-  **Direction:** edges whose remaining obligations and cleanup phase are the
-  same should share one cleanup tail, like a drop tree. That makes a body's
-  cleanup linear in its owners. Prerequisite: a shared block cannot be bound to
-  one static `activeFailure`, so the record it propagates must travel with the
-  edge, for example as a block parameter. The verifier, failure effects,
-  optimizer replay and the C++ emitter's cleanup admission must then accept a
-  cleanup block reached from several records. They must still preserve exact
-  record identity, reverse cleanup order, loan ending, and termination when
-  cleanup itself fails.
-
-  **Acceptance:**
-  - The synthetic N-owner body grows linearly in N.
-  - The JSON unit shrinks proportionally, and the `json` case returns to the
-    default build limit.
-  - Runtime output and failure attribution are unchanged.
-  - Verifier mutations reject a shared tail with a mismatched obligation
-    suffix, phase or record.
+  **Remaining:**
+  - Constructor, field-initializer, destructor, module and hosted-startup
+    bodies keep one chain per failure edge.
+  - Moved-shell drops, prepared-argument drops and lifecycle-bound loan ends
+    keep the cleanup before them private, because verification proves their
+    meaning along their own producer's path.
+  - Normal-path exits still each destroy their own live owners. Sharing those
+    exit drops would be a separate normal-path change.
 
 - **State/role:** delivered foundation with bounded extensions; `D-FAIL-01`,
   `I-CAP-01`, `M-LIFE-01`, and the source-body backend cutover are done. Exact
   origin/site metadata, propagation and cleanup edges, hosted containment, and
   the versioned runtime record/report/firewall substrate are implemented for
   all currently admitted source forms, including their secondary-failure
-  contracts. Newly introduced operation/result families and shared cleanup
-  record flow still require explicit MIR contracts.
+  contracts. Newly introduced operation/result families still require
+  explicit MIR contracts. Shared failure-cleanup record flow has one for
+  function and lambda bodies (above); other body kinds do not share cleanup.
 - **Scope:** Represent exact local categories/details and canonical frontend
   source anchors in HIR, then assign deterministic artifact-local site IDs for
   MIR through the failure-metadata builder. Represent call-like propagation

@@ -209,6 +209,7 @@ successorsForDominance(const MirBody &body, const MirTerminator &terminator) {
   std::vector<MirBlockId> result;
   switch (terminator.kind) {
   case MirTerminatorKind::Goto:
+  case MirTerminatorKind::ContinueFailure:
     result.push_back(terminator.target);
     break;
   case MirTerminatorKind::Branch:

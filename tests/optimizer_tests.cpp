@@ -3808,7 +3808,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v81\n") &&
+  expect(dump.starts_with("mir-body-v82\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -5729,6 +5729,24 @@ int switch_reactivation(mut int& parent) {
                                 instruction.loan == loan;
                        });
   };
+  // A failure route's cleanup may continue into a shared suffix: follow its
+  // ordinary, fallible-drop and shared-continuation edges to propagation.
+  const auto endsLoanOnFailureRoute = [&](const lang::MirBody &body,
+                                          const lang::MirBlock *block,
+                                          lang::MirLoanId loan) {
+    for (std::size_t steps = 0; block != nullptr && steps <= body.blocks.size();
+         ++steps) {
+      if (endsLoan(block, loan))
+        return true;
+      const auto &terminator = block->terminator;
+      if (terminator.kind != lang::MirTerminatorKind::Goto &&
+          terminator.kind != lang::MirTerminatorKind::Invoke &&
+          terminator.kind != lang::MirTerminatorKind::ContinueFailure)
+        return false;
+      block = body.findBlock(terminator.target);
+    }
+    return false;
+  };
   const auto invokeSuccess = [](const lang::MirBody &body,
                                 const lang::MirBlock *block,
                                 const lang::MirInstruction *instruction) {
@@ -5777,7 +5795,8 @@ int switch_reactivation(mut int& parent) {
              callTransient->carriers.size() == 1 &&
              callTransient->semanticLoan != 0 && !callTransient->escapes &&
              retainedChildEndings == 0 &&
-             endsLoan(callFailure, callTransient->id) &&
+             endsLoanOnFailureRoute(*retainedCallChild, callFailure,
+                                    callTransient->id) &&
              lang::verifyMirBody(*retainedCallChild).valid(),
          "retaining a receiver-tied mutable call result should keep that call "
          "result's own loan under the retaining carrier instead of ending it "
@@ -5850,9 +5869,12 @@ int switch_reactivation(mut int& parent) {
       chainTransients[1]->carriers.size() == 1 &&
       chainTransients[1]->semanticLoan != 0 && !chainTransients[1]->escapes;
   expect(retainedChainAncestry &&
-             endsLoan(firstChainFailure, chainTransients[0]->id) &&
-             endsLoan(secondChainFailure, chainTransients[1]->id) &&
-             endsLoan(secondChainFailure, chainTransients[0]->id) &&
+             endsLoanOnFailureRoute(*retainedCallChain, firstChainFailure,
+                                    chainTransients[0]->id) &&
+             endsLoanOnFailureRoute(*retainedCallChain, secondChainFailure,
+                                    chainTransients[1]->id) &&
+             endsLoanOnFailureRoute(*retainedCallChain, secondChainFailure,
+                                    chainTransients[0]->id) &&
              lang::verifyMirBody(*retainedCallChain).valid() &&
              lang::verifyMirBody(*nonretainedCallMember).valid(),
          "receiver-tied call-result chains reached through a reference "
