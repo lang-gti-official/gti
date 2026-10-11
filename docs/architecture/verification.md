@@ -3104,7 +3104,8 @@ live SSH usage and the limits of custom command plans.
 `agent_workflow` also verifies that remote validation submits the exact plan
 without taking a laptop slot or retaining the metadata lock, records retrieved
 evidence against the clean published head, and refuses failed runs and
-mismatched source identities. Existing head/base race checks remain unchanged.
+mismatched source identities, including a successful step that changes tracked
+source before cleanup. Existing head/base race checks remain unchanged.
 
 ## CLI terminal colour
 

@@ -447,6 +447,16 @@ def worker(root_value, run_id):
             signal.signal(number, signal.SIG_IGN)
         stop_child(process)
         state.update(pid=None, child_pid=None, finished=time.time(), phase="cleanup")
+        if (run / "source" / ".git").is_dir():
+            try:
+                state["final_source"] = {
+                    "head": git(run / "source", "rev-parse", "HEAD").decode().strip(),
+                    "status": git(run / "source", "status", "--porcelain=v1", "-z")
+                        .decode(errors="replace").replace("\0", "\n")}
+            except (RunnerError, OSError) as error:
+                state["source_identity_error"] = str(error)
+                if state["state"] == "passed":
+                    state.update(state="failed", exit_code=1)
         try:
             collect_results(run, request, state)
         except Exception as error:
