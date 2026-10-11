@@ -1,5 +1,218 @@
 # Compiler Verification
 
+## Scoped concurrency (0.405.0)
+
+### Reconciled acceptance evidence
+
+The implementation is reconciled with reflected JSON 0.403.0 at clean published
+commit `a4e16a8d179c95f8e2c35b63ab0f3cfa0e0db126`, snapshot
+`f0a678f1565a543343e7cd7b39c2884968aa4ee8194866622a7d530ff4e28dc4`.
+Release run `run-64b4217c848948fcb0d8bd5e9eeaffa5` builds all targets (526 steps) and
+passes all 51 selected integration CTests, including ownership/cleanup proof
+mutations, shared and scoped native matrices, executed ThreadSanitizer gates,
+LSP recovery, relocated installed O0/O3 consumers, reflection/experimental JSON,
+standard-library coverage and complete backend/example corpus gates. The same
+source passes local `source_debug_lldb`; the noninteractive remote Mac cannot
+grant debugger attachment permission. The previous clean `41b2889c` full sweep
+(`run-f9d393d12e8a40dca39465e0bec8391e`) passed all 647 selected tests plus
+the separate local debugger check. The reconciled-source full completion sweep
+`run-f23d1f8deb0b42f0a5843bdb24b52cf6` passes all 648 selected CTests, with no
+failures or skips, plus its all-target build, five scoped O3 fixtures and
+relocated installed O0/O3 consumers. Only `source_debug_lldb` is excluded from
+the remote selection; it passes locally on the same source. Full-suite test
+execution takes 1335.13 seconds, excluding the shared-window wait. Checkpoints
+`3780cc2f` and `d0249752` only record acceptance documentation; they do not
+change executable source from that full-suite/performance snapshot.
+
+The combined 138-example LoweredProgram census measures 71225 declarations,
+12967 bodies and 7073 generated items; the MIR census measures 12956 bodies.
+The reflected-JSON addition and callable-interface inventories were measured
+together rather than accepted by resolving numerical conflicts arbitrarily.
+
+Before integration, main advanced again to `a2abf675` (mutable constexpr
+builders and owning-class conditional publication). Reconciliation preserves
+the scoped implementation and both upstream features, advancing this release
+to 0.405.0. The refreshed 139-example census measures 71903 declarations,
+13018 bodies and 7090 generated items, with 13007 MIR bodies. Only the new
+constexpr-builder example adds inventory. An optimized local build passes
+all 22 constexpr compiler cases, all five scoped O3 fixtures and the new owning
+conditional O3 regression. Clean published `8eaa07a3` passes all 125 selected
+delta-integration CTests in 691.20 seconds, including the complete constexpr,
+owning-publication, concurrency, sanitizer, installed and corpus families, plus
+the separate local debugger check. All seven selected ThreadSanitizer gates
+execute and pass; none skips. The earlier 648-check run is not represented as
+a full run of this later upstream snapshot.
+
+Main's subsequent expected-payload short-circuit fix (`64c712cc`, 0.404.1)
+merges without compiler-source conflicts into clean published `e76e1493`.
+The all-target optimized rebuild and all 35 selected backend/concurrency
+integration CTests pass (74.26 seconds), including the new expected-payload
+regression, owning publication/failure paths, full scoped and shared-job native
+matrices, four executed threading sanitizer gates, editor recovery and relocated
+installed O0/O3 consumers. Example 066 also compiles and runs directly at O0/O3.
+The standalone example-corpus probe checks synthetic-row readiness; its
+agreement half uses the default execution profile and does not establish native
+concurrent execution. The direct CLI example and native matrices supply that
+evidence. These final checks extend, rather than relabel, the earlier full and
+125-check runs.
+
+The clean exact-head macOS arm64 benchmark on `e76e1493`
+(`run-20261011T183201Z-10920-6fed290f`) is conclusive. The Release compiler uses
+Apple C++/C++23 O3; three warmups and fifteen interleaved samples run while
+holding the local suite slot and both build slots. Equal-work sequential /
+four owned / four scoped medians are 961.148 / 255.939 / 256.156 ms; MAD is
+12.706 / 1.415 / 0.466 ms and CV is 1.81% / 0.74% / 0.52%. Scoped and owned
+runtime remains effectively equal. Binary sizes are 124272 / 147840 / 126272
+bytes; emitted C++ sizes are 465519 / 647453 / 521955 bytes. All variants
+produce the same 2,800,000-unit digest recorded below. The final allocation
+oracle again reports four owned / two scoped transport-state allocations and
+zero for an empty scope. The separate Linux build-time/RSS evidence below is
+retained with its original source identity, not claimed as a fresh macOS cost.
+
+Clean-head Linux run `run-007dae38ae1241e49acf4231ecda9bf7` reports exact compiler
+and source identity and conclusive timing quality. GCC 14/C++23 O3 on an
+eight-vCPU Intel i3-13100F host runs three warmups and fifteen interleaved
+samples while holding both repository build and suite windows. Every variant
+produces digest `000000097bfbb42c` for 2,800,000 work units. Sequential / four
+owned / four scoped medians are 697.691 / 186.762 / 186.120 ms; MAD is
+0.891 / 1.416 / 2.417 ms and CV is 0.28% / 1.40% / 1.46%. Scoped and owned
+runtime are effectively equal, not evidence of a scoped runtime speedup.
+Binary sizes are 123408 / 158024 / 130280 bytes; emitted C++ sizes are
+465527 / 647461 / 521963 bytes. Separate GTI-plus-native O3 builds take
+1.21 s and 194368 KiB peak RSS for scoped versus 1.58 s and 215784 KiB for
+owned. The allocation oracle counts two GTI transport/state allocations for
+two scoped workers versus four for owned workers and zero for an empty scope;
+native thread-library/libc allocations are excluded. The Linux five-fixture
+40-case scoped and 24-case shared-job matrices pass in
+`run-a3427feb65584aa8a90b7791fbcb509a`; the matched allocation-hook ASan/UBSan
+control also passes on clean `41b2889c` in
+`run-207e4dabb32b4100ad1aff773e99592a` without suppression.
+
+### Earlier candidate evidence
+
+The scoped-concurrency branch now connects public `std::parallel_invoke` to
+semantic admission, concrete HIR, verified MIR scope/loan contracts, generated
+task adapters and the native join-all boundary. These are candidate results,
+not evidence of final integration or full release acceptance:
+
+- Release run `run-9cb27359761043d49c86a303d4a1b7b7`, source snapshot
+  `42b905af00348941423934e82490649f342fe0f3f70f126dcce458c83c46b552`, passes
+  `scoped_thread_semantic_shapes`, `managed_thread_semantic_ir` and
+  `mutex_semantic_ir`, plus all four scoped fixtures under C++23 O3.
+  Runtime observations cover shared readers, disjoint mutable fields,
+  heterogeneous generic forwarding, owned-capture lambdas, erased read/once
+  jobs, consuming and nonconsuming task cleanup, empty groups, worker failure,
+  cleanup failure, their emergency combination, and creation failure before
+  any worker or after one starts. The latter is a one-shot calling-thread test
+  seam; no timing race decides which prefix starts.
+- Release run `run-c7104bc26b4e4535bfb697a000a57bed`, source snapshot
+  `68d88f15f065507e58e9ae1b94d3f41ba23c6177782b47aa41266adc019bf8cf`, passes
+  `concurrency_composition_lsp`, `scoped_parallel_threads_tsan` and
+  `scoped_parallel_cleanup_tsan` on macOS arm64. Both sanitizer tests executed
+  (neither skipped); the harness runs each binary three times. Editor evidence
+  includes overlap rejection, source navigation and versioned recovery.
+  `066-managed-threads.gti` builds at O3 and retains its expected output. Its
+  measured inventory is 122 emitted MIR bodies; LoweredProgram contains 751
+  declarations, 124 bodies and 64 generated items, including six task adapters.
+- The older `run-e7f4050d2b064973bae6874092cc885c` passed the borrowing,
+  cleanup-bound-borrow/mutation and complete compiler-ownership checks on its
+  earlier snapshot. It does not certify the current backend/public-API work.
+- Linux x64 Release run `run-59ea826829bf4d4c9d397febd4711ae8`, snapshot
+  `68d88f15f065507e58e9ae1b94d3f41ba23c6177782b47aa41266adc019bf8cf`,
+  passes twelve selected CTests: the complete four-fixture scoped native matrix
+  (C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan), scoped runtime/join/C-header,
+  borrowing composition, cleanup-bound borrows and mutations, scoped semantic
+  shapes, and managed-thread/mutex semantic and end-to-end controls. Example
+  066's O3 execution and exact inventories and the LSP test pass separately.
+- macOS Release run `run-f9e9fb05746d4c17a5b374167d413858`, snapshot
+  `25a3aa9e84d26e94a12179cc02338a5b1ae84f155389cb05ebd0aa2d9c95b069`,
+  passes the allocation oracle at O3 and ASan/UBSan and the native scoped test
+  including deterministic injected creation failure. Two owned workers use
+  four instrumented no-throw C++ allocations (task boxes plus worker states);
+  two scoped workers use two (worker states), and an empty group uses zero.
+  This excludes native thread-library and libc allocations, not total heap
+  accounting. The new scoped Mandelbrot variant builds/runs at O3 with the
+  same digest and 2,800,000 work units as both existing variants.
+- macOS Release run `run-54f2b63c198b44ea996f81f2c8878dbc`, snapshot
+  `ec844b8d972690526a7c690435b280707b1388a20a48df964c4b7ca11de2b08e`,
+  passes function-item semantic/IR controls, scoped semantic/HIR/MIR/backend
+  checks and all five scoped fixtures at C++23 O3, now including nested scopes,
+  nested carriers and free-function tasks. This exposed and repairs two general
+  composition defects: contextual names were indexed against unexpanded formal
+  packs, and passive copyable call-input values were wrongly required to carry
+  a move. Ordinary overload/unsafe negatives remain rejected. The relocated
+  install step stopped before consumer execution because this targeted build
+  omitted `gti.so`; all-target build plus installation remains required.
+- macOS Release run `run-0bb60840f66f490f8d1dae0f8f922a5d`, snapshot
+  `f5bb194a1982739c4d39ff9a4453540e8fb14b05a32f49f8bfcb0b405cda2872`,
+  passes cleanup-bound borrowing, cleanup-bound proof mutations, scoped
+  semantic/IR/backend controls and all five scoped fixtures at C++23 O3.
+  The nested worker-failure case now preserves its original failure and joins
+  both levels before caller cleanup. Its general prerequisite is exact
+  reborrowing through an incoming reference field when constructing a
+  cleanup-owning child; an ordinary non-threaded guard exercises the same rule.
+  Wrong-field origins and insufficient parent access remain verifier failures.
+  The earlier all-target Release build (`run-967b1ba839284d39bb429e8ee0bef1d1`)
+  passed, but this nested regression stopped its subsequent validation before
+  installed consumption or the full suite. Those gates must run again.
+- The unfiltered Release sweep on `c73297c1` exposed a composed-reference
+  regression: an additional external field was attributed to the temporary
+  physical reference instead of its abstract external entry. Snapshot
+  `d0344a83ff947406ba509671443530717eb4da66700c07056641a87d2550d83c`
+  (`run-1bd2bb435f6146a1a646b88f28454615`) repairs the authority selection and
+  passes borrowing composition semantics, cleanup-bound borrows/mutations,
+  scoped semantic/backend controls, the complete ordinary-borrowing native
+  matrix and all five scoped fixtures at C++23 O3. Further final-head gates
+  remain required. The Linux allocation oracle also needs matched ordinary
+  `new`/`delete` replacements: replacing delete alone misclassified libstdc++'s
+  uncounted worker allocation under ASan. This is a test-instrumentation repair,
+  not an allocation-mismatch suppression or a production allocator change.
+
+- The first quiet Linux cost run (`run-14448016aaa546eba8b2009f45e24bf9`,
+  published `c73297c1`) compares equal 2,800,000-work-unit Mandelbrot jobs under
+  GCC 14/C++23 O3 on six vCPUs. Both shared build and suite windows are held
+  during three warmups and fifteen interleaved samples. Sequential / four
+  owned threads / four scoped threads have medians 1076.826 / 279.474 / 279.402
+  ms, MAD 5.189 / 1.469 / 1.162 ms and CV 0.50% / 0.69% / 0.54%. Scoped and
+  owned execution are indistinguishable at this resolution, about 3.85 times
+  faster than this sequential workload on this host, not a universal speedup.
+  Binary sizes are 123408 / 158024 / 130280 bytes; emitted C++ is 465527 /
+  647461 / 521963 bytes. Separate full GTI-plus-native O3 builds take 1.99 s
+  and 194688 KiB peak RSS for scoped versus 2.62 s and 216408 KiB for owned.
+  The shared-job 24-case native matrix passes. The five-fixture scoped matrix
+  passes 39/40 cases; its remaining allocation-oracle ASan failure is the
+  instrumentation mismatch described above, not accepted release evidence.
+- The unfiltered macOS Release sweep (`run-585eb79c20e241779381e718cde387c4`,
+  `c73297c1`) builds all targets, passes relocated installed consumers at
+  O0/O3, and passes 639/647 CTests. Failures identify shared-borrow proof/test
+  mismatches, the new analyzer-consumer inventory entry, and example census
+  additions; all require correction and rerun. Three lifetime-slot failures
+  (`stdlib_surface` meta, reflection and temporary-owner borrowing) overlap
+  the subsequent main 0.402.11 fix. The remote Mac cannot grant LLDB debugger
+  permission in its noninteractive SSH session; the debugger test must run
+  on a permitted host. None of these failures is counted as a passing gate.
+- The subsequent local Release build passes `optimizer_foundation`,
+  `scoped_thread_semantic_shapes`, `semantic_header_boundary`, all five scoped
+  O3 fixtures and `source_debug_lldb`. Shared local and stored read-only
+  children now coexist in either declaration order; distinct shared reborrows
+  retain independent endpoints, while overlapping writes remain rejected.
+  The earlier remote focused check also passes the new mutation rejecting
+  release of an external field authority before its forwarded dependent.
+- On reconciled main 0.402.11, the meta-library and temporary-owner O3 cases
+  and the reflection-callables C++20/C++23 O0/O1/O3 matrix pass. Fresh census
+  generation across all 137 examples measures 70002 declarations, 12583 bodies
+  and 6841 generated items: 53 functional-library consumers add 49 declarations
+  and three callable adapters, one thread-only consumer adds two declarations,
+  and no existing body count changes. The baseline records those measured
+  additions rather than weakening the inventory check.
+
+The outstanding gates in these historical checkpoints are closed by the
+reconciled acceptance evidence above. Final acceptance-documentation changes
+are checked to leave executable source identical to `e76e1493`; their focused
+ownership controls and direct O0/O3 example are rerun before integration.
+The native group creates OS threads. These results do not establish cheap job
+dispatch or imply a persistent worker pool.
+
 ## Expected results of callable invocations (0.402.10)
 
 - **Defect.** A lambda returning `expected<point, errc>`, where `point` has no

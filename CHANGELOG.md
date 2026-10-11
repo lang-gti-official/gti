@@ -9,6 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.405.0 — Scoped parallel borrowing and cross-thread ownership
+
+- `std::parallel_invoke` runs consumed tasks with checked shared or exclusive
+  borrows and joins all started workers before return or failure propagation.
+  Disjoint fields, nested borrowed carriers and generic task packs retain their
+  ordinary ownership proofs. This creates native threads, not a worker pool.
+- Mutex transfer and sharing follow the protected payload's transfer
+  capability. This enables owned shared mutexes while preserving thread-affine
+  payload restrictions and thread-local lock guards.
+- `std::transfer_function` retains an explicit transfer requirement through
+  read-only, mutable, and consuming owning callable erasure. Ordinary local
+  function wrappers do not acquire permission to cross threads implicitly.
+- Unambiguous free-function names can fill generic parameter-pack elements,
+  including later elements after ordinary values; deduction retains each
+  function's exact identity rather than indexing an unexpanded formal list.
+
 ## 0.404.1 — Field reads of `expected` payloads inside `&&`, `||` and conditionals
 
 - A field of an `expected` payload whose class has a destructor or owns

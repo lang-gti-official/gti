@@ -460,6 +460,9 @@ void writeCppSupportPreamble(std::ostream &output,
   const bool usesManagedThreads = features.managedThreads;
   const bool usesAtomics = features.atomics;
   const bool usesMutexes = features.mutexes;
+  if (usesManagedThreads) {
+    output << "#include <tuple>\n";
+  }
   if (usesAtomics) {
     output << "#include <atomic>\n";
   }
@@ -2437,6 +2440,10 @@ template <typename Task> struct managed_thread_task_box final {
   Task task;
 };
 
+template <typename Task> struct managed_scoped_task_box final {
+  mir_lifetime_slot<Task, true> task;
+};
+
 template <typename Task, typename Result>
 struct managed_thread_value_box final {
   mir_lifetime_slot<Task, true> task;
@@ -2526,6 +2533,70 @@ inline bool valid_thread_join_payload(
                GTI_FAILURE_REPORT_OK_V1;
   }
   return false;
+}
+
+// The verified scope owns every task slot through join-all and reverse cleanup.
+// Native thread creation failure cannot destroy a task while earlier workers
+// are live. No task box allocation or native RAII destructor runs GTI cleanup.
+struct managed_thread_scope_outcome {
+  std::int32_t spawn_status;
+  ::gti_thread_join_result_v2 worker;
+};
+
+template <std::uint64_t... Adapters, typename... Tasks>
+inline managed_thread_scope_outcome managed_thread_scope(
+    const ::gti_failure_artifact_descriptor_v1 *artifact, Tasks &&...tasks) {
+  static_assert(sizeof...(Adapters) == sizeof...(Tasks));
+  std::tuple<managed_scoped_task_box<std::remove_cvref_t<Tasks>>...> boxes;
+  return [&]<std::size_t... I>(std::index_sequence<I...>) {
+    (std::get<I>(boxes).task.construct(std::forward<Tasks>(tasks)), ...);
+    const std::array<::gti_thread_scoped_task_v1, sizeof...(Tasks)> entries{{
+        {&managed_thread_task_adapter<Adapters>::template entry<std::remove_cvref_t<Tasks>>,
+         &std::get<I>(boxes)}...}};
+    std::array<::gti_thread_state_v1 *, sizeof...(Tasks)> scratch{};
+    const auto joined = ::gti_rt_thread_scope_v1(entries.data(), scratch.data(), entries.size());
+    if (joined.abi_version != GTI_THREAD_ABI_VERSION_V1 ||
+        !valid_thread_spawn_status(joined.spawn_status) ||
+        joined.started > entries.size() ||
+        (joined.spawn_status == GTI_THREAD_SPAWN_OK_V1 && joined.started != entries.size()) ||
+        joined.worker.abi_version != GTI_THREAD_ABI_VERSION_V2 ||
+        joined.worker.reserved != 0 || !valid_thread_join_payload(joined.worker) ||
+        (joined.worker.status != GTI_THREAD_JOIN_OK_V1 &&
+         joined.worker.status != GTI_THREAD_JOIN_WORKER_FAILURE_V1) ||
+        ((joined.worker.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1)
+             ? joined.failed_worker >= joined.started
+             : joined.failed_worker != UINT64_MAX))
+      malformed_thread_runtime_result();
+    for (const auto *state : scratch)
+      if (state != nullptr) malformed_thread_runtime_result();
+    managed_thread_scope_outcome result{static_cast<std::int32_t>(joined.spawn_status), joined.worker};
+    if (result.worker.failure_kind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1)
+      ::gti_rt_failure_terminate_cleanup_v2(&result.worker.cleanup_failure,
+          result.worker.primary_artifact, result.worker.secondary_artifact);
+
+    // All workers have joined. Reuse the ordinary failure-cleanup context:
+    // preserve an existing worker/outer failure; otherwise retain the first
+    // task-cleanup failure while draining remaining task slots.
+    mir_failure_cleanup_scope_v1 cleanup_context;
+    if (result.worker.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1)
+      cleanup_context.activate(&result.worker.failure, result.worker.primary_artifact);
+    auto cleanup_one = [&]<std::size_t Index>() {
+      constexpr auto adapter = std::array<std::uint64_t, sizeof...(Adapters)>{Adapters...}[Index];
+      ::gti_failure_record_v2 failure{};
+      const bool unwinding = mir_incoming_failure_cleanup_v1() != nullptr;
+      if (!managed_thread_task_adapter<adapter>::cleanup(
+              std::get<Index>(boxes).task, &failure, unwinding)) {
+        mir_check_incoming_cleanup_failure_v1(&failure, artifact);
+        result.worker.status = GTI_THREAD_JOIN_WORKER_FAILURE_V1;
+        result.worker.failure_kind = GTI_THREAD_WORKER_FAILURE_ORDINARY_V1;
+        result.worker.failure = failure;
+        result.worker.primary_artifact = artifact;
+        cleanup_context.activate(&result.worker.failure, result.worker.primary_artifact);
+      }
+    };
+    (cleanup_one.template operator()<sizeof...(I) - 1 - I>(), ...);
+    return result;
+  }(std::index_sequence_for<Tasks...>{});
 }
 
 template <std::uint64_t Adapter, typename Task>

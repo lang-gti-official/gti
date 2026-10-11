@@ -73,7 +73,7 @@ if(Python3_Interpreter_FOUND)
     reference_class_assignment_runtime
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
     retained_owner_member_pack_runtime shared_accessor_range_runtime
-    shared_ownership_runtime shared_ownership_threads
+    shared_ownership_runtime shared_ownership_threads scoped_parallel_threads
     source_storage_drain_runtime
     source_prefix_owner_runtime source_resource_prefix_runtime
     source_text_address_runtime source_prefix_string_runtime
