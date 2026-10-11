@@ -32,9 +32,8 @@ The tool is a *source generator*, not a compiler phase:
   remains the sole ABI authority. The tool targets that surface; it does not
   restate or bypass it.
 - It lives in its own archive (`gti_bindgen`, `namespace lang::bindgen`)
-  beside the compiler/driver split: the CLI presents it today, and the driver
-  can later invoke the same library from a manifest-declared import (the
-  planned `gti.toml` integration point). It links no compiler internals; the
+  beside the compiler/driver split: the CLI and implemented manifest-declared
+  imports already invoke the same library. It links no compiler internals; the
   generated text is its only coupling to the language.
 - Determinism is a contract: identical input text, selected target, and
   options produce byte-identical output, in header declaration order.
@@ -108,12 +107,12 @@ change the caller's contract). An inline function-pointer type (a parameter,
 field, or result declared `ret (*)(params)` without a typedef) models
 faithfully as a pointer to a function shape — binding policy for it lives in
 the planner, not here — while a prototype-less `ret (*)()` pointer stays
-unsupported because its parameters are unspecified. Object-like macros whose
-bodies are bounded integer constant expressions (int64 arithmetic over
-literals, references to earlier imported macros, parentheses, unary `+ - ~`,
-and `| ^ & << >> + - * / %`) import as constant declarations; function-like
-macros and empty guards stay silent, and a non-evaluable object-like macro
-is noted, never approximated. C redefinition keeps the first position with
+unsupported because its parameters are unspecified. Object-like macros import bounded integer constant expressions (int64
+arithmetic over literals, references to earlier imported integer macros,
+parentheses, unary `+ - ~`, and `| ^ & << >> + - * / %`), bounded floating
+literals and backslash-free adjacent string literals. Function-like macros and
+empty guards stay silent; a non-evaluable object-like macro is noted, never
+approximated. C redefinition keeps the first position with
 the latest value.
 `<stdint.h>`/`<stddef.h>` names resolve through a target-macro prelude, so
 their widths are Clang facts for the selected data model. The reader receives
@@ -184,8 +183,9 @@ methods, overloads) lands without touching the reader. Two passes:
    own admitted form — deduplicated by shape, named deterministically from
    the first committing declaration (`<owner>_<member>_fn`, ordinals on
    collision, header names pre-reserved), emitted before its first use, and
-   rolled back when its only use skips. Imported macros plan as
-   `constexpr int32_t`/`int64_t` constants by value range. Three shapes real
+   rolled back when its only use skips. Imported integer macros plan as
+   `constexpr int32_t`/`int64_t` constants by value range; floating and text
+   forms plan as `double` and `std::string_view` respectively. Three shapes real
    system headers exposed are handled structurally: a use of a *skipped*
    typedef spells the canonical type (the alias name never reaches the
    file), C prototype-scoped forward references of one tag collapse to one
@@ -205,9 +205,9 @@ methods, overloads) lands without touching the reader. Two passes:
    zero-length array extensions, native variables, reserved or GTI-invalid identifiers — become a
    `SkippedItem{origin, name, reason}`.
 
-The plan is an ordered value type: inspectable, testable, and the future
-driver integration surface (a manifest import produces a plan the build can
-cache and diff).
+The plan is an ordered, inspectable and testable value type. Implemented
+manifest imports use the same planner, with driver-owned generation/reuse;
+metadata projection remains a separate unimplemented presentation step.
 
 ### The writer (`gti_writer.h`)
 
@@ -221,8 +221,8 @@ for native declarations.
 ### The pipeline facade (`bindgen.h`)
 
 `runCBindgen(headerText, headerName, options, targetProfile)` returns the
-generated source, the plan, and all diagnostics. The CLI subcommand and the
-future driver integration are both thin callers of this one entry point.
+generated source, the plan, and all diagnostics. The CLI subcommand and
+implemented driver integration are both thin callers of this one entry point.
 
 ## Scalability Contract
 
@@ -531,8 +531,11 @@ identity. The planner records exact skips for unsupported storage kinds rather
 than silently approximating them. Read-only data is not a macro constant;
 `errno` and other accessor macros legitimately continue to need native adapters.
 
-Raw foreign loads/stores and address acquisition require unsafe obligations for
-validity, initialization, access, lifetime and synchronization. Constness rejects
+Raw foreign loads/stores require unsafe obligations for validity,
+initialization, access, lifetime and synchronization. Address formation must
+be decided separately against the general inert raw-address contract: forming
+an address does not itself perform a foreign load or create a checked loan,
+and must not silently certify the storage's lifetime or initialization. Constness rejects
 writes; it does not independently prove a safe foreign read. Initial support can
 be structurally bounded to non-thread-local, non-volatile ABI-representable
 objects. TLS and volatile access require explicit general semantics and target
@@ -554,7 +557,8 @@ renaming/collision behavior, unsupported TLS/volatile diagnostics, no emitted
 definition or destructor, generated C17/C++20/C++23 header compatibility,
 optimizer effects, MIR mutations, tooling and a runnable registered example.
 
-Implement and verify C-08A and C-08B as independent vertical slices. Groundwork
-does not claim either capability is usable, require a version bump, or satisfy
-their future executable-example gates. Revise the canonical native interop
+C-08A is delivered; C-08B remains an independent vertical slice with the
+prerequisites and acceptance above. Groundwork for foreign storage alone does
+not claim that capability is usable, require a version bump, or satisfy its
+future executable-example gate. Revise the canonical native interop
 contract only as implementation lands.
