@@ -83,6 +83,9 @@ public:
   void reserve(size_t count) mut { this.entries.reserve(count); }
   void rehash(size_t count) mut { this.entries.rehash(count); }
   const_iterator begin() { return const_iterator(this.entries.begin()); }
+  const_iterator end_iterator() { return const_iterator(this.entries.end_iterator()); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel cend() { return this.end(); }
   detail::unordered_map_sentinel end() { return this.entries.end(); }
   const_iterator find(K& key) { return const_iterator(this.entries.find(key)); }
   pair<iterator, bool> insert(K key) mut {

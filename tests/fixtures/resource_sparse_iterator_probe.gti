@@ -1,0 +1,16 @@
+#include <std/resource>
+int main() {
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_storage<int, std::process_resource> values{resource};
+    if (!values.try_allocate(std::size_t(3))) { return 1; }
+    values.emplace(std::size_t(1), 42);
+    mut int total = 0;
+    for (auto& value : values) { total += value; }
+    auto first = values.begin();
+    if (*first != 42) { return 3; }
+    if (values.cbegin() == values.cend()) { return 4; }
+    return total == 42 ? 0 : 2;
+  }
+}

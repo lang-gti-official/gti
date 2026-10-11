@@ -1,0 +1,267 @@
+#include <std/memory>
+#include <std/resource>
+#include <std/simd>
+#include <std/iterator>
+#include <std/algorithm>
+
+void require_random<I>(I cursor) requires std::random_access_iterator<I> {}
+void require_bidirectional<I>(I cursor) requires std::bidirectional_iterator<I> {}
+
+class Immovable {
+  int number;
+public:
+  Immovable(int number) : number(number) {}
+  Immovable(Immovable& other) = delete;
+  Immovable(Immovable&& other) = delete;
+  int value() { return this.number; }
+};
+
+int sparse_storage() {
+  std::allocator allocator{};
+  mut auto allocated = allocator.try_storage<int>(std::size_t(9));
+  if (!allocated) { return 1; }
+  mut auto values = std::move(allocated).value();
+  if (values.begin() != values.end() || values.end_iterator() != values.cend()) { return 2; }
+  values.construct(std::size_t(1), 10);
+  values.construct(std::size_t(4), 20);
+  values.construct(std::size_t(8), 30);
+  {
+    require_bidirectional(values.begin());
+    mut auto first = values.cbegin();
+    auto copy = first;
+    ++first;
+    if (*copy != 10 || *first != 20 || first == copy) { return 3; }
+    auto found = std::find(values.begin(), values.end(), *first);
+    if (*found != 20 || std::distance(values.begin(), values.end()) != std::ptrdiff_t(3)) { return 4; }
+    mut auto back = values.end_iterator();
+    --back;
+    if (*back != 30) { return 5; }
+    --back;
+    if (*back != 20) { return 6; }
+    --back;
+    if (*back != 10 || back != copy) { return 7; }
+  }
+  for (mut auto& value : values) { value += 1; }
+  {
+    mut auto back = values.end_mut();
+    --back;
+    *back = 31;
+    --back;
+    *back = 21;
+  }
+  if (values.get(std::size_t(1)) != 11 || values.get(std::size_t(4)) != 21 ||
+      values.get(std::size_t(8)) != 31 || values.initialized(std::size_t(0))) { return 8; }
+  {
+    require_bidirectional(values.rbegin());
+    mut auto reverse = values.crbegin();
+    auto copy = reverse;
+    if (*reverse != 31 || reverse != copy) { return 12; }
+    ++reverse;
+    if (*reverse != 21 || *copy != 31) { return 13; }
+    ++reverse;
+    if (*reverse != 11) { return 14; }
+    ++reverse;
+    if (reverse != values.crend()) { return 15; }
+    --reverse;
+    if (*reverse != 11) { return 16; }
+  }
+  {
+    mut auto reverse = values.rend_mut();
+    --reverse;
+    *reverse = 12;
+    --reverse;
+    *reverse = 22;
+  }
+  if (values.get(std::size_t(1)) != 12 || values.get(std::size_t(4)) != 22) { return 17; }
+  values.clear();
+  if (values.begin() != values.end() || values.rbegin() != values.rend()) { return 9; }
+
+  mut auto fixed_allocated = allocator.try_storage<Immovable>(std::size_t(3));
+  if (!fixed_allocated) { return 10; }
+  mut auto fixed = std::move(fixed_allocated).value();
+  fixed.emplace(std::size_t(2), 42);
+  mut int total = 0;
+  for (auto& value : fixed) { total += value.value(); }
+  if (total != 42) { return 11; }
+  return 0;
+}
+
+int prefix_arena() {
+  mut auto allocated = std::try_make_arena<int>(std::size_t(8));
+  if (!allocated) { return 20; }
+  mut auto values = std::move(allocated).value();
+  if (values.begin() != values.end()) { return 21; }
+  [[discard]] values.try_insert(10);
+  [[discard]] values.try_insert(20);
+  [[discard]] values.try_insert(30);
+  {
+    require_random(values.begin());
+    mut auto back = values.end_iterator();
+    --back;
+    if (*back != 30 || back[std::ptrdiff_t(-2)] != 10) { return 22; }
+    back -= std::ptrdiff_t(2);
+    if (*back != 10 || back - values.end() != std::ptrdiff_t(3)) { return 23; }
+  }
+  for (mut int& value : values) { value *= 2; }
+  {
+    mut auto write = values.begin_mut();
+    write += std::ptrdiff_t(2);
+    write[std::ptrdiff_t(-1)] = 41;
+    *write = 61;
+  }
+  if (values.get(std::size_t(0)) != 20 || values.get(std::size_t(1)) != 41 ||
+      values.get(std::size_t(2)) != 61) { return 24; }
+  {
+    require_random(values.rbegin());
+    mut auto reverse = values.crbegin();
+    if (*reverse != 61 || reverse[std::ptrdiff_t(1)] != 41 ||
+        reverse - values.rend() != std::ptrdiff_t(3)) { return 26; }
+    reverse += std::ptrdiff_t(2);
+    if (*reverse != 20) { return 27; }
+    mut auto write = values.rbegin_mut();
+    write[std::ptrdiff_t(1)] = 42;
+    *write = 62;
+  }
+  if (values.get(std::size_t(1)) != 42 || values.get(std::size_t(2)) != 62) { return 28; }
+  values.reset();
+  if (values.cbegin() != values.cend() || values.crbegin() != values.crend()) { return 25; }
+  return 0;
+}
+
+int sparse_pool() {
+  mut auto allocated = std::try_make_pool<int>(std::size_t(6));
+  if (!allocated) { return 30; }
+  mut auto values = std::move(allocated).value();
+  [[discard]] values.try_insert(1);
+  [[discard]] values.try_insert(2);
+  [[discard]] values.try_insert(3);
+  values.erase(std::size_t(1));
+  mut int sum = 0;
+  for (auto& value : values) { sum += value; }
+  if (sum != 4 || std::distance(values.begin(), values.end()) != std::ptrdiff_t(2)) { return 31; }
+  for (mut auto& value : values) { value *= 10; }
+  {
+    mut auto last = values.end_mut();
+    --last;
+    if (*last != 30) { return 32; }
+  }
+  if (values.get(std::size_t(0)) != 10 || values.get(std::size_t(2)) != 30) { return 33; }
+  {
+    mut auto reverse = values.rbegin();
+    if (*reverse != 30) { return 35; }
+    ++reverse;
+    if (*reverse != 10) { return 36; }
+    ++reverse;
+    if (reverse != values.rend()) { return 37; }
+  }
+  values.clear();
+  if (values.begin() != values.end() || values.rbegin() != values.rend()) { return 34; }
+  return 0;
+}
+
+int resource_sparse() {
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_storage<int, std::process_resource> values{resource};
+    if (!values.try_allocate(std::size_t(7))) { return 40; }
+    values.emplace(std::size_t(2), 2);
+    values.emplace(std::size_t(6), 6);
+    {
+      require_bidirectional(values.begin());
+      mut auto last = values.end_iterator();
+      --last;
+      if (*last != 6) { return 41; }
+      --last;
+      if (*last != 2) { return 42; }
+    }
+    for (mut auto& value : values) { value *= 3; }
+    if (values.get(std::size_t(2)) != 6 || values.get(std::size_t(6)) != 18) { return 43; }
+    {
+      mut auto reverse = values.crbegin();
+      if (*reverse != 18) { return 45; }
+      ++reverse;
+      if (*reverse != 6) { return 46; }
+      ++reverse;
+      if (reverse != values.crend()) { return 47; }
+    }
+    values.release();
+    if (values.cbegin() != values.cend() || values.crbegin() != values.crend()) { return 44; }
+  }
+  return 0;
+}
+
+int lanes() {
+  mut std::simd<float, 4> values{2.0};
+  {
+    require_random(values.begin());
+    mut auto end = values.end_iterator();
+    --end;
+    if (*end != 2.0 || end[std::ptrdiff_t(-3)] != 2.0) { return 50; }
+    end -= std::ptrdiff_t(3);
+    if (end - values.cend() != std::ptrdiff_t(4)) { return 51; }
+  }
+  for (mut float& value : values) { value += 1.0; }
+  {
+    mut auto write = values.end_mut();
+    --write;
+    *write = 4.0;
+    write[std::ptrdiff_t(-2)] = 5.0;
+  }
+  if (values.reduce() != 15.0) { return 52; }
+  {
+    require_random(values.rbegin());
+    mut auto reverse = values.crbegin();
+    if (*reverse != 4.0 || reverse[std::ptrdiff_t(2)] != 5.0 ||
+        reverse - values.rend() != std::ptrdiff_t(4)) { return 56; }
+    reverse += std::ptrdiff_t(4);
+    if (reverse != values.crend()) { return 57; }
+    --reverse;
+    if (*reverse != 3.0) { return 58; }
+  }
+  {
+    mut auto reverse = values.rbegin_mut();
+    *reverse = 7.0;
+  }
+  if (values.reduce() != 18.0) { return 59; }
+  mut std::simd_mask<4> mask{};
+  {
+    require_random(mask.begin());
+    mut auto write = mask.begin_mut();
+    write += std::ptrdiff_t(2);
+    *write = true;
+    write[std::ptrdiff_t(-2)] = true;
+  }
+  if (mask.count() != std::size_t(2)) { return 53; }
+  for (mut bool& value : mask) { value = true; }
+  if (!mask.all_of()) { return 54; }
+  mut int count = 0;
+  for (auto& value : mask) { if (value) { count++; } }
+  if (count != 4) { return 55; }
+  {
+    require_random(mask.rbegin());
+    mut auto reverse = mask.rbegin();
+    reverse += std::ptrdiff_t(4);
+    if (reverse != mask.rend()) { return 60; }
+    --reverse;
+    if (!*reverse) { return 61; }
+  }
+  {
+    mut auto reverse = mask.rend_mut();
+    --reverse;
+    *reverse = false;
+  }
+  return mask.count() == std::size_t(3) ? 0 : 62;
+}
+
+int main() {
+  int sparse = sparse_storage();
+  if (sparse != 0) { return sparse; }
+  int arena = prefix_arena();
+  if (arena != 0) { return arena; }
+  int pool = sparse_pool();
+  if (pool != 0) { return pool; }
+  int resource = resource_sparse();
+  if (resource != 0) { return resource; }
+  return lanes();
+}

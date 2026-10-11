@@ -1,7 +1,101 @@
 #include <std/span>
 #include <std/memory>
+#include <std/detail/iterator>
 
 namespace std {
+namespace detail {
+class paired_span_sentinel {
+  size_t finish;
+public:
+  paired_span_sentinel(size_t finish) : finish(finish) {}
+  size_t position() { return this.finish; }
+};
+
+/// Read-only paired access without copying either underlying element.
+/// A reference to this proxy borrows its cursor; advancing the cursor while
+/// that reference is live is excluded by the ordinary child-loan rules.
+class paired_span_element<std::storage_element L, std::storage_element R> {
+  paired_span<L, R>& source;
+  mut size_t current_position;
+public:
+  paired_span_element(paired_span<L, R>& source, size_t position)
+      : source(source), current_position(position) {
+    if (position > this.size()) { gti_internal::index_bounds_check(position, this.size()); }
+  }
+  size_t size() {
+    return this.source.size();
+  }
+  size_t position() { return this.current_position; }
+  L& first() {
+    return this.source.first(this.current_position);
+  }
+  R& second() {
+    return this.source.second(this.current_position);
+  }
+  // Every observation remains checked by the source view. Cursors establish
+  // their inclusive base-position bounds before changing this coordinate.
+  void select(size_t position) mut { this.current_position = position; }
+};
+
+class paired_span_iterator<std::storage_element L, std::storage_element R, uint64_t Reverse = 0> {
+  mut paired_span_element<L, R> element;
+  mut size_t current_position;
+
+  void advance(ptrdiff_t offset, bool subtract = false) mut {
+    size_t position = detail::checked_iterator_position(this.current_position,
+        size_t(0), this.element.size(), offset, subtract != (Reverse != 0));
+    mut size_t selected = position;
+    if constexpr (Reverse != 0) {
+      if (position != size_t(0)) { selected = position - size_t(1); }
+    }
+    this.element.select(selected);
+    this.current_position = position;
+  }
+public:
+  paired_span_iterator(paired_span<L, R>& source, size_t position)
+      : element(paired_span_element<L, R>(source, position)), current_position(position) {
+    if constexpr (Reverse != 0) {
+      if (position != size_t(0)) { this.element.select(position - size_t(1)); }
+    }
+  }
+  paired_span_element<L, R>& operator*() {
+    if constexpr (Reverse != 0) {
+      size_t position = detail::checked_iterator_position(this.current_position,
+          size_t(0), this.element.size(), ptrdiff_t(-1));
+      gti_internal::index_bounds_check(position, this.element.size());
+    } else {
+      gti_internal::index_bounds_check(this.current_position, this.element.size());
+    }
+    return this.element;
+  }
+  paired_span_element<L, R>& operator->() { return *this; }
+  void operator++() mut { this.advance(ptrdiff_t(1)); }
+  void operator--() mut { this.advance(ptrdiff_t(1), true); }
+  void operator+=(ptrdiff_t offset) mut { this.advance(offset); }
+  void operator-=(ptrdiff_t offset) mut { this.advance(offset, true); }
+  ptrdiff_t operator-(paired_span_sentinel sentinel) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(sentinel.position()); }
+    return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
+  }
+  ptrdiff_t operator-(paired_span_iterator<L, R, Reverse>& other) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(other.current_position); }
+    return ptrdiff_t(other.current_position) - ptrdiff_t(this.current_position);
+  }
+  bool operator!=(paired_span_sentinel sentinel) {
+    return this.current_position != sentinel.position();
+  }
+  bool operator!=(paired_span_iterator<L, R, Reverse>& other) {
+    return this.current_position != other.current_position;
+  }
+  bool operator==(paired_span_sentinel sentinel) {
+    return this.current_position == sentinel.position();
+  }
+  bool operator==(paired_span_iterator<L, R, Reverse>& other) {
+    return this.current_position == other.current_position;
+  }
+};
+}
+
 /// A read-only indexed view over two independently owned contiguous buffers.
 /// Its length is the shorter input length. Both owners remain borrowed until
 /// the last use of this view and every copy derived from it.
@@ -10,6 +104,10 @@ class paired_span<std::storage_element L, std::storage_element R> {
   span<R> right_view;
 
 public:
+  using const_iterator = detail::paired_span_iterator<L, R>;
+  using const_reverse_iterator = detail::paired_span_iterator<L, R, 1>;
+  using sentinel = detail::paired_span_sentinel;
+  using value_type = detail::paired_span_element<L, R>;
   paired_span(span<L> left, span<R> right)
       : left_view(std::move(left)), right_view(std::move(right)) {}
 
@@ -22,6 +120,20 @@ public:
   bool empty() {
     return this.size() == 0;
   }
+
+  detail::paired_span_iterator<L, R> begin() {
+    return detail::paired_span_iterator<L, R>(this, size_t(0));
+  }
+  detail::paired_span_sentinel end() { return detail::paired_span_sentinel(this.size()); }
+  detail::paired_span_iterator<L, R> end_iterator() {
+    return detail::paired_span_iterator<L, R>(this, this.size());
+  }
+  detail::paired_span_iterator<L, R> cbegin() { return this.begin(); }
+  detail::paired_span_sentinel cend() { return this.end(); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this, this.size()); }
+  detail::paired_span_sentinel rend() { return detail::paired_span_sentinel(size_t(0)); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  detail::paired_span_sentinel crend() { return this.rend(); }
 
   L& first(size_t index) {
     gti_internal::index_bounds_check(index, this.size());

@@ -49,6 +49,15 @@ concept random_access_iterator<Iterator> =
     std::bidirectional_iterator<Iterator> &&
     gti_internal::random_access_iterator_capability<Iterator>;
 
+// Movement is independent of duplication: exclusive output cursors can move
+// backward or jump without becoming copyable multipass readers.
+concept bidirectional_cursor<Iterator> =
+    std::input_iterator<Iterator> &&
+    gti_internal::bidirectional_iterator_capability<Iterator>;
+concept random_access_cursor<Iterator> =
+    std::bidirectional_cursor<Iterator> &&
+    gti_internal::random_access_iterator_capability<Iterator>;
+
 // Positioned mutable access without moving the cursor: a mut iterator whose
 // `mut operator[](std::ptrdiff_t)` returns a mutable reference to exactly T.
 // One exclusive cursor plus offsets reaches every element of its range, which
@@ -92,7 +101,7 @@ struct contiguous_iterator_tag : public random_access_iterator_tag {};
 // meaning. Movement steps rather than jumping so the reference receiver only
 // needs the increment/decrement contract.
 void advance<Iterator>(mut Iterator& iterator, mut ptrdiff_t distance)
-  requires std::bidirectional_iterator<Iterator> {
+  requires std::bidirectional_cursor<Iterator> {
   while (distance > 0) {
     ++iterator;
     distance--;
@@ -129,7 +138,7 @@ Iterator next<Iterator>(mut Iterator iterator)
 }
 
 Iterator next<Iterator>(mut Iterator iterator, ptrdiff_t distance)
-  requires std::random_access_iterator<Iterator> {
+  requires std::random_access_cursor<Iterator> {
   iterator += distance;
   return std::move(iterator);
 }
@@ -144,13 +153,13 @@ Iterator next<Iterator>(mut Iterator iterator, mut size_t distance)
 }
 
 Iterator prev<Iterator>(mut Iterator iterator)
-  requires std::bidirectional_iterator<Iterator> {
+  requires std::bidirectional_cursor<Iterator> {
   --iterator;
   return std::move(iterator);
 }
 
 Iterator prev<Iterator>(mut Iterator iterator, mut size_t distance)
-  requires std::bidirectional_iterator<Iterator> {
+  requires std::bidirectional_cursor<Iterator> {
   while (distance > 0) {
     --iterator;
     distance--;

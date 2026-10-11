@@ -314,6 +314,10 @@ public:
     return detail::unordered_map_mut_iterator<K, V>(this.nodes, this.first_position());
   }
   detail::unordered_map_sentinel end() { return detail::unordered_map_sentinel(this.nodes.size()); }
+  const_iterator end_iterator() { return const_iterator(this.nodes, this.nodes.size()); }
+  iterator end_mut() mut { return iterator(this.nodes, this.nodes.size()); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel cend() { return this.end(); }
   detail::unordered_map_iterator<K, V> find(K& key) {
     size_t node = this.locate(key, this.hasher(key));
     if (node == 0) { return detail::unordered_map_iterator<K, V>(this.nodes, this.nodes.size()); }

@@ -1,6 +1,7 @@
 #include <std/span>
 #include <std/utility>
 #include <std/memory>
+#include <std/detail/iterator>
 
 // The storage-backed value, capacity, indexed operations, move-aware
 // insertion/erasure, and bounded read-only/mutable iteration are implemented.
@@ -20,7 +21,7 @@ public:
   }
 };
 
-class vector_iterator<std::storage_element T> {
+class vector_iterator<std::storage_element T, uint64_t Reverse = 0> {
   std::detail::prefix_owner<T>& data;
   mut size_t current_position;
 
@@ -29,31 +30,49 @@ public:
       : data(source), current_position(position) {}
 
   T& operator*() {
+    if constexpr (Reverse != 0) {
+      size_t position = checked_iterator_position(this.current_position, size_t(0),
+                                                  this.data.length(), ptrdiff_t(-1));
+      return this.data.read(position);
+    }
     return this.data.read(this.current_position);
   }
 
+  T& operator->() { return *this; }
+  T& operator[](ptrdiff_t offset) {
+    mut size_t position = checked_iterator_position(this.current_position, size_t(0),
+                                                this.data.length(), offset, Reverse != 0);
+    if constexpr (Reverse != 0) { position = checked_iterator_position(position, size_t(0), this.data.length(), ptrdiff_t(-1)); }
+    return this.data.read(position);
+  }
+
   void operator++() mut {
-    this.current_position++;
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.data.length(), ptrdiff_t(1), Reverse != 0);
   }
 
   // Backward and signed movement keep checked position arithmetic: stepping
-  // or jumping before position zero raises the defined unsigned-range
-  // failure, and every read remains prefix-checked at the access itself.
+  // or jumping outside the inclusive cursor boundary raises defined invalid
+  // container argument failure; every element read remains prefix-checked.
   void operator--() mut {
-    this.current_position--;
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.data.length(), ptrdiff_t(-1), Reverse != 0);
   }
 
   void operator+=(ptrdiff_t distance) mut {
-    this.current_position = size_t(ptrdiff_t(this.current_position) + distance);
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.data.length(), distance, Reverse != 0);
   }
 
   void operator-=(ptrdiff_t distance) mut {
-    this.current_position = size_t(ptrdiff_t(this.current_position) - distance);
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.data.length(), distance, Reverse == 0);
   }
 
   // The signed distance from this iterator to the sentinel; positive while
   // the sentinel is ahead.
   ptrdiff_t operator-(vector_sentinel sentinel) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(sentinel.position()); }
     return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
   }
 
@@ -61,15 +80,21 @@ public:
     return this.current_position != sentinel.position();
   }
 
-  bool operator!=(vector_iterator<T>& other) {
+  bool operator!=(vector_iterator<T, Reverse>& other) {
     return this.current_position != other.current_position;
+  }
+
+  bool operator==(vector_sentinel sentinel) {
+    return this.current_position == sentinel.position();
+  }
+  bool operator==(vector_iterator<T, Reverse>& other) {
+    return this.current_position == other.current_position;
   }
 };
 
-// This mutable storage dependency is an ephemeral standard-library carrier.
-// Semantics permits it only when the compiler-generated range iterator keeps
-// it on the range's exclusive loan; ordinary local storage remains rejected.
-class vector_mut_iterator<std::storage_element T> {
+// An exclusive checked storage dependency. Cursor movement never grants
+// independent access to the owner while its loan remains active.
+class vector_mut_iterator<std::storage_element T, uint64_t Reverse = 0> {
   mut std::detail::prefix_owner<T>& data;
   mut size_t current_position;
 
@@ -79,21 +104,58 @@ public:
       : data(source), current_position(position) {}
 
   T& operator*() {
-    return this.data.read(
-                                              this.current_position);
+    mut size_t position = this.current_position;
+    if constexpr (Reverse != 0) { position = checked_iterator_position(position, size_t(0), this.data.length(), ptrdiff_t(-1)); }
+    return this.data.read(position);
   }
 
   mut T& operator*() mut {
-    return this.data.read_mut(
-                                                  this.current_position);
+    mut size_t position = this.current_position;
+    if constexpr (Reverse != 0) { position = checked_iterator_position(position, size_t(0), this.data.length(), ptrdiff_t(-1)); }
+    return this.data.read_mut(position);
   }
 
   void operator++() mut {
-    this.current_position++;
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.data.length(), ptrdiff_t(1), Reverse != 0);
+  }
+
+  void operator--() mut {
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.data.length(), ptrdiff_t(-1), Reverse != 0);
+  }
+  void operator+=(ptrdiff_t offset) mut {
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.data.length(), offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.current_position = checked_iterator_position(this.current_position, size_t(0),
+                                                      this.data.length(), offset, Reverse == 0);
+  }
+  T& operator[](ptrdiff_t offset) {
+    mut size_t position = checked_iterator_position(this.current_position, size_t(0),
+                                                    this.data.length(), offset, Reverse != 0);
+    if constexpr (Reverse != 0) { position = checked_iterator_position(position, size_t(0), this.data.length(), ptrdiff_t(-1)); }
+    return this.data.read(position);
+  }
+  mut T& operator[](ptrdiff_t offset) mut {
+    mut size_t position = checked_iterator_position(this.current_position, size_t(0),
+                                                    this.data.length(), offset, Reverse != 0);
+    if constexpr (Reverse != 0) { position = checked_iterator_position(position, size_t(0), this.data.length(), ptrdiff_t(-1)); }
+    return this.data.read_mut(position);
+  }
+  T& operator->() { return *this; }
+  mut T& operator->() mut { return *this; }
+  ptrdiff_t operator-(vector_sentinel sentinel) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.current_position) - ptrdiff_t(sentinel.position()); }
+    return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
   }
 
   bool operator!=(vector_sentinel sentinel) {
     return this.current_position != sentinel.position();
+  }
+  bool operator==(vector_sentinel sentinel) {
+    return this.current_position == sentinel.position();
   }
 };
 }
@@ -127,6 +189,8 @@ public:
   using iterator = detail::vector_mut_iterator<T>;
   using const_iterator = detail::vector_iterator<T>;
   using sentinel = detail::vector_sentinel;
+  using reverse_iterator = detail::vector_mut_iterator<T, 1>;
+  using const_reverse_iterator = detail::vector_iterator<T, 1>;
 
   vector() : data(std::detail::prefix_owner<T>(uint64_t(0))) {}
 
@@ -258,6 +322,21 @@ public:
   iterator begin_mut() mut {
     return detail::vector_mut_iterator<T>(this.data, size_t(0));
   }
+
+  const_iterator end_iterator() {
+    return const_iterator(this.data, this.data.length());
+  }
+  iterator end_mut() mut {
+    return iterator(this.data, this.data.length());
+  }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel cend() { return this.end(); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this.data, this.data.length()); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return sentinel(size_t(0)); }
+  sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut { return reverse_iterator(this.data, this.data.length()); }
+  reverse_iterator rend_mut() mut { return reverse_iterator(this.data, size_t(0)); }
 
   sentinel end() {
     return detail::vector_sentinel(

@@ -1,0 +1,107 @@
+#include <std/memory>
+#include <std/simd>
+#include <std/vector>
+#include <std/string>
+
+class Drop {
+  int id;
+public:
+  Drop(int id) : id(id) {}
+  ~Drop() { std::println(this.id); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  std::allocator allocator{};
+  mut auto guards_allocated = allocator.try_storage<Drop>(std::size_t(5));
+  if (!guards_allocated) { return 1; }
+  mut auto guards = std::move(guards_allocated).value();
+  guards.emplace(std::size_t(1), 10);
+  guards.emplace(std::size_t(4), 20);
+
+  if (argc >= 13 && argc <= 15) {
+    mut auto allocated = allocator.try_storage<int>(std::size_t(4));
+    if (!allocated) { return 4; }
+    mut auto values = std::move(allocated).value();
+    if (argc == 13) {
+      values.construct(std::size_t(2), 1);
+      mut auto reverse = values.rbegin();
+      --reverse;
+    } else if (argc == 14) {
+      mut auto reverse = values.rend_mut();
+      ++reverse;
+    } else {
+      auto reverse = values.rbegin();
+      return *reverse;
+    }
+    return 99;
+  }
+  if (argc == 16) {
+    mut auto allocated = std::try_make_arena<int>(std::size_t(5));
+    if (!allocated) { return 5; }
+    mut auto values = std::move(allocated).value();
+    [[discard]] values.try_insert(42);
+    mut auto reverse = values.rbegin_mut();
+    reverse += std::ptrdiff_t(2);
+    return 99;
+  }
+  if (argc >= 17) {
+    mut std::simd_mask<4> values{};
+    if (argc == 17) {
+      auto reverse = values.rend_mut();
+      return *reverse ? 6 : 7;
+    }
+    mut auto reverse = values.rbegin_mut();
+    reverse -= std::ptrdiff_t(-9223372036854775807) - std::ptrdiff_t(1);
+    return 99;
+  }
+
+  if (argc <= 4) {
+    mut auto allocated = allocator.try_storage<int>(std::size_t(4));
+    if (!allocated) { return 2; }
+    mut auto values = std::move(allocated).value();
+    if (argc == 1) {
+      auto end = values.end_iterator();
+      return *end;
+    }
+    if (argc == 2) {
+      mut auto empty = values.begin();
+      --empty;
+    } else if (argc == 3) {
+      mut auto end = values.end_mut();
+      ++end;
+    } else {
+      values.construct(std::size_t(2), 1);
+      mut auto first = values.begin();
+      --first;
+    }
+  } else if (argc <= 8) {
+    mut auto allocated = std::try_make_arena<int>(std::size_t(5));
+    if (!allocated) { return 3; }
+    mut auto values = std::move(allocated).value();
+    [[discard]] values.try_insert(42);
+    mut auto cursor = values.begin_mut();
+    if (argc == 5) {
+      --cursor;
+    } else if (argc == 6) {
+      cursor += std::ptrdiff_t(2);
+    } else if (argc == 7) {
+      cursor -= std::ptrdiff_t(-9223372036854775807) - std::ptrdiff_t(1);
+    } else {
+      return cursor[std::ptrdiff_t(1)];
+    }
+  } else {
+    mut std::simd_mask<4> values{};
+    mut auto cursor = values.begin_mut();
+    if (argc == 9) {
+      --cursor;
+    } else if (argc == 10) {
+      cursor += std::ptrdiff_t(4);
+      ++cursor;
+    } else if (argc == 11) {
+      cursor -= std::ptrdiff_t(-9223372036854775807) - std::ptrdiff_t(1);
+    } else {
+      return cursor[std::ptrdiff_t(4)] ? 4 : 5;
+    }
+  }
+  return 99;
+}

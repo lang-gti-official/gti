@@ -5,6 +5,44 @@
 
 Status: implementation proposal
 
+## Container completion campaign (in progress, 2026-10-11)
+
+The active outcome is complete, checked iteration for every current standard
+library sequence/container family, not just the easiest contiguous containers.
+The original single-owner staging described below is historical: the current
+ownership model already represents shared/exclusive stored references, nested
+carriers and multiple external origins. The campaign must use those general
+facts rather than introduce public container-name exceptions.
+
+| Family | Required traversal | Required access |
+| --- | --- | --- |
+| vector, array, deque, string, span, mutable_span, resource_vector, arena, SIMD lanes/masks | checked positional movement and reverse endpoints | shared reading; exclusive writing where elements are mutable |
+| list, map, set | predecessor/successor movement and reverse endpoints | shared reading; exclusive sequence/mapped-value writing; never mutable keys |
+| forward_list, unordered_map, unordered_set | forward traversal and common-position endpoints | shared reading; exclusive element/mapped-value writing; never mutable keys |
+| storage, pool, resource_storage | forward/backward live-slot traversal and reverse endpoints | shared reading; exclusive live-element writing; skip vacant slots |
+| string_view | read-only text traversal and positional/reverse access | preserve literal or dynamic owner witnesses |
+| paired_span | checked reference-proxy traversal and reverse endpoints | retain both owners without copying owning elements |
+
+Movement and duplication are separate capabilities: an exclusive cursor can
+move backward or jump without becoming copyable. End sentinels need not retain
+another owner loan. Queue adapters and ownership/result/guard objects are not
+automatically ranges. Fallible directory streams retain their explicit
+recoverable `next()` contract; they must not silently become infallible cursors.
+
+Delivery requires positive category/algorithm composition checks, independent
+shared-cursor copies, noncopyable exclusive cursors, owner invalidation/escape
+rejections, empty/exhausted and signed-offset failures, deterministic cleanup,
+and resource-provider lifetime coverage. New executable paths must pass
+MIR/LoweredProgram verification and independent forged-loan mutations, native
+C++20/C++23 optimization and sanitizer matrices, and zero-allocation traversal
+controls. Runnable examples, corpus/census registration and the reviewed stdlib
+surface manifest accompany the completed implementation.
+
+Current source checkpoints cover the listed nominal container families;
+string-view iteration, associative whole-entry key integrity, and remaining
+paired/resource lifetime-lowering failures are still prerequisites. Partial
+focused passes do not establish campaign completion or shipped support.
+
 The prerequisite order for the remaining dynamic-view and foundational
 range-algorithm work is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). The phases below

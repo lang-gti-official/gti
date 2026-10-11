@@ -18,13 +18,14 @@ struct map_node<K, V> {
 
 class map_sentinel {};
 
-class map_iterator<K, V> {
+class map_iterator<K, V, uint64_t Reverse = 0> {
   vector<unique_ptr<map_node<K, V>>>& nodes;
+  size_t root;
   mut size_t position;
 
 public:
-  map_iterator(vector<unique_ptr<map_node<K, V>>>& source, size_t index)
-      : nodes(source), position(index) {}
+  map_iterator(vector<unique_ptr<map_node<K, V>>>& source, size_t index, size_t root)
+      : nodes(source), root(root), position(index) {}
 
   map_entry<K, V>& operator*() {
     gti_internal::require_container_argument(this.position != 0);
@@ -34,41 +35,87 @@ public:
   map_entry<K, V>& operator->() { return *this; }
 
   bool operator!=(map_sentinel end) { return this.position != 0; }
-  bool operator==(map_sentinel& end) { return this.position == 0; }
-  bool operator!=(map_iterator<K, V>& other) {
+  bool operator==(map_sentinel end) { return this.position == 0; }
+  bool operator!=(map_iterator<K, V, Reverse>& other) {
     return this.position != other.position;
   }
-  bool operator==(map_iterator<K, V>& other) {
+  bool operator==(map_iterator<K, V, Reverse>& other) {
     return this.position == other.position;
   }
 
   void operator++() mut {
     gti_internal::require_container_argument(this.position != 0);
-    size_t right = this.nodes[this.position - 1]->right;
+    mut size_t right = this.nodes[this.position - 1]->right;
+    if constexpr (Reverse != 0) { right = this.nodes[this.position - 1]->left; }
     if (right != 0) {
       this.position = right;
-      while (this.nodes[this.position - 1]->left != 0) {
-        this.position = this.nodes[this.position - 1]->left;
+      while (true) {
+        mut size_t next = this.nodes[this.position - 1]->left;
+        if constexpr (Reverse != 0) { next = this.nodes[this.position - 1]->right; }
+        if (next == 0) { break; }
+        this.position = next;
       }
     } else {
       mut size_t child = this.position;
       mut size_t parent = this.nodes[child - 1]->parent;
-      while (parent != 0 && this.nodes[parent - 1]->right == child) {
+      while (parent != 0) {
+        mut size_t next = this.nodes[parent - 1]->right;
+        if constexpr (Reverse != 0) { next = this.nodes[parent - 1]->left; }
+        if (next != child) { break; }
         child = parent;
         parent = this.nodes[child - 1]->parent;
       }
       this.position = parent;
     }
   }
+
+  void operator--() mut {
+    mut size_t previous = this.position;
+    if (previous == 0) {
+      previous = this.root;
+      gti_internal::require_container_argument(previous != 0);
+      while (true) {
+        mut size_t next = this.nodes[previous - 1]->right;
+        if constexpr (Reverse != 0) { next = this.nodes[previous - 1]->left; }
+        if (next == 0) { break; }
+        previous = next;
+      }
+    } else {
+      mut size_t subtree = this.nodes[previous - 1]->left;
+      if constexpr (Reverse != 0) { subtree = this.nodes[previous - 1]->right; }
+      if (subtree != 0) {
+        previous = subtree;
+        while (true) {
+          mut size_t next = this.nodes[previous - 1]->right;
+          if constexpr (Reverse != 0) { next = this.nodes[previous - 1]->left; }
+          if (next == 0) { break; }
+          previous = next;
+        }
+      } else {
+        mut size_t child = previous;
+        previous = this.nodes[child - 1]->parent;
+        while (previous != 0) {
+          mut size_t next = this.nodes[previous - 1]->left;
+          if constexpr (Reverse != 0) { next = this.nodes[previous - 1]->right; }
+          if (next != child) { break; }
+          child = previous;
+          previous = this.nodes[child - 1]->parent;
+        }
+        gti_internal::require_container_argument(previous != 0);
+      }
+    }
+    this.position = previous;
+  }
 };
 
-class map_mut_iterator<K, V> {
+class map_mut_iterator<K, V, uint64_t Reverse = 0> {
   mut vector<unique_ptr<map_node<K, V>>>& nodes;
+  size_t root;
   mut size_t position;
 
 public:
-  map_mut_iterator(mut vector<unique_ptr<map_node<K, V>>>& source, size_t index)
-      : nodes(source), position(index) {}
+  map_mut_iterator(mut vector<unique_ptr<map_node<K, V>>>& source, size_t index, size_t root)
+      : nodes(source), root(root), position(index) {}
 
   map_entry<K, V>& operator*() {
     gti_internal::require_container_argument(this.position != 0);
@@ -81,25 +128,70 @@ public:
   map_entry<K, V>& operator->() { return *this; }
   mut map_entry<K, V>& operator->() mut { return *this; }
   bool operator!=(map_sentinel end) { return this.position != 0; }
-  bool operator==(map_sentinel& end) { return this.position == 0; }
+  bool operator==(map_sentinel end) { return this.position == 0; }
 
   void operator++() mut {
     gti_internal::require_container_argument(this.position != 0);
-    size_t right = this.nodes[this.position - 1]->right;
+    mut size_t right = this.nodes[this.position - 1]->right;
+    if constexpr (Reverse != 0) { right = this.nodes[this.position - 1]->left; }
     if (right != 0) {
       this.position = right;
-      while (this.nodes[this.position - 1]->left != 0) {
-        this.position = this.nodes[this.position - 1]->left;
+      while (true) {
+        mut size_t next = this.nodes[this.position - 1]->left;
+        if constexpr (Reverse != 0) { next = this.nodes[this.position - 1]->right; }
+        if (next == 0) { break; }
+        this.position = next;
       }
     } else {
       mut size_t child = this.position;
       mut size_t parent = this.nodes[child - 1]->parent;
-      while (parent != 0 && this.nodes[parent - 1]->right == child) {
+      while (parent != 0) {
+        mut size_t next = this.nodes[parent - 1]->right;
+        if constexpr (Reverse != 0) { next = this.nodes[parent - 1]->left; }
+        if (next != child) { break; }
         child = parent;
         parent = this.nodes[child - 1]->parent;
       }
       this.position = parent;
     }
+  }
+
+  void operator--() mut {
+    mut size_t previous = this.position;
+    if (previous == 0) {
+      previous = this.root;
+      gti_internal::require_container_argument(previous != 0);
+      while (true) {
+        mut size_t next = this.nodes[previous - 1]->right;
+        if constexpr (Reverse != 0) { next = this.nodes[previous - 1]->left; }
+        if (next == 0) { break; }
+        previous = next;
+      }
+    } else {
+      mut size_t subtree = this.nodes[previous - 1]->left;
+      if constexpr (Reverse != 0) { subtree = this.nodes[previous - 1]->right; }
+      if (subtree != 0) {
+        previous = subtree;
+        while (true) {
+          mut size_t next = this.nodes[previous - 1]->right;
+          if constexpr (Reverse != 0) { next = this.nodes[previous - 1]->left; }
+          if (next == 0) { break; }
+          previous = next;
+        }
+      } else {
+        mut size_t child = previous;
+        previous = this.nodes[child - 1]->parent;
+        while (previous != 0) {
+          mut size_t next = this.nodes[previous - 1]->left;
+          if constexpr (Reverse != 0) { next = this.nodes[previous - 1]->right; }
+          if (next != child) { break; }
+          child = previous;
+          previous = this.nodes[child - 1]->parent;
+        }
+        gti_internal::require_container_argument(previous != 0);
+      }
+    }
+    this.position = previous;
   }
 };
 }
@@ -204,6 +296,8 @@ public:
   using iterator = detail::map_mut_iterator<K, V>;
   using const_iterator = detail::map_iterator<K, V>;
   using sentinel = detail::map_sentinel;
+  using reverse_iterator = detail::map_mut_iterator<K, V, 1>;
+  using const_reverse_iterator = detail::map_iterator<K, V, 1>;
 
   map() requires std::default_initializable<Compare> &&
                  std::read_binary_callable<Compare, K, K, bool>
@@ -228,10 +322,32 @@ public:
         node = this.nodes[node - 1]->left;
       }
     }
-    return detail::map_iterator<K, V>(this.nodes, node);
+    return detail::map_iterator<K, V>(this.nodes, node, this.root);
   }
 
   detail::map_sentinel end() { return detail::map_sentinel(); }
+  const_iterator end_iterator() { return const_iterator(this.nodes, size_t(0), this.root); }
+  iterator end_mut() mut { return iterator(this.nodes, size_t(0), this.root); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel cend() { return this.end(); }
+  const_reverse_iterator rbegin() {
+    mut size_t node = this.root;
+    if (node != 0) {
+      while (this.nodes[node - 1]->right != 0) { node = this.nodes[node - 1]->right; }
+    }
+    return const_reverse_iterator(this.nodes, node, this.root);
+  }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return sentinel(); }
+  sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut {
+    mut size_t node = this.root;
+    if (node != 0) {
+      while (this.nodes[node - 1]->right != 0) { node = this.nodes[node - 1]->right; }
+    }
+    return reverse_iterator(this.nodes, node, this.root);
+  }
+  reverse_iterator rend_mut() mut { return reverse_iterator(this.nodes, size_t(0), this.root); }
 
   detail::map_mut_iterator<K, V> begin_mut() mut {
     mut size_t node = this.root;
@@ -240,17 +356,17 @@ public:
         node = this.nodes[node - 1]->left;
       }
     }
-    return detail::map_mut_iterator<K, V>(this.nodes, node);
+    return detail::map_mut_iterator<K, V>(this.nodes, node, this.root);
   }
 
   detail::map_iterator<K, V> find(K& key) {
     size_t node = this.locate(key);
-    return detail::map_iterator<K, V>(this.nodes, node);
+    return detail::map_iterator<K, V>(this.nodes, node, this.root);
   }
 
   detail::map_mut_iterator<K, V> find_mut(K& key) mut {
     size_t node = this.locate(key);
-    return detail::map_mut_iterator<K, V>(this.nodes, node);
+    return detail::map_mut_iterator<K, V>(this.nodes, node, this.root);
   }
 
   detail::map_iterator<K, V> lower_bound(K& key) {
@@ -264,7 +380,7 @@ public:
         node = this.nodes[node - 1]->left;
       }
     }
-    return detail::map_iterator<K, V>(this.nodes, result);
+    return detail::map_iterator<K, V>(this.nodes, result, this.root);
   }
 
   detail::map_iterator<K, V> upper_bound(K& key) {
@@ -276,7 +392,7 @@ public:
         node = this.nodes[node - 1]->left;
       } else { node = this.nodes[node - 1]->right; }
     }
-    return detail::map_iterator<K, V>(this.nodes, result);
+    return detail::map_iterator<K, V>(this.nodes, result, this.root);
   }
 
   V& at(K& key) {
@@ -327,31 +443,31 @@ private:
 public:
   pair<iterator, bool> insert(K key, V value) mut {
     auto result = this.insert_position(std::move(key), std::move(value));
-    return pair<iterator, bool>(iterator(this.nodes, result.first), result.second);
+    return pair<iterator, bool>(iterator(this.nodes, result.first, this.root), result.second);
   }
 
   pair<iterator, bool> insert_or_assign(K key, V value) mut {
     size_t node = this.locate(key);
     if (node != 0) {
       this.nodes[node - 1]->entry.second = std::move(value);
-      return pair<iterator, bool>(iterator(this.nodes, node), false);
+      return pair<iterator, bool>(iterator(this.nodes, node, this.root), false);
     }
     auto result = this.insert_position(std::move(key), std::move(value));
-    return pair<iterator, bool>(iterator(this.nodes, result.first), result.second);
+    return pair<iterator, bool>(iterator(this.nodes, result.first, this.root), result.second);
   }
 
   pair<iterator, bool> try_emplace<Args...>(K key, Args... args) mut {
     size_t node = this.locate(key);
     if (node != 0) {
-      return pair<iterator, bool>(iterator(this.nodes, node), false);
+      return pair<iterator, bool>(iterator(this.nodes, node, this.root), false);
     }
     auto result = this.insert_position(std::move(key), V(args...));
-    return pair<iterator, bool>(iterator(this.nodes, result.first), result.second);
+    return pair<iterator, bool>(iterator(this.nodes, result.first, this.root), result.second);
   }
 
   pair<iterator, bool> emplace<Args...>(K key, Args... args) mut {
     auto result = this.insert_position(std::move(key), V(args...));
-    return pair<iterator, bool>(iterator(this.nodes, result.first), result.second);
+    return pair<iterator, bool>(iterator(this.nodes, result.first, this.root), result.second);
   }
 
   mut V& get_or_insert(K key) mut requires std::default_initializable<V> {

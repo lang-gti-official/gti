@@ -1,7 +1,6 @@
-// C++-familiar API scaffold for <std/forward_list>.
-//
 // Node algorithms transfer exclusive node owners instead of retaining mutable
-// traversal borrows. Iteration still needs nullable owner-tied traversal.
+// traversal borrows. Cursors retain the whole chain's checked owner dependency
+// and follow its stable node addresses in constant time.
 
 #include <std/memory>
 
@@ -24,18 +23,104 @@ namespace std {
 
       forward_list_node<Args...>(forward_list_in_place tag, Args... args)
           : value(T(args...)) {}
+
+      const forward_list_node<T>* successor() {
+        if (this.next == nullptr) { return nullptr; }
+        return &*this.next;
+      }
+
+      forward_list_node<T>* successor() mut {
+        if (this.next == nullptr) { return nullptr; }
+        return &*this.next;
+      }
     };
 
     class forward_list_sentinel<T> {};
 
     class forward_list_iterator<T> {
-    public:
-      forward_list_iterator(forward_list_iterator<T>& other) = delete;
-      forward_list_iterator(forward_list_iterator<T>&& other) = default;
+      std::unique_ptr<forward_list_node<T>>& root;
+      mut const forward_list_node<T>* current = nullptr;
 
-      T& operator*();
-      void operator++() mut;
-      bool operator!=(forward_list_sentinel<T> sentinel);
+    public:
+      forward_list_iterator(std::unique_ptr<forward_list_node<T>>& root,
+                            bool at_end = false)
+          : root(root) {
+        if (!at_end && root != nullptr) {
+          this.current = &*root;
+        }
+      }
+
+      T& operator*() {
+        gti_internal::require_container_argument(this.current != nullptr);
+        // The retained root owns every node reached through next. Its shared
+        // checked loan excludes unlinking, mutation, movement and destruction.
+        unsafe { return std::assume_ref(&this.current->value, this.root); }
+      }
+
+      T& operator->() { return *this; }
+
+      void operator++() mut {
+        gti_internal::require_container_argument(this.current != nullptr);
+        unsafe { this.current = this.current->successor(); }
+      }
+
+      bool operator!=(forward_list_sentinel<T> end) {
+        return this.current != nullptr;
+      }
+
+      bool operator==(forward_list_sentinel<T> end) {
+        return this.current == nullptr;
+      }
+
+      bool operator!=(forward_list_iterator<T>& other) {
+        return this.current != other.current;
+      }
+
+      bool operator==(forward_list_iterator<T>& other) {
+        return this.current == other.current;
+      }
+    };
+
+    class forward_list_mut_iterator<T> {
+      mut std::unique_ptr<forward_list_node<T>>& root;
+      mut forward_list_node<T>* current = nullptr;
+
+    public:
+      forward_list_mut_iterator(mut std::unique_ptr<forward_list_node<T>>& root,
+                                bool at_end = false)
+          : root(root) {
+        if (!at_end && root != nullptr) {
+          this.current = &*root;
+        }
+      }
+
+      T& operator*() {
+        gti_internal::require_container_argument(this.current != nullptr);
+        unsafe { return std::assume_ref(&this.current->value, this.root); }
+      }
+
+      mut T& operator*() mut {
+        gti_internal::require_container_argument(this.current != nullptr);
+        // The exclusive root loan covers the stable node and grants access
+        // only through this cursor. Advancing never moves or destroys a node.
+        unsafe { return std::assume_mut(&this.current->value, this.root); }
+      }
+
+      T& operator->() { return *this; }
+      mut T& operator->() mut { return *this; }
+
+      void operator++() mut {
+        gti_internal::require_container_argument(this.current != nullptr);
+        unsafe { this.current = this.current->successor(); }
+      }
+
+      bool operator!=(forward_list_sentinel<T> end) {
+        return this.current != nullptr;
+      }
+
+      bool operator==(forward_list_sentinel<T> end) {
+        return this.current == nullptr;
+      }
     };
   }
 
@@ -74,6 +159,7 @@ namespace std {
     }
 
   public:
+    using iterator = detail::forward_list_mut_iterator<T>;
     using const_iterator = detail::forward_list_iterator<T>;
     using sentinel = detail::forward_list_sentinel<T>;
 
@@ -267,8 +353,26 @@ namespace std {
       this.head = std::move(reversed);
     }
 
-    // Initial iterator support is read-only.
-    detail::forward_list_iterator<T> begin();
-    detail::forward_list_sentinel<T> end();
+    detail::forward_list_iterator<T> begin() {
+      return detail::forward_list_iterator<T>(this.head);
+    }
+    detail::forward_list_sentinel<T> end() {
+      return detail::forward_list_sentinel<T>();
+    }
+    detail::forward_list_iterator<T> cbegin() {
+      return detail::forward_list_iterator<T>(this.head);
+    }
+    detail::forward_list_sentinel<T> cend() {
+      return detail::forward_list_sentinel<T>();
+    }
+    detail::forward_list_mut_iterator<T> begin_mut() mut {
+      return detail::forward_list_mut_iterator<T>(this.head);
+    }
+    detail::forward_list_iterator<T> end_iterator() {
+      return detail::forward_list_iterator<T>(this.head, true);
+    }
+    detail::forward_list_mut_iterator<T> end_mut() mut {
+      return detail::forward_list_mut_iterator<T>(this.head, true);
+    }
   };
 }

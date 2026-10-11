@@ -1609,6 +1609,20 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(forward_list_runtime PROPERTIES TIMEOUT 600)
+  foreach(iterator_gate IN ITEMS
+      forward_list_iterator_runtime
+      contiguous_iterator_completion
+      paired_span_iterator_completion
+      storage_lane_iterator_runtime
+      cursor_carrier_publication
+      container_iterator_movement)
+    add_test(
+      NAME ${iterator_gate}
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/${iterator_gate}_test.py"
+              "$<TARGET_FILE:gti>")
+    set_tests_properties(${iterator_gate} PROPERTIES TIMEOUT 600)
+  endforeach()
   add_test(
     NAME pack_parameter_runtime
     COMMAND "${Python3_EXECUTABLE}"

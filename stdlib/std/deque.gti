@@ -1,5 +1,6 @@
 #include <std/vector>
 #include <std/memory>
+#include <std/detail/iterator>
 
 namespace std {
 namespace detail {
@@ -29,7 +30,7 @@ public:
   deque_sentinel(size_t limit) : limit(limit) {}
   size_t position() { return this.limit; }
 };
-class deque_iterator<T> {
+class deque_iterator<T, uint64_t Reverse = 0> {
   vector<deque_slot<T>>& slots;
   size_t head;
   size_t length;
@@ -38,50 +39,75 @@ public:
   deque_iterator(vector<deque_slot<T>>& slots, size_t head, size_t length, size_t position)
       : slots(slots), head(head), length(length), position(position) {}
   T& operator*() {
-    gti_internal::index_bounds_check(this.position, this.length);
-    return this.slots[(this.head + this.position) % this.slots.size()].get();
+    size_t selected = checked_iterator_element(this.position, size_t(0), this.length, ptrdiff_t(0), Reverse != 0);
+    return this.slots[(this.head + selected) % this.slots.size()].get();
   }
   T& operator->() { return *this; }
   void operator++() mut {
-    gti_internal::index_bounds_check(this.position, this.length);
-    this.position++;
+    this.position = checked_iterator_position(this.position, size_t(0), this.length, ptrdiff_t(1), Reverse != 0);
   }
-  void operator--() mut { this.position--; }
+  void operator--() mut { this.position = checked_iterator_position(this.position, size_t(0), this.length, ptrdiff_t(-1), Reverse != 0); }
+  T& operator[](ptrdiff_t offset) {
+    size_t position = checked_iterator_element(this.position, size_t(0), this.length, offset, Reverse != 0);
+    return this.slots[(this.head + position) % this.slots.size()].get();
+  }
   bool operator!=(deque_sentinel end) { return this.position != end.position(); }
-  bool operator==(deque_sentinel& end) { return this.position == end.position(); }
-  bool operator!=(deque_iterator<T>& other) { return this.position != other.position; }
-  bool operator==(deque_iterator<T>& other) { return this.position == other.position; }
+  bool operator==(deque_sentinel end) { return this.position == end.position(); }
+  bool operator!=(deque_iterator<T, Reverse>& other) { return this.position != other.position; }
+  bool operator==(deque_iterator<T, Reverse>& other) { return this.position == other.position; }
   void operator+=(ptrdiff_t offset) mut {
-    this.position = size_t(ptrdiff_t(this.position) + offset);
+    this.position = checked_iterator_position(this.position, size_t(0), this.length, offset, Reverse != 0);
   }
   void operator-=(ptrdiff_t offset) mut {
-    this.position = size_t(ptrdiff_t(this.position) - offset);
+    this.position = checked_iterator_position(this.position, size_t(0), this.length, offset, Reverse == 0);
   }
   ptrdiff_t operator-(deque_sentinel end) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
     return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
   }
 };
-class deque_mut_iterator<T> {
+class deque_mut_iterator<T, uint64_t Reverse = 0> {
   mut vector<deque_slot<T>>& slots;
   size_t head;
   size_t length;
   mut size_t position;
 public:
-  deque_mut_iterator(mut vector<deque_slot<T>>& slots, size_t head, size_t length)
-      : slots(slots), head(head), length(length), position(0) {}
+  deque_mut_iterator(mut vector<deque_slot<T>>& slots, size_t head, size_t length, size_t position = 0)
+      : slots(slots), head(head), length(length), position(position) {}
   T& operator*() {
-    gti_internal::index_bounds_check(this.position, this.length);
-    return this.slots[(this.head + this.position) % this.slots.size()].get();
+    size_t selected = checked_iterator_element(this.position, size_t(0), this.length, ptrdiff_t(0), Reverse != 0);
+    return this.slots[(this.head + selected) % this.slots.size()].get();
   }
   mut T& operator*() mut {
-    gti_internal::index_bounds_check(this.position, this.length);
-    return this.slots[(this.head + this.position) % this.slots.size()].get();
+    size_t selected = checked_iterator_element(this.position, size_t(0), this.length, ptrdiff_t(0), Reverse != 0);
+    return this.slots[(this.head + selected) % this.slots.size()].get();
   }
   void operator++() mut {
-    gti_internal::index_bounds_check(this.position, this.length);
-    this.position++;
+    this.position = checked_iterator_position(this.position, size_t(0), this.length, ptrdiff_t(1), Reverse != 0);
   }
+  void operator--() mut { this.position = checked_iterator_position(this.position, size_t(0), this.length, ptrdiff_t(-1), Reverse != 0); }
+  void operator+=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), this.length, offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), this.length, offset, Reverse == 0);
+  }
+  T& operator[](ptrdiff_t offset) {
+    size_t position = checked_iterator_element(this.position, size_t(0), this.length, offset, Reverse != 0);
+    return this.slots[(this.head + position) % this.slots.size()].get();
+  }
+  mut T& operator[](ptrdiff_t offset) mut {
+    size_t position = checked_iterator_element(this.position, size_t(0), this.length, offset, Reverse != 0);
+    return this.slots[(this.head + position) % this.slots.size()].get();
+  }
+  T& operator->() { return *this; }
+  mut T& operator->() mut { return *this; }
   bool operator!=(deque_sentinel end) { return this.position != end.position(); }
+  bool operator==(deque_sentinel end) { return this.position == end.position(); }
+  ptrdiff_t operator-(deque_sentinel end) {
+    if constexpr (Reverse != 0) { return ptrdiff_t(this.position) - ptrdiff_t(end.position()); }
+    return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
+  }
 };
 }
 
@@ -124,6 +150,8 @@ public:
   using iterator = detail::deque_mut_iterator<T>;
   using const_iterator = detail::deque_iterator<T>;
   using sentinel = detail::deque_sentinel;
+  using reverse_iterator = detail::deque_mut_iterator<T, 1>;
+  using const_reverse_iterator = detail::deque_iterator<T, 1>;
 
   deque() {}
   static deque<T> collection_init(uint64_t count) { return deque<T>(); }
@@ -247,5 +275,19 @@ public:
   detail::deque_mut_iterator<T> begin_mut() mut {
     return detail::deque_mut_iterator<T>(this.slots, this.head, this.length);
   }
+  const_iterator end_iterator() {
+    return const_iterator(this.slots, this.head, this.length, this.length);
+  }
+  iterator end_mut() mut {
+    return iterator(this.slots, this.head, this.length, this.length);
+  }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel cend() { return this.end(); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this.slots, this.head, this.length, this.length); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return sentinel(size_t(0)); }
+  sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut { return reverse_iterator(this.slots, this.head, this.length, this.length); }
+  reverse_iterator rend_mut() mut { return reverse_iterator(this.slots, this.head, this.length, size_t(0)); }
 };
 }
