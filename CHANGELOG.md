@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.400.7 — Owning `expected` fields initialized from calls
+## 0.401.7 — Owning `expected` fields initialized from calls
 
 - A constructor's `expected<T, E>` field can now be initialized directly from
   a call when `T` owns resources, as in
@@ -18,7 +18,7 @@ for what minor and patch releases mean.
   field without a default value. If a later member fails, the field is
   destroyed exactly once. Such constructors used to report GTI-B0001.
 
-## 0.400.6 — Member initializers taking owning `expected` results
+## 0.401.6 — Member initializers taking owning `expected` results
 
 - A member initializer that constructs its field from an `expected<T, E>`
   call result whose payload owns resources, as in
@@ -28,7 +28,7 @@ for what minor and patch releases mean.
   member fails. Such constructors used to fail MIR verification with
   GTI-B0001.
 
-## 0.400.5 — `expected` results in member initializers and conditionals
+## 0.401.5 — `expected` results in member initializers and conditionals
 
 - A constructor's `expected<T, E>` field can now be initialized directly from
   a call, as in `box(bool ok) : item(make_item(ok)) {}`, when `T` is a class
@@ -42,7 +42,7 @@ for what minor and patch releases mean.
 - Still reporting GTI-B0001: an `expected` field initialized from a call when
   the payload owns resources, such as a `std::string` field.
 
-## 0.400.4 — Assigning a construction whose constructor can fail
+## 0.401.4 — Assigning a construction whose constructor can fail
 
 - Assigning a construction to an existing variable, as in
   `h = holder(6)`, now builds when the constructor can fail, for any
@@ -53,7 +53,7 @@ for what minor and patch releases mean.
   `h = holder(make_item())`, whether `T` needs no cleanup or owns resources.
   The consumed payload is destroyed exactly once.
 
-## 0.400.3 — Reading a field of a temporary that owns resources
+## 0.401.3 — Reading a field of a temporary that owns resources
 
 - A field of a temporary class value can now be read directly when the class
   has a destructor or owns resources, as in `make_counted(5).number`,
@@ -65,7 +65,7 @@ for what minor and patch releases mean.
   `make_named(true).value().text.size()`, when the payload owns resources.
   Reading `.value()` of an error still stops with GTI-R0009.
 
-## 0.400.2 — Observing an `expected` call result directly
+## 0.401.2 — Observing an `expected` call result directly
 
 - A call's `expected<T, E>` result can now be tested or read in place:
   `if (make_item())`, `!make_item()`, `make_item() ? a : b`,
@@ -85,7 +85,7 @@ for what minor and patch releases mean.
   temporaries joined by a conditional before they are used, and an `expected`
   field initialized directly from a call.
 
-## 0.400.1 — Returning a construction built from an `expected`
+## 0.401.1 — Returning a construction built from an `expected`
 
 - A construction from a by-value `expected<T, E>` argument can now be returned
   directly or used as a member initializer, as in
@@ -101,6 +101,15 @@ for what minor and patch releases mean.
   emitting C++ that the native compiler rejects. Assigning such a
   construction to an existing variable still reports GTI-B0001, and so does a
   member initializer whose `expected` payload owns resources.
+
+## 0.401.0 — Comparator-ordered search and partition points
+
+- `<std/algorithm>` adds `partition_point` and comparator overloads of
+  `lower_bound`, `upper_bound` and `binary_search`. Applications can discover
+  predicate boundaries or search records without defining `operator<`,
+  including descending orders and move-only records/callbacks. Returned
+  cursors retain checked owner loans; the queries allocate no element storage.
+- Example 139 demonstrates sorting and searching with the same custom order.
 
 ## 0.400.0 — Structural construction and callable reflection
 
