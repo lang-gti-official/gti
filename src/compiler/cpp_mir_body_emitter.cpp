@@ -18846,7 +18846,12 @@ expectedClassResultDestinationSlot(const MirProgram &program,
 
 // A copy has no intermediate value-drop to reparent. Construct its sole
 // binding directly at the Load, retaining the distinct source and destination
-// lexical drops and the destination's ordinary Initialize event.
+// lexical drops and the destination's ordinary Initialize event. This serves a
+// byte-preserving native-record success payload and, equally, any cleanup-free
+// placement Expected (one whose success alternative is a class): a separate
+// SSA local would have to value-initialize that alternative, a construction
+// the source program does not perform. A scalar-success Expected keeps its
+// ordinary carrier, so its bindings never become lifetime slots here.
 [[nodiscard]] const MirPlace *
 expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
                             MirValueId valueId) {
@@ -18856,8 +18861,10 @@ expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
   if (value == nullptr || value->info.type.kind != SemanticType::Expected ||
       value->info.type.arguments.size() != 2 || !value->info.traits.copyable ||
       value->info.traits.drop != DropKind::Lexical ||
-      !cppRequiresIndirectValueTransport(program,
-                                         value->info.type.arguments.front()) ||
+      (!cppRequiresIndirectValueTransport(program,
+                                          value->info.type.arguments.front()) &&
+       (!expectedClassPlacementStorageEligible(program, value->info.type) ||
+        !cleanupFreeExpectedClassAlternatives(program, value->info.type))) ||
       load == nullptr || load->kind != MirInstructionKind::Load ||
       load->result != valueId || load->destination || load->receiver ||
       load->operands.size() != 1 ||
@@ -18933,13 +18940,15 @@ expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
 // the following Initialize reparents it to the binding; neither record needs
 // separate C++ storage when this exact move/reparent chain is present.
 //
-// A cleanup-free Expected<Class, E> moves into one binding the same way. MIR
-// gives the moved value no drop and no lifecycle event, only the source's
-// ownership transition, and the adjacent Initialize activates the binding's
-// own drop exactly as a copy does. Constructing the binding at the Move is
-// then the only exact publication: a separate SSA local would have to
-// value-initialize the success alternative, a construction the source program
-// does not perform and that a class without a default constructor lacks.
+// A cleanup-free placement Expected (a class success alternative) moves into
+// one binding the same way. MIR gives the moved value no drop and no
+// lifecycle event, only the source's ownership transition, and the adjacent
+// Initialize activates the binding's own drop exactly as a copy does.
+// Constructing the binding at the Move is then the only exact publication: a
+// separate SSA local would have to value-initialize the success alternative,
+// a construction the source program does not perform and that a class
+// without a default constructor lacks. A scalar-success Expected keeps its
+// ordinary carrier, so its bindings never become lifetime slots here.
 [[nodiscard]] const MirPlace *
 expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
                             MirValueId valueId) {
@@ -18952,6 +18961,7 @@ expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
   const bool cleanupFree =
       value != nullptr && move != nullptr && move->lifecycle.empty() &&
       valueDrop == nullptr &&
+      expectedClassPlacementStorageEligible(program, value->info.type) &&
       cleanupFreeExpectedClassAlternatives(program, value->info.type);
   if (value == nullptr || value->info.type.kind != SemanticType::Expected ||
       value->info.type.arguments.size() != 2 ||
