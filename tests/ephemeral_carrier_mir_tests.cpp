@@ -2096,6 +2096,98 @@ int main() {
          "exclusive transport exercises one non-lifecycle Stored entry loan");
 }
 
+void checkMultiDependencyRelayIdentity() {
+  for (const bool sharedFirst : {false, true}) {
+    const std::string prefix = sharedFirst ? "int&" : "mut int&";
+    const auto frontend = lang::Frontend().analyze(
+        "multi-dependency-relay.gti",
+        "#include <std/utility>\nclass Owners {\n" + prefix + R"gti( first;
+  mut int& second;
+public:
+  Owners()gti" +
+            prefix + R"gti( first, mut int& second)
+      : first(first), second(second) {}
+  void advance() mut { this.second += this.first; }
+};
+T relay<T>(T owners) { return std::move(owners); }
+int main() {
+  mut int left = 3;
+  mut int right = 0;
+  {
+    Owners input{left, right};
+    mut auto result = relay(std::move(input));
+    result.advance();
+    mut auto final = relay(std::move(result));
+    final.advance();
+  }
+  return left + right - 9;
+}
+)gti",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(frontend.canGenerateCode(),
+           "generic relay preserves distinct multi-dependency endpoints");
+    if (!frontend.canGenerateCode()) {
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      continue;
+    }
+    const auto lowered =
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+    expect(lang::verifyMirProgram(frontend.mir).valid() &&
+               lang::verifyLoweredProgram(lowered).empty(),
+           "mixed and exclusive owner relay admits verified backend input");
+    std::size_t checked = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      for (const auto &loan : function.body.loans) {
+        if (loan.entry || loan.kind != lang::MirLoanKind::Stored ||
+            loan.additionalDependencies.empty() || loan.producedBy == 0)
+          continue;
+        const auto *hir = frontend.hir.findFunctionInstance(function.id);
+        const auto *producer =
+            hir ? hir->body.findValue(loan.producedBy) : nullptr;
+        if (!producer || !producer->functionTarget)
+          continue;
+        ++checked;
+        for (int mutation = 0; mutation < 2; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *instance = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          if (mutation == 0) {
+            instance->body.loans[loan.id - 1].additionalDependencies.clear();
+          } else {
+            bool changed = false;
+            for (auto &block : instance->body.blocks) {
+              if (changed || block.activeFailure || block.failureParameter)
+                continue;
+              for (auto &instruction : block.instructions) {
+                if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                    instruction.loan && *instruction.loan < loan.id) {
+                  instruction.loan = loan.id;
+                  changed = true;
+                  break;
+                }
+              }
+            }
+            expect(changed, "a consuming relay retires its input first");
+          }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "relay cannot omit an owner or use the input's endpoint for "
+                 "the result");
+          bool rejected = false;
+          try {
+            (void)gti_test::lowerProgram(frontend, malformed, malformed);
+          } catch (const std::exception &) {
+            rejected = true;
+          }
+          expect(rejected, "backend admission rejects forged relay endpoints");
+        }
+      }
+    }
+    expect(checked == 2,
+           "both multi-dependency relay publications are checked");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -2113,5 +2205,6 @@ int main() {
   checkRangeEndpointSemanticContracts();
   checkReadonlyLocalCleanupGuard();
   checkMovedExclusiveParameterEntry();
+  checkMultiDependencyRelayIdentity();
   return failures == 0 ? 0 : 1;
 }

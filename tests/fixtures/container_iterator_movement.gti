@@ -37,7 +37,34 @@ void exclusive_bidirectional<I>(mut I cursor)
   *middle = 81;
 }
 
+// An unrelated multi-owner carrier has the same consuming-relay contract.
+// Its fresh result endpoint must not be replaced by the consumed input's end.
+class OwnerPair {
+  int& increment;
+  mut int& first;
+  mut int& second;
+public:
+  OwnerPair(int& increment, mut int& first, mut int& second)
+      : increment(increment), first(first), second(second) {}
+  void advance() mut {
+    this.first += this.increment;
+    this.second += this.increment;
+  }
+};
+T relay_owners<T>(T owners) { return std::move(owners); }
+
 int main() {
+  int increment = 3;
+  mut int first_owner = 0;
+  mut int second_owner = 1;
+  {
+    OwnerPair original{increment, first_owner, second_owner};
+    mut auto active = relay_owners(std::move(original));
+    active.advance();
+    mut auto final = relay_owners(std::move(active));
+    final.advance();
+  }
+  if (first_owner != 6 || second_owner != 7) { return 40; }
   mut std::vector<int> values = {1, 2, 3};
   if (!random_cursor(values.cbegin())) { return 1; }
   { mut auto end = values.end_iterator(); --end; if (*end != 3) { return 2; } }

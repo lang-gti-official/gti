@@ -1422,7 +1422,11 @@ A by-value call that consumes a complete borrowed carrier retires the input
 loan on the call-success continuation before initializing the returned carrier.
 An exact same-type noncopyable argument relay transports the semantic loan
 identity to its published `Stored` result only when the complete source,
-permissions, ancestry and dependency set agree. It must not leave the result
+permissions, ancestry and dependency set agree and semantics has not assigned
+the result a distinct retained identity. A fresh result keeps its independent
+endpoint; the input's last-use endpoint only acknowledges its retired input
+loan, including carriers with mixed shared/exclusive or multiple dependencies.
+It must not leave the result
 parented to the consumed shell or resurrect the retired formal at a later local
 initialization. Independent verification still rejects forged field paths,
 weakened access, retained consumed ancestry and omitted retirement.
