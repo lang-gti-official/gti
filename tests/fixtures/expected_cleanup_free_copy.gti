@@ -1,0 +1,93 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// Copying a cleanup-free expected<T, E> into a new binding. The copy
+// constructs the new binding from its source, so nothing default-constructs
+// a success payload the program never constructs; a class without a default
+// constructor has no such construction at all. Each binding keeps its own
+// value afterwards.
+struct point {
+  mut int32_t x;
+  mut int32_t y;
+};
+
+class token {
+  int32_t id;
+public:
+  token(int32_t id) : id(id) {}
+  int32_t value() { return this.id; }
+};
+
+// This payload has a default constructor; its copy takes the same route.
+struct sized {
+  mut int32_t width = 1;
+  mut int32_t height = 2;
+};
+
+expected<point, int32_t> make_point(int32_t x) {
+  point made = {.x = x, .y = x + 1};
+  return made;
+}
+
+expected<point, int32_t> missing_point(int32_t code) {
+  return unexpected(code);
+}
+
+expected<token, int32_t> make_token(int32_t id) { return token(id); }
+
+expected<sized, int32_t> make_sized(int32_t width) {
+  sized made = {.width = width};
+  return made;
+}
+
+int32_t next(int32_t value) { return value + 1; }
+
+// A by-value parameter is a named binding too.
+int32_t parameter_copy(expected<point, int32_t> value) {
+  auto local = value;
+  return local.value().x + value.value().y;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut auto original = make_point(3);
+  auto copy = original;
+  auto again = copy;
+  original = make_point(10);
+  std::println(copy.value().x + again.value().y + original.value().x);
+
+  auto fixed = make_point(5);
+  auto fixed_copy = fixed;
+  std::println(fixed_copy.value().y + fixed.value().x);
+
+  auto failed = missing_point(4);
+  auto failed_copy = failed;
+  std::println(failed_copy.error() + failed.error());
+
+  mut int32_t total = 0;
+  for (mut int32_t i = 1; i < 4; i++) {
+    auto item = make_token(i);
+    auto duplicate = item;
+    total += duplicate.value().value() + item.value().value();
+  }
+  std::println(total);
+
+  auto made = make_sized(5);
+  auto made_copy = made;
+  auto moved = std::move(made_copy);
+  std::println(moved.value().width + made.value().height);
+
+  std::println(parameter_copy(make_point(7)));
+
+  mut auto left = make_point(1);
+  mut auto right = left;
+  right = make_point(2);
+  std::swap(left, right);
+  std::println(left.value().x * 10 + right.value().x);
+
+  // A failure while every copy is still live.
+  if (argc == 2) {
+    std::println(next(2147483645 + argc));
+  }
+  return 0;
+}

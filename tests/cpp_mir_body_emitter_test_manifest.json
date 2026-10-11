@@ -374,6 +374,10 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeExpectedClassCopySlot",
+      "suite": "text"
+    },
+    {
       "name": "testExpectedClassReplacementSources",
       "suite": "text"
     },
