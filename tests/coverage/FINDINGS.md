@@ -894,6 +894,12 @@ O0/O1/O3 native modes with elision disabled. The eight consumers are binding,
 receiver, argument, relay, container insertion, operator, chained call and
 discard. Broader reconciliation remains required; this is not closure of #103.
 
+A parenthesized lambda failed the same way, with GTI-B0001, when it was bound,
+passed as a generic argument or copied as `(f)`. Since 0.398.7, HIR lowers the
+grouping as a source alias of the operand's closure value, and
+`grouped_lambda_runtime` gates those forms, including nesting, an owning
+capture and an immediate call.
+
 ## S02 — ICE: a ternary producing a class value
 
 `reproducers/s02-ternary-class-value.gti`

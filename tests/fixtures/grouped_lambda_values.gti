@@ -1,0 +1,23 @@
+#include <std/string>
+
+// Parentheses around a lambda create no second closure: each grouped value
+// below is its producer's exact closure, binding or argument.
+int32_t run<F>(F f) { return f(); }
+
+int main() {
+  auto plain = ([]() -> int32_t { return 1; });
+  if (plain() != 1) { return 1; }
+  int32_t base = 2;
+  auto nested = ((([base]() -> int32_t { return base; })));
+  if (nested() != 2) { return 2; }
+  mut std::string text = std::string("abc");
+  auto owning =
+      ([text = std::move(text)]() -> int32_t { return int32_t(text.size()); });
+  if (owning() != 3) { return 3; }
+  if (run(([]() -> int32_t { return 4; })) != 4) { return 4; }
+  auto copied = (plain);
+  if (copied() != 1) { return 5; }
+  if ((([]() -> int32_t { return 6; }))() != 6) { return 6; }
+  std::println("grouped lambdas ok");
+  return 0;
+}
