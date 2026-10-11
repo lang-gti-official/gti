@@ -1,0 +1,115 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// A member initializer constructing its field from an owning
+// Expected<Class, E> call result passed directly by value. The member's
+// constructor owns that argument before it can fail: the result is moved in
+// once and destroyed exactly once when the construction succeeds, when it
+// fails, and when a later member fails and the earlier members roll back.
+mut int32_t destroyed = 0;
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() { destroyed += 1; }
+};
+
+struct named_value {
+  std::string text;
+  named_value(std::string text) : text(std::move(text)) {}
+};
+
+expected<counted, int32_t> make_counted(bool ok) {
+  if (ok) { return counted(5); }
+  return unexpected(int32_t(2));
+}
+
+expected<named_value, int32_t> make_named(bool ok) {
+  if (ok) { return named_value(std::string("payload")); }
+  return unexpected(int32_t(6));
+}
+
+struct counted_holder {
+  int32_t number;
+  counted_holder(expected<counted, int32_t> item)
+      : number(item ? item.value().number : 100 + item.error()) {}
+};
+
+struct named_holder {
+  int32_t size;
+  named_holder(expected<named_value, int32_t> item)
+      : size(item ? int32_t(item.value().text.size()) : 100 + item.error()) {}
+};
+
+// A member with its own destructor reports its destruction.
+class tracked_holder {
+public:
+  int32_t number;
+  tracked_holder(expected<counted, int32_t> item)
+      : number(item ? item.value().number : 100 + item.error()) {}
+  ~tracked_holder() { std::println(this.number); }
+};
+
+// Reads the value unconditionally, so the error state raises inside the
+// member's constructor after it owns its argument.
+struct strict_holder {
+  int32_t number;
+  strict_holder(expected<counted, int32_t> item)
+      : number(item.value().number) {}
+};
+
+struct owner {
+  counted_holder first;
+  named_holder named;
+  tracked_holder tracked;
+  owner(bool ok)
+      : first(counted_holder(make_counted(ok))),
+        named(named_holder(make_named(ok))),
+        tracked(tracked_holder(make_counted(!ok))) {}
+};
+
+// A later member can fail after an earlier owning member was constructed.
+struct failing_owner {
+  tracked_holder tracked;
+  strict_holder strict;
+  failing_owner(bool ok)
+      : tracked(tracked_holder(make_counted(true))),
+        strict(strict_holder(make_counted(ok))) {}
+};
+
+int32_t check(bool yes) {
+  bool no = !yes;
+  owner success{yes};
+  if (success.first.number != 5 || success.named.size != 7 ||
+      success.tracked.number != 102 || destroyed != 1) {
+    return 1;
+  }
+  owner failure{no};
+  if (failure.first.number != 102 || failure.named.size != 106 ||
+      failure.tracked.number != 5 || destroyed != 2) {
+    return 2;
+  }
+  failing_owner both{yes};
+  if (both.tracked.number != 5 || both.strict.number != 5 || destroyed != 4) {
+    return 3;
+  }
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    owner looped{index != 1};
+    total += looped.first.number + looped.named.size;
+  }
+  if (total != 2 * (5 + 7) + 102 + 106 || destroyed != 7) { return 4; }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) {
+    failing_owner failing{argc == 0};
+    return failing.strict.number;
+  }
+  int32_t status = check(argc > 0);
+  std::println(destroyed);
+  return status;
+}

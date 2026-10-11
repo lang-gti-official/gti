@@ -2722,7 +2722,7 @@ analysis, HIR, MIR, and the backend.
   A terminal wrapper is not completion. This remains M-FAIL-01/M-BACK-02 work,
   not a change to source-language validity.
 
-- **Shared failure cleanup (Gitea #222), delivered in 0.401.1:**
+- **Shared failure cleanup (Gitea #222), delivered in 0.401.7:**
   - Function and lambda bodies emit each distinct failure-cleanup suffix once,
     as a continuation record entered by `ContinueFailure`; see
     [MIR](../architecture/mir.md#shared-failure-cleanup).
@@ -2730,7 +2730,7 @@ analysis, HIR, MIR, and the backend.
     owners before.
   - The `stdlib_surface_json` fixture's generated C++ fell from 33.5 MB to
     4.3 MB, and its native `-O3` build from 153 s to 7.7 s; see
-    [verification](../architecture/verification.md#shared-failure-cleanup-0401-1).
+    [verification](../architecture/verification.md#shared-failure-cleanup-0401-7).
 
   **Remaining:**
   - Constructor, field-initializer, destructor, module and hosted-startup
