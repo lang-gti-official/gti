@@ -875,6 +875,11 @@ add_test(NAME expected_class_argument_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_argument_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_class_argument_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_cleanup_free_copy_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_cleanup_free_copy_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_cleanup_free_copy_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_cleanup_free_move_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_cleanup_free_move_runtime_test.py"
