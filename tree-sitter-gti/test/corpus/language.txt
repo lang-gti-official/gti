@@ -4041,3 +4041,41 @@ public:
             (initializer_expression
               (primary_expression
                 (identifier)))))))))
+
+==================
+Compiler type bindings
+==================
+
+@compiler_type("meta_list") struct list<Elements...> {
+public:
+  constexpr list() {}
+};
+
+@compiler_type("meta_field_type") struct field_type<T, uint64_t I> {};
+
+---
+
+(source_file
+  (class_declaration
+    (compiler_type_binding
+      (string_literal))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (class_body
+      (access_specifier)
+      (constructor_declaration
+        (identifier)
+        (parameter_clause)
+        (block))))
+  (class_declaration
+    (compiler_type_binding
+      (string_literal))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (identifier)))
+    (class_body)))
