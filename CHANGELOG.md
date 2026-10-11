@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.402.9 — `expected` results returned from lambdas
+## 0.402.10 — `expected` results returned from lambdas
 
 - A lambda or other callable that returns `expected<T, E>`, where `T` has no
   default constructor, can now be called where its result is passed by value,
@@ -18,6 +18,17 @@ for what minor and patch releases mean.
   programs previously stopped with internal compiler error `GTI-B0001`.
 - Still reporting `GTI-B0001`: assigning a fresh `expected<T, E>` result to an
   existing binding, as in `r = make(7);`, when `T` has no default constructor.
+
+## 0.402.9 — Copying `expected` values of plain structs and classes
+
+- Copying an `expected<T, E>` into a new variable, as in
+  `auto copy = original;`, now builds when `T` is a struct or class without
+  cleanup. It used to stop with internal compiler error `GTI-B0001` unless `T`
+  was a pointer-bearing `[[c_abi]]` record. The new variable is constructed
+  directly from the original, and both keep their own values.
+- Moving an `expected<T, E>` whose `T` is a number and whose `E` is a struct
+  into a new variable, and then assigning that variable to another one, builds
+  again. 0.402.7 had made this stop with `GTI-B0001`.
 
 ## 0.402.8 — Field reads of temporaries inside `&&`, `||` and conditionals
 
