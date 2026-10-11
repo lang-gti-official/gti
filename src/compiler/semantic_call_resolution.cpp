@@ -959,6 +959,8 @@ auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
     return argument.kind == SemanticType::Enum && argument.enumId != 0 &&
            argument.enumId <= enums.size() &&
            !enums[argument.enumId - 1].payload;
+  case GenericConstraintKind::Reflectable:
+    return isReflectableType(argument);
   case GenericConstraintKind::SignedIntegral:
     return isSignedInteger(argument);
   case GenericConstraintKind::UnsignedIntegral:

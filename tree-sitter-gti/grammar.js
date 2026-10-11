@@ -441,6 +441,7 @@ module.exports = grammar({
     class_declaration: ($) =>
       seq(
         optional(field("compiler_binding", $.compiler_type_binding)),
+        optional(field("declared_attributes", $.declared_attribute_list)),
         optional(
           field("attributes", $.class_attribute_list),
         ),
@@ -471,6 +472,40 @@ module.exports = grammar({
         $._class_attribute,
         repeat(seq(",", $._class_attribute)),
         "]]",
+      ),
+
+    // `[[ns::name(arguments)]]`: a declared attribute names an `[[attribute]]`
+    // struct by qualified name and initializes its fields positionally or by
+    // designator with constant expressions.
+    declared_attribute_list: ($) =>
+      seq(
+        "[[",
+        $.declared_attribute,
+        repeat(seq(",", $.declared_attribute)),
+        "]]",
+      ),
+
+    declared_attribute: ($) =>
+      seq(
+        field("name", $.scoped_identifier),
+        optional(
+          seq(
+            "(",
+            optional(
+              choice(
+                commaSep1($.designated_initializer),
+                commaSep1($.expression),
+              ),
+            ),
+            ")",
+          ),
+        ),
+      ),
+
+    attributed_field_declaration: ($) =>
+      seq(
+        field("attributes", $.declared_attribute_list),
+        choice($.variable_declaration, $.static_variable_declaration),
       ),
 
     _class_attribute: ($) => seq(
@@ -527,6 +562,7 @@ module.exports = grammar({
         $.method_declaration,
         $.static_variable_declaration,
         $.variable_declaration,
+        $.attributed_field_declaration,
         $.empty_declaration,
       ),
 

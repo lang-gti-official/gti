@@ -4043,7 +4043,8 @@ public:
     AccessModifier access = declaration.kind == ClassKind::Class
                                 ? AccessModifier::Private
                                 : AccessModifier::Public;
-    if (declaration.kind == ClassKind::Interface) {
+    if (declaration.kind == ClassKind::Interface ||
+        (declaration.reflectPrivate && access == AccessModifier::Private)) {
       writeIndent();
       output << "public:\n";
       access = AccessModifier::Public;
@@ -4053,7 +4054,8 @@ public:
     for (const LoweredDeclaration *member : loweredChildren(classRow.id)) {
       if (const auto *value =
               std::get_if<LoweredAccessDeclaration>(&member->payload)) {
-        access = value->access;
+        access =
+            declaration.reflectPrivate ? AccessModifier::Public : value->access;
         if (indentation > 0) {
           --indentation;
         }
