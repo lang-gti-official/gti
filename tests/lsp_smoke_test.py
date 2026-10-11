@@ -3112,13 +3112,19 @@ def test_defaulted_lifecycle_tooling(executable, root):
 
 def test_constexpr_aggregate_tooling(executable, root):
     source = (
+        "constexpr void advance(mut int32_t& value) { value += 1; }\n"
         "struct Point {\n"
-        "  int32_t coordinate;\n"
-        "  constexpr Point(int32_t initial) : coordinate(initial) {}\n"
+        "  mut int32_t coordinate;\n"
+        "  constexpr Point(int32_t initial) : coordinate(initial) { this.coordinate += 0; }\n"
         "  constexpr int32_t value() { return this.coordinate; }\n"
+        "  constexpr void bump(int32_t amount) mut { this.coordinate += amount; }\n"
+        "  constexpr mut int32_t& current() mut { return this.coordinate; }\n"
         "};\n"
+        "constexpr int32_t build() { mut Point point = Point(7); "
+        "point.bump(2); advance(point.current()); return point.value(); }\n"
         "constexpr Point origin = Point(7);\n"
         "static_assert(origin.value() == 7);\n"
+        "static_assert(build() == 10);\n"
         "int main() { return origin.value() - 7; }\n"
     )
     path = root / "constexpr-aggregate-tooling.gti"
@@ -3187,6 +3193,11 @@ def test_constexpr_aggregate_tooling(executable, root):
         assert "constexpr int32_t Point::value()" in method_hover["contents"][
             "value"
         ], method_hover
+        mutable_method = source.index("bump(2)")
+        mutable_hover = request(6, "textDocument/hover", mutable_method + 1)
+        assert "constexpr void Point::bump(int32_t amount) mut" in mutable_hover[
+            "contents"
+        ]["value"], mutable_hover
 
         session.send(
             {
@@ -3251,6 +3262,32 @@ def test_constexpr_aggregate_tooling(executable, root):
             and message["params"].get("version") == 3
             and not has_error_diagnostics(message["params"])
         )
+        overflow = source.replace("value += 1", "value += 2147483647", 1)
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 4},
+                    "contentChanges": [{"text": overflow}],
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 4
+        )["params"]
+        diagnostic = next(
+            item for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2057"
+            and "overflow" in item["message"]
+        )
+        assert diagnostic["data"]["phase"] == "semantics"
+        assert diagnostic["range"]["start"] == lsp_position(
+            overflow, overflow.index("+=")
+        ), diagnostic
     finally:
         session.close()
 

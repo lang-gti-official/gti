@@ -1358,7 +1358,8 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         identity = report["tools"][name]
         expected_command = [str(executable), "--version"]
         require(identity["requested"] == str(executable), f"{name} request changed")
-        require(identity["resolved"] == str(executable), f"{name} path was not resolved")
+        require(identity["resolved"] == str(executable.resolve(strict=True)),
+                f"{name} file identity was not resolved")
         require(
             identity["version_command"] == expected_command,
             f"{name} version command was not recorded exactly",
@@ -1368,7 +1369,7 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         )
         require(
             identity["version_output"] == (version.stdout + version.stderr).strip(),
-            f"{name} version output does not match the resolved compiler",
+            f"{name} version output does not match the selected invocation",
         )
 
     require(
@@ -1713,7 +1714,8 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         lambda: module.load_build_provenance(
             tampered_path,
             module.Tool(str(gti), gti, (str(gti), "--version"), "gti"),
-            module.Tool(str(cxx), cxx, (str(cxx), "--version"), "cxx"),
+            module.Tool(str(cxx), cxx.resolve(strict=True), (str(cxx), "--version"),
+                        "cxx", cxx.absolute()),
             (
                 Path(thread_workload["descriptor_path"]).parent
                 / thread_descriptors["gti-sequential"]["source"]
@@ -1731,7 +1733,8 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
     )
     archive_index = sequential_report["native"]["argv"].index(str(archive_path))
     selected_gti = module.Tool(str(gti), gti, (str(gti), "--version"), "gti")
-    selected_cxx = module.Tool(str(cxx), cxx, (str(cxx), "--version"), "cxx")
+    selected_cxx = module.Tool(str(cxx), cxx.resolve(strict=True),
+                               (str(cxx), "--version"), "cxx", cxx.absolute())
     sequential_entry = (
         Path(thread_workload["descriptor_path"]).parent
         / thread_descriptors["gti-sequential"]["source"]
@@ -2234,16 +2237,40 @@ def test_arithmetic_success_proxy_smoke(
     )
 
 
+def test_tool_invocation_alias(module, root: Path) -> None:
+    root.mkdir()
+    target = root / "clang"
+    target.write_text(
+        f"#!{sys.executable}\n"
+        "import pathlib,sys\nprint(pathlib.Path(sys.argv[0]).name)\n",
+        encoding="utf-8")
+    target.chmod(0o755)
+    alias = root / "clang++"
+    alias.symlink_to(target)
+    selected = module.resolved_tool(str(alias), ("--version",))
+    require(selected.resolved == target.resolve(strict=True),
+            "tool file/hash identity must remain canonical")
+    require(selected.command_path == alias.absolute() and
+            selected.version_command[0] == str(alias.absolute()) and
+            selected.version_output == "clang++",
+            "tool invocation and its identity query must preserve driver selection")
+    record = module.tool_record(selected)
+    require(record["resolved"] == str(target.resolve(strict=True)) and
+            record["executable"]["path"] == str(target.resolve(strict=True)),
+            "preserving driver spelling must not weaken executable provenance")
+
+
 def main() -> None:
     if len(sys.argv) != 4:
         raise SystemExit("usage: benchmark_compare_test.py runner.py gti cxx")
 
     runner = Path(sys.argv[1]).resolve(strict=True)
     gti = Path(sys.argv[2]).resolve(strict=True)
-    cxx = Path(sys.argv[3]).resolve(strict=True)
+    cxx = Path(sys.argv[3]).absolute()
     module = load_runner(runner)
     with tempfile.TemporaryDirectory(prefix="gti-benchmark-harness-") as directory:
         root = Path(directory).resolve()
+        test_tool_invocation_alias(module, root / "tool-alias")
         test_strict_descriptors(module, runner, gti, cxx, root / "descriptors")
         test_source_containment(module, root / "sources")
         test_output_containment(module, runner, gti, cxx, root / "outputs")

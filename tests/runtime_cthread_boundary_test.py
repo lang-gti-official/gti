@@ -60,7 +60,7 @@ def main():
         for name, flags in modes:
             binary = pathlib.Path(temporary) / name
             execute([
-                args.cxx.resolve(), *flags, "-Wall", "-Wextra", "-Werror",
+                args.cxx.absolute(), *flags, "-Wall", "-Wextra", "-Werror",
                 "-pthread", "-I", root / "runtime/src",
                 "-I", root / "runtime/include",
                 root / "runtime/src/cthread_state.cpp",
