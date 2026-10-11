@@ -47,8 +47,8 @@
     "stdlib/std/string_view.gti": "2cdba7c578ac5ec9581946253763439eae656ad8cbd7cf739218891e040f1a6d",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
-    "stdlib/std/unordered_map.gti": "56394ca14708bcb53d9e8111ac758d6d3f3426e3c62d1de95499bcda377ed005",
-    "stdlib/std/unordered_set.gti": "a34e3491db726db67aeb15eddcf538139e38f1253f2b44e8d9ddf726538e5a41",
+    "stdlib/std/unordered_map.gti": "8f2b0f540d58b9e2a363c33b1708e31bc13cf4985051f9ae9a82c071bc411bb1",
+    "stdlib/std/unordered_set.gti": "d34da5c1a6347dea83c385c536c7eaf217335da2bcab7ba99275a9ea26f52fc4",
     "stdlib/std/utility.gti": "959b87c2cd332ad51a4d1711fb4e94b83ab752cb8af886e2aa3bbf2658815e7d",
     "stdlib/std/vector.gti": "a7806f68471af6ff6fd65433a12ccdd561ae97ba69a6dc1d5b965e424ae2a395"
   },
@@ -822,6 +822,13 @@
         "stdout": "",
         "stderr": ""
       }
+    },
+    {
+      "id": "iterator-text-view-module",
+      "mode": "run",
+      "source": "tests/fixtures/text_view_iterator_module.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "json",
@@ -3503,17 +3510,21 @@
         "std::string_view::reverse_iterator_at"
       ],
       "case_ids": [
-        "iterator-text-view"
+        "iterator-text-view",
+        "iterator-text-view-module"
       ],
       "required_instantiations": [
         "literal-backed and owner-backed counted bytes",
         "embedded zero",
         "independent readonly character value yield",
         "view-shell and dynamic-owner lifetime",
-        "forward and reverse position"
+        "forward and reverse position",
+        "direct std.string_view module import and independently advanced shared copies"
       ],
       "evidence": [
         "tests/fixtures/text_view_iterator_completion.gti",
+        "tests/fixtures/text_view_iterator_module.gti",
+        "stdlib/modules/string_view.gti",
         "tests/text_view_iterator_runtime_test.py",
         "tests/text_view_iterator_compiler_tests.cpp",
         "examples/144-counted-text-view-iteration.gti"
@@ -3664,16 +3675,20 @@
         "std::unordered_map::end_mut"
       ],
       "case_ids": [
+        "iterator-checked-position",
         "iterator-projected-map"
       ],
       "required_instantiations": [
         "readonly key",
         "exclusive mapped scalar and owning value",
         "vacant bucket skipping",
-        "no fabricated reverse category"
+        "no fabricated reverse category",
+        "independently advanced shared copies and by-value sentinel equality"
       ],
       "evidence": [
         "tests/fixtures/map_mutable_entry_projection.gti",
+        "tests/fixtures/container_iterator_movement.gti",
+        "tests/container_iterator_movement_test.py",
         "tests/map_mutable_entry_projection_test.py",
         "examples/087-associative-containers.gti"
       ]
@@ -3757,7 +3772,8 @@
       "required_instantiations": [
         "readonly keys",
         "forward shared cursors",
-        "common-position endpoint without fabricated reverse support"
+        "common-position endpoint without fabricated reverse support",
+        "independently advanced shared copies and by-value sentinel equality"
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",

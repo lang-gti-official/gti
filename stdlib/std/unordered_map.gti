@@ -41,7 +41,7 @@ public:
            this.nodes[this.current] == nullptr) { this.current++; }
   }
   bool operator!=(unordered_map_sentinel end) { return this.current != end.position(); }
-  bool operator==(unordered_map_sentinel& end) { return this.current == end.position(); }
+  bool operator==(unordered_map_sentinel end) { return this.current == end.position(); }
   bool operator!=(unordered_map_iterator<K, V>& other) { return this.current != other.current; }
   bool operator==(unordered_map_iterator<K, V>& other) { return this.current == other.current; }
 };
@@ -91,7 +91,7 @@ public:
   K& key() { return this.projection.key(); }
   void operator++() mut { this.projection.advance(); }
   bool operator!=(unordered_map_sentinel end) { return this.projection.index() != end.position(); }
-  bool operator==(unordered_map_sentinel& end) { return this.projection.index() == end.position(); }
+  bool operator==(unordered_map_sentinel end) { return this.projection.index() == end.position(); }
 };
 }
 

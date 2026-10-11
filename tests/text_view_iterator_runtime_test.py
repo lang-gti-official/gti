@@ -40,6 +40,7 @@ def main():
         output = Path(directory)
         for name, flags, native in modes:
             cases = [(root / "tests/fixtures/text_view_iterator_completion.gti", []),
+                     (root / "tests/fixtures/text_view_iterator_module.gti", []),
                      (root / "tests/fixtures/text_view_iterator_failure.gti",
                       [root / "tests/fixtures/text_view_iterator_support.cpp"]),
                      (root / "examples/144-counted-text-view-iteration.gti", [])]
