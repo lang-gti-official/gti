@@ -3107,11 +3107,31 @@ task checkpoint while validation is in progress.
 slot files record owner pid, time, kind and command and disappear on release;
 a waiter blocks until a full window frees a slot and prints who holds it; a
 bounded wait reports the holders; a slot of an exited pid is reclaimed while a
-live one never is; the suite and build counts come from defaults, the
+live one never is; a mutex in its owner-publication gap and an old live mutex
+cannot be reclaimed; the suite and build counts come from defaults, the
 `GTI_BUILD_WINDOW_*` environment and overriding flags; the CLI holds its slot
 for the whole wrapped command, propagates the command's exit status and lists
 holders with `--status`; and an interrupt delivered to the process group
 releases the slot. The last check is POSIX-only.
+
+`remote_runner` exercises `scripts/remote_runner.py` using disposable real Git
+repositories and detached processes, without production SSH access. It covers
+dirty/new/deleted source snapshot identity and ignored-file exclusion; refusal
+of symlinks, unsafe roots, archive traversal/links and duplicate entries;
+successful and failed command status/log retrieval; failed-fetch preservation;
+cancellation and timeout cleanup; active-clean refusal; shared suite-window
+contention and cancellation while queued; recovery of crashed workers and
+partial uploads; concurrent recovery serialization; and refusal to sweep
+unmarked/live directories. Fault injection proves cancellation during process
+creation cannot strand the child and cleanup errors cannot report success.
+The [remote-runner contract](agent-workflow.md#mac-mini-remote-runs) describes
+live SSH usage and the limits of custom command plans.
+
+`agent_workflow` also verifies that remote validation submits the exact plan
+without taking a laptop slot or retaining the metadata lock, records retrieved
+evidence against the clean published head, and refuses failed runs and
+mismatched source identities, including a successful step that changes tracked
+source before cleanup. Existing head/base race checks remain unchanged.
 
 ## CLI terminal colour
 

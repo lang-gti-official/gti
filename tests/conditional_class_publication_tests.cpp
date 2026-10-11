@@ -153,6 +153,54 @@ int main() {
   }
   expect(joins == 3,
          "nonraising and raising passive class diamonds were exercised");
+  {
+    // A parenthesized lambda is likewise a non-executing HIR source alias:
+    // no Grouping value of lambda type exists, and the wrapper resolves to
+    // the exact closure, binding or argument value it groups.
+    const auto path = std::filesystem::path(__FILE__).parent_path() /
+                      "fixtures" / "grouped_lambda_values.gti";
+    std::ifstream input(path);
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    expect(frontend.canGenerateCode(), "grouped lambda fixture has valid MIR");
+    std::size_t lambdaAliases = 0;
+    for (const auto &function : frontend.hir.functionInstances()) {
+      if (function.source == nullptr ||
+          function.source->name().source != path.string())
+        continue;
+      expect(std::none_of(
+                 function.body.values.begin(), function.body.values.end(),
+                 [](const auto &value) {
+                   return value.kind == lang::HirValueKind::Grouping &&
+                          value.info.type.kind == lang::SemanticType::Lambda;
+                 }),
+             "a parenthesized lambda adds no Grouping value");
+      for (const auto &alias : function.body.sourceAliases) {
+        const auto *group = lang::exprAs<lang::Grouping>(alias.source);
+        if (group == nullptr)
+          continue;
+        ++lambdaAliases;
+        const auto *producer = function.body.findValue(alias.value);
+        expect(producer != nullptr &&
+                   producer->info.type.kind == lang::SemanticType::Lambda &&
+                   function.body.valueForSource(*alias.source) == producer &&
+                   function.body.valueForSource(*group->expression()) ==
+                       producer,
+               "a grouped lambda resolves to its operand's exact value");
+      }
+    }
+    expect(lambdaAliases >= 6,
+           "binding, nested, owning, argument, copy and callee groupings "
+           "are all exercised");
+    if (frontend.canGenerateCode()) {
+      try {
+        expect(!gti_test::emitCppText(frontend).empty(),
+               "grouped lambdas emit from verified MIR");
+      } catch (const std::exception &error) {
+        expect(false, error.what());
+      }
+    }
+  }
   std::size_t groupedFixtures = 0;
   for (const std::string fixture :
        {"grouped_class_passive", "grouped_class_cleanup",
