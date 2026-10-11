@@ -137,8 +137,9 @@ ask the frontend-aware `LoweredProgramBuilder` to capture parser-recorded
 statement spans against the **optimized** MIR's retained HIR identities.
 Each `LoweredBody::sourceLocations` row owns its source path/span and exact
 block/instruction identity; instruction zero identifies a terminator. These
-optional rows are verified and sealed with the lowered contract (printer
-version 13), survive destruction of AST/HIR, and are never executable,
+optional rows are verified and sealed with the lowered contract (current printer
+version 17; debug rows were introduced in version 13), survive destruction of
+AST/HIR, and are never executable,
 ownership, type, or optimization authority. The default contract has no rows.
 
 The C++ backend consumes only those lowered rows. Body/template planning emits
@@ -166,8 +167,9 @@ remain later slices; this metadata does not bypass MIR verification.
 ## Backend Contract
 
 Terminal and caller-tracking contracts are sealed declaration facts, also
-checked against the embedded MIR. Lowered-program serialization version 13
-includes both flags and optional source debug locations. The C++ representation
+checked against the embedded MIR. The current lowered-program inspection format
+is version 17 and retains both flags and optional source debug locations.
+The C++ representation
 passes an explicit artifact-local caller-site parameter through supported
 tracked signatures and calls. An
 untracked caller supplies the verified call-site constant; a tracked caller
@@ -354,15 +356,18 @@ must fail closed, never silently fall back to memberwise expired-pointer
 copying. The ordinary address carrier alone does not discharge those composite
 transport requirements.
 
-The address representation guarantee is distinct from permission to invoke an
-unknown callee with a known-expired pointer. Such a callee may access the
-pointee. Semantics admits inert transport through proved direct/lambda targets
-and bounded virtual families; an owning erased interface whose generic target
-set is not known remains conservative, even if one particular source initializer
-looks inert. Its native-record ABI is tested with live payloads, alongside an
-expired-payload rejection test. Supporting arbitrary erased targets would need
-semantic target/effect tracking through ownership, replacement and cloning,
-not a backend or public-library-name exception.
+The address representation guarantee is distinct from the unsafe obligation to
+pass a valid pointer to a callee that accesses it. The optional raw auditor can
+prove inert transport through direct/lambda targets and bounded virtual
+families; an owning erased interface whose generic target set is unknown can
+remain incomplete even when one initializer looks inert. Warn reports that
+uncertainty without blocking compilation; Strict promotes audit findings to
+errors. The default Off policy requires no such interprocedural raw-validity
+proof. Native ABI tests use live payloads, and explicit audit negatives cover
+expired payloads. Improving erased-target auditing requires general effect/
+target tracking through ownership, replacement and cloning, not a backend or
+public-library-name permission. Mandatory checked loans, type/access rules and
+unsafe caller obligations apply in every audit mode.
 
 ## Lowered Program Construction
 
@@ -433,7 +438,7 @@ this admission boundary. `CppBackend` hands the
 evidence to the emitter, emission planner, and representation snapshot, so no
 stage checks again. The `LoweredProgram` overloads of those stages still check
 first, so a direct or test caller cannot bypass rejection. `verifyLoweredProgram`
-is also available for independent tooling and tests. The PR #176 audit
+is also available for independent tooling and tests. The historical PR #176 audit
 therefore retains streamed hashing and shared evidence, but rejects its
 seal-only admission shortcut.
 
@@ -953,7 +958,7 @@ large dominance-frontier/phi sets for every alternative cleanup status. This
 does not change any GTI value's initialization, lifecycle slot, constructor
 status protocol, failure record, or cleanup edge.
 
-Aggregate, array, prefix, optional, shared/unique, closure and polymorphic cleanup
+Aggregate, array, source-defined sequence, optional, shared/unique, closure and polymorphic cleanup
 recipes inherit that scope. A cleanup sequence arms its own scope after its first
 failure so later child calls stop before local cleanup on a second failure; the
 fixed-array leaf traversal retains the same rule. Nested scopes never replace the
@@ -1246,8 +1251,9 @@ exact receiver value type with the `StringView` representation, and a
 producer other than a staged `CallInput`; observers carrying failure sites or
 a defined failure are not admitted. MIR constant evaluation already observes
 either operand category. When `std::string_view` becomes a source-defined
-class (PR #109), these become ordinary member calls on a class value and this
-intrinsic route is subsumed.
+class under the separate source-view proposal (historical PR #109), these would
+become ordinary member calls on a class value and subsume this intrinsic route.
+That proposal is not the current primitive-view implementation.
 Their existing value-rooted moved-Expected slot admits either its one state
 test or a sole checked scalar observer, preserving the same source-to-value
 drop transfer and full-expression destruction. Trivial scalar-only Expected
@@ -1504,6 +1510,13 @@ field as that field's selected member initializer, immediately after the
 producer succeeds. The constructor initializer metadata must name exactly that
 field and the producer's value. As for a cleanup-free class result, the field's
 empty representation ends and the field is constructed from the moved wrapper.
+An owning Expected result, such as one whose payload holds a `std::string`,
+reaches its field the same way from its value-rooted slot. The producer's
+success edge may activate only that result's own obligation, and the field's
+`Initialize` must reparent it into the field's construction rollback. After the
+field is constructed from the moved wrapper, the slot's moved-from shell
+retires without a semantic drop, and a later member's failure drains the
+field through MIR's rollback.
 Two cleanup-free Expected call results joined by a conditional publish into the
 join's conditional temporary. MIR gives that temporary no drop, so each
 producer constructs it directly. A failure-free call does this immediately
@@ -1854,11 +1867,14 @@ the destination and cleanup remain checked. Native virtual boundary bridges
 placement-construct class results in uninitialized storage instead of first
 default-constructing an object and overwriting it.
 
-An unused cleanup-free nominal result also receives uninitialized output
-storage for a transformed call. Selection requires no SSA uses, value-rooted
-places, semantic result-drop obligation, borrowed state, or active cleanup;
-the class must have generated destruction. On success the emitter marks and
-immediately retires that representation, permitting repeated calls in a loop.
+An unused cleanup-free nominal or Expected result also receives
+uninitialized output storage, from a transformed or a failure-free source call,
+such as `[[discard]] make_value()` or a comma's discarded left operand.
+Selection requires no SSA uses, value-rooted places, semantic result-drop
+obligation, borrowed state, or active cleanup; the class must have generated
+destruction. A transformed call marks that representation on success and a
+failure-free call constructs it from its returned value; either retires it
+immediately, permitting repeated calls in a loop.
 Failure leaves the storage uninitialized and follows the existing MIR failure
 edge. This is not a substitute for the MIR cleanup schedule of an owning or
 destructor-bearing result.
@@ -2604,13 +2620,16 @@ selected private constructor's instruction-free, unborrowed void-return body on
 every aggregate/status admission route. Field order or an empty native shell
 alone cannot replace that witness.
 
-Generated/defaulted construction still uses the separate declaration schedule.
-Fallible ordinary class-value calls on that route remain `GTI-B0003`: generated
-construction has no concrete constructor body to carry propagation to callers.
-It is not silently redirected through a terminal wrapper. For this remaining
-case, an assignable nullable owner can start null and be allocated in an explicit
-initialization method after construction. This gap remains tracked under
-M-FAIL/M-BACK in the implementation queue.
+Generated/defaulted construction with `generatedDefaultRequiresSchedule`
+retains its selected concrete constructor MIR and can suppress the separately
+retained declaration catalog after the complete coverage proof. It does not
+universally lack a constructor failure channel. The backend still has a
+classified `GTI-B0003` boundary for a fallible source class-value call left in
+an unscheduled declaration-time initializer. It cannot silently redirect that
+call through a terminal wrapper. For such a rejected case, an assignable nullable
+owner can start null and be allocated in an explicit initialization method
+after construction. Remaining schedule/routing profiles need focused evidence;
+the classification is not a blanket prohibition on generated defaults.
 
 Obligation-free class values in a move capture or an owning `Expected` payload
 remain concrete MIR values rather than backend-recognized library types. The

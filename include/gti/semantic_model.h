@@ -1981,7 +1981,10 @@ public:
   // A fresh class result is a newly produced object, not a value-category
   // transfer from an existing place (notably the Move intrinsic).
   [[nodiscard]] bool isFreshClassResult(const Expr &expression) const;
-  // Class-value grouping or a selected fresh-result construction wrapper.
+  // A comma expression with no selected operator.
+  [[nodiscard]] const Binary *builtinComma(const Expr &expression) const;
+  // A class or Expected value grouping or comma, or a selected fresh-result
+  // construction wrapper.
   [[nodiscard]] const Expr *
   directInitializationSource(const Expr &expression) const;
 

@@ -1761,9 +1761,10 @@ public:
 
 /// Constructs one owned object and its strong-reference control block.
 ///
-/// Construction uses the same scalar/class family as make_unique. If control
-/// block allocation fails, the completed object is destroyed before the
-/// defined allocation failure propagates. This factory is not recoverable.
+/// Construction uses the same scalar/class family as make_unique. Infallible
+/// object or control-block exhaustion reports allocation failure and aborts
+/// without cleanup. Ordinary constructor failure retains verified rollback.
+/// This factory is not recoverable.
 shared_ptr<T> make_shared<T, Args...>(Args... args) {
   return shared_ptr<T>(gti_internal::shared_owner_from_unique(
       gti_internal::allocate_unique_owner<T>(args...)));

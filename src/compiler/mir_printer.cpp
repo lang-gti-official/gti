@@ -1798,7 +1798,10 @@ private:
     }
     output << " failure-records " << value.failureRecords.size() << '\n';
     for (const MirFailureRecord &item : value.failureRecords) {
-      output << "  fail" << item.id
+      output << "  fail" << item.id << " kind="
+             << (item.kind == MirFailureRecordKind::Continuation
+                     ? "continuation"
+                     : "producer")
              << " hosted-operation=" << item.hostedStartupOperation
              << " producer=bb" << item.producerBlock << ":i"
              << item.producerInstruction << " parameter=bb"

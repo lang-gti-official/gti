@@ -9,6 +9,44 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.402.3 — Comma expressions that yield class values
+
+- A comma expression whose right operand is a class or `expected` value now
+  builds: binding it, as in `plain_value v = (log(), make_value());`,
+  returning it, passing it by value, reading a field of it, assigning it, or
+  observing an `expected`, as in `(step(), make_item(ok)).has_value()`. The
+  comma's value is the right operand's object itself, neither copied nor
+  moved. The left operand runs first, and its temporaries are destroyed at the
+  end of the full expression. Such programs used to report GTI-B0001.
+- A class or `expected` value can also be the discarded left operand of a
+  comma, as in `(make_owned(1), step())`.
+- A parenthesized `expected` call result, as in `(make_item(ok)).has_value()`,
+  and an explicitly discarded result that needs no cleanup, as in
+  `[[discard]] make_value();`, now build too. These also used to report
+  GTI-B0001.
+- Still reporting GTI-B0001, with or without a comma: a member initializer
+  built from a call that cannot fail, such as `p(make_value(n))`, a class-valued
+  conditional whose arms need no cleanup, and a field read of an owning
+  temporary on the right of `&&` or `||`.
+
+## 0.402.2 — Smaller, faster builds for functions with many owned locals
+
+- A function that owns many values with destructors no longer repeats the
+  same cleanup code for every point where it can fail. The JSON
+  standard-library test program now generates 4.3 MB of C++ instead of
+  33.5 MB, and its optimized native build takes about 8 seconds instead of
+  about 150. Behaviour on failure is unchanged: the same resources are
+  released in the same order, and the same failure is reported.
+
+## 0.402.1 — Owning `expected` fields initialized from calls
+
+- A constructor's `expected<T, E>` field can now be initialized directly from
+  a call when `T` owns resources, as in
+  `box(bool ok) : named(make_named(ok)) {}` with a `std::string` in the
+  payload, or when `T` has a destructor. The result is constructed in the
+  field without a default value. If a later member fails, the field is
+  destroyed exactly once. Such constructors used to report GTI-B0001.
+
 ## 0.401.6 — Member initializers taking owning `expected` results
 
 - A member initializer that constructs its field from an `expected<T, E>`

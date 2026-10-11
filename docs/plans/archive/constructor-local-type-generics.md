@@ -7,6 +7,12 @@
 
 Status: complete
 
+This archived proposal retains the first delivery's rationale, restrictions and
+test obligations. Illustrative private prefix storage and statements about
+then-missing complete-range relationships are historical, not current library
+implementation requirements. Later constructor, pack, range and source-storage
+profiles are owned by the canonical contracts and implementation sequence.
+
 This proposal adds inferred constructor-local type parameters and bounded
 trailing requirements. Its first user-facing client is construction of an
 owning `std::string` from an exact input iterator and sentinel:

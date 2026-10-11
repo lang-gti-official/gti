@@ -3,6 +3,13 @@
 Status: Implemented for GTI 0.294.0. Canonical syntax and semantics now live in
 `docs/language/grammar.ebnf` and `docs/language/static-semantics.md`.
 
+This is the completed first proposal, not today's constexpr support inventory.
+Its scalar evaluator baseline, staged dependent-assertion restrictions and
+implementation verbs are historical. Both assertion slices landed; subsequent
+constant-execution and reflection work follows `L-CONST-01` in the
+[implementation sequence](../implementation-sequence.md), with semantic timing
+and deterministic resource limits preserved.
+
 ## Summary
 
 GTI should add a compiler-owned `static_assert` declaration with the familiar

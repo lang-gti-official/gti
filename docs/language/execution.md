@@ -32,7 +32,9 @@ The count conversion therefore precedes both program effects and argument
 allocation. Program-wide initialization precedes construction through the
 source-defined string/vector surface, so that surface cannot depend on
 uninitialized standard-library state. Every completed startup or initializer
-value receives ordinary cleanup if a later step fails. The no-argument entry
+value receives ordinary cleanup if a later step raises a cleanup-preserving
+defined failure. Infallible allocation exhaustion instead aborts under Section
+4.10. The no-argument entry
 form performs the same program-wide initialization walk before entering its
 body but has no owned-argument setup.
 
@@ -138,7 +140,11 @@ position, so later captures and the enclosing expression observe it as moved.
 
 The comma operator evaluates its left operand and then its right operand. It
 does not end the enclosing full-expression: a temporary or transient loan
-created by the left operand remains active while the right operand runs.
+created by the left operand remains active while the right operand runs. The
+left operand's value is discarded. When the right operand is a class or
+`expected` value, the comma's value is that object itself, neither copied nor
+moved, with the right operand's lifetime; a parenthesized class or `expected`
+value is likewise its operand's object.
 
 Logical `and`/`&&` evaluates the left operand first and evaluates the right
 operand only when the left value is true. Logical `or`/`||` evaluates the left
@@ -221,9 +227,10 @@ operations remain enforced at those actual operations. A fresh result may
 initialize a local or return destination even when its type is not movable.
 This does not change assignment, named-local return/implicit-return movement,
 conversion between different types, or existing callable/container constraints.
-Conditional/comma materializations and immovable by-value argument transport
+Conditional materializations and immovable by-value argument transport
 retain their existing structural admission rules; this slice does not widen
-those families. Borrow-carrying results retain their original owner dependency
+those families. A comma whose value is a class or `expected` object denotes
+its right operand's object, as described above. Borrow-carrying results retain their original owner dependency
 set and access/escape limits, not a new owner supplied by the wrapper.
 
 [`130-fresh-result-initialization.gti`](../../examples/130-fresh-result-initialization.gti)
@@ -312,13 +319,14 @@ full-expression cleanup completes before the selected body or arm begins. A
 classic `for` initializer completes once; its condition is a new
 full-expression on each test and its increment is a new full-expression after
 each body/`continue`. A range-for evaluates its range once. An addressable range
-is retained through a read-only hidden owner reference; an owned temporary is
+is retained through a read-only hidden owner reference for read traversal or
+an exclusive hidden owner reference for mutable traversal; an owned temporary is
 transferred into a hidden owner lasting for the complete range statement. For
 a nominal range, the iterator and sentinel are then initialized in that order.
 A fixed array uses an exact index and extent instead. On each iteration the
 comparison condition completes before the body, the element binding and its
-read-only loan are initialized before the body and ended at the end of that
-iteration, and the increment completes before the next condition. On loop exit
+selected shared/exclusive loan are initialized before the body and ended at
+the end of that iteration, and the increment completes before the next condition. On loop exit
 the sentinel, iterator, range carrier, and hidden owner are cleaned in reverse
 initialization order. `break`, `return`, and defined-failure edges converge
 through the same active-obligation plan; `continue` ends the current element
@@ -498,9 +506,10 @@ call-argument scheduling gap.
 Checked explicit conversions reject out-of-range constants and produce a
 defined runtime failure when a dynamic value is outside the target range.
 Float-to-integer conversion truncates toward zero after its validity check.
-The explicit `uint8_t(char)` code-unit extraction is bit-preserving and cannot
-fail; it is not a numeric promotion or arithmetic operation. This slice adds no
-inverse `char(uint8_t)` conversion.
+Explicit `uint8_t(char)` extraction and `char(uint8_t)` construction preserve
+the exact code-unit bits and cannot fail, including in constant contexts. They
+are not numeric promotions, Unicode conversion, or arithmetic operations;
+implicit conversion and other integer widths remain rejected.
 
 Built-in integer arithmetic first applies GTI's integer promotions and exact
 common-type rules. The operation then executes in that fixed-width result
@@ -817,6 +826,12 @@ alternative by move. A named expected place is observed without consuming the
 object and copies the selected alternative. `void` needs no value transport.
 The success and error alternatives must support the selected transport even
 though only one is active at runtime.
+
+For the admitted checked-borrow form `expected<T&, E>`, success instead
+produces a read-only checked reference preserving the carrier's original owner
+dependency; it does not copy or move the referent. The error follows the same
+copy/move rule above. Retention and forwarding remain subject to the exact
+borrow-origin contract in [Expected values](expected.md#fallible-borrows).
 
 GTI does not provide language exceptions.
 
@@ -1165,8 +1180,9 @@ or virtual GTI call, constructor call, managed-task join, or callback-forwarding
 edge may propagate an already formed ordinary record, but it preserves every
 field byte-for-byte and does not add a caller site or transitive category set.
 
-After a failure record is selected, ordinary execution does not resume. The
-implementation follows compiler-generated failure edges and destroys every
+After a cleanup-preserving failure record is selected, ordinary execution does
+not resume. Infallible exhaustion is the aborting exception specified below.
+The implementation follows compiler-generated failure edges and destroys every
 fully initialized live temporary, local, owned parameter, and initialized
 subobject between the operation and the nearest containment boundary. Cleanup
 uses the same Section 4.2 LIFO full-expression and reverse successful-
@@ -1376,18 +1392,16 @@ arbitrates one process-wide winner, completes partial/interrupted report
 writes, and exits immediately with status 70. The descriptor-free all-zero
 artifact/site token resolves to the normative runtime sentinel. Semantics and
 HIR carry the stable local failure vocabulary and
-snapshot-local source anchors. The pre-optimization metadata builder now
+snapshot-local source anchors. The pre-optimization metadata builder
 constructs the canonical logical source table, one-based artifact-local sites,
 descriptor serialization, and SHA-256 identity; MIR retains exact detector and
 separate caller-attribution site mappings plus distinct direct, virtual,
-constructor, and callable propagation channels. MIR now gives eligible full-expression-root scalar
-operations in function and lambda bodies explicit normal/failure successors,
-one fixed-record parameter, reverse-construction failure cleanup, and an exact
-record-preserving propagation endpoint. An exact later scalar ordinary-call
-argument may also branch after earlier owning parameters have been staged when
-it is either a local detector or an un-sited static direct-call propagation with
-no nested owning parameter or result state. That general argument shape remains
-a verified IR slice except where the narrower component below selects it.
+constructor, and callable propagation channels. Admitted source bodies carry
+explicit normal/failure successors, fixed-record channels, ordered prepared
+inputs, pending result publication and reverse live-obligation cleanup. These
+are verified operation families, not an AST fallback or a general promise to
+emit an unrepresented ownership/borrowing shape. The current MIR and backend
+chapters describe their exact admission checks.
 
 The general verified-MIR backend is the executable consumer of this contract.
 For every admitted local detector, lowering records the exact outcome and site;
@@ -1411,29 +1425,30 @@ propagation and cleanup contract. Generated C++ terminal integrity helpers are n
 an alternate source-body failure authority. The frontend still rejects
 recursively cleanup-owning namespace globals and static fields.
 
-## 4.11 Temporary And Cleanup Implementation Gaps
+## 4.11 Temporary And Cleanup Completion Boundaries
 
 MIR now gives supported lexical storage and materializing values typed drop
 obligations, tracks initialize/move/reparent/replace/transfer/drop state, and
 verifies LIFO full-expression plus reverse lexical cleanup on every normal
 failure-free edge. Branch-local logical/conditional temporaries retain a
 path-conditional obligation through their merge and are destroyed at the
-enclosing full-expression boundary. Section 4.2 fixes the wider language
-order, but these executable-authority gaps remain:
+enclosing full-expression boundary. Ordered call/constructor staging, owning
+result publication, partial-construction rollback, cleanup failure and general
+manual object-lifetime operations are implemented for their admitted profiles.
+Every production source body emits from verified MIR; none of these is a
+blanket missing feature or an alternate AST execution route.
 
-- ordered materialization of receivers, arguments, destinations, results, and
-  compound-expression child roles;
-- path-sensitive cleanup of fully initialized subobjects after partial
-  construction or a defined failure;
-- a distinct initialization and destruction contract for generic static
-  storage;
-- complete executable representation of Section 4.10 beyond the bounded
-  full-expression-root and prepared-call-argument scalar MIR cleanup
-  families; and
-- cleanup interaction with any future manual object-lifetime operations.
+The remaining goals are uniform verifier-visible materialization for additional
+expression/ownership shapes, broader construction and callable compositions,
+generic static storage with its own initialization/destruction contract, and
+embedding/arbitrary foreign-thread containment. Each extension must establish
+exact origins, success-only publication, cleanup on every applicable exit and
+defined failure before backend admission. Manual lifetime already has its
+explicit unsafe obligations; later profiles cannot weaken checked borrowing or
+infer object validity from bytes alone.
 
-The first four are systems-readiness goals for complete backend-independent
-execution. The current partial-construction and defined-failure implementation
-must be checked against their wider scope before extending it. General manual
-lifetime is a further goal with explicit initialization, drop and failure
-prerequisites; its current absence cannot weaken the defined contract.
+Use [MIR](../architecture/mir.md), [backend admission](../architecture/backend.md)
+and the [active implementation sequence](../plans/implementation-sequence.md)
+for current prerequisites and evidence. Historical narrow failure slices do not
+describe the current whole compiler's scope, and recorded tests do not imply
+coverage of every composition.

@@ -45,6 +45,8 @@ Iterators and sentinels may be self-contained values or source-defined checked
 carriers. A cursor can retain shared or exclusive references and nested owner
 dependencies through the ordinary stored-reference rules. The physical cursor
 and range shells remain distinct from the external storage they protect.
+Range lowering adds its dedicated traversal/element loans; a library name
+grants no permission.
 
 ```gti
 for (T value : range) {
@@ -58,8 +60,9 @@ reference. For a mutable-reference loop, an addressable lvalue must provide a
 mutable place and is retained by one exclusive hidden owner reference. An
 owned prvalue is transferred into hidden loop storage and can supply either
 access mode. A second range carrier borrows that owner. Nominal read-only
-ranges then use the equivalent compiler-private core sequence (`auto&` is
-otherwise confined to a range declaration):
+ranges then use the equivalent compiler-private core sequence. Ordinary local
+`auto&` inference is also implemented; these generated names and bindings are
+still only an explanatory model:
 
 ```gti
 auto owner = range;            // read-only reference for an lvalue, owned value for a prvalue
@@ -300,12 +303,16 @@ which the owner may be mutated, moved, or dropped. While it is live, every
 overlapping owner mutation or movement is rejected. Empty dynamic views follow
 the same rules and carry a zero length without requiring an element address.
 
-Dynamic text-view values deliberately exclude reassignment and
-field/global/static storage. This is a restriction of the counted builtin
-value's tracked dynamic origin, not a ban on source-defined mutable spans,
-multi-owner carriers, or nested stored references. A dynamic text view cannot
-be formed from temporary storage or escape a local
-owner. A `std::string_view` parameter is conservatively treated as potentially
+The original L-RANGE-03 checkpoint was a single-owner read-only slice, not a
+permanent limit on nominal carriers. Mutable spans are implemented above;
+ordinary carriers may also compose multiple shared/exclusive dependencies and
+nominal fields under the current [ownership contract](ownership-and-lifetimes.md).
+`<std/paired_span>` supplies a source-defined two-span indexed/subspan and
+checked reference-proxy iteration client. Primitive dynamic text views retain their
+narrower one-owner contract and cannot be reseated or stored in fields,
+globals/statics, arrays or containers. A view of a temporary owner may be used
+immediately within its full expression, but cannot be retained or escape it.
+A `std::string_view` parameter is conservatively treated as potentially
 dynamic inside the callee; it may be inspected or returned through one exact
 read-only parameter summary, but it cannot be retained in another storage
 object. These restrictions keep source validity in semantics and preserve the
@@ -364,9 +371,9 @@ zero or more times, so both read-callable and mut-callable targets are valid,
 while a consuming once-callable is not. Numeric operation state can affect the
 current reduction but is not returned to the caller, and the element,
 intermediate, and accumulator types remain the same exact `T`. This establishes
-a bounded iterator/sentinel algorithm surface, not a complete range concept,
-heterogeneous accumulation, iterator category hierarchy, or C++20 ranges
-model.
+a bounded homogeneous numeric algorithm surface. Complete-range concepts and
+source-composed iterator categories are implemented separately; heterogeneous
+accumulation and the full C++20 ranges model do not follow from this contract.
 
 `<std/algorithm>` additionally defines the ordinary iterator/sentinel
 `std::find`, `std::count`, and `std::for_each` cluster. All three accept an
@@ -385,8 +392,8 @@ ambiguous and are rejected. `count` returns an independent `ptrdiff_t`.
 `std::copy(first, last, output)` is the first writable-output client: the
 source side uses the input/sentinel contract and the destination uses
 `std::output_iterator`. Every destination write remains checked at the access
-itself, and the advanced destination cursor is not returned because a mutable
-owner-tied cursor cannot escape through a return value. The read-only vector
+itself. The current API deliberately returns `void`; it does not publish an
+advanced destination cursor or introduce a new return-origin contract. The read-only vector
 cursor additionally implements the bidirectional, random-access, and
 sized-sentinel operator sets, so `std::prev`, signed `std::next`, in-place
 `+=`/`-=` movement, and `cursor - sentinel` distances are ordinary generic
@@ -397,7 +404,8 @@ code over it.
 `std::vector<T>` directly. These whole-owner forms exist because the
 iterator-pair spelling would either need a read borrow of the owner while its
 exclusive mutable cursor is live (`values.begin_mut()` and `values.end()` in
-one call) or retainable mutable cursors in ordinary bodies. Each form keeps one
+one call), plus the exact output/position and return contracts of a generalized
+algorithm. Retained mutable cursors are already supported. Each form keeps one
 exclusive borrow for the whole rewrite and names the element type for locals.
 `reverse` and both sort forms use checked indexed swaps and require
 `std::relocatable`, not copyability or move assignment. They borrow elements
@@ -449,9 +457,9 @@ still rejecting it in a body that may iterate again. It supports read-only
 owner-tied iterators and small factory-built views without a public
 compiler-owned cursor or raw pointer. The source-defined `std::string`
 exercises this path: its
-iterator retains a trusted read-only borrow of the private checked storage
+iterator retains an ordinary read-only borrow of the source-defined prefix owner
 while the compiler remains unaware of the public container and iterator names.
-The initial source-defined `std::vector<T>` uses the same iterator path. Its
+The source-defined `std::vector<T>` uses the same iterator path. Its
 read-only iterator carries an index plus a read-only storage borrow. Its
 `begin_mut()` endpoint returns a separate mutable iterator carrying an index
 plus the exclusive storage borrow, and mutable dereference uses checked
@@ -482,17 +490,20 @@ it need not have the outer function's result type. `<std/functional>` exposes
 those same read/mut/once facts as public
 unary, binary, and iterator-aware predicate/operation relations, so invalid
 targets fail before concrete body reanalysis. Result
-inference through `auto` and borrowed callable results remain unavailable. One
-bounded exact-return transport may be combined with repeated direct invocation
-when every reachable return moves that same callable parameter; arbitrary
-storage, wrappers, and erased callable escape remain unavailable. The bounded
+inference through `auto` and borrowed callable results remain outside these
+bounded open-callable contracts. One exact-return transport may be combined
+with repeated direct invocation when every reachable return moves that same
+callable parameter. These confined algorithms do not themselves grant escape;
+the separately implemented exact owned generic transport and source-defined
+owning wrappers have their own [callable ownership contract](ownership-and-lifetimes.md#exact-generic-callable-transport).
+The bounded
 input-iterator, sentinel, exact `dereferences_to`, lifecycle
 `copy_constructible`, and source-composed `forward_iterator` capabilities are
 implemented. `std::string(first, last)` uses the input family in an ordinary
 constructor-local generic declaration and copies the selected character range
 without retaining either iterator. Read-only string and vector cursors may be
 copy-constructed: each copy has an independent position while retaining the
-same shared owner loan. They remain non-assignable, and the compiler-confined
+same shared owner loan. They remain non-assignable, and the exclusive
 mutable vector iterator remains non-copyable.
 
 `std::binary_search(first, last, value)` is the first forward-iterator client.
@@ -583,8 +594,11 @@ The cursors borrow their owner and expose no raw pointer or array decay.
 Retaining a search result keeps that owner borrowed: mutation, movement, and
 destruction cannot invalidate it. Array/list/deque mutable cursors can also be
 bound locally under the existing nominal stored-reference rules, retaining an
-exclusive owner borrow; they cannot escape a local owner. Vector's private
-storage cursor retains its narrower confined contract. This slice adds neither
+exclusive owner borrow; they cannot escape a local owner. Vector cursors also
+support this local and by-value algorithm transport (`mut_cursor_runtime`),
+preserving the caller's exclusive storage loan rather than borrowing the
+parameter shell. Copying an exclusive cursor and overlapping owner access
+remain rejected. This slice adds neither
 iterator reseating nor paired mutable subranges.
 Iterator-returning search still uses explicit endpoints, not a
 whole-range overload with an inferred associated iterator return type.
