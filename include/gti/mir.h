@@ -1874,6 +1874,21 @@ enumerateMirBodyAddresses(const MirProgram &program);
                                          MirBodyAddress address);
 [[nodiscard]] MirBody *findMirBody(MirProgram &program, MirBodyAddress address);
 
+// A constructor record can publish a field initializer that the body leaves
+// unstaged: no Initialize instruction carries that initializer, so the field
+// is written from the MIR value defined by the initializer's single HIR
+// argument. Returns that initializer when `instruction` defines such a value
+// in constructor `owner`'s body, or nullptr when an explicit Initialize owns
+// the field write, the initializer stores a reference, the body is not a
+// constructor, or the record names no such argument. The record is a consumer
+// of that value even when the body records no use of it, so a verified
+// rewrite must not remove the instruction as unused. Lowering, optimization
+// and the backend share this one rule.
+[[nodiscard]] const MirConstructorInitializer *
+mirRecordPublishedConstructorInitializer(const MirProgram &program,
+                                         const MirBody &body, std::size_t owner,
+                                         const MirInstruction &instruction);
+
 // Complete protected-place set, preserving deterministic first-seen order.
 // Missing/malformed loan or dependency identities yield an empty set so
 // consumers cannot accidentally treat incomplete provenance as disjoint.
