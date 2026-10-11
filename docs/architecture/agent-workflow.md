@@ -82,10 +82,18 @@ one-minute test to seventeen minutes and made timing-sensitive LSP tests
 flake, so every worktree and session of a repository shares one window:
 
 ```sh
-python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 6
+python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12
 python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8
 python3 scripts/build_window.py --status
 ```
+
+A suite may use every core of this 12-core host, but `--test-load 12` stops
+CTest from starting another test while the load average is at or above twelve.
+An idle host therefore runs the suite at full width, and the suite backs off
+while the window's builds or other sessions' work load the machine. CTest
+charges a multi-worker case suite its reserved processors against `-j`; at
+`-j 6` those reservations, not test durations, bounded the full suite's wall
+time.
 
 A `suite` slot wraps a whole or broad CTest run or a standalone harness
 matrix; a `build` slot wraps a whole `cmake --build`. Focused checks (`ctest
