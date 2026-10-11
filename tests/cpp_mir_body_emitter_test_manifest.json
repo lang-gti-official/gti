@@ -394,6 +394,10 @@
       "suite": "text"
     },
     {
+      "name": "testShortCircuitExpectedPayloadFieldView",
+      "suite": "text"
+    },
+    {
       "name": "testForwardListEmplacementPublication",
       "suite": "lifecycle"
     },
