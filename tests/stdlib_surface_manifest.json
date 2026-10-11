@@ -15,6 +15,7 @@
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
+    "stdlib/std/experimental/json.gti": "a1faa23f53df367bef773470765778333e74bd6927a6568248ac873779ba0db3",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "270c138f347f77a7c991395e21316d5cc2846f8fe66d3c8a1d7b0c395b1266fa",
@@ -26,7 +27,7 @@
     "stdlib/std/list.gti": "af8267642b50d09da74eab812a5f51bf56919153623a80dd78b4f4bbdd52693c",
     "stdlib/std/map.gti": "24c860882d65a76914308ac562762073574cbc7ccb1bc0b0ca61ba4eeaaa52c2",
     "stdlib/std/memory.gti": "91c4b08a85dbf59f2e121e093dedf0e33ac579b4ffe82cc11566b645ce258844",
-    "stdlib/std/meta.gti": "93a8f92e250cfb77e56ff3252755509894e54ab40dc0174ca9e8b822e16a27f7",
+    "stdlib/std/meta.gti": "13d0f4dbb6aaa319a4052043a7c6084a8853924956af343d9319528d4dd4fef7",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
@@ -561,6 +562,13 @@
       "id": "environment",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_environment.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "experimental-json",
+      "mode": "run",
+      "source": "tests/fixtures/experimental_json.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -1768,6 +1776,33 @@
       ]
     },
     {
+      "id": "experimental-json.executable",
+      "source": "stdlib/std/experimental/json.gti",
+      "status": "executable",
+      "operations": [
+        "std::experimental::json::decode",
+        "std::experimental::json::describe",
+        "std::experimental::json::encode",
+        "std::experimental::json::errc",
+        "std::experimental::json::error",
+        "std::experimental::json::ignore",
+        "std::experimental::json::name"
+      ],
+      "case_ids": ["experimental-json"],
+      "required_instantiations": [
+        "bool, signed and unsigned integers, float, std::string, enum, nested struct, std::vector of scalars and of structs",
+        "name and ignore attributes",
+        "every errc through decode failures with offsets"
+      ],
+      "evidence": [
+        "docs/language/json.md#experimental-reflected-json",
+        "examples/141-reflected-json.gti",
+        "stdlib/std/experimental/json.gti",
+        "tests/fixtures/experimental_json.gti",
+        "tests/reflection_runtime_test.py"
+      ]
+    },
+    {
       "id": "filesystem.executable",
       "source": "stdlib/std/filesystem.gti",
       "status": "executable",
@@ -2442,6 +2477,7 @@
         "std::meta::payload_field::index",
         "std::meta::payload_field::name",
         "std::meta::payload_field::type",
+        "std::meta::primary_name_of",
         "std::meta::reflectable",
         "std::meta::type::argument_count",
         "std::meta::type::arguments",
@@ -2476,11 +2512,12 @@
         "std::meta::type::methods",
         "std::meta::type::name",
         "std::meta::type::operators",
+        "std::meta::type::primary_name",
         "std::meta::type_of"
       ],
       "case_ids": ["meta"],
       "required_instantiations": ["field enumeration in declaration order", "constexpr field binding in if constexpr", "reflected field read", "type predicates", "declared attribute read", "enumerator enumeration", "base and generic-argument lists", "structural construction", "callable metadata"],
-      "evidence": ["tests/fixtures/stdlib_surface_meta.gti", "tests/reflection_runtime_test.py", "tests/reflection_tests.cpp", "stdlib/std/meta.gti", "tests/fixtures/reflection_attributes.gti", "tests/fixtures/reflection_construct.gti", "tests/fixtures/reflection_callables.gti"]
+      "evidence": ["tests/fixtures/stdlib_surface_meta.gti", "tests/reflection_runtime_test.py", "tests/reflection_tests.cpp", "stdlib/std/meta.gti", "tests/fixtures/reflection_attributes.gti", "tests/fixtures/reflection_construct.gti", "tests/fixtures/reflection_callables.gti", "tests/fixtures/reflection_deferred_range.gti"]
     },
     {
       "id": "mutable-span.executable",

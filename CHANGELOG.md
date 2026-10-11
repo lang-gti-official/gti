@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.402.12 — Conditionals of classes with destructors
+## 0.403.1 — Conditionals of classes with destructors
 
 - A conditional whose arms are class values with destructors, such as
   `ok ? make_tracked(1) : make_tracked(2)`, can now be read through a field,
@@ -18,6 +18,24 @@ for what minor and patch releases mean.
   whether the conditional is bound or returned. The selected object is
   destroyed exactly once, including when a later operand or the local's
   cleanup fails. These used to report GTI-B0001.
+
+## 0.403.0 — Experimental reflected JSON
+
+- `<std/experimental/json>` (preview): `std::experimental::json::encode(value)`
+  and `decode<T>(text)` for any `std::meta::reflectable` struct, written
+  entirely over reflection. Keys are declared names or
+  `[[std::experimental::json::name("key")]]`; `[[ignore]]` leaves a field out;
+  nested structs, `std::vector`, integral enums (by enumerator name), strings
+  with escapes, integers, floats and bools are supported; decoding builds the
+  struct through `std::meta::construct` and reports `error{errc, offset}`.
+  Example 141. `std::json` stays the DOM and codec library until the preview
+  covers its uses.
+- `std::meta::primary_name_of<T>()` and `type<T>::primary_name()` name a
+  generic instance's primary without its arguments.
+- A range-for inside an `if constexpr` arm whose condition depends on the
+  enclosing generic parameter no longer fails HIR verification
+  ("range HIR plan differs from semantic owner/loan/protocol facts") in the
+  concrete instance.
 
 ## 0.402.11 — Class results that exist on only one branch
 
