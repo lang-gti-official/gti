@@ -3295,6 +3295,61 @@ int main() {
 // the error is constructed in its slot at its own position and moved in at
 // the Assign. (Regression for issue #227: these raised GTI-B0001, the payload
 // conversion while constructing MIR.)
+void testShortCircuitExpectedPayloadFieldView() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-short-circuit-expected-payload.gti", R"(
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() {}
+};
+
+expected<counted, int32_t> make_counted(bool ok) {
+  if (ok) { return counted(5); }
+  return unexpected(int32_t(1));
+}
+
+bool check(bool skip) { return skip || make_counted(true).value().number == 5; }
+
+int main() { return check(false) ? 0 : 1; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the short-circuit expected payload fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // The checked extraction moves the payload out of the expected result's
+  // conditional temporary into its own, and the field is read there.
+  const std::string extraction =
+      "::gti_internal::backend::mir_expected_value_move_v1(__gti_mir_p_";
+  const std::size_t extracted = text.find(extraction);
+  const std::size_t target =
+      extracted == std::string::npos
+          ? std::string::npos
+          : text.find(".get(), &__gti_mir_p_", extracted);
+  const std::size_t nameStart = target == std::string::npos
+                                    ? std::string::npos
+                                    : target + std::string(".get(), &").size();
+  const std::string payload =
+      nameStart == std::string::npos
+          ? std::string()
+          : text.substr(nameStart, text.find(')', nameStart) - nameStart);
+  expect(!payload.empty() && text.find(" = " + payload + ".get().number;",
+                                       extracted) != std::string::npos,
+         "the payload should move into its conditional temporary and its "
+         "field should be read from that temporary");
+  expect(text.find("::__gti_program::counted __gti_mir_v_") ==
+             std::string::npos,
+         "the viewed payload should not declare an ordinary local");
+}
+
 void testOwningExpectedReplacementSources() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-owning-expected-replacement-sources.gti", R"gti(
@@ -4595,6 +4650,8 @@ constexpr NamedTest kTests[] = {
      testExpectedClassReplacementSources},
     {"testOwningExpectedReplacementSources",
      testOwningExpectedReplacementSources},
+    {"testShortCircuitExpectedPayloadFieldView",
+     testShortCircuitExpectedPayloadFieldView},
 };
 
 } // namespace
