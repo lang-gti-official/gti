@@ -151,10 +151,10 @@ package does not load a downstream LLVM package.
 
 ## Published Toolchain Channels
 
-GitHub (`gti-lang-official/gti`) is the Git, tag, workflow, and release
+GitHub (`lang-gti-official/gti`) is the Git, tag, workflow, and release
 authority; the self-hosted Gitea repository is a backup mirror and publishes
 nothing. Release archives are downloaded by the plugin from
-`https://github.com/gti-lang-official/gti/releases/download/<tag>/<asset>`.
+`https://github.com/lang-gti-official/gti/releases/download/<tag>/<asset>`.
 The plugin uses a full HTTPS Git URL, not owner/repository shorthand. Archive
 shapes exist for Linux x64, Linux arm64, and macOS arm64, but an archive is
 published only by a configured native runner job. The release workflow

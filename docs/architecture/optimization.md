@@ -171,6 +171,20 @@ Both levels currently derive the same GTI proofs. They still select their
 corresponding native optimization levels. `-O0` and `-O1` do not attach safety
 discharges.
 
+`dead-unused-computations` removes only a neutral `Compute` whose result has
+no MIR use. One consumer lives outside the body's use model: a constructor
+record publishes an unstaged field initializer, one that no `Initialize`
+instruction carries, from the MIR value its single HIR argument defines, and
+the backend writes the field from that value. A literal-backed
+`std::string_view` field default is the common instance, and a user-defined
+borrowed-state field initialized from any constant takes the same path.
+`mirRecordPublishedConstructorInitializer` is the one rule naming those values;
+the canonical dead-instruction rewrite refuses them, so the editor, the pass
+and coherence replay agree, and the pass reports the retained value as a
+missed candidate rather than silently skipping it. The C++ emitter publishes
+from exactly the same query. Before this rule, `-O1` and above removed the
+literal and every such field read back empty.
+
 ### Bounded Exact-Receiver Dispatch
 
 The `interface-exact-dispatch` update workload is the first devirtualization
