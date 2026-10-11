@@ -18918,6 +18918,14 @@ expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
 // lifetime slot directly. MIR still records the intermediate value drop and
 // the following Initialize reparents it to the binding; neither record needs
 // separate C++ storage when this exact move/reparent chain is present.
+//
+// A cleanup-free Expected<Class, E> moves into one binding the same way. MIR
+// gives the moved value no drop and no lifecycle event, only the source's
+// ownership transition, and the adjacent Initialize activates the binding's
+// own drop exactly as a copy does. Constructing the binding at the Move is
+// then the only exact publication: a separate SSA local would have to
+// value-initialize the success alternative, a construction the source program
+// does not perform and that a class without a default constructor lacks.
 [[nodiscard]] const MirPlace *
 expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
                             MirValueId valueId) {
@@ -18927,6 +18935,10 @@ expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
   const MirDropObligation *valueDrop =
       value == nullptr ? nullptr
                        : uniqueValueDrop(body, valueId, value->info.type);
+  const bool cleanupFree =
+      value != nullptr && move != nullptr && move->lifecycle.empty() &&
+      valueDrop == nullptr &&
+      cleanupFreeExpectedClassAlternatives(program, value->info.type);
   if (value == nullptr || value->info.type.kind != SemanticType::Expected ||
       value->info.type.arguments.size() != 2 ||
       value->info.traits.drop != DropKind::Lexical || move == nullptr ||
@@ -18939,7 +18951,7 @@ expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
       !move->localFailureSites.empty() ||
       !move->definedFailure.localOrigins.empty() ||
       move->definedFailure.propagation != FailurePropagationKind::None ||
-      move->lifecycle.size() != 1 || valueDrop == nullptr ||
+      (!cleanupFree && (move->lifecycle.size() != 1 || valueDrop == nullptr)) ||
       (!mirTypeMoveIsDefinedFailureFree(program, value->info.type) &&
        !expectedClassPlacementStorageEligible(program, value->info.type))) {
     return nullptr;
@@ -18957,14 +18969,24 @@ expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
       sourceDrop = &drop;
     }
   }
-  const MirLifecycleEvent &moveEvent = move->lifecycle.front();
   if (source == nullptr || sourceDrop == nullptr ||
       source->root != MirPlaceRootKind::Binding ||
-      !source->projections.empty() || source->type != value->info.type ||
-      moveEvent.kind != MirLifecycleEventKind::Move ||
-      moveEvent.source != sourceDrop->id || moveEvent.target != valueDrop->id ||
-      moveEvent.conditional || moveEvent.failureCleanup) {
+      !source->projections.empty() || source->type != value->info.type) {
     return nullptr;
+  }
+  if (cleanupFree) {
+    // The moved-from source keeps its own binding drop.
+    if (sourceDrop->kind != MirDropObligationKind::Binding) {
+      return nullptr;
+    }
+  } else {
+    const MirLifecycleEvent &moveEvent = move->lifecycle.front();
+    if (moveEvent.kind != MirLifecycleEventKind::Move ||
+        moveEvent.source != sourceDrop->id ||
+        moveEvent.target != valueDrop->id || moveEvent.conditional ||
+        moveEvent.failureCleanup) {
+      return nullptr;
+    }
   }
 
   const std::vector<MirValueUse> uses = nonRootRecordUses(body, valueId);
@@ -19009,6 +19031,28 @@ expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
       initialize->definedFailure.propagation != FailurePropagationKind::None ||
       initialize->lifecycle.size() != 1) {
     return nullptr;
+  }
+  if (cleanupFree) {
+    // Nothing may run between constructing the binding at the Move and the
+    // Initialize that activates its drop.
+    bool adjacent = false;
+    for (const MirBlock &block : body.blocks) {
+      for (std::size_t index = 1; index < block.instructions.size(); ++index) {
+        if (&block.instructions[index] == initialize &&
+            &block.instructions[index - 1] == move)
+          adjacent = true;
+      }
+    }
+    const MirLifecycleEvent &activation = initialize->lifecycle.front();
+    return adjacent && destination->id != source->id &&
+                   !destination->initiallyAvailable &&
+                   !bindingDrop->initiallyActive &&
+                   activation.kind == MirLifecycleEventKind::Initialize &&
+                   activation.source == 0 &&
+                   activation.target == bindingDrop->id &&
+                   !activation.conditional && !activation.failureCleanup
+               ? destination
+               : nullptr;
   }
   const MirLifecycleEvent &reparent = initialize->lifecycle.front();
   return reparent.kind == MirLifecycleEventKind::Reparent &&
@@ -37688,6 +37732,19 @@ private:
           if (copiedExpected != nullptr && copiedExpected->id == slot->id) {
             output << "// GTI MIR copied Expected initializes p"
                    << canonicalSlotPlaceId(facts.body, *copiedExpected) << "\n";
+            return;
+          }
+          // A cleanup-free move constructed the slot at its Move; this
+          // Initialize only activates the binding's drop. An owning move
+          // reparents instead and keeps its own publication route below.
+          const MirPlace *movedExpected = expectedMoveDestinationSlot(
+              program, facts.body, instruction.operands.front().value);
+          if (movedExpected != nullptr && movedExpected->id == slot->id &&
+              instruction.lifecycle.size() == 1 &&
+              instruction.lifecycle.front().kind ==
+                  MirLifecycleEventKind::Initialize) {
+            output << "// GTI MIR moved cleanup-free Expected initializes p"
+                   << canonicalSlotPlaceId(facts.body, *movedExpected) << "\n";
             return;
           }
           const MirPlace *directExpected = expectedClassResultDestinationSlot(

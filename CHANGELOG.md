@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.402.7 — Class results that exist on only one branch
+## 0.402.8 — Class results that exist on only one branch
 
 - A call that returns a class needing no cleanup, used directly as the
   receiver of a method on only one side of `||`, `&&` or `?:`, as in
@@ -18,6 +18,14 @@ for what minor and patch releases mean.
   was dropped while empty" at every optimization level. This also affected
   `constexpr for` loops over `std::meta` metaobjects that test, for example,
   `m.name() != "get" || !m.result().is_integral()`.
+
+## 0.402.7 — Moving `expected` values of plain structs and classes
+
+- Moving an `expected<T, E>` into a new variable, as in
+  `auto moved = std::move(original);`, builds again when `T` is a struct or
+  class without cleanup and without a default constructor, including a
+  `[[c_abi]]` record. Since 0.401.6 this stopped with internal compiler error
+  `GTI-B0001`. The new variable is constructed directly from the moved value.
 
 ## 0.402.6 — Class-valued conditionals
 
