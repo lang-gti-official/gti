@@ -875,11 +875,21 @@ add_test(NAME expected_class_argument_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_argument_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_class_argument_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_cleanup_free_copy_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_cleanup_free_copy_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_cleanup_free_copy_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_cleanup_free_move_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_cleanup_free_move_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_cleanup_free_move_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_lambda_class_argument_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_lambda_class_argument_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_lambda_class_argument_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_constructor_return_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_constructor_return_runtime_test.py"
@@ -935,6 +945,11 @@ add_test(NAME short_circuit_field_view_runtime
                  "${PROJECT_SOURCE_DIR}/tests/short_circuit_field_view_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(short_circuit_field_view_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME owning_conditional_join_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/owning_conditional_join_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(owning_conditional_join_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_payload_short_circuit_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_payload_short_circuit_runtime_test.py"
@@ -2125,8 +2140,17 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_construct.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_callables.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_receiver_effects.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_deferred_range.gti"
   )
   set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
+  add_test(
+    NAME experimental_json_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/reflection_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/experimental_json.gti"
+  )
+  set_tests_properties(experimental_json_runtime PROPERTIES TIMEOUT 900)
   add_test(
     NAME constexpr_text_runtime
     COMMAND "${Python3_EXECUTABLE}"

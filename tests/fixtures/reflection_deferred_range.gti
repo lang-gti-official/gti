@@ -1,0 +1,57 @@
+// A range-for inside an `if constexpr` arm that the symbolic primary defers
+// (its condition depends on the open parameter) is analyzed only by concrete
+// reanalysis; HIR verification accepts its plan on the instance's own facts.
+// `primary_name_of` tells a generic instance's primary apart from its
+// arguments.
+#include <std/meta>
+#include <std/string>
+#include <std/vector>
+
+struct point {
+  int32_t x = 0;
+  int32_t y = 0;
+};
+
+struct route {
+  std::vector<point> stops = std::vector<point>();
+  std::vector<int32_t> weights = std::vector<int32_t>();
+};
+
+uint64_t total<F>(F& item) {
+  if constexpr (std::meta::is_integral<F>()) {
+    return uint64_t(item);
+  } else if constexpr (std::meta::primary_name_of<F>() == "std::vector") {
+    mut uint64_t sum = 0;
+    for (auto& element : item) {
+      sum = sum + total(element);
+    }
+    return sum;
+  } else {
+    mut uint64_t sum = 0;
+    constexpr for (auto field : std::meta::fields_of<F>()) {
+      sum = sum + total(field.get(item));
+    }
+    return sum;
+  }
+}
+
+int main() {
+  point a = {.x = 1, .y = 2};
+  point b = {.x = 3, .y = 4};
+  mut std::vector<point> stops = std::vector<point>();
+  stops.push_back(a);
+  stops.push_back(b);
+  std::vector<int32_t> weights = {5, 6};
+  route trip = {.stops = std::move(stops), .weights = std::move(weights)};
+  if (total(trip) != uint64_t(21)) {
+    return 1;
+  }
+  if (std::meta::primary_name_of<std::vector<int32_t>>() != "std::vector") {
+    return 2;
+  }
+  if (std::meta::primary_name_of<point>() != "point" ||
+      std::meta::type_of<route>().primary_name() != "route") {
+    return 3;
+  }
+  return 0;
+}

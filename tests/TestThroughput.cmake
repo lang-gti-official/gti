@@ -37,7 +37,8 @@ if(Python3_Interpreter_FOUND)
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
     dormant_capability_runtime
     expected_class_argument_runtime expected_class_assignment_runtime
-    expected_cleanup_free_move_runtime
+    expected_cleanup_free_copy_runtime expected_cleanup_free_move_runtime
+    expected_lambda_class_argument_runtime
     expected_class_return_runtime expected_constructor_return_runtime
     expected_field_and_join_runtime expected_scoped_return_runtime
     expected_temporary_observation_runtime
@@ -62,6 +63,7 @@ if(Python3_Interpreter_FOUND)
     owning_function_resource_result_runtime owning_function_runtime
     owned_argument_member_initializer_runtime
     owning_expected_field_runtime
+    owning_conditional_join_runtime
     owning_temporary_field_read_runtime
     plain_call_member_initializer_runtime
     short_circuit_field_view_runtime
