@@ -1358,7 +1358,8 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         identity = report["tools"][name]
         expected_command = [str(executable), "--version"]
         require(identity["requested"] == str(executable), f"{name} request changed")
-        require(identity["resolved"] == str(executable), f"{name} path was not resolved")
+        require(identity["resolved"] == str(executable.resolve(strict=True)),
+                f"{name} file identity was not resolved")
         require(
             identity["version_command"] == expected_command,
             f"{name} version command was not recorded exactly",
@@ -1368,7 +1369,7 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         )
         require(
             identity["version_output"] == (version.stdout + version.stderr).strip(),
-            f"{name} version output does not match the resolved compiler",
+            f"{name} version output does not match the selected invocation",
         )
 
     require(
