@@ -38,7 +38,7 @@ policy below without bypassing that lifecycle.
    reconcile it without discarding local or remote work. Do not force-push or
    rewrite shared history.
    The destination must be GTI's canonical GitHub repository (`origin`,
-   `gti-lang-official/gti`); the `gitea` remote is a backup mirror the helper
+   `lang-gti-official/gti`); the `gitea` remote is a backup mirror the helper
    pushes to after integration, never a publication target.
 3. Run the proportionate local build, tests, packaging checks, formatting, and
    release-version checks (`python3 scripts/check_release_version.py
