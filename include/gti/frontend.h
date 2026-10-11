@@ -65,6 +65,13 @@ struct FrontendOptions {
   // builds set this, while inspection of every declaration's lowering does
   // not.
   bool lowerReachableOnly = false;
+  // With `lowerReachableOnly`, lower compiler-trusted (prelude and
+  // standard-library) declarations only when the program roots reach them. The
+  // entry unit and every application or package unit are still lowered
+  // completely, so their diagnostics are unchanged. Library instances that
+  // nothing reaches are not concretely analyzed. Artifact builds set this; `gti
+  // check` does not, so its diagnostics remain complete.
+  bool lowerLibraryReachableOnly = false;
   // Lower HIR only for the program roots and the entry source unit's own
   // declarations, discovering everything they reach. Concrete-instance
   // diagnostics are then reported for the entry unit's code and the library
