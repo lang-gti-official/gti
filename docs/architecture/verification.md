@@ -1,5 +1,34 @@
 # Compiler Verification
 
+## Expected results of callable invocations (0.402.10)
+
+- **Defect.** A lambda returning `expected<point, errc>`, where `point` has no
+  default constructor, could not be called as a by-value argument, as in
+  `point_code(make(7))`, nor used as a constructor argument, state-tested,
+  extracted from or discarded. Its SSA result had no exact publication, so it
+  fell back to a value-initialized `std::expected<point, errc>` local, which
+  the native compiler rejects and the Expected value-initialization guard
+  reports as `GTI-B0001`. The same program with a source function built.
+- **Cause and rule.** The cleanup-free `Expected<Class, E>` staging slot
+  (`classSsaLifetimeSlot`) and the fresh-temporary extraction receiver
+  (`freshExpectedTemporaryReceiverShape`) admitted only static source-call
+  producers. A callable value invocation now qualifies under the same
+  consumer, dominance and cleanup-free proofs. The invocation emitter passes
+  the slot's construction address in the transformed ABI, or constructs it
+  from the returned value in the plain ABI, and retires a discarded result
+  once published.
+- **Regression tests.** `expected_lambda_class_argument_runtime` builds a new
+  fixture under C++20 and C++23 at O0, O1 and O3, plus the no-elide and
+  ASan/UBSan modes. It covers a closure literal, a capturing closure and a
+  callable parameter whose results pass to a function and a constructor, are
+  state-tested, extracted and discarded, on both alternatives. It also checks
+  a later argument that raises after the result exists and a callable that
+  raises before publishing. `expected_scoped_return` now also returns a
+  class-payload lambda result across scope cleanup.
+- **Out of scope.** Replacing a binding with a fresh result, as in
+  `r = make(7);`, still reports `GTI-B0001` for a source function and a
+  lambda alike when the success class has no default constructor.
+
 ## Expected returns across scope cleanup (0.402.4)
 
 - **Defects.** Three verified programs stopped at the C++ backend with
@@ -4150,7 +4179,12 @@ in both HIR and MIR hosted plans.
 
 `discarded_nominal_result_runtime` covers discarded cleanup-free class results
 from member and free calls, loop-slot reuse, and failure with exact caller
-cleanup across the same eight native modes. The lifecycle emitter suite checks
+cleanup across the same eight native modes. Its `branch_temporary_call_result`
+fixture keeps a failure-free call's branch-only receiver result, which MIR
+publishes into a hidden temporary place with no remaining value uses, out of
+that discard representation, including when the receiver call fails; the
+emitter text test `testBranchTemporaryCallResultIsNotDiscarded` checks the
+same shape's MIR and representation. The lifecycle emitter suite checks
 output placement and retirement and rejects using that no-drop representation
 for classes with active cleanup. A cleanup-free borrowed result is admitted
 only when its exact stored loan is unused and ends at the full expression;

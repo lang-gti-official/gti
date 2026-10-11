@@ -1,0 +1,584 @@
+// <std/experimental/json> -- JSON text for reflectable types.
+//
+// The acceptance client of compile-time reflection: every encoding and
+// decoding rule is ordinary GTI written over <std/meta>. `encode` walks a
+// struct's fields and writes text; `decode` scans text into per-key spans and
+// builds the struct with `std::meta::construct`, so no object exists before
+// every field has a value and constructors are never bypassed. Field keys are
+// the declared names unless `[[std::experimental::json::name("key")]]`
+// renames one; `[[std::experimental::json::ignore]]` leaves a field out of the
+// text and, on decoding, default-constructs it. Members of the text that name
+// no field are skipped; when a key repeats, the first member wins.
+//
+// Supported field types: bool, the fixed-width integers, float and double,
+// std::string (owned text), std::string_view (encoding only), integral enums
+// (by enumerator name), std::vector<E> of a supported E, and nested
+// reflectable structs. Anything else is rejected where it is used.
+#include <std/meta>
+#include <std/string>
+#include <std/vector>
+
+namespace std {
+namespace experimental {
+namespace json {
+
+enum class errc {
+  unexpected_end,
+  unexpected_character,
+  invalid_number,
+  invalid_escape,
+  missing_field,
+  invalid_enumerator,
+  type_mismatch,
+  trailing_characters,
+};
+
+/// Where decoding stopped and why; `offset` is a byte offset into the text.
+struct error {
+  errc code = errc::unexpected_end;
+  std::size_t offset = 0;
+  error(errc code, std::size_t offset) : code(code), offset(offset) {}
+};
+
+std::string_view describe(errc code) {
+  switch (code) {
+    case errc::unexpected_end: return "unexpected end of JSON text";
+    case errc::unexpected_character: return "unexpected character";
+    case errc::invalid_number: return "invalid JSON number";
+    case errc::invalid_escape: return "invalid JSON string escape";
+    case errc::missing_field: return "object is missing a required field";
+    case errc::invalid_enumerator: return "string does not name an enumerator";
+    case errc::type_mismatch: return "JSON value has the wrong type for the field";
+    case errc::trailing_characters: return "characters follow the JSON value";
+  }
+  return "unknown JSON error";
+}
+
+/// `[[std::experimental::json::name("key")]]`: the object key of a field.
+[[attribute]] struct name {
+  std::string_view key = "";
+};
+
+/// `[[std::experimental::json::ignore]]`: the field is not part of the text.
+[[attribute]] struct ignore {};
+
+namespace detail {
+
+bool is_digit(char value) {
+  return uint8_t(value) >= uint8_t('0') && uint8_t(value) <= uint8_t('9');
+}
+
+bool is_space(char value) {
+  return value == ' ' || value == '\n' || value == '\t' || value == '\r';
+}
+
+void append_unsigned(mut std::string& out, uint64_t value) {
+  std::string_view digits = "0123456789";
+  if (value >= uint64_t(10)) {
+    append_unsigned(out, value / uint64_t(10));
+  }
+  out.push_back(digits[std::size_t(value % uint64_t(10))]);
+}
+
+void append_signed(mut std::string& out, int64_t value) {
+  if (value < int64_t(0)) {
+    out.push_back('-');
+    // Negate without overflowing: -(value + 1) fits int64_t for every
+    // negative value, and adding one back happens in the unsigned domain.
+    append_unsigned(out, uint64_t(int64_t(-1) - value) + uint64_t(1));
+    return;
+  }
+  append_unsigned(out, uint64_t(value));
+}
+
+void append_escaped(mut std::string& out, std::string_view text) {
+  std::string_view hex = "0123456789abcdef";
+  out.push_back('"');
+  for (mut std::size_t index = 0; index < text.size(); index++) {
+    char value = text[index];
+    if (value == '"') {
+      out.append("\\\"");
+    } else if (value == '\\') {
+      out.append("\\\\");
+    } else if (value == '\n') {
+      out.append("\\n");
+    } else if (value == '\t') {
+      out.append("\\t");
+    } else if (value == '\r') {
+      out.append("\\r");
+    } else if (uint8_t(value) < uint8_t(32)) {
+      out.append("\\u00");
+      out.push_back(hex[std::size_t(uint8_t(value) / uint8_t(16))]);
+      out.push_back(hex[std::size_t(uint8_t(value) % uint8_t(16))]);
+    } else {
+      out.push_back(value);
+    }
+  }
+  out.push_back('"');
+}
+
+/// The field's object key: the `name` attribute when applied, else the
+/// declared name.
+std::string_view key_of<T, uint64_t I>(std::meta::field<T, I> field) {
+  if constexpr (std::meta::field<T, I>().has_attribute<name>()) {
+    return std::meta::field<T, I>().attribute<name>().key;
+  } else {
+    return std::meta::field<T, I>().name();
+  }
+}
+
+// ---- encoding -------------------------------------------------------------
+
+void encode_enum<E>(mut std::string& out, E value) {
+  constexpr for (auto enumerator : std::meta::enumerators_of<E>()) {
+    if (value == enumerator.value()) {
+      append_escaped(out, enumerator.name());
+      return;
+    }
+  }
+  out.append("null");
+}
+
+void encode_value<F>(mut std::string& out, F& item) {
+  if constexpr (std::meta::is_bool<F>()) {
+    if (item) { out.append("true"); } else { out.append("false"); }
+  } else if constexpr (std::meta::is_signed_integral<F>()) {
+    append_signed(out, int64_t(item));
+  } else if constexpr (std::meta::is_integral<F>()) {
+    append_unsigned(out, uint64_t(item));
+  } else if constexpr (std::meta::is_floating_point<F>()) {
+    out.append(std::to_string(float(item)).view());
+  } else if constexpr (std::meta::is_text<F>()) {
+    append_escaped(out, item);
+  } else if constexpr (std::meta::name_of<F>() == "std::string") {
+    append_escaped(out, item.view());
+  } else if constexpr (std::meta::is_enum<F>()) {
+    encode_enum(out, item);
+  } else if constexpr (std::meta::primary_name_of<F>() == "std::vector") {
+    out.push_back('[');
+    mut bool first = true;
+    for (auto& element : item) {
+      if (!first) { out.push_back(','); }
+      first = false;
+      encode_value(out, element);
+    }
+    out.push_back(']');
+  } else if constexpr (std::meta::is_reflectable<F>()) {
+    encode_object(out, item);
+  } else {
+    static_assert(false, "std::experimental::json cannot encode this field type");
+  }
+}
+
+void encode_object<T>(mut std::string& out, T& value) {
+  out.push_back('{');
+  mut bool first = true;
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (!field.has_attribute<ignore>()) {
+      if (!first) { out.push_back(','); }
+      first = false;
+      append_escaped(out, key_of(field));
+      out.push_back(':');
+      encode_value(out, field.get(value));
+    }
+  }
+  out.push_back('}');
+}
+
+// ---- decoding -------------------------------------------------------------
+//
+// Decoding never slices the text: every value is a byte range [begin, end)
+// of the original `string_view`, so spans stay plain offsets and error
+// offsets are always absolute.
+
+/// One `"key": value` member of an object: the unescaped key and the byte
+/// range of the raw value text.
+struct member {
+  std::string key;
+  std::size_t begin = 0;
+  std::size_t end = 0;
+  member(std::string key, std::size_t begin, std::size_t end)
+      : key(std::move(key)), begin(begin), end(end) {}
+  member(member& other) = delete;
+  member(member&& other) = default;
+};
+
+/// A cursor over the range [offset, limit) of a JSON text. Methods report
+/// failures with the offset where they stopped.
+struct scanner {
+  std::string_view text;
+  std::size_t limit;
+  mut { std::size_t offset; }
+  scanner(std::string_view text, std::size_t begin, std::size_t end)
+      : text(text), limit(end), offset(begin) {}
+
+  bool at_end() { return this.offset >= this.limit; }
+
+  void skip_space() mut {
+    while (!this.at_end() && is_space(this.text[this.offset])) {
+      this.offset = this.offset + std::size_t(1);
+    }
+  }
+
+  expected<char, error> peek() {
+    if (this.at_end()) {
+      return unexpected(error(errc::unexpected_end, this.offset));
+    }
+    return this.text[this.offset];
+  }
+
+  expected<void, error> expect(char wanted) mut {
+    char actual = ?this.peek();
+    if (actual != wanted) {
+      return unexpected(error(errc::unexpected_character, this.offset));
+    }
+    this.offset = this.offset + std::size_t(1);
+    return;
+  }
+
+  /// Scans a string literal at the cursor into `out`, unescaping it.
+  expected<void, error> read_string(mut std::string& out) mut {
+    ?this.expect('"');
+    while (true) {
+      char value = ?this.peek();
+      this.offset = this.offset + std::size_t(1);
+      if (value == '"') {
+        return;
+      }
+      if (value != '\\') {
+        out.push_back(value);
+        continue;
+      }
+      char escape = ?this.peek();
+      this.offset = this.offset + std::size_t(1);
+      if (escape == '"') {
+        out.push_back('"');
+      } else if (escape == '\\') {
+        out.push_back('\\');
+      } else if (escape == '/') {
+        out.push_back('/');
+      } else if (escape == 'n') {
+        out.push_back('\n');
+      } else if (escape == 't') {
+        out.push_back('\t');
+      } else if (escape == 'r') {
+        out.push_back('\r');
+      } else if (escape == 'b') {
+        out.push_back(char(uint8_t(8)));
+      } else if (escape == 'f') {
+        out.push_back(char(uint8_t(12)));
+      } else {
+        return unexpected(error(errc::invalid_escape, this.offset - std::size_t(1)));
+      }
+    }
+  }
+
+  /// Skips one complete value at the cursor and returns the byte range it
+  /// occupied, labelled with `key`.
+  expected<member, error> skip_value(std::string key) mut {
+    this.skip_space();
+    std::size_t begin = this.offset;
+    char head = ?this.peek();
+    if (head == '"') {
+      mut std::string discarded = std::string("");
+      ?this.read_string(discarded);
+    } else if (head == '{' || head == '[') {
+      mut std::size_t depth = 0;
+      while (true) {
+        char value = ?this.peek();
+        if (value == '"') {
+          mut std::string discarded = std::string("");
+          ?this.read_string(discarded);
+          continue;
+        }
+        this.offset = this.offset + std::size_t(1);
+        if (value == '{' || value == '[') {
+          depth = depth + std::size_t(1);
+        } else if (value == '}' || value == ']') {
+          depth = depth - std::size_t(1);
+          if (depth == std::size_t(0)) {
+            break;
+          }
+        }
+      }
+    } else {
+      while (!this.at_end()) {
+        char value = this.text[this.offset];
+        if (value == ',' || value == '}' || value == ']' || is_space(value)) {
+          break;
+        }
+        this.offset = this.offset + std::size_t(1);
+      }
+      if (this.offset == begin) {
+        return unexpected(error(errc::unexpected_character, begin));
+      }
+    }
+    return member(std::move(key), begin, this.offset);
+  }
+
+  /// Requires the rest of the range to be blank.
+  expected<void, error> finish() mut {
+    this.skip_space();
+    if (!this.at_end()) {
+      return unexpected(error(errc::trailing_characters, this.offset));
+    }
+    return;
+  }
+};
+
+/// Splits an object's text into its members without interpreting values.
+expected<std::vector<member>, error> parse_members(std::string_view text, std::size_t begin, std::size_t end) {
+  mut std::vector<member> members = std::vector<member>();
+  mut scanner cursor{text, begin, end};
+  cursor.skip_space();
+  ?cursor.expect('{');
+  cursor.skip_space();
+  if (?cursor.peek() == '}') {
+    cursor.offset = cursor.offset + std::size_t(1);
+    ?cursor.finish();
+    return std::move(members);
+  }
+  while (true) {
+    cursor.skip_space();
+    mut std::string key = std::string("");
+    ?cursor.read_string(key);
+    cursor.skip_space();
+    ?cursor.expect(':');
+    member found = ?cursor.skip_value(std::move(key));
+    members.push_back(std::move(found));
+    cursor.skip_space();
+    char next = ?cursor.peek();
+    cursor.offset = cursor.offset + std::size_t(1);
+    if (next == '}') {
+      break;
+    }
+    if (next != ',') {
+      return unexpected(error(errc::unexpected_character, cursor.offset - std::size_t(1)));
+    }
+  }
+  ?cursor.finish();
+  return std::move(members);
+}
+
+/// Splits an array's text into the byte ranges of its elements.
+expected<std::vector<member>, error> parse_elements(std::string_view text, std::size_t begin, std::size_t end) {
+  mut std::vector<member> elements = std::vector<member>();
+  mut scanner cursor{text, begin, end};
+  cursor.skip_space();
+  ?cursor.expect('[');
+  cursor.skip_space();
+  if (?cursor.peek() == ']') {
+    cursor.offset = cursor.offset + std::size_t(1);
+    ?cursor.finish();
+    return std::move(elements);
+  }
+  while (true) {
+    member found = ?cursor.skip_value(std::string(""));
+    elements.push_back(std::move(found));
+    cursor.skip_space();
+    char next = ?cursor.peek();
+    cursor.offset = cursor.offset + std::size_t(1);
+    if (next == ']') {
+      break;
+    }
+    if (next != ',') {
+      return unexpected(error(errc::unexpected_character, cursor.offset - std::size_t(1)));
+    }
+  }
+  ?cursor.finish();
+  return std::move(elements);
+}
+
+expected<uint64_t, error> parse_unsigned(std::string_view text, std::size_t begin, std::size_t end) {
+  if (begin >= end) {
+    return unexpected(error(errc::invalid_number, begin));
+  }
+  mut uint64_t value = 0;
+  for (mut std::size_t index = begin; index < end; index++) {
+    char digit = text[index];
+    if (!is_digit(digit)) {
+      return unexpected(error(errc::invalid_number, index));
+    }
+    value = value * uint64_t(10) + uint64_t(uint8_t(digit) - uint8_t('0'));
+  }
+  return value;
+}
+
+expected<int64_t, error> parse_signed(std::string_view text, std::size_t begin, std::size_t end) {
+  if (begin < end && text[begin] == '-') {
+    uint64_t magnitude = ?parse_unsigned(text, begin + std::size_t(1), end);
+    if (magnitude > uint64_t(9223372036854775807)) {
+      return unexpected(error(errc::invalid_number, begin));
+    }
+    return int64_t(0) - int64_t(magnitude);
+  }
+  uint64_t magnitude = ?parse_unsigned(text, begin, end);
+  if (magnitude > uint64_t(9223372036854775807)) {
+    return unexpected(error(errc::invalid_number, begin));
+  }
+  return int64_t(magnitude);
+}
+
+expected<float, error> parse_float(std::string_view text, std::size_t begin, std::size_t end) {
+  mut std::size_t index = begin;
+  mut bool negative = false;
+  if (index < end && text[index] == '-') {
+    negative = true;
+    index = index + std::size_t(1);
+  }
+  mut float value = 0.0;
+  mut bool digits = false;
+  while (index < end && is_digit(text[index])) {
+    value = value * 10.0 + float(uint8_t(text[index]) - uint8_t('0'));
+    index = index + std::size_t(1);
+    digits = true;
+  }
+  if (index < end && text[index] == '.') {
+    index = index + std::size_t(1);
+    mut float scale = 0.1;
+    while (index < end && is_digit(text[index])) {
+      value = value + scale * float(uint8_t(text[index]) - uint8_t('0'));
+      scale = scale * 0.1;
+      index = index + std::size_t(1);
+      digits = true;
+    }
+  }
+  if (!digits || index != end) {
+    return unexpected(error(errc::invalid_number, index));
+  }
+  if (negative) {
+    return 0.0 - value;
+  }
+  return value;
+}
+
+/// True when the range holds exactly `literal`, ignoring surrounding blanks.
+bool range_is(std::string_view text, std::size_t begin, std::size_t end, std::string_view literal) {
+  if (end - begin != literal.size()) {
+    return false;
+  }
+  for (mut std::size_t index = 0; index < literal.size(); index++) {
+    if (text[begin + index] != literal[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+expected<E, error> decode_enum<E>(std::string_view text, std::size_t begin, std::size_t end) {
+  mut scanner cursor{text, begin, end};
+  mut std::string spelling = std::string("");
+  ?cursor.read_string(spelling);
+  ?cursor.finish();
+  constexpr for (auto enumerator : std::meta::enumerators_of<E>()) {
+    if (spelling.view() == enumerator.name()) {
+      return enumerator.value();
+    }
+  }
+  return unexpected(error(errc::invalid_enumerator, begin));
+}
+
+/// Decodes an array element; `E` is deduced from the element `type`
+/// metaobject, which is the first type argument of the vector.
+expected<E, error> decode_element<E>(std::meta::type<E> element, std::string_view text, std::size_t begin, std::size_t end) {
+  return decode_value<E>(text, begin, end);
+}
+
+/// The value of `F` that the text range denotes.
+expected<F, error> decode_value<F>(std::string_view text, std::size_t begin, std::size_t end) {
+  if constexpr (std::meta::is_bool<F>()) {
+    if (range_is(text, begin, end, "true")) {
+      return true;
+    }
+    if (range_is(text, begin, end, "false")) {
+      return false;
+    }
+    return unexpected(error(errc::type_mismatch, begin));
+  } else if constexpr (std::meta::is_signed_integral<F>()) {
+    int64_t value = ?parse_signed(text, begin, end);
+    return F(value);
+  } else if constexpr (std::meta::is_integral<F>()) {
+    uint64_t value = ?parse_unsigned(text, begin, end);
+    return F(value);
+  } else if constexpr (std::meta::is_floating_point<F>()) {
+    float value = ?parse_float(text, begin, end);
+    return F(value);
+  } else if constexpr (std::meta::name_of<F>() == "std::string") {
+    mut scanner cursor{text, begin, end};
+    mut std::string out = std::string("");
+    ?cursor.read_string(out);
+    ?cursor.finish();
+    return std::move(out);
+  } else if constexpr (std::meta::is_enum<F>()) {
+    return decode_enum<F>(text, begin, end);
+  } else if constexpr (std::meta::primary_name_of<F>() == "std::vector") {
+    mut F out = F();
+    std::vector<member> elements = ?parse_elements(text, begin, end);
+    for (auto& element : elements) {
+      auto value = ?decode_element(std::meta::list_first<std::meta::argument_list<F>>(), text, element.begin, element.end);
+      out.push_back(std::move(value));
+    }
+    return std::move(out);
+  } else if constexpr (std::meta::is_reflectable<F>()) {
+    return decode_object<F>(text, begin, end);
+  } else {
+    static_assert(false, "std::experimental::json cannot decode this field type");
+  }
+}
+
+/// The value an `[[ignore]]`d field takes on decoding: its type's default
+/// construction, which the field type must therefore support.
+expected<F, error> default_value<F>() requires std::default_initializable<F> {
+  return F();
+}
+
+/// Produces each field of `T` from the members of one object.
+struct object_producer<T> {
+  std::string_view text;
+  std::size_t begin;
+  std::vector<member> members;
+  object_producer(std::string_view text, std::size_t begin, std::vector<member> members)
+      : text(text), begin(begin), members(std::move(members)) {}
+  object_producer(object_producer<T>& other) = delete;
+
+  expected<std::meta::field_type<T, I>, error> produce<uint64_t I>(std::meta::field<T, I> field) mut {
+    if constexpr (std::meta::field<T, I>().has_attribute<ignore>()) {
+      return default_value<std::meta::field_type<T, I>>();
+    }
+    std::string_view key = key_of(field);
+    for (auto& candidate : this.members) {
+      if (candidate.key.view() == key) {
+        mut auto value = decode_value<std::meta::field_type<T, I>>(this.text, candidate.begin, candidate.end);
+        return std::move(value);
+      }
+    }
+    return unexpected(error(errc::missing_field, this.begin));
+  }
+};
+
+expected<T, error> decode_object<T>(std::string_view text, std::size_t begin, std::size_t end) {
+  std::vector<member> members = ?parse_members(text, begin, end);
+  mut object_producer<T> producer{text, begin, std::move(members)};
+  mut auto built = std::meta::construct<T, error, object_producer<T>>(producer);
+  return std::move(built);
+}
+
+}
+
+/// The JSON text of `value`: an object with one member per field that is not
+/// `[[ignore]]`d, keyed by `[[name]]` or the declared name.
+std::string encode<std::meta::reflectable T>(T& value) {
+  mut std::string out = std::string("");
+  detail::encode_object(out, value);
+  return std::move(out);
+}
+
+/// The `T` that the JSON text denotes, built field by field through
+/// `std::meta::construct`; every non-ignored field must be present.
+expected<T, error> decode<std::meta::reflectable T>(std::string_view text) {
+  return detail::decode_object<T>(text, std::size_t(0), text.size());
+}
+
+}
+}
+}

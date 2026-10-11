@@ -350,6 +350,10 @@
       "suite": "text"
     },
     {
+      "name": "testBranchTemporaryCallResultIsNotDiscarded",
+      "suite": "text"
+    },
+    {
       "name": "testPlainCallMemberInitializer",
       "suite": "text"
     },
@@ -362,6 +366,10 @@
       "suite": "text"
     },
     {
+      "name": "testOwningConditionalJoinConsumers",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },
@@ -371,6 +379,10 @@
     },
     {
       "name": "testCleanupFreeExpectedClassMoveSlot",
+      "suite": "text"
+    },
+    {
+      "name": "testCleanupFreeExpectedClassCopySlot",
       "suite": "text"
     },
     {

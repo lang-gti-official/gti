@@ -828,6 +828,20 @@ native shell where MIR hands its obligation away. In a plain body that staged
 the returned value, that point is the return's transfer-out. Otherwise it is
 the consuming `Initialize` that reparents the obligation into a field. A
 temporary that MIR later drops keeps that drop.
+An owning arm may also move out of a nested owning join, or move a named
+local whose obligation MIR first moves into the arm value; the arm's
+`Initialize` reparents that obligation into the join's. When the join's single
+move is read only through field views, or consumed by one assignment whose
+`Replace` takes the join's obligation, the moved value denotes the join
+temporary. Views read `temporary.get().field`, the assignment move-assigns from
+`temporary.get()`, and MIR's later Drop of the temporary ends the live object
+or its moved-from shell. A returned owning join whose move leaves a pending
+`ReturnResult` on the temporary, because later cleanup such as the moved
+local's Drop can fail, keeps the result there until `Return`. Each arm
+initializes the temporary once, the arms alone enter the move's block, and no
+arm is reachable again after the move. `Return` publishes it with `take()`,
+and a failure-cleanup edge destroys the unpublished temporary through MIR's
+ordinary Drop.
 
 A copy-loaded class result whose only executable use is `Return` also avoids an
 invented default-constructed SSA object. The plain C++ form returns the exact
@@ -1502,6 +1516,15 @@ such as a scalar payload with a cleanup-free class error, keeps its ordinary SSA
 local. An owning alternative keeps MIR's value drop and the value-rooted
 transfer slot described above.
 
+A callable value invocation produces the same fresh temporary as a source
+call: a closure literal, a stored closure, or a callable parameter invoked as
+`code(make(a))` uses that slot under the same consumer, observer, extraction
+and discard proofs. The enclosing body's ABI decides how the invocation
+publishes into it. A transformed invocation passes the slot's construction
+address and marks it constructed on its success edge; a plain invocation
+constructs it from the returned value. A raising callable leaves the slot
+unconstructed, and a discarded result retires as soon as it is published.
+
 The same slot may instead feed one by-value parameter of an exact ordinary
 source constructor, mirroring the owning route's constructor consumer. The
 construction must match the constructor's parameter types and owner, carry no
@@ -1550,7 +1573,8 @@ return value. The guard stays as a backstop: a shape with no exact
 publication rejects body emission rather than emitting native code that cannot
 compile.
 
-A whole cleanup-free Expected binding moved into a new binding, as in
+A whole cleanup-free placement Expected binding (one whose success
+alternative is a class) moved into a new binding, as in
 `auto moved = std::move(original);`, is constructed the same way. MIR gives the
 moved value no drop and no lifecycle event, only the source's ownership
 transition, and the adjacent `Initialize` activates the new binding's own drop,
@@ -1559,6 +1583,16 @@ slot from the source, and the `Initialize` emits nothing more. The moved-from
 source keeps its own binding drop and is destroyed at its scope exit, as after
 a copy. An owning Expected moves through its value drop and the `Initialize`'s
 `Reparent` instead.
+
+A copy into a new binding, as in `auto copy = original;`, takes the same route
+at its `Load`. MIR's copy of a whole binding has no defined failure, lifecycle
+event or value drop, and the adjacent `Initialize` activates the new binding's
+own drop. The `Load` copy-constructs the new binding's lifetime slot from the
+source, and each binding keeps its own drop. This serves a byte-preserving
+native-record payload and any cleanup-free class success payload alike. A
+scalar-success Expected, even one with a class error, keeps its ordinary
+carrier for both copies and moves, so its bindings stay ordinary locals that
+other assignments and observations already handle.
 
 The slot also serves an Expected call result that initializes a constructor
 field as that field's selected member initializer, immediately after the
@@ -1927,7 +1961,10 @@ uninitialized output storage, from a transformed or a failure-free source call,
 such as `[[discard]] make_value()` or a comma's discarded left operand.
 Selection requires no SSA uses, value-rooted places, semantic result-drop
 obligation, borrowed state, or active cleanup; the class must have generated
-destruction. A transformed call marks that representation on success and a
+destruction. A failure-free call with a MIR destination is not discarded even
+though its value has no uses: MIR rehomed it into that place (for example a
+branch-only receiver temporary on the right of `||`, `&&` or `?:`), so it
+constructs there and the place's own drop retires it. A transformed call marks that representation on success and a
 failure-free call constructs it from its returned value; either retires it
 immediately, permitting repeated calls in a loop.
 Failure leaves the storage uninitialized and follows the existing MIR failure
