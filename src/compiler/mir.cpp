@@ -3581,21 +3581,37 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
               sameCanonicalRoot(childPlace, otherPlace) &&
               !abstractStoredAccess(other, childPlace).overlaps)
             continue;
+          const bool primaryOverlap =
+              canonicalPlacesOverlap(childPlace, otherPlace);
+          bool overlaps = primaryOverlap;
+          bool otherWrites =
+              primaryOverlap && other.access == AccessMode::Mutable;
+          for (const auto &dependency : other.additionalDependencies) {
+            const bool overlap = canonicalPlacesOverlap(
+                childPlace,
+                canonicalPlace(body, dependency.source, bindingLoans, active));
+            overlaps = overlaps || overlap;
+            otherWrites = otherWrites ||
+                          (overlap && dependency.access == AccessMode::Mutable);
+          }
           const bool sharedEphemeralAccess =
               body.loans[loan - 1].kind == MirLoanKind::CallResult &&
-              other.kind == MirLoanKind::CallResult &&
-              body.loans[loan - 1].access == AccessMode::ReadOnly &&
-              other.access == AccessMode::ReadOnly;
+              other.kind == MirLoanKind::CallResult;
+          const auto &parentLoan = body.loans[parent - 1];
+          const bool plainReferenceAccess =
+              (parentLoan.kind == MirLoanKind::Parameter ||
+               parentLoan.kind == MirLoanKind::Local) &&
+              parentLoan.storedDependency == 0;
           // A read-only child of a parent that grants no mutation over the
           // child place shares access with every read-only sibling, whatever
           // kind of loan the parent is.
           const bool sharedReadOnlyAccess =
               body.loans[loan - 1].access == AccessMode::ReadOnly &&
-              other.access == AccessMode::ReadOnly &&
-              !loanPermitsPlace(body, body.loans[parent - 1], childPlace,
-                                AccessMode::Mutable, bindingLoans, active);
-          if (canonicalPlacesOverlap(childPlace, otherPlace) &&
-              !sharedEphemeralAccess && !sharedReadOnlyAccess) {
+              !otherWrites &&
+              (sharedEphemeralAccess || plainReferenceAccess ||
+               !loanPermitsPlace(body, parentLoan, childPlace,
+                                 AccessMode::Mutable, bindingLoans, active));
+          if (overlaps && !sharedReadOnlyAccess) {
             return failure(body, owner,
                            "child loan " + std::to_string(loan) +
                                " conflicts with active sibling loan " +
@@ -3663,13 +3679,19 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                     .throughLoan == parent;
           }
         }
+        const auto &parentLoan = body.loans[parent - 1];
+        const bool plainReferenceAccess =
+            (parentLoan.kind == MirLoanKind::Parameter ||
+             parentLoan.kind == MirLoanKind::Local) &&
+            parentLoan.storedDependency == 0;
         return throughParent &&
                std::all_of(
                    children[parent - 1].begin(), children[parent - 1].end(),
                    [&](MirLoanId child) {
                      const MirLoan &sibling = body.loans[child - 1];
                      return active[child - 1] == MirLoanFlowState::Inactive ||
-                            ((sibling.kind == MirLoanKind::CallResult ||
+                            ((plainReferenceAccess ||
+                              sibling.kind == MirLoanKind::CallResult ||
                               sibling.kind == MirLoanKind::Stored) &&
                              sibling.access == AccessMode::ReadOnly &&
                              std::all_of(sibling.additionalDependencies.begin(),

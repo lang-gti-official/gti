@@ -80,6 +80,37 @@ not evidence of final integration or full release acceptance:
   uncounted worker allocation under ASan. This is a test-instrumentation repair,
   not an allocation-mismatch suppression or a production allocator change.
 
+- The first quiet Linux cost run (`run-14448016aaa546eba8b2009f45e24bf9`,
+  published `c73297c1`) compares equal 2,800,000-work-unit Mandelbrot jobs under
+  GCC 14/C++23 O3 on six vCPUs. Both shared build and suite windows are held
+  during three warmups and fifteen interleaved samples. Sequential / four
+  owned threads / four scoped threads have medians 1076.826 / 279.474 / 279.402
+  ms, MAD 5.189 / 1.469 / 1.162 ms and CV 0.50% / 0.69% / 0.54%. Scoped and
+  owned execution are indistinguishable at this resolution, about 3.85 times
+  faster than this sequential workload on this host, not a universal speedup.
+  Binary sizes are 123408 / 158024 / 130280 bytes; emitted C++ is 465527 /
+  647461 / 521963 bytes. Separate full GTI-plus-native O3 builds take 1.99 s
+  and 194688 KiB peak RSS for scoped versus 2.62 s and 216408 KiB for owned.
+  The shared-job 24-case native matrix passes. The five-fixture scoped matrix
+  passes 39/40 cases; its remaining allocation-oracle ASan failure is the
+  instrumentation mismatch described above, not accepted release evidence.
+- The unfiltered macOS Release sweep (`run-585eb79c20e241779381e718cde387c4`,
+  `c73297c1`) builds all targets, passes relocated installed consumers at
+  O0/O3, and passes 639/647 CTests. Failures identify shared-borrow proof/test
+  mismatches, the new analyzer-consumer inventory entry, and example census
+  additions; all require correction and rerun. Three lifetime-slot failures
+  (`stdlib_surface` meta, reflection and temporary-owner borrowing) overlap
+  the subsequent main 0.402.11 fix. The remote Mac cannot grant LLDB debugger
+  permission in its noninteractive SSH session; the debugger test must run
+  on a permitted host. None of these failures is counted as a passing gate.
+- The subsequent local Release build passes `optimizer_foundation`,
+  `scoped_thread_semantic_shapes`, `semantic_header_boundary`, all five scoped
+  O3 fixtures and `source_debug_lldb`. Shared local and stored read-only
+  children now coexist in either declaration order; distinct shared reborrows
+  retain independent endpoints, while overlapping writes remain rejected.
+  The earlier remote focused check also passes the new mutation rejecting
+  release of an external field authority before its forwarded dependent.
+
 The remaining acceptance includes the extended nested-source native matrix, current-head
 ownership/backend/corpus controls, installed consumption, runtime/allocation/
 code-size measurements and final reconciled-head validation. The native group
