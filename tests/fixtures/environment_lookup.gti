@@ -11,6 +11,14 @@ expected<int, std::environment::errc> check() {
   auto spaces = std::environment::get("GTI_ENVIRONMENT_SPACES");
   if (!spaces || !spaces.value().has_value() ||
       spaces.value().value().view() != "two words = exact value") { return 3; }
+  mut std::string query_name = std::string("GTI_ENVIRONMENT_SPACES");
+  auto independent = std::environment::get(query_name.view());
+  query_name.clear();
+  if (!independent || !independent.value().has_value() ||
+      independent.value().value().view() != "two words = exact value") { return 9; }
+  auto non_shell_name = std::environment::get("GTI ENVIRONMENT:NAME");
+  if (!non_shell_name || !non_shell_name.value().has_value() ||
+      non_shell_name.value().value().view() != "non-shell-name") { return 10; }
   auto unicode = std::environment::get("GTI_ENVIRONMENT_UNICODE");
   if (!unicode || !unicode.value().has_value() ||
       unicode.value().value().view() != "café") { return 4; }
