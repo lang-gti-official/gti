@@ -83,7 +83,14 @@ worklist:
   instantiated.
 
 It then seeds every other declaration exactly as complete lowering does, and
-drains the worklist again.
+drains the worklist again. `HirLoweringScope::completeDeclarations` narrows
+that second seeding to the given top-level declaration ranges. Artifact builds
+(`FrontendOptions::lowerLibraryReachableOnly`) pass the entry unit and every
+application or package unit, so a compiler-trusted prelude or standard-library
+declaration is lowered only when the roots reach it. That pass never changes
+the prefix. Semantic analysis has already checked every trusted body, including
+the generic callee bodies it analyzes on demand. So only lowering work the
+program never uses is skipped.
 
 Instances are appended to their tables when first enqueued, and are finished
 once processed. Ordinary on-demand enqueueing discovers everything else the
