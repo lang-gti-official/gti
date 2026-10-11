@@ -83,7 +83,8 @@ while canonical language documents continue to describe actual support.
 - [I/O](language/io.md), [binary-to-text encoding](language/encoding.md),
   [filesystem operations](language/filesystem.md),
   [clocks and durations](language/chrono.md),
-  [child processes](language/process.md), [TCP](language/tcp.md),
+  [child processes](language/process.md),
+  [environment access](language/process.md#environment-observation), [TCP](language/tcp.md),
   [HTTP/HTTPS](language/http.md), [JSON](language/json.md), and
   [standard library](language/standard-library.md) — current library-facing
   semantics and boundaries.

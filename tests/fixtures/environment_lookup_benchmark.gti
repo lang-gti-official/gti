@@ -1,0 +1,12 @@
+#include <std/environment>
+#include <std/string>
+
+// A deterministic owned-lookup workload, not a comparison to borrowed getenv.
+int main() {
+  for (mut int iteration = 0; iteration < 100000; iteration++) {
+    auto result = std::environment::get("GTI_ENV_BENCH");
+    if (!result || !result.value().has_value() ||
+        result.value().value().view() != "sample-value") { return 1; }
+  }
+  return 0;
+}
