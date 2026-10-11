@@ -1,5 +1,31 @@
 # Compiler Verification
 
+## Record-published field initializers under optimization (0.399.1)
+
+- **Defect.** A literal-backed `std::string_view` field default read back
+  empty at `-O1` and above, both directly and through a by-reference read. The
+  generated default constructor's MIR carries no `Initialize` for the field:
+  the constructor record publishes it from the literal's MIR value, which has
+  no MIR use, and `dead-unused-computations` removed the literal. The
+  emitted constructor then wrote the field from a default-constructed value.
+  A user-written constructor with the same default member initializer, an
+  explicit `name("Ada")` mem-initializer, and a nested record with its own
+  text-view default all failed the same way.
+- **Rule.** `mirRecordPublishedConstructorInitializer` names the values a
+  constructor record publishes from. The canonical dead-instruction rewrite
+  refuses them, so the editor, the pass and coherence replay agree; the pass
+  reports the retained value as a missed candidate; and the C++ emitter's
+  publication predicate now calls the same query.
+- **Regression tests.** `optimizer_initializer_publication_runtime` builds
+  and runs the four programs above at O0, O1 and O3, requires identical
+  output at every level, and reads each optimization report: no applied
+  dead-computation transformation touches a constructor body, and O1/O3
+  carry the retained remark. `testRecordPublishedInitializerRetained` in
+  `optimizer_tests` locates the unstaged literal, proves the rewrite refuses
+  it and leaves MIR byte-identical, and checks the O1 pipeline keeps the
+  literal without a transformation record. Every program fails before this
+  change at O1 and O3.
+
 ## Backend crash fixes for #212–#214 (0.397.9)
 
 - **Regression programs.** `issues_212_214_regressions` builds and runs five
@@ -4672,7 +4698,7 @@ upstream code.
 | `feature_interaction_model` | constrained pairwise/selected-triple and full three-way coverage, seeded typed source generation, independent value/effect/cleanup expectations, metamorphic renaming, failure classifiers, retained evidence, and predicate-preserving bounded reduction |
 | `feature_interaction_smoke` | three fixed interaction programs through the real optimized compiler at C++20/C++23 and O0/O3, original/renamed variants, repeated execution, exact destructor/call/output checks, and negative ownership admission controls |
 | `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
-| `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces |
+| `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces. Each native build has a 300-second limit unless its case records a longer one, at most 900 seconds, with a `build_timeout_reason`. Only `json` does, because of [quadratic failure cleanup](../plans/implementation-sequence.md#m-fail-01-failure-operations-and-cleanup-edges) |
 | `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an include-only translation unit, including unused generic declarations |
 | `stdlib_modules` | every public `<std/name>` unit has exactly one canonical `stdlib/modules/name.gti` interface, and `import std.name;` alone reaches verified MIR for each |
 | `dormant_capability_runtime` | include-only programs for every capability-family module (atomic storage, mutex storage and lock token, shared owner, managed thread, C thread), alone under both execution profiles and together under both profiles at C++20/C++23, compile natively and exit cleanly; so do an uninstantiated application generic over those members and a concrete atomic beside a dormant mutex in the concurrent profile. This is the native complement to the emission-only sweep (#164) |
