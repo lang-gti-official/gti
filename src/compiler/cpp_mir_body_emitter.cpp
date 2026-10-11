@@ -27700,7 +27700,7 @@ producedCallResultLoan(const MirBody &body, const MirInstruction &producer) {
          producer->intrinsic == IntrinsicKind::None &&
          producer->borrowAccess == AccessMode::Mutable &&
          producer->info.type == place.type &&
-         producer->info.category == ValueCategory::Reference &&
+         producer->info.category == ValueCategory::Place &&
          producer->info.access == AccessMode::Mutable &&
          result->definition == producer->id && result->info == producer->info;
 }
