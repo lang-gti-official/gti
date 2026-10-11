@@ -1309,6 +1309,15 @@ cleanup failure leaves only that cleanup-free representation for the slot to
 retire. A call with nothing but inert records before its Return keeps the
 direct placement into the caller's storage instead.
 
+The same result-staging proof applies to an exact ordinary source member, not
+only a namespace function. Its ordered receiver input retains its own checked
+loan and ends according to MIR; no result alternative may contain borrowed
+state. A failure-free member constructs the wrapper from its returned value,
+while a transformed member constructs it only on its Invoke success edge.
+Neither route default-constructs an unused success payload. Missing or unrelated
+receivers, a substituted static/return target, extra result-place aliases and
+additional consumers fail the existing exact call and single-slot proofs.
+
 An Expected whose success payload is an enum with a boundary row (an
 integral enum, or a payload enum whose variants hold only passive movable
 fields) crosses the transformed failure ABI exactly like a scalar payload:

@@ -1,5 +1,41 @@
 # Compiler Verification
 
+## Container iterator completion: full-run reconciliation (2026-10-12)
+
+The clean reconciled `65a32870` unfiltered local run completes all 672 gates in
+1,810.63 seconds: 669 pass and three fail. The complete independent
+batch/standalone emitter comparison and native cutover oracle pass; this is
+still a failed whole-suite result, not acceptance. Raw output, `LastTest` and
+the failed-test list are retained under
+`/private/tmp/gti-iterator-65a32870-validation.anFhTN/`.
+
+`resource_protocol_contract` exposes an overly narrow representation proof:
+an unrelated provider returns a cleanup-free Expected through an exact source
+member, while staging admits only namespace functions or callable values. The
+repair reuses the same independent, uninitialized result slot for the member;
+ordered receiver loans, exact target types and single-consumer/alias checks
+remain mandatory. A new unrelated member fixture covers absent/default-deleted
+payloads, unused observable defaults, forwarding across fallible cleanup,
+observers, by-value arguments and replacement, with the existing eight native
+modes and complete success/producer-failure/cleanup-failure observations.
+
+The two other failures are stale forgery expectations, not accepted malformed
+MIR. `owning_function_types` now checks the exact member-target rejection rather
+than the earlier unexpected-receiver wording. `mir_backend_scalar_cfg` now
+requires the compiler-owned concrete-formal-trait rejection and still requires
+production backend rejection, rather than insisting the forgery remain valid
+MIR. The three original owning gates pass after the repair, as does the expanded
+32-build member-argument matrix with all eight modes and complete observations.
+The new named lifecycle test separately passes its five independent forgeries
+in C++20 and C++23: malformed call identities fail structural MIR readiness;
+an otherwise valid result alias fails the single-slot text-vocabulary proof.
+The unrelated failure-free resource provider also builds and runs at C++20/O3.
+The checked-member variant additionally returns its result across local
+fallible cleanup: both backend standards explicitly construct the independent
+slot only on Invoke success, and all eight native modes preserve complete
+success and producer-failure cleanup observations.
+Fresh final-source whole-suite/platform and integration evidence remain required.
+
 ## Container iterator completion: candidate validation (2026-10-12)
 
 The clean `a814a538` unfiltered 671-gate attempt is stopped after 52 completed
@@ -6830,6 +6866,30 @@ tests retain their unchanged command path. The helper preserves the selected
 C++ driver spelling, optimization/standard, strict floating-point flags,
 sanitizer options and both phases' failure diagnostics. Its unit gate checks
 those boundaries; runtime allocation/failure/cleanup assertions are unchanged.
+
+Iterator sanitizer positives with independent scenarios use exact source
+partitions when combined GCC instrumentation exceeds the existing per-case
+compile budget. Movement has four contiguous main-body groups; sparse
+pool/resource-storage/mask allocation checks have three. Common declarations
+are retained, the concatenated regions reconstruct the complete fixture
+byte-for-byte, and missing/duplicated/reordered cuts fail closed. All original
+assertions, allocation windows and complete-state checks remain; every
+non-sanitized mode still compiles the combined program. This is not a source
+or optimization-policy change to the compiler.
+
+The atomic borrowed-JSON accessor fixture cannot be independently partitioned.
+Its sanitizer-only extra `-fno-inline-functions-called-once` argument is selected
+by probing the invoked native C++ driver's predefined macros and excluding
+Clang/other known GCC-compatible drivers, not by the operating system or GTI's
+host compiler. Its O1, ASan/UBSan, strict-FP flags, 120-second compile budget and
+original execution oracle remain unchanged. The `native_fixture_build` unit
+gate checks reconstruction, complete mode/budget/native-input preservation and
+driver classification. On an actual selected GCC driver it also compiles tiny
+separate-TU controls, verifies sanitizer symbols, and independently requires
+ASan heap-buffer-overflow and UBSan signed-overflow reports with the extra flag.
+That native control is explicitly inapplicable when no GCC flag is selected;
+it does not replace any fixture's sanitizer execution. Neither partitioning nor
+the narrow flag establishes concurrent platform acceptance without a fresh run.
 
 Native compiler invocation spelling is likewise distinct from canonical binary
 identity: resolving `clang++` to `clang` changes link-driver selection. Runtime

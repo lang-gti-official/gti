@@ -8916,6 +8916,147 @@ int32_t main() {
          "call, and definition");
 }
 
+void testCleanupFreeExpectedMemberProducer() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/expected_cleanup_free_member_result.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "cleanup-free member result fixture exists");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "independent Expected member results retain exact receiver inputs");
+  if (!frontend.canGenerateCode())
+    return;
+
+  const lang::MirFunctionInstance *forwarder = nullptr;
+  const lang::MirInstruction *producer = nullptr;
+  const lang::MirFunctionInstance *checkedForwarder = nullptr;
+  const lang::MirInstruction *checkedProducer = nullptr;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    if (!hir || !hir->source ||
+        (hir->source->name().lexeme != "forward_method" &&
+         hir->source->name().lexeme != "forward_checked"))
+      continue;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *target =
+            instruction.functionTarget
+                ? frontend.mir.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.result && instruction.receiver && target &&
+            target->owner && !target->staticMember &&
+            instruction.info.type == function.returnType) {
+          if (hir->source->name().lexeme == "forward_method" &&
+              !target->mayRaiseDefinedFailure) {
+            forwarder = &function;
+            producer = &instruction;
+          } else if (hir->source->name().lexeme == "forward_checked" &&
+                     target->mayRaiseDefinedFailure &&
+                     block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                     block.terminator.invokeInstruction == instruction.id) {
+            checkedForwarder = &function;
+            checkedProducer = &instruction;
+          }
+        }
+      }
+  }
+  expect(forwarder && producer,
+         "fixture returns one plain member result across fallible cleanup");
+  expect(checkedForwarder && checkedProducer,
+         "fixture invokes one checked member result across fallible cleanup");
+  if (!forwarder || !producer || !checkedForwarder || !checkedProducer)
+    return;
+
+  const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                     forwarder->id};
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const lang::CppMirBodyEmissionMap rows(
+        buildRows(frontend, frontend.mir, standard));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
+    expect(emitter.analyzeProgram().ready() &&
+               emitter.supportsFailureBodyText(address),
+           "member result staging supports both backend standards");
+    if (!emitter.supportsFailureBodyText(address))
+      continue;
+    const auto text = emitter.emitFailureBodyText(address, "member-result", 1);
+    const auto value = "__gti_mir_v_" + std::to_string(*producer->result);
+    expect(text.text.find(", true> " + value + ";") != std::string::npos &&
+               text.text.find(value + ".construct_from([&]() { return ") !=
+                   std::string::npos &&
+               text.text.find(value + "{}") == std::string::npos,
+           "plain member constructs one uninitialized result, not a default "
+           "success object");
+    expect(!gti_test::emitCpp(frontend, standard).contents.empty(),
+           "member Return, observer, by-value argument and replacement use "
+           "production verified-MIR emission");
+
+    const lang::MirBodyAddress checkedAddress{lang::MirBodyKind::Function,
+                                              checkedForwarder->id};
+    expect(emitter.supportsFailureBodyText(checkedAddress),
+           "transformed member result stages across local cleanup");
+    if (emitter.supportsFailureBodyText(checkedAddress)) {
+      const auto checkedText = emitter.emitFailureBodyText(
+          checkedAddress, "checked-member-result", 1);
+      const auto checkedValue =
+          "__gti_mir_v_" + std::to_string(*checkedProducer->result);
+      expect(
+          checkedText.text.find(", true> " + checkedValue + ";") !=
+                  std::string::npos &&
+              checkedText.text.find(checkedValue + ".construction_address()") !=
+                  std::string::npos &&
+              checkedText.text.find(checkedValue + "{}") == std::string::npos,
+          "Invoke publishes into an uninitialized independent result before "
+          "cleanup, without default construction");
+    }
+
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto malformed = frontend.mir;
+      auto *body = lang::findMirBody(malformed, address);
+      auto *call = const_cast<lang::MirInstruction *>(
+          testInstruction(*body, producer->id));
+      if (mutation == 0)
+        call->receiver.reset();
+      if (mutation == 1)
+        call->receiver->type = lang::SemanticType::Int32;
+      if (mutation == 2)
+        const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(*call->functionTarget))
+            ->staticMember = true;
+      if (mutation == 3)
+        const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(*call->functionTarget))
+            ->returnType = lang::SemanticType::Int32;
+      if (mutation == 4) {
+        body->places.push_back({.id = body->places.size() + 1,
+                                .root = lang::MirPlaceRootKind::Value,
+                                .value = *call->result,
+                                .type = call->info.type,
+                                .access = lang::AccessMode::ReadOnly,
+                                .traits = call->info.traits});
+      }
+      expect(lang::rebuildMirValueUses(*body),
+             "member forgery independently repairs its use census");
+      const bool valid = lang::verifyMirProgram(malformed).valid();
+      expect(mutation == 4 ? valid : !valid,
+             "exact member identity failures are MIR errors; a result-place "
+             "alias instead loses the single-slot representation proof");
+      // Vocabulary probes do not replace MIR verification. A mistyped
+      // receiver is rejected by structural readiness; an otherwise valid
+      // alias must independently fail the result-slot vocabulary proof.
+      const lang::CppMirBodyEmitter forgedEmitter(malformed, rows);
+      expect(!forgedEmitter.analyzeProgram().ready() &&
+                 (!valid || !forgedEmitter.supportsFailureBodyText(address)),
+             "missing/wrong receivers, static targets, return substitutions "
+             "and result aliases cannot enter member staging: " +
+                 std::to_string(mutation));
+    }
+  }
+}
+
 void testExpectedLifetimeSlotObserverFusion() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-expected-slot-observer.gti", R"(
@@ -13524,6 +13665,8 @@ constexpr NamedTest kTests[] = {
     {"testAbstractBaseFailureFamilyAndInheritedMembers",
      testAbstractBaseFailureFamilyAndInheritedMembers},
     {"testUniqueOwnerUpcastFailureBody", testUniqueOwnerUpcastFailureBody},
+    {"testCleanupFreeExpectedMemberProducer",
+     testCleanupFreeExpectedMemberProducer},
     {"testExpectedLifetimeSlotObserverFusion",
      testExpectedLifetimeSlotObserverFusion},
     {"testExpectedOwningPayloadPublicationAndForwarding",
