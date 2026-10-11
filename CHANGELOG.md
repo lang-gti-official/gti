@@ -21,6 +21,14 @@ for what minor and patch releases mean.
 - Still reporting GTI-B0001: reading a field of an owning `expected` payload
   in those positions, as in `ok || make_named(true).value().text.size() == 7`.
 
+## 0.402.7 — Moving `expected` values of plain structs and classes
+
+- Moving an `expected<T, E>` into a new variable, as in
+  `auto moved = std::move(original);`, builds again when `T` is a struct or
+  class without cleanup and without a default constructor, including a
+  `[[c_abi]]` record. Since 0.401.6 this stopped with internal compiler error
+  `GTI-B0001`. The new variable is constructed directly from the moved value.
+
 ## 0.402.6 — Class-valued conditionals
 
 - A conditional whose arms are class values that need no cleanup, such as
