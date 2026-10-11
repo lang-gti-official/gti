@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.401.7 — Owning `expected` fields initialized from calls
+## 0.402.1 — Owning `expected` fields initialized from calls
 
 - A constructor's `expected<T, E>` field can now be initialized directly from
   a call when `T` owns resources, as in
