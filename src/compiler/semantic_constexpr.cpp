@@ -257,21 +257,50 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                     : evaluateMirConstantFunction(mir.program, root.owner,
                                                   arguments, limits, receiver);
   context.work->steps += result.steps;
-  const bool requiresMir = std::any_of(
-      mir.program.functionInstances().begin(),
-      mir.program.functionInstances().end(), [](const auto &function) {
-        const auto mutableReference = [](const SemanticType &type) {
-          return type.kind == SemanticType::Reference &&
-                 type.referenceAccess == AccessMode::Mutable;
-        };
-        return function.constexprFunction &&
-               function.definitionKind == MirDefinitionKind::Source &&
-               (function.receiverMutability == ReceiverMutability::Mutable ||
-                function.returnType == SemanticType::Void ||
-                mutableReference(function.returnType) ||
-                std::any_of(function.parameterTypes.begin(),
-                            function.parameterTypes.end(), mutableReference));
-      });
+  const auto mutableLoans = [](const MirBody &body) {
+    return std::any_of(
+        body.loans.begin(), body.loans.end(),
+        [](const auto &loan) { return loan.access == AccessMode::Mutable; });
+  };
+  const bool requiresMir =
+      std::any_of(mir.program.functionInstances().begin(),
+                  mir.program.functionInstances().end(),
+                  [&](const auto &function) {
+                    const auto mutableReference = [](const SemanticType &type) {
+                      return type.kind == SemanticType::Reference &&
+                             type.referenceAccess == AccessMode::Mutable;
+                    };
+                    return function.constexprFunction &&
+                           function.definitionKind ==
+                               MirDefinitionKind::Source &&
+                           (function.receiverMutability ==
+                                ReceiverMutability::Mutable ||
+                            function.returnType == SemanticType::Void ||
+                            mutableReference(function.returnType) ||
+                            std::any_of(function.parameterTypes.begin(),
+                                        function.parameterTypes.end(),
+                                        mutableReference) ||
+                            mutableLoans(function.body));
+                  }) ||
+      std::any_of(mir.program.constructorInstances().begin(),
+                  mir.program.constructorInstances().end(),
+                  [&](const auto &constructor) {
+                    if (mutableLoans(constructor.body))
+                      return true;
+                    for (const auto &block : constructor.body.blocks) {
+                      for (const auto &instruction : block.instructions) {
+                        if ((instruction.kind == MirInstructionKind::Assign ||
+                             instruction.kind == MirInstructionKind::Modify) &&
+                            instruction.destination) {
+                          const auto *place = constructor.body.findPlace(
+                              *instruction.destination);
+                          if (place && place->root == MirPlaceRootKind::This)
+                            return true;
+                        }
+                      }
+                    }
+                    return false;
+                  });
   // Until the ordinary MIR profile covers aggregates/references and every
   // existing statement, retain the legacy driver's admitted subset. Work
   // already executed still consumes the shared budget; arithmetic and resource
@@ -282,10 +311,9 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       return std::nullopt;
     // The compatibility walker does not own reference or receiver mutation.
     // Retrying a value-copy interpretation could silently lose a caller write.
-    return constexprFailure(
-        callSite, result.failure,
+    result.detail =
         "This constexpr call requires the verified MIR execution profile. " +
-            result.detail);
+        result.detail;
   }
   if (workMetrics != nullptr) {
     ++workMetrics->constexprMirExecutions;

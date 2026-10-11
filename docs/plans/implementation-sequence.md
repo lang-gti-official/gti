@@ -8027,8 +8027,8 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
-- **State/role:** the staged MIR constexpr foundation is implemented and locally
-  validated; publication is held at the user's request. It enables source-defined numeric helpers,
+- **State/role:** the staged MIR constexpr foundation is implemented and
+  integrated. It enables source-defined numeric helpers,
   passive records and fixed-array metadata tables, including read-only text
   inspection for game-engine asset descriptions. Declaration-owned generic
   defaults retain exact identity through the same frontend-owned constant
@@ -8092,8 +8092,8 @@ consumer, and release refreshes remain outstanding for the full campaign.
   Checked read-only reference parameters, local bindings, and returned
   projections now execute through ordinary MIR loans, with immutable referent
   observations and no persisted constant references. `std::array::at`, `front`,
-  and `back` and an unrelated record exercise the same boundary; mutable and
-  stored-reference facilities remain excluded. A game-engine-like asset table
+  and `back` and an unrelated record exercise the same boundary; stored-reference
+  facilities remain excluded, while mutable references are extended below. A game-engine-like asset table
   now composes literal-path inspection, passive record construction, fixed-array
   storage and checked reference traversal, with staged execution counts and
   six native parity configurations. Passive array constructor failure proofs
@@ -8105,7 +8105,7 @@ consumer, and release refreshes remain outstanding for the full campaign.
   execute through MIR, including nested nominal call-operator invocation.
   `std::array::operator[]` and unrelated math records exercise the same rules;
   no operator body is added to the legacy AST evaluator. Arrow/contextual-bool
-  operators and mutable/consuming receivers remain outside this slice.
+  operators and consuming receivers remain outside this slice.
   Declaration-owned default
   schedules remain migration
   work for library clients. Generated native construction is not proof of const
@@ -8165,7 +8165,27 @@ consumer, and release refreshes remain outstanding for the full campaign.
   step/call-depth limits, and compile-time/runtime differential evidence. Its
   plan must say how overlapping AST execution is removed or subsumed rather
   than accepting two permanent meanings.
-- **Remaining scope:** Mutable/stored references, allocation, receiver mutation,
+- **Mutable constexpr builders (2026-10-11, implemented; broad validation pending):**
+  Checked mutable references, `void` helpers, non-consuming mutable methods and
+  operators, and constructor-body edits after explicit field initialization now
+  execute the same canonical verified MIR. Executor-local locations retain live
+  origins, access, once-formed index paths and storage generations across calls;
+  immutable aggregate backing still preserves independent value copies. No
+  reference or host address persists in `ConstantValue`. Ordinary lifetime,
+  access and loan rules remain authoritative, including the single mutable
+  return-origin restriction and full-expression temporary receiver lifetime.
+  Source-defined mutable `std::array` accessors and `fill` exercise this rule
+  alongside unrelated records and exact generic owners. Existing reflection
+  expansion and `get_mut` compose with these builders without a new reflection
+  evaluator or metadata surface. Mutation-capable closures cannot fall back to
+  AST execution after an unsupported MIR operation. Example
+  `141-constexpr-builders.gti` demonstrates engine budget/curve preparation and
+  runtime parity. Focused positive, negative, malformed-MIR, shared-budget and
+  tooling evidence is tracked in the verification document; this does not claim
+  allocation, stored borrows, every constructor schedule or complete constexpr
+  support.
+- **Remaining scope:** Stored references, constructor reference parameters,
+  declaration-default/in-place constructor schedules, allocation,
   payload enums, unions, inherited or cleanup-owning aggregates, generic packs,
   arrow/contextual-bool operators, consuming receivers, and polymorphism remain excluded. Do
   not widen exact qualified specialization into partial specialization as a

@@ -96,8 +96,7 @@ public:
 
 private:
   const SemanticType &observedType(const SemanticType &type) const {
-    return type.kind == SemanticType::Reference &&
-                   type.arguments.size() == 1
+    return type.kind == SemanticType::Reference && type.arguments.size() == 1
                ? type.arguments.front()
                : type;
   }
@@ -251,14 +250,14 @@ private:
           return {.failure = ConstantEvaluationFailure::ResourceLimit};
         location = *frame.receiverOrigin;
       } else {
-        const auto *aggregate = frame.receiver
-                                    ? std::get_if<ConstantAggregateValue>(
-                                          &*frame.receiver)
-                                    : nullptr;
-        const auto *owner = aggregate && aggregate->value &&
-                                    aggregate->value->exactType
-                                ? record(*aggregate->value->exactType)
-                                : nullptr;
+        const auto *aggregate =
+            frame.receiver
+                ? std::get_if<ConstantAggregateValue>(&*frame.receiver)
+                : nullptr;
+        const auto *owner =
+            aggregate && aggregate->value && aggregate->value->exactType
+                ? record(*aggregate->value->exactType)
+                : nullptr;
         if (!owner)
           return {.failure = ConstantEvaluationFailure::UnsupportedType};
         location = {.frame = &frame,
@@ -462,8 +461,7 @@ private:
                                       });
       if (field == fields.end())
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
-      auto result =
-          project(field->value, path, type, offset + 1, replacement);
+      auto result = project(field->value, path, type, offset + 1, replacement);
       if (!result || !replacement)
         return result;
       if (!charge(fields.size()))
@@ -714,8 +712,9 @@ private:
           instruction.kind != MirInstructionKind::Call ||
           !instruction.functionTarget ||
           instruction.dispatch != CallDispatch::Static))) {
-      return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
-                  "Operation is outside the scalar constant MIR profile.");
+      return fail(
+          frame, ConstantEvaluationFailure::UnsupportedExpression,
+          "Operation is outside the passive-value constant MIR profile.");
     }
     if (instruction.kind == MirInstructionKind::Lifecycle) {
       return {};
@@ -810,15 +809,18 @@ private:
         if (instruction.kind == MirInstructionKind::CallInput &&
             (instruction.callInputKind == HirCallInputKind::ReadBorrow ||
              instruction.callInputKind == HirCallInputKind::MutableBorrow ||
-             instruction.callInputKind == HirCallInputKind::ReadTemporaryBorrow ||
-             instruction.callInputKind == HirCallInputKind::MutableTemporaryBorrow)) {
+             instruction.callInputKind ==
+                 HirCallInputKind::ReadTemporaryBorrow ||
+             instruction.callInputKind ==
+                 HirCallInputKind::MutableTemporaryBorrow)) {
           Location location;
           const auto located =
               locateOperand(frame, instruction.operands.front(), location);
           if (located.failure != ConstantEvaluationFailure::None)
             return fail(frame, located.failure);
           if (instruction.callInputKind == HirCallInputKind::ReadBorrow ||
-              instruction.callInputKind == HirCallInputKind::ReadTemporaryBorrow)
+              instruction.callInputKind ==
+                  HirCallInputKind::ReadTemporaryBorrow)
             location.access = AccessMode::ReadOnly;
           reference = std::move(location);
         }
@@ -838,9 +840,8 @@ private:
           if (located.failure != ConstantEvaluationFailure::None)
             return fail(frame, located.failure);
           const auto root = cell(frame, target->id);
-          if (!root ||
-              (target->type.referenceAccess == AccessMode::Mutable &&
-               location.access != AccessMode::Mutable))
+          if (!root || (target->type.referenceAccess == AccessMode::Mutable &&
+                        location.access != AccessMode::Mutable))
             return fail(frame, ConstantEvaluationFailure::InvalidOperands);
           location.access = target->type.referenceAccess;
           if (frame.references.empty())
@@ -996,8 +997,9 @@ private:
       }
       break;
     default:
-      return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
-                  "Instruction is outside the scalar constant MIR profile.");
+      return fail(
+          frame, ConstantEvaluationFailure::UnsupportedExpression,
+          "Instruction is outside the passive-value constant MIR profile.");
     }
     if (!evaluated && !voidResult) {
       return fail(frame, evaluated.failure == ConstantEvaluationFailure::None
@@ -1041,15 +1043,12 @@ private:
     return {};
   }
 
-  MirConstantEvaluation invoke(HirFunctionInstanceId id,
-                               std::span<const ConstantValue> arguments,
-                               std::size_t depth,
-                               std::optional<ConstantValue> receiver = {},
-                               std::span<const std::optional<Location>>
-                                   argumentOrigins = {},
-                               std::optional<Location> receiverOrigin = {},
-                               std::optional<Location> *referenceResult =
-                                   nullptr) {
+  MirConstantEvaluation
+  invoke(HirFunctionInstanceId id, std::span<const ConstantValue> arguments,
+         std::size_t depth, std::optional<ConstantValue> receiver = {},
+         std::span<const std::optional<Location>> argumentOrigins = {},
+         std::optional<Location> receiverOrigin = {},
+         std::optional<Location> *referenceResult = nullptr) {
     const auto *function = program.findFunctionInstance(id);
     if (function == nullptr || !function->constexprFunction ||
         function->requiresUnsafe || function->virtualMethod ||
@@ -1080,15 +1079,14 @@ private:
       if (!exact)
         return {.failure = exact.failure, .function = id};
     }
-    return executeBody(function->body, {MirBodyKind::Function, id},
-                       function->returnType, function->parameterTypes,
-                       function->parameterBindings, arguments, depth,
-                       std::move(receiver), argumentOrigins,
-                       std::move(receiverOrigin),
-                       function->receiverMutability == ReceiverMutability::Mutable
-                           ? AccessMode::Mutable
-                           : AccessMode::ReadOnly,
-                       referenceResult);
+    return executeBody(
+        function->body, {MirBodyKind::Function, id}, function->returnType,
+        function->parameterTypes, function->parameterBindings, arguments, depth,
+        std::move(receiver), argumentOrigins, std::move(receiverOrigin),
+        function->receiverMutability == ReceiverMutability::Mutable
+            ? AccessMode::Mutable
+            : AccessMode::ReadOnly,
+        referenceResult);
   }
 
   MirConstantEvaluation construct(HirConstructorInstanceId id,
@@ -1172,8 +1170,10 @@ private:
     Frame frame{
         .body = body,
         .address = address,
-        .values = std::vector<std::optional<ConstantValue>>(body.values.size() + 1),
-        .places = std::vector<std::optional<ConstantValue>>(body.places.size() + 1),
+        .values =
+            std::vector<std::optional<ConstantValue>>(body.values.size() + 1),
+        .places =
+            std::vector<std::optional<ConstantValue>>(body.places.size() + 1),
         .loans = std::vector<std::optional<Loan>>(body.loans.size() + 1),
         .placeEpochs = std::vector<std::size_t>(body.places.size() + 1),
         .valueEpochs = std::vector<std::size_t>(body.values.size() + 1),
@@ -1194,9 +1194,8 @@ private:
     }
     for (const auto &loan : body.loans) {
       const auto *source = body.findPlace(loan.source);
-      if (loan.storedDependency != 0 ||
-          !loan.additionalSources().empty() || loan.lifecycleBound ||
-          source == nullptr ||
+      if (loan.storedDependency != 0 || !loan.additionalSources().empty() ||
+          loan.lifecycleBound || source == nullptr ||
           !observedStorageType(source->type)) {
         return fail(frame, ConstantEvaluationFailure::UnsupportedType,
                     "Constant MIR only admits checked loans to supported "
@@ -1376,8 +1375,9 @@ private:
                          : fail(frame, converted.failure);
       }
       default:
-        return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
-                    "Terminator is outside the scalar constant MIR profile.");
+        return fail(
+            frame, ConstantEvaluationFailure::UnsupportedExpression,
+            "Terminator is outside the passive-value constant MIR profile.");
       }
     }
     return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);

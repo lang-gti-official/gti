@@ -3769,6 +3769,23 @@ relaxing ordinary negation overflow. The O0/O1/O3, C++20/C++23 differential
 fixture includes nested constant pairs alongside runtime string pairs, catching
 accidental class-wide rather than exact-instance factory emission.
 
+`testConstexprMutation`, `constexpr_mutation_runtime` and
+`constexpr_builders_example` cover mutable reference forwarding, `void` calls,
+constructor-body edits, mutable methods/subscript/call operators, isolated
+copies, once-formed indices, generic owners and reflection-driven field edits.
+Early-only analysis proves that required constants execute staged MIR before
+whole-program HIR, including array extents. Direct executor tests check exact
+results, unit completion without a persisted value, every interrupted scalar
+step budget, shared depth, malformed returned-loan origins/access and erased
+callee eligibility. Frontend negatives retain checked overflow/division,
+resources, runtime-input/call rejection and ordinary loan/lifetime checks.
+An unsupported operation in a mutable constructor closure cannot retry the
+legacy AST execution path. The native gates compare constant and runtime
+execution at O0/O1/O3 under C++20/C++23. The aggregate LSP test now covers
+mutable/void signatures, hover, successful staged evaluation, and an overflow
+diagnostic at the executed helper operator. The existing reflection gates
+remain separate regression controls, not newly implemented reflection.
+
 `testConstexprReadOnlyReferences` and `constexpr_readonly_references_runtime`
 cover checked read-only parameters, local bindings, returned field/index
 projections, forwarding, and loan reacquisition after mutation in another loop

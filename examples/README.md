@@ -41,6 +41,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](095-explicit-cloning.gti) |
 | Translate library errors into application errors | [96: error mapping](096-error-mapping.gti) |
 | Build and validate data at compile time | [97: constexpr tables](097-constexpr-tables.gti) |
+| Build constants with mutable helpers and reflection | [141: constexpr builders](141-constexpr-builders.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
@@ -195,6 +196,7 @@ is a teaching helper, not a production server.
 | `138-structural-construction.gti` | `std::meta::construct` building structs field by field from a byte reader and a text reader, with `expected` failures stopping production before construction |
 | `139-ordered-search.gti` | partition-point discovery and comparator bounds/binary search over application records without `operator<`, using the same descending order as sorting |
 | `140-environment-configuration.gti` | read-only owned environment configuration, missing versus explicitly empty values, and invalid-name rejection; try `GTI_DEMO_PROFILE=development` when running it |
+| `141-constexpr-builders.gti` | checked mutable constexpr references, `void` helpers, constructor-body edits, mutable array access and reflection-driven field mutation, with runtime parity |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
