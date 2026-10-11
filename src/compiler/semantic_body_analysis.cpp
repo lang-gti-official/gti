@@ -10079,10 +10079,10 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
            "constexpr subset.");
   }
   if (methodDeclaration && !function.isStatic() &&
-      function.receiverMutability() != ReceiverMutability::ReadOnly) {
+      function.receiverMutability() == ReceiverMutability::Consuming) {
     reject(function.operatorName() ? function.operatorName()->keyword
                                    : function.name(),
-           "A constexpr instance method must have a read-only receiver.");
+           "A constexpr instance method cannot consume its receiver.");
   }
   // The symbolic declaration must describe a potentially constant-capable
   // signature. Concrete generic substitutions can still be runtime-only:
@@ -10092,7 +10092,8 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
   if (methodDeclaration && !function.isStatic() && currentClass &&
       !instanceAnalysisActive &&
       !isSupportedConstexprType(openClassType(*currentClass), true)) {
-    reject(function.name(),
+    reject(function.operatorName() ? function.operatorName()->keyword
+                                   : function.name(),
            "A constexpr instance method requires a structural aggregate "
            "receiver with no base, polymorphism, stored reference, union "
            "state, or active destructor.");
@@ -10121,32 +10122,30 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
   }
   const auto observedType =
       [](const SemanticType &type) -> const SemanticType & {
-    return type.kind == SemanticType::Reference &&
-                   type.referenceAccess == AccessMode::ReadOnly &&
-                   type.arguments.size() == 1
+    return type.kind == SemanticType::Reference && type.arguments.size() == 1
                ? type.arguments.front()
                : type;
   };
-  if (function.returnMutability() == Mutability::Mutable ||
+  if ((function.returnMutability() == Mutability::Mutable &&
+       returnType.kind != SemanticType::Reference) ||
       (!instanceAnalysisActive && returnType != SemanticType::Unknown &&
+       returnType != SemanticType::Void &&
        !isSupportedConstexprType(observedType(returnType), true))) {
     reject(function.returnType().name.last(),
-           "A constexpr function must return a supported value: a "
+           "A constexpr function must return void or a supported value: a "
            "fixed-width integer, float, double, bool, char, string_view, "
            "nullptr_t, scoped enum, fixed array, structural aggregate, or "
-           "checked-integer expected result, or a read-only reference to a "
+           "checked-integer expected result, or a checked reference to a "
            "supported value.");
   }
   for (const Parameter &parameter : function.parameters()) {
     const SemanticType parameterType = typeOf(parameter);
     if (parameter.pack ||
-        (parameter.type.reference &&
-         parameter.mutability == Mutability::Mutable) ||
         (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
          !isSupportedConstexprType(observedType(parameterType), true))) {
       reject(parameter.sourceAnchor(),
              "Constexpr function parameters must be non-pack supported "
-             "values or read-only references to supported values.");
+             "values or checked references to supported values.");
     }
   }
   return valid;
@@ -10663,11 +10662,11 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
       }
     }
     if (receiver == nullptr ||
-        operation->receiverMutability != ReceiverMutability::ReadOnly) {
+        operation->receiverMutability == ReceiverMutability::Consuming) {
       return constexprFailure(expressionToken(source),
                               ConstantEvaluationFailure::UnsupportedExpression,
                               "Compile-time operators require a supported "
-                              "read-only receiver call.");
+                              "non-consuming receiver call.");
     }
     const ResolvedCallInfo call{.function = operation->function,
                                 .declaration = operation->declaration,
@@ -11423,7 +11422,6 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
     SemanticType parameterType =
         constexprType(resolved->parameterTypes[index], context);
     if (parameterType.kind == SemanticType::Reference &&
-        parameterType.referenceAccess == AccessMode::ReadOnly &&
         parameterType.arguments.size() == 1) {
       const SemanticType referent = parameterType.arguments.front();
       parameterType = referent;
@@ -11755,6 +11753,25 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
         "invalid parameter list.");
   }
 
+  // An AST compatibility frame owns value snapshots, not MIR constant-cell
+  // origins. Staging only its mutable callee would lose writes to that caller.
+  // Execute the whole enclosing body as MIR or reject; a successful isolated
+  // callee evaluation is not permission to copy-interpret a checked mutation.
+  const bool mutableOrigin =
+      function.receiverMutability() == ReceiverMutability::Mutable ||
+      std::any_of(function.parameters().begin(), function.parameters().end(),
+                  [&](const Parameter &parameter) {
+                    const auto type = typeOf(parameter);
+                    return type.kind == SemanticType::Reference &&
+                           type.referenceAccess == AccessMode::Mutable;
+                  });
+  if (context.callDepth != 0 && mutableOrigin) {
+    return constexprFailure(
+        callSite, ConstantEvaluationFailure::UnsupportedExpression,
+        "Mutable constexpr calls require their enclosing body to execute as "
+        "verified MIR, not an AST compatibility frame.");
+  }
+
   if (auto staged = executeStagedConstexpr(&function, arguments, substitution,
                                            receiver, callSite, context)) {
     return std::move(*staged);
@@ -11767,6 +11784,8 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
   }
 
   if (returnType.kind == SemanticType::Reference ||
+      returnType == SemanticType::Void ||
+      function.receiverMutability() == ReceiverMutability::Mutable ||
       std::any_of(function.parameters().begin(), function.parameters().end(),
                   [](const Parameter &parameter) {
                     return parameter.type.reference.has_value();
@@ -11774,7 +11793,7 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
         "Compile-time reference calls require an available verified MIR body "
-        "with only read-only loans to supported values.");
+        "with checked loans to supported values.");
   }
 
   const std::size_t enclosingScopeCount = context.scopes.size();

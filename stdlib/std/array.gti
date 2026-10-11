@@ -76,7 +76,7 @@ public:
     return this.values[index];
   }
 
-  mut T& at(int index) mut {
+  constexpr mut T& at(int index) mut {
     return this.values[index];
   }
 
@@ -84,7 +84,7 @@ public:
     return this.values[index];
   }
 
-  mut T& at(size_t index) mut {
+  constexpr mut T& at(size_t index) mut {
     return this.values[index];
   }
 
@@ -92,7 +92,7 @@ public:
     return this.values[0];
   }
 
-  mut T& front() mut {
+  constexpr mut T& front() mut {
     return this.values[0];
   }
 
@@ -100,7 +100,7 @@ public:
     return this.values[N - 1];
   }
 
-  mut T& back() mut {
+  constexpr mut T& back() mut {
     return this.values[N - 1];
   }
 
@@ -108,7 +108,7 @@ public:
     return this.values[index];
   }
 
-  mut T& operator[](int index) mut {
+  constexpr mut T& operator[](int index) mut {
     return this.values[index];
   }
 
@@ -116,7 +116,7 @@ public:
     return this.values[index];
   }
 
-  mut T& operator[](size_t index) mut {
+  constexpr mut T& operator[](size_t index) mut {
     return this.values[index];
   }
 
@@ -137,7 +137,7 @@ public:
     }
   }
 
-  void fill(T value) mut
+  constexpr void fill(T value) mut
     requires std::copyable<T> {
     for (mut size_t index = 0; index < N; index++) {
       this.values[index] = value;

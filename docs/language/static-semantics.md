@@ -1416,7 +1416,8 @@ static assertions, and compile-time branch conditions.
 
 A free function or method may be `constexpr` when its declaration has
 non-pack potentially supported value parameters (by value or read-only
-reference) and a potentially supported value or read-only reference result.
+or mutable reference) and a potentially supported value, checked reference,
+or `void` result.
 A generic type parameter can stand for a supported type at the
 declaration. A concrete instantiation with runtime-only types remains callable
 at runtime; for example, a generic by-value transfer helper can accept an owning
@@ -1426,7 +1427,8 @@ operations. Ordinary exact typing, ownership transfer, borrow checks, and
 source-written reference/receiver restrictions apply to every instantiation.
 Concrete type and `uint64_t` value-generic arguments retain canonical declaration and
 type/value identity throughout evaluation. A non-static instance method must
-have a read-only receiver of a supported structural class or struct. Its body
+have a read-only or mutable, non-consuming receiver of a supported structural
+class or struct. Its body
 may use supported automatic value bindings, exact assignment, scalar compound
 assignment, increment and decrement, blocks, returns, ordinary and constexpr
 conditionals, loops, switch, `break`/`continue`, compile-time conditionals,
@@ -1434,7 +1436,7 @@ recursion, and calls to available constexpr definitions. Calling the same
 function at runtime remains an ordinary GTI call with the same language
 semantics.
 
-Read-only arithmetic, bitwise, comparison, subscript, dereference, and call
+Read-only or mutable arithmetic, bitwise, comparison, subscript, dereference, and call
 operators may also be `constexpr` under those same signature and structural
 receiver rules. Ordinary overload resolution selects the exact target; no
 reversed operands, new conversions, or alternate lookup is introduced. Both
@@ -1443,7 +1445,7 @@ verified MIR execution, not an AST operator-body fallback. Generic owners retain
 their concrete type/value arguments. For example, a source-defined math record
 can implement constexpr addition, and a read-only `std::array` can be indexed
 in a required constant expression. Reference results are observed values, not
-persistable constant references. Mutable/consuming operators, arrow operators,
+persistable constant references. Consuming operators, arrow operators,
 and contextual-bool operators remain excluded from constexpr declarations.
 
 Completed free constexpr functions also support local fixed arrays of supported
@@ -1452,11 +1454,10 @@ by-value copies and parameters, `size()`, checked indexing, element assignment,
 compound assignment, and increment/decrement. Copies remain independent after
 mutation. These operations execute canonical verified MIR during semantic
 constant evaluation; no runtime C++ execution or optimization is required.
-Array materialization and updates share the evaluation budget. This does not
-admit mutation through references or mutable class receivers.
+Array materialization and updates share the evaluation budget.
 
 Completed constexpr functions may bind, pass, forward, and return checked
-read-only references to supported scalar, fixed-array, and passive structural
+read-only or mutable references to supported scalar, fixed-array, and passive structural
 values. The ordinary loan rules still govern the exact source owner, projection,
 access, and escape lifetime; returning a local reference or mutating an owner
 while a reference remains live is invalid. Required constant calls must observe
@@ -1464,8 +1465,31 @@ constant data: a reference to a runtime variable cannot supply it. Reference
 results can be read into constant values, but references themselves are not
 persistable constexpr bindings or fields. This capability requires the verified
 MIR executor; it does not extend the legacy AST evaluator with reference rules.
-Mutable references, stored-reference wrappers, raw addresses, and active
-cleanup remain outside this constant-execution profile.
+Mutable references preserve the live origin rather than a snapshot: edits by
+a `constexpr void` helper or mutable method are visible to the caller. An indexed
+reference retains the index chosen when it was formed, even if a separate index
+binding later changes. A method may return a checked field/element reference;
+the ordinary receiver or single mutable-parameter origin rule still controls
+its permitted escape. A mutable reference parameter still cannot bind to a
+temporary. A mutable method on an otherwise eligible fresh temporary uses its
+ordinary full-expression lifetime. `void` completion is not a constant value,
+and copying an aggregate does not create a mutable alias.
+
+The source-defined mutable `std::array::at`, `front`, `back`, subscript, and
+`fill` members now use these same rules. Existing reflection's `constexpr for`
+and `get_mut` can compose with such helpers; reflection continues to expand and
+resolve fields before constant execution. No public library spelling grants
+permission to mutate. Stored-reference wrappers, raw addresses, allocation,
+active cleanup, and host/runtime calls remain outside this constant-execution
+profile. Calls requiring these new mutation rules cannot retry an unsupported
+MIR operation in the compatibility AST evaluator.
+
+These new mutation rules require values supported by the MIR constant profile.
+Ordinary enum values and checked-integer `expected` results retain their older
+compatibility evaluation, but are not yet usable in mutable constexpr builders,
+including as fields. Migrating those values and operations to MIR is a
+prerequisite; admitting their declarations does not guarantee every call can
+execute as a required constant.
 
 Completed free constexpr functions may also transform fully initialized passive
 structural records supplied by value: copy into a mutable local, mutate fields
@@ -1473,7 +1497,7 @@ structural records supplied by value: copy into a mutable local, mutate fields
 The same no-base, no-polymorphism, no-stored-borrow, no-active-cleanup boundaries
 apply. Field selection uses exact declaration identity, not field spelling or
 native layout. Completed function closures also execute explicitly constexpr
-constructors with explicit field initializers and read-only constexpr methods
+constructors with explicit field initializers and read-only or mutable constexpr methods
 through MIR. Other already-admitted constructor forms retain the earlier
 evaluator during migration; eligibility is never inferred from a generated
 native constructor.
@@ -1482,14 +1506,18 @@ An ordinary constructor with a source body may be `constexpr`. The constructed
 class or struct must have no base, polymorphism, union state, stored reference,
 or active destructor, and every recursively reachable field must have a
 supported constexpr value type for compile-time construction. Generic
-constructors and read-only methods can also be instantiated with runtime-only
+constructors and methods can also be instantiated with runtime-only
 field types for ordinary runtime use, under the same declaration-versus-call
 distinction. Each field must be fully initialized by its
 declaration or one exact constructor initializer before the body runs. The
-bounded initial subset permits local computation in the constructor body but
-does not permit receiver mutation after initialization or a control transfer
-out of the body. A read-only constexpr instance method may subsequently
-observe the exact stored fields. Mutable receivers, special-member policies,
+verified-MIR profile permits local computation and checked mutation of mutable
+fields after explicit field initialization, including loops and pure helper
+calls. Declaration-default and nested in-place initializer schedules still
+retain their earlier migration boundary; they are not admitted by the new
+receiver-mutation profile. A control transfer out of the constructor remains
+invalid. A constexpr instance method may subsequently observe or, with a
+mutable receiver, edit the exact stored fields. Constructor reference
+parameters, special-member policies,
 generic packs, and polymorphic dispatch remain outside this subset.
 
 `if constexpr (condition)` requires the frontend to compute one `bool`. Only
