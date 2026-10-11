@@ -1682,6 +1682,7 @@ if(Python3_Interpreter_FOUND)
       user_owning_reference_replacement
       range_endpoint_parking_runtime
       text_view_iterator_runtime
+      json_object_iterator_runtime
       container_iterator_movement)
     add_test(
       NAME ${iterator_gate}
@@ -2194,6 +2195,20 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_readonly_references.gti"
+  )
+  add_test(
+    NAME constexpr_mutation_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_mutation.gti"
+  )
+  add_test(
+    NAME constexpr_builders_example
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/examples/142-constexpr-builders.gti"
   )
   add_test(
     NAME constexpr_chrono_runtime

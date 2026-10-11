@@ -41,7 +41,7 @@ def main() -> int:
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(sys.argv[2]).resolve()
-    native_compiler = pathlib.Path(sys.argv[3]).resolve()
+    native_compiler = pathlib.Path(sys.argv[3]).absolute()
 
     with tempfile.TemporaryDirectory(prefix="gti-managed-thread-tsan-") as scratch:
         root = pathlib.Path(scratch)

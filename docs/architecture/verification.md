@@ -9,6 +9,50 @@ shared-accessor runtime, generic algorithms, composed coverage and container
 failure/cleanup contracts. The sanitized contiguous partition passes locally
 with all 21 source negatives; its Linux run remains a separate platform gate.
 
+The subsequent clean `e67961cf` Mini run builds every Release target and
+finishes the unfiltered 653-test suite with 650 passes and three failures.
+The complete native cutover oracle passes all 142 sources at O0/C++20 and
+O3/C++23. The actual emitter comparison does not run: ambient retained-evidence
+configuration leaks into the protocol stub gate, which creates the real
+corpus destination prematurely. Its repaired coordinator tests isolate that
+configuration while preserving all 29 protocol cases, and independently prove
+that an existing ambient directory remains untouched. The LLDB gate is denied
+debug-launch permission in the SSH environment; the exact local gate passes
+outside the tool sandbox without changing operating-system security policy.
+These repairs do not turn the failed full run into a passing certificate.
+The fetched raw results are under
+`.git/gti-remote-runner/results/run-da114287fd40420280dced8a1b9202f9/`.
+
+The Linux all-target run of that same clean source stops during linking with
+`No space left on device`, before its selected tests can execute. Its fetched
+logs are under
+`.git/gti-remote-runner/results/run-3ba5ad5d80334c17b06b93f49af1752a/`.
+Both remote run directories have been removed by the wrapper after retrieval;
+neither failed run establishes final platform acceptance. Independently,
+the three exact contiguous sanitizer partitions pass on Linux with all
+42 retained scenarios/provider observations and no truncated logs, using an
+optimized GTI compiler and the unchanged native compile budget. That scoped
+result is retained under
+`.git/gti-remote-runner/results/run-42be600c03554d91a6fd10fb0193df66/`.
+
+Current reconciliation preserves the constexpr builder as example 142 and
+renumbers the four iterator demonstrations to 143–146. The same fresh optimized
+inventory executable compares current main's constexpr source and the combined
+source: exactly 153 declaration rows, ten structural-operator adapters and
+two memory-slot sentinel initializer bodies are added, with no removed name or
+multiplicity. This is an independently reviewed delta, not automatic baseline
+regeneration or whole-corpus certification. The paired reverse common endpoint
+now has a native positive and the exclusive generic movement prerequisite has
+an unrelated user-defined cursor plus five independently rejected MIR/LoweredProgram
+forgeries. JSON object key/value/member projections are included in the active
+container goal. The focused JSON matrix now passes all eight modes (O0/O1/O3,
+C++20/C++23, no-elide and ASan/UBSan), retaining all seven defined-failure
+cleanup observations per binary, zero-allocation success and 13 independent
+lifetime/access rejections. Exclusive generic movement passes 24 positive
+builds and 192 boundary/failure cases; paired traversal passes 24 builds and
+nine lifetime/access rejections. Final inventories, current-head
+full/platform/performance checks and integration remain required.
+
 Reconciliation `9c51bdcf` preserves main's reflected-JSON implementation and
 reserves examples 142–145 for the four unpublished iterator demonstrations;
 the combined minor version is 0.404.0. A fresh optimized inventory tool exactly
@@ -4195,6 +4239,49 @@ relaxing ordinary negation overflow. The O0/O1/O3, C++20/C++23 differential
 fixture includes nested constant pairs alongside runtime string pairs, catching
 accidental class-wide rather than exact-instance factory emission.
 
+`testConstexprMutation`, `constexpr_mutation_runtime` and
+`constexpr_builders_example` cover mutable reference forwarding, `void` calls,
+constructor-body edits, mutable methods/subscript/call operators, isolated
+copies, once-formed indices, generic owners and reflection-driven field edits.
+Early-only analysis proves that required constants execute staged MIR before
+whole-program HIR, including array extents. Direct executor tests check exact
+results, unit completion without a persisted value, every interrupted scalar
+step budget, shared depth, malformed returned-loan origins/access and erased
+callee eligibility. Frontend negatives retain checked overflow/division,
+resources, runtime-input/call rejection and ordinary loan/lifetime checks.
+An unsupported operation in a mutable constructor closure cannot retry the
+legacy AST execution path. The native gates compare constant and runtime
+execution at O0/O1/O3 under C++20/C++23. The aggregate LSP test now covers
+mutable/void signatures, hover, successful staged evaluation, and an overflow
+diagnostic at the executed helper operator. The existing reflection gates
+remain separate regression controls, not newly implemented reflection.
+
+Exact diagnostic source assertions derive the entry identity through public
+`SourceLoader::load`, including nonexistent virtual fixture paths, so they
+follow the production absolute-path contract on both libc++ and libstdc++.
+Code, phase, message, byte offsets and related-span requirements are unchanged.
+
+The 2026-10-11 local performance control uses a Release compiler built with
+Clang/LLVM 23.1.2 on macOS arm64 (M2 Max), C++23/O3. One program builds the
+four-element integer curve `{1, 4, 9, 16}` with a mutable-reference square
+helper; its control initializes the same array directly. Both consume the
+constant through 50 million checked indexed additions (`index % 4`, expected
+sum 375000000), with identical API/storage/arithmetic contracts. Five samples
+per executable have a 0.02-second wall-time median (the timer rounds to 0.01
+seconds; the first launch of each takes 0.31 seconds). Both have a 31,488-byte
+`__text` section and a 1,753,088-byte maximum resident set. An interposed C++
+`new`/`new[]` counter observes zero allocations between entry to the workload
+and completion in both; that is not a claim about CRT startup, failure paths
+or arbitrary libc allocation. The instrumented text sections are also equal
+(31,704 bytes). Single instrumented build samples are 0.56/0.46 seconds and
+75,104,256/76,464,128 bytes maximum RSS for builder/control. These co-hosted
+samples establish a compact allocation-free successful consumer, not a
+statistically significant compile-time or runtime speedup. Constant construction
+does additional bounded compiler work: location traversal and immutable
+aggregate replacement are charged, and updating an array copies its backing
+elements. Larger tables still have to fit the shared 4096-step budget; this
+feature neither removes runtime checks nor raises that resource bound.
+
 `testConstexprReadOnlyReferences` and `constexpr_readonly_references_runtime`
 cover checked read-only parameters, local bindings, returned field/index
 projections, forwarding, and loan reacquisition after mutation in another loop
@@ -6269,6 +6356,13 @@ tests retain their unchanged command path. The helper preserves the selected
 C++ driver spelling, optimization/standard, strict floating-point flags,
 sanitizer options and both phases' failure diagnostics. Its unit gate checks
 those boundaries; runtime allocation/failure/cleanup assertions are unchanged.
+
+Native compiler invocation spelling is likewise distinct from canonical binary
+identity: resolving `clang++` to `clang` changes link-driver selection. Runtime
+and sanitizer harnesses preserve the invocation path. Benchmark tools retain
+the canonical binary for hashes/provenance but execute the selected alias, query
+that alias's version, and check both identities in a GTI build report. The
+benchmark harness includes a symlink regression for this boundary.
 
 `local_reference_inference` pairs explicit and inferred reference programs,
 checking admission and concrete binding/drop facts, HIR owner dependencies and

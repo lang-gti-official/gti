@@ -1,5 +1,7 @@
 #include <std/string>
 #include <std/vector>
+#include <std/span>
+#include <std/paired_span>
 
 // A strict, owned JSON document model.  The implementation is ordinary GTI:
 // no public JSON name has compiler recognition and parsed values never borrow
@@ -903,6 +905,25 @@ public:
       return 0;
     }
     return this.object_data().names.size();
+  }
+
+  // Views retain the document, never copy keys or descendants, and expose
+  // only its initialized members. Keys cannot be rewritten or resized;
+  // exclusive value access cannot change the two sequences' common extent.
+  std::span<std::string> keys() {
+    return this.object_data().names.as_span();
+  }
+
+  std::span<value> values() {
+    return this.object_data().values.as_span();
+  }
+
+  std::mutable_span<value> values_mut() mut {
+    return this.object_data().values.as_mutable_span();
+  }
+
+  std::paired_span<std::string, value> members() {
+    return std::paired_span<std::string, value>(this.keys(), this.values());
   }
 
   std::string& key_at(size_t index) {

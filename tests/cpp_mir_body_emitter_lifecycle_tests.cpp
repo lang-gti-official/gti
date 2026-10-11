@@ -246,6 +246,101 @@ void testCheckedReferenceClassAssignment() {
   expect(
       passive && owning,
       "fixture exercises both cleanup-free and owning reference replacement");
+  std::size_t cursorAssignments = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *destination =
+            instruction.destination
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            !destination || destination->root != lang::MirPlaceRootKind::Loan ||
+            !destination->projections.empty() ||
+            destination->type.kind != lang::SemanticType::Class)
+          continue;
+        const auto *loan = function.body.findLoan(destination->loan);
+        expect(loan && loan->kind == lang::MirLoanKind::CallResult &&
+                   loan->access == lang::AccessMode::Mutable &&
+                   loan->twoPhase &&
+                   destination->access == lang::AccessMode::ReadOnly &&
+                   instruction.replacementPair != 0 &&
+                   instruction.lifecycle.size() == 1 &&
+                   instruction.lifecycle.front().kind ==
+                       lang::MirLifecycleEventKind::Replace &&
+                   instruction.lifecycle.front().target == 0,
+               "contextual operator value info cannot replace the checked "
+               "mutable reference and exact replacement cleanup authority");
+        if (!loan)
+          continue;
+        ++cursorAssignments;
+        const lang::MirInstruction *producer = nullptr;
+        for (const auto &candidateBlock : function.body.blocks)
+          for (const auto &candidate : candidateBlock.instructions)
+            if (candidate.kind == lang::MirInstructionKind::Call &&
+                candidate.loan == loan->id)
+              producer = &candidate;
+        const auto *target =
+            producer && producer->functionTarget
+                ? frontend.mir.findFunctionInstance(*producer->functionTarget)
+                : nullptr;
+        expect(producer && target &&
+                   target->returnType.kind == lang::SemanticType::Reference &&
+                   target->returnType.referenceAccess ==
+                       lang::AccessMode::Mutable &&
+                   producer->info.access == lang::AccessMode::ReadOnly,
+               "writable user-defined operator selects an exact mutable "
+               "reference declaration independent of assignment context");
+        if (!producer || !target)
+          continue;
+        for (int mutation = 0; mutation != 8; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(
+              malformed, {lang::MirBodyKind::Function, function.id});
+          auto &changedLoan = body->loans[loan->id - 1];
+          auto &assignment =
+              *std::find_if(body->findBlock(block.id)->instructions.begin(),
+                            body->findBlock(block.id)->instructions.end(),
+                            [&](const auto &candidate) {
+                              return candidate.id == instruction.id;
+                            });
+          if (mutation == 0)
+            changedLoan.access = lang::AccessMode::ReadOnly;
+          if (mutation == 1) {
+            auto *callee = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(target->id));
+            callee->returnType.referenceAccess = lang::AccessMode::ReadOnly;
+          }
+          if (mutation == 2)
+            for (auto &candidateBlock : body->blocks)
+              for (auto &candidate : candidateBlock.instructions)
+                if (candidate.id == producer->id)
+                  candidate.borrowAccess = lang::AccessMode::ReadOnly;
+          if (mutation == 3)
+            body->places[destination->id - 1].loan = 0;
+          if (mutation == 4)
+            changedLoan.producedBy = 0;
+          if (mutation == 5)
+            assignment.replacementPair = 0;
+          if (mutation == 6)
+            assignment.lifecycle.clear();
+          if (mutation == 7)
+            changedLoan.source = 0;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "MIR rejects forged cursor declaration/access/loan/cleanup " +
+                     std::to_string(mutation));
+          expect(!lang::CppMirBodyEmitter(malformed, rows)
+                      .analyzeProgram()
+                      .ready(),
+                 "C++ admission rejects forged cursor authority rather than "
+                 "trusting contextual access " +
+                     std::to_string(mutation));
+        }
+      }
+    }
+  }
+  expect(cursorAssignments == 2,
+         "unrelated named cursor repeats owning reference replacement");
   const auto readonly = analyze("readonly-reference-assignment.gti", R"(
 struct Point { mut int value; Point(int value) : value(value) {} };
 void replace(Point& target) { target = Point(2); }

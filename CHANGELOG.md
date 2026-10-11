@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.404.0 — Checked container and view iteration
+## 0.406.0 — Checked container and view iteration
 
 - Standard-library container and view families gain their appropriate shared,
   exclusive, reverse and positioned cursor operations. Forward-only containers
@@ -26,9 +26,25 @@ for what minor and patch releases mean.
   and external owners through iteration and constructor rollback. Endpoint
   failures restore an exclusive cursor before cleanup. Unsupported endpoint
   shapes diagnose at the range-for source rather than failing in the backend.
-- Examples 142–145 demonstrate checked container, view, live-slot/lane and
+- JSON objects expose allocation-free key/value spans and paired member views.
+  Keys and member extent stay immutable; exclusive value iteration may replace
+  descendants without cloning the document. Example 91 demonstrates the views.
+- Examples 143–146 demonstrate checked container, view, live-slot/lane and
   counted-text iteration. Movement and cursor duplication have separate
   concepts; random access does not imply contiguous storage.
+
+## 0.404.0 — Mutable constexpr value builders
+
+- Pure constexpr helpers may return `void`, edit checked mutable references,
+  and forward owner-bound mutable reference results. Mutable methods and
+  operators, and constructor bodies after explicit field initialization, use
+  the same verified-MIR execution as runtime programs.
+- Mutable `std::array` accessors and `fill` are constexpr-capable. Existing
+  reflection can drive compile-time field edits; it gains no new metadata or
+  expansion rules. See `examples/142-constexpr-builders.gti`.
+- Ordinary access, ownership and loan rules, checked arithmetic and resource
+  limits still apply. This does not admit allocation, stored references,
+  active cleanup or host I/O during constant execution.
 
 ## 0.403.1 — Conditionals of classes with destructors
 

@@ -812,6 +812,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   integer truthiness or contextual conversion. Unsupported constant execution
   remains `GTI-S2057`, with the assertion declaration attached as related
   information; the LSP must not reinterpret either family.
+  Mutation-capable constexpr execution retains this same family when a required
+  operation is outside the verified-MIR profile. It cannot retry the older
+  value-copy evaluator and silently lose a caller write. Checked failures retain
+  their original executing expression, including inside a mutable callee; no
+  automatic edit changes borrow access, removes the constant requirement, or
+  invents an alternative constructor/storage policy.
 - `GTI-S2081` owns a class-value receiver that cannot use the bounded fresh
   temporary receiver capability. Point at the call/operator token and
   distinguish an explicit move from existing storage, an unsupported producer,
