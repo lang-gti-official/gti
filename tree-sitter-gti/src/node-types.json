@@ -540,6 +540,36 @@
     }
   },
   {
+    "type": "attributed_field_declaration",
+    "named": true,
+    "fields": {
+      "attributes": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "declared_attribute_list",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "static_variable_declaration",
+          "named": true
+        },
+        {
+          "type": "variable_declaration",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "base_clause",
     "named": true,
     "fields": {},
@@ -922,6 +952,10 @@
           "named": true
         },
         {
+          "type": "attributed_field_declaration",
+          "named": true
+        },
+        {
           "type": "compile_error_directive",
           "named": true
         },
@@ -1016,6 +1050,16 @@
         "types": [
           {
             "type": "compiler_type_binding",
+            "named": true
+          }
+        ]
+      },
+      "declared_attributes": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "declared_attribute_list",
             "named": true
           }
         ]
@@ -1375,6 +1419,10 @@
       "types": [
         {
           "type": "access_specifier",
+          "named": true
+        },
+        {
+          "type": "attributed_field_declaration",
           "named": true
         },
         {
@@ -1944,6 +1992,51 @@
     "type": "continue_statement",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "declared_attribute",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "scoped_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "designated_initializer",
+          "named": true
+        },
+        {
+          "type": "expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "declared_attribute_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "declared_attribute",
+          "named": true
+        }
+      ]
+    }
   },
   {
     "type": "default_label",

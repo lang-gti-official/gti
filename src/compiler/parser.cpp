@@ -557,10 +557,85 @@ private:
     return expression.nodes.size() - 1;
   }
 
+  // A qualified name after `[[` is a declared attribute
+  // (`[[json::name(...)]]`), not a compiler attribute; one group holds one or
+  // more of them.
+  [[nodiscard]] bool declaredAttributeAhead() const {
+    return check(TokenKind::IDENTIFIER) && peekAt(1).kind == TokenKind::SCOPE;
+  }
+
+  void
+  parseDeclaredAttributeGroup(const Token &opening,
+                              std::vector<DeclarationAttribute> &declared) {
+    while (true) {
+      Token first = consume(TokenKind::IDENTIFIER,
+                            "Expect an attribute name after '[['.");
+      DeclarationAttribute attribute{.open = opening,
+                                     .name = parseNamePath(std::move(first)),
+                                     .paren = Token(previous())};
+      if (match({TokenKind::LEFT_PAREN})) {
+        attribute.paren = previous();
+        const bool designated = check(TokenKind::DOT);
+        if (!check(TokenKind::RIGHT_PAREN)) {
+          while (true) {
+            if (designated) {
+              consume(TokenKind::DOT,
+                      "Expect '.field = value' in a designated attribute "
+                      "argument list.");
+              attribute.designators.push_back(consume(
+                  TokenKind::IDENTIFIER, "Expect a field name after '.'."));
+              consume(TokenKind::EQUAL,
+                      "Expect '=' after the designated field name.");
+            }
+            attribute.arguments.push_back(assignment());
+            if (!match({TokenKind::COMMA})) {
+              break;
+            }
+          }
+        }
+        consume(TokenKind::RIGHT_PAREN,
+                "Expect ')' after the attribute arguments.");
+      }
+      declared.push_back(std::move(attribute));
+      if (check(TokenKind::COMMA) && peekAt(1).kind == TokenKind::IDENTIFIER &&
+          peekAt(2).kind == TokenKind::SCOPE) {
+        advance();
+        continue;
+      }
+      break;
+    }
+    consume(TokenKind::RIGHT_BRACKET,
+            "Expect ']]' after declaration attributes.");
+    consume(TokenKind::RIGHT_BRACKET,
+            "Expect ']]' after declaration attributes.");
+  }
+
+  // Attaches declared attributes to the declaration they precede; only
+  // fields and class-like declarations accept them in this slice.
+  StmtPtr attachDeclaredAttributes(StmtPtr declaration,
+                                   std::vector<DeclarationAttribute> declared) {
+    if (declared.empty()) {
+      return declaration;
+    }
+    if (auto *variable = dynamic_cast<VariableDecl *>(declaration.get());
+        variable != nullptr && currentClassName.has_value()) {
+      variable->setDeclarationAttributes(std::move(declared));
+      return declaration;
+    }
+    if (auto *classDecl = dynamic_cast<ClassDecl *>(declaration.get())) {
+      classDecl->setDeclarationAttributes(std::move(declared));
+      return declaration;
+    }
+    throw error(declared.front().open,
+                "Declared attributes apply to fields and to class, struct, "
+                "interface, or union declarations.");
+  }
+
   StmtPtr bracketAttributedDeclaration(LanguageLinkage linkage) {
     std::optional<NativeCArrayAttribute> nativeCArray;
     std::optional<NativeLinkNameAttribute> nativeLinkName;
     std::vector<FunctionAttribute> functionAttributes;
+    std::vector<DeclarationAttribute> declared;
     bool parsedNativeFunctionAttribute = false;
     while (true) {
       const Token opening = peek();
@@ -568,6 +643,29 @@ private:
               "Expect '[[' before declaration attributes.");
       consume(TokenKind::LEFT_BRACKET,
               "Expect '[[' before declaration attributes.");
+      if (declaredAttributeAhead()) {
+        parseDeclaredAttributeGroup(opening, declared);
+        if (check(TokenKind::LEFT_BRACKET) &&
+            peekAt(1).kind == TokenKind::LEFT_BRACKET) {
+          continue;
+        }
+        if (match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
+                   TokenKind::UNION})) {
+          return attachDeclaredAttributes(classDeclaration({}, previous()),
+                                          std::move(declared));
+        }
+        if (!isTypedDeclaration()) {
+          throw error(peek(),
+                      "Declared attributes must annotate a field or a "
+                      "class, struct, interface, or union declaration.");
+        }
+        return attachDeclaredAttributes(
+            typedDeclaration(true, std::nullopt, currentClassName.has_value(),
+                             currentClassName.has_value(), true, linkage,
+                             std::move(nativeCArray), std::move(nativeLinkName),
+                             std::nullopt, std::move(functionAttributes)),
+            std::move(declared));
+      }
       if (match({TokenKind::UNSAFE})) {
         Token keyword = previous();
         if (parsedNativeFunctionAttribute) {
@@ -736,11 +834,12 @@ private:
           throw error(peek(), "Function attributes require a function "
                               "declaration.");
         }
-        return typedDeclaration(
-            true, std::nullopt, currentClassName.has_value(),
-            currentClassName.has_value(), true, linkage,
-            std::move(nativeCArray), std::move(nativeLinkName), std::nullopt,
-            std::move(functionAttributes));
+        return attachDeclaredAttributes(
+            typedDeclaration(true, std::nullopt, currentClassName.has_value(),
+                             currentClassName.has_value(), true, linkage,
+                             std::move(nativeCArray), std::move(nativeLinkName),
+                             std::nullopt, std::move(functionAttributes)),
+            std::move(declared));
       }
       if (!match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
                   TokenKind::UNION})) {
@@ -753,7 +852,9 @@ private:
             {.name = std::move(attribute.name),
              .capabilityParameter = std::move(attribute.argument)});
       }
-      return classDeclaration(std::move(classAttributes), previous());
+      return attachDeclaredAttributes(
+          classDeclaration(std::move(classAttributes), previous()),
+          std::move(declared));
     }
   }
 

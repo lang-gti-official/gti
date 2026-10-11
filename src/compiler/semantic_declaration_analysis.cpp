@@ -1013,8 +1013,10 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
   if (declaration.compilerBinding()) {
     const CompilerConstraintBinding &binding = *declaration.compilerBinding();
     const bool trustedAtomicConstraint =
-        isAtomicLibraryUnit(conceptInfo.sourceUnit) &&
-        binding.name == "atomic_scalar";
+        (isAtomicLibraryUnit(conceptInfo.sourceUnit) &&
+         binding.name == "atomic_scalar") ||
+        (isMetaLibraryUnit(conceptInfo.sourceUnit) &&
+         binding.name == "meta_reflectable");
     const bool trustedMemoryConstraint =
         (isMemoryLibraryUnit(conceptInfo.sourceUnit) &&
          (binding.name == "object_layout" ||
@@ -1995,7 +1997,10 @@ auto SemanticVisitor::Impl::registerClassAttributes(
                     "with [[unsafe_transfer(T)]] or [[unsafe_share(T)]]; a "
                     "passive "
                     "struct may instead opt into [[c_abi]], while an "
-                    "incomplete native handle uses [[c_opaque]].");
+                    "incomplete native handle uses [[c_opaque]]. A struct "
+                    "declared [[attribute]] annotates other declarations, "
+                    "and [[reflect_private]] opens private fields to "
+                    "reflected access.");
     diagnostics.emplace_back(std::move(diagnostic));
   };
   const auto setPolicy = [&](const Token &attribute, bool transfer,
@@ -2105,6 +2110,36 @@ auto SemanticVisitor::Impl::registerClassAttributes(
             "Declare the native handle as '[[c_opaque]] struct Name;'.");
         diagnostics.emplace_back(std::move(diagnostic));
       }
+    } else if (attribute.lexeme == "attribute" ||
+               attribute.lexeme == "reflect_private") {
+      const bool attributeTag = attribute.lexeme == "attribute";
+      std::optional<Token> &source =
+          attributeTag ? result.attributeSource : result.reflectPrivateSource;
+      if (source) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2059", DiagnosticPhase::Semantics, attribute,
+            "[[" + attribute.lexeme + "]] is declared more than once.");
+        diagnostic.related.push_back(
+            {tokenSpan(*source), "The first attribute is here."});
+        diagnostics.emplace_back(std::move(diagnostic));
+        continue;
+      }
+      if (interface) {
+        reportInvalid(attribute, "[[" + attribute.lexeme +
+                                     "]] applies to classes and structs, not "
+                                     "to interfaces.");
+        continue;
+      }
+      if (attributeTag && declaration.kind() != ClassKind::Struct) {
+        report(attribute,
+               "[[attribute]] applies only to struct declarations: an "
+               "attribute type is a struct with public value fields, "
+               "declaration defaults, and no declared constructors or bases.",
+               "GTI-S2113");
+        continue;
+      }
+      source = attribute;
+      (attributeTag ? result.attributeType : result.reflectPrivate) = true;
     } else if (attribute.lexeme == "transfer") {
       if (!interface) {
         reportInvalid(attribute,
@@ -2556,6 +2591,10 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           .cAbiAttribute = capabilityPolicies.cAbiSource,
           .cOpaqueHandle = capabilityPolicies.cOpaqueHandle,
           .cOpaqueAttribute = capabilityPolicies.cOpaqueSource,
+          .attributeType = capabilityPolicies.attributeType,
+          .attributeAttribute = capabilityPolicies.attributeSource,
+          .reflectPrivate = capabilityPolicies.reflectPrivate,
+          .reflectPrivateAttribute = capabilityPolicies.reflectPrivateSource,
           .transferPolicy = capabilityPolicies.transfer,
           .sharePolicy = capabilityPolicies.share,
           .transferPolicySource = capabilityPolicies.transferSource,
@@ -2704,6 +2743,33 @@ auto SemanticVisitor::Impl::compilerTypeKind(std::string_view binding)
   if (binding == "meta_field_type") {
     return CompilerTypeKind::MetaFieldType;
   }
+  if (binding == "meta_field_attributes") {
+    return CompilerTypeKind::MetaFieldAttributes;
+  }
+  if (binding == "meta_type_attributes") {
+    return CompilerTypeKind::MetaTypeAttributes;
+  }
+  if (binding == "meta_enumerator") {
+    return CompilerTypeKind::MetaEnumerator;
+  }
+  if (binding == "meta_payload_field") {
+    return CompilerTypeKind::MetaPayloadField;
+  }
+  if (binding == "meta_enumerator_list") {
+    return CompilerTypeKind::MetaEnumeratorList;
+  }
+  if (binding == "meta_payload_list") {
+    return CompilerTypeKind::MetaPayloadList;
+  }
+  if (binding == "meta_payload_type") {
+    return CompilerTypeKind::MetaPayloadType;
+  }
+  if (binding == "meta_base_list") {
+    return CompilerTypeKind::MetaBaseList;
+  }
+  if (binding == "meta_argument_list") {
+    return CompilerTypeKind::MetaArgumentList;
+  }
   return std::nullopt;
 }
 
@@ -2844,8 +2910,481 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
         type.arguments.front(), type.valueArguments.front().value);
     return facts ? facts->type : type;
   }
+  case CompilerTypeKind::MetaFieldAttributes:
+  case CompilerTypeKind::MetaTypeAttributes: {
+    const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
+    const bool field =
+        info.compilerType == CompilerTypeKind::MetaFieldAttributes;
+    if (list == 0 || type.arguments.size() != 1 ||
+        containsOpenTypeParameter(type.arguments.front()) ||
+        (field &&
+         (type.valueArguments.size() != 1 ||
+          type.valueArguments.front().kind != CompileTimeValue::UInt64))) {
+      return type;
+    }
+    const std::vector<ResolvedDeclarationAttribute> *attributes =
+        declarationAttributesOf(
+            type.arguments.front(),
+            field ? std::optional(type.valueArguments.front().value)
+                  : std::nullopt);
+    if (attributes == nullptr) {
+      return type;
+    }
+    std::vector<SemanticType> elements;
+    elements.reserve(attributes->size());
+    for (const ResolvedDeclarationAttribute &attribute : *attributes) {
+      elements.push_back(attribute.exactType);
+    }
+    return SemanticType::classType(list, std::move(elements));
+  }
+  case CompilerTypeKind::MetaEnumeratorList: {
+    const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
+    const ClassId enumerator =
+        compilerTypeClass(CompilerTypeKind::MetaEnumerator);
+    if (list == 0 || enumerator == 0 || type.arguments.size() != 1 ||
+        containsOpenTypeParameter(type.arguments.front())) {
+      return type;
+    }
+    const SemanticType &subject = type.arguments.front();
+    std::vector<SemanticType> elements;
+    const std::uint64_t count = metaEnumeratorCount(subject);
+    elements.reserve(count);
+    for (std::uint64_t index = 0; index < count; ++index) {
+      elements.push_back(SemanticType::classType(
+          enumerator, {subject}, {CompileTimeValue::uint64(index)}));
+    }
+    return SemanticType::classType(list, std::move(elements));
+  }
+  case CompilerTypeKind::MetaPayloadList: {
+    const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
+    const ClassId payload =
+        compilerTypeClass(CompilerTypeKind::MetaPayloadField);
+    if (list == 0 || payload == 0 || type.arguments.size() != 1 ||
+        type.valueArguments.size() != 1 ||
+        type.valueArguments.front().kind != CompileTimeValue::UInt64 ||
+        containsOpenTypeParameter(type.arguments.front())) {
+      return type;
+    }
+    const SemanticType &subject = type.arguments.front();
+    const CompileTimeValue &variant = type.valueArguments.front();
+    const std::optional<MetaEnumeratorFacts> facts =
+        metaEnumeratorFacts(subject, variant.value);
+    if (!facts) {
+      return type;
+    }
+    std::vector<SemanticType> elements;
+    elements.reserve(facts->payloadTypes.size());
+    for (std::uint64_t index = 0; index < facts->payloadTypes.size(); ++index) {
+      elements.push_back(SemanticType::classType(
+          payload, {subject}, {variant, CompileTimeValue::uint64(index)}));
+    }
+    return SemanticType::classType(list, std::move(elements));
+  }
+  case CompilerTypeKind::MetaPayloadType: {
+    if (type.arguments.size() != 1 || type.valueArguments.size() != 2 ||
+        type.valueArguments[0].kind != CompileTimeValue::UInt64 ||
+        type.valueArguments[1].kind != CompileTimeValue::UInt64 ||
+        containsOpenTypeParameter(type.arguments.front())) {
+      return type;
+    }
+    const std::optional<MetaEnumeratorFacts> facts = metaEnumeratorFacts(
+        type.arguments.front(), type.valueArguments[0].value);
+    const std::uint64_t position = type.valueArguments[1].value;
+    return facts && position < facts->payloadTypes.size()
+               ? facts->payloadTypes[position]
+               : type;
+  }
+  case CompilerTypeKind::MetaBaseList:
+  case CompilerTypeKind::MetaArgumentList: {
+    const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
+    const ClassId metaType = compilerTypeClass(CompilerTypeKind::MetaType);
+    if (list == 0 || metaType == 0 || type.arguments.size() != 1 ||
+        containsOpenTypeParameter(type.arguments.front())) {
+      return type;
+    }
+    const SemanticType &subject = type.arguments.front();
+    std::vector<SemanticType> described;
+    if (info.compilerType == CompilerTypeKind::MetaBaseList) {
+      if (const ClassInfo *owner = subject.kind == SemanticType::Class
+                                       ? classInfo(subject)
+                                       : nullptr) {
+        const GenericSubstitution substitution = classSubstitution(subject);
+        for (const ClassBaseTypeInfo &base : owner->bases) {
+          described.push_back(substituteType(base.type, substitution));
+        }
+      }
+    } else {
+      described = metaTypeArguments(subject);
+    }
+    std::vector<SemanticType> elements;
+    elements.reserve(described.size());
+    for (SemanticType &element : described) {
+      elements.push_back(
+          SemanticType::classType(metaType, {std::move(element)}));
+    }
+    return SemanticType::classType(list, std::move(elements));
+  }
   default:
     return type;
+  }
+}
+
+auto SemanticVisitor::Impl::metaEnumeratorCount(const SemanticType &type) const
+    -> std::uint64_t {
+  if (type.kind != SemanticType::Enum) {
+    return 0;
+  }
+  const std::optional<EnumTypeInfo> info = enumTypeFor(type);
+  return info ? info->enumerators.size() : 0;
+}
+
+auto SemanticVisitor::Impl::metaEnumeratorFacts(const SemanticType &type,
+                                                std::uint64_t index) const
+    -> std::optional<MetaEnumeratorFacts> {
+  if (type.kind != SemanticType::Enum) {
+    return std::nullopt;
+  }
+  const std::optional<EnumTypeInfo> info = enumTypeFor(type);
+  if (!info || index >= info->enumerators.size() ||
+      info->enumerators[index].declaration == nullptr) {
+    return std::nullopt;
+  }
+  const EnumeratorInfo &enumerator = info->enumerators[index];
+  const std::optional<CheckedIntegerDomain> domain =
+      constantIntegerDomain(info->underlyingType);
+  MetaEnumeratorFacts facts{
+      .name = enumerator.declaration->name.lexeme,
+      .value = ConstantValue{ConstantEnum{
+          .enumId = type.enumId,
+          .value =
+              ConstantInteger{.negative = enumerator.value.negative,
+                              .magnitude = enumerator.value.magnitude,
+                              .domain =
+                                  domain ? *domain
+                                         : CheckedIntegerDomain{.width = 32}}}},
+      .payloadTypes = enumerator.payloadTypes,
+      .payloadEnum = info->payload};
+  for (const Parameter &parameter : enumerator.declaration->payload) {
+    facts.payloadNames.push_back(parameter.name.lexeme);
+  }
+  return facts;
+}
+
+auto SemanticVisitor::Impl::metaTypeArguments(const SemanticType &type) const
+    -> std::vector<SemanticType> {
+  std::vector<SemanticType> arguments;
+  if (type.kind != SemanticType::Class && type.kind != SemanticType::Enum) {
+    return arguments;
+  }
+  for (const SemanticType &argument : type.arguments) {
+    if (argument.kind == SemanticType::TypePack && argument.concretePack) {
+      arguments.insert(arguments.end(), argument.arguments.begin(),
+                       argument.arguments.end());
+    } else {
+      arguments.push_back(argument);
+    }
+  }
+  return arguments;
+}
+
+auto SemanticVisitor::Impl::declarationAttributesOf(
+    const SemanticType &subject, std::optional<std::uint64_t> index) const
+    -> const std::vector<ResolvedDeclarationAttribute> * {
+  if (subject.kind != SemanticType::Class || subject.classId == 0 ||
+      subject.classId > classes.size()) {
+    return nullptr;
+  }
+  const Stmt *owner = nullptr;
+  if (index) {
+    const std::optional<MetaFieldFacts> facts = metaFieldFacts(subject, *index);
+    owner = facts ? facts->declaration : nullptr;
+  } else {
+    owner = classInfo(subject.classId).declaration;
+  }
+  if (owner == nullptr) {
+    return nullptr;
+  }
+  const std::vector<ResolvedDeclarationAttribute> *attributes =
+      semanticModel.findDeclarationAttributes(*owner);
+  return attributes == nullptr ? &noDeclarationAttributes : attributes;
+}
+
+auto SemanticVisitor::Impl::isReflectableType(const SemanticType &type) const
+    -> bool {
+  if (type.kind != SemanticType::Class || type.classId == 0 ||
+      type.classId > classes.size()) {
+    return false;
+  }
+  const ClassInfo &info = classInfo(type.classId);
+  if (info.kind != ClassKind::Struct && info.kind != ClassKind::Class) {
+    return false;
+  }
+  if (info.reflectPrivate) {
+    return true;
+  }
+  return std::all_of(
+      info.fields.begin(), info.fields.end(), [&](const FieldInfo &field) {
+        if (field.declaration == nullptr) {
+          return false;
+        }
+        const auto member = info.members.find(field.declaration->name().lexeme);
+        return member != info.members.end() &&
+               member->second.access == AccessModifier::Public;
+      });
+}
+
+// Declared attributes are constants of the attribute struct built by
+// positional or designated initialization of its fields; a field without an
+// argument takes its declaration default, which must be a literal because the
+// struct's own body has not been analysed yet when attributes are evaluated.
+auto SemanticVisitor::Impl::analyzeDeclarationAttributes() -> void {
+  const std::vector<std::string> enclosingNamespace = currentNamespace;
+  const SourceUnitId enclosingUnit = currentSourceUnit;
+  const std::optional<ClassId> enclosingClass = currentClass;
+  // Analysing an argument may register generic instances, so iterate by
+  // index and copy what the loop body needs before analysing.
+  for (std::size_t position = 0; position < classes.size(); ++position) {
+    const ClassDecl *declaration = classes[position].declaration;
+    if (declaration == nullptr ||
+        !analyzedDeclarationAttributeOwners.insert(declaration).second) {
+      continue;
+    }
+    const std::vector<std::string> scope = classes[position].namespaceScope;
+    const SourceUnitId unit = classes[position].sourceUnit;
+    std::vector<const VariableDecl *> fields;
+    for (const FieldInfo &field : classes[position].fields) {
+      if (field.declaration != nullptr &&
+          !field.declaration->declarationAttributes().empty()) {
+        fields.push_back(field.declaration);
+      }
+    }
+    if (declaration->declarationAttributes().empty() && fields.empty()) {
+      continue;
+    }
+    enterDeclarationContext(scope, unit, std::nullopt);
+    analyzeDeclarationAttributeList(declaration->declarationAttributes(),
+                                    *declaration);
+    for (const VariableDecl *field : fields) {
+      analyzeDeclarationAttributeList(field->declarationAttributes(), *field);
+    }
+    exitDeclarationContext(std::nullopt);
+  }
+  currentNamespace = enclosingNamespace;
+  currentSourceUnit = enclosingUnit;
+  currentClass = enclosingClass;
+}
+
+auto SemanticVisitor::Impl::analyzeDeclarationAttributeList(
+    const std::vector<DeclarationAttribute> &attributes, const Stmt &owner)
+    -> void {
+  std::vector<ResolvedDeclarationAttribute> resolved;
+  for (const DeclarationAttribute &syntax : attributes) {
+    const Token &anchor = syntax.name.last();
+    const std::string spelling = pathSpelling(syntax.name);
+    const TypeRef reference(syntax.name);
+    validateType(reference);
+    const SemanticType type = typeOf(reference);
+    if (type == SemanticType::Unknown) {
+      continue;
+    }
+    const ClassInfo *attribute =
+        type.kind == SemanticType::Class ? classInfo(type) : nullptr;
+    if (attribute == nullptr || !attribute->attributeType) {
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2113", DiagnosticPhase::Semantics, anchor,
+                         "'" + spelling + "' is not an attribute type.");
+      diagnostic.hints.emplace_back(
+          "Declare the struct with [[attribute]] to use it as a declaration "
+          "attribute.");
+      if (attribute != nullptr) {
+        diagnostic.related.push_back(
+            {tokenSpan(attribute->name), "Type declared here."});
+      }
+      diagnostics.emplace_back(std::move(diagnostic));
+      continue;
+    }
+    if (!attribute->genericParameters.empty() ||
+        (!attribute->fields.empty() && !attribute->designatedConstructor)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2113", DiagnosticPhase::Semantics, anchor,
+          "Attribute type '" + spelling +
+              "' must be a non-generic struct with public value fields and "
+              "no declared constructors or bases.");
+      diagnostic.related.push_back(
+          {tokenSpan(attribute->name), "Attribute type declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      continue;
+    }
+    const auto duplicate =
+        std::find_if(resolved.begin(), resolved.end(),
+                     [&](const ResolvedDeclarationAttribute &candidate) {
+                       return candidate.type == attribute->id;
+                     });
+    if (duplicate != resolved.end()) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2115", DiagnosticPhase::Semantics, anchor,
+          "Attribute '" + spelling +
+              "' is applied more than once to this declaration.");
+      diagnostic.related.push_back(
+          {duplicate->span, "The first application is here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      continue;
+    }
+    const auto invalidArguments = [&](const Token &at, std::string message) {
+      report(at, std::move(message), "GTI-S2114");
+    };
+    std::vector<const ExprPtr *> inputs(attribute->fields.size(), nullptr);
+    bool valid = true;
+    if (syntax.designators.empty()) {
+      if (syntax.arguments.size() > attribute->fields.size()) {
+        invalidArguments(
+            syntax.paren,
+            "Attribute '" + spelling + "' takes at most " +
+                std::to_string(attribute->fields.size()) + " argument(s); " +
+                std::to_string(syntax.arguments.size()) + " were given.");
+        continue;
+      }
+      for (std::size_t index = 0; index < syntax.arguments.size(); ++index) {
+        inputs[index] = &syntax.arguments[index];
+      }
+    } else {
+      std::optional<std::size_t> previous;
+      for (std::size_t index = 0; index < syntax.designators.size(); ++index) {
+        const Token &name = syntax.designators[index];
+        const auto found = std::find_if(
+            attribute->fields.begin(), attribute->fields.end(),
+            [&](const FieldInfo &field) {
+              return field.declaration != nullptr &&
+                     field.declaration->name().lexeme == name.lexeme;
+            });
+        if (found == attribute->fields.end()) {
+          invalidArguments(name, "Unknown field '" + name.lexeme +
+                                     "' in attribute type '" + spelling + "'.");
+          valid = false;
+          continue;
+        }
+        const std::size_t position =
+            static_cast<std::size_t>(found - attribute->fields.begin());
+        if (inputs[position] != nullptr || (previous && position < *previous)) {
+          invalidArguments(
+              name, inputs[position] != nullptr
+                        ? "Duplicate argument for attribute field '" +
+                              name.lexeme + "'."
+                        : "Designated attribute arguments must follow the "
+                          "attribute type's field order.");
+          valid = false;
+          continue;
+        }
+        previous = position;
+        inputs[position] = &syntax.arguments[index];
+      }
+    }
+    if (!valid) {
+      continue;
+    }
+    ConstexprInterpreter context = makeConstexprInterpreter();
+    ConstantAggregate aggregate{.kind = ConstantAggregateKind::Object,
+                                .identity = attribute->id,
+                                .exactType =
+                                    std::make_shared<const SemanticType>(type)};
+    aggregate.fields.reserve(attribute->fields.size());
+    for (std::size_t index = 0; index < attribute->fields.size(); ++index) {
+      const VariableDecl *field = attribute->fields[index].declaration;
+      const auto member = field == nullptr
+                              ? attribute->members.end()
+                              : attribute->members.find(field->name().lexeme);
+      if (member == attribute->members.end()) {
+        invalidArguments(anchor, "Attribute type '" + spelling +
+                                     "' has a field the compiler could not "
+                                     "resolve.");
+        valid = false;
+        break;
+      }
+      const SemanticType fieldType = member->second.symbol.type;
+      std::optional<ConstantValue> value;
+      if (inputs[index] != nullptr) {
+        const ExprPtr &argument = *inputs[index];
+        if (analyzeInitializer(argument, fieldType) == SemanticType::Unknown) {
+          valid = false;
+          break;
+        }
+        ConstexprEvaluation evaluated =
+            evaluateConstexprExpression(*argument, context);
+        if (!evaluated) {
+          invalidArguments(
+              evaluated.location.lexeme.empty() ? expressionToken(*argument)
+                                                : evaluated.location,
+              "The argument for attribute field '" + field->name().lexeme +
+                  "' must be a constant expression." +
+                  (evaluated.detail.empty() ? "" : " " + evaluated.detail));
+          valid = false;
+          break;
+        }
+        const ConstantEvaluation converted =
+            convertConstantToType(*evaluated.value, fieldType);
+        if (!converted) {
+          invalidArguments(expressionToken(*argument),
+                           "The argument for attribute field '" +
+                               field->name().lexeme +
+                               "' is not a constant of type '" +
+                               typeSpelling(fieldType) + "'.");
+          valid = false;
+          break;
+        }
+        value = *converted.value;
+      } else {
+        const Expr *initializer = field->initializer().get();
+        const auto *literal = exprAs<LiteralExpr>(initializer);
+        if (initializer == nullptr) {
+          invalidArguments(syntax.paren,
+                           "Attribute field '" + field->name().lexeme +
+                               "' has no argument and no declaration default.");
+          valid = false;
+          break;
+        }
+        if (literal == nullptr) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2114", DiagnosticPhase::Semantics, syntax.paren,
+              "Attribute field '" + field->name().lexeme +
+                  "' can be omitted only when its declaration default is a "
+                  "literal.");
+          diagnostic.related.push_back(
+              {tokenSpan(field->name()), "Field declared here."});
+          diagnostics.emplace_back(std::move(diagnostic));
+          valid = false;
+          break;
+        }
+        const ConstantEvaluation evaluated = evaluateConstantLiteral(
+            literal->value(), constantIntegerDomain(fieldType));
+        const ConstantEvaluation converted =
+            evaluated ? convertConstantToType(*evaluated.value, fieldType)
+                      : evaluated;
+        if (!converted) {
+          invalidArguments(field->name(),
+                           "The declaration default of attribute field '" +
+                               field->name().lexeme +
+                               "' is not a constant of its type.");
+          valid = false;
+          break;
+        }
+        value = *converted.value;
+      }
+      aggregate.fields.push_back(
+          {.symbol = toolingSymbolFor(member->second.symbol),
+           .value = std::move(*value)});
+    }
+    if (!valid) {
+      continue;
+    }
+    resolved.push_back(
+        {.type = attribute->id,
+         .exactType = type,
+         .value = ConstantValue{makeConstantAggregate(std::move(aggregate))},
+         .span = tokenSpan(anchor),
+         .syntax = &syntax});
+  }
+  if (!resolved.empty()) {
+    semanticModel.recordDeclarationAttributes(owner, std::move(resolved));
   }
 }
 
@@ -3220,20 +3759,24 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
 
     const ClassId specializationId = classes.size() + 1;
     classDeclIds.emplace(declaration, specializationId);
-    classes.push_back(
-        ClassInfo{.id = specializationId,
-                  .sourceUnit = currentSourceUnit,
-                  .declaration = declaration,
-                  .name = declaration->name(),
-                  .kind = declaration->kind(),
-                  .namespaceScope = primary.namespaceScope,
-                  .exactSpecializationPrimary = *primaryId,
-                  .exactTypeArguments = typeArguments,
-                  .exactValueArguments = valueArguments,
-                  .transferPolicy = capabilityPolicies.transfer,
-                  .sharePolicy = capabilityPolicies.share,
-                  .transferPolicySource = capabilityPolicies.transferSource,
-                  .sharePolicySource = capabilityPolicies.shareSource});
+    classes.push_back(ClassInfo{
+        .id = specializationId,
+        .sourceUnit = currentSourceUnit,
+        .declaration = declaration,
+        .name = declaration->name(),
+        .kind = declaration->kind(),
+        .namespaceScope = primary.namespaceScope,
+        .exactSpecializationPrimary = *primaryId,
+        .exactTypeArguments = typeArguments,
+        .exactValueArguments = valueArguments,
+        .attributeType = capabilityPolicies.attributeType,
+        .attributeAttribute = capabilityPolicies.attributeSource,
+        .reflectPrivate = capabilityPolicies.reflectPrivate,
+        .reflectPrivateAttribute = capabilityPolicies.reflectPrivateSource,
+        .transferPolicy = capabilityPolicies.transfer,
+        .sharePolicy = capabilityPolicies.share,
+        .transferPolicySource = capabilityPolicies.transferSource,
+        .sharePolicySource = capabilityPolicies.shareSource});
     exactClassSpecializations.push_back(
         {.primary = *primaryId,
          .specialization = specializationId,
@@ -7689,6 +8232,7 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
             .genericArgumentPatterns = owner.genericArgumentPatterns,
             .kind = owner.kind,
             .compilerPrivate = owner.compilerPrivate,
+            .reflectPrivate = owner.reflectPrivate,
             .compilerCapability = owner.compilerCapability});
   }
 }
@@ -7798,6 +8342,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .transferCondition = owner.transferCondition,
             .shareCondition = owner.shareCondition,
             .compilerPrivate = owner.compilerPrivate,
+            .reflectPrivate = owner.reflectPrivate,
             .compilerCapability = owner.compilerCapability});
   }
   for (const ExactClassSpecialization &specialization :

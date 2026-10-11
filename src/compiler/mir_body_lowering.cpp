@@ -3745,7 +3745,9 @@ private:
       valid = false;
       return;
     }
-    if (isCallLike(*value) ||
+    // A direct-initialized class temporary is a fresh SSA value like a call
+    // result: materialize it before a projection roots a place at it.
+    if (isCallLike(*value) || value->kind == HirValueKind::DirectInitializer ||
         value->kind == HirValueKind::ExpectedPropagation ||
         value->kind == HirValueKind::Conditional) {
       emitValue(id);

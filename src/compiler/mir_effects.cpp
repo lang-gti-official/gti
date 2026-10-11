@@ -303,6 +303,20 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // MetaFieldIsPublic
     harmless(), // MetaTypeName
     harmless(), // MetaTypeKind
+    harmless(), // MetaFieldAttributeCount
+    harmless(), // MetaFieldHasAttribute
+    harmless(), // MetaTypeAttributeCount
+    harmless(), // MetaTypeHasAttribute
+    harmless(), // MetaTypeTrait
+    harmless(), // MetaEnumeratorCount
+    harmless(), // MetaEnumeratorName
+    harmless(), // MetaEnumeratorValue
+    harmless(), // MetaPayloadCount
+    harmless(), // MetaPayloadName
+    harmless(), // MetaBaseCount
+    harmless(), // MetaArgumentCount
+    harmless(), // MetaFieldAttribute: aliased to a struct construction.
+    harmless(), // MetaTypeAttribute
     harmless(), // MetaFieldGet: aliased to the field projection it denotes.
     harmless(), // MetaFieldGetMut
     MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdAdd
@@ -576,6 +590,20 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "meta-field-is-public",
     "meta-type-name",
     "meta-type-kind",
+    "meta-field-attribute-count",
+    "meta-field-has-attribute",
+    "meta-type-attribute-count",
+    "meta-type-has-attribute",
+    "meta-type-trait",
+    "meta-enumerator-count",
+    "meta-enumerator-name",
+    "meta-enumerator-value",
+    "meta-payload-count",
+    "meta-payload-name",
+    "meta-base-count",
+    "meta-argument-count",
+    "meta-field-attribute",
+    "meta-type-attribute",
     "meta-field-get",
     "meta-field-get-mut",
     "simd-add",

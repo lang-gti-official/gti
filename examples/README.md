@@ -27,6 +27,7 @@ You do not need to read the entire sequence to find an API pattern:
 | --- | --- |
 | Use the standard library through imports instead of includes | [134: standard-library modules](134-standard-library-modules.gti) |
 | Own small polymorphic objects without allocating | [135: inline polymorphic values](135-inline-polymorphic-values.gti) |
+| Annotate fields with attributes and read them in a generic encoder | [137: declared attributes](137-declared-attributes.gti) |
 | Import C enums, including high-bit flags and native-width values | [native enum bindings project](native-enum-bindings/README.md) |
 | Import callback slots, function typedefs, text and fixed-array aliases | [native callback slots project](native-callback-slots/README.md) |
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
@@ -189,6 +190,7 @@ is a teaching helper, not a production server.
 | `134-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
 | `135-inline-polymorphic-values.gti` | an application interface owned by `std::inline_polymorphic`, with small sensors inline, an owning sensor boxed, state preserved across vector growth, and replacement |
 | `136-inline-closure-cells.gti` | an application-defined inline cell holding a bitwise-relocatable closure through raw-address lifetime helpers and `std::layout_of`, moved by its bytes |
+| `137-declared-attributes.gti` | `[[attribute]]` structs applied to fields and types with constant arguments, read through `<std/meta>` by a text encoder and a binary writer, with enumerator metaobjects and the `std::meta::reflectable` constraint |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run

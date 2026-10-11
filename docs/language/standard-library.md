@@ -184,9 +184,13 @@ The current implemented foundation includes:
   reference; see [raw pointers](raw-pointers.md#void); and
 
 - `<std/meta>` compile-time reflection: `std::meta::fields_of<T>()`,
-  `std::meta::type_of<T>()`, `std::meta::name_of<T>()`, type predicates, and
-  the `field` and `type` metaobjects with `name()`, `index()`, `is_public()`,
-  `type()`, `get()` and `get_mut()`, consumed by `constexpr for`; see
+  `std::meta::type_of<T>()`, `std::meta::name_of<T>()`, type predicates, the
+  `field` and `type` metaobjects with `name()`, `index()`, `is_public()`,
+  `type()`, `get()` and `get_mut()`, declared attributes
+  (`has_attribute<A>()`, `attribute<A>()`, `attributes()`),
+  `enumerators_of<E>()`/`alternatives_of<E>()` with payload fields,
+  `bases_of<T>()`, `arguments_of<T>()` and the `std::meta::reflectable<T>`
+  concept, consumed by `constexpr for`; see
   [compile-time iteration and reflection](static-semantics.md#312-compile-time-iteration-and-reflection); and
 
 - `<std/panic>` source-defined raw and formatted terminal reporting through
