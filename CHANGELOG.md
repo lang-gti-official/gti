@@ -32,6 +32,15 @@ for what minor and patch releases mean.
 - A direct-initialized struct temporary can be projected (`make().x` style
   reads of `{.x = 1}` values) without an internal compiler error.
 - Example 137 shows attribute-driven text and binary encoders.
+## 0.398.4 — Raw-pointer audit tracks class static fields
+
+- `--raw-pointer-audit` now follows raw addresses stored in class static
+  fields, as it already did for namespace globals. Storing `&local` in
+  `Holder::slot`, directly, through a setter function, or from inside one of
+  `Holder`'s own static members, and reading it after the local's scope ends
+  now reports GTI-S2101 or GTI-S2102. Previously such accesses were never
+  reported. Valid uses stay silent, and programs without raw-pointer static
+  fields report exactly what they did before.
 
 ## 0.398.3 — Generic callees declared after their caller
 

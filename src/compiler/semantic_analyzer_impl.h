@@ -921,12 +921,14 @@ private:
     enum class Namespace {
       Global,
       Internal,
-      Visible
+      Visible,
+      StaticField
     } space = Namespace::Global;
     SourceUnitId unit = 0;
     std::string name;
     std::vector<RawPointerOrigin> origins;
     std::vector<ProjectedRawPointerOrigins> fields;
+    const VariableDecl *staticField = nullptr;
   };
 
   struct OperatorReceiverState {
@@ -3781,6 +3783,10 @@ private:
 
   [[nodiscard]] Symbol *resolveQualifiedPlaceSymbol(const NamePath &path);
 
+  // The flow-state carrier of a class static field once body analysis has
+  // sealed the catalog; any other symbol is its own carrier.
+  [[nodiscard]] Symbol *staticFieldFlowSymbol(Symbol &member);
+
   [[nodiscard]] std::optional<std::string> resolveInitialNamespaceGlobally(
       const Token &name, const std::vector<std::string> &fromScope) const;
 
@@ -4129,6 +4135,10 @@ private:
                         bool strong);
   static bool rawWritesAreLinear(const StmtList &statements);
   [[nodiscard]] Symbol *rawPointerRoot(const PlaceKey &place);
+  // Replaces program storage's raw facts with symbolic inputs, so a cached
+  // source-result summary describes the storage rather than one caller's
+  // current value.
+  void seedRawStorageInput(Symbol &symbol);
   void preserveRawCallWrites(const Call &call);
   void invalidateRawCallOrigins(const Call *call,
                                 const RawInvocation *invocation = nullptr);
@@ -4474,6 +4484,12 @@ private:
         internalNamespaceSymbols;
     std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
         visibleNamespaceSymbols;
+    // Class static fields are program storage like namespace globals, but
+    // their declarations live in the sealed class catalog. Body analysis
+    // keeps their flow facts here, keyed by declaration as their place
+    // identity is, so writes never mutate the catalog and later reads,
+    // summaries and call writes see them.
+    std::unordered_map<const VariableDecl *, Symbol> staticFieldSymbols;
 
     void clear() {
       scopes.clear();
@@ -4484,12 +4500,20 @@ private:
       namespaceSymbols.clear();
       internalNamespaceSymbols.clear();
       visibleNamespaceSymbols.clear();
+      staticFieldSymbols.clear();
     }
 
     void beginBody(const SemanticCatalog &catalog) {
       namespaceSymbols = catalog.namespaceSymbols;
       internalNamespaceSymbols = catalog.internalNamespaceSymbols;
       visibleNamespaceSymbols = catalog.visibleNamespaceSymbols;
+      staticFieldSymbols.clear();
+      for (const auto &owner : catalog.classes)
+        for (const auto &[_, member] : owner.members)
+          if (member.symbol.bindingKind == SemanticBindingKind::StaticField &&
+              member.symbol.variableDeclaration != nullptr)
+            staticFieldSymbols.try_emplace(member.symbol.variableDeclaration,
+                                           member.symbol);
     }
   };
 
