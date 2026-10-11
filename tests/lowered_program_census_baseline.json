@@ -2054,11 +2054,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 40
       }
+    },
+    "141-constexpr-builders.gti": {
+      "declarations": 675,
+      "bodies": 51,
+      "generated_items": 17,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 7,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 1,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 8
+      }
     }
   },
   "totals": {
-    "declarations": 67128,
-    "bodies": 12519,
-    "generated_items": 6636
+    "declarations": 67803,
+    "bodies": 12570,
+    "generated_items": 6653
   }
 }
