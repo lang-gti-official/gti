@@ -30,6 +30,14 @@ for what minor and patch releases mean.
   counted-text iteration. Movement and cursor duplication have separate
   concepts; random access does not imply contiguous storage.
 
+## 0.402.7 — Moving `expected` values of plain structs and classes
+
+- Moving an `expected<T, E>` into a new variable, as in
+  `auto moved = std::move(original);`, builds again when `T` is a struct or
+  class without cleanup and without a default constructor, including a
+  `[[c_abi]]` record. Since 0.401.6 this stopped with internal compiler error
+  `GTI-B0001`. The new variable is constructed directly from the moved value.
+
 ## 0.402.6 — Class-valued conditionals
 
 - A conditional whose arms are class values that need no cleanup, such as
