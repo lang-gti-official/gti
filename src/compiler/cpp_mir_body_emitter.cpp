@@ -19444,11 +19444,15 @@ freshExpectedTemporaryReceiverShape(const MirBody &body,
                    [&](const MirDropObligation &drop) {
                      return drop.place == join->id;
                    });
+  // A callable value invocation's result is the same fresh temporary as a
+  // source call's.
   const bool freshCall =
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
-      producer->result == receiver->id && producer->functionTarget &&
-      !producer->receiver && !producer->destination &&
-      !producer->successResultDrop && !producer->successResultDestination &&
+      producer->result == receiver->id &&
+      ((producer->functionTarget && !producer->receiver) ||
+       callableValueInvocation(*producer)) &&
+      !producer->destination && !producer->successResultDrop &&
+      !producer->successResultDestination &&
       producer->intrinsic == IntrinsicKind::None;
   if (receiver == nullptr || receiver->info.type != call.receiver->type ||
       receiver->info.category != ValueCategory::Value ||
@@ -29905,6 +29909,13 @@ classSsaLifetimeSlot(const MirProgram &program,
   // storage keeps the direct placement instead. Owning alternatives keep
   // MIR's value drop and its value-rooted transfer slot; a non-placement
   // Expected keeps its ordinary SSA local.
+  //
+  // A callable value invocation (a closure literal, a stored closure or a
+  // callable parameter) produces the same result. Its invocation publishes
+  // through the same slot whichever ABI the enclosing body selects: the
+  // transformed form constructs at the slot's address on its success edge,
+  // and the plain form constructs from the returned value.
+  const bool callableProducer = producer && callableValueInvocation(*producer);
   if (value && value->info.type.kind == SemanticType::Expected &&
       value->info.category == ValueCategory::Value &&
       value->info.traits.movable && !value->info.traits.containsBorrowedState &&
@@ -29913,14 +29924,15 @@ classSsaLifetimeSlot(const MirProgram &program,
       cleanupFreeExpectedClassAlternatives(program, value->info.type) &&
       producer && producer->kind == MirInstructionKind::Call &&
       producer->result == valueId && producer->info.type == value->info.type &&
-      producer->functionTarget && !producer->receiver &&
+      (callableProducer || (producer->functionTarget && !producer->receiver)) &&
       !producer->destination && !producer->successResultDrop &&
       !producer->successResultDestination &&
       producer->intrinsic == IntrinsicKind::None &&
       producer->dispatch == CallDispatch::Static &&
       // A failure-free source callee is called plainly and constructs the
       // wrapper in the same slot from its returned value.
-      (transformedFailureCallee(program, representations, *producer) !=
+      (callableProducer ||
+       transformedFailureCallee(program, representations, *producer) !=
            nullptr ||
        (producer->definedFailure.empty() &&
         !invokePairedInstruction(body, producer->id) && [&] {
@@ -29929,7 +29941,9 @@ classSsaLifetimeSlot(const MirProgram &program,
           return callee != nullptr && !callee->mayRaiseDefinedFailure;
         }()))) {
     const auto *target =
-        program.findFunctionInstance(*producer->functionTarget);
+        callableProducer
+            ? nullptr
+            : program.findFunctionInstance(*producer->functionTarget);
     const auto uses = body.usesOf(valueId);
     const auto *consumer =
         uses.size() == 1 ? classSsaCallArgumentConsumer(program, body, *value,
@@ -29980,10 +29994,11 @@ classSsaLifetimeSlot(const MirProgram &program,
     // A discarded result still needs storage for its construction; it retires
     // as soon as the producer has published it.
     const bool discarded = uses.empty();
-    if (target && target->linkage == LanguageLinkage::Gti &&
-        target->definitionKind == MirDefinitionKind::Source &&
-        target->returnType == value->info.type &&
-        target->parameterTypes == producer->parameterTypes &&
+    if ((callableProducer ||
+         (target && target->linkage == LanguageLinkage::Gti &&
+          target->definitionKind == MirDefinitionKind::Source &&
+          target->returnType == value->info.type &&
+          target->parameterTypes == producer->parameterTypes)) &&
         (consumer || returned || discarded) &&
         std::none_of(
             body.dropObligations.begin(), body.dropObligations.end(),
@@ -41211,10 +41226,27 @@ private:
       return;
     }
     if (callableValueInvocation(instruction)) {
+      // A cleanup-free Expected<Class, E> result staged for one consumer
+      // constructs in its representation-only SSA slot, exactly as a source
+      // call's result does; a discarded one retires once published.
+      const ClassSsaLifetimeSlot invocationSlot =
+          instruction.result
+              ? classSsaLifetimeSlot(program, representations, facts.body,
+                                     *instruction.result)
+              : ClassSsaLifetimeSlot{};
+      const bool stagedInvocationSlot =
+          invocationSlot.producer == &instruction &&
+          instruction.info.type.kind == SemanticType::Expected &&
+          expectedClassResultDestinationSlot(program, facts.body,
+                                             *instruction.result) == nullptr;
+      const bool discardedInvocationSlot =
+          stagedInvocationSlot &&
+          invocationSlot.consumerKind == ClassSsaSlotConsumerKind::Discard;
       const bool expectedPayload =
-          instruction.result &&
-          expectedPayloadInitialize(program, facts.body, *instruction.result) !=
-              nullptr;
+          stagedInvocationSlot ||
+          (instruction.result &&
+           expectedPayloadInitialize(program, facts.body,
+                                     *instruction.result) != nullptr);
       const MirPlace *temporaryResult =
           instruction.result &&
                   instruction.info.type.kind == SemanticType::Expected
@@ -41327,6 +41359,11 @@ private:
           output << "if (__gti_mir_call_success_" << instruction.id
                  << ") __gti_mir_v_" << *instruction.result
                  << ".mark_constructed();\n";
+        }
+        if (discardedInvocationSlot) {
+          writeIndent();
+          output << "if (__gti_mir_call_success_" << instruction.id
+                 << ") __gti_mir_v_" << *instruction.result << ".destroy();\n";
         }
         if (temporaryResult != nullptr) {
           writeIndent();
@@ -41449,6 +41486,10 @@ private:
       } else {
         output << (temporaryResult != nullptr || expectedPayload ? "); });\n"
                                                                  : ");\n");
+      }
+      if (discardedInvocationSlot && !failureForm) {
+        writeIndent();
+        output << "__gti_mir_v_" << *instruction.result << ".destroy();\n";
       }
       retireConsumedClassResultStages();
       retireConsumedPayloadEnumArguments();
