@@ -60,6 +60,20 @@ otherwise temporary native diagnostics captured separately at
 `/private/tmp/gti-linux-iterator-native-evidence.txt`. This failed pre-repair
 run is not final platform acceptance.
 
+The clean `120d6240` Mini snapshot independently inventories all 141 shipped
+top-level examples: 14,072 emitted MIR body identities, and 88,480 lowered
+declarations / 14,081 bodies / 8,630 generated items. Compared with the current
+main inventories, 78 existing examples gain 273 bodies as their source cursor,
+sentinel and checked-movement closures grow; the four new iterator examples
+add another 1,289 bodies. The existing generated-item changes consist only of
+1,039 structural-operator adapters and 27 concrete-instance adapters; callable,
+cleanup, native and thread adapter counts are unchanged for existing examples.
+These are candidate inventories, with every example's count known and nonzero,
+not automatically promoted baselines. Their complete records are retained at
+`.git/gti-remote-runner/results/run-ae0b7a45a0164bd0ad8eb3f3b274c6bd/`.
+The checked-in inventories remain unchanged pending native corpus and owning
+matrix acceptance.
+
 ## Expected returns across scope cleanup (0.402.4)
 
 - **Defects.** Three verified programs stopped at the C++ backend with
