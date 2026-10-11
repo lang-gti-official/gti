@@ -1,0 +1,112 @@
+#include <std/string>
+#include <std/vector>
+
+// Shared failure cleanup. Each phase fails at a different point while a
+// different set of user-defined resources is live. Cleanup must release
+// exactly the live resources, newest first and once each, and report the
+// original failure. A destructor failing during that cleanup terminates
+// with both the primary and the secondary record.
+mut int32_t phase = 0;
+mut int32_t fail_at = 0;
+mut int32_t fail_destructor = 0;
+mut int32_t zero = 0;
+
+class Resource {
+  int32_t id;
+public:
+  Resource(int32_t id) : id(id) { std::println(id); }
+  ~Resource() {
+    std::println(0 - this.id);
+    if (fail_destructor == this.id) {
+      int32_t cleanup_failure = 7 / zero;
+    }
+  }
+};
+
+// Construction stops after its first field when the step fails, so only
+// that field is rolled back.
+class Holder {
+  Resource left;
+  int32_t checked;
+  Resource right;
+public:
+  Holder(int32_t base)
+      : left(Resource(base)),
+        checked(11 / (fail_at == base ? zero : 1)),
+        right(Resource(base + 1)) {}
+  ~Holder() { std::println(0 - 900); }
+};
+
+void step(int32_t at) {
+  if (fail_at == at) {
+    int32_t failure = 13 / zero;
+  }
+}
+
+// A failure after `made` exists releases it before the caller's own cleanup.
+Resource make(int32_t id) {
+  Resource made = Resource(id);
+  step(id);
+  return made;
+}
+
+// The callee owns its argument and releases it when it fails.
+void consume(Resource value) { step(30); }
+
+int32_t run() {
+  Resource a = Resource(1);
+  step(1);
+  Resource b = Resource(2);
+  step(2);
+  {
+    Resource c = Resource(3);
+    step(3);
+    Resource& view = a;
+    step(4);
+  }
+  step(5);
+  for (mut int32_t i = 0; i < 2; i++) {
+    Resource loop = Resource(10 + i);
+    step(10 + i);
+  }
+  Resource d = make(6);
+  step(7);
+  consume(std::move(b));
+  step(8);
+  Holder holder = Holder(20);
+  step(9);
+  if (fail_at >= 40) {
+    Resource e = Resource(40);
+    step(40);
+    if (fail_at == 41) {
+      return 41;
+    }
+    step(42);
+  }
+  Resource f = Resource(50);
+  if (fail_at == 51) {
+    return 51;
+  }
+  step(52);
+  return 0;
+}
+
+// Phase N fails at step N; phases from 100 also fail one destructor while
+// that failure's cleanup runs.
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  int32_t failures[17] = {0, 1, 2, 3, 4, 5, 10, 11, 6, 7, 30, 8, 20, 9, 40, 41, 52};
+  int32_t doubled[8] = {1, 3, 2, 6, 2, 20, 40, 50};
+  int32_t doubledAt[8] = {2, 4, 5, 7, 30, 9, 42, 52};
+  if (phase < 17) {
+    fail_at = failures[phase];
+  } else if (phase >= 100 && phase < 108) {
+    fail_destructor = doubled[phase - 100];
+    fail_at = doubledAt[phase - 100];
+  } else {
+    fail_at = 51;
+  }
+  int32_t result = run();
+  std::println(1000 + result);
+  return 0;
+}
