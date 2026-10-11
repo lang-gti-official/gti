@@ -1,5 +1,5 @@
 return {
-  "https://github.com/gti-lang-official/gti.git",
+  "https://github.com/lang-gti-official/gti.git",
   name = "gti",
   lazy = false,
   build = "build.lua",

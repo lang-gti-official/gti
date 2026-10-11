@@ -20,6 +20,10 @@ from case_jobs import configured_jobs, positive_jobs, run_cases
 SCHEMA = "gti-stdlib-surface-v1"
 STATUSES = {"executable", "scaffold", "unsupported"}
 CASE_MODES = {"run", "diagnostic"}
+# Each native build of a case has this limit unless the case records a longer,
+# justified one. The ceiling keeps a raised limit from hiding a hang.
+DEFAULT_BUILD_TIMEOUT_SECONDS = 300
+MAX_BUILD_TIMEOUT_SECONDS = 900
 
 
 class ManifestError(ValueError):
@@ -112,6 +116,23 @@ def validate_manifest(manifest: dict[str, Any], repository: pathlib.Path) -> Non
             f"invalid execution profile for {case_id}",
         )
         repository_path(repository, case.get("source"), f"case {case_id} source")
+        if "build_timeout_seconds" in case or "build_timeout_reason" in case:
+            timeout = case.get("build_timeout_seconds")
+            require(
+                isinstance(timeout, int)
+                and not isinstance(timeout, bool)
+                and DEFAULT_BUILD_TIMEOUT_SECONDS
+                < timeout
+                <= MAX_BUILD_TIMEOUT_SECONDS,
+                f"{case_id} build_timeout_seconds must raise the "
+                f"{DEFAULT_BUILD_TIMEOUT_SECONDS}-second limit to at most "
+                f"{MAX_BUILD_TIMEOUT_SECONDS}",
+            )
+            reason = case.get("build_timeout_reason")
+            require(
+                isinstance(reason, str) and reason.strip() != "",
+                f"{case_id} build_timeout_seconds needs a build_timeout_reason",
+            )
         native_sources = case.get("native_sources", [])
         require(isinstance(native_sources, list), f"{case_id} native_sources must be a list")
         for index, source in enumerate(native_sources):
@@ -324,7 +345,7 @@ def run_case(
             env=environment,
             text=True,
             capture_output=True,
-            timeout=300,
+            timeout=case.get("build_timeout_seconds", DEFAULT_BUILD_TIMEOUT_SECONDS),
             check=False,
         )
         expected = case["expected"]

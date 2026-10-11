@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 
-CANONICAL_ROOT = "https://github.com/gti-lang-official/gti"
+CANONICAL_ROOT = "https://github.com/lang-gti-official/gti"
 MIRROR_ROOT = "https://git.internal.howetotech.dev/gti-lang/gti"
 HISTORICAL_EXCEPTIONS = {
     "docs/plans/compiler-structural-baseline.json",
@@ -124,7 +124,7 @@ def main() -> None:
     installer = text(root, "lua/gti/installer.lua")
     expect(
         'local release_server = "https://github.com"' in installer
-        and 'local repository = "gti-lang-official/gti"' in installer,
+        and 'local repository = "lang-gti-official/gti"' in installer,
         "toolchain installer is not pinned to canonical GitHub releases",
     )
     attributes = text(root, ".gitattributes")
