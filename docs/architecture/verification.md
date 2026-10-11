@@ -4904,7 +4904,7 @@ when the public wrapper is added.
 compiler library exposes the same semantic/HIR/MIR native-record contract.
 
 The live workflows are GitHub Actions under `.github/workflows/` of
-`gti-lang-official/gti` (`ci.yml`, `release.yml`, `mirror.yml`), running on
+`lang-gti-official/gti` (`ci.yml`, `release.yml`, `mirror.yml`), running on
 GitHub-hosted `ubuntu-latest` and `macos-15` runners. They replace the Gitea
 Actions workflows archived under `docs/plans/archive/gitea-actions/` on
 2026-10-11, when the self-hosted instance's single 6-core runner could not
