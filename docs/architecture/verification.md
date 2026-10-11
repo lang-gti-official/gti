@@ -35,6 +35,11 @@
   bound and loop returns for both payload kinds on success and error paths,
   plus an enum-payload lambda. Its last stage fails inside a guard destructor
   after the result exists, and the test expects the defined failure.
+- **Suites.** 92 MIR, emitter, census, snapshot, `expected`, failure and
+  cleanup CTests pass locally in Release, including
+  `cpp_mir_body_emitter_corpus`; no census baseline changes. The full
+  616-test suite passes on the Mac mini, apart from `source_debug_lldb`: that
+  session cannot attach a debugger, and the test passes locally.
 - **Pre-existing gap left out.** A lambda returning `Expected<Class, E>`
   whose class has no default constructor, called as a by-value argument
   (`code(lam(a))`), emits a default-constructed native `expected`. The native

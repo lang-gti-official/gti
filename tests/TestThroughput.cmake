@@ -33,7 +33,7 @@ if(Python3_Interpreter_FOUND)
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
     dormant_capability_runtime
     expected_class_argument_runtime expected_class_assignment_runtime
-    expected_class_return_runtime
+    expected_class_return_runtime expected_scoped_return_runtime
     expected_filesystem_prerequisites_runtime expected_passive_publication_runtime
     expected_payload_pair_arguments_runtime expected_payload_pending_cleanup_runtime
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
