@@ -1188,6 +1188,23 @@ public:
                    .sourceStatement = instruction.hirStatement});
               continue;
             }
+            if (mirRecordPublishedConstructorInitializer(
+                    context.program, *body, address.owner, instruction) !=
+                nullptr) {
+              ++outcome.report.missed;
+              outcome.report.remarks.push_back(
+                  {.kind = OptimizationRemarkKind::Missed,
+                   .pass = outcome.report.name,
+                   .message = "unused computation retained: the constructor "
+                              "record publishes an unstaged field "
+                              "initializer from this value",
+                   .body = address,
+                   .block = block.id,
+                   .instruction = instruction.id,
+                   .sourceValue = instruction.hirValue,
+                   .sourceStatement = instruction.hirStatement});
+              continue;
+            }
             if (!programVerified) {
               programVerified = verifyMirProgram(context.program).valid();
             }
