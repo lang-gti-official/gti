@@ -10,6 +10,25 @@ Review type: read-only. No source file was modified.
 Method: the [`compiler-architecture-review`](../../.codex/skills/compiler-architecture-review/SKILL.md)
 procedure, plus controlled measurement of the built compiler.
 
+### Historical scope and current disposition (2026-10-11)
+
+All measurements, source line numbers, "current" descriptions and priority
+tiers below belong to `d861d18`, not the present compiler. In particular, the
+original attribution of the instantiation and memory costs to type interning
+was corrected in §§4.2–4.3: the instance-copy and occurrence-table fixes were
+the measured wins. Preserve both the review and those corrections; do not
+reuse its old node sizes or timing ratios as current performance evidence.
+
+Compiler-library/structural extraction, instance deltas/indexes, source-line
+indexing, target/layout facts, exact float computation, checked ordered MIR
+execution, failure records, generated diagnostic identities, parsed-unit
+reuse and documentation projection have delivered contracts. Remaining type,
+node/source identity, flow-state, editor recovery and performance work must be
+selected from the current [implementation sequence](../plans/implementation-sequence.md)
+and [architecture](../architecture/overview.md), not restarted from this
+audit's early tiers. Whole-program caches and source modules also exist;
+separate compilation/stable linkage remains a different goal.
+
 ## 1. Baseline
 
 The tree builds clean and every registered check passes.

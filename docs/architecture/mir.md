@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v98`, `mir-body-v81`).
+instruction, body, and caller-assignment facts (`mir-v99`, `mir-body-v82`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -270,8 +270,11 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v98`/`mir-body-v81`,
-with `lowered-program-v17` declaration metadata. It retains exact concrete
+The combined deterministic serialization is currently `mir-v99`/`mir-body-v82`,
+with `lowered-program-v17` declaration metadata. Version 99 records each
+failure record's kind, producer or shared-cleanup continuation, and adds the
+`ContinueFailure` terminator; see
+[shared failure cleanup](#shared-failure-cleanup). It retains exact concrete
 integral and payload enum identities, including their type/value arguments,
 alternative fields and lifecycle facts. Version 95 also records
 generated-default constructor identity explicitly on each constructor instance
@@ -314,7 +317,7 @@ from actual alternative fields; nominal generic metadata does not become a
 stored component. Missing exact rows remain invalid rather than granting a
 storage or capability exemption.
 
-The combined serialization is `mir-v98`/`lowered-program-v17`, preserving
+The combined serialization is `mir-v99`/`lowered-program-v17`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,
@@ -1891,6 +1894,96 @@ reported violation is unchanged. The lifecycle dataflow still carries one
 state per drop obligation into every block; a sparse representation remains
 future work for very long bodies.
 
+### Shared failure cleanup
+
+Function and lambda bodies share failure cleanup across failure edges. An
+edge's cleanup is a sequence of steps: drops in reverse construction order,
+loan ends and cleanup-boundary markers. Many edges end in the same steps. A
+failing call and the failing destructor of the next owner both release the
+same remaining owners. Lowering records each edge's steps as a plan while it
+lowers the body. Once the body is complete it interns every plan by identical
+suffix and emits each distinct suffix once. Cleanup then grows with failure
+entries plus distinct cleanup transitions instead of failure sites times live
+owners. The `stdlib_surface_json` fixture's `main`, for example, went from
+61,225 blocks and 29,941 failure drops to 3,362 blocks and 145 drops.
+
+**Representation.**
+- A shared suffix is a *continuation* failure record
+  (`MirFailureRecordKind::Continuation`). It has no producer and one parameter
+  block, its entry, which binds the continuation as both failure parameter and
+  active failure. The suffix's blocks carry the continuation as their active
+  failure.
+- A chain enters a continuation only through a `ContinueFailure` terminator,
+  which names the continuation and its entry.
+- Producer records keep their exact provenance: their Invoke, their parameter
+  block, and the failure-record write the producer performs before reaching
+  that parameter block.
+- A continuation carries whichever producer's failure entered it to its
+  endpoint unchanged, so a continuation's `PropagateFailure` propagates the
+  original failure.
+- A fallible drop in a continuation routes its own cleanup secondary as in any
+  chain. The secondary is a producer record whose primary is the
+  continuation, and it terminates at once.
+
+**Verified contract.**
+- Each record's own chain, from its parameter block, is linear. It follows
+  ordinary edges and the normal edges of fallible cleanup drops, and has one
+  endpoint: its `PropagateFailure`, or one `ContinueFailure`. Every block of
+  the chain carries that record as active failure. Each record's chain is
+  walked once, so a shared suffix is never walked again for every failure
+  that enters it.
+- `ContinueFailure` leaves primary cleanup only, never a secondary's
+  termination block. It enters exactly the named continuation's entry, and it
+  is the only edge that changes the active record, apart from an Invoke's
+  failure edge. A continuation has no Invoke, one parameter block, at least
+  one continuation edge and one endpoint.
+- Continuations form an acyclic graph. Drops along any complete cleanup path
+  stay in strictly reverse construction order across continuation edges. This
+  is checked per edge against each continuation's memoized first drop ahead.
+- The lifecycle dataflow joins drop-obligation states at a continuation entry
+  and validates each shared drop against the joined state. A drop that an
+  entering path already performed, or one whose conditionality differs, is
+  rejected.
+- Loan flow state must be equal on every edge into a block. A suffix is
+  therefore shared only between failure edges whose loans left live after
+  cleanup agree.
+- Hosted-startup bodies reject continuations.
+
+Backends emit `ContinueFailure` as a jump. The incoming failure is already in
+the invocation's single runtime failure record, and the cleanup context
+activated by the producer's parameter block spans the shared suffix.
+
+**Lowering rules.** A step is shared only when its meaning does not depend on
+the path that reaches it:
+- A drop's failure propagation must equal its destructor's own summary. A
+  drop proved to retire a moved-from shell has no destructor on that path,
+  but the proof walks back to its producer, so the drop stays in its edge's
+  private prefix.
+- A prepared call argument's drop stays private, because verification counts
+  it along its producer's own cleanup chain.
+- A lifecycle-bound loan's end stays private, because verification justifies
+  it by the drop or failed producer before it on the same path.
+
+Every step before a private step on its edge stays private too, and sharing
+begins after it. A plan that shares nothing is emitted exactly as an unshared
+chain. Cleanup boundaries are closed at the start and end of each emitted run,
+so no boundary spans a join.
+
+**Unshared shapes.** These keep one cleanup chain per failure edge:
+constructor, field-initializer, static-field-initializer, destructor and
+module bodies; the generated hosted-startup body; and edges whose remaining
+steps are all private. These are lowering scopes, not language restrictions.
+The normal path is unchanged: each return still destroys its own live owners.
+A body with an early return after every owner therefore still has normal exit
+code that grows with returns times owners.
+
+**Fallback.** If a body's shared schedule ever fails body verification,
+lowering emits that body with one chain per failure edge. If a program lowered
+with shared cleanup fails program verification, the program is lowered again
+unshared. The corpus differential in
+[verification](verification.md#shared-failure-cleanup-0402-2) triggers
+neither.
+
 Program verification also requires each function, constructor, destructor and
 lambda body to retain its enclosing instance's exact body kind and return
 type. Constructors and destructors return `void`. A well-formed body-local
@@ -3046,7 +3139,7 @@ part of the hosted schedule; it does not discover lifecycle from public wrapper
 names. The detached declaration/adapter contract is serialized as
 `lowered-program-v9`.
 
-`mir-v98`/`lowered-program-v17` retain `ProcessMemoryRuntimeOperation` on the
+`mir-v99`/`lowered-program-v17` retain `ProcessMemoryRuntimeOperation` on the
 exact private native declarations of the process allocator's runtime ABI
 (`std/memory`'s `gti_internal::runtime` block): the native size and address
 alignment queries, the POSIX pointer-size/`ENOMEM`/`EINVAL` queries, POSIX
@@ -3081,10 +3174,12 @@ whose callers keep the precise summary.
 M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
 reparenting, active drop, and LIFO full-expression obligations. MIR v18 added
 caller-owned ordinary-call parameter stages and an edge-initialized cleanup-
-owning call-result shape. Later M-EXEC-01 slices should make that ordered input
-representation uniform across borrowed-state class values, remaining call
-forms, result and target places, operators, and branches. Program
-initialization already has a dedicated plan, per-block
+owning call-result shape. Subsequent slices cover the currently admitted
+borrowed-state inputs, result and target places, operators, branches and
+constructor publication through their exact verified contracts. A new input,
+inline-publication or immovable-transport profile must extend those facts; the
+original v18 scope is not a current list of missing whole operation families.
+Program initialization already has a dedicated plan, per-block
 `ProgramInitializationStepId`, production body route, and hosted containment
 adapter.
 The verifier must reject use before materialization, duplicate target

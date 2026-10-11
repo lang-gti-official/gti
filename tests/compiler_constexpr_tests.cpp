@@ -2905,7 +2905,7 @@ int main() {
         "constexpr int invalid(std::string value) { return 7; }",
         "struct Owner { std::string value; constexpr Owner() : "
         "value(std::string(\"asset\")) {} };",
-        "constexpr T invalid<T>(mut T& value) { return value; }",
+        "constexpr T invalid<T>(mut T* value) { return 0; }",
         "constexpr int value = std::lcm(2147483647, 2);",
         "constexpr int8_t invert(int8_t value) { return int8_t(-value); } "
         "constexpr int8_t value = invert(int8_t(-128));",
@@ -2939,7 +2939,8 @@ int main() {
                  signature.diagnostics.begin(), signature.diagnostics.end(),
                  [&](const auto &d) {
                    return d.code == "GTI-S2057" &&
-                          d.message.find("must return a supported value") !=
+                          d.message.find(
+                              "must return void or a supported value") !=
                               std::string::npos &&
                           d.primary.start ==
                               invalidSignature.find("string impossible") &&
