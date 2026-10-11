@@ -430,6 +430,32 @@ mirRecordPublishedConstructorInitializer(const MirProgram &program,
   return nullptr;
 }
 
+const MirRangeIteration *
+mirRangePublishedInstruction(const MirBody &body,
+                             const MirInstruction &instruction) {
+  if (instruction.tombstone)
+    return nullptr;
+  for (const auto &range : body.rangeIterations) {
+    if (range.materializesElementValue && instruction.result &&
+        *instruction.result == range.elementAccessValue)
+      return &range;
+    if (range.elementOwner != 0 &&
+        instruction.kind == MirInstructionKind::Initialize &&
+        instruction.destination == range.elementOwner &&
+        instruction.hirStatement == range.elementOwnerStatement)
+      return &range;
+  }
+  return nullptr;
+}
+
+const MirRangeIteration *mirRangePublishedElementOwner(const MirBody &body,
+                                                       MirPlaceId place) {
+  for (const auto &range : body.rangeIterations)
+    if (place != 0 && range.elementOwner == place)
+      return &range;
+  return nullptr;
+}
+
 bool mirTransformRecordLess(const MirTransformRecord &left,
                             const MirTransformRecord &right) {
   const auto key = [](const MirTransformRecord &record) {
@@ -2421,6 +2447,53 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
     }
   }
   const MirLoanState inactive(body.loans.size(), MirLoanFlowState::Inactive);
+  std::vector<std::pair<const MirRangeIteration *, std::vector<MirLoanId>>>
+      materializedElementLoans;
+  for (const auto &range : body.rangeIterations) {
+    if (!range.materializesElementValue)
+      continue;
+    const auto *elementOwner = body.findPlace(range.elementOwner);
+    if (!elementOwner)
+      return failure(body, owner,
+                     "materialized range element has no exact owned place");
+    std::vector<MirLoanId> loans;
+    for (const auto &loan : body.loans) {
+      const auto origin =
+          canonicalPlace(body, loan.source, bindingLoans, inactive);
+      const auto belongsToElement = [&](const MirCanonicalPlace &place) {
+        return !place.ambiguous && place.root == MirPlaceRootKind::Binding &&
+               place.binding == elementOwner->binding;
+      };
+      if (belongsToElement(origin) ||
+          std::any_of(loan.additionalDependencies.begin(),
+                      loan.additionalDependencies.end(),
+                      [&](const auto &dependency) {
+                        return belongsToElement(canonicalPlace(
+                            body, dependency.source, bindingLoans, inactive));
+                      }))
+        loans.push_back(loan.id);
+    }
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      for (const auto &loan : body.loans)
+        if (std::find(loans.begin(), loans.end(), loan.id) == loans.end() &&
+            ((loan.parent != 0 && std::find(loans.begin(), loans.end(),
+                                            loan.parent) != loans.end()) ||
+             (loan.storedDependency != 0 &&
+              std::find(loans.begin(), loans.end(), loan.storedDependency) !=
+                  loans.end()))) {
+          loans.push_back(loan.id);
+          changed = true;
+        }
+    }
+    for (const auto id : loans)
+      if (body.loans[id - 1].entry || body.loans[id - 1].escapes)
+        return failure(body, owner,
+                       "materialized iteration value cannot publish or retain "
+                       "an escaping loan");
+    materializedElementLoans.emplace_back(&range, std::move(loans));
+  }
   for (const auto &loan : body.loans) {
     if (!loan.twoPhase)
       continue;
@@ -2587,6 +2660,19 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
     pending.pop();
     const MirBlock &block = body.blocks[blockId - 1];
     MirLoanState active = *blockEntries[blockId - 1];
+    for (const auto &[range, loans] : materializedElementLoans) {
+      if (block.id != range->conditionEntryBlock &&
+          block.id != range->conditionBlock &&
+          block.id != range->incrementBlock &&
+          block.id != range->cleanupBlock && block.id != range->exitBlock)
+        continue;
+      for (const auto id : loans)
+        if (active[id - 1] != MirLoanFlowState::Inactive)
+          return failure(body, owner,
+                         "iteration value loan survives its body into a "
+                         "range control or cleanup boundary",
+                         block.id);
+    }
 
     const auto abstractAuthorityForLoan = [&](const MirLoan &dependency,
                                               const MirLoan &derived) {
@@ -4605,6 +4691,26 @@ joinLifecycleState(const MirLifecycleState &left,
       continue;
     }
     MirLifecycleState state = *entries[block.id - 1];
+    for (const auto &range : body.rangeIterations) {
+      if (!range.materializesElementValue ||
+          (block.id != range.conditionEntryBlock &&
+           block.id != range.conditionBlock &&
+           block.id != range.incrementBlock && block.id != range.cleanupBlock &&
+           block.id != range.exitBlock))
+        continue;
+      for (const auto drop : {range.elementOwnerDrop, range.elementSourceDrop})
+        if (drop > state.size())
+          return failure(body, owner,
+                         "materialized iteration value has an invalid "
+                         "owned lifetime identity",
+                         block.id);
+        else if (drop != 0 &&
+                 !state[drop - 1].definitely(OwnershipState::Uninitialized))
+          return failure(body, owner,
+                         "materialized iteration value retains an owned "
+                         "lifetime across a range boundary",
+                         block.id);
+    }
     if (auto invalid = applyInstructions(block, state, true)) {
       return *invalid;
     }
@@ -4748,6 +4854,7 @@ rewriteMirScalarPlace(MirBody &body, MirPlaceId placeId) {
   }
   const MirPlace *sourcePlace = body.findPlace(placeId);
   if (sourcePlace == nullptr ||
+      mirRangePublishedElementOwner(body, placeId) != nullptr ||
       sourcePlace->root != MirPlaceRootKind::Binding ||
       sourcePlace->binding == 0 || !sourcePlace->projections.empty() ||
       sourcePlace->access != AccessMode::Mutable ||
@@ -5081,6 +5188,7 @@ mir_detail::rewriteVerifiedMirDeadInstruction(MirProgram &program,
     }
   }
   if (ownerBlock == nullptr || target == nullptr || target->tombstone ||
+      mirRangePublishedInstruction(*body, *target) != nullptr ||
       target->kind != MirInstructionKind::Compute || !target->result ||
       !body->usesOf(*target->result).empty()) {
     return std::nullopt;
@@ -7138,8 +7246,10 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
     const MirPlace *iteratorPlace = body.findPlace(range.iterator);
     const MirPlace *sentinelPlace = body.findPlace(range.sentinel);
     const MirPlace *elementPlace = body.findPlace(range.element);
+    const MirPlace *elementOwner = body.findPlace(range.elementOwner);
     const MirLoan *rangeLoan = body.findLoan(range.rangeLoan);
     const MirLoan *elementLoan = body.findLoan(range.elementLoan);
+    const MirLoan *elementOwnerLoan = body.findLoan(range.elementOwnerLoan);
     const MirBlock *conditionEntry = body.findBlock(range.conditionEntryBlock);
     const MirBlock *condition = body.findBlock(range.conditionBlock);
     const MirBlock *bodyBlock = body.findBlock(range.bodyBlock);
@@ -7194,6 +7304,241 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
              std::find(loan.carriers.begin(), loan.carriers.end(), binding) !=
                  loan.carriers.end();
     };
+    if (range.elementOwner == 0) {
+      if (range.elementOwnerStatement != 0 || range.elementOwnerLoan != 0 ||
+          range.elementAccessValue != 0 || range.materializesElementValue ||
+          range.elementOwnerDrop != 0 || range.elementSourceDrop != 0)
+        return failure(body, owner,
+                       "unstaged range element carries materialization facts");
+    } else {
+      if (!elementOwner || range.elementOwnerStatement == 0 ||
+          elementOwner->root != MirPlaceRootKind::Binding ||
+          elementOwner->binding == 0 || !elementOwner->projections.empty() ||
+          elementOwner->initiallyAvailable ||
+          elementOwner->access != AccessMode::ReadOnly ||
+          elementOwner->id == range.owner ||
+          elementOwner->id == range.rangeCarrier ||
+          elementOwner->id == range.iterator ||
+          elementOwner->id == range.sentinel ||
+          elementOwner->id == range.element)
+        return failure(body, owner,
+                       "range element staging has no distinct readonly "
+                       "iteration-local binding");
+      if (!range.materializesElementValue) {
+        if (range.elementAccessValue != 0 || range.elementOwnerDrop != 0 ||
+            range.elementSourceDrop != 0 ||
+            elementOwner->type !=
+                SemanticType::referenceTo(range.elementType,
+                                          AccessMode::ReadOnly) ||
+            !elementOwnerLoan || elementOwnerLoan->entry ||
+            elementOwnerLoan->escapes ||
+            elementOwnerLoan->access != AccessMode::ReadOnly ||
+            !carries(*elementOwnerLoan, elementOwner->binding) ||
+            !elementLoan || elementLoan->id != elementOwnerLoan->id)
+          return failure(body, owner,
+                         "reference-yield range staging changed its exact "
+                         "alias, producer or checked dependency");
+      } else {
+        const auto *access = body.findValue(range.elementAccessValue);
+        const MirInstruction *producer = nullptr;
+        const MirInstruction *initialize = nullptr;
+        const MirInstruction *receiverStage = nullptr;
+        const MirBlock *initializationBlock = nullptr;
+        bool ambiguousInitialization = false;
+        for (const auto &block : body.blocks)
+          for (const auto &instruction : block.instructions) {
+            if (access && instruction.id == access->definition)
+              producer = &instruction;
+            if (instruction.destination == elementOwner->id &&
+                instruction.kind == MirInstructionKind::Initialize) {
+              ambiguousInitialization |= initialize != nullptr;
+              initialize = &instruction;
+              initializationBlock = &block;
+            }
+          }
+        const auto *receiverValue =
+            producer && producer->receiver &&
+                    producer->receiver->kind == MirOperandKind::Value
+                ? body.findValue(producer->receiver->value)
+                : nullptr;
+        if (receiverValue)
+          for (const auto &block : body.blocks)
+            for (const auto &instruction : block.instructions)
+              if (instruction.id == receiverValue->definition)
+                receiverStage = &instruction;
+        const auto *receiverPlace =
+            receiverStage && receiverStage->operands.size() == 1
+                ? body.findPlace(receiverStage->operands.front().place)
+            : producer && producer->receiver &&
+                    producer->receiver->kind == MirOperandKind::BorrowRead
+                ? body.findPlace(producer->receiver->place)
+                : nullptr;
+        const bool exactReceiver =
+            receiverPlace && receiverPlace->root == MirPlaceRootKind::Binding &&
+            receiverPlace->binding == iteratorPlace->binding &&
+            receiverPlace->projections.empty() &&
+            ((!receiverStage && producer && producer->callSite == 0 &&
+              producer->receiver->kind == MirOperandKind::BorrowRead) ||
+             (receiverStage &&
+              receiverStage->kind == MirInstructionKind::CallInput &&
+              receiverStage->callSite == producer->callSite &&
+              receiverStage->callInputRole == MirCallInputRole::Receiver &&
+              receiverStage->callInputKind == HirCallInputKind::ReadBorrow &&
+              receiverStage->operands.size() == 1 &&
+              receiverStage->operands.front().kind ==
+                  MirOperandKind::BorrowRead));
+        const auto *ownedDrop = body.findDropObligation(range.elementOwnerDrop);
+        const auto *sourceDrop =
+            body.findDropObligation(range.elementSourceDrop);
+        const auto *sourcePlace =
+            initialize && initialize->operands.size() == 1
+                ? body.findPlace(initialize->operands.front().place)
+                : nullptr;
+        const bool exactOperand =
+            initialize && initialize->operands.size() == 1 &&
+            ((initialize->operands.front().kind == MirOperandKind::Value &&
+              initialize->operands.front().value == range.elementAccessValue) ||
+             ((initialize->operands.front().kind == MirOperandKind::Copy ||
+               initialize->operands.front().kind == MirOperandKind::Move) &&
+              sourcePlace &&
+              sourcePlace->sourceValue == range.elementAccessSource &&
+              sourcePlace->type == range.elementType));
+        const bool exactDropTransfer =
+            elementOwner->traits.drop == DropKind::Trivial
+                ? range.elementOwnerDrop == 0 && range.elementSourceDrop == 0 &&
+                      initialize && initialize->lifecycle.empty()
+                : ownedDrop && initialize &&
+                      ownedDrop->kind == MirDropObligationKind::Binding &&
+                      ownedDrop->binding == elementOwner->binding &&
+                      ownedDrop->place == elementOwner->id &&
+                      ownedDrop->dropType.type == range.elementType &&
+                      !ownedDrop->initiallyActive &&
+                      ((sourceDrop &&
+                        sourceDrop->kind == MirDropObligationKind::Value &&
+                        sourceDrop->value == range.elementAccessSource &&
+                        sourceDrop->dropType == ownedDrop->dropType &&
+                        initialize->lifecycle ==
+                            std::vector<MirLifecycleEvent>{
+                                {.kind = MirLifecycleEventKind::Reparent,
+                                 .source = sourceDrop->id,
+                                 .target = ownedDrop->id}}) ||
+                       // Ordinary direct result publication can establish
+                       // the binding lifetime without a temporary obligation.
+                       // Preserve that exact family, rather than inventing a
+                       // second resource owner for passive record values.
+                       (!sourceDrop && range.elementSourceDrop == 0 &&
+                        producer && !producer->successResultDrop &&
+                        producer->successResultDestination ==
+                            elementOwner->id &&
+                        std::none_of(
+                            body.dropObligations.begin(),
+                            body.dropObligations.end(),
+                            [&](const MirDropObligation &drop) {
+                              return drop.kind ==
+                                         MirDropObligationKind::Value &&
+                                     drop.value == range.elementAccessSource;
+                            }) &&
+                        initialize->lifecycle ==
+                            std::vector<MirLifecycleEvent>{
+                                {.kind = MirLifecycleEventKind::Initialize,
+                                 .target = ownedDrop->id}}));
+        if (!access || !producer || !initialize || ambiguousInitialization ||
+            !initializationBlock || elementOwner->type != range.elementType ||
+            elementOwner->type.kind == SemanticType::Reference ||
+            elementOwner->type.kind == SemanticType::StringView ||
+            elementOwner->type.kind == SemanticType::CString ||
+            !elementOwner->traits.copyable ||
+            elementOwner->traits.containsBorrowedState ||
+            range.elementOwnerLoan != 0 ||
+            range.elementAccess != AccessMode::ReadOnly ||
+            access->info.type != elementOwner->type ||
+            access->info.category != ValueCategory::Value ||
+            !access->info.traits.copyable ||
+            access->info.traits.containsBorrowedState ||
+            access->sourceValue != range.elementAccessSource ||
+            producer->hirValue != range.elementAccessSource ||
+            range.dereferenceFunction == 0 ||
+            producer->kind != MirInstructionKind::Call ||
+            producer->intrinsic != IntrinsicKind::None ||
+            !producer->functionTarget || !producer->operands.empty() ||
+            !producer->parameterTypes.empty() ||
+            !producer->borrowArguments.empty() ||
+            !producer->borrowFields.empty() || !exactReceiver ||
+            producer->borrowOrigin != BorrowOriginKind::None ||
+            producer->loan || producer->result != range.elementAccessValue ||
+            initialize->hirStatement != range.elementOwnerStatement ||
+            !exactOperand || !exactDropTransfer ||
+            !dominance->dominates(range.bodyBlock, access->definitionBlock) ||
+            !dominance->dominates(range.bodyBlock, initializationBlock->id) ||
+            !elementLoan || elementLoan->kind != MirLoanKind::Local ||
+            elementLoan->source != elementOwner->id || elementLoan->parent ||
+            elementLoan->storedDependency || elementLoan->entry ||
+            elementLoan->escapes || elementLoan->lifecycleBound ||
+            elementLoan->access != AccessMode::ReadOnly)
+          return failure(
+              body, owner,
+              "value-yield range staging lost its exact independent "
+              "producer, owned initialization or local readonly loan");
+        // Only the iteration body and its failure continuations may access the
+        // hidden value. The loop's own boundaries retire every dependent loan;
+        // no source temporary-reference exception or persistent cached proxy
+        // is introduced by this storage.
+        std::unordered_set<MirBlockId> bodyRegion;
+        std::queue<MirBlockId> pendingBody;
+        pendingBody.push(range.bodyBlock);
+        while (!pendingBody.empty()) {
+          const auto block = pendingBody.front();
+          pendingBody.pop();
+          if (block == range.incrementBlock ||
+              block == range.conditionEntryBlock ||
+              block == range.conditionBlock || block == range.cleanupBlock ||
+              block == range.exitBlock || !bodyRegion.insert(block).second)
+            continue;
+          for (const auto successor :
+               successors(body.blocks[block - 1].terminator))
+            pendingBody.push(successor);
+        }
+        const auto iterationPlace = [&](MirPlaceId id) {
+          return id != 0 &&
+                 mirCanonicalPlaceContains(body, elementOwner->id, id);
+        };
+        for (const auto &block : body.blocks) {
+          if (bodyRegion.contains(block.id))
+            continue;
+          for (const auto &instruction : block.instructions) {
+            if ((instruction.destination &&
+                 iterationPlace(*instruction.destination)) ||
+                (instruction.receiver &&
+                 iterationPlace(instruction.receiver->place)) ||
+                std::any_of(instruction.operands.begin(),
+                            instruction.operands.end(),
+                            [&](const auto &operand) {
+                              return iterationPlace(operand.place);
+                            }))
+              return failure(body, owner,
+                             "materialized iteration value is accessed outside "
+                             "its body and failure cleanup",
+                             block.id, instruction.id);
+          }
+          if ((block.terminator.value &&
+               iterationPlace(block.terminator.value->place)) ||
+              std::any_of(block.terminator.targetArguments.begin(),
+                          block.terminator.targetArguments.end(),
+                          [&](const auto &operand) {
+                            return iterationPlace(operand.place);
+                          }) ||
+              std::any_of(block.terminator.elseArguments.begin(),
+                          block.terminator.elseArguments.end(),
+                          [&](const auto &operand) {
+                            return iterationPlace(operand.place);
+                          }))
+            return failure(body, owner,
+                           "materialized iteration place escapes through an "
+                           "out-of-body control-flow operand",
+                           block.id);
+        }
+      }
+    }
     const MirLoan *physicalCursor = nullptr;
     bool ambiguousCursor = false;
     if (range.strategy == RangeIterationStrategy::Structural)
@@ -7358,7 +7703,8 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
           (range.elementAccess == AccessMode::Mutable &&
            (range.elementLoan == range.rangeLoan ||
             (elementLoan->parent != range.rangeLoan && !physicalProxy))) ||
-          (physicalCursor != nullptr && !physicalProxy)))) {
+          (physicalCursor != nullptr && !physicalProxy &&
+           !range.materializesElementValue)))) {
       return failure(body, owner,
                      "range iteration contains an incoherent or escaping "
                      "range/element loan");

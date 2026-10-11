@@ -295,6 +295,13 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
       continue;
     }
     const MirInstruction &instruction = *location.instruction;
+    if (mirRangePublishedInstruction(*target, instruction) != nullptr) {
+      addError(result, patch.target.body, location.block->id,
+               patch.target.instruction,
+               "MIR replacement must preserve the exact range publication "
+               "producer and initialization identities");
+      continue;
+    }
     if (instruction.kind != MirInstructionKind::Compute ||
         instruction.operation != patch.expectedOperation) {
       addError(result, patch.target.body, location.block->id,

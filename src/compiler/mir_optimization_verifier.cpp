@@ -378,6 +378,13 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
         continue;
       }
       MirInstruction &instruction = *location.instruction;
+      if (mirRangePublishedInstruction(*body, instruction) != nullptr) {
+        reject(record.body,
+               "literal-fold record replaces an authoritative range "
+               "publication producer or initialization",
+               record.block, record.instruction);
+        return result;
+      }
       std::optional<Literal> folded;
       MirLiteralProvenance provenance;
       if (record.proof == MirTransformProofKind::IdentityFold &&
@@ -509,6 +516,13 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
       return result;
     }
     MirInstruction &instruction = *location.instruction;
+    if (mirRangePublishedInstruction(*body, instruction) != nullptr) {
+      reject(record.body,
+             "sparse-constant record replaces an authoritative range "
+             "publication producer or initialization",
+             record.block, record.instruction);
+      return result;
+    }
     instruction.literalProvenance = {
         .kind = MirLiteralProvenanceKind::SparseConstant,
         .sourceOperation = instruction.operation,

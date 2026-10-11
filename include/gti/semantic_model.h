@@ -111,8 +111,13 @@ struct ResolvedRangeIterationInfo {
   SymbolId iterator = 0;
   SymbolId sentinel = 0;
   SymbolId element = 0;
+  // Synthetic per-iteration staging: a reference alias for place yields, or
+  // an independent lexical value for value yields. Its exact producer and
+  // declaration identity remain part of the range contract.
+  SymbolId elementOwner = 0;
   SemanticLoanId rangeLoan = 0;
   SemanticLoanId elementLoan = 0;
+  SemanticLoanId elementOwnerLoan = 0;
   FunctionId beginFunction = 0;
   FunctionId endFunction = 0;
   FunctionId compareFunction = 0;
@@ -129,6 +134,7 @@ struct ResolvedRangeIterationInfo {
   // retained reference or stored-owner dependency. This permits MIR to park a
   // fresh hidden mutable cursor while evaluating that exact endpoint.
   bool nonBorrowingEndpoint = false;
+  bool materializesElementValue = false;
 };
 
 struct SemanticConditionalLoanEnds {

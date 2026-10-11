@@ -5165,8 +5165,43 @@ private:
                         selection->borrowOrigin == BorrowOriginKind::Receiver &&
                         selection->borrowFields.empty() &&
                         (range->iterator == binding ||
-                         range->element == binding);
+                         range->element == binding ||
+                         range->elementOwner == binding);
                });
+  }
+
+  [[nodiscard]] bool exactReadonlyRangeElementAlias(HirBindingId binding,
+                                                    const HirValue &initializer,
+                                                    const MirLoan &loan) const {
+    if (initializer.kind != HirValueKind::Variable ||
+        loan.kind != MirLoanKind::CallResult || loan.entry || loan.escapes ||
+        loan.access != AccessMode::ReadOnly || !loanIsActive(scopes, loan.id))
+      return false;
+    for (const auto &statement : source.statements) {
+      if (!statement.rangeIteration)
+        continue;
+      const auto &range = *statement.rangeIteration;
+      const auto *staging = findBinding(range.elementOwner);
+      const auto stagedLoan = bindingLoans.find(range.elementOwner);
+      const auto cursorLoan = bindingLoans.find(range.iterator);
+      const auto parent = semanticLoans.find(range.rangeLoan);
+      const auto *cursor = cursorLoan == bindingLoans.end()
+                               ? nullptr
+                               : output.findLoan(cursorLoan->second);
+      if (!range.materializesElementValue && range.element == binding &&
+          range.elementOwner != 0 && staging &&
+          staging->info.symbol == initializer.symbol &&
+          stagedLoan != bindingLoans.end() && stagedLoan->second == loan.id &&
+          loan.producedBy == range.elementAccessValue && cursor &&
+          loan.storedDependency == cursor->id &&
+          cursor->kind == MirLoanKind::Stored &&
+          parent != semanticLoans.end() && cursor->parent == parent->second &&
+          loanIsActive(scopes, cursor->id) &&
+          std::find(loan.carriers.begin(), loan.carriers.end(),
+                    range.elementOwner) != loan.carriers.end())
+        return true;
+    }
+    return false;
   }
 
   [[nodiscard]] bool isRangeIteratorValue(HirValueId value) const {
@@ -7067,8 +7102,28 @@ private:
     construct.borrowFields = value.borrowFields;
     if (value.borrowOrigin != BorrowOriginKind::None && origin != 0) {
       MirLoanId parent = 0;
+      // A cleanup-bound adapter constructed through a checked readonly
+      // reference keeps that exact parent alive until its own drop. This is
+      // the semantic retained-loan contract, not permission to invent ancestry
+      // from an overlapping source place (or from the constructor spelling).
+      const auto retainedContract = retainedInitializerLoans.find(value.id);
+      const auto *retained = retainedContract == retainedInitializerLoans.end()
+                                 ? nullptr
+                                 : source.findLoan(retainedContract->second);
+      const auto resolvedParent = retained && retained->parent != 0
+                                      ? semanticLoans.find(retained->parent)
+                                      : semanticLoans.end();
+      const auto *selectedParent = output.findLoan(originLoan);
+      const bool exactReadonlyCleanupParent =
+          retained && retained->lifecycleBound &&
+          retained->access == AccessMode::ReadOnly &&
+          value.borrowAccess == AccessMode::ReadOnly && selectedParent &&
+          selectedParent->access == AccessMode::ReadOnly &&
+          resolvedParent != semanticLoans.end() &&
+          resolvedParent->second == originLoan;
       if (originLoan != 0 && originLoan <= output.loans.size() &&
           (output.loans[originLoan - 1].access == AccessMode::Mutable ||
+           exactReadonlyCleanupParent ||
            (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
             output.loans[originLoan - 1].entry &&
             isLifecycleBoundBorrowCarrier(value.info.type)))) {
@@ -7087,6 +7142,9 @@ private:
           MirLoanKind::Stored, origin,
           transferredLoan ? transferredLoan->access : value.borrowAccess,
           value.id, 0, 0, parent);
+      if (parent != 0)
+        output.loans[loan - 1].storedDependency =
+            output.loans[parent - 1].storedDependency;
       std::vector<MirLoanDependency> additionalDependencies;
       const auto addDependency = [&](MirLoanDependency dependency) {
         if (dependency.source != 0 && dependency.source != origin &&
@@ -9116,6 +9174,12 @@ private:
               .type = value->info.type};
     }
     if (desired != nullptr) {
+      if (const auto *alias = output.findLoan(existing);
+          alias && desired->access == AccessMode::ReadOnly &&
+          exactReadonlyRangeElementAlias(binding, *value, *alias))
+        return {.kind = MirOperandKind::Loan,
+                .loan = alias->id,
+                .type = value->info.type};
       const bool exactRangeElement = std::any_of(
           source.statements.begin(), source.statements.end(),
           [&](const HirStatement &statement) {
@@ -9131,7 +9195,8 @@ private:
             source.statements.begin(), source.statements.end(),
             [&](const HirStatement &statement) {
               return statement.rangeIteration &&
-                     statement.rangeIteration->element == binding &&
+                     (statement.rangeIteration->element == binding ||
+                      statement.rangeIteration->elementOwner == binding) &&
                      statement.rangeIteration->elementAccessValue == valueId;
             });
         const auto iterator =
@@ -10270,7 +10335,9 @@ private:
           }
           if (existing != nullptr && candidate != nullptr &&
               existing->access == candidate->access && initializer != nullptr &&
-              candidate->producedBy == initializer->id &&
+              (candidate->producedBy == initializer->id ||
+               exactReadonlyRangeElementAlias(*statement.binding, *initializer,
+                                              *candidate)) &&
               (candidate->kind == MirLoanKind::Stored ||
                candidate->kind == MirLoanKind::CallResult) &&
               isPhysicalProxyRangeProtocolBinding(*statement.binding)) {
@@ -11029,6 +11096,10 @@ private:
          .iterator = placeForBinding(sourceRange.iterator),
          .sentinel = placeForBinding(sourceRange.sentinel),
          .element = placeForBinding(sourceRange.element),
+         .elementOwner = sourceRange.elementOwner == 0
+                             ? MirPlaceId{0}
+                             : placeForBinding(sourceRange.elementOwner),
+         .elementOwnerStatement = sourceRange.elementOwnerStatement,
          .rangeLoan = loanFor(sourceRange.rangeLoan, true),
          .elementLoan =
              [&] {
@@ -11051,6 +11122,32 @@ private:
                return loanFor(sourceRange.elementLoan,
                               sourceRange.elementLoan != 0);
              }(),
+         .elementOwnerLoan =
+             [&] {
+               if (isPhysicalProxyRangeProtocolBinding(
+                       sourceRange.elementOwner))
+                 for (const auto &loan : output.loans)
+                   if (loan.kind == MirLoanKind::CallResult &&
+                       std::find(loan.carriers.begin(), loan.carriers.end(),
+                                 sourceRange.elementOwner) !=
+                           loan.carriers.end())
+                     return loan.id;
+               return loanFor(sourceRange.elementOwnerLoan,
+                              sourceRange.elementOwnerLoan != 0);
+             }(),
+         .elementAccessValue = sourceRange.materializesElementValue
+                                   ? mirValueFor(sourceRange.elementAccessValue)
+                                   : MirValueId{0},
+         .elementAccessSource = sourceRange.elementAccessValue,
+         .dereferenceFunction = sourceRange.dereferenceFunction,
+         .elementOwnerDrop =
+             sourceRange.materializesElementValue
+                 ? dropObligationForBinding(sourceRange.elementOwner)
+                 : MirDropObligationId{0},
+         .elementSourceDrop =
+             sourceRange.materializesElementValue
+                 ? dropObligationForValue(sourceRange.elementAccessValue)
+                 : MirDropObligationId{0},
          .expectedPayloadExtraction = sourceRange.expectedPayloadProjection
                                           ? mirValueFor(sourceRange.source)
                                           : MirValueId{0},
@@ -11064,6 +11161,7 @@ private:
          .arrayLength = sourceRange.arrayLength,
          .ownsRangeTemporary = sourceRange.ownsRangeTemporary,
          .expectedPayloadProjection = sourceRange.expectedPayloadProjection,
+         .materializesElementValue = sourceRange.materializesElementValue,
          .endpointParking =
              rangeEndpointParking.contains(statement.id)
                  ? std::optional{rangeEndpointParking.at(statement.id)}

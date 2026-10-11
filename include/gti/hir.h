@@ -320,6 +320,8 @@ struct HirRangeIteration {
   HirBindingId iterator = 0;
   HirBindingId sentinel = 0;
   HirBindingId element = 0;
+  HirBindingId elementOwner = 0;
+  HirStatementId elementOwnerStatement = 0;
   HirValueId source = 0;
   HirValueId begin = 0;
   HirValueId end = 0;
@@ -329,6 +331,7 @@ struct HirRangeIteration {
   HirStatementId coreLoop = 0;
   SemanticLoanId rangeLoan = 0;
   SemanticLoanId elementLoan = 0;
+  SemanticLoanId elementOwnerLoan = 0;
   FunctionId beginFunction = 0;
   FunctionId endFunction = 0;
   FunctionId compareFunction = 0;
@@ -338,6 +341,7 @@ struct HirRangeIteration {
   bool ownsRangeTemporary = false;
   bool expectedPayloadProjection = false;
   bool nonBorrowingEndpoint = false;
+  bool materializesElementValue = false;
 
   friend bool operator==(const HirRangeIteration &,
                          const HirRangeIteration &) = default;

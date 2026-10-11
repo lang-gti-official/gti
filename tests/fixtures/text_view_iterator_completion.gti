@@ -2,6 +2,75 @@
 #include <std/string_view>
 #include <std/iterator>
 #include <std/algorithm>
+#include <std/vector>
+#include <std/numeric>
+
+struct IndependentRecord {
+  int number;
+  IndependentRecord(int number) : number(number) {}
+};
+class UserValueSentinel {
+  std::size_t count;
+public:
+  UserValueSentinel(std::size_t count) : count(count) {}
+  std::size_t size() { return this.count; }
+};
+class UserScalarCursor {
+  mut std::size_t index;
+public:
+  UserScalarCursor(std::size_t index) : index(index) {}
+  int operator*() { return int(this.index) + 1; }
+  void operator++() mut { this.index++; }
+  bool operator!=(UserValueSentinel end) { return this.index != end.size(); }
+  bool operator==(UserValueSentinel end) { return this.index == end.size(); }
+};
+class UserScalarRange {
+public:
+  UserScalarCursor begin() { return UserScalarCursor(std::size_t(0)); }
+  UserValueSentinel end() { return UserValueSentinel(std::size_t(3)); }
+};
+class VirtualValueCursor {
+  mut std::size_t index;
+public:
+  VirtualValueCursor(std::size_t index) : index(index) {}
+  virtual int operator*() { return int(this.index) + 1; }
+  void operator++() mut { this.index++; }
+  bool operator!=(UserValueSentinel end) { return this.index != end.size(); }
+  bool operator==(UserValueSentinel end) { return this.index == end.size(); }
+};
+class VirtualValueRange {
+public:
+  VirtualValueCursor begin() { return VirtualValueCursor(std::size_t(0)); }
+  UserValueSentinel end() { return UserValueSentinel(std::size_t(3)); }
+};
+class UserRecordCursor {
+  mut std::size_t index;
+public:
+  UserRecordCursor(std::size_t index) : index(index) {}
+  IndependentRecord operator*() { return IndependentRecord(int(this.index) + 1); }
+  void operator++() mut { this.index++; }
+  bool operator!=(UserValueSentinel end) { return this.index != end.size(); }
+  bool operator==(UserValueSentinel end) { return this.index == end.size(); }
+};
+class UserRecordRange {
+public:
+  UserRecordCursor begin() { return UserRecordCursor(std::size_t(0)); }
+  UserValueSentinel end() { return UserValueSentinel(std::size_t(3)); }
+};
+class TextCounter {
+public:
+  mut int count = 0;
+  void operator()(char& value) mut { if (value != 'x') { this.count++; } }
+};
+class TextValueCounter {
+public:
+  mut int count = 0;
+  void operator()(char value) mut { if (value != 'x') { this.count++; } }
+};
+bool positive_value(int& value) { return value > 0; }
+bool positive_copy(int value) { return value > 0; }
+bool nonzero_character(char value) { return value != '\0'; }
+bool small_record(IndependentRecord& value) { return value.number > 0 && value.number <= 3; }
 
 using UserCountedText = std::string_view;
 
@@ -60,14 +129,16 @@ int inspect(std::string_view& view) {
   if (*second_reverse != 'd') { return 12; }
   if (std::distance(view.begin(), view.end()) != std::ptrdiff_t(5)) { return 13; }
   mut std::size_t count = 0;
-  for (char character : view) {
+  for (char& character : view) {
     if (character != view[count]) { return 14; }
     count++;
   }
   if (count != std::size_t(5)) { return 15; }
+  for (mut char character : view) { character = 'z'; }
+  if (view[std::size_t(0)] != 'a') { return 28; }
   UserTextRange wrapped{view};
   mut std::size_t wrapped_count = 0;
-  for (char character : wrapped) {
+  for (auto& character : wrapped) {
     if (character != view[wrapped_count]) { return 16; }
     wrapped_count++;
   }
@@ -75,6 +146,19 @@ int inspect(std::string_view& view) {
   mut int events = 0;
   auto sequenced = select_text(view, events).iterator_at(select_position(events));
   if (events != 12 || *sequenced != 'b') { return 18; }
+  char needle = 'c';
+  auto found = std::find(view.begin(), view.end(), needle);
+  if (*found != needle || !std::contains(view, needle) ||
+      !std::equal(view.begin(), view.end(), view.begin(), view.end())) { return 19; }
+  mut std::vector<char> copied{};
+  for (mut int index = 0; index < 5; index++) { copied.push_back('x'); }
+  std::copy(view.begin(), view.end(), copied.begin_mut());
+  if (copied[std::size_t(2)] != needle) { return 20; }
+  auto visits = std::for_each(view, TextCounter());
+  if (visits.count != 5) { return 21; }
+  auto direct_visits = std::for_each(view.begin(), view.end(), TextValueCounter());
+  if (direct_visits.count != 5 ||
+      !std::all_of(view.begin(), view.end(), nonzero_character)) { return 31; }
   return 0;
 }
 
@@ -93,5 +177,29 @@ int main() {
   if (begin != empty.end() || reverse != empty.rend()) { return 22; }
   mut int count = 0;
   for (char character : empty) { count++; }
+  UserScalarRange values{};
+  if (!std::all_of(values, positive_value)) { return 23; }
+  if (!std::all_of(values.begin(), values.end(), positive_copy)) { return 32; }
+  mut int scalar_sum = 0;
+  for (auto& element : values) { scalar_sum += element; }
+  if (scalar_sum != 6) { return 24; }
+  if (std::accumulate(values.begin(), values.end(), 0) != 6) { return 30; }
+  VirtualValueRange virtual_values{};
+  mut int virtual_sum = 0;
+  for (int& element : virtual_values) { virtual_sum += element; }
+  if (virtual_sum != 6) { return 29; }
+  UserRecordRange records{};
+  if (!std::all_of(records, small_record)) { return 25; }
+  mut int record_sum = 0;
+  for (IndependentRecord& element : records) {
+    if (element.number == 2) { continue; }
+    record_sum += element.number;
+  }
+  if (record_sum != 4) { return 26; }
+  for (IndependentRecord& element : records) {
+    if (element.number == 2) { break; }
+    record_sum += element.number;
+  }
+  if (record_sum != 5) { return 27; }
   return count;
 }

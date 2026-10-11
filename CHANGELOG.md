@@ -9,6 +9,27 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.403.0 — Checked container and view iteration
+
+- Standard-library container and view families gain their appropriate shared,
+  exclusive, reverse and positioned cursor operations. Forward-only containers
+  remain forward-only; sparse storage skips vacant slots. Shared cursor copies
+  have independent positions, while exclusive cursors move rather than copy
+  permission to mutate. Mutable map iteration exposes mapped values without
+  permitting keys or complete entries to be replaced.
+- `<std/string_view>` provides checked counted-text cursors. General readable
+  iterators may yield independent copyable values as well as checked references.
+  A read-only reference range-for binding owns such a value for one iteration,
+  including cleanup of local guards before advancement. Iterator-pair callback
+  constraints preserve whether dereference produces a reference or a value.
+- General two-owner reference proxies preserve their physical cursor lifetime
+  and external owners through iteration and constructor rollback. Endpoint
+  failures restore an exclusive cursor before cleanup. Unsupported endpoint
+  shapes diagnose at the range-for source rather than failing in the backend.
+- Examples 141–144 demonstrate checked container, view, live-slot/lane and
+  counted-text iteration. Movement and cursor duplication have separate
+  concepts; random access does not imply contiguous storage.
+
 ## 0.402.3 — Comma expressions that yield class values
 
 - A comma expression whose right operand is a class or `expected` value now

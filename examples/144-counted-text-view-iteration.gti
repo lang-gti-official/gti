@@ -8,7 +8,7 @@ int main() {
   std::string_view text = owner.view();
 
   mut std::size_t count = 0;
-  for (char character : text) {
+  for (char& character : text) {
     if (character != text[count]) { return 1; }
     count++;
   }
@@ -25,7 +25,9 @@ int main() {
   if (*cursor != 's') { return 6; }
   if (std::distance(text.cbegin(), text.cend()) != std::ptrdiff_t(7)) { return 7; }
 
-  // Dereference yields a readonly code-unit value. Retained cursors exclude mutation/movement
-  // of a dynamic owner, and neither a local view shell nor its cursor escapes.
+  // Dereference yields a code-unit value. The loop's readonly reference names
+  // one iteration-local copy, not a typed reference into the byte view.
+  // Retained cursors exclude mutation/movement of a dynamic owner, and neither
+  // a local view shell nor its cursor escapes.
   return 0;
 }

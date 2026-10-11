@@ -3,7 +3,7 @@
   "source_fingerprints": {
     "stdlib/prelude.gti": "a33aa3f09d625f30f05d937483d0db075649a2037e45e990ae628ce07f28e448",
     "stdlib/std/algorithm.gti": "c46dc1e269933a154b029b3dd3254aa6335e92cc270cdd17565dc5d369e6a655",
-    "stdlib/std/array.gti": "19d4eee0136cd3a66c4a088057d7467de9eac847a4c526104471c43edeb70846",
+    "stdlib/std/array.gti": "a85c3742db19d4314f1b177dcf2f227699edc654d52e7ac4b1f2abd93e14d020",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
@@ -11,44 +11,46 @@
     "stdlib/std/cmath.gti": "ce64a3e07f35f48079a95b6784d4e5aa11c7829691f6436d18a3932319e2773d",
     "stdlib/std/cstdio.gti": "8081db343694df6698be59fbc91574fb92cc366e0471681daff43ea17cc7e7f3",
     "stdlib/std/cthread.gti": "8980aedce805131cd3f0a528b55ec31b8e3626b267bfb4321501e236138217d9",
-    "stdlib/std/deque.gti": "51fc37f145409c7fd8d20da63a73c8ffdf73fa59459b4044cd358350e2e1c0b3",
+    "stdlib/std/deque.gti": "19868bdc1be11f9c81df14afce28830fba3ed3271fc813a6625cedc5ed108bf9",
+    "stdlib/std/detail/iterator.gti": "fd3db5132bf1332831a9233f693a35d6bef3e762b5deb30ec59c8d1b37842254",
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
-    "stdlib/std/forward_list.gti": "270c138f347f77a7c991395e21316d5cc2846f8fe66d3c8a1d7b0c395b1266fa",
+    "stdlib/std/forward_list.gti": "a5a15a5fcf0b908e161df030798829c11a95bfd4d9bc8c116394469e6d56af1a",
     "stdlib/std/functional.gti": "502eca2d667f29c6643d9ba605056fd6ee307cb7891a47de9f9acc0c2935b50a",
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
-    "stdlib/std/iterator.gti": "c08502a5c686ad0df6ee193e5222741dcce8276269259a03f184365763484d50",
+    "stdlib/std/iterator.gti": "89bca11053f5e8fa115c3625047bb3b6708c34b6c18f350e74cf4a8c9b96f286",
     "stdlib/std/json.gti": "b54226945bf9be04ba527264601234078911dd0dfdde70780ad2f44c048c3fa7",
-    "stdlib/std/list.gti": "af8267642b50d09da74eab812a5f51bf56919153623a80dd78b4f4bbdd52693c",
-    "stdlib/std/map.gti": "24c860882d65a76914308ac562762073574cbc7ccb1bc0b0ca61ba4eeaaa52c2",
-    "stdlib/std/memory.gti": "91c4b08a85dbf59f2e121e093dedf0e33ac579b4ffe82cc11566b645ce258844",
+    "stdlib/std/list.gti": "b670d0cf766d8bfae1cc32c51517510bcd434dc834ed31d8f8a46ff59da800e0",
+    "stdlib/std/map.gti": "24bf0e1e969a92e4d6df567d6b13e1e5e2519e3bf2f80c225ca5937dcfeba3cf",
+    "stdlib/std/memory.gti": "d0de60dbd40a2136d7d00bc0346f24bf20ad5fece73679b746917baed50ea1ca",
     "stdlib/std/meta.gti": "93a8f92e250cfb77e56ff3252755509894e54ab40dc0174ca9e8b822e16a27f7",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
-    "stdlib/std/paired_span.gti": "93b4fc364bb597f846a5c245d10bf3af93810b78b31c70fe5b7c7b8b7e11f78e",
+    "stdlib/std/paired_span.gti": "ab28c57598bc28b95564aa0f1f0badf6b2b0accf7f7cbba17c330146980cb319",
     "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
     "stdlib/std/polymorphic.gti": "a2194db76d6e36b30e813e6fa46baf4a31937b8362c49764f20ed7f9589a8a77",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
-    "stdlib/std/resource.gti": "09e91e255c8a6ada7527e2858fe11cdd879041e5f199d82b869d5f0ec31e16c4",
-    "stdlib/std/resource_vector.gti": "ded0a8f8f3eb38540cd4ac9f6cd255947a72ed9bc6e78aa825813f2009f9ac6b",
-    "stdlib/std/set.gti": "1bf289005e99766d2aaddf5e2488a91a10c509d6ab015f8c824c8cb7b121f407",
-    "stdlib/std/simd.gti": "ec60e8807ec3d4cf617a03d4f593231e54b298c2b399b260aa19acfddcdbe720",
+    "stdlib/std/resource.gti": "54fc9c2e5dfe54e81d48f58b1c30d007176d4779fab9d78e34e695c28c21cf2d",
+    "stdlib/std/resource_vector.gti": "4a8fda29fefb3c128cc6a0a537165fdcf03c7ef8e5a5eb5159fc48750105ad3a",
+    "stdlib/std/set.gti": "21ae1fa7f3e6344a2bfe17c0a6f0fc1a274954bfe7a52d6b46e0a44bb84dc779",
+    "stdlib/std/simd.gti": "6e698fd5bf28d48e63d599fa0e8559017b2c2247076bd057eb7e72f6822c2c58",
     "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
-    "stdlib/std/span.gti": "496e5ac58405e439e78cdcd1c69ce83f6d1c655722e23b17b4982bf0e2b7df7a",
-    "stdlib/std/string.gti": "2c0a123dcb6723d44a7309b081a59b26fb70fea99f2465d1d90d1e00d20ceae4",
+    "stdlib/std/span.gti": "f1653435f595e6d96c69d2ca9163151024de00c73d6750a62717f3331e61ea82",
+    "stdlib/std/string.gti": "f6c3fa63e9e9e1c7231409b3f48f77b1414c0345dcb0e0ad25b9cdbfc91cc2f1",
+    "stdlib/std/string_view.gti": "2cdba7c578ac5ec9581946253763439eae656ad8cbd7cf739218891e040f1a6d",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
-    "stdlib/std/unordered_map.gti": "fd284db99a49ce10538568d589254921fbdda810860ffd4719efb4fc477b6fd6",
-    "stdlib/std/unordered_set.gti": "af95482466d952b670a69fdecad5ab905935cc4c1ee082c19f37e97741e2e84c",
-    "stdlib/std/utility.gti": "142fb40869c5b2f4d0a431035ae7af5128c99426e9adb2abb2f9fa9d4b3b382d",
-    "stdlib/std/vector.gti": "9a9cea018dd2641764feaed4c7f58efaded85f1767ca80f07a03c26d6e1c8e36"
+    "stdlib/std/unordered_map.gti": "56394ca14708bcb53d9e8111ac758d6d3f3426e3c62d1de95499bcda377ed005",
+    "stdlib/std/unordered_set.gti": "a34e3491db726db67aeb15eddcf538139e38f1253f2b44e8d9ddf726538e5a41",
+    "stdlib/std/utility.gti": "959b87c2cd332ad51a4d1711fb4e94b83ab752cb8af886e2aa3bbf2658815e7d",
+    "stdlib/std/vector.gti": "a7806f68471af6ff6fd65433a12ccdd561ae97ba69a6dc1d5b965e424ae2a395"
   },
   "cases": [
     {
@@ -641,6 +643,20 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "forward-list-iterator",
+      "mode": "run",
+      "source": "tests/fixtures/forward_list_iterator_completion.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "forward-list-operations",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_forward_list.gti",
@@ -688,6 +704,124 @@
       "source": "tests/fixtures/stdlib_surface_iterator.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "iterator-checked-position",
+      "mode": "run",
+      "source": "tests/fixtures/container_iterator_movement.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "iterator-contiguous",
+      "mode": "run",
+      "source": "tests/fixtures/contiguous_iterator_completion.gti",
+      "native_sources": [
+        "tests/fixtures/stdlib_adoption_allocation_counts.cpp"
+      ],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "iterator-coordinate-boundaries",
+      "mode": "run",
+      "source": "tests/fixtures/iterator_coordinate_boundaries.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "iterator-paired",
+      "mode": "run",
+      "source": "tests/fixtures/paired_span_iterator_completion.gti",
+      "native_sources": [
+        "tests/fixtures/stdlib_adoption_allocation_counts.cpp"
+      ],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "iterator-projected-map",
+      "mode": "run",
+      "source": "tests/fixtures/map_mutable_entry_projection.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "iterator-reverse",
+      "mode": "run",
+      "source": "tests/fixtures/container_reverse_probe.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "iterator-sparse-lane",
+      "mode": "run",
+      "source": "tests/fixtures/storage_lane_iterator_completion.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "iterator-text-view",
+      "mode": "run",
+      "source": "tests/fixtures/text_view_iterator_completion.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "json",
@@ -1429,6 +1563,40 @@
       "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_breadth_test.py", "tests/generic_algorithm_errors_test.py", "tests/ordered_search_runtime_test.py", "tests/fixtures/ordered_search.gti", "tests/fixtures/ordered_search_user_types.gti", "examples/139-ordered-search.gti", "stdlib/std/algorithm.gti"]
     },
     {
+      "id": "array.checked-iteration",
+      "source": "stdlib/std/array.gti",
+      "status": "executable",
+      "operations": [
+        "std::array::cbegin",
+        "std::array::cend",
+        "std::array::crbegin",
+        "std::array::crend",
+        "std::array::end_iterator",
+        "std::array::end_mut",
+        "std::array::rbegin",
+        "std::array::rbegin_mut",
+        "std::array::rend",
+        "std::array::rend_mut"
+      ],
+      "case_ids": [
+        "iterator-checked-position",
+        "iterator-reverse"
+      ],
+      "required_instantiations": [
+        "shared cursor copies",
+        "exclusive noncopyable cursor",
+        "empty and one-past positions",
+        "signed movement and reverse direction",
+        "checked bounds and owner lifetime"
+      ],
+      "evidence": [
+        "tests/fixtures/container_iterator_movement.gti",
+        "tests/container_iterator_movement_test.py",
+        "tests/contiguous_iterator_completion_test.py",
+        "examples/141-checked-container-iteration.gti"
+      ]
+    },
+    {
       "id": "array.executable",
       "source": "stdlib/std/array.gti",
       "status": "executable",
@@ -1662,6 +1830,40 @@
       "evidence": ["stdlib/std/cthread.gti", "tests/cthread_runtime_test.py", "tests/cthread_sleep_test.py", "tests/cthread_mutex_test.py", "tests/cthread_condition_test.py", "tests/cthread_once_test.py", "tests/cthread_create_join_test.py", "tests/cthread_tests.cpp", "tests/fixtures/cthread_yield_call_count.cpp", "docs/language/concurrency.md"]
     },
     {
+      "id": "deque.checked-iteration",
+      "source": "stdlib/std/deque.gti",
+      "status": "executable",
+      "operations": [
+        "std::deque::cbegin",
+        "std::deque::cend",
+        "std::deque::crbegin",
+        "std::deque::crend",
+        "std::deque::end_iterator",
+        "std::deque::end_mut",
+        "std::deque::rbegin",
+        "std::deque::rbegin_mut",
+        "std::deque::rend",
+        "std::deque::rend_mut"
+      ],
+      "case_ids": [
+        "iterator-checked-position",
+        "iterator-reverse"
+      ],
+      "required_instantiations": [
+        "shared cursor copies",
+        "exclusive noncopyable cursor",
+        "empty and one-past positions",
+        "signed movement and reverse direction",
+        "checked bounds and owner lifetime"
+      ],
+      "evidence": [
+        "tests/fixtures/container_iterator_movement.gti",
+        "tests/container_iterator_movement_test.py",
+        "tests/contiguous_iterator_completion_test.py",
+        "examples/141-checked-container-iteration.gti"
+      ]
+    },
+    {
       "id": "deque.executable",
       "source": "stdlib/std/deque.gti",
       "status": "executable",
@@ -1759,7 +1961,7 @@
       ],
       "evidence": [
         "docs/language/process.md",
-        "examples/139-environment-configuration.gti",
+        "examples/140-environment-configuration.gti",
         "runtime/src/environment.cpp",
         "tests/fixtures/stdlib_surface_environment.gti",
         "tests/fixtures/environment_lookup.gti",
@@ -1921,18 +2123,37 @@
       "required_instantiations": ["std::forward_list<int32_t>", "std::forward_list<entry>"]
     },
     {
-      "id": "forward-list.scaffold",
+      "id": "forward-list.positioned-iteration",
       "source": "stdlib/std/forward_list.gti",
-      "status": "scaffold",
+      "status": "executable",
       "operations": [
         "std::forward_list::begin",
+        "std::forward_list::begin_mut",
+        "std::forward_list::cbegin",
+        "std::forward_list::cend",
         "std::forward_list::const_iterator",
         "std::forward_list::emplace_front",
         "std::forward_list::end",
+        "std::forward_list::end_iterator",
+        "std::forward_list::end_mut",
+        "std::forward_list::iterator",
         "std::forward_list::sentinel"
       ],
-      "reason": "Iteration needs nullable owner-tied traversal; emplacement needs generic in-place construction.",
-      "evidence": ["stdlib/std/forward_list.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds", "tests/fixtures/stdlib_surface_container_aliases.gti"]
+      "case_ids": [
+        "forward-list-iterator"
+      ],
+      "required_instantiations": [
+        "copyable scalar",
+        "move-only owning string",
+        "immovable final-address payload",
+        "independent shared cursor copies",
+        "exclusive element mutation"
+      ],
+      "evidence": [
+        "tests/fixtures/forward_list_iterator_completion.gti",
+        "tests/forward_list_iterator_runtime_test.py",
+        "examples/141-checked-container-iteration.gti"
+      ]
     },
     {
       "id": "forward-list.swap",
@@ -2066,6 +2287,45 @@
       "evidence": ["tests/composable_io_runtime_test.py", "tests/runtime_io_tests.cpp", "docs/language/io.md"]
     },
     {
+      "id": "iterator.checked-capabilities",
+      "source": "stdlib/std/iterator.gti",
+      "status": "executable",
+      "operations": [
+        "std::bidirectional_cursor",
+        "std::bidirectional_iterator",
+        "std::dereferences_to",
+        "std::forward_iterator",
+        "std::input_iterator",
+        "std::output_iterator",
+        "std::random_access_cursor",
+        "std::random_access_iterator",
+        "std::sentinel_for",
+        "std::sized_sentinel_for",
+        "std::subscripts_to_mut",
+        "std::writes_to"
+      ],
+      "case_ids": [
+        "forward-list-iterator",
+        "iterator-checked-position",
+        "iterator-contiguous",
+        "iterator-paired",
+        "iterator-sparse-lane"
+      ],
+      "required_instantiations": [
+        "independent copyable shared cursors",
+        "noncopyable exclusive movement",
+        "unrelated source cursor",
+        "scalar and owning reference elements",
+        "inline reference proxy"
+      ],
+      "evidence": [
+        "tests/fixtures/container_iterator_movement.gti",
+        "tests/fixtures/forward_list_iterator_completion.gti",
+        "tests/fixtures/paired_span_iterator_completion.gti",
+        "tests/ephemeral_carrier_mir_tests.cpp"
+      ]
+    },
+    {
       "id": "iterator.executable",
       "source": "stdlib/std/iterator.gti",
       "status": "executable",
@@ -2075,12 +2335,37 @@
       "evidence": ["tests/fixtures/stdlib_surface_iterator.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "stdlib/std/iterator.gti"]
     },
     {
-      "id": "iterator.scaffold",
+      "id": "iterator.position-arithmetic",
+      "source": "stdlib/std/detail/iterator.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::checked_iterator_difference",
+        "std::detail::checked_iterator_element",
+        "std::detail::checked_iterator_position"
+      ],
+      "case_ids": [
+        "iterator-checked-position",
+        "iterator-coordinate-boundaries"
+      ],
+      "required_instantiations": [
+        "inclusive endpoint coordinate",
+        "reverse one-past base",
+        "minimum signed offset and difference",
+        "large unsigned coordinates with small representable signed difference"
+      ],
+      "evidence": [
+        "tests/fixtures/iterator_coordinate_boundaries.gti",
+        "tests/container_iterator_movement_test.py"
+      ]
+    },
+    {
+      "id": "iterator.signed-movement",
       "source": "stdlib/std/iterator.gti",
-      "status": "scaffold",
+      "status": "executable",
       "operations": ["std::advance(Iterator&,ptrdiff_t)", "std::next(Iterator,ptrdiff_t)", "std::prev"],
-      "reason": "Signed movement and prev are bodyless until GTI has a bidirectional iterator contract.",
-      "evidence": ["stdlib/std/iterator.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+      "case_ids": ["iterator"],
+      "required_instantiations": ["unrelated value-state bidirectional cursor", "checked owner-tied random-access cursor", "positive and negative in-place movement", "explicit cursor transport"],
+      "evidence": ["stdlib/std/iterator.gti", "tests/fixtures/stdlib_surface_iterator.gti", "tests/container_iterator_movement_test.py"]
     },
     {
       "id": "json.executable",
@@ -2096,6 +2381,40 @@
         "tests/fixtures/stdlib_json_codec.gti",
         "tests/fixtures/stdlib_surface_json.gti",
         "tests/json_stdlib_test.py"
+      ]
+    },
+    {
+      "id": "list.checked-iteration",
+      "source": "stdlib/std/list.gti",
+      "status": "executable",
+      "operations": [
+        "std::list::cbegin",
+        "std::list::cend",
+        "std::list::crbegin",
+        "std::list::crend",
+        "std::list::end_iterator",
+        "std::list::end_mut",
+        "std::list::rbegin",
+        "std::list::rbegin_mut",
+        "std::list::rend",
+        "std::list::rend_mut"
+      ],
+      "case_ids": [
+        "iterator-checked-position",
+        "iterator-reverse"
+      ],
+      "required_instantiations": [
+        "shared cursor copies",
+        "exclusive noncopyable cursor",
+        "empty and one-past positions",
+        "signed movement and reverse direction",
+        "checked bounds and owner lifetime"
+      ],
+      "evidence": [
+        "tests/fixtures/container_iterator_movement.gti",
+        "tests/container_iterator_movement_test.py",
+        "tests/contiguous_iterator_completion_test.py",
+        "examples/141-checked-container-iteration.gti"
       ]
     },
     {
@@ -2152,6 +2471,36 @@
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti"
+      ]
+    },
+    {
+      "id": "map.checked-mapped-projection",
+      "source": "stdlib/std/map.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::map_entry_projection::first",
+        "std::detail::map_entry_projection::key",
+        "std::detail::map_entry_projection::mapped",
+        "std::detail::map_entry_projection::second",
+        "std::map::crbegin",
+        "std::map::crend",
+        "std::map::end_mut",
+        "std::map::rbegin_mut",
+        "std::map::rend_mut"
+      ],
+      "case_ids": [
+        "iterator-projected-map"
+      ],
+      "required_instantiations": [
+        "readonly key",
+        "exclusive scalar and owning mapped value",
+        "noncopyable exclusive cursor",
+        "reverse mapped projection"
+      ],
+      "evidence": [
+        "tests/fixtures/map_mutable_entry_projection.gti",
+        "tests/map_mutable_entry_projection_test.py",
+        "examples/087-associative-containers.gti"
       ]
     },
     {
@@ -2303,6 +2652,31 @@
       "case_ids": ["memory-layout"],
       "required_instantiations": ["std::layout_of<Envelope<Owner>>()", "std::layout_of<Owner>()", "std::layout_of<Pinned>()", "std::layout_of<int32_t>()", "std::layout_of<uint64_t[3]>()"],
       "evidence": ["examples/119-runtime-object-layout.gti", "tests/runtime_object_layout_tests.cpp", "tests/runtime_object_layout_test.py", "docs/language/standard-library.md"]
+    },
+    {
+      "id": "memory.live-slot-iteration",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": [
+        "std::arena::checked positional and reverse iteration",
+        "std::pool::checked live-slot and reverse iteration",
+        "std::storage::checked live-slot and reverse iteration"
+      ],
+      "case_ids": [
+        "iterator-sparse-lane"
+      ],
+      "required_instantiations": [
+        "vacant and live slots",
+        "immovable payload",
+        "prefix arena",
+        "independent shared cursors",
+        "exclusive mutation and resource lifetime"
+      ],
+      "evidence": [
+        "tests/fixtures/storage_lane_iterator_completion.gti",
+        "tests/storage_lane_iterator_runtime_test.py",
+        "examples/143-live-slot-and-lane-iteration.gti"
+      ]
     },
     {
       "id": "memory.manual-lifetimes",
@@ -2483,6 +2857,36 @@
       "evidence": ["tests/fixtures/stdlib_surface_meta.gti", "tests/reflection_runtime_test.py", "tests/reflection_tests.cpp", "stdlib/std/meta.gti", "tests/fixtures/reflection_attributes.gti", "tests/fixtures/reflection_construct.gti", "tests/fixtures/reflection_callables.gti"]
     },
     {
+      "id": "mutable-span.checked-iteration",
+      "source": "stdlib/std/span.gti",
+      "status": "executable",
+      "operations": [
+        "std::mutable_span::cbegin",
+        "std::mutable_span::cend",
+        "std::mutable_span::crbegin",
+        "std::mutable_span::crend",
+        "std::mutable_span::end_iterator",
+        "std::mutable_span::end_mut",
+        "std::mutable_span::rbegin",
+        "std::mutable_span::rbegin_mut",
+        "std::mutable_span::rend",
+        "std::mutable_span::rend_mut"
+      ],
+      "case_ids": [
+        "iterator-contiguous"
+      ],
+      "required_instantiations": [
+        "noncopyable exclusive cursor",
+        "readonly child traversal",
+        "signed positioned mutation",
+        "reverse subspan and empty endpoint"
+      ],
+      "evidence": [
+        "tests/fixtures/contiguous_iterator_completion.gti",
+        "tests/contiguous_iterator_completion_test.py"
+      ]
+    },
+    {
       "id": "mutable-span.executable",
       "source": "stdlib/std/span.gti",
       "status": "executable",
@@ -2575,6 +2979,38 @@
       "case_ids": ["optional", "optional-clone", "optional-nested", "optional-expected-composition", "vector-construction-only", "optional-value-or-contract"],
       "required_instantiations": ["std::optional<int32_t>", "std::optional<move_only>", "std::optional<std::optional<std::string>>"],
       "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/fixtures/optional_clone.gti", "tests/fixtures/optional_nested.gti", "tests/fixtures/optional_expected_composition.gti", "tests/fixtures/expected_constructor_payload.gti", "tests/fixtures/optional_constructor_failure.gti", "tests/fixtures/optional_reset_failure.gti", "tests/constructor_field_publication_test.py", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
+    },
+    {
+      "id": "paired-span.checked-proxy-iteration",
+      "source": "stdlib/std/paired_span.gti",
+      "status": "executable",
+      "operations": [
+        "std::paired_span::begin",
+        "std::paired_span::cbegin",
+        "std::paired_span::cend",
+        "std::paired_span::crbegin",
+        "std::paired_span::crend",
+        "std::paired_span::end",
+        "std::paired_span::end_iterator",
+        "std::paired_span::rbegin",
+        "std::paired_span::rend",
+        "std::paired_span::rend_iterator"
+      ],
+      "case_ids": [
+        "iterator-paired"
+      ],
+      "required_instantiations": [
+        "two retained external owners",
+        "owning element proxy without copying",
+        "positional and reverse shared traversal",
+        "confined algorithm callback"
+      ],
+      "evidence": [
+        "tests/fixtures/paired_span_iterator_completion.gti",
+        "tests/paired_span_iterator_completion_test.py",
+        "tests/user_dual_range_lifetime_test.py",
+        "examples/142-checked-view-iteration.gti"
+      ]
     },
     {
       "id": "paired-span.executable",
@@ -2732,6 +3168,39 @@
       "evidence": ["tests/fixtures/random_engine.gti", "stdlib/std/random.gti"]
     },
     {
+      "id": "resource-vector.checked-iteration",
+      "source": "stdlib/std/resource_vector.gti",
+      "status": "executable",
+      "operations": [
+        "std::resource_vector::cbegin",
+        "std::resource_vector::cend",
+        "std::resource_vector::crbegin",
+        "std::resource_vector::crend",
+        "std::resource_vector::end_iterator",
+        "std::resource_vector::end_mut",
+        "std::resource_vector::rbegin",
+        "std::resource_vector::rbegin_mut",
+        "std::resource_vector::rend",
+        "std::resource_vector::rend_mut"
+      ],
+      "case_ids": [
+        "iterator-contiguous"
+      ],
+      "required_instantiations": [
+        "shared cursor copies",
+        "exclusive noncopyable cursor",
+        "empty and one-past positions",
+        "signed movement and reverse direction",
+        "checked bounds and owner lifetime"
+      ],
+      "evidence": [
+        "tests/fixtures/contiguous_iterator_completion.gti",
+        "tests/container_iterator_movement_test.py",
+        "tests/contiguous_iterator_completion_test.py",
+        "examples/141-checked-container-iteration.gti"
+      ]
+    },
+    {
       "id": "resource-vector.executable",
       "source": "stdlib/std/resource_vector.gti",
       "status": "executable",
@@ -2765,6 +3234,27 @@
       "case_ids": ["resource-allocator-example", "resource-programmable", "resource-container-usage", "resource-vector-constructor-rollback", "container-member-aliases", "sequence-unchecked-resource"],
       "required_instantiations": ["int and std::string", "owning Item with an observable destructor", "application-defined arena and allocation-budget provider", "growth, iteration, mutable element access, owner movement and recoverable growth failure"],
       "evidence": ["examples/121-programmable-allocators.gti", "tests/fixtures/programmable_allocators.gti", "tests/programmable_allocators_runtime_test.py", "tests/resource_protocol_tests.cpp", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti", "tests/fixtures/resource_vector_constructor_rollback.gti", "tests/fixtures/stdlib_surface_container_aliases.gti"]
+    },
+    {
+      "id": "resource.live-slot-iteration",
+      "source": "stdlib/std/resource.gti",
+      "status": "executable",
+      "operations": [
+        "std::resource_storage::checked live-slot and reverse iteration"
+      ],
+      "case_ids": [
+        "iterator-sparse-lane"
+      ],
+      "required_instantiations": [
+        "same-resource slot metadata",
+        "vacant slot skipping",
+        "provider lifetime",
+        "shared and exclusive bidirectional traversal"
+      ],
+      "evidence": [
+        "tests/fixtures/storage_lane_iterator_completion.gti",
+        "tests/storage_lane_iterator_runtime_test.py"
+      ]
     },
     {
       "id": "resource.protocol",
@@ -2805,6 +3295,35 @@
       "case_ids": ["resource-allocator-example", "resource-constructor-rollback", "resource-programmable", "resource-region-contracts", "resource-container-usage", "resource-vector-constructor-rollback"],
       "required_instantiations": ["int and owning Item", "immovable FixedObject and Fixed", "explicit over-alignment and sparse slots", "structural relocation with strong allocation-failure preservation", "element cleanup before provider release and constructor rollback"],
       "evidence": ["examples/121-programmable-allocators.gti", "tests/fixtures/programmable_allocators.gti", "tests/fixtures/resource_constructor_rollback.gti", "tests/fixtures/resource_region_contracts.gti", "tests/programmable_allocators_runtime_test.py", "tests/resource_protocol_tests.cpp", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti", "tests/fixtures/resource_vector_constructor_rollback.gti"]
+    },
+    {
+      "id": "set.checked-iteration",
+      "source": "stdlib/std/set.gti",
+      "status": "executable",
+      "operations": [
+        "std::set::cbegin",
+        "std::set::cend",
+        "std::set::crbegin",
+        "std::set::crend",
+        "std::set::end_iterator",
+        "std::set::rbegin",
+        "std::set::rend"
+      ],
+      "case_ids": [
+        "iterator-checked-position",
+        "iterator-reverse"
+      ],
+      "required_instantiations": [
+        "readonly keys",
+        "shared independent bidirectional cursors",
+        "common-position endpoint",
+        "reverse empty and populated sets"
+      ],
+      "evidence": [
+        "tests/fixtures/container_iterator_movement.gti",
+        "tests/fixtures/container_reverse_probe.gti",
+        "tests/container_iterator_movement_test.py"
+      ]
     },
     {
       "id": "set.executable",
@@ -2849,6 +3368,30 @@
       ]
     },
     {
+      "id": "simd.checked-lane-iteration",
+      "source": "stdlib/std/simd.gti",
+      "status": "executable",
+      "operations": [
+        "std::simd::checked positional and reverse lane iteration",
+        "std::simd_mask::checked positional and reverse lane iteration"
+      ],
+      "case_ids": [
+        "iterator-sparse-lane"
+      ],
+      "required_instantiations": [
+        "float and double lanes",
+        "boolean masks",
+        "zero lane count",
+        "shared copies",
+        "exclusive lane mutation"
+      ],
+      "evidence": [
+        "tests/fixtures/storage_lane_iterator_completion.gti",
+        "tests/storage_lane_iterator_runtime_test.py",
+        "examples/143-live-slot-and-lane-iteration.gti"
+      ]
+    },
+    {
       "id": "simd.executable",
       "source": "stdlib/std/simd.gti",
       "status": "executable",
@@ -2888,6 +3431,36 @@
       "evidence": ["tests/fixtures/stdlib_surface_source_location.gti", "tests/source_location_runtime_test.py", "stdlib/std/source_location.gti"]
     },
     {
+      "id": "span.checked-iteration",
+      "source": "stdlib/std/span.gti",
+      "status": "executable",
+      "operations": [
+        "std::span::cbegin",
+        "std::span::cend",
+        "std::span::crbegin",
+        "std::span::crend",
+        "std::span::end_iterator",
+        "std::span::rbegin",
+        "std::span::rend"
+      ],
+      "case_ids": [
+        "iterator-contiguous"
+      ],
+      "required_instantiations": [
+        "shared cursor copies",
+        "readonly whole spans and subspans",
+        "empty and one-past positions",
+        "signed movement and reverse direction",
+        "checked bounds and owner lifetime"
+      ],
+      "evidence": [
+        "tests/fixtures/contiguous_iterator_completion.gti",
+        "tests/container_iterator_movement_test.py",
+        "tests/contiguous_iterator_completion_test.py",
+        "examples/141-checked-container-iteration.gti"
+      ]
+    },
+    {
       "id": "span.executable",
       "source": "stdlib/std/span.gti",
       "status": "executable",
@@ -2910,6 +3483,74 @@
       "case_ids": ["span", "container-member-aliases", "sequence-unchecked"],
       "required_instantiations": ["std::span<int32_t>", "std::span<char>"],
       "evidence": ["tests/fixtures/span_owner_dependent.gti", "stdlib/std/span.gti", "tests/fixtures/stdlib_surface_container_aliases.gti"]
+    },
+    {
+      "id": "string-view.checked-value-iteration",
+      "source": "stdlib/std/string_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::string_view::begin",
+        "std::string_view::cbegin",
+        "std::string_view::cend",
+        "std::string_view::crbegin",
+        "std::string_view::crend",
+        "std::string_view::end",
+        "std::string_view::end_iterator",
+        "std::string_view::iterator_at",
+        "std::string_view::rbegin",
+        "std::string_view::rend",
+        "std::string_view::rend_iterator",
+        "std::string_view::reverse_iterator_at"
+      ],
+      "case_ids": [
+        "iterator-text-view"
+      ],
+      "required_instantiations": [
+        "literal-backed and owner-backed counted bytes",
+        "embedded zero",
+        "independent readonly character value yield",
+        "view-shell and dynamic-owner lifetime",
+        "forward and reverse position"
+      ],
+      "evidence": [
+        "tests/fixtures/text_view_iterator_completion.gti",
+        "tests/text_view_iterator_runtime_test.py",
+        "tests/text_view_iterator_compiler_tests.cpp",
+        "examples/144-counted-text-view-iteration.gti"
+      ]
+    },
+    {
+      "id": "string.checked-iteration",
+      "source": "stdlib/std/string.gti",
+      "status": "executable",
+      "operations": [
+        "std::string::cbegin",
+        "std::string::cend",
+        "std::string::crbegin",
+        "std::string::crend",
+        "std::string::end_iterator",
+        "std::string::end_mut",
+        "std::string::rbegin",
+        "std::string::rbegin_mut",
+        "std::string::rend",
+        "std::string::rend_mut"
+      ],
+      "case_ids": [
+        "iterator-contiguous"
+      ],
+      "required_instantiations": [
+        "shared cursor copies",
+        "exclusive noncopyable cursor",
+        "empty and one-past positions",
+        "signed movement and reverse direction",
+        "checked bounds and owner lifetime"
+      ],
+      "evidence": [
+        "tests/fixtures/contiguous_iterator_completion.gti",
+        "tests/container_iterator_movement_test.py",
+        "tests/contiguous_iterator_completion_test.py",
+        "examples/141-checked-container-iteration.gti"
+      ]
     },
     {
       "id": "string.executable",
@@ -3010,6 +3651,34 @@
       "evidence": ["examples/066-managed-threads.gti", "stdlib/std/thread.gti", "tests/managed_thread_runtime_test.py", "tests/managed_thread_tests.cpp", "tests/runtime_thread_tests.cpp"]
     },
     {
+      "id": "unordered-map.checked-mapped-projection",
+      "source": "stdlib/std/unordered_map.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::unordered_map_entry_projection::first",
+        "std::detail::unordered_map_entry_projection::key",
+        "std::detail::unordered_map_entry_projection::mapped",
+        "std::detail::unordered_map_entry_projection::second",
+        "std::unordered_map::cbegin",
+        "std::unordered_map::cend",
+        "std::unordered_map::end_mut"
+      ],
+      "case_ids": [
+        "iterator-projected-map"
+      ],
+      "required_instantiations": [
+        "readonly key",
+        "exclusive mapped scalar and owning value",
+        "vacant bucket skipping",
+        "no fabricated reverse category"
+      ],
+      "evidence": [
+        "tests/fixtures/map_mutable_entry_projection.gti",
+        "tests/map_mutable_entry_projection_test.py",
+        "examples/087-associative-containers.gti"
+      ]
+    },
+    {
       "id": "unordered_map.executable",
       "source": "stdlib/std/unordered_map.gti",
       "status": "executable",
@@ -3071,6 +3740,28 @@
         "tests/container_contract_failure_test.py",
         "docs/language/standard-library.md",
         "tests/fixtures/stdlib_surface_container_aliases.gti"
+      ]
+    },
+    {
+      "id": "unordered_set.checked-iteration",
+      "source": "stdlib/std/unordered_set.gti",
+      "status": "executable",
+      "operations": [
+        "std::unordered_set::cbegin",
+        "std::unordered_set::cend",
+        "std::unordered_set::end_iterator"
+      ],
+      "case_ids": [
+        "iterator-checked-position"
+      ],
+      "required_instantiations": [
+        "readonly keys",
+        "forward shared cursors",
+        "common-position endpoint without fabricated reverse support"
+      ],
+      "evidence": [
+        "tests/fixtures/container_iterator_movement.gti",
+        "tests/container_iterator_movement_test.py"
       ]
     },
     {
@@ -3146,6 +3837,40 @@
       "case_ids": ["restoring-exchange-example", "restoring-shapes"],
       "required_instantiations": ["unrelated move-only Asset and Resource", "owning and cleanup-free fixed arrays", "unique and shared owners", "optional", "expected owning success and error", "owning payload enum"],
       "evidence": ["examples/103-resource-exchange.gti", "tests/fixtures/restoring_exchange_shapes.gti", "tests/restoring_exchange_tests.cpp", "tests/restoring_exchange_runtime_test.py", "tests/restoring_exchange_shapes_runtime_test.py"]
+    },
+    {
+      "id": "vector.checked-iteration",
+      "source": "stdlib/std/vector.gti",
+      "status": "executable",
+      "operations": [
+        "std::vector::cbegin",
+        "std::vector::cend",
+        "std::vector::crbegin",
+        "std::vector::crend",
+        "std::vector::end_iterator",
+        "std::vector::end_mut",
+        "std::vector::rbegin",
+        "std::vector::rbegin_mut",
+        "std::vector::rend",
+        "std::vector::rend_mut"
+      ],
+      "case_ids": [
+        "iterator-checked-position",
+        "iterator-reverse"
+      ],
+      "required_instantiations": [
+        "shared cursor copies",
+        "exclusive noncopyable cursor",
+        "empty and one-past positions",
+        "signed movement and reverse direction",
+        "checked bounds and owner lifetime"
+      ],
+      "evidence": [
+        "tests/fixtures/container_iterator_movement.gti",
+        "tests/container_iterator_movement_test.py",
+        "tests/contiguous_iterator_completion_test.py",
+        "examples/141-checked-container-iteration.gti"
+      ]
     },
     {
       "id": "vector.executable",

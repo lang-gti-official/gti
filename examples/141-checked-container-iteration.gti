@@ -49,7 +49,7 @@ int main() {
   [[discard]] priorities.insert(3, 30);
   {
     mut auto highest = priorities.rbegin_mut();
-    highest->second = 31; // Mapped values are mutable; keys are not.
+    highest->mapped() = 31; // Mapped values are mutable; keys are not.
   }
   int key = 3;
   if (priorities.at(key) != 31) { return 4; }

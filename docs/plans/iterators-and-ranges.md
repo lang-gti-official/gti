@@ -132,10 +132,12 @@ Iterator and sentinel types may differ. Comparison may accept a read-only
 sentinel reference or a copyable exact value; a reference-taking sentinel still
 requires a stable named argument.
 
-The shipped readable protocol returns checked references. Broader value/proxy
-yield profiles need an explicit operation and lifetime contract; an illustrative
-yield shape in the early proposal was not evidence of a complete general
-single-pass generator profile.
+The readable protocol supports checked references and independent copyable
+values without borrowed state. A read-only reference loop binding over a value
+owns the result per iteration and borrows that storage; cleanup retires its
+borrowers before the value and before advancement. Reference yields remain
+aliases without element copies. This does not establish move-only generator
+yields, state-mutating read traversal, or a complete lazy-adaptor protocol.
 
 Lookup is member-based. There is no ADL, free `begin`/`end` search,
 `tag_invoke`, C++ customization-point lookup or implicit element conversion.

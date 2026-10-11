@@ -28,6 +28,9 @@ if(Python3_Interpreter_FOUND)
     conditional_owning_argument_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_null_native_runtime constructor_passive_field_rollback_runtime
+    contiguous_iterator_completion container_iterator_movement
+    paired_span_iterator_completion cursor_carrier_publication
+    range_endpoint_parking_runtime user_dual_range_lifetime
     comma_class_results_runtime
     construction_assignment_runtime
     consuming_call_assignment_runtime consuming_lambda_runtime consuming_methods_runtime consuming_owned_pointee_runtime

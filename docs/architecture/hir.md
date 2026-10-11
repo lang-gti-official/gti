@@ -686,6 +686,17 @@ not infer it from `std` wrapper names or ordinary call spelling. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source.
 
+Read-only reference range bindings retain an explicit `elementOwner` statement,
+binding and loan in `HirRangeIteration`, together with the original dereference
+value. Semantics chooses a checked alias for reference yields or independent
+owned per-iteration storage for eligible value yields; `materializesElementValue`
+preserves that choice. Verification checks the synthetic AST identity, exact
+source producer, concrete type/category/ownership, and the written element's
+borrow of that binding. Generic symbolic range facts do not decide a concrete
+yield's storage policy. Mutable-reference and ordinary by-value loop bindings
+keep their direct paths. HIR does not create temporary-reference permissions
+or infer storage from a backend representation.
+
 When semantics marks an exact named return as an implicit move, HIR preserves
 the source place value and adds one unary `HirValueKind::Move` as the return
 root. That value carries the same ownership event, exact place identity,

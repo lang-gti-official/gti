@@ -49,7 +49,7 @@ def main():
                 capture_output=True, text=True, timeout=180)
             assert result.returncode == 0, (label, result.stdout, result.stderr)
             generated = executable.with_suffix(".gti.cpp").read_text()
-            assert "park-range-cursor" in generated and "restore-range-cursor" in generated, label
+            assert "// GTI MIR park range cursor loan " in generated and "// GTI MIR restore range cursor loan " in generated, label
             return label, executable
 
         def observe(case):
@@ -62,8 +62,15 @@ def main():
                     assert result.stderr == "", (label, count, result.stderr)
                 else:
                     assert message in result.stderr, (label, count, result.stderr)
-                    assert "runtime error[GTI-R0017]" in result.stderr, (label, count, result.stderr)
-                    assert ("GTI-R0014" in result.stderr) == (count in (5, 6)), (label, count, result.stderr)
+                    if count in (5, 6):
+                        primary = ("mutable proxy loop body failure" if count == 5
+                                   else "readonly mutable-range endpoint failure")
+                        assert "runtime error[GTI-R0014]" in result.stderr, (label, count, result.stderr)
+                        assert "primary [GTI-R0017]" in result.stderr and f'message="{primary}"' in result.stderr, (label, count, result.stderr)
+                        assert 'secondary [GTI-R0017] message="mutable cursor cleanup failure"' in result.stderr, (label, count, result.stderr)
+                    else:
+                        assert "runtime error[GTI-R0017]" in result.stderr, (label, count, result.stderr)
+                        assert "GTI-R0014" not in result.stderr, (label, count, result.stderr)
                 assert "AddressSanitizer" not in result.stderr and "UndefinedBehaviorSanitizer" not in result.stderr
 
         run_cases([(label, (label, flags, native)) for label, flags, native in modes],
