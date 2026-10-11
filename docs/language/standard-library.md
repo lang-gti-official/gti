@@ -279,7 +279,8 @@ The current implemented foundation includes:
 - `<std/algorithm>` value-returning `min`, `max`, and `clamp`, and structural
   input-iterator `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, and
   `count_if`, exact-value `find` and `count`, and returned-callable `for_each`,
-  plus `binary_search`, bounds, subsequence and repeated-value search,
+  plus `partition_point`, default/comparator `binary_search` and bounds,
+  subsequence and repeated-value search,
   adjacent search, extrema, sortedness, bounded sequence comparison, and
   prefix comparison. Structural whole-range predicates, `contains`, `count`,
   `fill`, `replace`, and `replace_if` accept nominal ranges and fixed arrays.
