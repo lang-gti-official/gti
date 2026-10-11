@@ -7726,7 +7726,7 @@ consumer, and release refreshes remain outstanding for the full campaign.
 - **Implemented ordered-query composition:** the source-defined slice adds
   `partition_point` and comparator `lower_bound`/`upper_bound`/`binary_search`
   over exact homogeneous keys, preserving checked cursor loans and one owned
-  repeatable callback in ordinary GTI. Example 141 demonstrates custom-record
+  repeatable callback in ordinary GTI. Example 139 demonstrates custom-record
   ordering. Callback failure, exact returned-owner rejection, and allocation/
   traversal-cost fixtures cover the same rules with unrelated cursors.
 - **Remaining scope:** structural complete-range

@@ -120,7 +120,8 @@ def write_stub(path: Path, case: ProtocolCase) -> None:
 
 
 def run_coordinator(coordinator: Path, stub: Path, root: Path,
-                    baseline: Path) -> subprocess.CompletedProcess[str]:
+                    baseline: Path,
+                    evidence: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             sys.executable,
@@ -129,6 +130,7 @@ def run_coordinator(coordinator: Path, stub: Path, root: Path,
             str(root),
             str(baseline),
             "--jobs=1",
+            *(["--evidence-dir", str(evidence)] if evidence is not None else []),
         ],
         text=True,
         capture_output=True,
@@ -376,6 +378,27 @@ def main() -> int:
             write_stub(stub, case)
 
             completed = run_coordinator(coordinator, stub, root, baseline)
+            evidence = root / "evidence"
+            observed = run_coordinator(coordinator, stub, root, baseline,
+                                       evidence)
+            expect(observed.returncode == completed.returncode and
+                   observed.stderr == completed.stderr,
+                   f"{case.name}: retaining progress must preserve every "
+                   "success/rejection and exact diagnostic")
+            if case.actual_sources == case.baseline_sources:
+                records = sorted(evidence.glob("*.json"))
+                expect({path.stem for path in records} == set(case.actual_sources),
+                       f"{case.name}: evidence must cover every worker exactly")
+                for path in records:
+                    record = json.loads(path.read_text(encoding="utf-8"))
+                    expect(record["source"] == path.stem and
+                           record["returncode"] == case.worker_exit and
+                           record["seconds"] >= 0 and record["pid"] > 0,
+                           f"{case.name}: worker identity/timing/exit evidence "
+                           "must remain exact")
+                    expect((evidence / f"{path.stem}.stdout").is_file() and
+                           (evidence / f"{path.stem}.stderr").is_file(),
+                           f"{case.name}: both raw worker streams must survive")
             if case.expected_fragment is None:
                 expect(
                     completed.returncode == 0,

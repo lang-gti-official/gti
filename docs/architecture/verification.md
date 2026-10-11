@@ -3,7 +3,41 @@
 ## Container iterator completion: candidate validation (2026-10-12)
 
 The records below are chronological checkpoint evidence, not a blanket final
-certification. At reconciled clean `25d7e49d`, all Release targets build and
+certification. After checkpoint `c689a9a8` repairs all seven failures described
+below, focused fresh gates pass for borrowed-class range verification,
+shared-accessor runtime, generic algorithms, composed coverage and container
+failure/cleanup contracts. The sanitized contiguous partition passes locally
+with all 21 source negatives; its Linux run remains a separate platform gate.
+
+Reconciliation `9c51bdcf` preserves main's reflected-JSON implementation and
+reserves examples 142–145 for the four unpublished iterator demonstrations;
+the combined minor version is 0.404.0. A fresh optimized inventory tool exactly
+matches examples 137/138. Using that same executable against main's source
+and the combined source independently explains every reflected-JSON addition:
+261 declaration rows, 16 source structural-operator adapters, one concrete
+`checked_iterator_step` adapter, and five bodies (the memory/text sentinel
+field/static-field initializers and that helper). No declaration, body or
+generated-item name/multiplicity disappears. Direct production C++ emission
+confirms 389 distinct MIR body identities for that example. The reviewed fixed
+inventories now total 89,991 declarations / 14,470 lowered bodies / 8,876 generated
+items, and 14,461 emitted MIR bodies across 142 examples. Complete non-update
+census/oracle checks remain required; a reviewed delta is not a whole-corpus pass.
+
+An operation-scoped structural batch and immutable production text plan remove
+repeated whole-program verification from the emitter corpus without changing
+the two sweeps or their assertions. The new structural operation deliberately
+does not substitute text-vocabulary admission for structural readiness.
+Preflight tests retain exact standalone results/body order, global forgery
+rejection before body results, and body-local missing-row issues. All 29
+coordinator protocol cases pass with and without optional retained evidence
+(58 invocations). The fresh all-target Release build, compiler pipeline,
+preflight/protocol tests and 554-file formatting check pass. Exact old/new
+comparison also passes for the newly reconciled reflected-JSON fixture (767
+structurally ready bodies and 517 identical production/general text bodies).
+Comparison over the entire reconciled corpus and fresh unfiltered/platform
+acceptance still remain open; a single-fixture proxy is not final certification.
+
+At reconciled clean `25d7e49d`, all Release targets build and
 the unfiltered 651-test run finishes with 644 passes and seven failures.
 The complete C++ emitter corpus passes (141 sources, 35,978 ready bodies,
 22,910 production/general matches), as does the complete native cutover oracle
