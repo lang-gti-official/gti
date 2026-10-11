@@ -5471,9 +5471,26 @@ private:
         lifecycleValid = false;
       } else {
         value.packExpansionElements.reserve(value.info.type.arguments.size());
-        for (const SemanticType &element : value.info.type.arguments) {
+        for (std::size_t index = 0; index < value.info.type.arguments.size();
+             ++index) {
+          const SemanticType &element = value.info.type.arguments[index];
           const SemanticTypeTraits traits =
               instanceProvider->traitsFor(element);
+          const bool storedEntry =
+              element.kind == SemanticType::Class &&
+              std::any_of(model.loans().begin(), model.loans().end(),
+                          [&](const SemanticLoanInfo &loan) {
+                            return loan.entry &&
+                                   loan.kind == SemanticLoanKind::StoredValue &&
+                                   loan.place.root == value.symbol &&
+                                   !loan.place.receiver &&
+                                   loan.place.projections.size() == 1 &&
+                                   loan.place.projections.front().kind ==
+                                       PlaceProjectionKind::ConstantIndex &&
+                                   loan.place.projections.front().index ==
+                                       index &&
+                                   !loan.designatedFields.empty();
+                          });
           HirCallInputKind inputKind = HirCallInputKind::Value;
           if (element.kind == SemanticType::Reference) {
             inputKind = element.referenceAccess == AccessMode::Mutable
@@ -5483,11 +5500,13 @@ private:
             inputKind = HirCallInputKind::Value;
           } else if ((element.kind == SemanticType::Class ||
                       element.kind == SemanticType::Lambda) &&
-                     !traits.containsBorrowedState && traits.copyable) {
+                     (!traits.containsBorrowedState || storedEntry) &&
+                     traits.copyable) {
             inputKind = HirCallInputKind::CopyValue;
           } else if ((element.kind == SemanticType::Class ||
                       element.kind == SemanticType::Lambda) &&
-                     !traits.containsBorrowedState && traits.movable) {
+                     (!traits.containsBorrowedState || storedEntry) &&
+                     traits.movable) {
             inputKind = HirCallInputKind::MoveValue;
           } else {
             lifecycleValid = false;

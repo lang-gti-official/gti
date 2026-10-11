@@ -2170,7 +2170,26 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       } else if (place != nullptr && place->root == MirPlaceRootKind::Binding) {
         const auto found = bindingLoans.find(place->binding);
         if (found != bindingLoans.end() && !found->second.empty()) {
-          loan = body.findLoan(found->second.front());
+          if (!place->projections.empty() &&
+              place->projections.front().kind ==
+                  MirProjectionKind::PackElement) {
+            for (const auto id : found->second) {
+              const auto *candidate = body.findLoan(id);
+              const auto *origin = candidate == nullptr
+                                       ? nullptr
+                                       : body.findPlace(candidate->source);
+              // One binding can contain several borrowed pack elements. Select
+              // the exact element, never the first loan of the entire pack.
+              if (origin == nullptr || !candidate->entry ||
+                  origin->projections != place->projections)
+                continue;
+              if (loan != nullptr)
+                return {};
+              loan = candidate;
+            }
+          } else {
+            loan = body.findLoan(found->second.front());
+          }
         }
         if (loan == nullptr && place->projections.empty()) {
           for (const auto &candidate : body.loans) {
@@ -10670,6 +10689,9 @@ verifyMirProgramContracts(const MirProgram &program) {
           const bool mutableReference =
               type.kind == SemanticType::Reference &&
               type.referenceAccess == AccessMode::Mutable;
+          const auto storedPaths = findStoredCarrierReferences(program, type);
+          const bool storedCarrier =
+              type.kind == SemanticType::Class && !storedPaths.empty();
           std::size_t entryLoans = 0;
           for (const MirLoan &loan : body.loans) {
             const MirPlace *source = body.findPlace(loan.source);
@@ -10681,8 +10703,12 @@ verifyMirProgramContracts(const MirProgram &program) {
                 source->projections.front().constantIndex != element)
               continue;
             ++entryLoans;
-            if (loan.kind != MirLoanKind::Parameter || loan.semanticLoan == 0 ||
-                loan.access != AccessMode::Mutable || loan.escapes ||
+            const bool exactAccess =
+                (mutableReference && loan.kind == MirLoanKind::Parameter &&
+                 loan.access == AccessMode::Mutable) ||
+                (storedCarrier && loan.kind == MirLoanKind::Stored &&
+                 loan.access == storedPaths.front().reference.referenceAccess);
+            if (!exactAccess || loan.semanticLoan == 0 || loan.escapes ||
                 loan.parent != 0 ||
                 loan.carriers != std::vector<HirBindingId>{binding} ||
                 source->type != type || !source->initiallyAvailable) {
@@ -10690,10 +10716,10 @@ verifyMirProgramContracts(const MirProgram &program) {
                   {.bodyKind = body.kind,
                    .owner = owner,
                    .message =
-                       "reference pack element has invalid entry capability"});
+                       "borrowed pack element has invalid entry capability"});
             }
           }
-          if (entryLoans != (mutableReference ? 1u : 0u)) {
+          if (entryLoans != (mutableReference || storedCarrier ? 1u : 0u)) {
             result.errors.push_back(
                 {.bodyKind = body.kind,
                  .owner = owner,

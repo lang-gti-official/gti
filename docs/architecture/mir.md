@@ -268,9 +268,10 @@ continuations. Program verification replays the operand's actual origins,
 field paths, access modes, structural scoped eligibility and exact callable
 entry. Body verification requires all task loans live and rejects overlapping
 exclusive sibling accesses. Neither an empty group nor borrowed transport
-changes the ordinary owned-thread contract. Public generic forwarding and the
-production backend consumer remain incomplete; this representation is not yet
-a public executable scope API.
+changes the ordinary owned-thread contract. Concrete generic and pack forwarding
+preserve each task's exact entry origins, including multiple reference fields
+and repeated types. The production backend consumer and public wrapper remain
+incomplete; this representation is not yet a public executable scope API.
 
 Fresh-value transport distinguishes lexical loan lifetime from active object
 cleanup. A freshly constructed borrowed carrier can have no destructor work
@@ -1758,6 +1759,13 @@ A `MirBody` owns:
   referent. Forwarding stages the exact loan, not a borrow of the whole pack.
   Verification checks per-element coverage, access, non-escape and source
   identity; normal and failure exits retire the entry capabilities;
+- each borrowed class element of a concrete formal pack has a `StoredValue`
+  entry loan over its exact `PackElement` place, with all resolved field paths
+  and access modes. Projecting its referents appends the ordinary field and
+  dereference projections to that element, not to the whole pack. Forwarding
+  reuses the canonical element place and its loan; copying stages an independent
+  carrier while moving consumes only the carrier shell. Whole-program checks
+  independently replay field paths and reject missing or substituted origins;
 - typed lexical/value drop obligations and per-instruction initialize, move,
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
@@ -2541,8 +2549,9 @@ Cleanup-free results retain the normal no-value-drop convention, while the
 moved-from cleanup-free parameter still has its harmless lexical lifetime.
 The original construction expression supplies result provenance and the
 full-expression boundary. No native constructor lookup or new escape rule is
-introduced; borrowed-state pack elements remain outside the existing by-value
-pack contract.
+introduced. Borrowed class elements use their exact stored entry loans under
+the same carrier copy/move contract; this does not admit untracked borrowed
+closures or manufacture dependencies from representation.
 
 An active-cleanup nominal receiver's `Move` initializes its existing Value
 obligation from the source binding. Its `CallInput(Receiver, MoveValue)` aliases

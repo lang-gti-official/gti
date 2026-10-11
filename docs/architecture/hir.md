@@ -373,6 +373,11 @@ Read-only reference pack elements retain their exact reference type and a
 MIR projects their existing parameter carrier and stages that borrow at the
 selected call. A reference element cannot acquire a copy/move role from the
 referent's traits.
+Borrowed class elements may retain a copy/move expansion role only with their
+exact semantic stored entry loan. HIR preserves the selected element's complete
+reference-field dependencies; ownership of the carrier shell does not grant
+ownership or mutable access to its referents. MIR retains the same element
+identity across preparation, invocation and cleanup.
 Concrete function-instance signatures flatten pack elements in order, including
 zero elements, whether discovered through a scalar call, forwarded pack, or
 virtual declaration. This does not flatten the body's source bindings: a named

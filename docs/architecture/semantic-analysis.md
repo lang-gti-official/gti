@@ -838,6 +838,12 @@ preserves the exact reference type/access rather than borrowing the grouped
 binding. These elements cannot be named independently or escape through a pack
 expression; the entry capabilities last for the invocation. HIR and MIR retain
 the projected identities and end the loans on normal and failure exits.
+Concrete by-value pack elements that carry reference fields likewise retain
+separate `StoredValue` entry loans. Their identities include the formal binding,
+constant element index and each resolved reference-field path/access mode.
+Expanded call arguments preserve that element path, even when several elements
+have the same type. Generic reanalysis forwards these exact dependencies rather
+than treating the grouped binding as a referent or dropping its other origins.
 
 One call to either public `SemanticVisitor::check` overload owns one complete
 semantic request session. `SemanticVisitor::Impl::RequestSessionState` owns one

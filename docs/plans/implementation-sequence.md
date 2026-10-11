@@ -201,6 +201,16 @@ public source wrappers, runnable scoped examples, editor and runtime/performance
 gates. The broad ownership job for the earlier snapshot is still live/queued;
 it does not certify these newer changes.
 
+Concrete generic/pack forwarding now retains separate semantic stored entry
+loans and canonical MIR places for each borrowed class element, including all
+reference-field dependencies. Repeated task types, mixed owned/borrowed tasks,
+nested forwarding, disjoint projections and empty groups pass through verified
+MIR. Forwarding cannot hide aliasing or thread affinity. Release snapshot
+`e83e0429ada6a2698cb4c232f9b201cd994b435fe41e70a0d6ac7cda4c9723d6`
+passes scoped shapes, managed-thread and mutex controls, and scoped runtime.
+This is focused prerequisite evidence; production adapters, task cleanup/public
+scope execution, examples, editor and whole-goal performance gates remain open.
+
 ## Compile-Time Reflection Delivered (2026-10-11)
 
 The owner accepted [`reflection.md`](reflection.md) with its decisions. All

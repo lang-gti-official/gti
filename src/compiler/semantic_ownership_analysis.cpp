@@ -2432,6 +2432,42 @@ auto SemanticVisitor::Impl::operatorBorrowSource(
   return nullptr;
 }
 
+auto SemanticVisitor::Impl::storedBorrowDependencies(
+    const AnalyzedCallArgument &argument)
+    -> std::vector<SemanticLoanDependency> {
+  if (argument.expression == nullptr)
+    return {};
+  if (!argument.forwardedPackElement)
+    return storedBorrowDependencies(*argument.expression);
+  const auto *expansion = exprAs<PackExpansion>(argument.expression->get());
+  const auto *carrier =
+      expansion == nullptr ? nullptr : resolve(expansion->name());
+  if (carrier == nullptr || argument.packPath.empty())
+    return {};
+  SemanticLoanPlace place{.root = toolingSymbolFor(*carrier)};
+  for (const auto index : argument.packPath)
+    place.projections.push_back(
+        {.kind = PlaceProjectionKind::ConstantIndex, .index = index});
+  for (const auto &loan : semanticModel.loans()) {
+    if (!loan.entry || loan.kind != SemanticLoanKind::StoredValue ||
+        loan.place != place)
+      continue;
+    std::vector<SemanticLoanDependency> result{
+        {.place = loan.place,
+         .designatedFields = loan.designatedFields,
+         .access = loan.access,
+         .protectsStorage = loan.protectsStorage}};
+    result.insert(result.end(), loan.additionalDependencies.begin(),
+                  loan.additionalDependencies.end());
+    for (auto &dependency : result)
+      for (const auto field : dependency.designatedFields)
+        dependency.place.projections.push_back(
+            {.kind = PlaceProjectionKind::Field, .field = field});
+    return result;
+  }
+  return {};
+}
+
 auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
     -> std::vector<SemanticLoanDependency> {
   if (!expression) {
@@ -4626,6 +4662,37 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
     for (std::size_t index = 0; index < carrier->type.arguments.size();
          ++index) {
       const auto &element = carrier->type.arguments[index];
+      const auto paths = storedReferencePaths(element);
+      if (!paths.empty()) {
+        const SemanticLoanPlace place{
+            .root = symbol,
+            .projections = {
+                {.kind = PlaceProjectionKind::ConstantIndex, .index = index}}};
+        SemanticLoanInfo loan{
+            .id = nextSemanticLoanId++,
+            .kind = SemanticLoanKind::StoredValue,
+            .owner = symbol,
+            .entry = true,
+            .place = place,
+            .access = paths.front().reference.referenceAccess,
+            .protectsStorage = false,
+            .lifecycleBound = lifecycleBoundBorrowCarrierFor(element),
+            .designatedFields =
+                storedFieldSymbols(element, paths.front().fields),
+            .carriers = {symbol}};
+        for (std::size_t field = 1; field < paths.size(); ++field)
+          loan.additionalDependencies.push_back(
+              {.place = place,
+               .designatedFields =
+                   storedFieldSymbols(element, paths[field].fields),
+               .access = paths[field].reference.referenceAccess,
+               .protectsStorage = false});
+        // Pack elements are individually identified, but cannot be named or
+        // reassigned independently by source. Do not overwrite the whole
+        // pack binding's single-carrier flow entry with its last element.
+        semanticModel.recordLoan(std::move(loan));
+        continue;
+      }
       if (element.kind != SemanticType::Reference ||
           element.referenceAccess != AccessMode::Mutable) {
         continue;
@@ -6514,6 +6581,16 @@ auto SemanticVisitor::Impl::analyzeThreadScopeCall(const Call &expr) -> void {
 
   (void)validateConcurrentSurfaceAvailability(expr.paren(), "A parallel scope");
 
+  if (std::any_of(inputs->begin(), inputs->end(), [](const auto &input) {
+        return containsOpenTypeParameter(input.type);
+      })) {
+    for (const auto &input : *inputs)
+      resolved.parameterTypes.push_back(input.type);
+    currentType = resolved.returnType;
+    semanticModel.record(expr, std::move(resolved));
+    return; // The concrete instance selects entries and all borrowed origins.
+  }
+
   for (const auto &input : *inputs) {
     const auto &argument = *input.expression;
     const auto *info = semanticModel.findExpression(*argument);
@@ -6536,7 +6613,7 @@ auto SemanticVisitor::Impl::analyzeThreadScopeCall(const Call &expr) -> void {
       continue;
     }
     ResolvedScopedThreadTask task{.shape = *shape};
-    const auto dependencies = storedBorrowDependencies(argument);
+    const auto dependencies = storedBorrowDependencies(input);
     bool complete = true;
     for (const auto &path : shape->dependencies) {
       auto found =
