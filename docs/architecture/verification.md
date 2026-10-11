@@ -36,10 +36,38 @@ to 0.405.0. The refreshed 139-example census measures 71903 declarations,
 13018 bodies and 7090 generated items, with 13007 MIR bodies. Only the new
 constexpr-builder example adds inventory. An optimized local build passes
 all 22 constexpr compiler cases, all five scoped O3 fixtures and the new owning
-conditional O3 regression. Final delta validation includes the complete
-constexpr, owning-publication, concurrency, sanitizer, installed and corpus
-families; the earlier 648-check run is not represented as a full run of this
-later upstream snapshot.
+conditional O3 regression. Clean published `8eaa07a3` passes all 125 selected
+delta-integration CTests in 691.20 seconds, including the complete constexpr,
+owning-publication, concurrency, sanitizer, installed and corpus families, plus
+the separate local debugger check. All seven selected ThreadSanitizer gates
+execute and pass; none skips. The earlier 648-check run is not represented as
+a full run of this later upstream snapshot.
+
+Main's subsequent expected-payload short-circuit fix (`64c712cc`, 0.404.1)
+merges without compiler-source conflicts into clean published `e76e1493`.
+The all-target optimized rebuild and all 35 selected backend/concurrency
+integration CTests pass (74.26 seconds), including the new expected-payload
+regression, owning publication/failure paths, full scoped and shared-job native
+matrices, four executed threading sanitizer gates, editor recovery and relocated
+installed O0/O3 consumers. Example 066 also compiles and runs directly at O0/O3.
+The standalone example-corpus probe checks synthetic-row readiness; its
+agreement half uses the default execution profile and does not establish native
+concurrent execution. The direct CLI example and native matrices supply that
+evidence. These final checks extend, rather than relabel, the earlier full and
+125-check runs.
+
+The clean exact-head macOS arm64 benchmark on `e76e1493`
+(`run-20261011T183201Z-10920-6fed290f`) is conclusive. The Release compiler uses
+Apple C++/C++23 O3; three warmups and fifteen interleaved samples run while
+holding the local suite slot and both build slots. Equal-work sequential /
+four owned / four scoped medians are 961.148 / 255.939 / 256.156 ms; MAD is
+12.706 / 1.415 / 0.466 ms and CV is 1.81% / 0.74% / 0.52%. Scoped and owned
+runtime remains effectively equal. Binary sizes are 124272 / 147840 / 126272
+bytes; emitted C++ sizes are 465519 / 647453 / 521955 bytes. All variants
+produce the same 2,800,000-unit digest recorded below. The final allocation
+oracle again reports four owned / two scoped transport-state allocations and
+zero for an empty scope. The separate Linux build-time/RSS evidence below is
+retained with its original source identity, not claimed as a fresh macOS cost.
 
 Clean-head Linux run `run-007dae38ae1241e49acf4231ecda9bf7` reports exact compiler
 and source identity and conclusive timing quality. GCC 14/C++23 O3 on an
@@ -179,7 +207,9 @@ not evidence of final integration or full release acceptance:
   additions rather than weakening the inventory check.
 
 The outstanding gates in these historical checkpoints are closed by the
-reconciled acceptance evidence above.
+reconciled acceptance evidence above. Final acceptance-documentation changes
+are checked to leave executable source identical to `e76e1493`; their focused
+ownership controls and direct O0/O3 example are rerun before integration.
 The native group creates OS threads. These results do not establish cheap job
 dispatch or imply a persistent worker pool.
 
