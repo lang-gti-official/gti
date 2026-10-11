@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.402.10 — Conditionals of classes with destructors
+## 0.402.11 — Conditionals of classes with destructors
 
 - A conditional whose arms are class values with destructors, such as
   `ok ? make_tracked(1) : make_tracked(2)`, can now be read through a field,
@@ -18,6 +18,16 @@ for what minor and patch releases mean.
   whether the conditional is bound or returned. The selected object is
   destroyed exactly once, including when a later operand or the local's
   cleanup fails. These used to report GTI-B0001.
+
+## 0.402.10 — `expected` results returned from lambdas
+
+- A lambda or other callable that returns `expected<T, E>`, where `T` has no
+  default constructor, can now be called where its result is passed by value,
+  as in `code(make(a))` or `boxed b{make(a)};`, tested, as in `if (make(a))`,
+  read through `make(a).value()`, or discarded with `[[discard]]`. These
+  programs previously stopped with internal compiler error `GTI-B0001`.
+- Still reporting `GTI-B0001`: assigning a fresh `expected<T, E>` result to an
+  existing binding, as in `r = make(7);`, when `T` has no default constructor.
 
 ## 0.402.9 — Copying `expected` values of plain structs and classes
 
