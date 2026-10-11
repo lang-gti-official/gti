@@ -948,6 +948,33 @@ host failure transfers its still-coherent state into a private terminal
 quarantine and raises `GTI-R0012`; this is neither detach nor a resumable
 ownership state.
 
+### Scoped-worker runtime foundation
+
+`gti_rt_thread_scope_v1` adds a synchronous native group boundary over borrowed
+opaque task contexts. The caller supplies task descriptors and scratch handle
+slots; the service starts workers in descriptor order and joins every started
+worker before returning, including after partial creation failure. It neither
+destroys nor retains the contexts. This avoids a separate task-box or dynamic
+handle-array allocation; each started worker still has the existing native
+thread and runtime-state costs. It is not a worker pool or job scheduler.
+
+Worker adapters use the same managed failure containment as owned tasks. The
+group preserves the first failed worker in input order, not completion order,
+with its exact failure record and artifact identities. Creation status is
+reported separately so a generated caller can propagate a worker failure
+before exposing a later creation error. All other started workers have already
+joined at either outcome. A native join error is process-terminal without
+unwinding the caller: borrowed contexts cannot enter the owned-thread terminal
+quarantine, because the borrowing stack must not be destroyed beneath a live
+worker.
+
+This is runtime infrastructure, **not an implemented safe GTI scoped-thread
+API**. Its raw ABI requires the caller to establish context lifetime, disjoint
+or synchronized access, and scratch isolation. Source admission still requires
+general semantic borrow/callable facts and verified HIR/MIR scope ownership;
+calling the runtime does not manufacture that proof. The outstanding source
+work remains in the scoped-concurrency implementation goal.
+
 ## Native And Runtime Boundary
 
 `runtime/include/gti/c_abi.h` defines the public C-compatible counted-text

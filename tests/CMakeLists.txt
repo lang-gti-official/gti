@@ -204,6 +204,25 @@ target_compile_features("gti_runtime_thread_tests" PRIVATE cxx_std_23)
 target_link_libraries("gti_runtime_thread_tests" PRIVATE gti_runtime)
 add_test(NAME managed_thread_runtime COMMAND gti_runtime_thread_tests)
 
+add_executable(gti_runtime_scoped_thread_tests runtime_scoped_thread_tests.cpp)
+target_include_directories(gti_runtime_scoped_thread_tests PRIVATE
+                           "${PROJECT_SOURCE_DIR}/runtime/src")
+target_compile_features(gti_runtime_scoped_thread_tests PRIVATE cxx_std_23)
+target_link_libraries(gti_runtime_scoped_thread_tests PRIVATE gti_runtime)
+add_test(NAME scoped_thread_runtime COMMAND gti_runtime_scoped_thread_tests)
+add_test(NAME scoped_thread_join_boundary
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/runtime_scoped_thread_boundary_test.py"
+          "$<TARGET_FILE:gti_runtime_scoped_thread_tests>")
+set_tests_properties(scoped_thread_runtime scoped_thread_join_boundary
+                     PROPERTIES TIMEOUT 60)
+add_executable(gti_runtime_scoped_thread_header_smoke
+               runtime_scoped_thread_header_smoke.c)
+target_compile_features(gti_runtime_scoped_thread_header_smoke PRIVATE c_std_17)
+target_link_libraries(gti_runtime_scoped_thread_header_smoke PRIVATE gti_runtime)
+add_test(NAME scoped_thread_c_header COMMAND gti_runtime_scoped_thread_header_smoke)
+set_tests_properties(scoped_thread_c_header PROPERTIES TIMEOUT 60)
+
 add_executable("gti_runtime_cthread_tests"
                "${PROJECT_SOURCE_DIR}/tests/runtime_cthread_tests.cpp")
 target_include_directories("gti_runtime_cthread_tests"
