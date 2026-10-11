@@ -318,6 +318,10 @@
       "suite": "text"
     },
     {
+      "name": "testExpectedClassArgumentReturnedConstruction",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },
