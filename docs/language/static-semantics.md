@@ -1645,6 +1645,51 @@ type arguments of a generic class or enum instance (`argument_count()`,
 `std::meta::is_generic_instance<T>()` tells an instance from a non-generic
 type. A primary template is not a type and has no metaobject.
 
+### 3.12.5 Structural Construction
+
+`std::meta::construct<T, E, Producer>(producer)` builds one `T` from one
+value per instance field, in declaration order, without a constructor written
+for `T`: for every field `F` of `T` it calls `producer.produce(F())` (a
+generic method of the producer taking the field metaobject), which yields
+`expected<std::meta::field_type<T, I>, E>`; the first failure ends
+production and is the result, and the values produced so far are destroyed by
+the ordinary cleanup of the values a call holds. When every field has a
+value, `T` is initialized through the same generated constructor that
+designated construction uses, so the eligibility is designated
+construction's: a struct with public value fields and no declared
+constructors or bases (`GTI-S2118` otherwise). Constructors and invariants are
+never bypassed, nothing is default-constructed and then assigned, and no
+storage is written before its object exists. The compiler-private step
+`gti_internal::meta_construct<T>(values...)` is the selection of that
+generated constructor for a pack of values; it is unavailable to application
+code (`GTI-S2058`). A call `std::meta::field_type<T, I>(value)` (or any
+computed type that denotes a scalar once its arguments are concrete) is the
+explicit numeric conversion that scalar's own name spells, so a producer can
+form the exact field value generically.
+
+### 3.12.6 Callables, Parameters And Source Locations
+
+`std::meta::methods_of<T>()` is a list of `std::meta::method<T, I>`
+metaobjects over the methods `T` declares, in declaration order, operators and
+static methods included and constructors and destructors excluded;
+`operators_of<T>()` is the operator subset and `constructors_of<T>()` the
+declared constructors as `std::meta::constructor<T, I>`. A method reports
+`name()` (an operator as its spelling, `operator==`), `index()`,
+`is_static()`, `is_operator()`, `is_constexpr()`, `is_virtual()`,
+`is_mutating()` (a `mut` receiver), `is_public()`, `parameter_count()`,
+`parameters()` (a list of `std::meta::parameter<T, I, P>` with `name()`,
+`index()` and `type()`, backed by the computed `parameter_type<T, I, P>`)
+and `result()` (a type metaobject of `return_type<T, I>`); a constructor
+reports `index()`, `parameter_count()` and `parameters()` likewise. This is
+metadata only: invoking a method or constructor through a metaobject is a
+separate capability that this slice does not provide. Indices out of range
+are rejected like field indices (`GTI-S2111`).
+
+Where the frontend retains a source position, metaobjects expose it as a
+constant: `line()` on type, field, enumerator, method and constructor
+metaobjects, and `file()` on a type (the path the compiler names the unit
+by). These are the diagnostics' locations; no stronger guarantee is made.
+
 ## 3.13 Static Assertions
 
 `static_assert(condition);` and `static_assert(condition, "message");` are

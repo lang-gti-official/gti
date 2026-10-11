@@ -9,14 +9,31 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.400.0 — Comparator-ordered search and partition points
+## 0.401.0 — Comparator-ordered search and partition points
 
 - `<std/algorithm>` adds `partition_point` and comparator overloads of
   `lower_bound`, `upper_bound` and `binary_search`. Applications can discover
   predicate boundaries or search records without defining `operator<`,
   including descending orders and move-only records/callbacks. Returned
   cursors retain checked owner loans; the queries allocate no element storage.
-- Example 138 demonstrates sorting and searching with the same custom order.
+- Example 139 demonstrates sorting and searching with the same custom order.
+
+## 0.400.0 — Structural construction and callable reflection
+
+- `std::meta::construct<T, E, Producer>(producer)` builds a struct from one
+  produced value per field, in declaration order, through the same generated
+  constructor designated construction uses; a failed producer stops
+  production before any struct exists. Types with constructors are rejected
+  (GTI-S2118). Example 138 decodes the same struct from bytes and text.
+- `methods_of<T>()`, `operators_of<T>()` and `constructors_of<T>()` describe
+  callables with names, traits, parameters (`name()`, `type()`) and result
+  types; `line()` and `file()` give declaration locations. Metadata only: no
+  invocation through a metaobject.
+- A computed type that denotes a scalar can be called as that scalar's
+  conversion (`std::meta::field_type<T, I>(value)`).
+- Fixes GitHub #4: a reflected access no longer drops the evaluation of a
+  call producing its metaobject receiver. Fixes GitHub #5: `field.get` rejects
+  an owner of another type (GTI-S2003).
 
 ## 0.399.3 — Faster builds that include standard-library units
 

@@ -556,7 +556,7 @@ without them, the query result is not promised to identify the requested
 boundary or membership. This does not authorize undefined native behavior:
 all cursor accesses still obey their checked protocol.
 
-See [`examples/138-ordered-search.gti`](../../examples/138-ordered-search.gti)
+See [`examples/139-ordered-search.gti`](../../examples/139-ordered-search.gti)
 for sorting and searching application records with the same custom order.
 
 `copy_if`, `copy_n`, `replace_copy`, `replace_copy_if`, `remove_copy`, and
