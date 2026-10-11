@@ -4724,6 +4724,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     // expressions to that same value and publication.
     if (const auto *group = exprAs<Grouping>(expression.get()))
       return recordRetainedBorrow(binding, group->expression());
+    if (const auto *comma = semanticModel.builtinComma(*expression))
+      return recordRetainedBorrow(binding, comma->right());
     if (const auto *call = exprAs<Call>(expression.get()))
       return recordRetainedBorrow(binding, call->arguments().front());
     if (const auto *direct = exprAs<DirectInitializer>(expression.get()))

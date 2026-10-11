@@ -992,9 +992,10 @@ and select an independent row.
   and return publication can therefore retain an immovable object's final
   address without an extra lifecycle move. This does not make a completed
   immovable object movable, remove container constraints, or deliver the
-  complete inline-optional parity. Remaining fresh-result breadth includes
-  conditional/comma result construction and immovable by-value parameter
-  transport. The latter needs a verified final-place parameter storage protocol
+  complete inline-optional parity. A comma whose value is a class or Expected
+  object now denotes its right operand's producer. Remaining fresh-result
+  breadth includes conditional result construction and immovable by-value
+  parameter transport. The latter needs a verified final-place parameter storage protocol
   with stable identity through later argument failure and callee cleanup;
   acceptance must prove address identity and once-only cleanup, not merely
   relax the current movable argument check.

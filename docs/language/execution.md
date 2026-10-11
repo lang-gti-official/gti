@@ -140,7 +140,11 @@ position, so later captures and the enclosing expression observe it as moved.
 
 The comma operator evaluates its left operand and then its right operand. It
 does not end the enclosing full-expression: a temporary or transient loan
-created by the left operand remains active while the right operand runs.
+created by the left operand remains active while the right operand runs. The
+left operand's value is discarded. When the right operand is a class or
+`expected` value, the comma's value is that object itself, neither copied nor
+moved, with the right operand's lifetime; a parenthesized class or `expected`
+value is likewise its operand's object.
 
 Logical `and`/`&&` evaluates the left operand first and evaluates the right
 operand only when the left value is true. Logical `or`/`||` evaluates the left
@@ -223,9 +227,10 @@ operations remain enforced at those actual operations. A fresh result may
 initialize a local or return destination even when its type is not movable.
 This does not change assignment, named-local return/implicit-return movement,
 conversion between different types, or existing callable/container constraints.
-Conditional/comma materializations and immovable by-value argument transport
+Conditional materializations and immovable by-value argument transport
 retain their existing structural admission rules; this slice does not widen
-those families. Borrow-carrying results retain their original owner dependency
+those families. A comma whose value is a class or `expected` object denotes
+its right operand's object, as described above. Borrow-carrying results retain their original owner dependency
 set and access/escape limits, not a new owner supplied by the wrapper.
 
 [`130-fresh-result-initialization.gti`](../../examples/130-fresh-result-initialization.gti)
