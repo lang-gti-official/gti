@@ -1,0 +1,103 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// Conditionals whose arms are owning class values: read through a field,
+// assigned, nested, or selecting a moved local that is then bound or
+// returned. The joined object is constructed once in the conditional's
+// storage and destroyed exactly once, including when later cleanup fails.
+mut int32_t destroyed = 0;
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() { destroyed += 1; }
+};
+
+// Reports its destruction.
+class traced {
+public:
+  int32_t number;
+  traced(int32_t number) : number(number) {}
+  ~traced() { std::println(this.number); }
+};
+
+// The checked addition can fail.
+int32_t bump(int32_t value) { return value + 1; }
+
+// Its destructor fails for the largest number.
+class fragile {
+public:
+  int32_t number;
+  fragile(int32_t number) : number(number) {}
+  ~fragile() { destroyed += bump(this.number) - this.number; }
+};
+
+counted make_counted(int32_t number) { return counted(number); }
+
+traced make_traced(int32_t number) { return traced(number); }
+
+counted pick_local(bool yes) {
+  counted local = make_counted(4);
+  return yes ? std::move(local) : make_counted(5);
+}
+
+// The local's cleanup fails after the selected object was moved out of it.
+traced pick_fragile(bool yes, int32_t number) {
+  fragile guard = fragile(number);
+  traced local = make_traced(6);
+  return yes ? std::move(local) : make_traced(7);
+}
+
+int32_t check(bool yes) {
+  bool no = !yes;
+  if ((yes ? make_counted(1) : make_counted(0)).number != 1) { return 1; }
+  if (destroyed != 1) { return 2; }
+  {
+    mut counted assigned = make_counted(0);
+    assigned = no ? make_counted(0) : make_counted(2);
+    if (assigned.number != 2 || destroyed != 2) { return 3; }
+  }
+  if (destroyed != 3) { return 4; }
+  {
+    counted nested = yes ? (no ? make_counted(0) : make_counted(3))
+                         : make_counted(0);
+    if (nested.number != 3 || destroyed != 3) { return 5; }
+  }
+  if (destroyed != 4) { return 6; }
+  {
+    counted local = make_counted(4);
+    counted moved = yes ? std::move(local) : make_counted(0);
+    if (moved.number != 4 || destroyed != 4) { return 7; }
+  }
+  if (destroyed != 5) { return 8; }
+  if (pick_local(yes).number != 4) { return 9; }
+  if (destroyed != 6) { return 10; }
+  // The unselected arm leaves the local to its ordinary Drop.
+  if (pick_local(no).number != 5) { return 11; }
+  if (destroyed != 8) { return 12; }
+  // A loop constructs and destroys each joined object once.
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    total += (index == 1 ? make_counted(10) : make_counted(index)).number;
+  }
+  if (total != 12 || destroyed != 11) { return 13; }
+  if (pick_fragile(yes, 0).number != 6) { return 14; }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  bool yes = argc > 0;
+  if (argc == 2) {
+    // The joined object is live when a later operand fails.
+    return (yes ? make_traced(8) : make_traced(0)).number + bump(2147483647);
+  }
+  if (argc == 3) {
+    traced failing = pick_fragile(yes, 2147483647);
+    return failing.number;
+  }
+  int32_t status = check(yes);
+  std::println(destroyed);
+  return status;
+}
