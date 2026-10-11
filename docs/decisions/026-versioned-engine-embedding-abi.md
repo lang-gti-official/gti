@@ -2,6 +2,13 @@
 
 Status: Accepted
 
+Implementation disposition (2026-10-11): manifest/configuration and exact
+semantic export roots are delivered. Context runtime, generated wrapper/header,
+shared artifact publication, editor and installed load/call/fail/unload/reload
+acceptance remain the E-EMBED-01B/C and B-LIB/T-EMBED/Q-EMBED campaign. The ABI
+contract below is accepted direction, not a claim that current artifacts already
+provide those completed embedding boundaries.
+
 ## Context
 
 A game engine must be able to load GTI gameplay code, call selected functions,

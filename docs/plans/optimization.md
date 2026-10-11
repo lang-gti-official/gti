@@ -76,8 +76,10 @@ canonical proof or an exactly equivalent, independently verified fallback.
 > [`docs/architecture/optimization.md`](../architecture/optimization.md).
 
 Status: accepted; Milestones 1 through 5 are implemented for their bounded
-local families. Milestone 6 has verified per-instance effects and exact closed
-call-summary queries, but no interprocedural transformation. The completed
+local families. Milestone 6 has verified effects, bounded contextual safety
+summaries and closed-world exact-reference-receiver dispatch refinement.
+General MIR inlining/cloning, owned-pointee/`this` specialization and broader
+memory/loop transforms remain incomplete. The completed
 exclusive runtime-performance campaign and every follow-on optimizer row are
 sequenced only in
 [`implementation-sequence.md`](implementation-sequence.md).
@@ -99,7 +101,8 @@ implementation `2c8d4561`: paired local-interface runtime falls from 223.175 to
 120.008 ms, controls show no material regression, and broad/focused functional
 gates pass. Exact evidence and the larger, still-unimplemented callback/helper
 proxy ceilings are recorded in [performance-tooling.md](performance-tooling.md).
-Publication remains held; this is not completion of general devirtualization.
+Publication was held at that historical checkpoint; the bounded facility is
+now integrated. It is not completion of every devirtualization family.
 
 Implementation update (2026-08-22): ADR 016 supersedes the migration mechanics
 in this proposal. `BackendInput`, HIR replacement-table emission, mixed AST/HIR
@@ -115,8 +118,8 @@ promotion, unreachable cleanup, dead unused computation removal, the
 client-backed pass/analysis manager, and opt-in MIR/report observability are
 implemented. O1 owns this local pipeline. O2/O3 additionally run independent
 bounds, initialized-storage-state, and arithmetic-overflow discharge passes
-backed by canonical body-local proofs. O-MIR-03 and the first O-MIR-04 slice are
-have their architectural prerequisites in place.
+backed by canonical body-local proofs. O-MIR-03 and the first O-MIR-04 slice have their architectural prerequisites
+in place.
 
 Implementation update (2026-08-24): O-MIR-05 adds one deterministic monotone
 forward-dataflow substrate, migrates safety analysis without changing its
@@ -186,9 +189,10 @@ Operational ordering is maintained in
 for scalar promotion, folding, unreachable cleanup, and dead computation
 removal, SCCP, safety analysis, and alias-aware safety invalidation. Loop/range
 and alias facts remain available for further performance work, but they do not
-dictate a pass. General loop transforms, MemorySSA, general/contextual
-devirtualization, an LLVM backend, and broad optimizer frameworks remain
-unimplemented. Their design and scheduling may follow architectural need under
+dictate a pass. General loop transforms, MemorySSA, broader contextual/owned-pointee
+specialization, an LLVM backend and broader optimizer frameworks remain
+unimplemented. The bounded local and closed-world reference-parameter
+exact-receiver clients are implemented. Their design and scheduling may follow architectural need under
 ADR 012 without waiting for a measured bottleneck; the operational sequence
 still owns task ordering and each facility retains its technical prerequisites.
 
@@ -645,9 +649,10 @@ removal authority as a gate.
    not an excuse to keep source expressions as optimization identity.
 8. Require language-level proofs for removing checks, calls, drops, or other
    observable behavior. Native C++ optimizer behavior is never such a proof.
-9. Add only the pass infrastructure and observability required by a concrete
-   transform or production-emission client; backend cutover precedes broader
-   shadow-pass coverage.
+9. Add infrastructure for a defined general optimization contract, operation
+   family or production client, with bounded analyses and verification. Backend
+   cutover is delivered; neither a prior bottleneck nor a proxy speedup is an
+   admission requirement under ADR 012.
 10. Treat `-O0` through `-O3` as different optimization effort, never different
     GTI semantics.
 
@@ -741,7 +746,7 @@ the API for new passes.
 
 ### MIR
 
-MIR becomes the optimization authority for executable bodies. It owns:
+MIR is the implemented optimization authority for executable bodies. It owns:
 
 - basic blocks, edges, and terminators;
 - typed value definitions and uses;
@@ -755,15 +760,17 @@ An optimized MIR program must be valid input to every backend. No backend may
 select a different GTI transformation because of emitted language, host
 compiler, or platform spelling.
 
-MIR is not yet ready for every optimization. Body-local place alias/escape and
-verified call effects are available, but memory versions, interprocedural
-pointer identity, general temporary lifetime, concrete object layout, ABI, and
-some primitive edge semantics remain incomplete. The capability gates below
+MIR is not yet ready for every optimization. Body-local alias/escape,
+verified effects, exact closed-world reference facts, authoritative
+lifetime/cleanup and bounded target/layout facts are available. Memory
+versioning, broader interprocedural pointer identity, transform-specific
+lifetime composition, target/ABI representation and additional proof families
+still need explicit contracts. The capability gates below
 make those gaps explicit instead of allowing passes to guess.
 
 ## Proposed Pipeline
 
-The intended steady-state pipeline is:
+The implemented steady-state authority path is:
 
 ```text
 Frontend
@@ -786,9 +793,10 @@ OptimizedProgram
 ```
 
 The driver supplies the same `TargetInfo` to semantics, MIR lowering,
-optimization, and backend generation. When optimization eventually requires
-layout, introduce one backend-neutral `TargetMachineInfo` or data-layout
-contract shared by relevant phases. Do not query a C++ compiler from a pass.
+optimization and backend generation. Reuse compiler-owned target/layout facts
+when a transform needs them; extend a backend-neutral layout/ABI query only
+for facts the current contract cannot express. Do not introduce a parallel
+target authority or query a C++ compiler from a pass.
 
 The LSP continues to stop at `FrontendResult`; it does not need optimized MIR
 for semantic language queries. Developer IR views may explicitly request the
@@ -800,8 +808,8 @@ The current `MirProgram` exposes only const accessors and grants mutation to
 `MirLowerer`. Preserve that encapsulation. Do not make every program vector
 public to enable passes.
 
-Introduce one optimizer-owned mutation boundary. Exact names may change, but
-the conceptual API is:
+The implemented optimizer-owned mutation boundary keeps canonical source and
+candidate MIR separately. Its public request/result shape is:
 
 ```cpp
 struct OptimizationRequest {
@@ -813,18 +821,19 @@ struct OptimizationRequest {
 };
 
 struct OptimizedProgram {
+  MirProgram sourceMir;
   MirProgram mir;
   OptimizationReport report;
 };
 
 class MirEditor;
-class MirBodyEditor;
 ```
 
 The optimizer takes MIR by value or unique ownership and returns a new owned
 result. The unoptimized `FrontendResult::mir` stays available for debugging and
-differential tests. The CLI may move a MIR copy when that ownership becomes
-practical; shared mutable MIR is forbidden.
+differential tests. The driver passes an owned MIR value to the pipeline; shared mutable MIR is
+forbidden. Controlled editor queues and core MIR repair utilities are the
+existing mutation seam, not a missing extraction task.
 
 Editors provide operations such as replacing an operand, replacing a
 terminator, splitting or removing a block, replacing a value with a constant,
@@ -835,8 +844,8 @@ validation to shared MIR utilities.
 Passes must not update `valueUses`, definition locations, block reachability,
 or IDs ad hoc. A central repair/canonicalization step either incrementally
 maintains those facts or rebuilds them after a pass. Start with rebuilding for
-simplicity; optimize the compiler only after profiles justify incremental
-maintenance.
+simplicity; introduce incremental maintenance when its invalidation and cost
+model are coherent, then measure representative compile/memory behavior.
 
 ## Pass Manager And Analysis Contract
 
@@ -857,9 +866,10 @@ include/gti/optimization/
   passes/
 ```
 
-Declarations remain under `include/gti/`, but optimization implementations
-should move into the compiled `gti_compiler` target as described by
-[the compiler library migration record](archive/compiler-library-migration.md).
+Declarations remain under `include/gti/`; optimization implementations are
+already compiled under `src/compiler/optimization/` and
+`src/compiler/optimizer.cpp`. The [library migration record](archive/compiler-library-migration.md)
+is historical, not a prerequisite to start a new optimizer task.
 The focused layout is an ownership boundary and must not become another
 monolithic implementation header.
 
@@ -897,8 +907,10 @@ nearest bounded prerequisite, are:
 - sparse typed constants and executable edges; and
 - safety-specific integer ranges and known predicates.
 
-Do not add an analysis because mature compilers commonly have one. Add it with
-the first transformation and tests that demonstrate its contract.
+Do not adopt an analysis merely because a mature compiler has one. A general
+operation-family/optimization contract can justify infrastructure before its
+first transformation; test its invariants, consumers and invalidation and
+measure costs at acceptance.
 
 Pass order is explicit per optimization level. Repeated groups use a fixed,
 documented iteration bound or a monotonic worklist; never use an unbounded
@@ -927,8 +939,9 @@ trap and therefore may not be deleted or moved. A read may be repeatable only
 when alias and call effects prove no intervening write. A destructor call is
 observable even when its result is unused.
 
-Use a conservative default for ordinary and virtual calls until a checked
-effect-summary system exists. Intrinsics receive explicit summaries by semantic
+Use the implemented checked effect summaries for admitted exact calls;
+unknown or unproved virtual calls retain conservative defaults. Intrinsics
+receive explicit summaries by semantic
 intrinsic identity, never by function spelling. Unknown effects block the
 optimization; they do not become pure. Runtime and user-code calls remain
 possible synchronization barriers until a checked summary proves otherwise.
@@ -942,8 +955,8 @@ The following rules are mandatory:
 - preserve loan creation, alias restrictions, and borrow end points;
 - preserve exact static/virtual dispatch unless closed-world type facts prove
   a replacement;
-- preserve NaN, signed-zero, rounding, and comparison behavior once GTI's
-  floating-point contract is explicit;
+- preserve the implemented exact floating-point contract: NaN, signed zero,
+  rounding, comparison, no reassociation and no contraction;
 - preserve target-conditional selection and use one target throughout;
 - never derive signed overflow, shift, division, remainder, conversion, or
   indexing semantics from the optimizer host language.
@@ -1021,12 +1034,12 @@ verbosity are also independent of semantic optimization level.
 | CFG simplification | bounded branch/unreachable family implemented | MIR blocks and terminators | predecessor/successor repair; reachability; cleanup-edge preservation; block verifier |
 | dead-value elimination | bounded family implemented | MIR instructions and indexed uses | complete effect/trap table; drop/loan awareness; definition/use repair |
 | sparse constant propagation | bounded scalar SSA family implemented | MIR CFG and values | executable-edge solver; typed lattice; typed proof/replay; CFG rewrite |
-| copy propagation | deferred to a measured client | MIR values and places | dominance; exact type/access preservation; move and loan barriers |
+| copy propagation | unimplemented general transform | MIR values and places | dominance; exact type/access preservation; move and loan barriers; bounded replay and cost model |
 | redundant load/store removal | analysis gates partly complete; transform absent | MIR places | place alias/escape; exact call effects; memory versions or a proved local substitute; lifetime boundaries |
 | bounds/check elimination | bounded read/storage/arithmetic families implemented | MIR checked operations | integer semantics; range/predicate analysis; explicit check identity; proof reporting |
 | loop optimization | analysis gate complete; transform absent | MIR loops and values | natural-loop forest; invariants/inductions; transform-specific legality and replay; cost evidence |
 | devirtualization | bounded local and closed-world reference-parameter exact-receiver slices implemented; owned-pointee, `this`, pointer and specialization forms deferred | verified MIR calls, local loans, closed-world call-site facts, concrete instances and override identities | exact confined or closed-world receiver, initialization dominance or exact caller facts, authoritative effects, failure/cleanup compatibility, independent replay |
-| inlining/specialization | one candidate among the `O-PERF-02` choices; transform absent | HIR call graph plus MIR bodies | conservative call effects; recursion handling; cost model; provenance composition; cleanup and temporary lifetime correctness; exact profile/proxy evidence |
+| inlining/specialization | general transform absent; RT-10 defines the remaining goal | HIR call graph plus MIR bodies | conservative effects and callee-set facts; recursion handling; cost limits; provenance and ordered-input composition; cleanup/lifetime correctness; independent replay and optimized performance evidence |
 
 Do not implement a pass when one of its gates is represented only by C++
 emission behavior. Add the missing backend-neutral fact first.
@@ -1040,10 +1053,11 @@ The implemented local sequence is:
 5. sparse propagation and another CFG cleanup; and
 6. range-based check elimination.
 
-Loop/range and place alias/escape analyses are now explicit prerequisites, not
-implemented transforms. O-MIR-08 and O-MIR-09 remain measured-defer;
-`O-PERF-02` may consume the bounded O-MIR-10 gates only if closed-call
-profiling selects that mechanism. The maintained sequence in
+Loop/range and place alias/escape analyses are implemented foundations, not
+blanket loop/memory transformation authority. O-MIR-08/09 and standalone
+O-MIR-10 retain historical measured-defer/parked records. Reopening those goals
+follows ADR 012 and the missing proof contracts; O-PERF-02's historical choice
+is not a permanent bar on general inlining or memory architecture. The maintained sequence in
 `implementation-sequence.md` does not leave an open-ended "future
 propagation" phase.
 
@@ -1063,11 +1077,14 @@ General infrastructure may grow from architectural requirements under ADR 012;
 identify its production consumers and validation, not a prior speedup threshold.
 
 - Maintain deterministic MIR printing, public validation utilities, effect
-  traits, and the bounded controlled editor. Add broader editor or analysis
-  management only with a transform that consumes it.
+  traits and the bounded controlled editor. Broader editor/analysis management
+  needs a defined optimization contract, consumers and validation, not merely
+  resemblance to another compiler's framework.
 - Return an `OptimizedProgram`; keep `-O0` unchanged while changed passes carry
   explicit reports and fresh verification.
-- Keep the existing HIR `OptimizationResult` and C++ emitter behavior intact.
+- Historical Stage A preserved the HIR replacement/emitter bridge. That bridge
+  is now retired from production emission; only the bounded fold shadow
+  comparison remains.
 - Verify that `-O0` is structurally identical and every queued edit is atomic.
 
 ### Stage B: prove the shadow path
@@ -1076,8 +1093,8 @@ Status: complete for the compatibility fold. Primitive identities plus admitted
 comparison, logical, floating arithmetic, and conversion computations are
 implemented and cross-checked. New passes do not use shadow authority.
 
-- Preserve the implemented primitive identity cross-check until its body family
-  consumes optimized MIR.
+- Retain or retire the bounded fold cross-check as test evidence; its body
+  family already consumes optimized MIR. It cannot authorize new transforms.
 - Port another compatibility fold when general optimization architecture or an
   active migration phase requires it; validate its production consumer.
 - Treat disagreement as a compiler test failure, not as permission to choose
@@ -1140,14 +1157,15 @@ Fixing a correctness bug in the existing pass remains allowed.
 - Assert optimized MIR shape directly; generated C++ text is secondary.
 - Pair every applied rewrite with a near-miss case that lacks one required
   proof.
-- Require a deterministic applied or missed remark when the reporting
-  milestone lands.
+- Preserve deterministic applied/missed remarks in the implemented reporting
+  surface; add exact new-family coverage.
 - Test pass idempotence where the pass claims canonical output.
 - Add randomized or property-driven equivalence testing only after deterministic
   printers and failure classification exist.
 
-Benchmarks decide priority and cost policy, not correctness. CI should not use
-wall-clock pass thresholds. Follow the performance tooling proposal for
+Measurements validate performance acceptance and inform cost/priority; they
+are not permission to design general architecture and never prove correctness.
+CI should not use wall-clock pass thresholds. Follow the performance tooling proposal for
 measurement and reporting.
 
 ## Anti-Drift Review Checklist
@@ -1178,8 +1196,8 @@ Every optimization change must additionally answer:
 - What near-miss test proves the pass is conservative?
 - What metric or workload justifies enabling it at this level?
 
-These questions belong in code review and in the
-`gti-language` change workflow. If a question cannot be answered from GTI IR,
+These questions belong in code review and the repository's
+`implement-language-feature` and `verify-change` workflows. If a question cannot be answered from GTI IR,
 identify and implement the missing architectural fact before admitting the
 optimization; C++ behavior cannot supply its proof.
 
@@ -1201,7 +1219,8 @@ Acceptance criteria:
 
 ### Milestone 1: MIR integrity and bounded editor
 
-Status: complete; broader framework remains client-gated
+Status: complete; broader infrastructure needs a defined contract and evidence,
+not a benchmark-first admission gate
 
 - Extract reusable MIR validation, reachability, use indexing, deterministic
   printing, effect traits, controlled editors, and pass management.
@@ -1280,17 +1299,17 @@ Acceptance criteria:
 
 ### Milestone 5: proof-carrying safety optimization
 
-**Implementation status:** the first bounded slice is complete. Exact
-fixed-array read bounds, exact sparse-storage read bounds/initialization, and
-checked integer add/subtract/multiply/negate overflow outcomes can be
-discharged at O2/O3. Canonical analysis, typed outcome metadata, controlled
-editing, independent replay, backend consumption, schema-v3 per-family
-reporting, near-miss tests, and O0/O2/O3 native-`-O0` differential evidence are
-implemented together. Array writes/borrows, prefix storage, remaining numeric
-operators, and interprocedural range proofs remain future measured slices.
-Schema v3 additionally records sparse-constant proof vocabulary. Place alias
-facts now preserve known-disjoint safety state across writes but do not
-discharge checks.
+**Implementation status:** bounded fixed-array bounds, arithmetic overflow,
+contextual source-prefix/logical-size and indexed-content proof families are
+implemented at O2/O3 with canonical analysis, typed metadata, controlled edits,
+independent replay, reporting and near-miss/differential coverage. The original
+sparse/private-prefix capability discharge engines are retired with their
+storage migration; their historical evidence is not a current pass inventory.
+Conversion/division/shift proof families, relational runtime lengths, cyclic
+promotion and broader memory/loop transforms remain work. Alias facts preserve
+proven disjoint state; they do not themselves authorize check removal. The
+[current architecture](../architecture/optimization.md) owns the exact admitted
+operations and current report schema.
 
 - Represent checked integer operations and their failure categories explicitly
   enough for range proofs to discharge individual checks.
@@ -1367,11 +1386,10 @@ prerequisite is documented but is not active work merely to improve the
 fixed-array bounds workload. It is also not an automatic prerequisite of
 `O-PERF-01`: current safety analysis already carries place facts through a
 fixpoint, and that row first tests a fixed-array content summary plus precise
-widening/transfer functions. Reconsider cyclic scalar promotion only when a
-focused source-MIR probe demonstrates that place-based analysis cannot carry
-the required fact. Implement O-MIR-08 only if a replayable loop fact reaches
-real source MIR and the workload shows runtime value after native
-optimization. The safety client must consume only loop, dominance, alias,
+widening/transfer functions. Reconsider cyclic promotion as general SSA/loop infrastructure when its
+cost model and correctness obligations justify it, even before a benchmark
+regression. A transforming O-MIR-08 client still needs a replayable fact that
+reaches real source MIR and optimized performance acceptance. The safety client must consume only loop, dominance, alias,
 effect, and fixed-array facts, record near misses, invalidate safety analysis
 after edits, replay coherently, use `MirEditor`, preserve O0 identity
 and all checked failure behavior, and remain backend-neutral.
@@ -1384,8 +1402,8 @@ Status: the first bounded contextual proof-summary client is complete under
 - Conservative per-instance call effects and exact closed static-summary
   queries are implemented and independently verified.
 - One deterministic whole-program analysis transports exact scalar arguments,
-  returns, mutable object fields, private prefix-storage state, and
-  structurally admitted indexed-element envelopes through concrete
+  returns, mutable object fields, structurally admitted source-prefix state
+  and indexed-element envelopes through concrete
   source-defined static calls and constructors. It uses bounded rounds and
   per-context updates, stores values separately from effects, and rejects
   recursion, native or virtual calls, owning transfers, synchronization,
@@ -1395,12 +1413,13 @@ Status: the first bounded contextual proof-summary client is complete under
   metadata attachment explicitly preserves the immutable result. Replay
   validates all claims against one source and one candidate snapshot rather
   than recomputing the whole program per claim.
-- Closed-world reachability as a removal authority, body cloning, and inlining
-  are not implemented. The later `O-MEASURE-02` local exact-receiver slice is
-  body-local dispatch refinement, not an interprocedural transform.
-- General/contextual devirtualization remains deferred. Do not generalize the
-  local slice until temporary lifetime, cleanup, layout, and cost requirements
-  are met and another workload measures value; do not assume a closed world.
+- Closed-world executable artifact lowering is integrated; full analysis and
+  reached compiler-trusted body selection remain distinct contracts. Body
+  cloning and general MIR inlining are not implemented.
+- Local exact-receiver dispatch and the closed-world exact-reference-parameter
+  refinement are implemented. Broader owned-pointee/`this`/specialization
+  clients require exact call/root, lifetime, cleanup, layout and cost contracts;
+  closed-world facts must be established, never assumed.
 
 Acceptance criteria:
 
@@ -1418,7 +1437,8 @@ Resolve these before the pass families that depend on them:
   express the required general reasoning soundly and maintainably, without a
   benchmark-first entry gate;
 - transform-specific loop legality, failure-order proof, and cost evidence;
-- general temporary lifetime and active-drop transitions in MIR;
+- transform-specific composition of the existing temporary/lifetime/drop
+  authority, including ordered arguments and new cloned/inlined failure edges;
 - backend-neutral object layout, data layout, virtual tables, and calling
   conventions;
 - the closed-world boundary once separate compilation or dynamic linkage exists;
@@ -1429,8 +1449,9 @@ one inside a pass or `CppEmitter` is architectural drift.
 
 ## Documentation And Release Effects
 
-The implemented optimizer and observability milestones change shipped
-compiler/CLI behavior and require a `VERSION` increase. For later milestones,
+Apply current release policy per change: observable optimization behavior,
+CLI/report surface or a user-visible fix may require a VERSION change; internal
+refactors, authority moves, tests and plan updates do not. For later milestones,
 update together:
 
 - this proposal's current-state, capability, and milestone status;

@@ -249,8 +249,9 @@ reason and listed in the generated file's skip report rather than silently
 dropped. Native preprocessor errors retain Clang's source diagnostics. The
 declaration reader is itself libclang (ADR 021), so a declaration that does
 not parse as C is skipped with Clang's error message rather than imported
-through error recovery; reader and planner notes identify preprocessed line
-numbers until the import policy milestone owns original-source provenance. The
+through error recovery. Reader/planner notes now preserve original-source
+provenance through preprocessing line markers; internal spelling coordinates
+still identify native-error overlap without laundering recovered declarations. The
 generated source has no special status: this language contract remains the
 sole ABI authority when it is compiled. The tool's architecture and growth
 phases are recorded in
@@ -421,9 +422,10 @@ compare it with `nullptr`, copy it as the same exact type, initialize it from
 `unsafe` boundary.
 
 The only implicit production conversion in the current bounded slice is from
-`std::string_view` to a `c_string` **call parameter**. Current string views can
-only denote complete static string literals, whose backing arrays include a
-terminator, so MIR verifies the exact source/parameter pair and the backend
+`std::string_view` to a `c_string` **call parameter**. Only a complete,
+statically known literal-backed view qualifies; ordinary dynamic views and
+subviews do not acquire an implicit termination guarantee. The literal backing
+array includes a terminator, so MIR verifies the exact source/parameter pair and the backend
 passes the literal's `.data()` pointer. Exact overloads remain preferred: a
 literal selects a `std::string_view` overload over a `c_string` overload.
 This conversion is not a general class conversion and does not permit a
@@ -499,12 +501,13 @@ unsafe {
 ```
 
 Semantics resolves the count name to its exact parameter and HIR/MIR retain
-that parameter index. MIR verification rejects a nested-pointer return without
-the pair metadata or a malformed pair before backend entry. The generated
-C/C++ bridge header erases the attribute and emits the exact C declarator.
-`GTI-S2073` owns an invalid attribute/count pair; `GTI-S2074` owns nested raw
-pointer syntax outside this return boundary or the exact opaque-handle C out
-parameter boundary.
+that parameter index. MIR verification rejects malformed pair metadata before
+backend entry. The annotation is optional for ordinary recursive pointer
+passage; a nested return does not require a count when its native contract is
+not a counted array. The generated C/C++ bridge header erases the attribute
+and emits the exact C declarator. `GTI-S2073` owns an invalid attribute/count
+pair. The former `GTI-S2074` nested-pointer position restriction is retired;
+pointer depth is no longer limited to these two boundary positions.
 
 ## Passive Native Records
 
@@ -661,8 +664,9 @@ A `[[c_abi]]` field may contain `NativeDatabase*` or
 pointee contributes no record-layout fact. An annotated `[[c_array(count)]]`
 function may return `NativeDatabase**`. A bodyless C function may instead take
 `NativeDatabase**` to replace one mutable handle-pointer binding. These are
-separate bounded positions; the opaque declaration alone does not enable a
-storable nested-pointer value.
+distinct native contract uses, not restrictions on where a nested-pointer
+value may be stored. General recursive pointer values remain ordinary inert
+addresses; accessing a slot or pointee retains its unsafe/type obligations.
 
 The generated bridge header gives each handle a deterministic dual surface:
 
@@ -1042,7 +1046,9 @@ standard-library units can resolve that namespace; application declarations,
 references, and namespace aliases are rejected with `GTI-S2058`, and shared
 language queries filter the same private identities from application tooling.
 
-The current runtime entry symbols and C prototypes are exactly:
+The legacy scalar/file entries below remain supported examples of that
+boundary, not an exhaustive runtime catalogue. Current buffered I/O, byte and
+host-service entries are declared in the installed runtime headers:
 
 ```c
 int32_t gti_rt_write_stdout(gti_c_string_view value);
