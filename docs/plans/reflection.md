@@ -1,7 +1,9 @@
 # Compile-Time Semantic Reflection Plan
 
-Status: phase 1 implemented (`constexpr for`, `<std/meta>` types, fields,
-queries and access); phases 2 and 3 are proposals. Current language
+Status: phases 1 and 2 are implemented (`constexpr for`, `<std/meta>` types,
+fields and access, declared attributes, enum/base/generic metadata and the
+fixture clients); phase 3 remains proposed. The phase-2 implementation was
+integrated on 2026-10-11 through GitHub PR #2. Current language
 behavior is documented in [`docs/language/`](../language/index.md); the
 authoritative compiler structures named below are described in
 [`docs/architecture/semantic-analysis.md`](../architecture/semantic-analysis.md)
@@ -110,11 +112,11 @@ runtime reflection exists.
 | Class and struct fields in declaration order, exact type, access, static versus instance | `ClassInfo::fields`, `ClassInfo::members`, `FieldInfo` | none for enumeration |
 | Concrete generic identity (primary plus arguments) | class specialization catalog, `ConcreteClassId`, concrete reanalysis | none |
 | Type and value generic parameters | `GenericParameterInfo` (`value`, `pack`), `CompileTimeValue` (`uint64_t` domain only) | metaobject value domain |
-| Declaration attributes | `ClassAttribute` (class-level, name only), function contract attributes, native attributes | field attributes and attribute arguments do not exist |
-| Constant evaluation, budgets, located failures | `mir_constant_evaluator`, staged executor, 4096-step and 64-depth limits | intrinsic kernels for metaobject queries |
-| Compile-time selection with discarded branches | `if constexpr`, `ConditionalStmt::activeBranch` | finite compile-time iteration |
-| Projected field places, borrow lifetime, mutability, access checks | body analysis, loan flow, place authority (`place-and-ownership-state.md`) | an access path that starts from a metaobject |
-| Scoped enums and payload enums | enum registration, alternative inventory | metaobject views |
+| Declaration attributes | declared attribute types, typed constant arguments, resolved declaration/field attribute facts, compiler/native contracts | phase-2 declaration and field queries implemented; callable metadata is phase 3 |
+| Constant evaluation, budgets, located failures | `mir_constant_evaluator`, staged executor, 4096-step and 64-depth limits | reflected constant-query kernels implemented; broader executor profiles remain separate work |
+| Compile-time selection with discarded branches | `if constexpr`, `ConditionalStmt::activeBranch`, `constexpr for` expansion | finite type-pack iteration implemented; nested-budget hardening remains a phase-3 gate |
+| Projected field places, borrow lifetime, mutability, access checks | body analysis, loan flow, place authority (`place-and-ownership-state.md`) | reflected read/mutable projections implemented; owner identity and receiver-effects defects remain tracked below |
+| Scoped enums and payload enums | enum registration, alternative inventory, enum/payload metaobjects | phase-2 enumeration and payload-field metadata implemented |
 | Designated construction | structs without constructors, public value fields, declaration-order evaluation, rollback | generalisation for structural construction |
 | JSON codecs | `std::json::codec<T>` explicit specializations | generic default path |
 
@@ -194,10 +196,15 @@ and the evidence is `tests/reflection_tests.cpp`,
 `std::json` library is left untouched; the three clients are fixture programs,
 and reflection reaches a JSON library as `std::experimental::json`, a
 verification gate built after phase 3, after which `std::json` is deprecated.
-Two pre-existing defects found while writing the clients are tracked
-separately (a designated-constructed struct with a `string_view` field passed
-by reference is outside the C++ emitter's vocabulary; a `string_view` field's
-literal default reads back empty after GTI optimization).
+The two pre-existing client defects are now repaired on main: designated
+construction with a borrowed text-view field was integrated through the former
+Gitea PR #245, and record-published literal defaults are retained under
+optimization in 0.399.1 (GitHub PR #7). This does not imply reflection is free
+of correctness work: GitHub issues
+[#4](https://github.com/gti-lang-official/gti/issues/4) (receiver evaluation)
+and [#5](https://github.com/gti-lang-official/gti/issues/5) (exact owner
+compatibility) remain prerequisites of trustworthy reflected access and must
+be reconciled with phase 3 rather than bypassed by structural construction.
 
 Goal: make the surface rich enough that serialization policy lives entirely
 in libraries, and prove it with three structurally different clients.

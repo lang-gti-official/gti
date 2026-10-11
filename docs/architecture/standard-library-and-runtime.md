@@ -59,7 +59,7 @@ obtain metadata releases the object region before returning an error.
 | Allocation family | Current owner and rationale |
 | --- | --- |
 | Sparse object bytes and per-slot metadata | Source `try_allocate_sparse`, leases and process-resource policy in `stdlib/std/memory.gti`; POSIX/CRT adapters only acquire or release bytes. The old `gti_rt_memory_allocate_v1`/`release_v1`, sparse C++ allocation/bitmap helpers and sparse capability operations have no remaining consumers and are removed. |
-| Prefix storage used by strings/vectors and related clients | Source prefix state and matching process/resource leases in `<std/memory>`. Terminated string policy adds one initialized NUL slot. The native engine, prelude declarations, semantic type/intrinsic family, construction-preflight instruction, representation and private optimizer facts are removed on the S-ALLOC-09 task branch; revised raw-buffer layering, full regression migration and campaign acceptance remain in progress. |
+| Prefix storage used by strings/vectors and related clients | Source raw-buffer/prefix state and matching process/resource leases in `<std/memory>`. Terminated string policy adds one initialized NUL slot. S-ALLOC-09 and its performance/regression acceptance are integrated in 0.397.0; the native engine, prelude declarations, semantic type/intrinsic family, construction-preflight instruction, representation and private optimizer facts are retired. General object-lifetime and checked-loan mechanisms remain. |
 | Unique ownership and generated allocation resources | `mir_object_allocation_v1` and scalar unique allocation in `cpp_failure_support_writer.cpp` still acquire native storage; verified MIR owns construction, publication, failure and cleanup. Shared ownership additionally uses its native control block. These are remaining migration clients, not reasons to put sparse allocation policy back in the backend. |
 | Native service implementation state | Runtime file/process/HTTP/thread/synchronization and conversion implementations use native containers or host handles internally. Their buffer/handle lifetimes belong to their service boundaries; they do not supply sparse-storage metadata. |
 | Compiler and tool memory | C++ containers in compiler, driver, LSP and tooling are host implementation state, outside GTI-program allocation policy. |
@@ -72,8 +72,9 @@ provide a deterministic test seam for exhaustion, rollback and matching release.
 
 ## Operation Ownership Ledger
 
-Initial evidence snapshot: 2026-10-08, reviewed against `14caa023`; prefix rows
-now include the in-progress S-ALLOC-09 branch cutover. This ledger
+Initial evidence snapshot: 2026-10-08, reviewed against `14caa023`; reconciled
+against integrated 0.399.1 on 2026-10-11. Prefix and terminated-string rows
+describe delivered S-ALLOC-09 source policy, not an unmerged branch. This ledger
 classifies current ownership and remaining boundaries; it does not approve or
 schedule migrations. The [implementation sequence](../plans/implementation-sequence.md)
 remains the sole work queue. Source and owning tests take precedence when an
@@ -117,9 +118,9 @@ all compiler/runtime support.
 | S08 | Relocate and shift sparse elements | Validate source/destination ranges, loop order and update live state. | General typed relocation eligibility and transfer execution. |
 | S09 | Arena/pool allocation policy | Cursor/free-slot choice, reuse, capacity and public access rules. | Source sparse storage and owner-anchored checked references. |
 | S10 | Resource-vector growth | Capacity choice, reserve, recoverable allocation errors, append/pop/clear and iteration. | Source resource storage, relocation and checked borrows. |
-| S11 | Map/hash-map algorithms | Tree/bucket organization, hash/comparison protocol, lookup and insertion policy. | Currently use vector and unique-owner foundations that retain private machinery. |
+| S11 | Map/hash-map algorithms | Tree/bucket organization, hash/comparison protocol, lookup and insertion policy. | Source vector storage and the still compiler-backed unique-owner foundation. |
 | S12 | List/deque/forward-list algorithms | Links/indices, ordering, insertion/removal and traversal. | Currently use unique owners and, for some containers, vectors. |
-| S13 | Callable-wrapper policy | Source model objects, public invocation/clone/reset policy and type-erased interface composition. | Unique allocation, ordinary dispatch and compiler callable/ownership facts. |
+| S13 | Callable-wrapper policy | Source model objects, public invocation/clone/reset policy, inline-versus-boxed choice and type-erased interface composition. | General private polymorphic storage, unique allocation, ordinary dispatch and compiler callable/ownership facts. |
 | S14 | Format grammar and customization | Replacement parsing, argument counting, formatter protocol, formatting errors and integral-enum default policy. | Primitive enum classification/extraction; owning string; some native float conversion. |
 | S15 | Integer text conversion | Digits, radix, sign, consumed offset, overflow policy and output construction. | Exact-width arithmetic operations and string storage. |
 | S16 | Base64/hex and JSON grammar | Encoding alphabets/validation and JSON parsing, traversal and serialization policy. | Scalar/text operations and the containers used to hold output/data. |
@@ -131,6 +132,7 @@ all compiler/runtime support.
 | S22 (was M01) | Prefix allocation, length and live-prefix bookkeeping | Source `raw_buffer<T, Lease>` owns a lease, element pointer and capacity; `prefix_slots<T, Lease>` adds the sole live count, with no per-slot metadata. | General typed construction, destruction and relocation; process and resource byte providers. |
 | S23 (was M02) | Prefix append, pop, insertion, erasure and reserve | Source prefix-owner policy with one check per safe operation and bulk byte relocation of bitwise-relocatable elements. | Final-address emplacement, construction rollback and exactly-once cleanup through general object operations. |
 | S24 (was M04) | Views and iterators over prefix storage | Span, vector and string wrappers borrow source prefix owners; `unsafe` unchecked accessors on vector, string, span and fixed array. | General carrier and checked-loan contracts; raw text conversion through an exact checked owner witness. |
+| S25 (was M03) | Character trailing-NUL policy | Source `terminated_prefix_owner`, allocation-free empty sentinel, hidden initialized terminator and embedded-NUL scan. | General text/C-string carrier conversion through a checked owner witness; this is not a private string-storage engine. |
 
 Evidence: [memory](../../stdlib/std/memory.gti),
 [resource](../../stdlib/std/resource.gti),
@@ -150,14 +152,13 @@ does not claim a new test run.
 ### B. Source-Policy Migrations And Remaining Prerequisites
 
 These entries distinguish migration work from complete acceptance. S-ALLOC-09
-completed the former M01, M02 and M04 rows, now S22–S24 above. The remaining
+completed the former M01–M04 rows, now S22–S25 above. The remaining
 rows are candidates, not implicitly approved or completed migrations.
 "Prerequisite" means a fact that must be established before retiring a path,
 not permission to weaken existing safety or reject previously supported users.
 
 | ID | Operation to move | Current owner | Prerequisite/acceptance boundary |
 | --- | --- | --- | --- |
-| M03 | Character trailing-NUL policy | Source terminated-prefix owner and embedded-NUL scan. | Empty static sentinel and hidden initialized terminator; checked views retain actual owner. Primitive text/C-string carrier conversion remains an identity-bound general compiler bridge, not a private string-storage engine. |
 | M05 | Non-polymorphic unique allocation and release | `allocate_unique_owner`, private `unique_owner<T>` and generated allocation support. | Source lease/engagement state, constructor rollback, exactly-once final drop, safe borrow anchoring, movement and replacement. A sparse storage field is not automatically API/performance-equivalent. |
 | M06 | Polymorphic unique-owner conversion and destruction | Private unique upcast and dynamic cleanup bindings. | Retain original allocation/release authority while changing the view; execute the actual dynamic object's cleanup. Ordinary base-pointer destruction is not a substitute. |
 | M07 | Optional engagement, access and reset | Private `optional_storage<T>`. | Source inline storage plus engagement state, inactive-access failures and checked loans. Public `uninitialized<T>` is fixed-address for non-bitwise-relocatable payloads; preserving movable owning optional needs a general carrier/lifecycle solution. A flag alone is insufficient. |

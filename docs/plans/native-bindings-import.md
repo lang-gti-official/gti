@@ -1,12 +1,15 @@
 # Native Bindings Import (`gti bindgen`)
 
-Status: C-01 through C-07 and BUILD-01 implemented (bounded C17 declaration import,
+Status: C-01 through C-07, BUILD-01 and C-08A implemented (bounded C17 declaration import,
 target-selected LP64/LLP64 mapping, Clang-driver preprocessing with ordered
 translation-unit inputs, exact opaque-handle out parameters sufficient for an
 end-to-end SQLite open/prepare/step/finalize/close client, and the libclang
-declaration reader of ADR 021 replacing the bootstrap parser). Source
-provenance and include discovery (C-05), build-manifest integration, and C++
-import remain bounded future milestones below.
+declaration reader of ADR 021 replacing the bootstrap parser, source provenance
+and include policy, manifest-driven generation/reuse, native indirect invocation
+and recursive pointer/native-scalar families). Remaining work includes bindgen
+facts in `gti metadata`, C-08B foreign storage and the CPP-01/02 policy/import
+milestones below. The standalone generator and manifest integration are already
+clients of the same reader/planner; neither needs a second bootstrap phase.
 
 ## Problem
 
