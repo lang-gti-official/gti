@@ -2905,6 +2905,16 @@ field appended to the coarse range owner. Nested shared loops cannot reattach
 physical cursor/element bindings to a reused semantic owner loan. External
 stored-reference-field dereferences remain a separate ordinary projection
 shape; borrowed element type alone does not select the inline-proxy profile.
+The hidden reference binding itself always contains borrowed state. Physical
+proxy classification instead uses the selected dereference producer's resolved
+nominal result traits. An ordinary owning class reached through an abstract
+Stored-parent cursor retains that exact parent's iterator carrier and dependency,
+without inventing a second physical cursor. Body verification checks the
+producer's original HIR identity, receiver place, access and referent type;
+program verification independently checks its selected dereference declaration
+and nominal traits against the concrete class catalog. Rewiring a physical
+cursor and falsifying the producer traits cannot manufacture the abstract
+profile or shorten the proxy's lifetime.
 Lowering ends descendants child-first before
 increment and on `continue`, `break`, `return`, normal cleanup, and failure
 cleanup. An escaping owned temporary is impossible because its drop follows

@@ -7572,23 +7572,46 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
             ambiguousElementProducer |= elementProducer != nullptr;
             elementProducer = &instruction;
           }
-    const bool physicalElement =
-        elementLoan && elementLoan->kind == MirLoanKind::CallResult &&
+    const bool receiverClassElement =
+        range.strategy == RangeIterationStrategy::Structural && elementLoan &&
+        elementLoan->kind == MirLoanKind::CallResult &&
         elementLoan->source == range.iterator &&
-        range.elementType.kind == SemanticType::Class &&
-        elementPlace->traits.containsBorrowedState && elementProducer &&
+        range.elementType.kind == SemanticType::Class;
+    // The hidden element binding is a reference and therefore always carries
+    // borrowed state. Only the selected producer's resolved nominal result
+    // traits distinguish an inline borrowed proxy from an ordinary owning
+    // element reached through an abstract Stored-parent cursor.
+    const bool physicalElement =
+        receiverClassElement && elementProducer &&
+        elementProducer->info.traits.containsBorrowedState &&
         elementProducer->borrowOrigin == BorrowOriginKind::Receiver &&
         elementProducer->borrowFields.empty();
-    if (physicalElement || physicalProxy) {
-      if (!physicalProxy || ambiguousElementProducer || !elementProducer ||
+    if (receiverClassElement || physicalProxy) {
+      if (ambiguousElementProducer || !elementProducer ||
           elementProducer->hirValue != elementLoan->producedBy ||
+          elementProducer->hirValue != range.elementAccessSource ||
           elementProducer->borrowAccess != elementLoan->access ||
           elementProducer->borrowOrigin != BorrowOriginKind::Receiver ||
+          !elementProducer->receiver ||
+          elementProducer->receiver->place != range.iterator ||
           elementProducer->info.type != range.elementType ||
           elementProducer->info.category != ValueCategory::Place)
         return failure(body, owner,
+                       "range element lacks its exact selected dereference "
+                       "producer");
+      if (physicalElement && !physicalProxy)
+        return failure(body, owner,
                        "physical range element lacks its exact cursor and "
                        "selected dereference producer");
+      if (!physicalProxy && rangeLoan->kind == MirLoanKind::Stored &&
+          elementProducer->borrowFields.empty() &&
+          (physicalCursor || range.elementAccess != AccessMode::ReadOnly ||
+           rangeLoan->entry || elementLoan->entry || elementLoan->parent ||
+           elementLoan->storedDependency != rangeLoan->id ||
+           !carries(*rangeLoan, iteratorPlace->binding)))
+        return failure(body, owner,
+                       "abstract shared range element lost its exact stored "
+                       "cursor authority");
     }
     if (range.endpointParking) {
       const auto &parking = *range.endpointParking;

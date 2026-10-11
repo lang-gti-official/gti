@@ -31,7 +31,7 @@ public:
                            "invalid_container_argument", "container_argument"),
         "map-missing": ("std::map<int, int> values{}; int key = 1; [[discard]] values.at(key);",
                         15, "key_not_found", "key_lookup"),
-        "map-arrow-overflow": ("mut std::map<int, int> values{}; mut auto result = values.insert(1, 2147483647); result.first->second += 1;",
+        "map-arrow-overflow": ("mut std::map<int, int> values{}; mut auto result = values.insert(1, 2147483647); result.first->second() += 1;",
                                1, "integer_overflow", "addition"),
         "unordered-missing": ("std::unordered_map<int, int> values{}; int key = 1; [[discard]] values.at(key);",
                               15, "key_not_found", "key_lookup"),

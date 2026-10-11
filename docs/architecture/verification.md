@@ -1,6 +1,81 @@
 # Compiler Verification
 
-## Container iterator completion: candidate validation (2026-10-11)
+## Container iterator completion: candidate validation (2026-10-12)
+
+The records below are chronological checkpoint evidence, not a blanket final
+certification. At reconciled clean `25d7e49d`, all Release targets build and
+the unfiltered 651-test run finishes with 644 passes and seven failures.
+The complete C++ emitter corpus passes (141 sources, 35,978 ready bodies,
+22,910 production/general matches), as does the complete native cutover oracle
+at O0/C++20 and O3/C++23. The relocated installed-consumer gate passes, including
+all ten iterator consumers. The full raw CTest log is preserved at
+`/private/tmp/gti-iterator-full-25d7e49d.log` before any follow-up source edit.
+
+Two failing gates expose one real range-verifier regression: the hidden
+reference binding's borrowed-state trait is not the nominal dereference
+result's trait. An ordinary class reference through a borrowed carrier must not
+be classified as an inline physical proxy. The repair must retain exact
+selected-producer/dependency validation and reject forged physical cursor
+transfers, including a forged producer trait. The other five gates identify
+stale expectations: mutable map projections use `second()`, signed subtraction
+is left-minus-right, forward vector instances now include the explicit zero
+direction argument, library failure locations shifted, and the cached bounds
+add field declarations. Every affected runtime category, exit status and
+cleanup observation remains required; these failures are not waived.
+
+The fixed LoweredProgram census changes only 37 declaration counts: 36 grow
+by two vector cursor fields and the vector/resource-vector example grows by
+four, totaling 76. Emitted bodies, generated families and all other census
+fields are unchanged. This audited source-field delta is 88,556 declarations,
+14,081 bodies and 8,630 generated items; a fresh non-update census remains
+required. Independently, the native-C example's `int64_t` argument genuinely
+aliases C `long` on Linux but C `long long` on macOS/Windows. Six target-profile
+probes confirm that contrasting C `long` and `long long` instead preserves two
+distinct concrete classes and 13 bodies on every profile; the compiler's alias
+rules and body baselines must not be changed to conceal this target fact.
+
+The final bound-snapshot performance comparison, clean `5385c0b0` versus clean
+`25d7e49d`, passes on the Apple M4 Pro Mini with optimized GTI compilers,
+Apple Clang 21, O3/C++23 and strict floating-point ordering. Each of two
+campaigns uses five warmups and 21 seeded/interleaved rounds under the suite
+and both build slots. Candidate/baseline paired median particle ratios are
+1.00104 and 1.00269 (95% bootstrap intervals 0.99660–1.00689 and
+0.99780–1.00801); vector ratios are 0.99685 and 0.99654 (0.98376–1.00065 and
+0.99014–0.99936). Neither workload shows a material runtime regression.
+Vector samples are bimodal/order-sensitive: quotient-of-medians differences
+are not evidence of a 6–7% speedup. All six separate baseline/candidate/C++
+complete-state cases pass, with 60 million ordered vector observations and
+bitwise equality of 400,000 final particle fields, plus omitted/mismatched/
+incomplete-observation negative controls. The unchanged timing probes remain
+checksum tests; the full-state oracle is deliberately untimed.
+
+The representation tradeoff is one inline bound scalar: shared/exclusive
+vector and resource-vector cursors grow from 16 to 24 bytes without an
+allocation. The owning allocation-counted traversal gate passes separately.
+Vector/particle generated C++ grows from 842,023/874,944 to 903,317/938,669
+bytes; native text grows from 48,332/47,524 to 48,384/47,532 bytes. Single
+instrumented program builds take 1.4325/1.0102 versus 1.5071/1.0754 seconds,
+with peak build RSS 239,026,176/249,544,704 versus
+240,713,728/259,768,320 bytes. Runtime median peak RSS is
+3,801,088/5,685,248 versus 3,817,472/5,685,248 bytes. Build observations are
+not statistically established compile-time changes, and idiomatic C++ controls
+do not promise GTI's defined-failure contract. Exact source closures, compiler
+identities and 171 hash-verified retained artifacts are recorded at
+`/private/tmp/gti-iterator-performance.hheNJa/mini-bound-snapshot/assessment.json`.
+The wrapper has fetched results and removed its remote run.
+
+The clean Linux inventory/oracle run `186d5936` reaches all examples but fails
+the native-C alias census noted above; its emitter corpus reaches the unchanged
+1,500-second test limit. The isolated current-head sanitizer run `603768cf`
+also reproduces the combined contiguous fixture's unchanged 180-second native
+compile limit with one worker. Neither timeout proves a runtime sanitizer
+failure or platform acceptance. An equivalent smaller sanitizer partition
+must preserve every assertion, all three zero-allocation observation windows,
+provider and sanitizer flags; the combined fixture remains in the other seven
+modes. Corpus progress evidence must locate the Linux tail without excluding
+sources or weakening readiness/agreement assertions. Fresh repaired-head
+owning gates, Linux validation, unfiltered checks and PR integration remain
+required.
 
 The clean `0249b92f` Release compiler passes all 17 owning iterator gates in
 the combined 18-gate matrix: contiguous and paired spans, linked and sparse

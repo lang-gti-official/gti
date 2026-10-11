@@ -1351,7 +1351,25 @@ void checkSharedAccessorRange() {
                  !element->carriers.empty(),
              "shared range element keeps its call loan and exact stored "
              "owner dependency through the source-defined iterator");
-      for (int mutation = 0; mutation < 4; ++mutation) {
+      const auto *iterator = function.body.findPlace(range.iterator);
+      const auto *binding = function.body.findPlace(range.element);
+      const lang::MirInstruction *producer = nullptr;
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.loan == element->id)
+            producer = &instruction;
+      expect(iterator && binding && producer &&
+                 binding->traits.containsBorrowedState &&
+                 !producer->info.traits.containsBorrowedState &&
+                 producer->hirValue == range.elementAccessSource &&
+                 std::find(parent->carriers.begin(), parent->carriers.end(),
+                           iterator->binding) != parent->carriers.end(),
+             "ordinary owning range elements have nominal unborrowed traits "
+             "despite their hidden reference bindings");
+      if (!iterator || !producer)
+        continue;
+      for (int mutation = 0; mutation < 12; ++mutation) {
         auto invalid = frontend.mir;
         auto &body = const_cast<lang::MirFunctionInstance *>(
                          invalid.findFunctionInstance(function.id))
@@ -1363,7 +1381,7 @@ void checkSharedAccessorRange() {
           changed.access = lang::AccessMode::Mutable;
         else if (mutation == 3)
           changed.storedDependency = 0;
-        else {
+        else if (mutation == 2) {
           // Ending the range immediately after dereference must not revoke
           // the authority still required by the live returned element.
           lang::MirInstructionId last = 0;
@@ -1388,10 +1406,31 @@ void checkSharedAccessorRange() {
               break;
           }
           expect(inserted, "range element has an exact call producer");
+        } else if (mutation == 4) {
+          std::erase(body.loans[parent->id - 1].carriers, iterator->binding);
+        } else if (mutation == 5) {
+          body.loans[parent->id - 1].kind = lang::MirLoanKind::Local;
+        } else if (mutation == 6) {
+          changed.source = range.rangeCarrier;
+        } else if (mutation == 7) {
+          changed.producedBy = 0;
+        } else if (mutation == 8) {
+          body.rangeIterations[range.id - 1].elementAccessSource++;
+        } else if (mutation == 9) {
+          body.rangeIterations[range.id - 1].dereferenceFunction++;
+        } else {
+          for (auto &block : body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.id == producer->id) {
+                if (mutation == 10)
+                  instruction.receiver->place = range.rangeCarrier;
+                else
+                  instruction.info.traits.containsBorrowedState = true;
+              }
         }
         expect(!lang::verifyMirProgram(invalid).valid(),
-               "shared range rejects forged kind/access, missing dependency "
-               "or early owner retirement: " +
+               "shared range rejects forged traits, producer, cursor "
+               "authority, dependency or early owner retirement: " +
                    std::to_string(mutation));
       }
       checked = true;

@@ -1318,7 +1318,7 @@ int main() {
                reason);
         expect(!lang::verifyMirProgram(malformed).valid(), reason);
       };
-      for (int mutation = 0; mutation < 6; ++mutation) {
+      for (int mutation = 0; mutation < 8; ++mutation) {
         auto malformed = frontend.mir;
         auto *instance = const_cast<lang::MirFunctionInstance *>(
             malformed.findFunctionInstance(function.id));
@@ -1344,6 +1344,13 @@ int main() {
               range.elementAccess == lang::AccessMode::ReadOnly
                   ? lang::AccessMode::Mutable
                   : lang::AccessMode::ReadOnly;
+          break;
+        case 6:
+          changed.loans[element->id - 1].storedDependency = range.rangeLoan;
+          break;
+        case 7:
+          changed.loans[cursor->id - 1].carriers.clear();
+          changed.loans[element->id - 1].storedDependency = range.rangeLoan;
           break;
         }
         reject(malformed,
@@ -1559,6 +1566,139 @@ int main() {
       "owning inline-proxy fixture exercises shared and exclusive range loans");
   expect(siblingCursorChecks == 2,
          "nested shared traversal exercises exact same-type cursor identities");
+}
+
+void checkInlineProxyCannotBecomeAbstractStoredRange() {
+  const std::string source = R"gti(
+class End { public: End() {} };
+class Projection {
+  Buffer& source;
+public:
+  Projection(Buffer& source) : source(source) {}
+  int& read() { return this.source.read(); }
+};
+class Cursor {
+  mut Projection projection;
+  mut int position = 0;
+public:
+  Cursor(Buffer& source) : projection(Projection(source)) {}
+  Projection& operator*() { return this.projection; }
+  void operator++() mut { this.position++; }
+  bool operator!=(End end) { return this.position < 2; }
+};
+class Buffer {
+  mut int number = 4;
+public:
+  Buffer() {}
+  int& read() { return this.number; }
+  Cursor begin() { return Cursor(this); }
+  End end() { return End(); }
+};
+expected<Buffer&, int> lookup(Buffer& source) { return source; }
+int main() {
+  Buffer buffer{};
+  auto borrowed = lookup(buffer);
+  auto& stable = borrowed.value();
+  mut int total = 0;
+  for (auto& element : stable) { total += element.read(); }
+  return total - 8;
+}
+)gti";
+  const auto frontend = lang::Frontend().analyze(
+      "inline-proxy-stored-parent.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "an inline proxy over a borrowed carrier keeps a separate physical "
+         "cursor despite its Stored parent");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &range : function.body.rangeIterations) {
+      const auto *element = function.body.findLoan(range.elementLoan);
+      const auto *parent = function.body.findLoan(range.rangeLoan);
+      const auto *cursor =
+          element == nullptr
+              ? nullptr
+              : function.body.findLoan(element->storedDependency);
+      const auto *iterator = function.body.findPlace(range.iterator);
+      if (!element || !parent || !cursor || !iterator)
+        continue;
+      expect(
+          parent->kind == lang::MirLoanKind::Stored &&
+              cursor->id != parent->id &&
+              cursor->kind == lang::MirLoanKind::Stored &&
+              cursor->parent == parent->id,
+          "physical inline proxy and abstract parent have distinct identities");
+      for (int mutation = 0; mutation < 6; ++mutation) {
+        auto malformed = frontend.mir;
+        auto &body = const_cast<lang::MirFunctionInstance *>(
+                         malformed.findFunctionInstance(function.id))
+                         ->body;
+        if (mutation <= 3) {
+          body.loans[cursor->id - 1].carriers.clear();
+          body.loans[element->id - 1].storedDependency = parent->id;
+          if (mutation >= 1)
+            body.loans[parent->id - 1].carriers.push_back(iterator->binding);
+        }
+        for (auto &block : body.blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.kind == lang::MirInstructionKind::Call &&
+                instruction.loan == element->id) {
+              expect(instruction.info.traits.containsBorrowedState,
+                     "selected inline proxy has authoritative nominal borrowed "
+                     "traits");
+              if (mutation == 2 || mutation == 3 || mutation == 4)
+                instruction.info.traits.containsBorrowedState = false;
+              if (mutation == 3)
+                body.rangeIterations[range.id - 1].elementAccessSource = 0;
+              if (mutation == 5)
+                instruction.functionTarget = function.id;
+            }
+        const auto result = lang::verifyMirProgram(malformed);
+        expect(!result.valid(),
+               "a physical cursor cannot be forged into abstract stored "
+               "authority: " +
+                   std::to_string(mutation));
+        if (mutation == 2 || mutation == 3 || mutation == 4)
+          expect(
+              std::any_of(
+                  result.errors.begin(), result.errors.end(),
+                  [](const auto &error) {
+                    return error.message ==
+                           "reference iteration element has no exact nominal "
+                           "traits and selected dereference declaration";
+                  }),
+              "the program catalog independently rejects falsified nominal "
+              "proxy traits even when cursor authority is also rewired");
+      }
+      ++checked;
+    }
+  }
+  expect(checked == 1,
+         "Stored-parent proxy forgery fixture exercises one range");
+  auto virtualSource = source;
+  virtualSource.insert(virtualSource.find("Projection& operator*()"),
+                       "virtual ");
+  const auto virtualFrontend = lang::Frontend().analyze(
+      "virtual-inline-proxy-stored-parent.gti", virtualSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(virtualFrontend.canGenerateCode(),
+         "nominal element validation preserves virtual checked dereference");
+  bool virtualProducer = false;
+  for (const auto &function : virtualFrontend.mir.functionInstances())
+    for (const auto &range : function.body.rangeIterations)
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          virtualProducer |=
+              instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.loan == range.elementLoan &&
+              instruction.dispatch == lang::CallDispatch::Virtual;
+  expect(virtualProducer,
+         "virtual reference-yield fixture exercises the selected dynamic call");
 }
 
 void checkRangeEndpointSemanticContracts() {
@@ -1840,6 +1980,7 @@ int main() {
   checkTemporaryCursorRetainedOwnerDependencies();
   checkTemporaryCursorCleanupProviderLifetime();
   checkInlineRangeProxyPhysicalLifetime();
+  checkInlineProxyCannotBecomeAbstractStoredRange();
   checkRangeEndpointSemanticContracts();
   checkReadonlyLocalCleanupGuard();
   return failures == 0 ? 0 : 1;
