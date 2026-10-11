@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.402.5 — Member initializers from calls that cannot fail
+
+- A constructor field can now be initialized directly from a call that cannot
+  fail, as in `holder(int32_t n) : value(make_value(n)) {}`, whether the class
+  needs no cleanup or has a destructor, and also through a comma, as in
+  `value((log(), make_value(n)))`. If a later member fails, an owning field is
+  destroyed exactly once. Such constructors used to report GTI-B0001.
+
 ## 0.402.4 — Returning `expected` results across scope cleanup
 
 - A function that returns an `expected<T, E>` call result while
