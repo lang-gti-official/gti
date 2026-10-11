@@ -75,11 +75,12 @@ detect drift; they are not compiler identities or URLs. Identical source
 snapshots must produce byte-identical JSON.
 
 `gti_docgen` is an `EXCLUDE_FROM_ALL` CMake target and is not installed with
-the user toolchain. From a configured build tree:
+the user toolchain. From a configured, host-optimized build tree (for example,
+`Release`), use the shared build window and the matching executable:
 
 ```sh
-cmake --build build --target gti_docgen
-build/gti_docgen --stdlib stdlib --output documentation-index.json
+python3 scripts/build_window.py --kind build -- cmake --build build-release --target gti_docgen
+build-release/gti_docgen --stdlib stdlib --output documentation-index.json
 ```
 
 ## Authored Content Graph

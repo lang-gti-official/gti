@@ -36,8 +36,8 @@ include contract above; interfaces must be imported rather than included, and
 only explicit re-exports add transitive visibility. It does not adopt C++ BMIs
 or introduce separate compilation.
 
-Include behavior belongs in `SourceLoader`/`SourceGraph`. The combined
-transitional AST does not imply global visibility. Standard-library paths
+Include behavior belongs in `SourceLoader`/`SourceGraph`. A combined program
+view of independently parsed units does not imply global visibility. Standard-library paths
 resolve only through configured GTI roots, never native C++ include paths.
 Package source retains stable provenance for diagnostics/cache identity but
 does not gain compiler trust. Workspace and dependency acquisition policy

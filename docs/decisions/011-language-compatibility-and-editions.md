@@ -178,5 +178,5 @@ becomes a moving default.
 No syntax, manifest key, CLI option, diagnostic, or compiler behavior changes
 with this decision-only row. The first selector implementation requires a new
 bounded operational row before a second edition exists. `D-COMPAT-01` is
-complete; `Q-DEPRECATION-01` now waits only on its documentation-retention/LSP
-prerequisite.
+complete; `Q-DEPRECATION-01` is eligible now that its shared documentation/LSP
+prerequisite is implemented. The deprecation feature itself remains planned.

@@ -91,7 +91,7 @@ ReferenceAlignment: Right
 
 ## Formatter architecture
 
-The current formatter has three deliberately separate responsibilities:
+The current formatter has four deliberately separate responsibilities:
 
 1. `format_config` owns the default document and discovers and validates
    configuration without knowing about LSP or JSON-RPC;
@@ -301,7 +301,9 @@ The next low-risk style controls can build on the current structural state:
 - custom brace wrapping for records, functions, namespaces, and control flow;
 - empty-block and access-label empty-line policies;
 - spaces within parentheses, brackets, generic angles, and initializer braces;
-- include grouping/sorting once source visibility ordering rules are fixed; and
+- include/import grouping or sorting only with an explicit proof that a rewrite
+  preserves visibility and declaration order (current source-unit/module rules
+  are already defined; this is a formatter transformation requirement); and
 - format-disable regions with explicit GTI comment markers.
 
 `ColumnLimit`, width-sensitive argument and constructor-initializer packing,

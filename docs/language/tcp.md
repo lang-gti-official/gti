@@ -68,11 +68,13 @@ is best-effort because cleanup cannot return an error; call `close()` explicitly
 when the result matters.
 
 The returned `expected<socket, errc>` owns the socket in its value alternative
-and is itself move-only. Move that result as a whole when transferring local
-ownership; `socket`'s declared cleanup and private handle make it neither
+and is itself move-only. Moving that result transfers whole-result ownership;
+consuming extraction with `std::move(result).value()` or `?` in a compatible
+Expected-returning function can instead transfer the socket. `socket`'s
+declared cleanup and private handle make it neither
 transfer-capable nor share-capable across threads.
-GTI's current partial-place rules do not permit moving the socket separately
-out of `result.value()`.
+A borrowed lvalue observer such as `result.value()` does not itself authorize
+moving the socket through that reference; use the consuming result operation.
 
 `close()` invalidates the private handle before calling POSIX `close`. A native
 close failure therefore returns `close_failed` but is not retried by a later
@@ -103,8 +105,9 @@ resource but sends no network traffic.
 
 This slice intentionally does not provide address construction, `connect`,
 `bind`, `listen`, `accept`, `send`, or `receive`. Those operations require a
-reviewed cross-platform address representation and bounded mutable/read-only
-byte-buffer API. GTI's bounded one-level raw pointers do not define native
+reviewed cross-platform address and traffic/retention policy. Passive records
+and bounded mutable/read-only byte buffers now supply useful prerequisites,
+but do not implement those socket operations. General recursive raw pointers do not define native
 `sockaddr` layout, a safe slice, a public descriptor API, traffic ownership and
-retention rules, or a general unsafe FFI merely because this owner uses C
+retention rules merely because this owner uses C
 linkage internally.

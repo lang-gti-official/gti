@@ -25,9 +25,10 @@ are `invalid_argument`, `not_found`, `permission_denied`, `already_exists`,
 `not_directory`, `is_directory`, `directory_not_empty`, `too_many_symlinks`,
 `no_space`, `read_only`, `cross_device`, `name_too_long`, `out_of_memory`,
 `unsupported`, and fallback `io_error`. Host exceptions never cross the C ABI.
-Allocation of ordinary GTI strings/vectors still follows GTI's defined runtime
-failure contract; the expected channel covers host operations and their native
-allocation.
+Infallible allocation of ordinary GTI strings/vectors aborts on exhaustion
+without cleanup; size-computation overflow remains a contained defined failure.
+The Expected channel covers the documented host operations and their native
+allocation, not implicit recoverability of all GTI-side allocation.
 
 ## Observation and mutation
 
