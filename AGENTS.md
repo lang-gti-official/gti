@@ -71,12 +71,16 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   the configured remote host's window. `build_window.py --status` shows local
   holders and `remote_runner.py status` shows remote holders.
 - Offload heavy validation with `python3 scripts/remote_runner.py run ...`.
-  Configure the shared SSH connection once; the wrapper snapshots the selected
-  worktree, uses the Mac mini's shared build window, retrieves logs/results,
+  Select `--runner mini`, `--runner ubuntu-6`, or `--runner ubuntu-8` before the
+  subcommand, or set `GTI_REMOTE_RUNNER` for remote lifecycle verification.
+  Inspect `status --all` to spread work across idle, platform-appropriate hosts;
+  Linux checks do not replace required macOS evidence. The wrapper snapshots
+  the selected worktree, uses that host's shared build window, retrieves logs/results,
   and removes remote source/build trees even after failures or cancellation.
   Use `--detach`, `status` and `fetch` for asynchronous work. Follow the
-  [remote-runner contract](docs/architecture/agent-workflow.md#mac-mini-remote-runs);
-  do not leave ad hoc clones or builds on the Mini.
+  [remote-runner contract](docs/architecture/agent-workflow.md#remote-buildtest-hosts);
+  detached run IDs remember their original connection. Do not leave ad hoc
+  clones or builds on any runner.
 - Use `scripts/agent_workflow.py` for lifecycle operations. Reconcile upstream,
   validate the resulting head/base, and merge only through GitHub PRs. Respect
   required checks/reviews. No direct pushes to `main`, rewritten shared history,

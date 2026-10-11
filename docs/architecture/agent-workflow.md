@@ -138,21 +138,45 @@ slot file, so helper validation and ad hoc suite runs queue behind each
 other. Builds that the checks need should be run beforehand through a `build`
 slot. The environment variables above apply to the helper too.
 
-## Mac mini remote runs
+<a id="mac-mini-remote-runs"></a>
+
+## Remote build/test hosts
 
 `scripts/remote_runner.py` is repository automation, not a second compiler or
 driver. It sends a disposable source snapshot to a trusted SSH account, runs
 exact build/test argument vectors, and brings evidence back. It requires
-Python 3.9+, Git and SSH locally; the Mini additionally needs CMake, Ninja and
-the repository's native build dependencies. SSH keys and host-key verification
-must already work; the wrapper does not change SSH configuration. The current
-host is `lukeh@192.168.0.53`.
+Python 3.9+, Git and SSH locally; each host additionally needs CMake, Ninja and
+the repository's native build dependencies. Ubuntu profiles use the local
+`tailscale ssh` client, which validates the server's advertised node host key
+through the Tailscale coordination server ([Tailscale CLI](https://tailscale.com/docs/reference/tailscale-cli)).
+Tailscale authentication/policy must already permit `root` access. The Mini
+retains ordinary SSH and its existing keys/host verification. Neither transport
+disables host-key checks or changes SSH configuration.
+
+Three named presets are available; saved connection overrides live only under
+the Git common directory:
+
+| Runner | Connection | OS / declared capacity | Default build / test workers |
+| --- | --- | --- | --- |
+| `mini` | `lukeh@192.168.0.53` | macOS; observed host CPU count | half CPUs / all CPUs |
+| `ubuntu-6` | `root@100.77.66.96` | Ubuntu; 6 vCPUs, 13 GB RAM | 3 / 6 |
+| `ubuntu-8` | `root@100.81.111.76` | Ubuntu; 8 vCPUs, 13 GB RAM | 3 / 6 |
+
+Selection is explicit, not automatic failover or test sharding: inspect
+`status --all`, then choose an idle appropriate host. Linux evidence does not
+replace macOS-only acceptance. `run --platform Darwin` or `--platform Linux`
+rejects a mismatched selection before uploading; the worker also verifies the
+required platform before executing steps. Configure validates the actual OS.
 
 From any task worktree, configure once (settings are shared in the Git common
 directory, not committed):
 
 ```sh
-python3 scripts/remote_runner.py --host lukeh@192.168.0.53 configure
+python3 scripts/remote_runner.py --runner mini configure
+python3 scripts/remote_runner.py --runner ubuntu-6 configure
+python3 scripts/remote_runner.py --runner ubuntu-8 configure
+python3 scripts/remote_runner.py hosts
+python3 scripts/remote_runner.py status --all
 python3 scripts/remote_runner.py run --target gti_runtime_failure_tests --ctest-regex '^runtime_failure_boundary$'
 ```
 
@@ -160,7 +184,8 @@ For a compiler feature, build the compiler and applicable test targets in the
 **same run**; binaries do not persist for a later run. For example:
 
 ```sh
-python3 scripts/remote_runner.py run --target gti --target gti_optimizer_tests --ctest-regex '^optimizer_foundation$'
+python3 scripts/remote_runner.py --runner ubuntu-6 run --target gti --target gti_optimizer_tests --ctest-regex '^optimizer_foundation$'
+python3 scripts/remote_runner.py --runner ubuntu-8 run --full-suite --detach
 python3 scripts/remote_runner.py run --full-suite --detach
 python3 scripts/remote_runner.py status
 python3 scripts/remote_runner.py status run-<32-hex-digits>
@@ -172,27 +197,52 @@ Omit `--target` to build all targets. `--ctest-regex` and `--full-suite` are
 exclusive; zero matching tests is an error. Default CMake configuration is
 `Release`; `--build-type` also accepts `RelWithDebInfo` and `MinSizeRel`.
 The configured cache is checked before building. Extra options use
-`--cmake-arg=-DNAME=value`. The wrapper prepends Homebrew's bin directory and
-automatically supplies the Homebrew LLVM directory when present. The remote
-Python defaults to `/opt/homebrew/bin/python3` (`--python` overrides it).
+`--cmake-arg=-DNAME=value`. On macOS the wrapper prepends Homebrew's bin
+directory and supplies the Homebrew LLVM directory when present. Otherwise it
+discovers LLVM through `llvm-config --cmakedir`. The Mini retains normal CMake
+compiler selection. The Ubuntu profiles select `/usr/bin/gcc-14` and
+`/usr/bin/g++-14`: Ubuntu 26's newer default GCC 15 and Clang 21 currently expose
+warning-as-error failures in the compiler sources. No warning is suppressed.
+`--cc`/`--cxx` override the profile defaults and can be saved by `configure`;
+remote `CC`/`CXX` take precedence over those defaults, and explicit
+`--cmake-arg=-DCMAKE_CXX_COMPILER=...` arguments are applied last. Custom steps
+retain their exact toolchain arguments. Remote
+Python is `/opt/homebrew/bin/python3` on the Mini and `/usr/bin/python3` on
+Ubuntu (`--python` overrides it).
 Global options precede the subcommand. `--repo` selects another worktree;
-`--host`/`--root`, or `GTI_REMOTE_HOST`/`GTI_REMOTE_ROOT`, override saved settings.
+`--runner` takes precedence over `GTI_REMOTE_RUNNER` and the saved default.
+`--host`/`--root`, or `GTI_REMOTE_HOST`/`GTI_REMOTE_ROOT`, override the selected
+profile; `--transport ssh|tailscale` selects the client. Existing single-host
+settings migrate on the next configure, preserving their endpoint, paths and
+default. `configure` saves only that named host without changing the default;
+`configure --default` changes it explicitly. Metadata updates are serialized so
+concurrent configuration cannot lose a peer's profile. Custom names can be
+registered with `--runner NAME --host USER@HOST` and the applicable paths/client.
+Saved settings also retain the original flat connection fields for the selected
+default, allowing older task worktrees to keep using the Mini during an update.
 
-All wrapper runs use one host-wide window at
-`/private/tmp/gti-remote-runner/window`, **not** their isolated Git directories.
-The authoritative `build_window.Window` implements two build slots and one
-suite slot. Configure/build take build slots; test steps take suite slots.
-Builds default to half the host's CPUs per build, while CTest can use all CPUs
-but uses `--test-load` to back off under concurrent load. `--jobs` and
-`--test-jobs` override command parallelism, not slot counts. On a dedicated
+All runs use one window **per host**, not their isolated Git directories. The
+Mini's is `/private/tmp/gti-remote-runner/window`; Ubuntu uses
+`/tmp/gti-remote-runner/window`. The authoritative `build_window.Window` uses
+two build slots on macOS, one on Linux, and one suite slot on each. This is a
+server-side OS policy shared by all clients. The 13-GB VMs intentionally do not
+stack two compiler builds. Configure/build take build slots; test steps take
+suite slots. Mini builds default to half the CPUs; Ubuntu caps default build/
+test workers as above. CTest uses the actual host CPU count for `--test-load` to
+back off under concurrent load. `--jobs` and `--test-jobs` override command
+parallelism, not slot counts. On a dedicated
 Mini, `--jobs 12` can use its full 12-core build capacity. Agents should inspect
-`status` before increasing parallelism. Manual heavy commands on this Mini
-must use the **same directory and counts**:
+`status` before increasing parallelism. Manual heavy commands on a host must
+use the **same directory and counts**; for the Mini:
 
 ```sh
 GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind build -- cmake --build build-release -j 6
 GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12
 ```
+
+On Ubuntu, set `GTI_BUILD_WINDOW_DIR=/tmp/gti-remote-runner/window` and
+`GTI_BUILD_WINDOW_BUILD_SLOTS=1`, keeping `GTI_BUILD_WINDOW_SUITE_SLOTS=1`.
+Different hosts can independently hold their own build/suite slots.
 
 The snapshot contains tracked working files and nonignored untracked files,
 including edits and deletions. Ignored build trees and Git configuration/hooks
@@ -209,6 +259,13 @@ replace the lifecycle's exact head/base validation before integration.
 `run` normally waits and fetches automatically, returning the build/test exit
 status. `--detach` prints the run ID immediately. The worker survives SSH/client
 disconnection; reconnect with `status`/`fetch`. Ctrl-C requests cancellation.
+Before submission, the client records the run's named host and full token-free
+connection under `<git common dir>/gti-remote-runner/runs/<run-id>.json`.
+`status`, `fetch`, `cancel` and `clean` for that ID use its recorded connection
+even after the default, environment or saved profile changes. Conflicting
+explicit connection options fail instead of contacting the wrong host. Legacy
+IDs without a record still use the selected profile; select their original
+host explicitly. Records remain local recovery metadata after fetching.
 Cancellation and the default three-hour deadline (including window waits,
 overridable with `--timeout` in seconds) stop the command process group before
 releasing its slot and cleaning its files. Commands must not intentionally
@@ -224,7 +281,7 @@ validates/extracts locally **before** deleting remote evidence. A failed fetch
 leaves remote results retrievable; it never overwrites existing local results.
 
 Every run uses a marked directory below
-`/private/tmp/gti-remote-runner/runs/run-<32-hex-digits>`. Source, build, upload
+the selected root's `runs/run-<32-hex-digits>`. Source, build, upload
 and staging files are deleted **before completion**, on success, failure,
 timeout and cancellation. Only a small result bundle, state and worker scripts
 remain until fetching; fetching deletes the whole run directory. Unfetched
@@ -260,6 +317,10 @@ without occupying a laptop suite slot, use:
 ```sh
 python3 scripts/agent_workflow.py verify <task> --remote-steps-file /absolute/path/plan.json
 ```
+
+Prefix that command with `GTI_REMOTE_RUNNER=ubuntu-6` or `ubuntu-8` to use a VM
+without changing other agents' shared default. Each invocation submits one
+plan to one host; split independent plans explicitly when using several hosts.
 
 The helper submits that plan through the runner, retains results under its
 local task metadata, and checks success and source identity before binding
