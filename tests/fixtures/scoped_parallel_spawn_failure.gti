@@ -1,0 +1,27 @@
+#include <std/thread>
+#include <std/memory>
+#include <std/vector>
+#include <std/string>
+
+extern "C" { void gti_test_fail_scoped_creation(uint64_t starts); }
+
+[[unsafe_transfer]] class Job {
+  mut int& target;
+  std::unique_ptr<int> ticket;
+public:
+  Job(mut int& target) : target(target), ticket(std::make_unique<int>(1)) {}
+  void operator()() mut { this.target = 10; }
+  ~Job() { if (this.ticket) this.target += 1; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  unsafe { gti_test_fail_scoped_creation(argc == 1 ? uint64_t(0) : uint64_t(1)); }
+  mut int first = 0;
+  mut int second = 0;
+  auto result = std::parallel_invoke(Job(first), Job(second));
+  if (result || result.error() != std::thread_errc::resource_unavailable) return 1;
+  if (first != (argc == 1 ? 1 : 11) || second != 1) return 2;
+  // Failure injection is one-shot, and all borrowed places are usable again.
+  if (!std::parallel_invoke(Job(first), Job(second))) return 3;
+  return first == 11 && second == 11 ? 0 : 4;
+}

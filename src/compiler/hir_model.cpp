@@ -1133,6 +1133,43 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       program.threadTaskAdapters().size(), SemanticType::Unknown);
   const auto verifyThreadTaskValues = [&](const HirBody &body) {
     for (const HirValue &value : body.values) {
+      if (value.intrinsic == IntrinsicKind::ThreadScope) {
+        if (value.threadTaskAdapter ||
+            value.scopedThreadTasks.size() != value.parameterTypes.size() ||
+            value.info.type != SemanticType::Int32 ||
+            value.synchronization.kind !=
+                SynchronizationOperationKind::ThreadScope ||
+            !validSynchronizationOperation(value.synchronization) ||
+            program.executionProfile() != ExecutionProfile::Concurrent)
+          result.errors.emplace_back(
+              "parallel scope has an invalid HIR group contract");
+        for (std::size_t index = 0; index < value.scopedThreadTasks.size();
+             ++index) {
+          const auto *adapter =
+              program.findThreadTaskAdapter(value.scopedThreadTasks[index]);
+          if (adapter == nullptr || !adapter->scoped ||
+              adapter->spawnValue != value.id ||
+              adapter->scopeArgument != index ||
+              index >= value.parameterTypes.size() ||
+              adapter->taskType != value.parameterTypes[index]) {
+            result.errors.emplace_back(
+                "parallel scope has no exact HIR task operand");
+            continue;
+          }
+          for (const auto &dependency : adapter->scopeDependencies)
+            if (dependency.place.domain != body.placeDomain ||
+                (dependency.place.root == 0 && !dependency.place.receiver) ||
+                dependency.designatedFields.empty())
+              result.errors.emplace_back(
+                  "parallel task has no exact body-local dependency");
+          ++threadTaskRoots[adapter->id - 1];
+          threadTaskResults[adapter->id - 1] = SemanticType::Void;
+        }
+        continue;
+      }
+      if (!value.scopedThreadTasks.empty())
+        result.errors.emplace_back(
+            "non-scope HIR value carries scoped task operands");
       if (value.intrinsic != IntrinsicKind::ThreadSpawn) {
         if (value.threadTaskAdapter) {
           result.errors.emplace_back(
@@ -1144,7 +1181,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value.threadTaskAdapter
               ? program.findThreadTaskAdapter(*value.threadTaskAdapter)
               : nullptr;
-      if (adapter == nullptr || adapter->spawnValue != value.id) {
+      if (adapter == nullptr || adapter->spawnValue != value.id ||
+          adapter->scoped || !adapter->scopeDependencies.empty()) {
         result.errors.emplace_back(
             "managed thread spawn has no exact HIR task adapter");
         continue;

@@ -1,0 +1,52 @@
+#include <std/thread>
+#include <std/memory>
+#include <std/panic>
+#include <std/vector>
+#include <std/string>
+
+struct World {
+  mut int first = 0;
+  mut int second = 0;
+  ~World() { std::println(this.first); std::println(this.second); }
+};
+
+[[unsafe_transfer]] class Job {
+  mut int& target;
+  bool fail;
+  bool cleanup_fail;
+  std::unique_ptr<int> ticket;
+public:
+  Job(mut int& target, bool fail, bool cleanup_fail)
+      : target(target), fail(fail), cleanup_fail(cleanup_fail), ticket(std::make_unique<int>(1)) {}
+  void operator()() mut {
+    this.target = 10;
+    if (this.fail) std::panic("scoped worker failed"); // worker-failure
+  }
+  ~Job() {
+    if (this.ticket) {
+      this.target += 1;
+      if (this.cleanup_fail) std::panic("scoped cleanup failed"); // cleanup-failure
+    }
+  }
+};
+
+class NestedJob {
+  mut int& target;
+public:
+  NestedJob(mut int& target) : target(target) {}
+  void operator()() mut {
+    [[discard]] std::parallel_invoke(Job(this.target, true, false));
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut World world{};
+  if (argc == 4) {
+    [[discard]] std::parallel_invoke(NestedJob(world.first),
+                                   Job(world.second, false, false));
+    return 2;
+  }
+  [[discard]] std::parallel_invoke(Job(world.first, argc != 2, false),
+                                 Job(world.second, false, argc != 1));
+  return 1;
+}

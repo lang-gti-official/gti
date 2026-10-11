@@ -204,6 +204,25 @@ target_compile_features("gti_runtime_thread_tests" PRIVATE cxx_std_23)
 target_link_libraries("gti_runtime_thread_tests" PRIVATE gti_runtime)
 add_test(NAME managed_thread_runtime COMMAND gti_runtime_thread_tests)
 
+add_executable(gti_runtime_scoped_thread_tests runtime_scoped_thread_tests.cpp)
+target_include_directories(gti_runtime_scoped_thread_tests PRIVATE
+                           "${PROJECT_SOURCE_DIR}/runtime/src")
+target_compile_features(gti_runtime_scoped_thread_tests PRIVATE cxx_std_23)
+target_link_libraries(gti_runtime_scoped_thread_tests PRIVATE gti_runtime)
+add_test(NAME scoped_thread_runtime COMMAND gti_runtime_scoped_thread_tests)
+add_test(NAME scoped_thread_join_boundary
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/runtime_scoped_thread_boundary_test.py"
+          "$<TARGET_FILE:gti_runtime_scoped_thread_tests>")
+set_tests_properties(scoped_thread_runtime scoped_thread_join_boundary
+                     PROPERTIES TIMEOUT 60)
+add_executable(gti_runtime_scoped_thread_header_smoke
+               runtime_scoped_thread_header_smoke.c)
+target_compile_features(gti_runtime_scoped_thread_header_smoke PRIVATE c_std_17)
+target_link_libraries(gti_runtime_scoped_thread_header_smoke PRIVATE gti_runtime)
+add_test(NAME scoped_thread_c_header COMMAND gti_runtime_scoped_thread_header_smoke)
+set_tests_properties(scoped_thread_c_header PROPERTIES TIMEOUT 60)
+
 add_executable("gti_runtime_cthread_tests"
                "${PROJECT_SOURCE_DIR}/tests/runtime_cthread_tests.cpp")
 target_include_directories("gti_runtime_cthread_tests"
@@ -955,6 +974,11 @@ add_test(NAME owning_conditional_join_runtime
                  "${PROJECT_SOURCE_DIR}/tests/owning_conditional_join_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(owning_conditional_join_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_payload_short_circuit_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_payload_short_circuit_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_payload_short_circuit_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_class_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"
@@ -1010,6 +1034,10 @@ add_executable("gti_managed_thread_tests"
                "${PROJECT_SOURCE_DIR}/tests/managed_thread_tests.cpp")
 target_link_libraries("gti_managed_thread_tests" PRIVATE gti_cpp_backend)
 add_test(NAME managed_thread_semantic_ir COMMAND gti_managed_thread_tests)
+
+add_executable(gti_scoped_thread_semantic_tests scoped_thread_semantic_tests.cpp)
+target_link_libraries(gti_scoped_thread_semantic_tests PRIVATE gti_cpp_backend)
+add_test(NAME scoped_thread_semantic_shapes COMMAND gti_scoped_thread_semantic_tests)
 
 add_executable("gti_function_item_tests"
                "${PROJECT_SOURCE_DIR}/tests/function_item_tests.cpp")
@@ -2975,6 +3003,20 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(shared_ownership_threads PROPERTIES TIMEOUT 480)
   add_test(
+    NAME scoped_parallel_threads
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/scoped_parallel_threads_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(scoped_parallel_threads PROPERTIES TIMEOUT 480)
+  add_test(
+    NAME scoped_concurrency_installed
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/scoped_concurrency_install_test.py"
+            "${PROJECT_BINARY_DIR}"
+  )
+  set_tests_properties(scoped_concurrency_installed PROPERTIES TIMEOUT 300)
+  add_test(
     NAME http_url_operators
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/http_url_operators_test.py"
@@ -3700,6 +3742,18 @@ if(Python3_Interpreter_FOUND)
               "${CMAKE_CXX_COMPILER}"
     )
     set_tests_properties(managed_thread_tsan PROPERTIES TIMEOUT 300)
+    foreach(fixture shared_mutex_threads transfer_function_threads
+                    scoped_parallel_threads scoped_parallel_cleanup)
+      add_test(
+        NAME ${fixture}_tsan
+        COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tests/managed_thread_tsan_test.py"
+                "$<TARGET_FILE:gti>"
+                "${PROJECT_SOURCE_DIR}/tests/fixtures/${fixture}.gti"
+                "${CMAKE_CXX_COMPILER}"
+      )
+      set_tests_properties(${fixture}_tsan PROPERTIES TIMEOUT 300)
+    endforeach()
     add_test(
       NAME atomic_end_to_end
       COMMAND "${Python3_EXECUTABLE}"
@@ -3762,12 +3816,18 @@ if(Python3_Interpreter_FOUND)
       cthread_once_runtime
       cthread_create_join_runtime
       managed_thread_tsan
+      shared_mutex_threads_tsan
+      transfer_function_threads_tsan
+      scoped_parallel_threads_tsan
+      scoped_parallel_cleanup_tsan
       atomic_tsan
       mutex_tsan
       PROPERTIES ENVIRONMENT "GTI_TSAN_SUPPORTED=${gti_tsan_supported}"
     )
     set_tests_properties(
-      managed_thread_tsan atomic_tsan mutex_tsan
+      managed_thread_tsan shared_mutex_threads_tsan transfer_function_threads_tsan
+      scoped_parallel_threads_tsan scoped_parallel_cleanup_tsan
+      atomic_tsan mutex_tsan
       PROPERTIES SKIP_RETURN_CODE 77
     )
     add_test(
@@ -3847,6 +3907,13 @@ if(Python3_Interpreter_FOUND)
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>" mutex
     )
+    add_test(
+      NAME concurrency_composition_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/concurrency_composition_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(concurrency_composition_lsp PROPERTIES TIMEOUT 120)
     add_test(
       NAME expected_payload_range_lsp
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"

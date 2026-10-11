@@ -848,6 +848,12 @@ preserves the exact reference type/access rather than borrowing the grouped
 binding. These elements cannot be named independently or escape through a pack
 expression; the entry capabilities last for the invocation. HIR and MIR retain
 the projected identities and end the loans on normal and failure exits.
+Concrete by-value pack elements that carry reference fields likewise retain
+separate `StoredValue` entry loans. Their identities include the formal binding,
+constant element index and each resolved reference-field path/access mode.
+Expanded call arguments preserve that element path, even when several elements
+have the same type. Generic reanalysis forwards these exact dependencies rather
+than treating the grouped binding as a referent or dropping its other origins.
 
 One call to either public `SemanticVisitor::check` overload owns one complete
 semantic request session. `SemanticVisitor::Impl::RequestSessionState` owns one
@@ -1492,6 +1498,14 @@ named-native-callback conversion retain their existing resolution paths.
 
 ## Owned Managed-Thread Tasks
 
+Concrete callable-entry matching expands substituted parameter packs before
+testing the exact zero-argument signature. An empty pack is eligible; a
+nonempty or unresolved pack is not. The rule applies equally to user-defined
+callable classes and capability-qualified library erasure.
+The compiler-owned inline polymorphic slot derives its concurrency facts from
+the erased interface's required capabilities, not its empty source shell.
+MIR verifies those facts against the concrete interface independently.
+
 Selection of the trusted private thread-spawn declaration extends the existing
 `Owned` callable boundary with
 `CallableOwnedTransportKind::ThreadTask`; it does not recognize
@@ -1523,6 +1537,48 @@ overload selection in C++, infer callable shape from a host type, nor repeat
 transfer analysis. A direct fresh class construction is accepted by the same
 owned-value rule as a fresh lambda; a named task still requires one explicit
 move.
+
+### Scoped-task type prerequisites
+
+`SemanticVisitor::scopedThreadTaskShapeFor` is an internal preparation query,
+not executable scoped-thread admission. It selects an exact safe `void()` task
+entry and enumerates every supported stored reference as a resolved field path
+with its exact reference access/type. It reuses structural capability analysis
+with a confined boundary: a shared reference requires ordinary referent sharing,
+and an exclusive reference requires ordinary referent transfer. Nominal nested
+carriers and concrete generic substitution use the existing stored-dependency
+path machinery. Ordinary transfer/share traits are unchanged. Owning erasure,
+shared owners and synchronization storage retain their existing owned contracts;
+the scoped query does not let those facilities hide borrowed dependencies.
+
+The query preserves thread-affinity and unaudited-cleanup denials. Even an unsafe
+positive assertion on the task cannot remove the separate requirements on its
+checked referents. Missing dependency paths reject the shape rather than losing
+the borrow. This result has no origin places, endpoint, or joining proof and
+cannot authorize a spawn alone. The identity-bound private `thread_scope`
+operation now resolves consumed concrete inputs into `ResolvedScopedThreadTask`
+records: each exact field path is paired with its checked origin place and
+access, and sibling accesses use ordinary place-overlap analysis. Read/read
+sharing and disjoint projections are admitted; overlapping mutable access,
+unconsumed tasks, affine referents and missing origins are rejected in semantics.
+The concurrent profile and target thread capability are required. The call is
+classified as a join failure-propagation boundary, not a recoverable conversion
+of worker failures into its integer creation status.
+
+This internal operation is not yet exposed through a public source wrapper.
+Concrete pack-element origin retention, full invocation-loan endpoints,
+verified MIR child accesses/join-all cleanup, and production adapters remain
+implementation work. HIR preparation alone is not executable acceptance.
+The public owned-thread boundary above is unchanged.
+
+Composed borrowed locals may reborrow exact reference-formal entry permissions
+without treating those permissions as competing loans. This applies to ordinary
+constructor/function borrow mappings, not just scoped work. Only the exact
+mapped reference entry is exempted when checking the new loan; unrelated local
+children remain conflicts, and the composed dependencies continue to prohibit
+parent mutation while the carrier is live. A primary origin from a mutable
+reference formal retains that exact entry as its parent; independent fields
+retain their own origins instead of being folded under that parent.
 
 ## Temporary Value Call Capabilities
 

@@ -19,7 +19,7 @@
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "270c138f347f77a7c991395e21316d5cc2846f8fe66d3c8a1d7b0c395b1266fa",
-    "stdlib/std/functional.gti": "502eca2d667f29c6643d9ba605056fd6ee307cb7891a47de9f9acc0c2935b50a",
+    "stdlib/std/functional.gti": "36655633f83576c320307577ddf51204ae4a2f6d8498b539b6176f5cf079d7ea",
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
     "stdlib/std/iterator.gti": "c08502a5c686ad0df6ee193e5222741dcce8276269259a03f184365763484d50",
@@ -45,7 +45,7 @@
     "stdlib/std/span.gti": "496e5ac58405e439e78cdcd1c69ce83f6d1c655722e23b17b4982bf0e2b7df7a",
     "stdlib/std/string.gti": "2c0a123dcb6723d44a7309b081a59b26fb70fea99f2465d1d90d1e00d20ceae4",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
-    "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
+    "stdlib/std/thread.gti": "8cbe5f5b4807a6e2480213c04f0ff09f692f72c55527b3b75198d92a8027a732",
     "stdlib/std/unordered_map.gti": "fd284db99a49ce10538568d589254921fbdda810860ffd4719efb4fc477b6fd6",
     "stdlib/std/unordered_set.gti": "af95482466d952b670a69fdecad5ab905935cc4c1ee082c19f37e97741e2e84c",
     "stdlib/std/utility.gti": "142fb40869c5b2f4d0a431035ae7af5128c99426e9adb2abb2f9fa9d4b3b382d",
@@ -1250,6 +1250,14 @@
       }
     },
     {
+      "id": "transfer-function-threads",
+      "mode": "run",
+      "source": "tests/fixtures/transfer_function_threads.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "unique-ptr",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_unique_ptr.gti",
@@ -2004,6 +2012,15 @@
       "case_ids": ["owning-function", "owning-function-borrows", "owning-function-items", "owning-function-schema", "owning-function-temporary-target", "owning-function-mutable", "owning-function-mutable-arguments", "owning-function-mutable-arguments-cleanup"],
       "required_instantiations": ["int(int) copyable captured lambda, explicit clone and setter transfer", "void() read-callable lambda", "int(int) move-only unique-owner capture", "mixed read-only reference/value arguments with noncopyable referents", "stored and returned namespace function items, capture, replacement, clone and callee evaluation order", "nested immutable command schema with vector children and an owned leaf handler", "int(int) mut stateful targets, independent clone state, replacement, reset and exactly-once destruction"],
       "evidence": ["tests/fixtures/owning_function.gti", "tests/fixtures/owning_function_borrows.gti", "tests/fixtures/owning_function_items.gti", "tests/fixtures/owning_function_schema.gti", "tests/fixtures/owning_function_mutable.gti", "tests/fixtures/owning_function_mutable_arguments.gti", "tests/fixtures/owning_function_policy_failure.gti", "tests/fixtures/inline_polymorphic_lifecycle.gti", "tests/owning_function_tests.cpp", "tests/owning_function_runtime_test.py", "tests/owning_function_policy_failure_test.py", "tests/inline_polymorphic_runtime_test.py", "stdlib/std/functional.gti"]
+    },
+    {
+      "id": "functional.transfer",
+      "source": "stdlib/std/functional.gti",
+      "status": "executable",
+      "operations": ["std::transfer_function::empty", "std::transfer_function::operator()", "std::transfer_function::replace", "std::transfer_function::reset", "std::transfer_function::transfer_function"],
+      "case_ids": ["transfer-function-threads"],
+      "required_instantiations": ["read, mutable and consuming int() invocation", "transfer-safe move-only captures", "heterogeneous jobs in a shared mutex-protected vector", "default, replacement, reset and empty state"],
+      "evidence": ["stdlib/std/functional.gti", "tests/fixtures/transfer_function_threads.gti", "tests/managed_thread_tests.cpp", "tests/shared_ownership_threads_test.py"]
     },
     {
       "id": "http.executable",
@@ -3041,9 +3058,9 @@
       "id": "thread.executable",
       "source": "stdlib/std/thread.gti",
       "status": "executable",
-      "operations": ["std::thread::join", "std::thread::joinable", "std::thread::start", "std::thread_result::join", "std::thread_result::joinable", "std::thread_result::start"],
+      "operations": ["std::parallel_invoke", "std::thread::join", "std::thread::joinable", "std::thread::start", "std::thread_result::join", "std::thread_result::joinable", "std::thread_result::start"],
       "case_ids": ["thread"],
-      "required_instantiations": ["noncapturing lambda", "owned move-capture lambda", "once-callable class", "typed named task", "typed closure", "owned result cleanup"],
+      "required_instantiations": ["noncapturing lambda", "owned move-capture lambda", "once-callable class", "typed named task", "typed closure", "owned result cleanup", "scoped disjoint field borrows"],
       "evidence": ["examples/066-managed-threads.gti", "stdlib/std/thread.gti", "tests/managed_thread_runtime_test.py", "tests/managed_thread_tests.cpp", "tests/runtime_thread_tests.cpp"]
     },
     {

@@ -1376,15 +1376,25 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
           }
         }
       }
+      const bool exactSpawn =
+          payload != nullptr && spawn != nullptr &&
+          (payload->adapter.scoped
+               ? spawn->intrinsic == IntrinsicKind::ThreadScope &&
+                     spawn->synchronization.kind ==
+                         SynchronizationOperationKind::ThreadScope &&
+                     payload->adapter.scopeArgument <
+                         spawn->scopedThreadTasks.size() &&
+                     spawn->scopedThreadTasks[payload->adapter.scopeArgument]
+                             .adapter == payload->adapter.id
+               : spawn->intrinsic == IntrinsicKind::ThreadSpawn &&
+                     spawn->synchronization.kind ==
+                         SynchronizationOperationKind::ThreadSpawn &&
+                     spawn->threadTaskAdapter == payload->adapter.id);
       if (payload == nullptr || adapter == nullptr ||
           *adapter != payload->adapter ||
           item.identity.owner != payload->adapter.id ||
           item.sourceBody != payload->adapter.sourceBody || spawn == nullptr ||
-          spawn->hirValue != payload->adapter.spawnValue ||
-          spawn->intrinsic != IntrinsicKind::ThreadSpawn ||
-          spawn->synchronization.kind !=
-              SynchronizationOperationKind::ThreadSpawn ||
-          spawn->threadTaskAdapter != payload->adapter.id ||
+          spawn->hirValue != payload->adapter.spawnValue || !exactSpawn ||
           payload->adapter.taskType == SemanticType::Unknown ||
           payload->adapter.invocation != CallableInvocationCapability::Once ||
           !payload->adapter.catchesWorkerFailure ||

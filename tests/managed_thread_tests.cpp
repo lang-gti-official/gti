@@ -813,6 +813,162 @@ lang::MirInstruction *findIntrinsic(lang::MirProgram &program,
   return found;
 }
 
+void testTransferQualifiedCallables() {
+  const auto packed = analyze("empty-pack-task.gti", R"(
+#include <std/thread>
+struct PackedTask<Args...> {
+  int operator()(Args... arguments) { return 42; }
+};
+int main() {
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(PackedTask<>());
+  if (!started) return 1;
+  auto result = worker.join();
+  return result && result.value() == 42 ? 0 : 2;
+}
+)");
+  if (!packed.canGenerateCode())
+    printDiagnostics(packed);
+  expect(packed.canGenerateCode(),
+         "a concrete empty parameter pack is an exact zero-argument task");
+  expectThreadRejection("nonempty-pack-task.gti", R"(
+#include <std/thread>
+struct PackedTask<Args...> {
+  int operator()(Args... arguments) { return 42; }
+};
+int main() {
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(PackedTask<int>());
+  return started ? 0 : 1;
+}
+)",
+                        "transfer-safe exact task");
+  for (const std::string suffix : {"", " mut", " &&"}) {
+    const auto frontend = analyze(
+        "transfer-function.gti",
+        "#include <std/functional>\n#include <std/thread>\n" + std::string(R"(
+struct Task { int operator()())") +
+            suffix + R"( { return 42; } };
+int main() {
+  std::transfer_function<int())" +
+            suffix + R"(> callback{Task()};
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(std::move(callback));
+  if (!started) return 1;
+  auto result = worker.join();
+  return result && result.value() == 42 ? 0 : 2;
+}
+)");
+    if (!frontend.canGenerateCode())
+      printDiagnostics(frontend);
+    expect(frontend.canGenerateCode(),
+           "transfer-qualified erased targets must enter owned workers");
+    bool sawInlineSlot = false;
+    for (const auto &instance : frontend.mir.classInstances()) {
+      if (instance.compilerCapability !=
+          lang::CompilerCapabilityTypeKind::PolymorphicStorage)
+        continue;
+      sawInlineSlot = true;
+      expect(instance.traits.transferCapable && !instance.traits.shareCapable,
+             "inline erasure retains transfer without inventing sharing");
+      for (bool transfer : {true, false}) {
+        auto forged = frontend.mir;
+        auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+            forged.classInstances());
+        auto &traits = classes[instance.id - 1].traits;
+        if (transfer)
+          traits.transferCapable = !traits.transferCapable;
+        else
+          traits.shareCapable = !traits.shareCapable;
+        expect(!lang::verifyMirProgram(forged).valid(),
+               "MIR rejects a forged erased-slot concurrency capability");
+      }
+    }
+    expect(suffix == " &&" || sawInlineSlot,
+           "repeatable transfer wrappers should exercise inline storage");
+  }
+  for (const std::string suffix : {"", " mut", " &&"}) {
+    const auto rejected = analyze("affine-erased-task.gti",
+                                  "#include <std/functional>\n[[no_transfer]] "
+                                  "struct Task { int operator()()" +
+                                      suffix + R"( { return 42; } };
+int main() {
+  std::transfer_function<int())" + suffix +
+                                      R"(> callback{Task()};
+  return 0;
+}
+)");
+    expect(!rejected.canGenerateCode() && !hasCode(rejected, "GTI-B0001") &&
+               !hasCode(rejected, "GTI-P0001"),
+           "erasure must reject a non-transferable target at construction");
+    const auto replacement =
+        analyze("affine-erased-replacement.gti",
+                "#include <std/functional>\n[[no_transfer]] struct Task { int "
+                "operator()()" +
+                    suffix + R"( { return 42; } };
+int main() {
+  mut std::transfer_function<int())" +
+                    suffix + R"(> callback{};
+  callback.replace(Task());
+  return 0;
+}
+)");
+    expect(!replacement.canGenerateCode() &&
+               hasCode(replacement, "GTI-S2029") &&
+               !hasCode(replacement, "GTI-B0001"),
+           "replacement cannot weaken an erased transfer contract");
+    const std::string firstCall =
+        suffix == " &&" ? "std::move(first)()" : "first()";
+    const std::string secondCall =
+        suffix == " &&" ? "std::move(second)()" : "second()";
+    const auto local =
+        analyze("local-erased-affine-target.gti",
+                "#include <std/functional>\n[[no_transfer]] struct Task { int "
+                "operator()()" +
+                    suffix + R"( { return 42; } };
+int main() {
+  mut std::function<int())" +
+                    suffix + R"(> first{Task()};
+  mut std::move_only_function<int())" +
+                    suffix + R"(> second{Task()};
+  first.replace(Task());
+  second.replace(Task());
+  return )" + firstCall +
+                    " + " + secondCall + " - 84;\n}\n");
+    if (!local.canGenerateCode())
+      printDiagnostics(local);
+    expect(local.canGenerateCode(),
+           "ordinary read, mutable and consuming erased wrappers retain "
+           "non-transferable local targets and replacement");
+  }
+  // This is an ordinary interface contract, not a stdlib type-name rule.
+  const auto unrelated = analyze("unrelated-transfer-interface.gti", R"(
+#include <std/memory>
+#include <std/thread>
+[[transfer]] interface Job { int perform(); };
+class Work : public Job { public: int perform() override { return 42; } };
+class Runner {
+  std::unique_ptr<Job> job;
+public:
+  Runner(std::unique_ptr<Job> job) : job(std::move(job)) {}
+  int operator()() { return this.job->perform(); }
+};
+int main() {
+  auto concrete = std::make_unique<Work>();
+  auto erased = std::upcast_unique<Job, Work>(std::move(concrete));
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(Runner(std::move(erased)));
+  if (!started) return 1;
+  auto result = worker.join();
+  return result && result.value() == 42 ? 0 : 2;
+}
+)");
+  if (!unrelated.canGenerateCode())
+    printDiagnostics(unrelated);
+  expect(unrelated.canGenerateCode(),
+         "unrelated interface erasure must retain its transfer requirement");
+}
+
 void testVerifierMutations() {
   const lang::FrontendResult frontend =
       analyze("managed-thread-verifier.gti", validProgram());
@@ -973,6 +1129,7 @@ int main() {
   testTypedResultPipeline();
   testClassTypedResultPipeline();
   testSemanticRejections();
+  testTransferQualifiedCallables();
   testVerifierMutations();
   return failures == 0 ? 0 : 1;
 }

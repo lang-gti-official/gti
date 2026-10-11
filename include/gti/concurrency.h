@@ -62,6 +62,9 @@ enum class SynchronizationOperationKind : std::uint8_t {
   // schedules existing waiters; shared-data ordering is through their mutex.
   ConditionWait,
   ConditionNotify,
+  // One indivisible structured operation: all starts precede the join-all
+  // completion boundary, including its defined-failure continuation.
+  ThreadScope,
   Count,
 };
 
@@ -144,6 +147,7 @@ validSynchronizationOperation(const SynchronizationOperation &operation) {
   case SynchronizationOperationKind::MutexUnlock:
   case SynchronizationOperationKind::ConditionWait:
   case SynchronizationOperationKind::ConditionNotify:
+  case SynchronizationOperationKind::ThreadScope:
     return !operation.order && !operation.failureOrder;
   case SynchronizationOperationKind::AtomicLoad:
     return operation.order && validAtomicLoadOrder(*operation.order) &&

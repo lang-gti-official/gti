@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.404.1 — Replacing `expected` bindings with call results
+## 0.405.1 — Replacing `expected` bindings with call results
 
 - Assigning a fresh `expected<T, E>` call result to an existing binding, as in
   `r = make(7);`, now builds when `T` is a struct or class without cleanup and
@@ -25,6 +25,33 @@ for what minor and patch releases mean.
   or `error()`, or is discarded. Each replaced or temporary value is destroyed
   exactly once. These programs previously stopped with `GTI-B0001`; only
   initializing a new binding from such a call built.
+
+## 0.405.0 — Scoped parallel borrowing and cross-thread ownership
+
+- `std::parallel_invoke` runs consumed tasks with checked shared or exclusive
+  borrows and joins all started workers before return or failure propagation.
+  Disjoint fields, nested borrowed carriers and generic task packs retain their
+  ordinary ownership proofs. This creates native threads, not a worker pool.
+- Mutex transfer and sharing follow the protected payload's transfer
+  capability. This enables owned shared mutexes while preserving thread-affine
+  payload restrictions and thread-local lock guards.
+- `std::transfer_function` retains an explicit transfer requirement through
+  read-only, mutable, and consuming owning callable erasure. Ordinary local
+  function wrappers do not acquire permission to cross threads implicitly.
+- Unambiguous free-function names can fill generic parameter-pack elements,
+  including later elements after ordinary values; deduction retains each
+  function's exact identity rather than indexing an unexpanded formal list.
+
+## 0.404.1 — Field reads of `expected` payloads inside `&&`, `||` and conditionals
+
+- A field of an `expected` payload whose class has a destructor or owns
+  resources can now be read inside the right operand of `&&` or `||`, or
+  inside a conditional arm, as in
+  `ok || make_named(true).value().text.size() == 7`. `error()` reads an
+  owning error the same way. The `expected` result and its payload exist
+  only when their operand runs and are destroyed exactly once, including
+  when the extraction finds the wrong alternative or a later operand fails.
+  Such programs used to report GTI-B0001.
 
 ## 0.404.0 — Mutable constexpr value builders
 
