@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.398.7 — Returning a construction built from an `expected`
+
+- A construction from a by-value `expected<T, E>` argument can now be returned
+  directly or used as a member initializer, as in
+  `return Holder(make_item());` or `owner() : held(Holder(make_item())) {}`,
+  when `T` is a class that needs no cleanup. Such programs used to fail
+  native compilation, or report GTI-B0001, depending on how the `expected`
+  was produced (#6). It also works when `T` has no default constructor, in
+  both the value and the error state, and for a named local copied or moved
+  in. A returned construction whose payload owns resources, such as a
+  `std::string` field, now builds too.
+- A remaining unsupported use of such an `expected`, such as testing a call's
+  result directly in `if (make_item())`, now reports GTI-B0001 instead of
+  emitting C++ that the native compiler rejects. Assigning such a
+  construction to an existing variable still reports GTI-B0001, and so does a
+  member initializer whose `expected` payload owns resources.
+
 ## 0.398.4 — Raw-pointer audit tracks class static fields
 
 - `--raw-pointer-audit` now follows raw addresses stored in class static

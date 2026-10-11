@@ -20598,6 +20598,27 @@ transformedFailureCallee(const MirProgram &program,
          valueOwner->copyAssignment == SpecialMemberStatus::Deleted;
 }
 
+[[nodiscard]] const MirInstruction *
+returnConstructDefinition(const MirBody &body, MirValueId value);
+
+// A construction consuming a by-value argument publishes its own result at an
+// exact MIR destination: MIR's staged or published class slot, a constructor
+// field's result slot, or the transformed or plain result of the Return that
+// consumes it. Each form spells the construction once, at that destination.
+[[nodiscard]] bool
+constructionPublishesResult(const MirProgram &program, const MirBody &body,
+                            const MirInstruction &construct) {
+  return construct.result &&
+         (stagedClassResultForSource(body, *construct.result).producer ==
+              &construct ||
+          classValuePublicationSlot(program, body, *construct.result) !=
+              nullptr ||
+          constructorFieldResultSlot(program, body, *construct.result)
+                  .producer == &construct ||
+          (returnConstructDefinition(body, *construct.result) == &construct &&
+           body.returnType == construct.info.type));
+}
+
 // A successfully published owning result can supply one exact by-value
 // parameter without a separate CallInput shell. Both classes and Expected
 // carriers use the same storage/transfer proof; no representation may defer
@@ -20662,10 +20683,7 @@ transformedFailureCallee(const MirProgram &program,
         target->parameterTypes != consumer->parameterTypes ||
         owner->type != consumer->info.type ||
         !failureConstructorBoundaryEligible(program, *target) ||
-        (stagedClassResultForSource(body, *consumer->result).producer !=
-             consumer &&
-         classValuePublicationSlot(program, body, *consumer->result) ==
-             nullptr))
+        !constructionPublishesResult(program, body, *consumer))
       return nullptr;
   } else if (consumer->kind == MirInstructionKind::Call) {
     const auto *target =
@@ -28677,11 +28695,12 @@ cleanupFreeExpectedClassAlternatives(const MirProgram &program,
 // The same argument may instead feed one by-value parameter of an exact
 // ordinary source constructor. As for an owning result consumed at a
 // construction boundary, the constructor's parameter identity and owner must
-// match, and the construction must publish its own result into MIR's staged
-// or published class slot. A raising constructor must cross the failure
-// constructor boundary; a non-raising one carries no defined failure. A class
-// value reaches a constructor through MIR's prepared-parameter place instead,
-// so only the Expected wrapper, which MIR gives no place, uses this consumer.
+// match, and the construction must publish its own result at an exact MIR
+// destination (constructionPublishesResult). A raising constructor must cross
+// the failure constructor boundary; a non-raising one carries no defined
+// failure. A class value reaches a constructor through MIR's prepared-parameter
+// place instead, so only the Expected wrapper, which MIR gives no place, uses
+// this consumer.
 [[nodiscard]] const MirInstruction *classSsaConstructorArgumentConsumer(
     const MirProgram &program, const MirBody &body, const MirValue &value,
     const MirInstruction &producer, const MirValueUse &use) {
@@ -28712,10 +28731,7 @@ cleanupFreeExpectedClassAlternatives(const MirProgram &program,
          failureConstructorBoundaryEligible(program, *target)) ||
         (consumer->definedFailure.empty() &&
          !target->mayRaiseDefinedFailure)) ||
-      (stagedClassResultForSource(body, *consumer->result).producer !=
-           consumer &&
-       classValuePublicationSlot(program, body, *consumer->result) ==
-           nullptr) ||
+      !constructionPublishesResult(program, body, *consumer) ||
       !classSsaArgumentReachesConsumer(body, value, producer, *consumer, use))
     return nullptr;
   return consumer;
@@ -32104,6 +32120,23 @@ public:
           throw std::logic_error(
               "verified MIR fixed-array value has no exact uninitialized "
               "publication; value-initialization would invent element "
+              "default construction");
+      }
+      // Value-initializing an Expected local default-constructs its success
+      // alternative. When MIR gives that class no default constructor, the
+      // construction does not exist in the source program either.
+      if (value.info.type.kind == SemanticType::Expected &&
+          value.info.type.arguments.size() == 2) {
+        const SemanticType &success = value.info.type.arguments.front();
+        const MirClassInstance *instance =
+            success.kind == SemanticType::Class
+                ? uniqueClassInstanceForType(program, success)
+                : nullptr;
+        if (instance != nullptr &&
+            instance->defaultConstructor == SpecialMemberStatus::Deleted)
+          throw std::logic_error(
+              "verified MIR Expected value has no exact uninitialized "
+              "publication; value-initialization would invent success "
               "default construction");
       }
       writeIndent();
@@ -43283,6 +43316,12 @@ private:
                ++index) {
             if (index != 0) {
               output << ", ";
+            }
+            // A staged Expected argument moves its wrapper; the slot retires
+            // the moved-from representation when the return leaves scope.
+            if (emitConstructionArgumentSlot(facts, *construct,
+                                             construct->operands[index])) {
+              continue;
             }
             // A borrow-staged argument never materialized a local; the
             // constructor call spells its place directly.
