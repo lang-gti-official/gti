@@ -32,6 +32,8 @@ struct FrontendWorkMetrics {
   std::size_t semanticApplicationBodyMicroseconds = 0;
   std::size_t semanticFinalizationMicroseconds = 0;
   std::size_t hirMicroseconds = 0;
+  // Function instances HIR lowered, including any beyond the reachable prefix.
+  std::size_t hirFunctionInstances = 0;
   std::size_t semanticBorrowSummaryCandidateInspections = 0;
   std::size_t semanticBorrowSummaryFunctions = 0;
   std::size_t constexprMirExecutions = 0;
@@ -57,6 +59,7 @@ struct FrontendWorkMetrics {
     semanticApplicationBodyMicroseconds = 0;
     semanticFinalizationMicroseconds = 0;
     hirMicroseconds = 0;
+    hirFunctionInstances = 0;
     semanticBorrowSummaryCandidateInspections = 0;
     semanticBorrowSummaryFunctions = 0;
     constexprMirExecutions = 0;
