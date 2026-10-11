@@ -528,11 +528,18 @@ A mutable local loan may be reborrowed into a distinct mutable or read-only
 child loan. The child may itself be reborrowed, and a read-only child may gain
 ordinary read-only aliases of its own loan identity. A read-only loan cannot be
 upgraded into a mutable child. While any child remains active, its mutable
-parent remains live but suspended: reading, writing, moving, or borrowing
-through an overlapping part of the parent or owner place is rejected. Known-
+parent remains live but suspended: exclusive access, moving, or replacing
+an overlapping part of the parent or owner place is rejected. An ordinary
+reference without a stored-carrier dependency can still provide read-only
+access and further shared children while every overlapping child access is
+read-only. This revises the earlier blanket suspended-parent rejection;
+an exclusive child still rejects overlapping reads. Reading a borrowed
+carrier's physical shell does not itself authorize operations on its hidden
+exclusive dependencies. Known-
 disjoint named-field projections remain usable through that parent, and
-multiple children may coexist only when their stable places are known to be
-disjoint. Ending a child reactivates its parent only when no other active child
+multiple children may coexist when their accesses are shared or their stable
+places are known to be disjoint. Ending a child reactivates exclusive access
+through its parent only when no other active child
 remains, so the whole parent may be used again after the final child's proven
 endpoint. Nested children end from the inside out.
 

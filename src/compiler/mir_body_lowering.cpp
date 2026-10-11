@@ -6564,6 +6564,28 @@ private:
                                         value.constructorTarget)
                                   : FailurePropagationKind::None;
     }
+    if (value.intrinsic == IntrinsicKind::ThreadScope) {
+      if (value.scopedThreadTasks.size() != call.operands.size() ||
+          expandsPack || arguments.size() != call.operands.size()) {
+        // Concrete borrowed pack entries need their own retained input loans.
+        // Do not erase that prerequisite by treating the pack as owned state.
+        valid = false;
+      } else {
+        for (std::size_t index = 0; index < arguments.size(); ++index) {
+          const auto *adapter =
+              program.findThreadTaskAdapter(value.scopedThreadTasks[index]);
+          const auto loan =
+              adapter != nullptr && !adapter->scopeDependencies.empty()
+                  ? loanForValue(arguments[index])
+                  : MirLoanId{0};
+          if (adapter == nullptr || !adapter->scoped ||
+              (!adapter->scopeDependencies.empty() && loan == 0))
+            valid = false;
+          call.scopedThreadTasks.push_back(
+              {.adapter = value.scopedThreadTasks[index], .dependency = loan});
+        }
+      }
+    }
     if (!value.callPlan && !expandsPack) {
       for (std::size_t index = 0; index < arguments.size(); ++index) {
         const SemanticType parameter =

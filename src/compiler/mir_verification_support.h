@@ -67,7 +67,8 @@ terminatorSuccessors(const MirTerminator &terminator);
                                   const MirOperand &operand,
                                   MirInstructionId expectedInstruction,
                                   std::size_t expectedOperandIndex);
-[[nodiscard]] bool freshOwnedValueInto(const MirBody &body,
+[[nodiscard]] bool freshOwnedValueInto(const MirProgram &program,
+                                       const MirBody &body,
                                        const MirOperand &operand,
                                        MirInstructionId expectedInstruction,
                                        std::size_t expectedOperandIndex);

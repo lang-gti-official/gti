@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/semantic_analyzer.h"
 
@@ -158,6 +159,55 @@ void checkComposedAuthorities(const lang::FrontendResult &result) {
   expect(checked, "ordinary carrier exercises independent reference entries");
 }
 
+void checkScopeMir(const lang::FrontendResult &result) {
+  if (!result.mirValid)
+    return;
+  bool found = false;
+  for (std::size_t bodyIndex = 0;
+       bodyIndex < result.mir.functionInstances().size(); ++bodyIndex) {
+    const auto &body = result.mir.functionInstances()[bodyIndex].body;
+    for (std::size_t blockIndex = 0; blockIndex < body.blocks.size();
+         ++blockIndex) {
+      const auto &block = body.blocks[blockIndex];
+      for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+        const auto &scope = block.instructions[index];
+        if (scope.intrinsic != lang::IntrinsicKind::ThreadScope)
+          continue;
+        found = true;
+        expect(scope.definedFailure.propagation ==
+                   lang::FailurePropagationKind::TaskJoin,
+               "scope retains the worker failure propagation boundary");
+        const auto mutate = [&](auto change) {
+          auto malformed = result.mir;
+          auto &functions =
+              const_cast<std::vector<lang::MirFunctionInstance> &>(
+                  malformed.functionInstances());
+          change(
+              functions[bodyIndex].body.blocks[blockIndex].instructions[index]);
+          return lang::verifyMirProgram(malformed).valid();
+        };
+        expect(!mutate([](auto &call) {
+          call.definedFailure.propagation = lang::FailurePropagationKind::None;
+        }),
+               "MIR rejects a scope without join failure containment");
+        if (!scope.scopedThreadTasks.empty()) {
+          expect(!mutate([](auto &call) { call.scopedThreadTasks.pop_back(); }),
+                 "MIR rejects a missing scoped task record");
+          expect(!mutate(
+                     [](auto &call) { call.scopedThreadTasks[0].adapter = 0; }),
+                 "MIR rejects a scoped task without its exact adapter");
+          if (scope.scopedThreadTasks[0].dependency != 0)
+            expect(!mutate([](auto &call) {
+              call.scopedThreadTasks[0].dependency = 0;
+            }),
+                   "MIR rejects erased borrowed task origins");
+        }
+      }
+    }
+  }
+  expect(found, "fixture contains its executable MIR parallel scope");
+}
+
 void checkInvocations() {
   for (const auto &body :
        {"mut auto task = Pair(first, second); task(); return 0;",
@@ -172,6 +222,32 @@ void checkInvocations() {
         "ordinary composed entry-reference carriers retain verified MIR loans");
     checkComposedAuthorities(result);
   }
+  const auto sharedLocals =
+      invocation("auto left = Read(first); auto right = Read(first); "
+                 "left(); right(); return 0;",
+                 true, lang::FrontendPhase::Mir, false);
+  for (const auto &diagnostic : sharedLocals.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(sharedLocals.canGenerateCode(),
+         "ordinary read-only carriers may coexist through a mutable input");
+  const auto sharedRead = invocation(
+      "auto child = Read(first); int copy = first; child(); return copy;", true,
+      lang::FrontendPhase::Mir, false);
+  for (const auto &diagnostic : sharedRead.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(
+      sharedRead.canGenerateCode(),
+      "shared children suspend exclusive access, not ordinary reference reads");
+  const auto exclusiveRead = invocation(
+      "mut auto child = Write(first); int copy = first; child(); return copy;",
+      true, lang::FrontendPhase::Mir, false);
+  expect(!exclusiveRead.semanticValid,
+         "an exclusive child continues to prohibit overlapping parent reads");
+  const auto sharedMutation =
+      invocation("auto left = Read(first); first = 3; left(); return 0;", true,
+                 lang::FrontendPhase::Mir, false);
+  expect(!sharedMutation.semanticValid,
+         "shared child carriers do not authorize parent mutation");
   for (const auto &body :
        {"return gti_internal::thread_scope(Write(first), Write(second));",
         "return gti_internal::thread_scope(Read(first), Read(first));",
@@ -183,18 +259,34 @@ void checkInvocations() {
         "gti_internal::thread_scope(std::move(task));",
         "return gti_internal::thread_scope(Once());",
         "return gti_internal::thread_scope();"}) {
-    const auto result = invocation(body);
+    const auto result = invocation(body, true, lang::FrontendPhase::Mir);
     if (!result.diagnostics.empty())
       std::cerr << "Invocation: " << body << '\n';
     for (const auto &diagnostic : result.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << " at "
                 << diagnostic.primary.start << '\n';
+    if (!result.mirValid)
+      for (const auto &function : result.mir.functionInstances())
+        if (std::any_of(function.body.blocks.begin(),
+                        function.body.blocks.end(), [](const auto &block) {
+                          return std::any_of(
+                              block.instructions.begin(),
+                              block.instructions.end(),
+                              [](const auto &instruction) {
+                                return instruction.intrinsic ==
+                                       lang::IntrinsicKind::ThreadScope;
+                              });
+                        }))
+          std::cerr << lang::MirPrinter{}.print(function.body);
     expect(result.sourceValid && result.syntaxValid && result.semanticValid,
            "scoped invocation resolves actual consumed task origins");
     expect(
         result.hirValid &&
             lang::verifyHirProgramPlans(result.semantics, result.hir).valid(),
         "scoped invocation preserves an exact verified HIR task group");
+    expect(result.mirValid && lang::verifyMirProgram(result.mir).valid(),
+           "scoped invocation preserves verified MIR task loans and join-all");
+    checkScopeMir(result);
     const lang::ResolvedCallInfo *selected = nullptr;
     for (const auto &declaration : result.program.declarations()) {
       const auto *space =

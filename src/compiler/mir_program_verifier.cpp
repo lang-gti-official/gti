@@ -818,6 +818,60 @@ conditionalCapabilities(const MirProgram &program, const SemanticType &type,
                                  .shareCapable = traits->shareCapable};
 }
 
+// Verify scoped transport structurally, without changing ordinary ownership
+// transfer. Borrowed fields get permission only for the joined invocation;
+// their referents retain the ordinary transfer/share requirements.
+[[nodiscard]] bool scopedTransferAllowed(const MirProgram &program,
+                                         const SemanticType &type,
+                                         std::vector<SemanticType> &visiting) {
+  if (type.kind == SemanticType::Reference) {
+    if (type.arguments.size() != 1)
+      return false;
+    const auto referent = conditionalCapabilities(program, type.arguments[0]);
+    return referent && (type.referenceAccess == AccessMode::Mutable
+                            ? referent->transferCapable
+                            : referent->shareCapable);
+  }
+  const auto traits = concretePackElementTraits(program, type);
+  if (!traits)
+    return false;
+  if (!traits->containsBorrowedState)
+    return traits->transferCapable;
+  if (type.kind != SemanticType::Class ||
+      std::find(visiting.begin(), visiting.end(), type) != visiting.end())
+    return false;
+  const auto found = std::find_if(
+      program.classInstances().begin(), program.classInstances().end(),
+      [&](const auto &candidate) { return candidate.type == type; });
+  if (found == program.classInstances().end() ||
+      found->transferPolicy == ConcurrencyCapabilityPolicy::Denied)
+    return false;
+  visiting.push_back(type);
+  bool permitted = found->destructorStatus != SpecialMemberStatus::Declared;
+  for (const auto &base : found->structuralBases)
+    if (!base.interface)
+      permitted &= scopedTransferAllowed(program, base.type, visiting);
+  for (const auto &field : found->declaredFields)
+    permitted &= scopedTransferAllowed(program, field.type, visiting);
+  visiting.pop_back();
+  if (found->transferPolicy == ConcurrencyCapabilityPolicy::UnsafeAsserted)
+    permitted = true;
+  if (found->transferPolicy == ConcurrencyCapabilityPolicy::UnsafeConditional) {
+    const auto condition =
+        found->transferCondition
+            ? conditionalCapabilities(program, *found->transferCondition)
+            : std::nullopt;
+    permitted = condition && condition->transferCapable;
+  }
+  // Unsafe ownership assertions never erase the checked referent contract.
+  const auto paths = findStoredCarrierReferences(program, type);
+  if (paths.empty())
+    return false;
+  for (const auto &path : paths)
+    permitted &= scopedTransferAllowed(program, path.reference, visiting);
+  return permitted;
+}
+
 [[nodiscard]] bool storageOwnershipTypeValid(const MirProgram &program,
                                              const SemanticType &type) {
   if (type.kind == SemanticType::Class)
@@ -1941,7 +1995,8 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                  !receiverIsConsumed(body, instruction.operands[operandIndex],
                                      MirValueUseKind::InstructionOperand,
                                      instruction.id, operandIndex) &&
-                 !freshOwnedValueInto(body, instruction.operands[operandIndex],
+                 !freshOwnedValueInto(program, body,
+                                      instruction.operands[operandIndex],
                                       instruction.id, operandIndex) &&
                  !ownedPreparedCopy)) {
               return verificationFailure(
@@ -2201,6 +2256,64 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
   };
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.intrinsic == IntrinsicKind::ThreadScope) {
+        if (instruction.scopedThreadTasks.size() != instruction.operands.size())
+          return verificationFailure(body, owner,
+                                     "parallel scope lost a task operand",
+                                     block.id, instruction.id);
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          const auto &operand = instruction.operands[index];
+          const auto &task = instruction.scopedThreadTasks[index];
+          const auto traits = concretePackElementTraits(program, operand.type);
+          std::vector<SemanticType> visiting;
+          if (!traits || !traits->movable ||
+              !scopedTransferAllowed(program, operand.type, visiting) ||
+              (!movedValueInto(body, operand, instruction.id, index) &&
+               !receiverIsConsumed(body, operand,
+                                   MirValueUseKind::InstructionOperand,
+                                   instruction.id, index) &&
+               !freshOwnedValueInto(program, body, operand, instruction.id,
+                                    index)))
+            return verificationFailure(
+                body, owner,
+                "parallel task lost its consumed transport contract", block.id,
+                instruction.id);
+          const auto paths = findStoredCarrierReferences(program, operand.type);
+          const auto *loan = body.findLoan(task.dependency);
+          if (!traits->containsBorrowedState) {
+            if (task.dependency != 0 || !paths.empty())
+              return verificationFailure(
+                  body, owner, "owned parallel task has a spurious loan",
+                  block.id, instruction.id);
+            continue;
+          }
+          if (loan == nullptr || paths.empty())
+            return verificationFailure(body, owner,
+                                       "parallel task lost its stored origins",
+                                       block.id, instruction.id);
+          auto actual = concreteDependencies(*loan, true);
+          const auto expected =
+              dependencySources(dependencySources, operand, 0, true);
+          if (actual != expected || actual.size() != paths.size())
+            return verificationFailure(
+                body, owner,
+                "parallel task loan does not match its operand origins",
+                block.id, instruction.id);
+          for (std::size_t field = 0; field < paths.size(); ++field) {
+            const bool compact =
+                actual.size() == 1 && actual[field].designatedFields.empty();
+            if (actual[field].source == 0 ||
+                (!compact &&
+                 actual[field].designatedFields != paths[field].fields) ||
+                actual[field].access != paths[field].reference.referenceAccess)
+              return verificationFailure(
+                  body, owner,
+                  "parallel task lost a field origin or access mode", block.id,
+                  instruction.id);
+          }
+        }
+      }
       if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.callInputRole == MirCallInputRole::Argument &&
           instruction.operands.size() == 1 &&
@@ -10753,6 +10866,8 @@ verifyMirProgramContracts(const MirProgram &program) {
             (instruction.synchronization.kind ==
                  SynchronizationOperationKind::ThreadSpawn ||
              instruction.synchronization.kind ==
+                 SynchronizationOperationKind::ThreadScope ||
+             instruction.synchronization.kind ==
                  SynchronizationOperationKind::ThreadJoin ||
              instruction.synchronization.kind ==
                  SynchronizationOperationKind::MutexLock ||
@@ -10913,6 +11028,54 @@ verifyMirProgramContracts(const MirProgram &program) {
                    "shared owner intrinsic lost its exact capability, "
                    "ownership transfer, read-only loan, or failure contract"});
         }
+        if (instruction.intrinsic == IntrinsicKind::ThreadScope) {
+          bool exact =
+              instruction.kind == MirInstructionKind::Call &&
+              instruction.result && !instruction.receiver &&
+              !instruction.threadTaskAdapter &&
+              instruction.info.type == SemanticType::Int32 &&
+              instruction.parameterTypes.size() ==
+                  instruction.operands.size() &&
+              instruction.scopedThreadTasks.size() ==
+                  instruction.operands.size() &&
+              instruction.synchronization.kind ==
+                  SynchronizationOperationKind::ThreadScope &&
+              validSynchronizationOperation(instruction.synchronization) &&
+              instruction.definedFailure.propagation ==
+                  FailurePropagationKind::TaskJoin &&
+              program.executionProfile() == ExecutionProfile::Concurrent;
+          for (std::size_t index = 0;
+               index < instruction.scopedThreadTasks.size(); ++index) {
+            const auto *adapter = program.findThreadTaskAdapter(
+                instruction.scopedThreadTasks[index].adapter);
+            exact = exact && adapter != nullptr && adapter->scoped &&
+                    adapter->scopeArgument == index &&
+                    adapter->spawnValue == instruction.hirValue &&
+                    adapter->spawnInstruction == instruction.id &&
+                    adapter->sourceBody.kind == body.kind &&
+                    adapter->sourceBody.owner == owner &&
+                    index < instruction.operands.size() &&
+                    adapter->taskType == instruction.operands[index].type &&
+                    index < instruction.parameterTypes.size() &&
+                    adapter->taskType == instruction.parameterTypes[index];
+          }
+          if (!exact)
+            result.errors.push_back(
+                {.bodyKind = body.kind,
+                 .owner = owner,
+                 .block = block.id,
+                 .instruction = instruction.id,
+                 .message =
+                     "parallel scope lost its exact join-all task group"});
+        } else if (!instruction.scopedThreadTasks.empty()) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message =
+                   "non-scope instruction carries parallel task records"});
+        }
         if (instruction.intrinsic == IntrinsicKind::ThreadSpawn &&
             !instruction.threadTaskAdapter) {
           result.errors.push_back(
@@ -10968,7 +11131,7 @@ verifyMirProgramContracts(const MirProgram &program) {
         if (instruction.threadTaskAdapter) {
           const MirThreadTaskAdapter *adapter =
               program.findThreadTaskAdapter(*instruction.threadTaskAdapter);
-          if (adapter == nullptr ||
+          if (adapter == nullptr || adapter->scoped ||
               instruction.intrinsic != IntrinsicKind::ThreadSpawn ||
               instruction.synchronization.kind !=
                   SynchronizationOperationKind::ThreadSpawn ||
@@ -11023,6 +11186,9 @@ verifyMirProgramContracts(const MirProgram &program) {
             (instruction.synchronization.kind ==
                  SynchronizationOperationKind::ThreadSpawn &&
              instruction.intrinsic == IntrinsicKind::ThreadSpawn) ||
+            (instruction.synchronization.kind ==
+                 SynchronizationOperationKind::ThreadScope &&
+             instruction.intrinsic == IntrinsicKind::ThreadScope) ||
             (instruction.synchronization.kind ==
                  SynchronizationOperationKind::ThreadJoin &&
              (instruction.intrinsic == IntrinsicKind::ThreadJoin ||
@@ -11132,9 +11298,11 @@ verifyMirProgramContracts(const MirProgram &program) {
     const bool functionEntry = adapter.functionTarget.has_value();
     const bool lambdaEntry = adapter.lambdaTarget.has_value();
     SemanticType spawnResult = SemanticType::Unknown;
-    if (spawn != nullptr && spawn->operands.size() == 2 &&
-        spawn->operands.front().type.kind == SemanticType::Reference &&
-        spawn->operands.front().type.arguments.size() == 1) {
+    if (adapter.scoped && spawn != nullptr) {
+      spawnResult = SemanticType::Void;
+    } else if (spawn != nullptr && spawn->operands.size() == 2 &&
+               spawn->operands.front().type.kind == SemanticType::Reference &&
+               spawn->operands.front().type.arguments.size() == 1) {
       const SemanticType &handleType =
           spawn->operands.front().type.arguments.front();
       if (handleType.kind == SemanticType::Class &&
@@ -11180,6 +11348,20 @@ verifyMirProgramContracts(const MirProgram &program) {
           target->parameterTypes.empty() &&
           adapter.targetInvocation == CallableInvocationCapability::Read;
     }
+    const bool exactSpawn =
+        spawn != nullptr &&
+        (adapter.scoped
+             ? spawn->intrinsic == IntrinsicKind::ThreadScope &&
+                   spawn->synchronization.kind ==
+                       SynchronizationOperationKind::ThreadScope &&
+                   adapter.scopeArgument < spawn->scopedThreadTasks.size() &&
+                   spawn->scopedThreadTasks[adapter.scopeArgument].adapter ==
+                       adapter.id
+             : spawn->intrinsic == IntrinsicKind::ThreadSpawn &&
+                   spawn->threadTaskAdapter == adapter.id &&
+                   spawn->synchronization.kind ==
+                       SynchronizationOperationKind::ThreadSpawn &&
+                   adapter.scopeArgument == 0);
     if (adapter.id != index + 1 || adapter.taskType == SemanticType::Unknown ||
         adapter.resultType == SemanticType::Unknown ||
         adapter.resultType != spawnResult || adapter.spawnValue == 0 ||
@@ -11187,11 +11369,7 @@ verifyMirProgramContracts(const MirProgram &program) {
         adapter.invocation != CallableInvocationCapability::Once ||
         !adapter.catchesWorkerFailure || !adapter.catchesNativeExceptions ||
         !exactEntry || body == nullptr || spawn == nullptr ||
-        spawn->hirValue != adapter.spawnValue ||
-        spawn->intrinsic != IntrinsicKind::ThreadSpawn ||
-        spawn->threadTaskAdapter != adapter.id ||
-        spawn->synchronization.kind !=
-            SynchronizationOperationKind::ThreadSpawn ||
+        spawn->hirValue != adapter.spawnValue || !exactSpawn ||
         program.executionProfile() != ExecutionProfile::Concurrent) {
       result.errors.push_back(
           {.bodyKind = adapter.sourceBody.kind,
