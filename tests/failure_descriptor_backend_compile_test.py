@@ -135,7 +135,7 @@ def main() -> int:
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(sys.argv[2]).resolve()
-    cxx = pathlib.Path(sys.argv[3]).resolve()
+    cxx = pathlib.Path(sys.argv[3]).absolute()
     source_root = pathlib.Path(sys.argv[4]).resolve()
     runtime_include = source_root / "runtime" / "include"
 

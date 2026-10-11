@@ -120,6 +120,13 @@ class Tool:
     resolved: Path
     version_command: tuple[str, ...]
     version_output: str
+    invocation: Path | None = None
+
+    @property
+    def command_path(self) -> Path:
+        # A symlink's basename can select the C++ rather than C link driver.
+        # Keep that invocation separate from canonical file/hash identity.
+        return self.invocation if self.invocation is not None else self.resolved
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -178,10 +185,11 @@ def resolved_tool(requested: str, version_arguments: tuple[str, ...]) -> Tool:
             candidate = str(path)
     if candidate is None:
         raise BenchmarkError(f"benchmark tool was not found: {requested}")
-    resolved = Path(candidate).resolve(strict=True)
+    invocation = Path(candidate).absolute()
+    resolved = invocation.resolve(strict=True)
     if not resolved.is_file() or not os.access(resolved, os.X_OK):
         raise BenchmarkError(f"benchmark tool is not executable: {resolved}")
-    command = (str(resolved), *version_arguments)
+    command = (str(invocation), *version_arguments)
     completed, _ = invoke(command, REPOSITORY_ROOT, 30.0)
     if completed.returncode != 0:
         raise BenchmarkError(
@@ -190,7 +198,7 @@ def resolved_tool(requested: str, version_arguments: tuple[str, ...]) -> Tool:
     output = (completed.stdout + completed.stderr).strip()
     if not output:
         raise BenchmarkError(f"tool identity command produced no output: {command}")
-    return Tool(requested, resolved, command, output)
+    return Tool(requested, resolved, command, output, invocation)
 
 
 def invoke(
@@ -1035,7 +1043,8 @@ def load_build_provenance(
     argv = native["argv"]
     if not isinstance(argv, list) or not argv or any(not isinstance(item, str) or "\0" in item for item in argv):
         raise BenchmarkError("GTI native argv must be a nonempty string array")
-    if Path(argv[0]).resolve(strict=True) != cxx.resolved:
+    if (Path(argv[0]).resolve(strict=True) != cxx.resolved or
+            Path(argv[0]).absolute() != cxx.command_path):
         raise BenchmarkError("GTI native argv does not use the selected native compiler")
     if "-MD" not in argv or "-MF" not in argv:
         raise BenchmarkError("GTI native argv did not capture compiler-owned dependencies")
@@ -1107,7 +1116,7 @@ def build_variant(
             "--std",
             cpp_standard,
             "--cxx",
-            str(cxx.resolved),
+            str(cxx.command_path),
             "--keep-cpp",
         ]
         if variant.execution_profile is not None:
@@ -1120,7 +1129,7 @@ def build_variant(
     else:
         selected_native_optimization = native_optimization or optimization
         command = [
-            str(cxx.resolved),
+            str(cxx.command_path),
             f"-O{selected_native_optimization}",
             f"-std={cpp_standard}",
             *native_flags,

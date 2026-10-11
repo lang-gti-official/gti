@@ -18,7 +18,8 @@ def run(command):
 def main():
     if len(sys.argv) != 5:
         raise SystemExit("usage: cpp_program_linkage_test.py <gti> <cxx> <root> <runtime>")
-    compiler, cxx, repository, runtime = map(lambda arg: Path(arg).resolve(), sys.argv[1:])
+    compiler, _, repository, runtime = map(lambda arg: Path(arg).resolve(), sys.argv[1:])
+    cxx = Path(sys.argv[2]).absolute()
     with tempfile.TemporaryDirectory(prefix="gti-private-linkage-") as temporary:
         root = Path(temporary)
         harness = root / "native.cpp"

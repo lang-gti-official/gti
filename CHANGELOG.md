@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.404.0 — Mutable constexpr value builders
+
+- Pure constexpr helpers may return `void`, edit checked mutable references,
+  and forward owner-bound mutable reference results. Mutable methods and
+  operators, and constructor bodies after explicit field initialization, use
+  the same verified-MIR execution as runtime programs.
+- Mutable `std::array` accessors and `fill` are constexpr-capable. Existing
+  reflection can drive compile-time field edits; it gains no new metadata or
+  expansion rules. See `examples/142-constexpr-builders.gti`.
+- Ordinary access, ownership and loan rules, checked arithmetic and resource
+  limits still apply. This does not admit allocation, stored references,
+  active cleanup or host I/O during constant execution.
+
 ## 0.403.1 — Conditionals of classes with destructors
 
 - A conditional whose arms are class values with destructors, such as

@@ -30,7 +30,7 @@ def main() -> int:
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(sys.argv[2]).resolve()
-    native_compiler = pathlib.Path(sys.argv[3]).resolve()
+    native_compiler = pathlib.Path(sys.argv[3]).absolute()
     source_root = pathlib.Path(sys.argv[4]).resolve()
     runtime_library = pathlib.Path(sys.argv[5]).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-optimizer-runtime-") as directory:

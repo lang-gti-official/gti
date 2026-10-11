@@ -76,7 +76,7 @@ def main() -> int:
             for name, compiler in compilers.items():
                 executable = directory / name
                 base = [str(compiler.resolved), str(gti_source), '-O' + level,
-                        '--std', 'c++23', '--cxx', str(cxx.resolved)]
+                        '--std', 'c++23', '--cxx', str(cxx.command_path)]
                 profile = variants['gti'].execution_profile
                 if profile:
                     base += ['--execution-profile', profile]
@@ -95,7 +95,7 @@ def main() -> int:
                     'c++23', level, level, benchmark.REPOSITORY_ROOT)
             for name in ('cpp-idiomatic', 'cpp-semantic'):
                 if name in variants:
-                    commands[name] = [str(cxx.resolved), '-O' + level, '-std=c++23',
+                    commands[name] = [str(cxx.command_path), '-O' + level, '-std=c++23',
                                       *benchmark.STRICT_NATIVE_FLAGS, str(variants[name].source),
                                       '-o', str(directory / name)]
             samples = {name: [] for name in commands}

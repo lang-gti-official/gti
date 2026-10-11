@@ -5,6 +5,18 @@
 
 namespace {
 
+std::filesystem::path fixtureSourcePath(const std::filesystem::path &path) {
+  // Derive the identity through public source loading, not a second path
+  // normalizer or a platform-dependent weakly_canonical(relative) call.
+  lang::SourceLoader loader;
+  const auto graph = loader.load(path, std::string{});
+  const auto *entry = graph.findUnit(graph.entryUnit());
+  expect(
+      !loader.hadError() && entry != nullptr && entry->path.is_absolute(),
+      "diagnostic fixture paths retain the source loader's absolute identity");
+  return entry ? entry->path : path;
+}
+
 void testFixedWidthIntegers() {
   lang::Lexer aliasLexer;
   const std::vector<lang::Token> aliases = aliasLexer.scan(
@@ -1807,9 +1819,8 @@ int later() { return selected(); }
   expect(!failing.semanticValid && failureMetrics.constexprMirExecutions == 1 &&
              failure != nullptr &&
              failure->phase == lang::DiagnosticPhase::Semantics &&
-             failure->primary.source == std::filesystem::weakly_canonical(
-                                            "staged-constant-failure.gti")
-                                            .string() &&
+             failure->primary.source ==
+                 fixtureSourcePath("staged-constant-failure.gti").string() &&
              failure->primary.start == failingSource.find('/') &&
              failure->primary.end == failingSource.find('/') + 1 &&
              failure->fixes.empty(),
@@ -2143,9 +2154,9 @@ int main() {
                           d.phase == lang::DiagnosticPhase::Semantics &&
                           d.message.find("execution-step limit") !=
                               std::string::npos &&
-                          d.primary.source == std::filesystem::weakly_canonical(
-                                                  "shared-constexpr-budget.gti")
-                                                  .string() &&
+                          d.primary.source ==
+                              fixtureSourcePath("shared-constexpr-budget.gti")
+                                  .string() &&
                           d.primary.start == sharedSource.find("++") &&
                           d.primary.end == d.primary.start + 2 &&
                           std::any_of(d.related.begin(), d.related.end(),
@@ -2293,12 +2304,13 @@ void testConstexprOperators() {
     std::size_t width;
   };
   const std::vector<Rejection> rejected{
-      {"struct Item { int x; constexpr int operator()() mut { return this.x; } "
+      {"struct Item { int* x = nullptr; constexpr int operator()() mut { "
+       "return 0; } "
        "};",
-       "read-only receiver", "operator()", 8},
+       "structural aggregate", "operator()", 8},
       {"struct Item { int x; constexpr int operator()() && { return this.x; } "
        "};",
-       "read-only receiver", "operator()", 8},
+       "cannot consume", "operator()", 8},
       {"struct Item { int x; constexpr Item(int x) : x(x) {} int operator+(int "
        "n) { return this.x + n; } }; "
        "constexpr Item item = Item(1); constexpr int bad = item + 2;",
@@ -2323,9 +2335,9 @@ void testConstexprOperators() {
         [&](const auto &d) {
           return d.code == "GTI-S2057" &&
                  d.phase == lang::DiagnosticPhase::Semantics &&
-                 d.primary.source == std::filesystem::weakly_canonical(
-                                         "constexpr-operator-invalid.gti")
-                                         .string() &&
+                 d.primary.source ==
+                     fixtureSourcePath("constexpr-operator-invalid.gti")
+                         .string() &&
                  d.primary.start == test.source.find(test.marker) &&
                  d.primary.end == d.primary.start + test.width &&
                  d.message.find(test.message) != std::string::npos;
@@ -2363,6 +2375,320 @@ void testConstexprOperators() {
               }),
       "constexpr operator bounds failures retain the original library index "
       "location");
+}
+
+void testConstexprMutation() {
+  const auto scalar =
+      lang::Frontend().analyze("constexpr-mutation-scalar.gti", R"(
+constexpr void add(mut int& value, int amount) { value += amount; }
+constexpr mut int& forward_mut(mut int& value) { return value; }
+constexpr int scalar_work(int seed) {
+  mut int value = seed;
+  add(value, 4);
+  { mut int& same = forward_mut(value); add(same, 2); }
+  return value;
+}
+struct Flag {
+  mut bool enabled;
+  constexpr Flag() : enabled(true) {}
+};
+constexpr void flip(mut bool& flag) {
+  if (flag) { flag = false; } else { flag = true; }
+}
+constexpr bool conditional_work() {
+  mut Flag flag = Flag();
+  flip(flag.enabled);
+  return !flag.enabled;
+}
+int main() { return scalar_work(3) - 9; }
+)");
+  lang::HirFunctionInstanceId scalarId = 0;
+  for (const auto &function : scalar.hir.functionInstances()) {
+    if (function.source && function.source->name().lexeme == "scalar_work")
+      scalarId = function.id;
+  }
+  const std::array<lang::ConstantValue, 1> argument{lang::makeConstantInteger(
+      {.magnitude = 3}, {.width = 32, .signedValue = true})};
+  const auto computed =
+      lang::evaluateMirConstantFunction(scalar.mir, scalarId, argument);
+  if (!computed)
+    std::cerr << "Mutable scalar MIR failure: " << int(computed.failure)
+              << " body " << computed.body.owner << " instruction "
+              << computed.instruction << ": " << computed.detail << '\n';
+  expect(scalar.canGenerateCode() && computed &&
+             std::get<lang::ConstantInteger>(*computed.value).magnitude == 9,
+         "direct canonical MIR shares mutable referents across nested calls");
+  for (std::size_t budget = 0; computed && budget < computed.steps; ++budget) {
+    const auto limited = lang::evaluateMirConstantFunction(
+        scalar.mir, scalarId, argument, {.steps = budget});
+    expect(!limited && limited.failure ==
+                           lang::ConstantEvaluationFailure::ResourceLimit,
+           "every interrupted mutable call step preserves the shared resource "
+           "limit failure");
+  }
+  const auto shallow = lang::evaluateMirConstantFunction(
+      scalar.mir, scalarId, argument, {.callDepth = 1});
+  expect(!shallow &&
+             shallow.failure == lang::ConstantEvaluationFailure::ResourceLimit,
+         "mutable calls share the ordinary constexpr call-depth limit");
+  for (const auto &function : scalar.hir.functionInstances()) {
+    if (!function.source ||
+        function.source->name().lexeme != "conditional_work")
+      continue;
+    const auto conditional =
+        lang::evaluateMirConstantFunction(scalar.mir, function.id, {});
+    expect(conditional && conditional.value == lang::ConstantValue{true},
+           "a branch reads the live mutable field referent");
+    for (std::size_t budget = 0; conditional && budget < conditional.steps;
+         ++budget) {
+      const auto limited = lang::evaluateMirConstantFunction(
+          scalar.mir, function.id, {}, {.steps = budget});
+      expect(!limited && limited.failure ==
+                             lang::ConstantEvaluationFailure::ResourceLimit,
+             "an interrupted mutable-reference branch retains its resource "
+             "failure instead of being relabeled as invalid input");
+    }
+  }
+  for (const auto &function : scalar.hir.functionInstances()) {
+    if (!function.source || function.source->name().lexeme != "add")
+      continue;
+    const std::array<lang::ConstantValue, 2> arguments{argument[0],
+                                                       argument[0]};
+    const auto completed =
+        lang::evaluateMirConstantFunction(scalar.mir, function.id, arguments);
+    expect(completed && completed.voidResult && !completed.value,
+           "a void root completes without manufacturing a constant value or "
+           "persisting its mutable input reference");
+  }
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/constexpr_mutation.gti";
+  std::ifstream input(fixture);
+  const std::string source((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+  const auto constants = source.find("\nconstexpr Table baked");
+  const auto runtimeSource = source.substr(0, constants) + R"(
+int main() { Table table = build(4); return table.total() + array_work(4) - 68; }
+)";
+  const auto runtime = lang::Frontend().analyze(fixture, runtimeSource,
+                                                {standardLibraryPrelude()}, {},
+                                                {standardLibraryRoot()});
+  for (const auto &name : {"build", "array_work", "alias_work", "callable_work",
+                           "temporary_work"}) {
+    lang::HirFunctionInstanceId id = 0;
+    for (const auto &function : runtime.hir.functionInstances()) {
+      if (function.source && function.source->name().lexeme == name)
+        id = function.id;
+    }
+    const std::array<lang::ConstantValue, 1> seed{lang::makeConstantInteger(
+        {.magnitude = 4}, {.width = 32, .signedValue = true})};
+    const auto direct = lang::evaluateMirConstantFunction(
+        runtime.mir, id,
+        std::string_view(name) == "build" ||
+                std::string_view(name) == "array_work"
+            ? std::span<const lang::ConstantValue>(seed)
+            : std::span<const lang::ConstantValue>());
+    if (!direct) {
+      std::cerr << name << " MIR failure " << int(direct.failure) << " body "
+                << int(direct.body.kind) << ':' << direct.body.owner
+                << " instruction " << direct.instruction << ": "
+                << direct.detail << '\n';
+      if (const auto *body = lang::findMirBody(runtime.mir, direct.body)) {
+        if (const auto *block = body->findBlock(direct.block)) {
+          for (const auto &instruction : block->instructions) {
+            if (instruction.id == direct.instruction)
+              std::cerr << "kind " << int(instruction.kind) << " operation "
+                        << int(instruction.operation) << " type "
+                        << int(instruction.info.type.kind) << '\n';
+          }
+        }
+      }
+    }
+    expect(runtime.canGenerateCode() && direct,
+           "direct constant execution supports the mutable builder: " +
+               std::string(name));
+    if (direct && std::string_view(name) != "build")
+      expect(std::get<lang::ConstantInteger>(*direct.value).magnitude ==
+                 (std::string_view(name) == "array_work"      ? 29
+                  : std::string_view(name) == "alias_work"    ? 18
+                  : std::string_view(name) == "callable_work" ? 12
+                                                              : 6),
+             "mutable calls, once-formed indexed references, independent "
+             "copies and reflection agree on the exact result: " +
+                 std::string(name));
+  }
+  lang::FrontendWorkMetrics metrics;
+  const auto result = lang::Frontend({.workMetrics = &metrics})
+                          .analyze(fixture, source, {standardLibraryPrelude()},
+                                   {}, {standardLibraryRoot()});
+  if (!result.canGenerateCode()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.primary.line << ": " << diagnostic.code << ": "
+                << diagnostic.message << '\n';
+  }
+  expect(!source.empty() && result.canGenerateCode() &&
+             metrics.constexprMirExecutions >= 5,
+         "mutable references, void helpers, mutable methods and constructor "
+         "bodies build constants through canonical MIR");
+
+  lang::FrontendWorkMetrics earlyMetrics;
+  const auto early =
+      lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics,
+                      .workMetrics = &earlyMetrics})
+          .analyze(fixture, source, {standardLibraryPrelude()}, {},
+                   {standardLibraryRoot()});
+  expect(early.semanticValid && !early.canGenerateCode() &&
+             earlyMetrics.constexprMirExecutions ==
+                 metrics.constexprMirExecutions &&
+             early.hir.functionInstances().empty(),
+         "required constants and reflection-driven builders stage before "
+         "whole-program HIR, including the array extent");
+
+  const std::string prefix =
+      "constexpr void add(mut int& value, int amount) { value += amount; }\n";
+  struct Rejection {
+    std::string body;
+    std::string code;
+  };
+  const std::vector<Rejection> rejections{
+      {"constexpr int bad() { mut int value = 2147483647; add(value, 1); "
+       "return value; } constexpr int constant = bad();",
+       "GTI-S2057"},
+      {"constexpr void divide(mut int& value) { value /= 0; } "
+       "constexpr int bad() { mut int value = 4; divide(value); return value; "
+       "} "
+       "constexpr int constant = bad();",
+       "GTI-S2057"},
+      {"constexpr int bad() { mut int value = 0; "
+       "while (value < 5000) { add(value, 1); } return value; } "
+       "constexpr int constant = bad();",
+       "GTI-S2057"},
+      {"constexpr void recurse(mut int& value) { "
+       "if (value > 0) { value--; recurse(value); } } "
+       "constexpr int bad() { mut int value = 100; recurse(value); return "
+       "value; } "
+       "constexpr int constant = bad();",
+       "GTI-S2057"},
+      {"constexpr mut int& bad() { mut int local = 4; return local; }",
+       "GTI-S2017"},
+      {"constexpr int bad() { mut int value = 4; int& view = value; "
+       "add(value, 1); return view; }",
+       "GTI-S2017"},
+      {"constexpr int bad() { add(4, 1); return 0; }", "GTI-S2017"},
+      {"int runtime(mut int& value) { value++; return value; } "
+       "constexpr int bad() { mut int value = 4; return runtime(value); } "
+       "constexpr int constant = bad();",
+       "GTI-S2057"},
+      {"int runtime = 4; constexpr int inspect(mut int value) { "
+       "add(value, 1); return value; } constexpr int constant = "
+       "inspect(runtime);",
+       "GTI-S2057"},
+      {"constexpr void bad(mut int* value) {}", "GTI-S2057"},
+      {"constexpr int& retained = bad(); "
+       "constexpr int& bad() { int value = 4; return value; }",
+       "GTI-S2057"}};
+  for (const auto &test : rejections) {
+    const auto rejected = lang::Frontend().analyze(
+        "constexpr-mutation-invalid.gti",
+        prefix + test.body + "\nint main() { return 0; }");
+    expect(!rejected.canGenerateCode() &&
+               hasDiagnosticCode(rejected.diagnostics, test.code) &&
+               std::none_of(rejected.diagnostics.begin(),
+                            rejected.diagnostics.end(),
+                            [](const auto &d) {
+                              return d.phase == lang::DiagnosticPhase::Backend;
+                            }),
+           "mutable constexpr execution preserves frontend rejection: " +
+               test.body);
+  }
+
+  for (const bool removeOrigin : {false, true}) {
+    auto malformed = scalar.mir;
+    for (const auto &instance : scalar.hir.functionInstances()) {
+      if (instance.source && instance.source->name().lexeme == "forward_mut") {
+        auto *function = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(instance.id));
+        for (auto &loan : function->body.loans) {
+          if (loan.kind != lang::MirLoanKind::Return)
+            continue;
+          if (removeOrigin)
+            loan.source = 0;
+          else
+            loan.access = lang::AccessMode::ReadOnly;
+        }
+      }
+    }
+    const auto rejected =
+        lang::evaluateMirConstantFunction(malformed, scalarId, argument);
+    expect(!lang::verifyMirProgram(malformed).valid() && !rejected &&
+               rejected.detail.find("verified MIR") != std::string::npos,
+           "ordinary verification rejects a lost origin or forged read-only "
+           "return loan before mutable constant execution");
+  }
+  auto runtimeOnly = scalar.mir;
+  for (const auto &instance : scalar.hir.functionInstances()) {
+    if (instance.source && instance.source->name().lexeme == "add")
+      const_cast<lang::MirFunctionInstance *>(
+          runtimeOnly.findFunctionInstance(instance.id))
+          ->constexprFunction = false;
+  }
+  const auto unavailable =
+      lang::evaluateMirConstantFunction(runtimeOnly, scalarId, argument);
+  expect(lang::verifyMirProgram(runtimeOnly).valid() && !unavailable &&
+             unavailable.failure ==
+                 lang::ConstantEvaluationFailure::UnsupportedExpression,
+         "runtime validity is not proof of constant eligibility for a mutable "
+         "selected call");
+
+  const auto constructorUnsupported = lang::Frontend().analyze(
+      "constexpr-mutation-constructor-invalid.gti", R"(
+#include <std/numeric>
+struct Item {
+  mut int value;
+  constexpr Item(int seed) : value(seed) {
+    this.value++;
+    this.value = std::wrapping_add(this.value, 1);
+  }
+};
+constexpr Item constant = Item(3);
+int main() { return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !constructorUnsupported.canGenerateCode() &&
+          hasDiagnosticCode(constructorUnsupported.diagnostics, "GTI-S2057") &&
+          hasDiagnostic(constructorUnsupported.diagnostics,
+                        "requires the verified MIR execution profile"),
+      "constructor-body mutation cannot fall back to a value-copy AST "
+      "interpretation after an unsupported operation");
+
+  const std::string enclosing = R"(
+constexpr int write(mut int& value) { value++; return value; }
+constexpr int build() {
+  mut int value = 1;
+  [[discard]] write(value);
+  return value;
+}
+constexpr int result = build();
+static_assert(result == 2);
+int main() { return result - 2; }
+)";
+  const auto staged =
+      lang::Frontend().analyze("constexpr-mutation-enclosing.gti", enclosing);
+  expect(staged.canGenerateCode(),
+         "an enclosing verified-MIR builder retains an ignored mutable "
+         "callee's writes");
+  // Retain real source-unit/binding identities but withhold the source manager
+  // that the staged service needs. This selects the compatibility interpreter.
+  lang::SemanticVisitor withoutStagingSource(lang::TargetInfo::host(),
+                                             &staged.sourceGraph);
+  const bool compatible = withoutStagingSource.check(staged.program);
+  if (!hasDiagnostic(withoutStagingSource, "AST compatibility frame"))
+    for (const auto &diagnostic : withoutStagingSource.errors())
+      std::cerr << diagnostic.message << '\n';
+  expect(!compatible &&
+             hasDiagnostic(withoutStagingSource, "AST compatibility frame"),
+         "a source-less compatibility caller cannot stage an isolated mutable "
+         "callee and silently lose its writes");
 }
 
 void testConstexprReadOnlyReferences() {
@@ -2466,7 +2792,7 @@ void testConstexprReadOnlyReferences() {
   const std::vector<Rejection> rejections{
       {"constexpr int& bad() { int value = 4; return value; }", "GTI-S2017",
        "borrowed return requires", "bad()", 3},
-      {"constexpr int bad(mut int& value) { return value; }", "GTI-S2057",
+      {"constexpr int bad(mut int* value) { return 0; }", "GTI-S2057",
        "parameters must be", "value)", 5},
       {"constexpr int bad() { mut int value = 4; int& ref = value; "
        "value = 5; return ref; }",
@@ -2494,7 +2820,7 @@ void testConstexprReadOnlyReferences() {
                      return d.code == test.code &&
                             d.phase == lang::DiagnosticPhase::Semantics &&
                             d.primary.source ==
-                                std::filesystem::weakly_canonical(
+                                fixtureSourcePath(
                                     "constexpr-reference-invalid.gti")
                                     .string() &&
                             d.primary.start ==
@@ -2521,9 +2847,8 @@ void testConstexprReadOnlyReferences() {
                          [&](const auto &d) {
                            return d.code == "GTI-S2057" &&
                                   d.primary.source ==
-                                      std::filesystem::weakly_canonical(
-                                          standardLibraryRoot() /
-                                          "std/array.gti")
+                                      fixtureSourcePath(standardLibraryRoot() /
+                                                        "std/array.gti")
                                           .string() &&
                                   d.primary.start == access &&
                                   d.primary.end == access + 1;
@@ -2649,7 +2974,7 @@ int main() {
         "constexpr int invalid(std::string value) { return 7; }",
         "struct Owner { std::string value; constexpr Owner() : "
         "value(std::string(\"asset\")) {} };",
-        "constexpr T invalid<T>(mut T& value) { return value; }",
+        "constexpr T invalid<T>(mut T* value) { return 0; }",
         "constexpr int value = std::lcm(2147483647, 2);",
         "constexpr int8_t invert(int8_t value) { return int8_t(-value); } "
         "constexpr int8_t value = invert(int8_t(-128));",
@@ -2683,7 +3008,8 @@ int main() {
                  signature.diagnostics.begin(), signature.diagnostics.end(),
                  [&](const auto &d) {
                    return d.code == "GTI-S2057" &&
-                          d.message.find("must return a supported value") !=
+                          d.message.find(
+                              "must return void or a supported value") !=
                               std::string::npos &&
                           d.primary.start ==
                               invalidSignature.find("string impossible") &&
@@ -3120,8 +3446,7 @@ int main() {
                 std::string::npos &&
             diagnostic->phase == lang::DiagnosticPhase::Semantics &&
             diagnostic->primary.source ==
-                std::filesystem::weakly_canonical("constexpr-text-bounds.gti")
-                    .string() &&
+                fixtureSourcePath("constexpr-text-bounds.gti").string() &&
             diagnostic->primary.start == source.find(index) &&
             diagnostic->primary.end ==
                 source.find(index) + (index == "-1" ? 1 : index.size()) &&
@@ -3432,7 +3757,7 @@ int32_t runtime_value() { return 1; }
 constexpr int32_t called = runtime_value();
 constexpr int32_t generic_values<Args...>(Args... values) { return 0; }
 class InvalidMethod {
-  constexpr int32_t method() mut { return 1; }
+  constexpr int32_t method() && { return 1; }
 };
 class InvalidMember {
   constexpr int32_t value = 1;
@@ -3443,21 +3768,21 @@ struct RuntimePoint {
 };
 constexpr RuntimePoint runtime_point = RuntimePoint(1);
 )");
-  expect(!invalid.semanticValid &&
-             countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 6 &&
-             hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
-             hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "does not name a constexpr function") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "Constexpr generic parameter packs") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "must have a read-only receiver") &&
-             hasDiagnostic(invalid.diagnostics, "must be static") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "not an available constexpr constructor"),
-         "unsupported constexpr forms should fail with focused bounded "
-         "diagnostics");
+  expect(
+      !invalid.semanticValid &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 6 &&
+          hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
+          hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "does not name a constexpr function") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Constexpr generic parameter packs") &&
+          hasDiagnostic(invalid.diagnostics, "cannot consume its receiver") &&
+          hasDiagnostic(invalid.diagnostics, "must be static") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "not an available constexpr constructor"),
+      "unsupported constexpr forms should fail with focused bounded "
+      "diagnostics");
 
   const lang::FrontendResult invalidBranch =
       lang::Frontend().analyze("invalid-if-constexpr.gti", R"(
@@ -3994,7 +4319,7 @@ public:
   const std::filesystem::path left = root / "left.gti";
   const std::filesystem::path right = root / "right.gti";
   const auto canonical = [](const std::filesystem::path &path) {
-    return std::filesystem::weakly_canonical(path).string();
+    return fixtureSourcePath(path).string();
   };
   const lang::FrontendResult separateUnits = lang::Frontend().analyze(
       entry,
@@ -4503,8 +4828,7 @@ int main() { return selected_value() + local_state(); }
         std::filesystem::temp_directory_path() / "gti-configuration-includes";
     const std::filesystem::path entry = root / "main.gti";
     const std::filesystem::path dependency = root / "flags.gti";
-    const std::string dependencyKey =
-        std::filesystem::weakly_canonical(dependency).string();
+    const std::string dependencyKey = fixtureSourcePath(dependency).string();
     const lang::FrontendResult includeOrdered = lang::Frontend().analyze(
         entry,
         "#define BEFORE_INCLUDE\n"
@@ -4731,6 +5055,7 @@ constexpr NamedTest kTests[] = {
     {"testConstexprOperators", testConstexprOperators},
     {"testDependentConstexprBranches", testDependentConstexprBranches},
     {"testConstexprReadOnlyReferences", testConstexprReadOnlyReferences},
+    {"testConstexprMutation", testConstexprMutation},
     {"testStaticAssertions", testStaticAssertions},
     {"testStaticStorageAndMembers", testStaticStorageAndMembers},
     {"testConcurrentGlobalPolicy", testConcurrentGlobalPolicy},

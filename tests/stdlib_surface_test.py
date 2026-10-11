@@ -15,6 +15,7 @@ import tempfile
 from typing import Any
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from native_fixture_build import build_fixture
 
 
 SCHEMA = "gti-stdlib-surface-v1"
@@ -330,17 +331,17 @@ def run_case(
             "--cxx",
             str(cxx),
             f"-{optimization}",
-            "-o",
-            str(executable),
         ]
         if case.get("execution_profile") is not None:
             command.extend(
                 ["--execution-profile", str(case["execution_profile"])]
             )
-        if native_sources:
-            command.extend(["--", *(str(path) for path in native_sources)])
-        built = subprocess.run(
+        built = build_fixture(
             command,
+            executable,
+            native_sources=native_sources,
+            optimization=optimization,
+            cxx=cxx,
             cwd=case_root,
             env=environment,
             text=True,
