@@ -894,6 +894,11 @@ add_test(NAME owned_argument_member_initializer_runtime
                  "${PROJECT_SOURCE_DIR}/tests/owned_argument_member_initializer_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(owned_argument_member_initializer_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME owning_expected_field_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/owning_expected_field_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(owning_expected_field_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_class_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"
