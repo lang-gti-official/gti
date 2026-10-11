@@ -57,10 +57,12 @@ Shared/exclusive contiguous traversal, sparse/lane traversal, paired proxy
 traversal and unrelated two-owner inline proxies have focused native/sanitizer
 evidence. Associative mutation now uses source-defined mapped-value projections
 instead of replaceable entries, with key/owner/access bypass negatives.
-Remaining prerequisites are native cleanup-bearing exclusive proxy endpoint
-publication and the general value-yielding readable-iterator profile required
-by counted text views. Text views must read through their existing checked byte
+The cleanup-bearing exclusive proxy endpoint and value-yielding readable
+iterator prerequisites now have general source/MIR implementations and focused
+proof tests. Counted text views read through their existing checked byte
 operation, not reinterpret native `char` storage as GTI-character references.
+The latest mapped owning-value replacement additionally exercises the ordinary
+mutable-reference accessor destination rather than a container-specific path.
 Final cross-phase/corpus/census, whole container matrices and integration remain
 required. Partial focused passes do not establish campaign completion or
 shipped support.
