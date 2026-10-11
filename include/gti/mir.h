@@ -836,6 +836,12 @@ enum class MirTerminatorKind {
   Exit,
   ContainFailure,
   TerminateCleanupFailure,
+  // Enters a shared failure-cleanup continuation. The source block is a
+  // primary cleanup block of any active record; `target` is the entry of the
+  // continuation named by `failureRecord`, which then runs with that
+  // continuation as its active record and propagates the incoming failure
+  // unchanged.
+  ContinueFailure,
 };
 
 struct MirSwitchTarget {
@@ -916,8 +922,21 @@ struct MirBlock {
   friend bool operator==(const MirBlock &, const MirBlock &) = default;
 };
 
+// A producer record binds the failure of exactly one Invoke at its parameter
+// block. A continuation record names a cleanup suffix shared by several
+// failure paths: it has no producer, its parameter block is entered only by
+// `ContinueFailure` edges from primary cleanup blocks, and it carries
+// whichever producer's failure entered it to the endpoint unchanged. Failure
+// provenance therefore stays with producers; continuations own only the
+// cleanup schedule they share.
+enum class MirFailureRecordKind {
+  Producer,
+  Continuation,
+};
+
 struct MirFailureRecord {
   MirFailureRecordId id = 0;
+  MirFailureRecordKind kind = MirFailureRecordKind::Producer;
   MirHostedStartupOperationId hostedStartupOperation = 0;
   MirBlockId producerBlock = 0;
   MirInstructionId producerInstruction = 0;

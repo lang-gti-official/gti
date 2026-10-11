@@ -694,8 +694,6 @@
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_json.gti",
       "optimizations": ["O0", "O3"],
-      "build_timeout_seconds": 600,
-      "build_timeout_reason": "main's failure cleanup is quadratic in its owning locals (M-FAIL-01 shared failure cleanup), so its generated C++ is about 33 MB; the native O3 build takes about 120 seconds on a quiet M2 Max and can pass 300 seconds under concurrent load",
       "expected": {"exit_code": 0, "stdout": "demo\n{\"name\":\"demo\",\"private\":true,\"count\":42,\"items\":[\"one\",2]}\n", "stderr": ""}
     },
     {

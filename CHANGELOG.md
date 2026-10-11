@@ -18,6 +18,15 @@ for what minor and patch releases mean.
   read-only, mutable, and consuming owning callable erasure. Ordinary local
   function wrappers do not acquire permission to cross threads implicitly.
 
+## 0.402.2 — Smaller, faster builds for functions with many owned locals
+
+- A function that owns many values with destructors no longer repeats the
+  same cleanup code for every point where it can fail. The JSON
+  standard-library test program now generates 4.3 MB of C++ instead of
+  33.5 MB, and its optimized native build takes about 8 seconds instead of
+  about 150. Behaviour on failure is unchanged: the same resources are
+  released in the same order, and the same failure is reported.
+
 ## 0.402.1 — Owning `expected` fields initialized from calls
 
 - A constructor's `expected<T, E>` field can now be initialized directly from
