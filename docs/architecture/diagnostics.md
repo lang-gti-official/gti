@@ -41,7 +41,16 @@ the actual type. `GTI-S2108` reports an expansion over the compile-time budget
 namespace declaration inside a `constexpr for` body. `GTI-S2111` rejects a
 `std::meta::field<T, I>` whose index is out of range for `T`, naming the count.
 `GTI-S2112` rejects `get_mut` on a field that is not writable through the
-given owner. Diagnostics produced inside an expanded copy carry related
+given owner. `GTI-S2113` rejects a declared attribute whose type is not an
+`[[attribute]]` struct, or an `[[attribute]]` declaration that is not an
+eligible struct; `GTI-S2114` rejects an attribute application's arguments
+(count, unknown designator, non-constant or mistyped value, missing default);
+`GTI-S2115` rejects applying one attribute type twice to a declaration, with
+the first application as related information; `GTI-S2116` rejects
+`attribute<A>()` on a declaration that does not apply `A`, with a hint to test
+`has_attribute<A>()`; `GTI-S2117` rejects `enumerator::value()` on a payload
+enum, whose alternatives are not integer constants, and enumerator reflection
+on a non-enum type. Diagnostics produced inside an expanded copy carry related
 information naming the element and are deduplicated across identical copies.
 
 `GTI-S2106` rejects a selected ordinary GTI call without a source definition

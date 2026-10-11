@@ -1581,6 +1581,70 @@ literal. `@compiler_type("...")` and the `gti_internal::meta_*` operations
 that `<std/meta>` is built on are compiler-bound declarations of that trusted
 unit and are unavailable to application code (`GTI-S2049`, `GTI-S2058`).
 
+### 3.12.3 Declared Attributes
+
+A struct declared `[[attribute]]` is an **attribute type**: a non-generic
+struct with public value fields, declaration defaults and no declared
+constructors or bases (`GTI-S2113` otherwise). `[[ns::name(arguments)]]`
+before a class-like declaration or an instance field **applies** it: the
+arguments initialize the attribute struct's fields positionally, or by
+designator (`[[ns::name(.key = "x")]]`), with constant expressions; a field
+without an argument takes its declaration default, which must then be a
+literal. Positional and designated arguments do not mix. Several applications
+share one group (`[[a::x, b::y(1)]]`), a declared group precedes any compiler
+attribute group, and one declaration applies a given attribute type at most
+once (`GTI-S2115`). Too many arguments, an unknown designator, a non-constant
+or mistyped argument, or a missing default are rejected (`GTI-S2114`). The
+compiler gives an application no meaning: it records the constant object the
+arguments denote and nothing else, so attribute semantics live in the library
+that declares the attribute type. Declared attributes are not allowed on
+local variables, functions or enumerators in this slice.
+
+Reflection reads them: `field.attribute_count()`, `field.has_attribute<A>()`
+and `field.attributes()` (a `std::meta::list` of the applied attribute
+*types*, in application order), and the same three on `std::meta::type<T>`
+for the declaration's own attributes. `field.attribute<A>()` and
+`type.attribute<A>()` denote the applied constant: in constant evaluation they
+are that object, so `field.attribute<json::name>().key` folds in `if constexpr`
+and `static_assert`; at run time a member read of the result is the constant
+itself (a literal of the field's type) and a use of the whole object constructs
+the attribute struct again from the application's arguments by designated
+construction. Reading an attribute the declaration does not apply is rejected
+(`GTI-S2116`); test with `has_attribute<A>()` first.
+
+A class or struct declared `[[reflect_private]]` lets reflected access
+(`field.get`, `get_mut`) reach its private instance fields from anywhere;
+direct access rules are unchanged. `std::meta::reflectable<T>` is the
+compiler-owned concept satisfied by a struct or class whose instance fields are
+all public, or that declares `[[reflect_private]]`; `std::meta::is_reflectable<T>()`
+is the same fact as a constant. A generic that reads every field through
+reflection constrains on it so a caller with private state fails at the call
+(`GTI-S2029`) rather than inside the expansion.
+
+### 3.12.4 Enumerators, Bases And Generic Arguments
+
+`std::meta::enumerators_of<E>()` (and `alternatives_of<E>()`, the same list
+read as a payload enum's alternatives) is a `std::meta::list` of
+`std::meta::enumerator<E, I>` metaobjects in declaration order, for integral
+and payload enums alike, generic instances substituted. An enumerator has
+`name()`, `index()`, `payload_count()` and `payload_fields()`, a list of
+`std::meta::payload_field<E, I, P>` with `name()`, `index()` and `type()`
+(`std::meta::payload_type<E, I, P>` is the exact payload type, spellable in
+type positions). `value()` is the enumerator as a constant of `E`; a payload
+enum's alternatives are not integer constants, so `value()` is rejected for
+them (`GTI-S2117`). `type<E>::enumerator_count()`, `is_payload_enum()` and
+`std::meta::is_payload_enum<E>()` report the shape; an out-of-range enumerator
+or payload index is rejected like a field index (`GTI-S2111`).
+
+`std::meta::bases_of<T>()` is a list of `std::meta::type<B>` over the direct
+bases of a class in declaration order (`type<T>::base_count()`, `bases()`);
+inherited fields are not part of `fields_of<T>()`.
+`std::meta::arguments_of<T>()` is a list of `std::meta::type<Arg>` over the
+type arguments of a generic class or enum instance (`argument_count()`,
+`arguments()`; value arguments are not listed), and
+`std::meta::is_generic_instance<T>()` tells an instance from a non-generic
+type. A primary template is not a type and has no metaobject.
+
 ## 3.13 Static Assertions
 
 `static_assert(condition);` and `static_assert(condition, "message");` are

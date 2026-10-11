@@ -609,6 +609,11 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     diagnostic.hints.emplace_back("The type must be an integral enum; payload "
                                   "enums have no underlying integer value.");
     break;
+  case GenericConstraintKind::Reflectable:
+    diagnostic.hints.emplace_back(
+        "The type must be a struct or class whose instance fields are all "
+        "public, or one declared [[reflect_private]].");
+    break;
   case GenericConstraintKind::None:
   case GenericConstraintKind::Invalid:
   case GenericConstraintKind::Count:

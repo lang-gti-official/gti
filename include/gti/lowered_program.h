@@ -248,6 +248,9 @@ struct LoweredClassDeclaration {
   bool cOpaqueHandle = false;
   bool requiresActiveDropState = false;
   bool compilerPrivate = false;
+  // Every member is emitted public: GTI access control is enforced in
+  // semantics, and reflected access may read private fields.
+  bool reflectPrivate = false;
 
   friend bool operator==(const LoweredClassDeclaration &,
                          const LoweredClassDeclaration &) = default;

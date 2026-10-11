@@ -184,6 +184,21 @@ for; the body-order gate and the whole suite stay clean.
 
 ## Phase 2: Attributes, Mutation, Enums, Generics And The Library Clients
 
+**Status (2026-10-11): implemented**, except as noted under item 6. The
+specification is [static semantics §3.12.3–3.12.4](../language/static-semantics.md#3123-declared-attributes),
+the implementation notes are in
+[semantic analysis](../architecture/semantic-analysis.md#compile-time-iteration-and-reflection),
+and the evidence is `tests/reflection_tests.cpp`,
+`tests/fixtures/reflection_attributes.gti` (the three clients) and
+`examples/137-declared-attributes.gti`. Item 6 was revised by the owner: the
+`std::json` library is left untouched; the three clients are fixture programs,
+and reflection reaches a JSON library as `std::experimental::json`, a
+verification gate built after phase 3, after which `std::json` is deprecated.
+Two pre-existing defects found while writing the clients are tracked
+separately (a designated-constructed struct with a `string_view` field passed
+by reference is outside the C++ emitter's vocabulary; a `string_view` field's
+literal default reads back empty after GTI optimization).
+
 Goal: make the surface rich enough that serialization policy lives entirely
 in libraries, and prove it with three structurally different clients.
 
@@ -335,12 +350,16 @@ decisions; the residual sub-questions are listed afterwards.
 - **R2 (phase 1, on the go).** Whether `field.name()` is usable inside
   `if constexpr` and `static_assert` in phase 1, which depends on the staged
   constant evaluator accepting a method whose body is a folded constant.
-- **R3 (phase 2, start).** The attribute declaration syntax and argument
-  domains.
-- **R4 (phase 2, start).** The exact spelling of the private-access opt-in.
-- **R5 (phase 2, start).** The compiler-owned concept that expresses "every
-  instance field is readable from here", which the reflective codec primary
-  constrains on.
+- **R3 (answered 2026-10-11).** `[[attribute]] struct` declares an attribute
+  type; `[[ns::name(args)]]` applies it with positional or designated constant
+  arguments initializing the struct's fields; omitted fields take literal
+  declaration defaults. Admitted argument kinds are the constants the staged
+  evaluator produces and `convertConstantToType` accepts (integers, floats,
+  bool, char, text, enumerators, nested passive structs).
+- **R4 (answered 2026-10-11).** `[[reflect_private]]` on the class or struct.
+- **R5 (answered 2026-10-11).** `std::meta::reflectable<T>`, bound to
+  `GenericConstraintKind::Reflectable`; `std::meta::is_reflectable<T>()` is
+  the same fact as a constant for `static_assert`.
 - **R6 (phase 3, start).** How far structural construction extends past
   designated construction.
 - **R7 (later).** A declaration-position spelling for a type metaobject.
