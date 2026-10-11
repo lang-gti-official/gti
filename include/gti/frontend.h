@@ -78,6 +78,9 @@ struct FrontendOptions {
   // library checks with that unit as the entry. The audit still analyses
   // those bodies, because application provenance flows through them.
   bool reportLibraryAuditFindings = false;
+  // When compiler-trusted function bodies are analysed; see
+  // TrustedBodyAnalysis. `Deferred` is a test mode.
+  TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
 };
 
 struct FrontendResult {

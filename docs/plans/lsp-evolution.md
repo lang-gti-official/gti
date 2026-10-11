@@ -264,15 +264,20 @@ layer.
    snapshot. Bodies no application code reaches are then never analysed in
    the editor. This removes most of the 247 ms and is a clean generalisation
    of the existing on-demand borrow-summary candidate inspection.
-   Precondition: body analysis publishes inferred facts onto callable
-   declarations that callers consume (`publishFunctionBorrowSummary`), so
-   first prove that those facts are independent of the order in which bodies
-   are analysed. If they are not, demand-driven analysis changes what is
-   inferred and is a language change, not a performance step; stop there and
-   take it through the language documents. The gate is mechanical: `gti
-   check` over the examples and standard-library tests must produce
-   byte-identical diagnostics with lazy analysis on and off. Keep it an
-   editor-only option; compilation keeps analysing every body.
+   Precondition, now met: body analysis publishes inferred facts onto
+   callable declarations that callers consume, so those facts had to be
+   independent of the order in which bodies are analysed. They were not: a
+   generic callee returning a moved parameter was rejected (`GTI-S2045`) when
+   declared after its caller. The fact is now demanded through
+   `ensureBodyAnalyzed`, which advances the resumable lexical pass to the
+   callee (see "Body Order And Demand" in
+   [semantic-analysis.md](../architecture/semantic-analysis.md)). The
+   mechanical gate exists as the `body_analysis_order` test: the complete pass
+   and the `Deferred` test mode (trusted bodies after application bodies, in
+   reverse order) must produce identical diagnostics over the examples and
+   standard-library tests. Deferral is not yet an editor option; build it on
+   that mode, keep it editor-only, and keep compilation analysing every
+   body.
 3. **Unit-local semantic reuse** (the true preamble analogue) only if 1 and 2
    leave the eight-include file above about 100 ms per edit. Trusted units'
    registration and body facts would be cached per unit, keyed by the unit's
