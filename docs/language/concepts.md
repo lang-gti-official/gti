@@ -96,7 +96,7 @@ below; this does not introduce class-level trailing `requires` syntax.
 
 A generic free function, non-polymorphic method, or ordinary generic
 constructor may append a bounded requirements clause after its parameter list
-and receiver `mut` qualifier, when present. For a constructor the clause comes
+and receiver `mut` or `&&` qualifier, when present. For a constructor the clause comes
 before its initializer-list colon:
 
 ```gti
