@@ -666,6 +666,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testOwnedPrologueFormalEntryLoanEnd",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testExampleCorpusEmissionReadiness",
       "suite": "corpus"
     },

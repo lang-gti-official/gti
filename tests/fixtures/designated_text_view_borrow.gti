@@ -1,0 +1,19 @@
+// A designated-constructed struct whose text-view field keeps the generated
+// constructor's parameter loan; the binding is then borrowed by reference.
+struct Player { std::string_view name = ""; uint32_t health = 100; };
+struct Tagged { std::string_view label = "none"; std::string_view note = ""; uint32_t weight = 1; };
+uint32_t read(Player& value) { return value.health; }
+std::size_t labelled(Tagged& value) { return value.label.size() + value.weight; }
+int main() {
+  Player hero = {.health = uint32_t(7)};
+  Player braced{.health = uint32_t(9)};
+  Player positional = {.name = "ally", .health = uint32_t(11)};
+  Tagged tagged = {.label = "boss", .weight = uint32_t(2)};
+  if (read(hero) != 7 || read(braced) != 9 || read(positional) != 11) {
+    return 1;
+  }
+  if (positional.name.size() != 4 || labelled(tagged) != 6 || tagged.note.size() != 0) {
+    return 2;
+  }
+  return 0;
+}
