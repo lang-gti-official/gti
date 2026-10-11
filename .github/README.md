@@ -1,6 +1,6 @@
 # GTI on GitHub
 
-The repository at `https://github.com/gti-lang-official/gti` is GTI's
+The repository at `https://github.com/lang-gti-official/gti` is GTI's
 canonical Git host. GitHub owns branches, pull requests, issues, CI, tags,
 nightly builds, stable releases, and release assets. The self-hosted Gitea
 instance at `https://git.internal.howetotech.dev/gti-lang/gti` is a backup
@@ -71,7 +71,7 @@ Both publication jobs use the repository's workflow token and publish only
 after the build-tree and installed-toolchain gates pass. A successful push
 merely starts that asynchronous work; local validation remains the pre-push
 authority. Release archives are downloaded by the Neovim plugin from
-`https://github.com/gti-lang-official/gti/releases/download/<tag>/<asset>`.
+`https://github.com/lang-gti-official/gti/releases/download/<tag>/<asset>`.
 
 ## History
 

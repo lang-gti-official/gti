@@ -49,7 +49,7 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
 - Explicit requests such as "PR only", "leave local", "do not merge", or
   "review first" override automatic integration. Read-only reviews/discussions
   do not authorize implementation or publication. Installation remains opt-in.
-- GitHub (`gti-lang-official/gti`, remote `origin`) is the canonical host for
+- GitHub (`lang-gti-official/gti`, remote `origin`) is the canonical host for
   branches, pull requests, issues, CI and releases. The self-hosted Gitea
   repository (remote `gitea`) is a backup mirror of `main` and the tags that
   the helper's `sync` pushes after every integration; never open PRs or
@@ -135,7 +135,7 @@ one-off implementation-note or redesign files when an existing category fits.
 
 Two channels publish this repository, and they answer different questions.
 Both publish from the GitHub release workflow (`.github/workflows/release.yml`)
-of the canonical repository `gti-lang-official/gti`, for Linux x64 and Apple
+of the canonical repository `lang-gti-official/gti`, for Linux x64 and Apple
 Silicon; the Gitea mirror publishes nothing.
 
 - **Nightly** republishes one rolling `nightly` release per commit on `main`.

@@ -55,14 +55,14 @@ def main() -> None:
                 return {"id": 91, "assets": published}
             return None
 
-        stale = module.sync_assets("gti-lang-official/gti", "nightly", root, request)
+        stale = module.sync_assets("lang-gti-official/gti", "nightly", root, request)
         expect(
             calls
             == [
-                ("GET", "/repos/gti-lang-official/gti/releases/tags/nightly"),
+                ("GET", "/repos/lang-gti-official/gti/releases/tags/nightly"),
                 # GitHub deletes an asset by its own id, in deterministic name order.
-                ("DELETE", "/repos/gti-lang-official/gti/releases/assets/4"),
-                ("DELETE", "/repos/gti-lang-official/gti/releases/assets/5"),
+                ("DELETE", "/repos/lang-gti-official/gti/releases/assets/4"),
+                ("DELETE", "/repos/lang-gti-official/gti/releases/assets/5"),
             ],
             f"only stale GitHub assets may be removed, in deterministic order: {calls}",
         )
@@ -76,7 +76,7 @@ def main() -> None:
         empty_calls: list[tuple[str, str]] = []
         try:
             module.sync_assets(
-                "gti-lang-official/gti",
+                "lang-gti-official/gti",
                 "nightly",
                 empty,
                 lambda method, path: empty_calls.append((method, path)),
