@@ -2188,6 +2188,15 @@ immovable element's address from its constructor onward. Class-call results
 and non-adjacent publication retain the value-rooted lifetime-slot route and
 its separate transfer proof. The ordinary C++ route uses factory construction
 so it never names an undeclared SSA value.
+A class call result can initialize a constructor field as its selected member
+initializer whether or not the callee can fail. A cleanup-free result has no
+obligation. A failure-free call constructs it in representation-only storage
+immediately before the field `Initialize`, and a transformed call does so on
+the Invoke success edge leading to it. The field's empty representation is
+then replaced by the moved value. An owning result from a failure-free call
+arms its value obligation with the call's own `Initialize` event, as a
+failure-free constructor does, and the field `Initialize` reparents it into the
+field's rollback. The value then moves from its lifetime slot into the field.
 If a constructor has no reachable normal `Return`, its initialized fields never
 transfer to a completed object. The field-slot proof permits zero final object
 publications only after recomputing CFG reachability and proving that absence;

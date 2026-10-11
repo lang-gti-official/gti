@@ -43,7 +43,7 @@
   fails the same way when this tree is rebuilt with `origin/main`'s emitter
   and MIR sources: `GTI-B0001`, "Expected value has no exact uninitialized
   publication" in `main`. That is an upstream regression, outside this change.
-  0.402.5 fixes it: a cleanup-free Expected moved into a new binding now
+  0.402.6 fixes it: a cleanup-free Expected moved into a new binding now
   constructs that binding at the `Move`.
 - **Pre-existing gap left out.** A lambda returning `Expected<Class, E>`
   whose class has no default constructor, called as a by-value argument

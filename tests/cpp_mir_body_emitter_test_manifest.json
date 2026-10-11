@@ -350,6 +350,10 @@
       "suite": "text"
     },
     {
+      "name": "testPlainCallMemberInitializer",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },
