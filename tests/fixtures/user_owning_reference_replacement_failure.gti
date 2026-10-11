@@ -32,7 +32,7 @@ public:
 LoggedText make_text(int phase) {
   std::println(200);
   if (phase == 1) { std::panic("replacement failed"); }
-  LoggedText result(std::string("after"), 20);
+  LoggedText result{std::string("after"), 20};
   if (phase == 2) { std::panic("replacement partially built"); }
   return result;
 }
