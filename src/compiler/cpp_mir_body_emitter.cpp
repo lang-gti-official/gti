@@ -18868,13 +18868,17 @@ expectedClassResultDestinationSlot(const MirProgram &program,
           return false;
         }();
     // A checked call publishes on its Invoke success edge, which leads
-    // straight to the Initialize.
+    // straight to the Initialize. A callable value invocation is such a call
+    // too: its exact lambda instance always propagates through the callable
+    // failure ABI, and the invocation constructs the destination at its
+    // construction address exactly as a source call does.
     const MirBlock *invoke = invokeProducerBlock(body, *definition);
     const MirBlock *success =
         invoke != nullptr ? body.findBlock(invoke->terminator.target) : nullptr;
     const bool invokeCleanupFreePublication =
-        success != nullptr && target != nullptr &&
-        target->mayRaiseDefinedFailure &&
+        success != nullptr &&
+        ((target != nullptr && target->mayRaiseDefinedFailure) ||
+         sourceLambda) &&
         !definition->successResultDestination &&
         invoke->terminator.successLifecycle.empty() &&
         !success->instructions.empty() &&
@@ -18963,6 +18967,11 @@ expectedClassResultDestinationSlot(const MirProgram &program,
 // SSA local would have to value-initialize that alternative, a construction
 // the source program does not perform. A scalar-success Expected keeps its
 // ordinary carrier, so its bindings never become lifetime slots here.
+//
+// The copy may instead be one arm of an Expected-valued conditional. MIR gives
+// a cleanup-free join temporary no drop, and the arm's Initialize activates
+// nothing; constructing the temporary at the Load is again the only exact
+// publication of that arm.
 [[nodiscard]] const MirPlace *
 expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
                             MirValueId valueId) {
@@ -19001,6 +19010,8 @@ expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
   const MirPlace *destination = initialize && initialize->destination
                                     ? body.findPlace(*initialize->destination)
                                     : nullptr;
+  const bool conditionalDestination =
+      destination != nullptr && expectedConditionalSlot(body, *destination);
   if (initialize == nullptr || destination == nullptr ||
       initialize->kind != MirInstructionKind::Initialize ||
       initialize->operands.size() != 1 ||
@@ -19009,12 +19020,14 @@ expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
       initialize->operands.front().type != value->info.type ||
       initialize->info.type != value->info.type ||
       destination->id == source->id ||
-      destination->root != MirPlaceRootKind::Binding ||
+      (destination->root != MirPlaceRootKind::Binding &&
+       !conditionalDestination) ||
       !destination->projections.empty() || destination->initiallyAvailable ||
       destination->type != value->info.type ||
       destination->traits.drop != DropKind::Lexical ||
       !initialize->localFailureSites.empty() ||
-      !initialize->definedFailure.empty() || initialize->lifecycle.size() != 1)
+      !initialize->definedFailure.empty() ||
+      initialize->lifecycle.size() != (conditionalDestination ? 0U : 1U))
     return nullptr;
   bool adjacent = false;
   for (const auto &block : body.blocks) {
@@ -19037,6 +19050,14 @@ expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
       return nullptr;
     selected = &drop;
   }
+  // A cleanup-free join temporary carries no drop of its own; the copied
+  // binding keeps its lexical drop.
+  if (conditionalDestination)
+    return sourceDrop != nullptr && destinationDrop == nullptr &&
+                   cleanupFreeExpectedClassAlternatives(program,
+                                                        value->info.type)
+               ? destination
+               : nullptr;
   const auto &event = initialize->lifecycle.front();
   return sourceDrop && destinationDrop && !destinationDrop->initiallyActive &&
                  event.kind == MirLifecycleEventKind::Initialize &&
@@ -19060,6 +19081,12 @@ expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
 // a construction the source program does not perform and that a class
 // without a default constructor lacks. A scalar-success Expected keeps its
 // ordinary carrier, so its bindings never become lifetime slots here.
+//
+// The move may instead be one arm of an Expected-valued conditional, whose
+// shared temporary takes the binding's role: an owning join's Initialize
+// reparents the moved value's drop into the temporary's value drop, and a
+// cleanup-free join's Initialize activates nothing, since its temporary has no
+// drop. The moved-from source keeps its own binding drop either way.
 [[nodiscard]] const MirPlace *
 expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
                             MirValueId valueId) {
@@ -19135,10 +19162,14 @@ expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
   const MirPlace *destination = initialize != nullptr && initialize->destination
                                     ? body.findPlace(*initialize->destination)
                                     : nullptr;
+  const bool conditionalDestination =
+      destination != nullptr && expectedConditionalSlot(body, *destination);
   const MirDropObligation *bindingDrop = nullptr;
   if (destination != nullptr) {
     for (const MirDropObligation &drop : body.dropObligations) {
-      if (drop.kind != MirDropObligationKind::Binding ||
+      if (drop.kind != (conditionalDestination
+                            ? MirDropObligationKind::Value
+                            : MirDropObligationKind::Binding) ||
           drop.place != destination->id ||
           drop.dropType.type != destination->type) {
         continue;
@@ -19149,6 +19180,32 @@ expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
       bindingDrop = &drop;
     }
   }
+  // A cleanup-free join temporary has no drop for the arm to activate.
+  if (conditionalDestination && cleanupFree &&
+      std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                   [&](const MirDropObligation &drop) {
+                     return drop.place == destination->id;
+                   }) &&
+      initialize->kind == MirInstructionKind::Initialize &&
+      initialize->operands.size() == 1 &&
+      initialize->operands.front().kind == MirOperandKind::Value &&
+      initialize->operands.front().value == valueId &&
+      initialize->operands.front().type == value->info.type &&
+      destination->type == value->info.type &&
+      initialize->info.type == destination->type &&
+      initialize->localFailureSites.empty() &&
+      initialize->definedFailure.localOrigins.empty() &&
+      initialize->definedFailure.propagation == FailurePropagationKind::None &&
+      initialize->lifecycle.empty() && destination->id != source->id) {
+    for (const MirBlock &block : body.blocks) {
+      for (std::size_t index = 1; index < block.instructions.size(); ++index) {
+        if (&block.instructions[index] == initialize &&
+            &block.instructions[index - 1] == move)
+          return destination;
+      }
+    }
+    return nullptr;
+  }
   if (initialize == nullptr || destination == nullptr ||
       bindingDrop == nullptr ||
       initialize->kind != MirInstructionKind::Initialize ||
@@ -19156,7 +19213,8 @@ expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
       initialize->operands.front().kind != MirOperandKind::Value ||
       initialize->operands.front().value != valueId ||
       initialize->operands.front().type != value->info.type ||
-      destination->root != MirPlaceRootKind::Binding ||
+      (destination->root != MirPlaceRootKind::Binding &&
+       !(conditionalDestination && !cleanupFree)) ||
       !destination->projections.empty() ||
       destination->type != value->info.type ||
       destination->traits.drop != DropKind::Lexical ||
@@ -19196,6 +19254,24 @@ expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
                  !reparent.failureCleanup
              ? destination
              : nullptr;
+}
+
+// The Expected-valued conditional temporary that one arm's producer constructs
+// directly: a source call or callable invocation result, a copy of a named
+// binding, or a move out of one. The arm's Initialize then publishes nothing
+// further, and a cleanup-free temporary's previous representation is retired
+// immediately before that producer runs.
+[[nodiscard]] const MirPlace *
+expectedConditionalArmSlot(const MirProgram &program, const MirBody &body,
+                           MirValueId valueId) {
+  for (const MirPlace *destination :
+       {expectedClassResultDestinationSlot(program, body, valueId),
+        expectedCopyDestinationSlot(program, body, valueId),
+        expectedMoveDestinationSlot(program, body, valueId)}) {
+    if (destination != nullptr && expectedConditionalSlot(body, *destination))
+      return destination;
+  }
+  return nullptr;
 }
 
 [[nodiscard]] OwnedExpectedClassExtractionProducer
@@ -39074,6 +39150,12 @@ private:
           output << "// Expected call result already occupies its exact join\n";
           return;
         }
+        if (input.kind == MirOperandKind::Value &&
+            expectedConditionalArmSlot(program, facts.body, input.value) ==
+                destination) {
+          output << "// Expected arm already occupies its exact join\n";
+          return;
+        }
         if (expectedConditionalPayloadInitialize(facts.body, input.value) ==
             &instruction) {
           output << "// Expected payload published at its move\n";
@@ -45714,10 +45796,9 @@ private:
     if (!instruction.result ||
         instruction.info.type.kind != SemanticType::Expected)
       return;
-    const MirPlace *destination = expectedClassResultDestinationSlot(
-        program, facts.body, *instruction.result);
+    const MirPlace *destination =
+        expectedConditionalArmSlot(program, facts.body, *instruction.result);
     if (destination == nullptr ||
-        !expectedConditionalSlot(facts.body, *destination) ||
         std::any_of(facts.body.dropObligations.begin(),
                     facts.body.dropObligations.end(),
                     [&](const MirDropObligation &drop) {
