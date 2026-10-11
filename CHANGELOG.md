@@ -27,6 +27,49 @@ for what minor and patch releases mean.
   ("range HIR plan differs from semantic owner/loan/protocol facts") in the
   concrete instance.
 
+## 0.402.11 — Class results that exist on only one branch
+
+- A call that returns a class needing no cleanup, used directly as the
+  receiver of a method on only one side of `||`, `&&` or `?:`, as in
+  `if (!ready || !make_reading(n).even())`, runs correctly again. Since
+  0.402.3 such programs aborted at run time with "verified MIR lifetime slot
+  was dropped while empty" at every optimization level. This also affected
+  `constexpr for` loops over `std::meta` metaobjects that test, for example,
+  `m.name() != "get" || !m.result().is_integral()`.
+
+## 0.402.10 — `expected` results returned from lambdas
+
+- A lambda or other callable that returns `expected<T, E>`, where `T` has no
+  default constructor, can now be called where its result is passed by value,
+  as in `code(make(a))` or `boxed b{make(a)};`, tested, as in `if (make(a))`,
+  read through `make(a).value()`, or discarded with `[[discard]]`. These
+  programs previously stopped with internal compiler error `GTI-B0001`.
+- Still reporting `GTI-B0001`: assigning a fresh `expected<T, E>` result to an
+  existing binding, as in `r = make(7);`, when `T` has no default constructor.
+
+## 0.402.9 — Copying `expected` values of plain structs and classes
+
+- Copying an `expected<T, E>` into a new variable, as in
+  `auto copy = original;`, now builds when `T` is a struct or class without
+  cleanup. It used to stop with internal compiler error `GTI-B0001` unless `T`
+  was a pointer-bearing `[[c_abi]]` record. The new variable is constructed
+  directly from the original, and both keep their own values.
+- Moving an `expected<T, E>` whose `T` is a number and whose `E` is a struct
+  into a new variable, and then assigning that variable to another one, builds
+  again. 0.402.7 had made this stop with `GTI-B0001`.
+
+## 0.402.8 — Field reads of temporaries inside `&&`, `||` and conditionals
+
+- A field of a temporary whose class has a destructor or owns resources can
+  now be read inside the right operand of `&&` or `||`, or inside a
+  conditional arm, as in `ok || make_tracked(5).number == 5`,
+  `ok ? make_tracked(5).number : 0` or `ok || make_named().text.size() == 3`.
+  The temporary exists only when its operand runs and is destroyed exactly
+  once, including when a later operand fails. Such programs used to report
+  GTI-B0001.
+- Still reporting GTI-B0001: reading a field of an owning `expected` payload
+  in those positions, as in `ok || make_named(true).value().text.size() == 7`.
+
 ## 0.402.7 — Moving `expected` values of plain structs and classes
 
 - Moving an `expected<T, E>` into a new variable, as in

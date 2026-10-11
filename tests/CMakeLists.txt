@@ -875,11 +875,21 @@ add_test(NAME expected_class_argument_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_argument_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_class_argument_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_cleanup_free_copy_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_cleanup_free_copy_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_cleanup_free_copy_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_cleanup_free_move_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_cleanup_free_move_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_cleanup_free_move_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_lambda_class_argument_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_lambda_class_argument_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_lambda_class_argument_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_constructor_return_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_constructor_return_runtime_test.py"
@@ -930,6 +940,11 @@ add_test(NAME class_conditional_join_runtime
                  "${PROJECT_SOURCE_DIR}/tests/class_conditional_join_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(class_conditional_join_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME short_circuit_field_view_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/short_circuit_field_view_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(short_circuit_field_view_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_class_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"

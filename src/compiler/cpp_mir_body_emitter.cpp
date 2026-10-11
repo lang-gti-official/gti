@@ -18832,7 +18832,12 @@ expectedClassResultDestinationSlot(const MirProgram &program,
 
 // A copy has no intermediate value-drop to reparent. Construct its sole
 // binding directly at the Load, retaining the distinct source and destination
-// lexical drops and the destination's ordinary Initialize event.
+// lexical drops and the destination's ordinary Initialize event. This serves a
+// byte-preserving native-record success payload and, equally, any cleanup-free
+// placement Expected (one whose success alternative is a class): a separate
+// SSA local would have to value-initialize that alternative, a construction
+// the source program does not perform. A scalar-success Expected keeps its
+// ordinary carrier, so its bindings never become lifetime slots here.
 [[nodiscard]] const MirPlace *
 expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
                             MirValueId valueId) {
@@ -18842,8 +18847,10 @@ expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
   if (value == nullptr || value->info.type.kind != SemanticType::Expected ||
       value->info.type.arguments.size() != 2 || !value->info.traits.copyable ||
       value->info.traits.drop != DropKind::Lexical ||
-      !cppRequiresIndirectValueTransport(program,
-                                         value->info.type.arguments.front()) ||
+      (!cppRequiresIndirectValueTransport(program,
+                                          value->info.type.arguments.front()) &&
+       (!expectedClassPlacementStorageEligible(program, value->info.type) ||
+        !cleanupFreeExpectedClassAlternatives(program, value->info.type))) ||
       load == nullptr || load->kind != MirInstructionKind::Load ||
       load->result != valueId || load->destination || load->receiver ||
       load->operands.size() != 1 ||
@@ -18919,13 +18926,15 @@ expectedCopyDestinationSlot(const MirProgram &program, const MirBody &body,
 // the following Initialize reparents it to the binding; neither record needs
 // separate C++ storage when this exact move/reparent chain is present.
 //
-// A cleanup-free Expected<Class, E> moves into one binding the same way. MIR
-// gives the moved value no drop and no lifecycle event, only the source's
-// ownership transition, and the adjacent Initialize activates the binding's
-// own drop exactly as a copy does. Constructing the binding at the Move is
-// then the only exact publication: a separate SSA local would have to
-// value-initialize the success alternative, a construction the source program
-// does not perform and that a class without a default constructor lacks.
+// A cleanup-free placement Expected (a class success alternative) moves into
+// one binding the same way. MIR gives the moved value no drop and no
+// lifecycle event, only the source's ownership transition, and the adjacent
+// Initialize activates the binding's own drop exactly as a copy does.
+// Constructing the binding at the Move is then the only exact publication: a
+// separate SSA local would have to value-initialize the success alternative,
+// a construction the source program does not perform and that a class
+// without a default constructor lacks. A scalar-success Expected keeps its
+// ordinary carrier, so its bindings never become lifetime slots here.
 [[nodiscard]] const MirPlace *
 expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
                             MirValueId valueId) {
@@ -18938,6 +18947,7 @@ expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
   const bool cleanupFree =
       value != nullptr && move != nullptr && move->lifecycle.empty() &&
       valueDrop == nullptr &&
+      expectedClassPlacementStorageEligible(program, value->info.type) &&
       cleanupFreeExpectedClassAlternatives(program, value->info.type);
   if (value == nullptr || value->info.type.kind != SemanticType::Expected ||
       value->info.type.arguments.size() != 2 ||
@@ -19434,11 +19444,15 @@ freshExpectedTemporaryReceiverShape(const MirBody &body,
                    [&](const MirDropObligation &drop) {
                      return drop.place == join->id;
                    });
+  // A callable value invocation's result is the same fresh temporary as a
+  // source call's.
   const bool freshCall =
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
-      producer->result == receiver->id && producer->functionTarget &&
-      !producer->receiver && !producer->destination &&
-      !producer->successResultDrop && !producer->successResultDestination &&
+      producer->result == receiver->id &&
+      ((producer->functionTarget && !producer->receiver) ||
+       callableValueInvocation(*producer)) &&
+      !producer->destination && !producer->successResultDrop &&
+      !producer->successResultDestination &&
       producer->intrinsic == IntrinsicKind::None;
   if (receiver == nullptr || receiver->info.type != call.receiver->type ||
       receiver->info.category != ValueCategory::Value ||
@@ -21735,6 +21749,92 @@ valueRootedClassCallResultSlot(const MirProgram &program,
                                               .drop = drop};
 }
 
+// An owned class result constructed directly into a conditional temporary,
+// as a short-circuit operand or conditional arm does, keeps its obligation on
+// that temporary; MIR's conditional Drop destroys it at the end of the full
+// expression. When the result is read only through field views, the
+// temporary is its storage and those views read it.
+[[nodiscard]] const MirPlace *
+conditionalTemporaryViewedResult(const MirProgram &program,
+                                 const CppMirBodyEmissionMap &representations,
+                                 const MirBody &body, MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirInstruction *producer =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
+      producer == nullptr ||
+      (producer->kind != MirInstructionKind::Call &&
+       producer->kind != MirInstructionKind::Construct) ||
+      !producer->result || *producer->result != value->id)
+    return nullptr;
+  // A failure-free producer constructs at its destination and arms the
+  // temporary with its own Initialize event; a transformed one arms the
+  // temporary's obligation on its Invoke success edge.
+  const MirDropObligation *drop = nullptr;
+  if (producer->destination && producer->lifecycle.size() == 1) {
+    const MirLifecycleEvent &activation = producer->lifecycle.front();
+    drop = activation.kind == MirLifecycleEventKind::Initialize &&
+                   activation.source == 0 && !activation.failureCleanup
+               ? body.findDropObligation(activation.target)
+               : nullptr;
+    if (drop != nullptr && drop->place != *producer->destination)
+      drop = nullptr;
+  } else if (!producer->destination && producer->successResultDrop &&
+             exactPreparedInputTransfers(body, *producer)) {
+    drop = body.findDropObligation(*producer->successResultDrop);
+    if (drop != nullptr && !invokeSuccessActivates(body, *producer, drop->id))
+      drop = nullptr;
+  }
+  const MirPlace *temporary =
+      drop == nullptr ? nullptr : body.findPlace(drop->place);
+  if (drop == nullptr || temporary == nullptr ||
+      drop->kind != MirDropObligationKind::Value || drop->initiallyActive ||
+      drop->dropType.type != value->info.type ||
+      temporary->root != MirPlaceRootKind::Temporary ||
+      temporary->temporary == 0 || !temporary->projections.empty() ||
+      temporary->type != value->info.type || temporary->initiallyAvailable)
+    return nullptr;
+  std::size_t views = 0;
+  for (const MirValueUse &use : body.usesOf(value->id)) {
+    const MirPlace *view = use.kind == MirValueUseKind::PlaceRoot
+                               ? body.findPlace(use.place)
+                               : nullptr;
+    if (view == nullptr ||
+        !ownedResultFieldView(program, representations, body, *value, *view))
+      return nullptr;
+    ++views;
+  }
+  return views != 0 ? temporary : nullptr;
+}
+
+[[nodiscard]] const MirPlace *
+conditionalTemporaryFieldViewSlot(const MirProgram &program,
+                                  const CppMirBodyEmissionMap &representations,
+                                  const MirBody &body, const MirPlace &place) {
+  return place.root == MirPlaceRootKind::Value && !place.projections.empty()
+             ? conditionalTemporaryViewedResult(program, representations, body,
+                                                place.value)
+             : nullptr;
+}
+
+// The conditional temporary storage of a result read only through field
+// views.
+[[nodiscard]] bool
+conditionalTemporaryViewStorage(const MirProgram &program,
+                                const CppMirBodyEmissionMap &representations,
+                                const MirBody &body, const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Temporary || place.temporary == 0)
+    return false;
+  for (const MirBlock &block : body.blocks)
+    for (const MirInstruction &instruction : block.instructions)
+      if (instruction.result &&
+          (instruction.destination || instruction.successResultDrop) &&
+          conditionalTemporaryViewedResult(program, representations, body,
+                                           *instruction.result) == &place)
+        return true;
+  return false;
+}
+
 // The owned result's slot when this place is one of its field views.
 [[nodiscard]] const MirPlace *
 ownedResultFieldViewSlot(const MirProgram &program,
@@ -21742,6 +21842,9 @@ ownedResultFieldViewSlot(const MirProgram &program,
                          const MirBody &body, const MirPlace &place) {
   if (place.root != MirPlaceRootKind::Value || place.projections.empty())
     return nullptr;
+  if (const MirPlace *temporary = conditionalTemporaryFieldViewSlot(
+          program, representations, body, place))
+    return temporary;
   const ValueRootedClassCallResultSlot owned = valueRootedClassCallResultSlot(
       program, representations, body, place.value);
   return owned && owned.consumingCall == nullptr && owned.consumer == nullptr &&
@@ -23195,6 +23298,10 @@ lifetimeSlotPlace(const MirProgram &program,
     }
     if (conditionalClassBindingJoin(program, body, place) ||
         cleanupFreeClassJoinMove(program, body, place) != nullptr) {
+      return true;
+    }
+    if (conditionalTemporaryViewStorage(program, representations, body,
+                                        place)) {
       return true;
     }
     if (someValueTargetsPlace(body, place,
@@ -29802,6 +29909,13 @@ classSsaLifetimeSlot(const MirProgram &program,
   // storage keeps the direct placement instead. Owning alternatives keep
   // MIR's value drop and its value-rooted transfer slot; a non-placement
   // Expected keeps its ordinary SSA local.
+  //
+  // A callable value invocation (a closure literal, a stored closure or a
+  // callable parameter) produces the same result. Its invocation publishes
+  // through the same slot whichever ABI the enclosing body selects: the
+  // transformed form constructs at the slot's address on its success edge,
+  // and the plain form constructs from the returned value.
+  const bool callableProducer = producer && callableValueInvocation(*producer);
   if (value && value->info.type.kind == SemanticType::Expected &&
       value->info.category == ValueCategory::Value &&
       value->info.traits.movable && !value->info.traits.containsBorrowedState &&
@@ -29810,14 +29924,15 @@ classSsaLifetimeSlot(const MirProgram &program,
       cleanupFreeExpectedClassAlternatives(program, value->info.type) &&
       producer && producer->kind == MirInstructionKind::Call &&
       producer->result == valueId && producer->info.type == value->info.type &&
-      producer->functionTarget && !producer->receiver &&
+      (callableProducer || (producer->functionTarget && !producer->receiver)) &&
       !producer->destination && !producer->successResultDrop &&
       !producer->successResultDestination &&
       producer->intrinsic == IntrinsicKind::None &&
       producer->dispatch == CallDispatch::Static &&
       // A failure-free source callee is called plainly and constructs the
       // wrapper in the same slot from its returned value.
-      (transformedFailureCallee(program, representations, *producer) !=
+      (callableProducer ||
+       transformedFailureCallee(program, representations, *producer) !=
            nullptr ||
        (producer->definedFailure.empty() &&
         !invokePairedInstruction(body, producer->id) && [&] {
@@ -29826,7 +29941,9 @@ classSsaLifetimeSlot(const MirProgram &program,
           return callee != nullptr && !callee->mayRaiseDefinedFailure;
         }()))) {
     const auto *target =
-        program.findFunctionInstance(*producer->functionTarget);
+        callableProducer
+            ? nullptr
+            : program.findFunctionInstance(*producer->functionTarget);
     const auto uses = body.usesOf(valueId);
     const auto *consumer =
         uses.size() == 1 ? classSsaCallArgumentConsumer(program, body, *value,
@@ -29877,10 +29994,11 @@ classSsaLifetimeSlot(const MirProgram &program,
     // A discarded result still needs storage for its construction; it retires
     // as soon as the producer has published it.
     const bool discarded = uses.empty();
-    if (target && target->linkage == LanguageLinkage::Gti &&
-        target->definitionKind == MirDefinitionKind::Source &&
-        target->returnType == value->info.type &&
-        target->parameterTypes == producer->parameterTypes &&
+    if ((callableProducer ||
+         (target && target->linkage == LanguageLinkage::Gti &&
+          target->definitionKind == MirDefinitionKind::Source &&
+          target->returnType == value->info.type &&
+          target->parameterTypes == producer->parameterTypes)) &&
         (consumer || returned || discarded) &&
         std::none_of(
             body.dropObligations.begin(), body.dropObligations.end(),
@@ -29963,6 +30081,11 @@ classSsaLifetimeSlot(const MirProgram &program,
         uses.size() == 1 && uses.front().kind == MirValueUseKind::Terminator &&
         body.returnType == value->info.type &&
         returnCallDefinition(body, valueId) == nullptr;
+    // A result with no value uses is discarded only when the call publishes
+    // it nowhere else. A call with a MIR destination, such as a branch-only
+    // temporary that MIR rehomed into its hidden result place, constructs
+    // into that place, and its readers use the place rather than the value.
+    const bool discardedResult = uses.empty() && !producer->destination;
     const auto *target =
         program.findFunctionInstance(*producer->functionTarget);
     const bool fieldInitialization =
@@ -29973,7 +30096,7 @@ classSsaLifetimeSlot(const MirProgram &program,
           (consumer->kind == MirInstructionKind::Assign ||
            consumer->kind == MirInstructionKind::Call)) ||
          fieldInitialization || projectedObservation || returnedResult ||
-         uses.empty()) &&
+         discardedResult) &&
         target != nullptr && target->linkage == LanguageLinkage::Gti &&
         target->definitionKind == MirDefinitionKind::Source) {
       callee = target;
@@ -41103,10 +41226,27 @@ private:
       return;
     }
     if (callableValueInvocation(instruction)) {
+      // A cleanup-free Expected<Class, E> result staged for one consumer
+      // constructs in its representation-only SSA slot, exactly as a source
+      // call's result does; a discarded one retires once published.
+      const ClassSsaLifetimeSlot invocationSlot =
+          instruction.result
+              ? classSsaLifetimeSlot(program, representations, facts.body,
+                                     *instruction.result)
+              : ClassSsaLifetimeSlot{};
+      const bool stagedInvocationSlot =
+          invocationSlot.producer == &instruction &&
+          instruction.info.type.kind == SemanticType::Expected &&
+          expectedClassResultDestinationSlot(program, facts.body,
+                                             *instruction.result) == nullptr;
+      const bool discardedInvocationSlot =
+          stagedInvocationSlot &&
+          invocationSlot.consumerKind == ClassSsaSlotConsumerKind::Discard;
       const bool expectedPayload =
-          instruction.result &&
-          expectedPayloadInitialize(program, facts.body, *instruction.result) !=
-              nullptr;
+          stagedInvocationSlot ||
+          (instruction.result &&
+           expectedPayloadInitialize(program, facts.body,
+                                     *instruction.result) != nullptr);
       const MirPlace *temporaryResult =
           instruction.result &&
                   instruction.info.type.kind == SemanticType::Expected
@@ -41219,6 +41359,11 @@ private:
           output << "if (__gti_mir_call_success_" << instruction.id
                  << ") __gti_mir_v_" << *instruction.result
                  << ".mark_constructed();\n";
+        }
+        if (discardedInvocationSlot) {
+          writeIndent();
+          output << "if (__gti_mir_call_success_" << instruction.id
+                 << ") __gti_mir_v_" << *instruction.result << ".destroy();\n";
         }
         if (temporaryResult != nullptr) {
           writeIndent();
@@ -41341,6 +41486,10 @@ private:
       } else {
         output << (temporaryResult != nullptr || expectedPayload ? "); });\n"
                                                                  : ");\n");
+      }
+      if (discardedInvocationSlot && !failureForm) {
+        writeIndent();
+        output << "__gti_mir_v_" << *instruction.result << ".destroy();\n";
       }
       retireConsumedClassResultStages();
       retireConsumedPayloadEnumArguments();
@@ -42590,6 +42739,15 @@ private:
               ? valueRootedClassCallResultSlot(program, representations,
                                                facts.body, *instruction.result)
               : ValueRootedClassCallResultSlot{};
+      // A result read only through field views constructs in the conditional
+      // temporary that owns it.
+      const MirPlace *valueRootedClassSlot =
+          valueRootedClassDestination.slot != nullptr
+              ? valueRootedClassDestination.slot
+          : instruction.result && callee.returnType.kind == SemanticType::Class
+              ? conditionalTemporaryViewedResult(
+                    program, representations, facts.body, *instruction.result)
+              : nullptr;
       const MirPlace *lambdaDestination =
           instruction.result && callee.returnType.kind == SemanticType::Lambda
               ? lambdaValueDestinationSlot(facts.body, *instruction.result)
@@ -42719,7 +42877,7 @@ private:
               expectedClassDestination == nullptr && !placementDirectReturn &&
               !aggregateInputSlot && !expectedInputSlot &&
               !expectedPayloadReturn && !classValueSlot &&
-              !constructorFieldDestination && !valueRootedClassDestination &&
+              !constructorFieldDestination && valueRootedClassSlot == nullptr &&
               !valueRootedExpectedDestination) {
             throw std::logic_error(
                 "verified MIR class call lost its exact destination slot");
@@ -42737,10 +42895,9 @@ private:
                    << canonicalSlotPlaceId(facts.body,
                                            *constructorFieldDestination.slot)
                    << ".construction_address()";
-          } else if (valueRootedClassDestination.slot != nullptr) {
+          } else if (valueRootedClassSlot != nullptr) {
             output << "__gti_mir_p_"
-                   << canonicalSlotPlaceId(facts.body,
-                                           *valueRootedClassDestination.slot)
+                   << canonicalSlotPlaceId(facts.body, *valueRootedClassSlot)
                    << ".construction_address()";
           } else if (lambdaDestination != nullptr) {
             output << "__gti_mir_p_"
@@ -42815,10 +42972,9 @@ private:
                  << canonicalSlotPlaceId(facts.body,
                                          *constructorFieldDestination.slot)
                  << ".mark_constructed();\n";
-        } else if (valueRootedClassDestination.slot != nullptr) {
+        } else if (valueRootedClassSlot != nullptr) {
           output << "__gti_mir_p_"
-                 << canonicalSlotPlaceId(facts.body,
-                                         *valueRootedClassDestination.slot)
+                 << canonicalSlotPlaceId(facts.body, *valueRootedClassSlot)
                  << ".mark_constructed();\n";
         } else if (lambdaDestination != nullptr) {
           output << "__gti_mir_p_"
@@ -42974,7 +43130,12 @@ private:
         : valueRootedClassResult.producer == &instruction
             ? valueRootedClassResult.slot
         : returnedResultDestination != nullptr ? returnedResultDestination
-                                               : lambdaResultDestination;
+        : instruction.result && conditionalTemporaryViewedResult(
+                                    program, representations, facts.body,
+                                    *instruction.result) != nullptr
+            ? conditionalTemporaryViewedResult(program, representations,
+                                               facts.body, *instruction.result)
+            : lambdaResultDestination;
     const ExpectedPayloadReturnSlot expectedPayloadResult =
         instruction.result
             ? expectedPayloadReturnSlot(program, representations, facts.body,
@@ -52395,6 +52556,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           classSsaLifetimeSlot(program_, representations_, body, value.id) ||
           valueRootedClassCallResultSlot(program_, representations_, body,
                                          value.id) ||
+          // A result read only through field views lives in the
+          // conditional temporary it was constructed into.
+          conditionalTemporaryViewedResult(program_, representations_, body,
+                                           value.id) != nullptr ||
           valueRootedClassMoveFieldSlot(program_, representations_, body,
                                         value.id) ||
           consumedReceiverValueSlot(body, value.id) ||
@@ -55853,6 +56018,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             valueRootedClassCallResultSlot(program_, representations_, body,
                                            *instruction.result)
                     .producer != &instruction &&
+            // A result read only through field views of its conditional
+            // temporary constructs there.
+            conditionalTemporaryViewedResult(program_, representations_, body,
+                                             *instruction.result) == nullptr &&
             returnedCallResultSlot(program_, body, *instruction.result) ==
                 nullptr &&
             // A nested contained-member result spells inline at its
@@ -56058,6 +56227,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                      valueRootedClassCallResultSlot(program_, representations_,
                                                     body,
                                                     *instruction.result) ||
+                     conditionalTemporaryViewedResult(
+                         program_, representations_, body,
+                         *instruction.result) != nullptr ||
                      classSsaLifetimeSlot(program_, representations_, body,
                                           *instruction.result) ||
                      transferredConstructorArgumentForSource(

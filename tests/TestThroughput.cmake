@@ -37,7 +37,8 @@ if(Python3_Interpreter_FOUND)
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
     dormant_capability_runtime
     expected_class_argument_runtime expected_class_assignment_runtime
-    expected_cleanup_free_move_runtime
+    expected_cleanup_free_copy_runtime expected_cleanup_free_move_runtime
+    expected_lambda_class_argument_runtime
     expected_class_return_runtime expected_constructor_return_runtime
     expected_field_and_join_runtime expected_scoped_return_runtime
     expected_temporary_observation_runtime
@@ -63,6 +64,7 @@ if(Python3_Interpreter_FOUND)
     owning_expected_field_runtime
     owning_temporary_field_read_runtime
     plain_call_member_initializer_runtime
+    short_circuit_field_view_runtime
     pack_prefix_constructor_failure_runtime private_constructor_placement_runtime
     programmable_allocators_runtime prvalue_direct_initialization_runtime
     raw_owner_witness_runtime raw_pointer_conversion_runtime
