@@ -1275,8 +1275,11 @@ Shared handles can cross threads only when `T` is both transfer-capable and
 share-capable: another thread can perform the last release. Atomic reference
 counts do not make the pointee's ordinary mutable methods safe. Synchronized
 read-receiver APIs such as `atomic<T>` retain their own checked permission.
-The current non-transferable mutex storage does not gain cross-thread transfer
-permission merely by being allocated behind a shared handle.
+A mutex derives both transfer and sharing from its payload's transfer
+capability: the lock serializes payload access, and the payload may ultimately
+be destroyed on another thread. Consequently a shared mutex owner can cross
+threads when its payload transfers. A lock guard remains non-transferable;
+neither allocation nor shared reference counting overrides thread affinity.
 
 Shared ownership does not solve cycles. Weak observation remains incomplete;
 strong ownership cycles must be avoided.

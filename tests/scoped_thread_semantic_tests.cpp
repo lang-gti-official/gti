@@ -71,6 +71,20 @@ public:
   AffineRead(Affine& value) : value(value) {}
   void operator()() {}
 };
+)";
+  if (privateDeclaration)
+    fixture << R"(
+int forward_one<Task>(Task task) {
+  return gti_internal::thread_scope(std::move(task));
+}
+int forward_group<Tasks...>(Tasks... tasks) {
+  return gti_internal::thread_scope(tasks...);
+}
+int relay_group<Tasks...>(Tasks... tasks) {
+  return forward_group(tasks...);
+}
+)";
+  fixture << R"(
 int scope_probe(mut int& first, mut int& second, mut Data& data,
                 Affine& affine) {
 )" << body << "\n}\n}\n";
@@ -201,6 +215,18 @@ void checkScopeMir(const lang::FrontendResult &result) {
               call.scopedThreadTasks[0].dependency = 0;
             }),
                    "MIR rejects erased borrowed task origins");
+          if (scope.scopedThreadTasks.size() > 1 &&
+              scope.scopedThreadTasks[0].dependency != 0 &&
+              scope.scopedThreadTasks[1].dependency != 0 &&
+              body.findLoan(scope.scopedThreadTasks[0].dependency)->entry &&
+              body.findLoan(scope.scopedThreadTasks[1].dependency)->entry &&
+              scope.scopedThreadTasks[0].dependency !=
+                  scope.scopedThreadTasks[1].dependency)
+            expect(!mutate([](auto &call) {
+              call.scopedThreadTasks[1].dependency =
+                  call.scopedThreadTasks[0].dependency;
+            }),
+                   "MIR rejects rebinding a task to another pack element loan");
         }
       }
     }
@@ -209,6 +235,51 @@ void checkScopeMir(const lang::FrontendResult &result) {
 }
 
 void checkInvocations() {
+  for (const auto &body :
+       {"return forward_one(Pair(first, second));",
+        "return forward_one(Nested(first, second));",
+        "return forward_group(Write(first), Write(second));",
+        "return forward_group(Read(first), Read(first));",
+        "return forward_group(Write(data.left), Write(data.right));",
+        "return forward_group(Pair(first, second), Once(), Read(data.left));",
+        "return relay_group(Write(first), Write(second));",
+        "return relay_group(Read(first), Read(first));",
+        "return forward_group();"}) {
+    const auto result = invocation(body, true, lang::FrontendPhase::Mir);
+    if (!result.canGenerateCode())
+      std::cerr << "Forwarding: " << body << '\n';
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    if (!result.hirValid)
+      for (const auto &error :
+           lang::verifyHirProgramPlans(result.semantics, result.hir).errors)
+        std::cerr << "HIR: " << error << '\n';
+    if (!result.mirValid)
+      for (const auto &function : result.mir.functionInstances())
+        if (std::any_of(function.body.places.begin(),
+                        function.body.places.end(), [](const auto &place) {
+                          return place.type.kind ==
+                                 lang::SemanticType::TypePack;
+                        }))
+          std::cerr << lang::MirPrinter{}.print(function.body);
+    expect(result.canGenerateCode(),
+           "generic source forwarding preserves borrowed task origins");
+    checkScopeMir(result);
+  }
+  for (const auto &body : {"return forward_group(Write(first), Write(first));",
+                           "return relay_group(Read(first), Write(first));",
+                           "return forward_one(AffineRead(affine));"}) {
+    const auto result = invocation(body);
+    if (result.canGenerateCode())
+      std::cerr << "Accepted invalid forwarding: " << body << '\n';
+    const bool semanticError = std::any_of(
+        result.diagnostics.begin(), result.diagnostics.end(),
+        [](const auto &diagnostic) {
+          return diagnostic.phase == lang::DiagnosticPhase::Semantics;
+        });
+    expect(!result.canGenerateCode() && semanticError,
+           "generic forwarding cannot hide aliasing or thread affinity");
+  }
   for (const auto &body :
        {"mut auto task = Pair(first, second); task(); return 0;",
         "mut auto task = Nested(first, second); task(); return 0;",
