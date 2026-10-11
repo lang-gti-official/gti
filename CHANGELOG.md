@@ -46,6 +46,14 @@ for what minor and patch releases mean.
   construction to an existing variable still reports GTI-B0001, and so does a
   member initializer whose `expected` payload owns resources.
 
+## 0.399.3 — Faster builds that include standard-library units
+
+- `gti build`, `gti run` and C++ emission no longer lower standard-library
+  declarations the program never uses. A program with three common includes
+  (`<std/format>`, `<std/string>`, `<std/vector>`) compiles about 19% faster,
+  and one that includes every standard unit about 14% faster. Generated code
+  and diagnostics are unchanged. `gti check` still lowers every declaration.
+
 ## 0.399.2 — Repository moved to `lang-gti-official`
 
 - GTI's canonical repository is now
