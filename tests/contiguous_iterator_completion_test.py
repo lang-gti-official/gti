@@ -27,6 +27,48 @@ def negative_sources():
 #include <std/resource>
 """
     return {
+        "vector-snapshot-invalidation": headers + """int main() {
+  mut std::vector<int> values = {1, 2}; auto cursor = values.begin();
+  values.clear(); return *cursor;
+}""",
+        "vector-snapshot-exclusive-growth": headers + """int main() {
+  mut std::vector<int> values = {1, 2}; auto cursor = values.begin_mut();
+  values.push_back(3); return *cursor;
+}""",
+        "vector-snapshot-exclusive-copy": headers + """int main() {
+  mut std::vector<int> values = {1, 2}; auto cursor = values.rbegin_mut();
+  auto copy = cursor; return *copy;
+}""",
+        "vector-snapshot-owner-transfer": headers + """int main() {
+  mut std::vector<int> values = {1, 2}; auto cursor = values.begin();
+  auto moved = std::move(values); return *cursor;
+}""",
+        "vector-snapshot-step-after-clear": headers + """int main() {
+  mut std::vector<int> values = {1, 2}; mut auto cursor = values.begin();
+  values.clear(); ++cursor; return 0;
+}""",
+        "vector-snapshot-step-after-transfer": headers + """int main() {
+  mut std::vector<int> values = {1, 2}; mut auto cursor = values.begin_mut();
+  auto moved = std::move(values); ++cursor; return 0;
+}""",
+        "resource-snapshot-step-after-clear": headers + """int main() {
+  std::process_resource process{}; unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1);
+    mut auto cursor = values.begin(); values.clear(); ++cursor; return 0;
+  }
+}""",
+        "resource-snapshot-step-after-transfer": headers + """int main() {
+  std::process_resource process{}; unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1);
+    mut auto cursor = values.begin_mut(); auto moved = std::move(values); ++cursor; return 0;
+  }
+}""",
+        "vector-snapshot-child-step": headers + """int main() {
+  mut std::vector<int> values = {1, 2}; mut auto cursor = values.begin_mut();
+  mut int& child = *cursor; ++cursor; return child;
+}""",
         "string-readonly": headers + """int main() {
   std::string text{"abc"}; mut auto cursor = text.begin(); *cursor = 'x'; return 0;
 }""",

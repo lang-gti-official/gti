@@ -22,6 +22,25 @@ int main() {
   { mut auto end = values.end_iterator(); --end; if (*end != 3) { return 2; } }
   { mut auto write = values.end_mut(); --write; write[std::ptrdiff_t(-1)] = 12; }
   if (values[std::size_t(1)] != 12) { return 3; }
+  // Every copy carries the same stable bound and owner origin. Element writes
+  // are permitted through the exclusive cursor without changing its extent.
+  {
+    auto end = values.end();
+    mut auto write = values.begin_mut();
+    *write = 11; ++write; *write = 12; ++write; *write = 13; ++write;
+    if (!(write == end)) { return 30; }
+    --write; if (*write != 13) { return 31; }
+  }
+  {
+    auto end = values.rend();
+    mut auto reverse = values.rbegin_mut();
+    *reverse = 3; ++reverse; *reverse = 2; ++reverse; *reverse = 1; ++reverse;
+    if (!(reverse == end)) { return 32; }
+    --reverse; if (*reverse != 1) { return 33; }
+  }
+  mut std::vector<int> empty{};
+  { auto end = empty.end(); auto cursor = empty.begin_mut(); if (cursor != end) { return 34; } }
+  { auto end = empty.rend(); auto cursor = empty.rbegin_mut(); if (cursor != end) { return 35; } }
 
   mut std::array<int, 3> fixed = std::array<int, 3>({1, 2, 3});
   if (!random_cursor(fixed.begin())) { return 4; }

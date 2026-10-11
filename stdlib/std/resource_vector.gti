@@ -69,12 +69,14 @@ public:
 };
 
 class resource_vector_iterator<std::storage_element T, std::memory_resource R, uint64_t Reverse = 0> {
+  // The source-owner/resource loan keeps the live prefix extent stable.
+  size_t final_position;
   resource_prefix_owner<T, R>& slots;
   mut size_t position;
 public:
   resource_vector_iterator(resource_prefix_owner<T, R>& slots, size_t position)
-      : slots(slots), position(position) {
-    if (position > slots.length()) { gti_internal::index_bounds_check(position, slots.length()); }
+      : final_position(slots.length()), slots(slots), position(position) {
+    if (position > this.final_position) { gti_internal::index_bounds_check(position, this.final_position); }
   }
   T& operator*() {
     mut size_t position = this.position;
@@ -86,11 +88,11 @@ public:
   T& operator->() { return *this; }
   void operator++() mut {
     this.position = detail::checked_iterator_step<Reverse>(
-        this.position, size_t(0), this.slots.length());
+        this.position, size_t(0), this.final_position);
   }
   void operator--() mut {
     this.position = detail::checked_iterator_step<Reverse, 1>(
-        this.position, size_t(0), this.slots.length());
+        this.position, size_t(0), this.final_position);
   }
   void operator+=(ptrdiff_t offset) mut {
     this.position = detail::checked_iterator_position(
@@ -131,12 +133,15 @@ public:
 };
 
 class resource_vector_mut_iterator<std::storage_element T, std::memory_resource R, uint64_t Reverse = 0> {
+  // Capture before retaining the exclusive source loan. Element mutation
+  // cannot change this bound; reads remain checked against actual live slots.
+  size_t final_position;
   mut resource_prefix_owner<T, R>& slots;
   mut size_t position;
 public:
   resource_vector_mut_iterator(mut resource_prefix_owner<T, R>& slots, size_t position = size_t(0))
-      : slots(slots), position(position) {
-    if (position > slots.length()) { gti_internal::index_bounds_check(position, slots.length()); }
+      : final_position(slots.length()), slots(slots), position(position) {
+    if (position > this.final_position) { gti_internal::index_bounds_check(position, this.final_position); }
   }
   T& operator*() {
     mut size_t position = this.position;
@@ -156,11 +161,11 @@ public:
   mut T& operator->() mut { return *this; }
   void operator++() mut {
     this.position = detail::checked_iterator_step<Reverse>(
-        this.position, size_t(0), this.slots.length());
+        this.position, size_t(0), this.final_position);
   }
   void operator--() mut {
     this.position = detail::checked_iterator_step<Reverse, 1>(
-        this.position, size_t(0), this.slots.length());
+        this.position, size_t(0), this.final_position);
   }
   void operator+=(ptrdiff_t offset) mut {
     this.position = detail::checked_iterator_position(

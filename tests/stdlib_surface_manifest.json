@@ -38,7 +38,7 @@
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/resource.gti": "54fc9c2e5dfe54e81d48f58b1c30d007176d4779fab9d78e34e695c28c21cf2d",
-    "stdlib/std/resource_vector.gti": "62b252d1158a77213a8c7adc071d2dfa556323e1740948c344613b599c37374c",
+    "stdlib/std/resource_vector.gti": "168647ac6a6b78f5559884bd2860dfb2b6f52e5187914ac445fe4d7dbb8910c3",
     "stdlib/std/set.gti": "21ae1fa7f3e6344a2bfe17c0a6f0fc1a274954bfe7a52d6b46e0a44bb84dc779",
     "stdlib/std/simd.gti": "9db37c0d480f519cfcfb44b22a478cf51f19e0c11334e85caf76e23bbe107f3b",
     "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
@@ -50,7 +50,7 @@
     "stdlib/std/unordered_map.gti": "8f2b0f540d58b9e2a363c33b1708e31bc13cf4985051f9ae9a82c071bc411bb1",
     "stdlib/std/unordered_set.gti": "d34da5c1a6347dea83c385c536c7eaf217335da2bcab7ba99275a9ea26f52fc4",
     "stdlib/std/utility.gti": "959b87c2cd332ad51a4d1711fb4e94b83ab752cb8af886e2aa3bbf2658815e7d",
-    "stdlib/std/vector.gti": "996de85951a50cb8d24fca822e93082f77981a110212297a46e7bab33d6cb803"
+    "stdlib/std/vector.gti": "281a64b7d752fe2abcd942d513e40f57f5a2e44cc807a2bcf1b6ab95db069956"
   },
   "cases": [
     {

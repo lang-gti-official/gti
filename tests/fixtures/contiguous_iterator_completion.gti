@@ -178,8 +178,25 @@ int main() {
       *reverse = 302;
       reverse[std::ptrdiff_t(2)] = 101;
     }
+    {
+      auto end = owned.end();
+      mut auto output = owned.begin_mut();
+      *output = 101; ++output; *output = 202; ++output; *output = 303; ++output;
+      if (!(output == end)) { return 36; }
+      --output; if (*output != 303) { return 37; }
+    }
+    {
+      auto end = owned.rend();
+      mut auto output = owned.rbegin_mut();
+      *output = 3; ++output; *output = 2; ++output; *output = 1; ++output;
+      if (!(output == end)) { return 38; }
+      --output; if (*output != 1) { return 39; }
+    }
     adoption_count_end();
     if (adoption_allocations() != uint64_t(0)) { return 22; }
+    mut std::resource_vector<int, std::process_resource> empty{resource};
+    { auto end = empty.end(); auto output = empty.begin_mut(); if (output != end) { return 40; } }
+    { auto end = empty.rend(); auto output = empty.rbegin_mut(); if (output != end) { return 41; } }
   }
   return 0;
 }
