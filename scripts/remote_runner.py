@@ -16,6 +16,7 @@ import io
 import json
 import os
 from pathlib import Path, PurePosixPath
+import platform
 import re
 import shlex
 import shutil
@@ -28,7 +29,21 @@ import time
 import uuid
 
 SCHEMA = 1
+SETTINGS_SCHEMA = 2
 DEFAULT_ROOT = "/private/tmp/gti-remote-runner"
+HOSTS = {
+    "mini": {"host": "lukeh@192.168.0.53", "root": DEFAULT_ROOT,
+             "python": "/opt/homebrew/bin/python3", "transport": "ssh", "platform": "Darwin"},
+    "ubuntu-6": {"host": "root@100.77.66.96", "root": "/tmp/gti-remote-runner",
+                 "python": "/usr/bin/python3", "transport": "tailscale", "platform": "Linux",
+                 "cpus": 6, "memory_gib": 13, "jobs": 3, "test_jobs": 6,
+                 "cc": "/usr/bin/gcc-14", "cxx": "/usr/bin/g++-14"},
+    "ubuntu-8": {"host": "root@100.81.111.76", "root": "/tmp/gti-remote-runner",
+                 "python": "/usr/bin/python3", "transport": "tailscale", "platform": "Linux",
+                 "cpus": 8, "memory_gib": 13, "jobs": 3, "test_jobs": 6,
+                 "cc": "/usr/bin/gcc-14", "cxx": "/usr/bin/g++-14"},
+}
+HOST_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\Z")
 RETENTION = 24 * 60 * 60
 MAX_INPUT = 1024 * 1024 * 1024
 MAX_RESULTS = 32 * 1024 * 1024
@@ -49,6 +64,146 @@ def write_json(path, value):
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
     temporary.replace(path)
+
+
+def validate_connection(config):
+    fields = {"host", "root", "python", "transport", "platform", "cpus", "memory_gib", "jobs", "test_jobs", "cc", "cxx"}
+    if not isinstance(config, dict) or set(config) - fields:
+        raise RunnerError("runner connection has unknown fields")
+    host = config.get("host")
+    if (not isinstance(host, str) or not host or host.startswith("-")
+            or any(c.isspace() or c == "\0" for c in host)):
+        raise RunnerError("provide an SSH alias or user@host; SSH/Tailscale authentication must already work")
+    root = config.get("root", "")
+    if (not isinstance(root, str) or not root.startswith("/")
+            or ".." in PurePosixPath(root).parts
+            or PurePosixPath(root).name != "gti-remote-runner" or "\0" in root):
+        raise RunnerError("remote root must be absolute, without '..', and end in gti-remote-runner")
+    python = config.get("python")
+    if not isinstance(python, str) or not python or "\0" in python:
+        raise RunnerError("remote Python executable must be a nonempty path/name")
+    for key in ("cc", "cxx"):
+        if key in config and (not isinstance(config[key], str) or not config[key] or "\0" in config[key]):
+            raise RunnerError(f"runner {key} must be a nonempty executable path/name")
+    if config.get("transport", "ssh") not in ("ssh", "tailscale"):
+        raise RunnerError("transport must be ssh or tailscale")
+    for key in ("jobs", "test_jobs", "cpus", "memory_gib"):
+        if key in config and (type(config[key]) is not int or config[key] < 1):
+            raise RunnerError(f"runner {key} must be a positive integer")
+    if config.get("platform") not in (None, "Darwin", "Linux"):
+        raise RunnerError("runner platform must be Darwin or Linux")
+    return config
+
+
+def load_settings(path):
+    settings = {"schema": SETTINGS_SCHEMA, "default": "mini",
+                "hosts": {name: dict(config) for name, config in HOSTS.items()}}
+    if Path(path).exists():
+        saved = read_json(path)
+        if not isinstance(saved, dict):
+            raise RunnerError("runner settings must be an object")
+        if "host" in saved and "schema" not in saved:
+            # Preserve the old single-host connection, including custom paths.
+            settings["hosts"]["mini"].update(saved)
+            if saved["host"] != HOSTS["mini"]["host"] and "platform" not in saved:
+                settings["hosts"]["mini"].pop("platform", None)
+            validate_connection(settings["hosts"]["mini"])
+        else:
+            if saved.get("schema") != SETTINGS_SCHEMA or not isinstance(saved.get("hosts"), dict):
+                raise RunnerError("unsupported runner settings schema")
+            for name, config in saved["hosts"].items():
+                if not HOST_NAME.fullmatch(name) or not isinstance(config, dict):
+                    raise RunnerError("invalid named runner settings")
+                settings["hosts"][name] = validate_connection(dict(config))
+            settings["default"] = saved.get("default")
+            if not isinstance(settings["default"], str) or settings["default"] not in settings["hosts"]:
+                raise RunnerError("default runner is not configured")
+    return settings
+
+
+def save_connection(path, name, config, make_default=False):
+    from build_window import Window
+    if not isinstance(name, str) or not HOST_NAME.fullmatch(name):
+        raise RunnerError("invalid named runner settings")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Serialize only metadata updates, never network calls or validation runs.
+    window = Window(path.parent / "settings-window", slots={"suite": 1}, poll=0.1)
+    with window.acquire("suite", ["remote-runner", "configure"]):
+        settings = load_settings(path)
+        settings["hosts"][name] = validate_connection(config)
+        if make_default:
+            settings["default"] = name
+        # Older task worktrees can still read the original single-host fields
+        # during a rolling update. Preserve their Mini connection until rebased.
+        settings.update({key: settings["hosts"][settings["default"]][key]
+                         for key in ("host", "root", "python")})
+        write_json(path, settings)
+
+
+def select_connection(args, settings, local, run_id=None):
+    record = local / "runs" / (run_id + ".json") if run_id else None
+    if record and record.exists():
+        saved = read_json(record)
+        if (not isinstance(saved, dict) or saved.get("schema") != SETTINGS_SCHEMA
+                or saved.get("id") != run_id):
+            raise RunnerError("saved run connection identity mismatch")
+        if (not isinstance(saved.get("runner"), str) or not HOST_NAME.fullmatch(saved["runner"])
+                or "connection" not in saved):
+            raise RunnerError("saved run connection is incomplete")
+        name, config = saved["runner"], validate_connection(saved["connection"])
+        # A changed default/environment must not redirect a detached run.
+        if args.runner and args.runner != name:
+            raise RunnerError(f"{run_id} belongs to {name}; omit --runner to use its recorded host")
+        for key in ("host", "root", "python", "transport"):
+            if getattr(args, key) is not None and getattr(args, key) != config.get(key):
+                raise RunnerError(f"{run_id} has a recorded {key}; connection overrides would redirect its evidence")
+        return name, config
+    name = (args.runner if args.runner is not None
+            else os.environ.get("GTI_REMOTE_RUNNER") or settings["default"])
+    if not HOST_NAME.fullmatch(name):
+        raise RunnerError("runner name must use letters, digits, '-' or '_'")
+    if name not in settings["hosts"] and not (args.host or os.environ.get("GTI_REMOTE_HOST")):
+        raise RunnerError(f"unknown runner {name!r}; choose one of {', '.join(settings['hosts'])}, or configure --host")
+    config = dict(settings["hosts"].get(name, {"root": DEFAULT_ROOT,
+                                            "python": "/opt/homebrew/bin/python3", "transport": "ssh"}))
+    config.update({key: value for key, value in {
+        "host": args.host if args.host is not None else os.environ.get("GTI_REMOTE_HOST") or None,
+        "root": args.root if args.root is not None else os.environ.get("GTI_REMOTE_ROOT") or None, "python": args.python,
+        "transport": args.transport, "cc": args.cc, "cxx": args.cxx}.items() if value is not None})
+    return name, validate_connection(config)
+
+
+def record_connection(local, run_id, name, config):
+    if not isinstance(name, str) or not HOST_NAME.fullmatch(name):
+        raise RunnerError("invalid run's named runner")
+    validate_connection(config)
+    directory = local / "runs"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / (valid_id(run_id) + ".json")
+    if path.exists():
+        raise RunnerError("refusing to overwrite an existing run connection")
+    write_json(path, {"schema": SETTINGS_SCHEMA, "id": run_id, "runner": name,
+                      "connection": config})
+
+
+def window_slots():
+    # The 13-GiB Ubuntu hosts must not stack two large compiler builds. This
+    # server-side policy is identical for every worktree/client on that host.
+    return {"build": 1 if platform.system() == "Linux" else 2, "suite": 1}
+
+
+def llvm_directory():
+    if platform.system() == "Darwin":
+        homebrew = Path("/opt/homebrew/opt/llvm/lib/cmake/llvm")
+        if homebrew.is_dir():
+            return str(homebrew)
+    executable = shutil.which("llvm-config")
+    if executable:
+        result = subprocess.run([executable, "--cmakedir"], capture_output=True, text=True)
+        path = Path(result.stdout.strip())
+        if result.returncode == 0 and path.is_absolute() and (path / "LLVMConfig.cmake").is_file():
+            return str(path)
+    return None
 
 
 def git(repo, *arguments):
@@ -226,16 +381,19 @@ def validate_steps(steps):
 
 
 def default_steps(request):
-    # Two build slots share the Mini. Each gets half the CPUs by default; one
-    # suite can use the whole host. Explicit job counts allow dedicated runs.
+    # Named Ubuntu profiles cap workers for 13 GiB; legacy/default requests
+    # retain the Mini's half-CPU build policy. Explicit counts still win.
     cpus = os.cpu_count() or 1
     jobs = request.get("jobs") or max(1, cpus // 2)
     test_jobs = request.get("test_jobs") or cpus
     configure = ["cmake", "-S", "{source}", "-B", "{build}", "-G", "Ninja",
                  "-DCMAKE_BUILD_TYPE=" + request["build_type"], "-DBUILD_TESTING=ON"]
-    llvm = Path("/opt/homebrew/opt/llvm/lib/cmake/llvm")
-    if llvm.is_dir():
-        configure.append("-DLLVM_DIR=" + str(llvm))
+    llvm = llvm_directory()
+    if llvm:
+        configure.append("-DLLVM_DIR=" + llvm)
+    for language, key in (("C", "cc"), ("CXX", "cxx")):
+        if request.get(key) and not os.environ.get("CC" if key == "cc" else "CXX"):
+            configure.append(f"-DCMAKE_{language}_COMPILER={request[key]}")
     configure.extend(request["cmake_args"])
     build = ["cmake", "--build", "{build}", "--parallel", str(jobs)]
     if request["targets"]:
@@ -340,7 +498,7 @@ def worker(root_value, run_id):
     run = run_directory(root, run_id)
     request = read_json(run / "input" / "request.json")
     started = time.time()
-    state = {"id": run_id, "state": "running", "pid": os.getpid(), "child_pid": None, "created": started,
+    state = {"id": run_id, "runner": request.get("runner"), "state": "running", "pid": os.getpid(), "child_pid": None, "created": started,
              "started": started, "steps": [], "source": request["source"], "exit_code": 1}
     process = None
     previous = {}
@@ -384,6 +542,8 @@ def worker(root_value, run_id):
     signal.setitimer(signal.ITIMER_REAL, 0.25, 0.25)
     write_json(run / "state.json", state)
     try:
+        if request.get("required_platform") and request["required_platform"] != platform.system():
+            raise RunnerError(f"run requires {request['required_platform']}, host is {platform.system()}")
         source = run / "source"
         build = run / "build"
         source.mkdir()
@@ -400,10 +560,12 @@ def worker(root_value, run_id):
                 process = None
         extract(run / "input" / "source.tar", source, MAX_INPUT // 2)
         steps = validate_steps(request["steps"] or default_steps(request))
-        window = Window(root / "window", slots={"build": 2, "suite": 1}, poll=1)
-        environment = dict(os.environ, PATH="/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "/usr/bin:/bin"),
+        slots = window_slots()
+        window = Window(root / "window", slots=slots, poll=1)
+        prefix = "/opt/homebrew/bin:/usr/local/bin:" if platform.system() == "Darwin" else ""
+        environment = dict(os.environ, PATH=prefix + os.environ.get("PATH", "/usr/bin:/bin"),
                            GTI_BUILD_WINDOW_DIR=str(root / "window"),
-                           GTI_BUILD_WINDOW_BUILD_SLOTS="2", GTI_BUILD_WINDOW_SUITE_SLOTS="1")
+                           GTI_BUILD_WINDOW_BUILD_SLOTS=str(slots["build"]), GTI_BUILD_WINDOW_SUITE_SLOTS=str(slots["suite"]))
         for step in steps:
             argv = [a.replace("{source}", str(source)).replace("{build}", str(build)) for a in step["argv"]]
             state["phase"] = step["name"]
@@ -524,7 +686,9 @@ def remote_action(action, root_value, run_id=None):
         states = []
         for path in runs:
             states.append(read_json(run_directory(root, path.name) / "state.json"))
-        return {"root": str(root), "runs": states, "window": Window(root / "window").status(), "pruned": removed}
+        return {"root": str(root), "platform": platform.system(), "machine": platform.machine(),
+                "cpus": os.cpu_count(), "slots": window_slots(), "runs": states,
+                "window": Window(root / "window").status(), "pruned": removed}
     if action == "clean" and not run_id:
         return {"pruned": removed}  # bounded garbage collection, not purge-all
     if action == "submit":
@@ -602,8 +766,14 @@ def connection(config, action, run_id=None, input_path=None, output_path=None):
                  f"s=base64.b64decode('{script}').decode();"
                  "exec(compile(s,'<remote_runner>','exec'),{'__name__':'__main__','RUNNER_SOURCE':s})")
     remote = shlex.join([config["python"], "-u", "-c", bootstrap, "_remote", action, config["root"], *([run_id] if run_id else [])])
-    command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
-               "-o", "ServerAliveCountMax=3", "--", config["host"], remote]
+    options = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
+               "-o", "ServerAliveCountMax=3"]
+    if config.get("transport", "ssh") == "tailscale":
+        # Tailscale validates the node's advertised SSH host key; never use
+        # StrictHostKeyChecking=no or silently fall back to unverified SSH.
+        command = ["tailscale", "ssh", config["host"], *options, remote]
+    else:
+        command = ["ssh", *options, "--", config["host"], remote]
     with (open(input_path, "rb") if input_path else open(os.devnull, "rb")) as incoming:
         if output_path:
             with open(output_path, "wb") as outgoing:
@@ -639,11 +809,17 @@ def fetch(config, run_id, destination):
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--repo", default=".", help="source worktree (default: current directory)")
+    result.add_argument("--runner", help="named host: mini, ubuntu-6, ubuntu-8 (or a configured name)")
     result.add_argument("--host", help="SSH alias or user@host; saved by configure")
     result.add_argument("--root", help="absolute remote directory ending in gti-remote-runner")
     result.add_argument("--python", help="remote Python 3.9+ executable")
+    result.add_argument("--transport", choices=["ssh", "tailscale"], help="authenticated SSH client")
+    result.add_argument("--cc", help="remote default C compiler; saved by configure")
+    result.add_argument("--cxx", help="remote default C++ compiler; saved by configure")
     commands = result.add_subparsers(dest="command", required=True)
-    commands.add_parser("configure", help="save shared connection settings in the Git common directory")
+    configure = commands.add_parser("configure", help="validate/save a named connection in the Git common directory")
+    configure.add_argument("--default", action="store_true", help="also select this runner as the shared default")
+    commands.add_parser("hosts", help="list configured/preset hosts without connecting")
     run = commands.add_parser("run", help="snapshot this worktree, build/test remotely and fetch results")
     run.add_argument("--target", action="append", default=[], help="CMake target; repeatable, default all")
     run.add_argument("--ctest-regex", help="CTest -R expression (no matching tests is an error)")
@@ -656,8 +832,10 @@ def parser():
     run.add_argument("--timeout", type=int, default=3 * 60 * 60, help="seconds, including window waits")
     run.add_argument("--detach", action="store_true", help="return run ID immediately; status/fetch later")
     run.add_argument("--results", help="local results directory; default under Git common directory")
-    status = commands.add_parser("status", help="show runs and the Mini's shared build window")
+    run.add_argument("--platform", choices=["Darwin", "Linux"], help="require this remote OS before running steps")
+    status = commands.add_parser("status", help="show runs and the selected host's shared build window")
     status.add_argument("run_id", nargs="?")
+    status.add_argument("--all", action="store_true", help="inspect every named host, reporting connection failures")
     get = commands.add_parser("fetch", help="retrieve finished results and delete the remote run")
     get.add_argument("run_id")
     get.add_argument("--results")
@@ -680,19 +858,38 @@ def main(argv=None):
     args = parser().parse_args(arguments)
     local = local_directory(args.repo)
     path = local / "config.json"
-    config = read_json(path) if path.exists() else {}
-    config.update({key: value for key, value in {
-        "host": args.host or os.environ.get("GTI_REMOTE_HOST"),
-        "root": args.root or os.environ.get("GTI_REMOTE_ROOT"), "python": args.python}.items() if value})
-    config.setdefault("root", DEFAULT_ROOT)
-    config.setdefault("python", "/opt/homebrew/bin/python3")
-    if not config.get("host") or config["host"].startswith("-") or any(c.isspace() for c in config["host"]):
-        raise RunnerError("configure --host user@host (or set GTI_REMOTE_HOST); SSH keys must already work")
+    settings = load_settings(path)
+    if args.command == "hosts":
+        print(json.dumps(settings, indent=2))
+        return 0
+    if args.command == "status" and args.all:
+        if args.run_id or any((args.runner, args.host, args.root, args.python, args.transport, args.cc, args.cxx)):
+            raise RunnerError("status --all cannot be combined with a run ID or connection overrides")
+        states = {}
+        for name, config in settings["hosts"].items():
+            try:
+                observed = connection(validate_connection(config), "status")
+                states[name] = {key: observed.get(key) for key in
+                                ("root", "platform", "machine", "cpus", "slots", "window")}
+                states[name]["active_runs"] = [
+                    {key: run.get(key) for key in ("id", "state", "phase")}
+                    for run in observed.get("runs", []) if run["state"] not in TERMINAL]
+                states[name]["retained_results"] = sum(
+                    run["state"] in TERMINAL for run in observed.get("runs", []))
+            except (RunnerError, OSError, ValueError) as error:
+                states[name] = {"error": str(error)}
+        print(json.dumps(states, indent=2))
+        return int(any("error" in state for state in states.values()))
+    run_id = valid_id(args.run_id) if getattr(args, "run_id", None) else None
+    name, config = select_connection(args, settings, local, run_id)
     if args.command == "configure":
-        connection(config, "status")  # validate connection and owned root before saving
-        local.mkdir(parents=True, exist_ok=True)
-        write_json(path, config)
-        print(f"Saved {path}; remote window: {config['root']}/window")
+        observed = connection(config, "status")  # validate connection and owned root before saving
+        if config.get("platform") and observed.get("platform") != config["platform"]:
+            raise RunnerError("runner platform differs from preset; use a matching named host")
+        if observed.get("platform") in ("Darwin", "Linux"):
+            config["platform"] = observed["platform"]
+        save_connection(path, name, config, args.default)
+        print(f"Saved {name} at {path}; remote window: {config['root']}/window")
         return 0
     if args.command == "run":
         if args.full_suite and args.ctest_regex:
@@ -701,6 +898,8 @@ def main(argv=None):
             raise RunnerError("job counts must be positive; timeout must be 1..86400 seconds")
         if any("CMAKE_BUILD_TYPE" in argument or "CMAKE_CONFIGURATION_TYPES" in argument for argument in args.cmake_arg):
             raise RunnerError("choose the optimized configuration with --build-type, not --cmake-arg")
+        if args.platform and config.get("platform") and args.platform != config["platform"]:
+            raise RunnerError(f"run requires {args.platform}, selected runner {name} is {config['platform']}")
         run_id = "run-" + uuid.uuid4().hex
         steps = validate_steps(read_json(args.steps_file)) if args.steps_file else None
         with tempfile.TemporaryDirectory(prefix="gti-runner-snapshot-") as temporary:
@@ -708,16 +907,20 @@ def main(argv=None):
             identity = snapshot(args.repo, temporary)
             request = {"schema": SCHEMA, "id": run_id, "source": identity, "steps": steps,
                        "targets": args.target, "ctest_regex": args.ctest_regex, "full_suite": args.full_suite,
-                       "jobs": args.jobs, "test_jobs": args.test_jobs, "build_type": args.build_type,
+                       "runner": {"name": name, "host": config["host"]},
+                       "required_platform": args.platform or config.get("platform"),
+                       "cc": config.get("cc"), "cxx": config.get("cxx"),
+                       "jobs": args.jobs or config.get("jobs"), "test_jobs": args.test_jobs or config.get("test_jobs"), "build_type": args.build_type,
                        "cmake_args": args.cmake_arg, "timeout": args.timeout}
             write_json(temporary / "request.json", request)
             packet = temporary / "upload.tar"
             with tarfile.open(packet, "w") as archive:
-                for name in ("head.bundle", "source.tar", "request.json"):
-                    archive.add(temporary / name, arcname=name, recursive=False)
+                for filename in ("head.bundle", "source.tar", "request.json"):
+                    archive.add(temporary / filename, arcname=filename, recursive=False)
                 add_bytes(archive, "remote_runner.py", source_code().encode())
                 add_bytes(archive, "build_window.py", (Path(__file__).parent / "build_window.py").read_bytes())
-            print(f"Submitting {run_id}: {identity['head']} / snapshot {identity['snapshot_sha256']}", flush=True)
+            record_connection(local, run_id, name, config)
+            print(f"Submitting {run_id} to {name} ({config['host']}): {identity['head']} / snapshot {identity['snapshot_sha256']}", flush=True)
             connection(config, "submit", run_id, input_path=packet)
         print(f"Run ID: {run_id}", flush=True)
         if args.detach:
@@ -740,7 +943,6 @@ def main(argv=None):
         report = fetch(config, run_id, args.results or local / "results" / run_id)
         print(f"Results: {args.results or local / 'results' / run_id}; remote run removed", flush=True)
         return report["exit_code"]
-    run_id = valid_id(args.run_id) if args.run_id else None
     if args.command == "fetch":
         destination = args.results or local / "results" / run_id
         report = fetch(config, run_id, destination)
