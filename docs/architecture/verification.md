@@ -37,6 +37,17 @@ structurally ready bodies and 517 identical production/general text bodies).
 Comparison over the entire reconciled corpus and fresh unfiltered/platform
 acceptance still remain open; a single-fixture proxy is not final certification.
 
+The frozen complete comparison subsequently identifies a test-only
+overconstraint: the detached agreement map does not overlay every callable
+template representation, and the original gate compares only production-selected
+scalar-CFG bodies. The added whole-plan readiness assertion is therefore removed,
+not an original admission check. Global validation, every selected body identity,
+per-body emitted status, exact standalone issues/text and production text matching
+remain mandatory. A fresh owning-callback fixture passes all 318 structural
+results and 98 selected text comparisons under that corrected contract.
+Reconciliation `0c9750ff` additionally preserves main's owning-conditional
+lifecycle fix unchanged; its full Release rebuild and focused runtime gate pass.
+
 At reconciled clean `25d7e49d`, all Release targets build and
 the unfiltered 651-test run finishes with 644 passes and seven failures.
 The complete C++ emitter corpus passes (141 sources, 35,978 ready bodies,
