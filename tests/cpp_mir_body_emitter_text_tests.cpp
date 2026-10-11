@@ -4523,6 +4523,70 @@ int main() { return read(true) + assign(true) + pick(true).number - 9; }
          "Return");
 }
 
+void testBranchTemporaryCallResultIsNotDiscarded() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-branch-temporary-result.gti", R"(
+class reading {
+public:
+  reading(uint32_t value) : value(value) {}
+  bool even() { return (this.value + uint32_t(1)) % uint32_t(2) == uint32_t(1); }
+private:
+  uint32_t value;
+};
+
+reading make_reading(uint32_t value) { return reading(value); }
+
+int main() {
+  mut uint32_t one = uint32_t(1);
+  one = one + uint32_t(0);
+  if (one != uint32_t(1) || !make_reading(uint32_t(4)).even()) { return 1; }
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the branch-temporary receiver fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  // The receiver temporary exists only on the right of `||`, so MIR rehomes
+  // its owning value into a hidden temporary place and the plain call
+  // publishes there. The call's value has no uses, yet it is not discarded.
+  std::size_t rehomed = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const lang::MirBody &body = function.body;
+    for (const lang::MirBlock &block : body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            !instruction.result || !instruction.destination ||
+            instruction.info.type.kind != lang::SemanticType::Class)
+          continue;
+        const lang::MirPlace *destination =
+            body.findPlace(*instruction.destination);
+        if (destination != nullptr &&
+            destination->root == lang::MirPlaceRootKind::Temporary &&
+            body.usesOf(*instruction.result).empty())
+          ++rehomed;
+      }
+  }
+  expect(rehomed == 1,
+         "the branch-only receiver result should publish into its hidden "
+         "temporary place with no remaining value uses");
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  expect(text.find("end discarded result representation") ==
+                 std::string::npos &&
+             text.find("mir_lifetime_slot<::__gti_program::reading, true> "
+                       "__gti_mir_v_") == std::string::npos &&
+             text.find(".construct_from([&]() { return "
+                       "::__gti_program::") != std::string::npos,
+         "a call publishing into its MIR destination should construct there "
+         "and never retire an unconstructed discard slot");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -4712,6 +4776,8 @@ constexpr NamedTest kTests[] = {
     {"testOwnedArgumentMemberInitializer", testOwnedArgumentMemberInitializer},
     {"testOwningExpectedFieldPublication", testOwningExpectedFieldPublication},
     {"testCommaDenotesRightOperandObject", testCommaDenotesRightOperandObject},
+    {"testBranchTemporaryCallResultIsNotDiscarded",
+     testBranchTemporaryCallResultIsNotDiscarded},
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
     {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},
