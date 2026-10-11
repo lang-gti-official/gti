@@ -5899,6 +5899,28 @@ bool mirBodyRoutesFailureEdges(const MirBody &body) {
             instruction.callSite != 0) {
           continue;
         }
+        // A completed owning result supplied directly as a by-value argument
+        // hands its own value obligation to the same callee, without a
+        // prepared-parameter shell or ordered call site. The dropped place is
+        // exactly one of this invocation's value operands, so the callee owns
+        // it before it can fail; this is not publication into `this` either.
+        if (source != nullptr && source->kind == MirDropObligationKind::Value &&
+            (instruction.kind == MirInstructionKind::Call ||
+             (instruction.kind == MirInstructionKind::Construct &&
+              instruction.constructorTarget &&
+              instruction.constructorKind == ConstructorKind::Ordinary))) {
+          const MirPlace *argument = body.findPlace(source->place);
+          if (argument != nullptr &&
+              argument->root == MirPlaceRootKind::Value &&
+              argument->projections.empty() &&
+              std::any_of(instruction.operands.begin(),
+                          instruction.operands.end(),
+                          [&](const MirOperand &operand) {
+                            return operand.kind == MirOperandKind::Value &&
+                                   operand.value == argument->value;
+                          }))
+            continue;
+        }
         // This retirement publishes the allocation into its ordinary owner,
         // not into `this`. The independent allocation protocol and lifecycle
         // dataflow prove its unique construction-success continuation.
