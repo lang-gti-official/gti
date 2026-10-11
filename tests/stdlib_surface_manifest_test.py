@@ -70,6 +70,16 @@ def main() -> int:
     }
     expect_failure(wrong_case_kind, repository, "references a non-run case")
 
+    unbounded_timeout = copy.deepcopy(original)
+    unbounded_timeout["cases"][0]["build_timeout_seconds"] = 3600
+    unbounded_timeout["cases"][0]["build_timeout_reason"] = "synthetic"
+    expect_failure(unbounded_timeout, repository, "to at most 900")
+
+    unexplained_timeout = copy.deepcopy(original)
+    unexplained_timeout["cases"][0]["build_timeout_seconds"] = 600
+    unexplained_timeout["cases"][0].pop("build_timeout_reason", None)
+    expect_failure(unexplained_timeout, repository, "needs a build_timeout_reason")
+
     print("stdlib surface census rejected missing, stale, and mismatched evidence")
     return 0
 
