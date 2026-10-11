@@ -25,6 +25,14 @@ for what minor and patch releases mean.
 - Fixes GitHub #4: a reflected access no longer drops the evaluation of a
   call producing its metaobject receiver. Fixes GitHub #5: `field.get` rejects
   an owner of another type (GTI-S2003).
+## 0.399.2 — Repository moved to `lang-gti-official`
+
+- GTI's canonical repository is now
+  [github.com/lang-gti-official/gti](https://github.com/lang-gti-official/gti).
+  The previous `gti-lang-official` organization is no longer available.
+- The Neovim installer and the lazy.nvim spec now download from the new
+  repository. Update an existing plugin spec to
+  `https://github.com/lang-gti-official/gti.git`.
 
 ## 0.399.0 — Declared attributes and richer reflection
 
