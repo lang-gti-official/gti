@@ -3842,6 +3842,27 @@ mutable/void signatures, hover, successful staged evaluation, and an overflow
 diagnostic at the executed helper operator. The existing reflection gates
 remain separate regression controls, not newly implemented reflection.
 
+The 2026-10-11 local performance control uses a Release compiler built with
+Clang/LLVM 23.1.2 on macOS arm64 (M2 Max), C++23/O3. One program builds the
+four-element integer curve `{1, 4, 9, 16}` with a mutable-reference square
+helper; its control initializes the same array directly. Both consume the
+constant through 50 million checked indexed additions (`index % 4`, expected
+sum 375000000), with identical API/storage/arithmetic contracts. Five samples
+per executable have a 0.02-second wall-time median (the timer rounds to 0.01
+seconds; the first launch of each takes 0.31 seconds). Both have a 31,488-byte
+`__text` section and a 1,753,088-byte maximum resident set. An interposed C++
+`new`/`new[]` counter observes zero allocations between entry to the workload
+and completion in both; that is not a claim about CRT startup, failure paths
+or arbitrary libc allocation. The instrumented text sections are also equal
+(31,704 bytes). Single instrumented build samples are 0.56/0.46 seconds and
+75,104,256/76,464,128 bytes maximum RSS for builder/control. These co-hosted
+samples establish a compact allocation-free successful consumer, not a
+statistically significant compile-time or runtime speedup. Constant construction
+does additional bounded compiler work: location traversal and immutable
+aggregate replacement are charged, and updating an array copies its backing
+elements. Larger tables still have to fit the shared 4096-step budget; this
+feature neither removes runtime checks nor raises that resource bound.
+
 `testConstexprReadOnlyReferences` and `constexpr_readonly_references_runtime`
 cover checked read-only parameters, local bindings, returned field/index
 projections, forwarding, and loan reacquisition after mutation in another loop

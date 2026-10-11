@@ -8308,7 +8308,7 @@ consumer, and release refreshes remain outstanding for the full campaign.
   step/call-depth limits, and compile-time/runtime differential evidence. Its
   plan must say how overlapping AST execution is removed or subsumed rather
   than accepting two permanent meanings.
-- **Mutable constexpr builders (2026-10-11, implemented; broad validation pending):**
+- **Mutable constexpr builders (2026-10-11, implemented):**
   Checked mutable references, `void` helpers, non-consuming mutable methods and
   operators, and constructor-body edits after explicit field initialization now
   execute the same canonical verified MIR. Executor-local locations retain live
