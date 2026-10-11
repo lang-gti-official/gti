@@ -1473,6 +1473,15 @@ such as a scalar payload with a cleanup-free class error, keeps its ordinary SSA
 local. An owning alternative keeps MIR's value drop and the value-rooted
 transfer slot described above.
 
+A callable value invocation produces the same fresh temporary as a source
+call: a closure literal, a stored closure, or a callable parameter invoked as
+`code(make(a))` uses that slot under the same consumer, observer, extraction
+and discard proofs. The enclosing body's ABI decides how the invocation
+publishes into it. A transformed invocation passes the slot's construction
+address and marks it constructed on its success edge; a plain invocation
+constructs it from the returned value. A raising callable leaves the slot
+unconstructed, and a discarded result retires as soon as it is published.
+
 The same slot may instead feed one by-value parameter of an exact ordinary
 source constructor, mirroring the owning route's constructor consumer. The
 construction must match the constructor's parameter types and owner, carry no
@@ -1515,7 +1524,12 @@ the fused assignment already spells, keeps that fused route.
 The success class of such an Expected often has no default constructor. An
 ordinary SSA local would value-initialize the native wrapper and invent that
 construction, so the declaration fails closed instead, as for a fixed array
-whose element class has none. A failure-free producer, whose plain call
+whose element class has none. The success row's boundary proof still admits
+the classes whose value-initialization runs no source construction. A passive
+`[[c_abi]]` record, which has no default constructor because a raw-pointer
+field needs an explicit initializer, value-initializes to zeroed bytes like
+every other passive-record local, and compiler capability storage owns its
+own empty state. A failure-free producer, whose plain call
 returns the Expected by value, therefore constructs a staged slot from that
 return value. The guard stays as a backstop: a shape with no exact
 publication rejects body emission rather than emitting native code that cannot
