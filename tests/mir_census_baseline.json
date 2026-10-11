@@ -136,7 +136,8 @@
     "137-declared-attributes.gti": 188,
     "138-structural-construction.gti": 185,
     "139-ordered-search.gti": 137,
-    "140-environment-configuration.gti": 123
+    "140-environment-configuration.gti": 123,
+    "141-reflected-json.gti": 384
   },
-  "total": 12510
+  "total": 12894
 }
