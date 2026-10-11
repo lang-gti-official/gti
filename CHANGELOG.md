@@ -9,6 +9,15 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.400.7 — Owning `expected` fields initialized from calls
+
+- A constructor's `expected<T, E>` field can now be initialized directly from
+  a call when `T` owns resources, as in
+  `box(bool ok) : named(make_named(ok)) {}` with a `std::string` in the
+  payload, or when `T` has a destructor. The result is constructed in the
+  field without a default value. If a later member fails, the field is
+  destroyed exactly once. Such constructors used to report GTI-B0001.
+
 ## 0.400.6 — Member initializers taking owning `expected` results
 
 - A member initializer that constructs its field from an `expected<T, E>`
