@@ -1415,6 +1415,14 @@ result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.
 An owning Expected temporary's payload whose fields alone are read moves into
 the payload's own result slot on the checked extraction's success edge, then is
 read the same way, as in `make_named(true).value().text.size()`.
+Inside a short-circuit operand or a conditional arm, the producer instead
+constructs the result in a conditional temporary that holds the result's own
+obligation. A failure-free producer does so at its destination; a transformed
+one arms the temporary on its Invoke success edge. When the result is read only
+through field views, that temporary is its storage: the views spell
+`temporary.get().field`, the result declares no local, and MIR's conditional
+Drop destroys the temporary exactly once if its operand ran, on the normal path
+or on a failure-cleanup edge.
 Reading a trivial scalar does not transfer its owner: fresh passive immovable
 results use this same proof and storage without requiring a copy or move
 constructor. They cannot carry borrowed state or active drop state through
