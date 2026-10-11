@@ -512,6 +512,17 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     const PhaseTimeScope timeScope("gti-hir-lowering");
     const ProgressScope progress(options.progress, ProgressPhase::HirLowering);
     HirLoweringScope scope{.reachablePrefix = options.lowerReachableOnly};
+    if (options.lowerReachableOnly && options.lowerLibraryReachableOnly &&
+        !options.lowerEntryUnitOnly) {
+      std::vector<std::pair<std::size_t, std::size_t>> complete;
+      for (const SourceUnit &unit : result.sourceGraph.sourceUnits()) {
+        if ((unit.entry || !result.sourceGraph.isCompilerTrusted(unit.id)) &&
+            unit.declarationCount != 0) {
+          complete.emplace_back(unit.declarationStart, unit.declarationCount);
+        }
+      }
+      scope.completeDeclarations = std::move(complete);
+    }
     if (options.lowerEntryUnitOnly) {
       if (const SourceUnit *entry =
               result.sourceGraph.findUnit(result.sourceGraph.entryUnit())) {
@@ -527,6 +538,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - hirStart)
             .count());
+    options.workMetrics->hirFunctionInstances =
+        hir.program.functionInstances().size();
   }
   result.hirValid = hir.valid();
   result.hir = std::move(hir.program);
