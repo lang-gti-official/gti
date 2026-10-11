@@ -241,6 +241,7 @@ must preserve platform and service contracts rather than remove them.
 | H05 | Network transport/TLS | OS sockets and, currently, external protocol/security implementation. | Request construction and parsing are algorithms; host transport remains external. TLS is not inherently a compiler operation or an impossible source algorithm. |
 | H06 | Create/join/wake threads and block on synchronization | Host threading/wait services. | Source handle policy and state machines; managed task/result transfer still needs language lifecycle/thread-capability facts. |
 | H07 | Native platform facts | Native size limits, pointer alignment and platform constants. | Observe through small adapters or general target facilities; do not hard-code host assumptions into source policy. |
+| H08 | Observe process environment | Native lookup and an immutable, uniquely owned byte snapshot. | Source validates names, distinguishes absent/empty values, maps errors and copies into an independent GTI string; native mutation must exclude concurrent access. |
 
 #### Algorithms Delegated By Choice, Not Necessity
 
@@ -799,6 +800,23 @@ directory overrides, asynchronous process ownership, cancellation, timeouts,
 and pipelines remain later process-policy work rather than implicit shell
 behavior. Windows is rejected by the source unit until its UTF-16 command-line
 and handle-inheritance boundary is implemented.
+
+`<std/environment>` supplies the separate read-only observation family. Its
+`get` function and error enum are ordinary GTI, with no public-name recognition.
+The counted `gti_rt_environment_get_v1` ABI revalidates names, copies one current
+native value, and distinguishes a missing variable (zero handle) from a present
+empty value (live zero-length snapshot). Size/data/destroy operations access
+only that immutable copy. Metadata and bytes share one native allocation; no
+C++ exception crosses the boundary.
+
+A source-defined move-only temporary owns the snapshot. It forms a checked
+view using the general erased-address and owner-witness facilities, copies it
+into an exactly reserved GTI string, then destroys the snapshot through normal
+MIR cleanup. Only `optional<string>` crosses the public API. Concurrent
+read-only queries work; foreign environment mutation retains its unsafe
+process-wide synchronization obligations. Environment setters, enumeration,
+and child-local overrides are not part of this slice. See
+[the language contract](../language/process.md#environment-observation).
 
 ## Clock Boundary
 

@@ -1957,7 +1957,7 @@ code that grows with returns times owners.
 lowering emits that body with one chain per failure edge. If a program lowered
 with shared cleanup fails program verification, the program is lowered again
 unshared. The corpus differential in
-[verification](verification.md#shared-failure-cleanup-0401-7) triggers
+[verification](verification.md#shared-failure-cleanup-0402-1) triggers
 neither.
 
 Program verification also requires each function, constructor, destructor and

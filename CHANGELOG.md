@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.401.7 — Smaller, faster builds for functions with many owned locals
+## 0.402.1 — Smaller, faster builds for functions with many owned locals
 
 - A function that owns many values with destructors no longer repeats the
   same cleanup code for every point where it can fail. The JSON

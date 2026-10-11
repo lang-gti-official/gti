@@ -1,0 +1,40 @@
+#include <std/environment>
+#include <std/string>
+
+expected<int, std::environment::errc> check() {
+  auto missing = std::environment::get("GTI_ENVIRONMENT_MISSING_7d4c9f3e");
+  if (!missing || missing.value().has_value()) { return 1; }
+  auto empty = std::environment::get("GTI_ENVIRONMENT_EMPTY");
+  if (!empty || !empty.value().has_value() || !empty.value().value().empty()) {
+    return 2;
+  }
+  auto spaces = std::environment::get("GTI_ENVIRONMENT_SPACES");
+  if (!spaces || !spaces.value().has_value() ||
+      spaces.value().value().view() != "two words = exact value") { return 3; }
+  mut std::string query_name = std::string("GTI_ENVIRONMENT_SPACES");
+  auto independent = std::environment::get(query_name.view());
+  query_name.clear();
+  if (!independent || !independent.value().has_value() ||
+      independent.value().value().view() != "two words = exact value") { return 9; }
+  auto non_shell_name = std::environment::get("GTI ENVIRONMENT:NAME");
+  if (!non_shell_name || !non_shell_name.value().has_value() ||
+      non_shell_name.value().value().view() != "non-shell-name") { return 10; }
+  auto unicode = std::environment::get("GTI_ENVIRONMENT_UNICODE");
+  if (!unicode || !unicode.value().has_value() ||
+      unicode.value().value().view() != "café") { return 4; }
+  auto first = ?std::environment::get("GTI_ENVIRONMENT_LARGE");
+  if (!first || first.value().size() != std::size_t(16384)) { return 5; }
+  // Move the optional and retain it across another lookup. The first string
+  // does not borrow the query name, native snapshot, or process environment.
+  auto retained = std::move(first);
+  auto second = ?std::environment::get("GTI_ENVIRONMENT_LARGE");
+  if (!second || retained.value().view() != second.value().view()) { return 6; }
+  if (retained.value()[0] != 'x' || retained.value()[16383] != 'x') { return 7; }
+  return 0;
+}
+
+int main() {
+  auto result = check();
+  if (!result) { return 8; }
+  return result.value();
+}
