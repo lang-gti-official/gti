@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.402.10 — Class results that exist on only one branch
+## 0.402.11 — Class results that exist on only one branch
 
 - A call that returns a class needing no cleanup, used directly as the
   receiver of a method on only one side of `||`, `&&` or `?:`, as in
@@ -18,6 +18,16 @@ for what minor and patch releases mean.
   was dropped while empty" at every optimization level. This also affected
   `constexpr for` loops over `std::meta` metaobjects that test, for example,
   `m.name() != "get" || !m.result().is_integral()`.
+
+## 0.402.10 — `expected` results returned from lambdas
+
+- A lambda or other callable that returns `expected<T, E>`, where `T` has no
+  default constructor, can now be called where its result is passed by value,
+  as in `code(make(a))` or `boxed b{make(a)};`, tested, as in `if (make(a))`,
+  read through `make(a).value()`, or discarded with `[[discard]]`. These
+  programs previously stopped with internal compiler error `GTI-B0001`.
+- Still reporting `GTI-B0001`: assigning a fresh `expected<T, E>` result to an
+  existing binding, as in `r = make(7);`, when `T` has no default constructor.
 
 ## 0.402.9 — Copying `expected` values of plain structs and classes
 
