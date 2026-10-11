@@ -9,14 +9,30 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.403.0 — Cross-thread ownership composition
+## 0.403.0 — Scoped parallel borrowing and cross-thread ownership
 
+- `std::parallel_invoke` runs consumed tasks with checked shared or exclusive
+  borrows and joins all started workers before return or failure propagation.
+  Disjoint fields, nested borrowed carriers and generic task packs retain their
+  ordinary ownership proofs. This creates native threads, not a worker pool.
 - Mutex transfer and sharing follow the protected payload's transfer
   capability. This enables owned shared mutexes while preserving thread-affine
   payload restrictions and thread-local lock guards.
 - `std::transfer_function` retains an explicit transfer requirement through
   read-only, mutable, and consuming owning callable erasure. Ordinary local
   function wrappers do not acquire permission to cross threads implicitly.
+
+## 0.402.8 — Field reads of temporaries inside `&&`, `||` and conditionals
+
+- A field of a temporary whose class has a destructor or owns resources can
+  now be read inside the right operand of `&&` or `||`, or inside a
+  conditional arm, as in `ok || make_tracked(5).number == 5`,
+  `ok ? make_tracked(5).number : 0` or `ok || make_named().text.size() == 3`.
+  The temporary exists only when its operand runs and is destroyed exactly
+  once, including when a later operand fails. Such programs used to report
+  GTI-B0001.
+- Still reporting GTI-B0001: reading a field of an owning `expected` payload
+  in those positions, as in `ok || make_named(true).value().text.size() == 7`.
 
 ## 0.402.7 — Moving `expected` values of plain structs and classes
 
