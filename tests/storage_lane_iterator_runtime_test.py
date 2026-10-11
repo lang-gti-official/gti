@@ -11,6 +11,16 @@ import tempfile
 import time
 
 from native_fixture_build import build_fixture
+from iterator_sanitizer_support import partition_main
+
+
+def sanitizer_partitions(source):
+    # Each group resets its own allocation-counting window after setup. Exact
+    # sparse vacancies, checksums, mutable restoration and final state remain
+    # in their original byte regions; only sanitizer positives are partitioned.
+    return partition_main(source, ("pool", "resource-storage", "simd-mask"),
+                          (b"  std::process_resource process{};",
+                           b"  mut std::simd_mask<8> mask{};"))
 
 
 def run(command, *, timeout=180):
@@ -125,19 +135,30 @@ def prove_allocation_free_families(compiler, fixtures, root):
               ("-fsanitize=address,undefined", "-fno-omit-frame-pointer")))
     for mode, standard, optimization, native in modes:
         for fixture, label in families.items():
-            binary = root / f"{fixture}-{mode}"
-            built = build_fixture(
-                [str(compiler), str(fixtures / f"{fixture}.gti"),
-                 "--std", standard, f"-{optimization}"], binary,
-                native_sources=[fixtures / "stdlib_adoption_allocation_counts.cpp"],
-                native_arguments=native, standard=standard,
-                optimization=optimization, capture_output=True, text=True,
-                timeout=180)
-            assert built.returncode == 0, (fixture, mode, built.stdout, built.stderr)
-            assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text(), (fixture, mode)
-            completed = run([str(binary)], timeout=30)
-            assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", ""), (fixture, mode, completed)
-            print(f"{label}: {mode}, direct 0 traversal allocations; complete state preserved", flush=True)
+            sources = {None: fixtures / f"{fixture}.gti"}
+            if fixture == "sparse_mask_iterator_allocations" and mode == "sanitized":
+                sources = {}
+                for region, contents in sanitizer_partitions(
+                        (fixtures / f"{fixture}.gti").read_bytes()).items():
+                    source = root / f"{fixture}-{region}.gti"
+                    source.write_bytes(contents)
+                    sources[region] = source
+            for region, source in sources.items():
+                name = f"{fixture}-{region}" if region else fixture
+                binary = root / f"{name}-{mode}"
+                built = build_fixture(
+                    [str(compiler), str(source),
+                     "--std", standard, f"-{optimization}"], binary,
+                    native_sources=[fixtures / "stdlib_adoption_allocation_counts.cpp"],
+                    native_arguments=native, standard=standard,
+                    optimization=optimization, capture_output=True, text=True,
+                    timeout=180)
+                assert built.returncode == 0, (name, mode, built.stdout, built.stderr)
+                assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text(), (name, mode)
+                completed = run([str(binary)], timeout=30)
+                assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", ""), (name, mode, completed)
+                print(f"{label}{('/' + region) if region else ''}: {mode}, "
+                      "direct 0 traversal allocations; complete state preserved", flush=True)
 
 
 def main():

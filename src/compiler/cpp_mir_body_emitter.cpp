@@ -30657,7 +30657,10 @@ classSsaLifetimeSlot(const MirProgram &program,
       cleanupFreeExpectedClassAlternatives(program, value->info.type) &&
       producer && producer->kind == MirInstructionKind::Call &&
       producer->result == valueId && producer->info.type == value->info.type &&
-      (callableProducer || (producer->functionTarget && !producer->receiver)) &&
+      // An exact source member publishes the same independent Expected as a
+      // namespace function. Its ordered receiver input retains its own loan;
+      // no result alternative here may retain borrowed state.
+      (callableProducer || producer->functionTarget) &&
       !producer->destination && !producer->successResultDrop &&
       !producer->successResultDestination &&
       producer->intrinsic == IntrinsicKind::None &&

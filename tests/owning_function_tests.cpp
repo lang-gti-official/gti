@@ -234,7 +234,8 @@ int main() {
                    std::any_of(verified.errors.begin(), verified.errors.end(),
                                [](const auto &error) {
                                  return error.message.find(
-                                            "unexpected receiver") !=
+                                            "ordinary call receiver does not "
+                                            "match its exact member target") !=
                                         std::string::npos;
                                }),
                "MIR rejects attaching a method receiver to a namespace "

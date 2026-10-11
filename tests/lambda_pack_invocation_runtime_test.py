@@ -11,7 +11,7 @@ from case_jobs import configured_jobs, positive_jobs, run_cases
 
 
 def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
-         fixture_paths=None, native_inputs_by_name=None):
+         fixture_paths=None, native_inputs_by_name=None, native_arguments_by_case=None):
     fixtures = pathlib.Path(__file__).parent / "fixtures"
     if names is None:
         names = ("lambda_pack_invocation", "stored_callable_signature",
@@ -47,6 +47,8 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
             if execution_profile is not None:
                 command += ["--execution-profile", execution_profile]
             native_arguments = [*native, *(native_inputs_by_name or {}).get(name, ())]
+            if native_arguments_by_case is not None:
+                native_arguments += native_arguments_by_case(name, label, environment)
             if native_arguments:
                 command += ["--", *native_arguments]
             built = subprocess.run(command, capture_output=True, text=True,

@@ -9,6 +9,18 @@ import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from contiguous_iterator_completion_test import MODES
+from iterator_sanitizer_support import partition_main
+
+
+def sanitizer_partitions(source):
+    # The four groups have independent owners and observations. Keep the
+    # OwnerPair relay and exclusive utilities together with their vector/list
+    # clients; every partition retains the complete common declarations.
+    return partition_main(source,
+                          ("vector-array", "deque-list", "map-set", "unordered"),
+                          (b"  mut std::deque<int> queue = {1, 2, 3};",
+                           b"  mut std::map<int, int> tree{};",
+                           b"  mut std::unordered_map<int, int> hash{};"))
 
 
 def main():
@@ -27,11 +39,19 @@ def main():
     modes = [mode for mode in MODES if not options.mode or mode[0] in options.mode]
     with tempfile.TemporaryDirectory(prefix="gti-container-movement-") as temporary:
         output = Path(temporary)
+        sanitizer_sources = {}
+        if any(label == "sanitized" for label, _, _ in modes):
+            source = root / "tests/fixtures/container_iterator_movement.gti"
+            for region, contents in sanitizer_partitions(source.read_bytes()).items():
+                path = output / f"container_iterator_movement-{region}.gti"
+                path.write_bytes(contents)
+                sanitizer_sources[region] = path
 
         def build(case):
-            fixture, label, flags, native = case
-            binary = output / f"{fixture}-{label}"
-            command = [str(compiler), str(root / "tests/fixtures" / f"{fixture}.gti"),
+            fixture, label, flags, native, source, region = case
+            name = f"{fixture}-{region}" if region else fixture
+            binary = output / f"{name}-{label}"
+            command = [str(compiler), str(source),
                        *flags, "--progress=never", "--keep-cpp", "-o", str(binary)]
             if native:
                 command += ["--", *native]
@@ -46,8 +66,16 @@ def main():
                                     text=True, timeout=30)
             assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), result
 
-        cases = [(f"{fixture}-{label}", (fixture, label, flags, native))
-                 for fixture in fixtures for label, flags, native in modes]
+        cases = []
+        for fixture in fixtures:
+            for label, flags, native in modes:
+                sources = (sanitizer_sources.items()
+                           if fixture == "container_iterator_movement" and label == "sanitized"
+                           else [(None, root / "tests/fixtures" / f"{fixture}.gti")])
+                for region, source in sources:
+                    name = f"{fixture}-{region}" if region else fixture
+                    cases.append((f"{name}-{label}",
+                                  (fixture, label, flags, native, source, region)))
         run_cases(cases, build, options.jobs, observe)
 
         # The inclusive cursor coordinate can span the full unsigned domain;

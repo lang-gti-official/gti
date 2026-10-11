@@ -998,15 +998,22 @@ void testIncoherentSwitchRejected(const std::filesystem::path &fixture) {
          "the trait-forgery mutation should locate a scalar parameter place");
   if (parameterPlace != nullptr) {
     parameterPlace->traits.copyable = false;
-    expect(lang::verifyMirProgram(forgedTraits).valid(),
-           "a forged scalar copyability flag should remain structurally valid "
-           "MIR so family coherence owns rejection");
-    if (lang::verifyMirProgram(forgedTraits).valid()) {
-      expectEmissionRejected(
-          frontend, forgedTraits, compatibility,
-          "forged scalar ownership traits must not enter native CFG emission "
-          "or demote the source body to AST emission");
-    }
+    const auto verification = lang::verifyMirProgram(forgedTraits);
+    expect(
+        !verification.valid() &&
+            std::any_of(verification.errors.begin(), verification.errors.end(),
+                        [](const auto &error) {
+                          return error.message.find(
+                                     "by-value formal copy/move facts do not "
+                                     "match its concrete MIR type") !=
+                                 std::string::npos;
+                        }),
+        "MIR rejects forged scalar formal traits before native family "
+        "coherence consumes them");
+    expectEmissionRejected(
+        frontend, forgedTraits, compatibility,
+        "forged scalar ownership traits must not enter native CFG emission "
+        "or demote the source body to AST emission");
   }
 
   lang::MirProgram duplicatedStorage = optimized.mir;

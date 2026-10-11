@@ -578,6 +578,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testCleanupFreeExpectedMemberProducer",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testExpectedLifetimeSlotObserverFusion",
       "suite": "lifecycle"
     },

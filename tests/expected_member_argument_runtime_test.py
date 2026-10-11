@@ -17,8 +17,17 @@ if __name__ == "__main__":
                    if "12 / this.drop_divisor" in line)
     failure = lambda line: (f"{fixture.name}:{line}: runtime error[GTI-R0002]: "
                             "division_by_zero in integer_division\n")
+    member_fixture = fixture.parent / "expected_cleanup_free_member_result.gti"
+    member_lines = member_fixture.read_text().splitlines()
+    member_cleanup = next(i + 1 for i, line in enumerate(member_lines)
+                          if "12 / this.divisor" in line)
+    member_call = next(i + 1 for i, line in enumerate(member_lines)
+                       if "this.number / divisor" in line)
+    member_failure = lambda line: (
+        f"{member_fixture.name}:{line}: runtime error[GTI-R0002]: "
+        "division_by_zero in integer_division\n")
     main(names=(fixture.stem, "expected_recursive_container_layout",
-                "expected_native_record_container"), cases={
+                "expected_native_record_container", member_fixture.stem), cases={
         fixture.stem: [
             ((), (0, "100\n1\n100\n2\n100\n5\n4\n3\n99\n", "")),
             (("later-argument",), (70, "1\n99\n", failure(later))),
@@ -31,4 +40,9 @@ if __name__ == "__main__":
         ],
         "expected_recursive_container_layout": [((), (0, "", ""))],
         "expected_native_record_container": [((), (0, "", ""))],
+        member_fixture.stem: [
+            ((), (0, "90\n90\n99\n", "")),
+            (("cleanup-failure",), (70, "90\n99\n", member_failure(member_cleanup))),
+            (("producer", "failure"), (70, "90\n99\n", member_failure(member_call))),
+        ],
     })
