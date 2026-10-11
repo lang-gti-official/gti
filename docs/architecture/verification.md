@@ -3087,6 +3087,19 @@ for the whole wrapped command, propagates the command's exit status and lists
 holders with `--status`; and an interrupt delivered to the process group
 releases the slot. The last check is POSIX-only.
 
+`remote_runner` exercises `scripts/remote_runner.py` using disposable real Git
+repositories and detached processes, without production SSH access. It covers
+dirty/new/deleted source snapshot identity and ignored-file exclusion; refusal
+of symlinks, unsafe roots, archive traversal/links and duplicate entries;
+successful and failed command status/log retrieval; failed-fetch preservation;
+cancellation and timeout cleanup; active-clean refusal; shared suite-window
+contention and cancellation while queued; recovery of crashed workers and
+partial uploads; concurrent recovery serialization; and refusal to sweep
+unmarked/live directories. Fault injection proves cancellation during process
+creation cannot strand the child and cleanup errors cannot report success.
+The [remote-runner contract](agent-workflow.md#mac-mini-remote-runs) describes
+live SSH usage and the limits of custom command plans.
+
 ## CLI terminal colour
 
 `runtime_failure_subprocess` independently checks ordinary v1 failures, v2

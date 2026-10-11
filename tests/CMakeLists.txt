@@ -1367,6 +1367,12 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(build_window PROPERTIES TIMEOUT 120)
   add_test(
+    NAME remote_runner
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/remote_runner_test.py"
+  )
+  set_tests_properties(remote_runner PROPERTIES TIMEOUT 120)
+  add_test(
     NAME cmake_test_ownership
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/cmake_test_ownership_test.py"
