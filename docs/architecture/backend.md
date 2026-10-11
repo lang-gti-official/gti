@@ -1503,6 +1503,16 @@ address and marks it constructed on its success edge; a plain invocation
 constructs it from the returned value. A raising callable leaves the slot
 unconstructed, and a discarded result retires as soon as it is published.
 
+An owning Expected result of a callable value invocation likewise shares the
+source call's value-rooted placement slot. Its exact lambda instance supplies
+the signature, and its Invoke success edge activates the result's value drop
+under callable propagation. The invocation constructs the slot whichever ABI
+the enclosing body selects. Every slot consumer then applies unchanged: a
+discard, one consuming call or constructor, a state test, a checked `value()`
+or `error()` extraction, a constructor field, or a whole binding it replaces.
+A binding the result initializes directly keeps the direct construction into
+that binding.
+
 The same slot may instead feed one by-value parameter of an exact ordinary
 source constructor, mirroring the owning route's constructor consumer. The
 construction must match the constructor's parameter types and owner, carry no
@@ -1628,7 +1638,8 @@ The same cleanup-free placement call result may instead replace one whole
 mutable binding of its type. MIR pairs that `Assign` with a
 `CleanupBeforeAssign`, whose recipe must be passive: no node has a destructor,
 owned pointee, closure, fixed array, polymorphic or recursive cleanup, or
-active cleanup. That cleanup executes nothing and cannot fail. The producer's
+active cleanup. An integral enum alternative is such a node, as it is for the
+cleanup-free alternative rule. That cleanup executes nothing and cannot fail. The producer's
 success edge must reach that exact pair directly, as for a class result
 replacing a binding. The producer constructs the slot on success. The `Assign`
 move-assigns the staged wrapper into the binding, and the moved-from

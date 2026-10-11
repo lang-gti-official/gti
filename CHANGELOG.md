@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.403.1 — Replacing `expected` bindings with call results
+
+- Assigning a fresh `expected<T, E>` call result to an existing binding, as in
+  `r = make(7);`, now builds when `T` is a struct or class without cleanup and
+  `E` is an `enum`, for source functions and lambdas alike. These programs
+  previously stopped with internal compiler error `GTI-B0001` when `T` had no
+  default constructor, and failed in the native C++ compiler otherwise.
+  Assigning a copy or move of another such `expected` binding, or a new
+  `T` value, to an existing binding builds too; these also reported
+  `GTI-B0001`.
+- A lambda or other callable returning `expected<T, E>` whose `T` has a
+  destructor or owns resources can now be called where its result replaces an
+  existing binding, is passed by value, is tested, is read through `value()`
+  or `error()`, or is discarded. Each replaced or temporary value is destroyed
+  exactly once. These programs previously stopped with `GTI-B0001`; only
+  initializing a new binding from such a call built.
+
 ## 0.403.0 — Experimental reflected JSON
 
 - `<std/experimental/json>` (preview): `std::experimental::json::encode(value)`

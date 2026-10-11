@@ -1,0 +1,202 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// An Expected<Class, E> binding whose error alternative is an integral enum is
+// replaced as a whole. A source function, a closure literal, a capturing
+// closure or a callable parameter produces the replacing result; so do copies,
+// moves, Unexpected values and payload constructions. A cleanup-free success
+// class without a default constructor publishes into its own uninitialized
+// storage, and MIR's replacement cleanup of the enum alternative is passive.
+// An owning success class retires each replaced value exactly once.
+
+enum class errc { bad, missing };
+
+struct point {
+  int32_t x;
+  int32_t y;
+  point(int32_t x, int32_t y) : x(x), y(y) {}
+};
+
+// A success class whose fields have default initializers but whose only
+// constructor takes an argument.
+struct tagged {
+  int32_t code = 0;
+  tagged(int32_t code) : code(code) {}
+};
+
+expected<tagged, errc> make_tagged(int32_t code) {
+  if (code < 0) { return unexpected(errc::bad); }
+  return tagged(code);
+}
+
+// An owning payload whose destructor reports each retirement.
+class noisy {
+public:
+  int32_t id;
+  noisy(int32_t id) : id(id) {}
+  ~noisy() { std::println(std::to_string(this.id)); }
+};
+
+int32_t bump(int32_t value) { return value + 1; }
+
+expected<point, errc> make(int32_t v) {
+  if (v == 0) { return unexpected(errc::missing); }
+  if (v < 0) { return unexpected(errc::bad); }
+  return point(v, 2);
+}
+
+expected<noisy, errc> make_noisy(int32_t id) {
+  if (id > 0) { return noisy(id); }
+  return unexpected(errc::bad);
+}
+
+// Replacing producers that fail before publishing a result.
+expected<point, errc> make_bumped(int32_t value) {
+  return point(bump(value), 0);
+}
+
+expected<noisy, errc> make_bumped_noisy(int32_t value) {
+  return noisy(bump(value));
+}
+
+int32_t code(expected<point, errc> result) {
+  if (!result) { return result.error() == errc::missing ? -1 : -2; }
+  return result.value().x * 10 + result.value().y;
+}
+
+int32_t observe(expected<point, errc> &result) {
+  if (!result) { return result.error() == errc::missing ? -1 : -2; }
+  return result.value().x * 10 + result.value().y;
+}
+
+// A callable parameter replaces a binding it first initialized.
+int32_t replace_through<F>(F produce, int32_t first, int32_t second) {
+  mut expected<point, errc> current = produce(first);
+  current = produce(second);
+  return observe(current);
+}
+
+// A failure-propagating caller replaces its binding.
+expected<int32_t, errc> relay(int32_t first, int32_t second) {
+  mut expected<point, errc> current = make(first);
+  current = make(second);
+  return observe(current);
+}
+
+// Owning call results replace one binding through every alternative pair.
+// Each replaced value is retired exactly once; an error retires nothing.
+int32_t replace_owned() {
+  mut expected<noisy, errc> owned = make_noisy(1);
+  owned = make_noisy(2);
+  owned = make_noisy(-3);
+  owned = make_noisy(-4);
+  owned = make_noisy(5);
+  return owned ? owned.value().id : 0;
+}
+
+// An owning closure result replaces the same binding.
+int32_t replace_owned_lambda() {
+  auto produce = [](int32_t id) -> expected<noisy, errc> {
+    if (id > 0) { return noisy(id); }
+    return unexpected(errc::missing);
+  };
+  mut auto owned = produce(6);
+  owned = produce(7);
+  owned = produce(0);
+  owned = produce(8);
+  return owned ? owned.value().id : 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  auto closure = [](int32_t v) -> expected<point, errc> {
+    if (v == 0) { return unexpected(errc::missing); }
+    if (v < 0) { return unexpected(errc::bad); }
+    return point(v, 3);
+  };
+  if (argc == 2) {
+    // A cleanup-free replacing call fails before the binding is replaced.
+    mut auto replaced = make(1);
+    replaced = make_bumped(int32_t(2147483647));
+    return observe(replaced);
+  }
+  if (argc == 3) {
+    // An owning replacing call fails; the old value is retired once.
+    mut auto owned = make_noisy(9);
+    owned = make_bumped_noisy(int32_t(2147483647));
+    return owned ? owned.value().id : 1;
+  }
+  // Source function results, through success and both error alternatives.
+  mut auto r = make(3);
+  std::println(observe(r));
+  r = make(7);
+  std::println(observe(r));
+  r = make(0);
+  std::println(observe(r));
+  r = make(-1);
+  std::println(observe(r));
+  r = make(4);
+  std::println(code(r));
+
+  // Closure results replace a binding a source function initialized, and
+  // the other way round.
+  r = closure(5);
+  std::println(observe(r));
+  r = closure(-5);
+  std::println(observe(r));
+  mut auto c = closure(6);
+  c = make(8);
+  std::println(observe(c));
+  c = closure(0);
+  std::println(observe(c));
+
+  int32_t offset = 4;
+  auto shifted = [offset](int32_t v) -> expected<point, errc> {
+    if (v == 0) { return unexpected(errc::missing); }
+    return point(v + offset, offset);
+  };
+  c = shifted(1);
+  std::println(observe(c));
+  c = shifted(0);
+  std::println(observe(c));
+
+  // Replacements inside a loop reuse the staging.
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 4; index++) {
+    if (index % 2 == 0) {
+      r = make(index);
+    } else {
+      r = closure(index);
+    }
+    total += observe(r);
+  }
+  std::println(total);
+
+  std::println(replace_through(make, 2, 3));
+  std::println(replace_through(closure, 2, 0));
+  std::println(replace_through(shifted, 0, 2));
+  auto relayed = relay(-1, 9);
+  std::println(relayed ? relayed.value() : 0);
+
+  // Copies, moves, Unexpected values and payload constructions.
+  expected<point, errc> source = make(0);
+  r = source;
+  std::println(observe(r) + observe(source));
+  expected<point, errc> movable = make(6);
+  r = std::move(movable);
+  std::println(observe(r));
+  r = unexpected(errc::bad);
+  std::println(observe(r));
+  r = point(1, 1);
+  std::println(observe(r));
+
+  mut auto t = make_tagged(1);
+  t = make_tagged(-1);
+  t = make_tagged(7);
+  std::println(t ? t.value().code : 0);
+
+  // Owning results.
+  std::println(replace_owned());
+  std::println(replace_owned_lambda());
+  return 0;
+}
