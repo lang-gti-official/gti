@@ -33,6 +33,16 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+**Reading current status versus history:** use the reconciled Ready Queue and
+the current contracts linked by each row to choose work. Dated implementation,
+release and validation narratives retain their original checkpoint language,
+including past publication holds, platform counts and intermediate failures.
+They do not reopen completed capabilities or authorize an old release/install
+procedure. Historical issue numbers refer to their recorded host; all new
+integration follows the current GitHub workflow. Reproduce a remaining
+composition against current main before treating a past rejection as a new
+compiler task.
+
 ## Runtime Performance Requirement: 2026-10-09
 
 Runtime performance is now a first-class design and delivery requirement under
@@ -121,7 +131,7 @@ workflow determine task scope and integration.
 | `L-CONST-01` extension | ready to select one execution profile | Use the staged verified-MIR executor and semantic query timing. Select one missing mutable-reference, pack, owning/sum or operator profile with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | lazy trusted-body prerequisite met | Body-order/demand facts and editor-scoped HIR exist. Demand/memoize trusted body facts, apply the same scope to completion and measure diagnostics/latency. Cross-snapshot semantic reuse follows only if simpler steps leave it necessary. See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
 | `RT-2` through `RT-10` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. |
-| Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; environment/process capture; required text/range/service breadth. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
+| Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
 
 This is priority/readiness information, not an artificial dependency chain.
 Reflection and independent library/performance work need not wait for one
@@ -1047,13 +1057,20 @@ and select an independent row.
    asynchronous CI/CD. This documentation-only review changes no runtime API
    and requires no VERSION advance.
 
-**Recommended next implementation prompt:** `L-UP-10`, the retained compiler
-correctness prerequisite before more emplacement APIs are built around the
-unresolved borrowed-pack composition. Rows 1–6 no longer need adoption work;
-`L-UP-07/08` now implement the independent exchange and move-only algorithm
-capability, with local completion evidence recorded above.
+**One useful implementation path:** close `L-UP-10`'s remaining acceptance
+matrix while adopting `L-UP-11` final-node emplacement. The retained borrowed-
+pack reproducer now passes; this is not an instruction to invent another
+compiler fix or repeat completed adoptions. Rows 1–8 have delivered their
+bounded outcomes. The reconciled Ready Queue also permits independent new
+capabilities whose exact prerequisites hold.
 
 ## Release Bug Closure
+
+The following release narratives preserve development and validation history.
+Their publication holds and pending checks describe the stated checkpoints,
+not the current work queue. The 0.363.0 release below superseded the earlier
+0.360–0.363 holds; later canonical contracts and validation records describe
+further generalizations.
 
 **State:** the six open Gitea bug reproductions (#20, #23, #25, #26, #28, #29)
 are fixed and locally validated. All 389 optimized CTest gates have passing
@@ -1761,14 +1778,13 @@ pending; these results do not establish arbitrary capability composition.
 
 ## How To Use This Plan
 
-Ordinary feature work should select one row from this plan, or one explicitly
-named bounded sub-slice. The immediate backend-authority recovery campaign is
-the deliberate exception: one declared implementation phase may combine the
-applicable `M-EXEC-01`, `M-FAIL-01`/`Q-FAIL-01`, and `M-BACK-01/02` slices when
-that is required to put a complete body family into production. The phase is
-the outcome boundary; it may land as several reviewable commits, but it must
-not stop at an IR-only checkpoint when the matching production cutover is
-within the declared scope.
+Ordinary feature work should select one unfinished outcome from this plan, or
+one explicitly named bounded sub-slice. Combine prerequisite rows when they
+form the smallest coherent vertical slice for that outcome, while recording
+scope and exit evidence for each. The completed backend-authority recovery
+campaign below is a historical example, not a current exception or missing
+cutover. A phase may land as several reviewable commits, but must not stop at
+an IR-only checkpoint when its declared outcome includes production execution.
 
 Every row has one of these states:
 
@@ -1789,8 +1805,10 @@ Readiness role is separate from dependency state:
   while broader forms remain explicit;
 - **design-first** means a cross-cutting contract must be settled before the
   first executable client; and
-- **measured defer** means a benchmark, client, or ownership design must exist
-  before implementation is scheduled.
+- **measured defer** records why an earlier slice was deferred. It is not a
+  requirement to produce a new benchmark before designing general runtime
+  architecture; the selected outcome still needs named technical prerequisites,
+  correctness obligations, a cost model and performance acceptance.
 
 Under [ADR 012](../decisions/012-outcome-first-systems-readiness.md), `1.0` is a
 soft, revisable systems-readiness goal, not a scheduling horizon. Legacy
@@ -1822,15 +1840,18 @@ every review recommendation as a release commitment:
 1. **Concurrency semantics are fixed before public concurrency.** ADR 008
    adopts safe data-race freedom, structural transfer/share facts, the concurrent-global
    boundary, sequentially consistent first atomics, and owned automatic-join
-   threads. A bounded public profile is systems-readiness work; detach, weak
-   memory-order breadth, and advanced reclamation are not.
+   threads. The bounded public profile now includes explicit atomic orders and
+   integer fetch operations. Scoped borrowed tasks, safe condition-variable
+   access, safe foreign-thread entry, detach and advanced reclamation need their own
+   contracts; they are not implied by the delivered owned-thread profile.
 2. **Concurrency starts from the adopted language model, not a pthread
    wrapper.** Implementation follows the capability, lifetime, ordered-
    execution, failure, runtime, and MIR prerequisites in this plan.
-3. **The executable critical path remains places -> initialization ->
+3. **The delivered executable foundation follows places -> initialization ->
    temporaries/drops -> ordered evaluation -> defined-failure edges ->
-   MIR-backed emission.** These facts unblock mutable ranges, allocators,
-   richer FFI, backend-independent failure, and public concurrency.
+   MIR-backed emission.** Later ranges, allocation, FFI, failure and concurrency
+   work must preserve and extend these facts rather than reschedule the whole
+   foundation or reconstruct authority in the backend.
 4. **Layout queries precede allocator and broad FFI work.** `sizeof` and
    `alignof` may initially support only types whose layout GTI owns; this does
    not imply a stable GTI ABI, packed records, unions, or manual lifetime.
@@ -1846,10 +1867,13 @@ every review recommendation as a release commitment:
    may implement language-neutral algorithms or private storage behind
    GTI-owned interfaces. It does not define GTI identities, semantics,
    serialized forms, public APIs, or cross-phase representations.
-8. **Type interning remains deferred.** Types were about three per cent of
-   retained semantic memory in the audit workload after the occurrence-table
-   fix; snapshot/context ownership and a type-allocation benchmark are still
-   missing.
+8. **A GTI-owned type context remains a distinct architecture goal.** The old
+   audit's roughly three-per-cent retained-type share is historical evidence,
+   not a current memory profile or permission threshold. Establish snapshot/
+   context ownership, canonical identity and invalidation before choosing an
+   interning/allocation implementation. A current cost model and measurements
+   validate that choice; private LLVM machinery is an option only when it is
+   clearly the better implementation, not a public representation requirement.
 9. **Evaluation is strictly left to right.** ADR 010 fixes receiver, argument,
    operand, assignment-target, initialization, full-expression, temporary,
    cleanup, and program-wide initialization order. M-LIFE/M-EXEC represent the
@@ -1978,10 +2002,15 @@ infrastructure project.
 | Compiler-style AST/protocol | `M-LIFE-01` + layout -> `L-SUM-01` | Generic payload cases support exhaustive move/borrow matching and deterministic cleanup. |
 | Fallible pipeline | `M-LIFE/M-EXEC` -> `L-ERR-01` plus `expected`/host APIs | Propagation is concise, exact-type, and cleanup-correct across a nontrivial call chain. |
 
-The first five user-facing lanes should normally outrank unrelated
-generalization work once their immediate prerequisites are ready. This does
-not permit skipping a correctness dependency; it prevents proof machinery with
-no named consumer from displacing a bounded executable slice.
+These paths record the foundations needed by each lane; most of those
+foundations and their first clients are now delivered. They are not seven new
+implementation campaigns or a reason to reopen completed rows. Select the
+remaining useful slice from the reconciled Ready Queue: embedding still needs
+its context/wrapper/artifact chain, while later library, range, allocation,
+concurrency and native-import profiles need their specifically named proofs.
+Prioritize a coherent user-facing outcome without skipping correctness
+dependencies; general runtime architecture may also proceed from its cost
+model under ADR 012.
 
 ## Verified Starting Point
 
@@ -2010,12 +2039,17 @@ start a later phase:
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, ordered scalar atomics, scoped mutex guards, global policy, and contained worker failure. Public managed threads, ordered scalar atomics including integer fetch operations, and mutex guards implement the bounded systems-ready surface. |
 | Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. Landed M-FAIL-01 slices provide exact outcome/propagation identity, deterministic artifact descriptors and detector sites, plus verified fixed-record failure edges and cleanup for eligible full-expression-root scalar operations and exact later local-detector or static direct-call arguments after prepared owners. |
 
-MIR is the sole executable-body authority. It still has bounded verifier gaps
-around complete ordered parameter/result materialization, additional nested or
-owning failure edges, partial-constructor rollback, and double failure, but
-those gaps cannot select another executable route. Object layout, ABI, and
-generated representation are combined with optimized MIR at the complete
-`LoweredProgram` frontier. Unsupported contracts fail before backend emission.
+This table retains the early foundation checkpoint, not the current breadth of
+MIR or its serialization versions. Subsequent ordered-call, owning-result,
+constructor rollback and first/secondary-failure profiles have shipped; their
+current boundaries and independent verification evidence are in
+[MIR](../architecture/mir.md), [backend](../architecture/backend.md) and
+[verification](../architecture/verification.md). Do not reschedule those whole
+families from this baseline or infer arbitrary untested compositions from them.
+MIR is the sole executable-body authority. Object layout, ABI and generated
+representation meet optimized MIR at the complete `LoweredProgram` frontier;
+an unsupported remaining contract must fail at its owning admission boundary,
+not select another executable route.
 
 ## Dependency Map
 
@@ -2080,11 +2114,12 @@ flowchart TD
   TD --> Q["L-ERR-01 propagation operator"]
 ```
 
-This is an abbreviated critical-path view. The `M-EXEC-01` edge into M-BACK is
-per selected body family, not a requirement to finish the entire row before
-production emission starts. Design rows may run in parallel. Rows that edit the
-same semantic or lowering authority must serialize even if the graph has no
-logical edge between them.
+This is an abbreviated historical foundation-dependency view, not the current
+unfinished queue. The `M-EXEC-01` edge into M-BACK applied per selected body
+family; the source-body cutover is complete. Later extensions preserve that
+authority and must name their additional facts. Independent rows may proceed
+in parallel; overlapping semantic or lowering changes must reconcile even
+when this graph has no logical edge between them.
 
 ## Historical Completed Campaign Baselines
 
@@ -2200,8 +2235,9 @@ The following decisions bound every row in this campaign:
   `[[c_opaque]]` engine handles. References, owners, ordinary classes,
   containers, payload enums, `expected`, callable values, strings, nested
   pointers, ownership transfer, and native C++ types do not cross this first
-  boundary. Pointer use inside GTI retains the existing lexical `unsafe`
-  requirement.
+  boundary. Raw dereference, unsafe native calls and unchecked borrow adoption
+  retain their lexical `unsafe` obligations; safe raw address formation and
+  transport do not become unsafe merely because the value crosses this ABI.
 - Every exported wrapper takes the generated module context first, returns a
   versioned embedding status, writes a non-`void` result only on success, and
   writes an immutable `gti_failure_record_v1` only for a GTI defined failure.
@@ -2504,12 +2540,17 @@ make the proposal feel concrete.
 - **Exit gate:** all existing checked-integer, conversion, indexing, owner,
   private-storage, and allocation failures map to the contract; the runtime can
   later expose one narrow entry point without erasing categories.
-- **Completion evidence:** stable `GTI-R0001` through `GTI-R0014` categories,
+- **Completion evidence at adoption:** stable `GTI-R0001` through `GTI-R0014` categories,
   artifact-qualified source tokens, status 70 and exact report framing,
   deterministic cleanup and double-failure behavior, observer constraints,
   program/embedding/task/callback boundaries, expected-versus-terminating
-  policy, and every current trap mapping are canonical. Current emitter aborts
-  remain an explicit M-FAIL-01/Q-FAIL-01 implementation gap.
+  policy, and the then-current trap mapping established the contract.
+  Subsequent M-FAIL-01/Q-FAIL-01 delivery owns normal and failure cleanup,
+  caller records and secondary failure through verified MIR. The current
+  category inventory and boundaries are in Execution §4.10; panic and checked
+  container categories were added later. Infallible allocation exhaustion now
+  explicitly reports and aborts without cleanup or containment, while typed
+  recoverable allocation and constructor failure retain their separate rules.
 - **Unlocked:** D-MEM-02's worker-policy adoption is complete. `M-FAIL-01`,
   public allocation design, hosted concurrency, and a future generated
   embedding boundary remain downstream clients.
