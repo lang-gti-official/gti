@@ -318,6 +318,30 @@
       "suite": "text"
     },
     {
+      "name": "testExpectedClassArgumentReturnedConstruction",
+      "suite": "text"
+    },
+    {
+      "name": "testExpectedTemporaryObservationSlot",
+      "suite": "text"
+    },
+    {
+      "name": "testOwningTemporaryFieldView",
+      "suite": "text"
+    },
+    {
+      "name": "testRaisingConstructionAssignmentSlot",
+      "suite": "text"
+    },
+    {
+      "name": "testExpectedFieldAndJoinPublication",
+      "suite": "text"
+    },
+    {
+      "name": "testOwnedArgumentMemberInitializer",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },

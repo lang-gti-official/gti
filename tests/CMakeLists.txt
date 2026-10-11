@@ -852,6 +852,36 @@ add_test(NAME expected_class_argument_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_argument_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_class_argument_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_constructor_return_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_constructor_return_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_constructor_return_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_temporary_observation_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_temporary_observation_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_temporary_observation_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME owning_temporary_field_read_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/owning_temporary_field_read_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(owning_temporary_field_read_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME construction_assignment_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/construction_assignment_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(construction_assignment_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_field_and_join_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_field_and_join_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_field_and_join_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME owned_argument_member_initializer_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/owned_argument_member_initializer_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(owned_argument_member_initializer_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_class_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"

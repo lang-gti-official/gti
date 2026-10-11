@@ -3354,6 +3354,597 @@ int main() {
          "local");
 }
 
+// A construction consuming a cleanup-free Expected<Class, E> argument may
+// publish its own result through its consuming Return or into a constructor
+// field. The success class has no default constructor: a failure-free
+// producer constructs the staged slot, the construction moves its wrapper and
+// the slot retires right after. A cleanup-owning payload keeps MIR's
+// value-rooted transfer slot. (Regression: the former gti-lang-official issue
+// #6 emitted a default-constructed std::expected<Item, E> local.)
+void testExpectedClassArgumentReturnedConstruction() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-expected-class-returned-construction.gti", R"(
+struct item_value {
+  int32_t number;
+  item_value(int32_t number) : number(number) {}
+};
+
+class tracked {
+public:
+  int32_t value = 0;
+  tracked(int32_t value) : value(value) {}
+  ~tracked() {}
+};
+
+expected<item_value, int32_t> make_item() { return item_value(7); }
+
+expected<tracked, int32_t> make_tracked() { return tracked(7); }
+
+struct item_holder {
+  int32_t number;
+  item_holder(expected<item_value, int32_t> item)
+      : number(item ? item.value().number : 0) {}
+};
+
+struct tracked_holder {
+  int32_t value;
+  tracked_holder(expected<tracked, int32_t> item)
+      : value(item ? item.value().value : 0) {}
+};
+
+item_holder hold_item() { return item_holder(make_item()); }
+
+tracked_holder hold_tracked() { return tracked_holder(make_tracked()); }
+
+struct item_owner {
+  item_holder held;
+  item_owner() : held(item_holder(make_item())) {}
+};
+
+int main() {
+  item_holder held = hold_item();
+  tracked_holder owned = hold_tracked();
+  item_owner owner{};
+  return held.number + owned.value + owner.held.number - 21;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the returned Expected construction fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string slotType =
+      "::gti_internal::backend::mir_lifetime_slot<std::expected<::__gti_"
+      "program::item_value, std::int32_t>, true> ";
+  // Counts item_holder constructions publishing at `destination` that move a
+  // slot the producer constructed and retire it on the next line.
+  const auto publishedConstructions = [&](std::string_view destination) {
+    const std::string_view marker = ">{}, std::move(__gti_mir_v_";
+    std::size_t count = 0;
+    for (std::size_t at = text.find(marker); at != std::string::npos;
+         at = text.find(marker, at + marker.size())) {
+      const std::size_t lineStart = text.rfind('\n', at) + 1;
+      const std::size_t lineEnd = text.find('\n', at);
+      const std::size_t idStart = at + marker.size();
+      const std::size_t idEnd = text.find(".get())", idStart);
+      if (lineEnd == std::string::npos || idEnd == std::string::npos ||
+          idEnd > lineEnd)
+        return std::size_t{0};
+      const std::string_view line =
+          std::string_view(text).substr(lineStart, lineEnd - lineStart);
+      if (line.find("::__gti_program::item_holder(") ==
+              std::string_view::npos ||
+          line.find(destination) == std::string_view::npos)
+        continue;
+      const std::string slot =
+          "__gti_mir_v_" + text.substr(idStart, idEnd - idStart);
+      const std::size_t next = text.find_first_not_of(' ', lineEnd + 1);
+      if (text.find(slotType + slot + ";") == std::string::npos ||
+          text.find(slot + ".construct_from([&]() { return ::__gti_program::"
+                           "__gti_fn_") == std::string::npos ||
+          text.compare(next, slot.size() + 11, slot + ".destroy();") != 0)
+        return std::size_t{0};
+      ++count;
+    }
+    return count;
+  };
+  expect(publishedConstructions("(__gti_mir_out_result)) ") == 1,
+         "a returned construction should publish into the transformed result "
+         "from the staged wrapper and retire it afterwards");
+  expect(publishedConstructions("std::addressof(") == 1,
+         "a member-initializer construction should publish into its field "
+         "from the staged wrapper and retire it afterwards");
+  expect(text.find("std::expected<::__gti_program::item_value, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no Expected without a default-constructible payload should "
+         "value-initialize an ordinary local");
+  const std::size_t owned =
+      text.find("::__gti_program::tracked_holder(::gti_internal::backend::"
+                "mir_failure_constructor_tag_v1<");
+  expect(owned != std::string::npos &&
+             text.find(">{}, __gti_mir_p_", owned) ==
+                 text.find(">{}, ", owned) &&
+             text.find(".take()", owned) < text.find('\n', owned),
+         "a returned construction consuming a cleanup-owning Expected should "
+         "take it from MIR's value-rooted transfer slot");
+}
+
+// A cleanup-free Expected<Class, E> call temporary read once by its state test
+// or a checked value() or error() lives in representation-only storage: the
+// producer constructs the slot, the observer reads the wrapper there, and the
+// representation retires right after that read. A class payload moves into
+// its own field-read slot. An owning temporary is read in place from MIR's
+// value-rooted slot, which MIR's own Drop retires. (Regression: these
+// value-initialized std::expected<Item, E> or reported GTI-B0001.)
+void testExpectedTemporaryObservationSlot() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-expected-temporary-observation.gti", R"(
+struct item_value {
+  int32_t number;
+  item_value(int32_t number) : number(number) {}
+};
+
+class tracked {
+public:
+  int32_t value = 0;
+  tracked(int32_t value) : value(value) {}
+  ~tracked() {}
+};
+
+expected<item_value, int32_t> make_item(bool ok) {
+  if (ok) { return item_value(7); }
+  return unexpected(int32_t(3));
+}
+
+expected<tracked, int32_t> make_tracked(bool ok) {
+  if (ok) { return tracked(7); }
+  return unexpected(int32_t(3));
+}
+
+int32_t observe(bool ok) {
+  if (make_item(ok)) { return make_item(ok).value().number; }
+  return make_item(ok).error() + make_tracked(ok).error();
+}
+
+int main() { return observe(true) + observe(false) - 13; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the Expected temporary observation fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string slotType =
+      "::gti_internal::backend::mir_lifetime_slot<std::expected<::__gti_"
+      "program::item_value, std::int32_t>, true> __gti_mir_v_";
+  // Each observed slot is constructed by its producer, read once through
+  // get() on the next line, and retired on the line after that read.
+  std::size_t observed = 0;
+  std::string payloadSlot;
+  for (std::size_t at = text.find(slotType); at != std::string::npos;
+       at = text.find(slotType, at + slotType.size())) {
+    const std::size_t idStart = at + slotType.size();
+    const std::string slot =
+        "__gti_mir_v_" +
+        text.substr(idStart, text.find(';', idStart) - idStart);
+    const std::size_t produced = text.find(
+        slot + ".construct_from([&]() { return ::__gti_program::__gti_fn_");
+    const std::size_t read = produced == std::string::npos
+                                 ? std::string::npos
+                                 : text.find(slot + ".get()", produced);
+    const std::size_t lineEnd =
+        read == std::string::npos ? std::string::npos : text.find('\n', read);
+    const std::size_t next = lineEnd == std::string::npos
+                                 ? std::string::npos
+                                 : text.find_first_not_of(' ', lineEnd + 1);
+    if (next == std::string::npos ||
+        text.compare(next, slot.size() + 11, slot + ".destroy();") != 0)
+      continue;
+    ++observed;
+    const std::string move = "mir_expected_value_move_v1(" + slot + ".get(), &";
+    const std::size_t moved = text.rfind(move, lineEnd);
+    if (moved != std::string::npos && moved > produced)
+      payloadSlot =
+          text.substr(moved + move.size(), text.find(')', moved + move.size()) -
+                                               moved - move.size());
+  }
+  expect(observed == 3,
+         "the state test, the value() extraction and the error() extraction "
+         "should each read one constructed slot and retire it: " +
+             std::to_string(observed) + " observed");
+  expect(!payloadSlot.empty() &&
+             text.find("mir_lifetime_slot<::__gti_program::item_value, true> " +
+                       payloadSlot + ";") != std::string::npos &&
+             text.find(payloadSlot + ".get().number") != std::string::npos,
+         "value() should move the payload into its own field-read slot");
+  expect(text.find("std::expected<::__gti_program::item_value, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no observed Expected should value-initialize an ordinary local");
+  expect(text.find("mir_expected_error_v1(__gti_mir_p_") != std::string::npos &&
+             text.find("mir_lifetime_slot<std::expected<::__gti_program::"
+                       "tracked, std::int32_t>, true>") == std::string::npos,
+         "an owning temporary should be read in place from MIR's value-rooted "
+         "slot");
+}
+
+// A field of an owning class temporary is a view of the result's own
+// value-rooted lifetime slot, read in place before MIR's full-expression Drop
+// destroys the temporary. An owning Expected temporary's payload moves into
+// its own result slot and is read the same way. The view declares no local:
+// a field class without a default constructor could not be declared.
+// (Regression: these reported GTI-B0001.)
+void testOwningTemporaryFieldView() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-owning-temporary-field-view.gti", R"(
+struct inner_value {
+  int32_t code;
+  inner_value(int32_t code) : code(code) {}
+};
+
+class tracked {
+public:
+  inner_value inner;
+  tracked(int32_t code) : inner(inner_value(code)) {}
+  ~tracked() {}
+};
+
+tracked make_tracked(int32_t code) { return tracked(code); }
+
+expected<tracked, int32_t> make_result(bool ok) {
+  if (ok) { return tracked(7); }
+  return unexpected(int32_t(3));
+}
+
+int32_t read() {
+  return make_tracked(7).inner.code + make_result(true).value().inner.code;
+}
+
+int main() { return read() - 14; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the owning temporary field view fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // Each view reads one declared owning slot that a normal-path Drop retires.
+  const std::string read = ".get().inner.code;";
+  std::size_t views = 0;
+  std::string moved;
+  for (std::size_t at = text.find(read); at != std::string::npos;
+       at = text.find(read, at + read.size())) {
+    const std::size_t slotStart = text.rfind("__gti_mir_p_", at);
+    const std::string slot = text.substr(slotStart, at - slotStart);
+    if (text.find("mir_lifetime_slot<::__gti_program::tracked> " + slot +
+                  ";") == std::string::npos ||
+        text.find(slot + ".destroy();\n") == std::string::npos)
+      continue;
+    ++views;
+    if (text.find("mir_expected_value_move_v1(__gti_mir_p_") <
+            text.find(slot + read) &&
+        text.find(", &" + slot + ");") != std::string::npos)
+      moved = slot;
+  }
+  expect(views == 2,
+         "both field reads should view a declared owning slot that MIR's "
+         "Drop retires: " +
+             std::to_string(views) + " views");
+  expect(!moved.empty(),
+         "the owning Expected payload should move into its own result slot "
+         "before its field is read");
+  expect(text.find("::__gti_program::inner_value __gti_mir_p_") ==
+             std::string::npos,
+         "a field view should declare no local of its own");
+}
+
+// A construction whose constructor can fail, assigned to an existing
+// variable, publishes into representation-only storage on its success edge;
+// the Assign then moves it in and the slot retires. This holds when the
+// construction consumes a staged Expected argument too. A failure-free
+// construction keeps the fused assignment. (Regression: GTI-B0001.)
+void testRaisingConstructionAssignmentSlot() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-raising-construction-assignment.gti", R"(
+struct item_value {
+  int32_t number;
+  item_value(int32_t number) : number(number) {}
+};
+
+expected<item_value, int32_t> make_item(bool ok) {
+  if (ok) { return item_value(7); }
+  return unexpected(int32_t(3));
+}
+
+struct sum_holder {
+  int32_t number;
+  sum_holder(int32_t number) : number(number + 1) {}
+};
+
+struct item_holder {
+  int32_t number;
+  item_holder(expected<item_value, int32_t> item)
+      : number(item ? item.value().number : 0) {}
+};
+
+struct plain_holder {
+  int32_t number;
+  plain_holder(int32_t number) : number(number) {}
+};
+
+int main() {
+  mut sum_holder sum{1};
+  sum = sum_holder(6);
+  mut item_holder item{make_item(false)};
+  item = item_holder(make_item(true));
+  mut plain_holder plain{1};
+  plain = plain_holder(7);
+  return sum.number + item.number + plain.number - 21;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the raising construction assignment fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // The assignment slot is constructed by the failure-tag constructor, moved
+  // into the binding, and retired on the next line.
+  const auto assignedThroughSlot = [&](std::string_view holder) {
+    const std::string declaration =
+        "::gti_internal::backend::mir_lifetime_slot<::__gti_program::" +
+        std::string(holder) + ", true> __gti_mir_v_";
+    const std::size_t declared = text.find(declaration);
+    if (declared == std::string::npos)
+      return false;
+    const std::size_t idStart = declared + declaration.size();
+    const std::string slot =
+        "__gti_mir_v_" +
+        text.substr(idStart, text.find(';', idStart) - idStart);
+    const std::string move = ", std::move(" + slot + ".get()));\n";
+    const std::size_t moved = text.find(move);
+    if (moved == std::string::npos)
+      return false;
+    const std::size_t next = text.find_first_not_of(' ', moved + move.size());
+    return text.find(slot + ".construction_address())) ::__gti_program::" +
+                     std::string(holder) +
+                     "(::gti_internal::backend::mir_failure_constructor_tag_"
+                     "v1<") != std::string::npos &&
+           text.compare(next, slot.size() + 11, slot + ".destroy();") == 0;
+  };
+  expect(assignedThroughSlot("sum_holder"),
+         "a raising construction should publish into its assignment slot "
+         "before the binding moves it in");
+  expect(assignedThroughSlot("item_holder") &&
+             text.find("item_holder(::gti_internal::backend::mir_failure_"
+                       "constructor_tag_v1<") != std::string::npos &&
+             text.find("end moved-from argument representation") !=
+                 std::string::npos,
+         "a raising construction consuming a staged Expected argument should "
+         "use the same assignment slot");
+  expect(text.find("mir_lifetime_slot<::__gti_program::plain_holder, true>") ==
+                 std::string::npos &&
+             text.find("= ::__gti_program::plain_holder(") != std::string::npos,
+         "a failure-free construction should keep the fused assignment");
+}
+
+// A cleanup-free Expected<Class, E> call result initializing a constructor
+// field is staged and moved into the field's storage after its empty
+// representation ends. Two such temporaries joined by a conditional publish
+// into the join's own storage, which each publication first retires, and the
+// grouped join reads that storage directly. Neither value-initializes the
+// Expected. (Regression: both reported GTI-B0001.)
+void testExpectedFieldAndJoinPublication() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-expected-field-and-join.gti", R"(
+struct item_value {
+  int32_t number;
+  item_value(int32_t number) : number(number) {}
+};
+
+expected<item_value, int32_t> make_item(bool ok) {
+  if (ok) { return item_value(7); }
+  return unexpected(int32_t(3));
+}
+
+struct box {
+  expected<item_value, int32_t> item;
+  box(bool ok) : item(make_item(ok)) {}
+};
+
+bool observe(bool ok) {
+  return (ok ? make_item(true) : make_item(false)).has_value();
+}
+
+int main() {
+  box held{true};
+  return held.item.value().number + (observe(false) ? 1 : 0) - 7;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the Expected field and join fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string rearm =
+      ".destroy_if_engaged(); // retire the previous join representation\n";
+  std::size_t publications = 0;
+  std::string join;
+  for (std::size_t at = text.find(rearm); at != std::string::npos;
+       at = text.find(rearm, at + rearm.size())) {
+    const std::size_t slotStart = text.rfind("__gti_mir_p_", at);
+    const std::string slot = text.substr(slotStart, at - slotStart);
+    const std::size_t next = text.find_first_not_of(' ', at + rearm.size());
+    const std::string publish =
+        slot + ".construct_from([&]() { return ::__gti_program::__gti_fn_";
+    if (text.compare(next, publish.size(), publish) != 0)
+      continue;
+    ++publications;
+    join = slot;
+  }
+  expect(publications == 2 && !join.empty() &&
+             text.find("mir_lifetime_slot<std::expected<::__gti_program::item_"
+                       "value, std::int32_t>, true> " +
+                       join + ";") != std::string::npos &&
+             text.find(join + ".get().has_value();") != std::string::npos,
+         "both join arms should publish into the join's storage after "
+         "retiring it, and the grouped join should read that storage");
+  const std::string field =
+      "::gti_internal::backend::construct_representation_at(std::addressof("
+      "__gti_mir_p_";
+  const std::size_t constructed = text.find(field);
+  const std::size_t moved =
+      constructed == std::string::npos
+          ? std::string::npos
+          : text.find(", std::move(__gti_mir_v_", constructed);
+  const std::size_t slotStart =
+      moved == std::string::npos ? std::string::npos : moved + 12;
+  const std::string slot =
+      slotStart == std::string::npos
+          ? std::string()
+          : text.substr(slotStart, text.find(".get()", slotStart) - slotStart);
+  expect(!slot.empty() &&
+             text.find(slot + ".construct_from([&]() { return ::__gti_program::"
+                              "__gti_fn_") != std::string::npos &&
+             text.find(slot + ".destroy();", moved) != std::string::npos,
+         "the field initializer should move a staged result into the field");
+  expect(text.find("std::expected<::__gti_program::item_value, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no Expected should value-initialize an ordinary local");
+}
+
+void testOwnedArgumentMemberInitializer() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-owned-argument-member-initializer.gti", R"(
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() {}
+};
+
+expected<counted, int32_t> make_counted(bool ok) {
+  if (ok) { return counted(5); }
+  return unexpected(int32_t(2));
+}
+
+struct holder {
+  int32_t number;
+  holder(expected<counted, int32_t> item)
+      : number(item ? item.value().number : 100 + item.error()) {}
+};
+
+struct owner {
+  holder held;
+  owner(bool ok) : held(holder(make_counted(ok))) {}
+};
+
+int main() {
+  owner success{true};
+  return success.held.number - 5;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the owned-argument member initializer fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  // The member's constructor takes the owning result's own value obligation
+  // directly; that handoff is not a transfer into `this`.
+  bool routed = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const lang::MirBody &body = constructor.body;
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Construct)
+          continue;
+        for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
+          const lang::MirDropObligation *source =
+              body.findDropObligation(event.source);
+          routed = routed ||
+                   (event.kind == lang::MirLifecycleEventKind::TransferOut &&
+                    source != nullptr &&
+                    source->kind == lang::MirDropObligationKind::Value &&
+                    lang::mirBodyRoutesFailureEdges(body) &&
+                    !body.failureRecords.empty());
+        }
+      }
+    }
+  }
+  expect(routed, "a constructor handing an owned result to a member's "
+                 "constructor should keep routing its failure edges");
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::size_t constructed =
+      text.find(") ::__gti_program::holder(::gti_internal::backend::mir_"
+                "failure_constructor_tag_v1<");
+  const std::size_t lineEnd = constructed == std::string::npos
+                                  ? std::string::npos
+                                  : text.find('\n', constructed);
+  const std::size_t slotStart =
+      constructed == std::string::npos
+          ? std::string::npos
+          : text.find("{}, __gti_mir_p_", constructed);
+  const std::size_t slotEnd = slotStart >= lineEnd
+                                  ? std::string::npos
+                                  : text.find(".take(), &__gti_mir_construct_"
+                                              "success_",
+                                              slotStart);
+  const std::string slot =
+      slotEnd >= lineEnd ? std::string()
+                         : text.substr(slotStart + 4, slotEnd - slotStart - 4);
+  const std::size_t declared =
+      slot.empty() ? std::string::npos
+                   : text.rfind("::gti_internal::backend::mir_lifetime_slot<"
+                                "std::expected<::__gti_program::counted, "
+                                "std::int32_t>> " +
+                                    slot + ";",
+                                constructed);
+  expect(declared != std::string::npos &&
+             text.find(slot + ".construct_from([&]() { return ::__gti_"
+                              "program::__gti_fn_",
+                       declared) < constructed,
+         "the member should be constructed in place from the owned result's "
+         "slot, taken once after its producer published it");
+  expect(text.find("std::expected<::__gti_program::counted, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no Expected should value-initialize an ordinary local");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -3531,6 +4122,16 @@ constexpr NamedTest kTests[] = {
      testCleanupFreeExpectedClassArgumentSlot},
     {"testCleanupFreeExpectedClassConstructorArgumentSlot",
      testCleanupFreeExpectedClassConstructorArgumentSlot},
+    {"testExpectedClassArgumentReturnedConstruction",
+     testExpectedClassArgumentReturnedConstruction},
+    {"testExpectedTemporaryObservationSlot",
+     testExpectedTemporaryObservationSlot},
+    {"testOwningTemporaryFieldView", testOwningTemporaryFieldView},
+    {"testRaisingConstructionAssignmentSlot",
+     testRaisingConstructionAssignmentSlot},
+    {"testExpectedFieldAndJoinPublication",
+     testExpectedFieldAndJoinPublication},
+    {"testOwnedArgumentMemberInitializer", testOwnedArgumentMemberInitializer},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",
