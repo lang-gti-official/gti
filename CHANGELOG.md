@@ -9,13 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.399.2 — Faster builds that include standard-library units
+## 0.399.3 — Faster builds that include standard-library units
 
 - `gti build`, `gti run` and C++ emission no longer lower standard-library
   declarations the program never uses. A program with three common includes
   (`<std/format>`, `<std/string>`, `<std/vector>`) compiles about 19% faster,
   and one that includes every standard unit about 14% faster. Generated code
   and diagnostics are unchanged. `gti check` still lowers every declaration.
+
+## 0.399.2 — Repository moved to `lang-gti-official`
+
+- GTI's canonical repository is now
+  [github.com/lang-gti-official/gti](https://github.com/lang-gti-official/gti).
+  The previous `gti-lang-official` organization is no longer available.
+- The Neovim installer and the lazy.nvim spec now download from the new
+  repository. Update an existing plugin spec to
+  `https://github.com/lang-gti-official/gti.git`.
 
 ## 0.399.0 — Declared attributes and richer reflection
 
