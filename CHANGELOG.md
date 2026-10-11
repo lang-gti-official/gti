@@ -18,6 +18,15 @@ for what minor and patch releases mean.
   read-only, mutable, and consuming owning callable erasure. Ordinary local
   function wrappers do not acquire permission to cross threads implicitly.
 
+## 0.402.1 — Owning `expected` fields initialized from calls
+
+- A constructor's `expected<T, E>` field can now be initialized directly from
+  a call when `T` owns resources, as in
+  `box(bool ok) : named(make_named(ok)) {}` with a `std::string` in the
+  payload, or when `T` has a destructor. The result is constructed in the
+  field without a default value. If a later member fails, the field is
+  destroyed exactly once. Such constructors used to report GTI-B0001.
+
 ## 0.401.6 — Member initializers taking owning `expected` results
 
 - A member initializer that constructs its field from an `expected<T, E>`

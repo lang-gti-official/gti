@@ -2,6 +2,12 @@
 
 Status: Accepted and implemented
 
+Scope revision (2026-10-11): later C-scalar, recursive-pointer and exact native
+callback slices broaden the original field/passage allowlist without changing
+passive layout or ownership. Foreign-header import is now implemented through
+libclang; it emits ordinary declarations, not a second native type system.
+Unions and native ownership transfer remain distinct boundaries.
+
 ## Context
 
 GTI's first `extern "C"` boundary deliberately supported calls before
@@ -40,10 +46,11 @@ The opt-in is nominal and closed. A C ABI record:
 - is a non-generic `struct` with at least one public instance field;
 - has no bases, access sections, static fields, methods, constructors,
   destructors, or copy/move policy declarations;
-- may contain fixed-width signed or unsigned integers, `float`, `double`, a
+- may contain target-correct C scalars, fixed-width integers, `bool`, `float`, `double`, a
   valid nested C ABI record, positive concrete fixed arrays of any admitted
-  field type, or one-level raw pointers to `void`, those scalar types, or C ABI
-  records;
+  field type, exact named native callback aliases, or recursive raw pointers
+  ending in `void`, admitted scalars, C ABI records, opaque handles, `c_string`
+  or exact named native callbacks;
 - may use aliases of an admitted field type;
 - cannot give fields GTI initializers; construction policy belongs in an
   ordinary wrapper or native factory, while the ABI declaration remains a
@@ -51,7 +58,7 @@ The opt-in is nominal and closed. A C ABI record:
 - may use `mut` on a field as a source access policy. Mutability does not alter
   representation.
 
-`bool`, `char`, enums, ordinary classes/structs/interfaces, references,
+GTI `char`, GTI enums, ordinary classes/structs/interfaces, references,
 owners, borrowed-state carriers, expected values, compiler-private types,
 symbolic or zero-length arrays, symbolic types, and cleanup-owning values are
 excluded.
@@ -61,7 +68,7 @@ offset up to the field's ABI alignment, places the field there, and advances by
 its size. Record ABI alignment is the maximum field ABI alignment. Final size
 is rounded up to that record alignment. Every addition, padding step, and final
 size is checked in the compiler's unsigned 64-bit layout domain. Empty and
-recursive by-value records are rejected. A one-level raw pointer is the
+recursive by-value records are rejected. A raw pointer is the
 explicit way to represent an opaque or linked edge.
 
 The semantic model owns the selected record size, alignment, field offsets,
@@ -72,7 +79,7 @@ standard-layout, and trivially-copyable assertions. Those assertions audit the
 selected native toolchain; they do not become language authority.
 
 Valid C ABI records may be passed to and returned from `extern "C"` functions
-by value. One-level raw pointers to them are also allowed. A pointer-free
+by value. Recursive raw pointers to them are also allowed. A pointer-free
 record does not by itself make a C call unsafe. A raw pointer in the signature,
 including one nested inside a by-value record, requires a lexical `unsafe`
 call. Raw pointers still create no owner, retained borrow, null guarantee, or
@@ -84,8 +91,9 @@ facts. Synthetic target tests prove deterministic frontend selection across
 arm64/x86_64 on macOS, Linux, and Windows. Native release platforms compile a
 C oracle that checks `sizeof`, `_Alignof`, `offsetof`, by-value arguments and
 returns, nested records, and pointer mutation. Cross-language declaration
-agreement remains the wrapper author's responsibility until a future header
-import facility exists. The implemented native-header backend now generates
+agreement remains the binding author's responsibility for handwritten
+boundaries; `gti bindgen` now imports supported foreign declarations through
+libclang. The native-header backend generates
 that agreement for GTI-authored declarations: one artifact contains a C17
 branch with deterministic flattened names and a C++20/C++23 branch with exact
 source namespaces, plus layout assertions and the external C prototypes. It
@@ -95,8 +103,9 @@ does not infer or import a foreign declaration.
 
 GTI 0.119.0 adds the independent `[[c_opaque]] struct Name;` declaration for a
 nominal incomplete C handle. This does not widen ordinary record layout or make
-an opaque pointee ABI-stable. It allows only one-level raw pointers to that
-identity, including pointer fields inside an admitted `[[c_abi]]` record. The
+an opaque pointee ABI-stable. Its original one-level pointer boundary has since
+been generalized to recursive raw pointers, including pointer fields inside
+an admitted `[[c_abi]]` record. The
 generated bridge header emits an incomplete C typedef and an exact namespaced
 C++ forward declaration, allowing either language to complete its private
 implementation while the exported functions retain C linkage. GTI infers no
@@ -126,10 +135,10 @@ decision.
   expose ordinary GTI ownership and invariants above it.
 - Native records are trivially copyable non-owning values. A pointer copied in
   a record is still only an address.
-- Annotated opaque ownership transfer, pointer-to-pointer out parameters,
-  callbacks, retained userdata, flexible arrays, unions, bit-fields, packing,
-  varargs, C++ ABI, and automatic foreign-header import remain separate
-  capability slices.
+- Recursive pointer/out-parameter passage, exact callbacks and bounded
+  foreign-header import are delivered separate slices. Annotated ownership
+  transfer, retained userdata, flexible arrays, C ABI unions, bit-fields,
+  packing, varargs and direct C++ ABI remain separate capabilities.
 - C++ libraries are supported through a generated-header C adapter: ordinary
   C++ classes and RAII stay behind `extern "C"`, and exceptions must be caught
   before they cross the boundary. GTI does not adopt native C++ ABI identity.

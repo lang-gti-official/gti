@@ -30,8 +30,9 @@ create a namespace alias to the root `gti_internal` namespace; semantic
 diagnostic `GTI-S2058` rejects each such attempt.
 
 Compiler-capability types and operations bind by an exact selected declaration
-identity, never by qualified spelling or a public wrapper name. Shared prefix
-storage, text, and core constraint identities live in the trusted prelude.
+identity, never by qualified spelling or a public wrapper name. Text and core
+constraint identities live in the trusted prelude. Prefix storage is ordinary
+source-defined policy, not a surviving prelude capability.
 Module-specific identities live only in their exact trusted source units:
 unique ownership and general object-lifetime operations in `<std/memory>`,
 managed threads in `<std/thread>`, checked one-slot storage in `<std/optional>`,
@@ -61,7 +62,7 @@ public surface includes:
 | --- | --- |
 | `std::size_t` | Transparent alias of `uint64_t` |
 | `std::ptrdiff_t` | Transparent alias of `int64_t` |
-| `std::string_view` | Counted read-only view over static literal storage |
+| `std::string_view` | Counted read-only text, either literal-backed or tied to a checked owner through the supported factories |
 | `std::print` and `std::println` | Portable output over string views, `char`, and all fixed-width integers |
 | `std::transferable<T>` | Compiler-backed transfer-capability concept |
 | `std::shareable<T>` | Compiler-backed read-only sharing concept |
@@ -107,10 +108,13 @@ application interface can pass a standard module on to its importers with
 `export import std.vector;`.
 
 Imports and includes use the same compilation pipeline; an import does not
-precompile anything or promise a compilation speedup. `import std;` is rejected: the cost of
-compiling a unit does not depend on how much of it a program uses, and the
-whole library takes several seconds to compile, so an aggregate module would
-slow every program that used it. Import each unit you use.
+precompile anything or promise a compilation speedup. Only reachable executable
+code is lowered for an artifact, but every loaded unit still participates in
+semantic analysis. `import std;` is not implemented: an aggregate interface
+still needs a selection policy for platform-gated units and analysis-cost
+acceptance. This is remaining implementation work, not a permanent prohibition
+or a claim that unused library bodies must always be emitted. Import each unit
+you use in the current surface.
 
 ### Fixed-lane SIMD
 
@@ -144,8 +148,8 @@ reassociate or introduce a positive-zero initial value.
 
 `copy_from<M>(std::array<T, M>& source, size_t offset)` mutates the receiver;
 `copy_to<M>(mut std::array<T, M>& destination, size_t offset)` writes the owner.
-Both validate the complete range before copying, and every index remains
-checked in optimized builds. The caller currently supplies M explicitly because
+Both validate the complete range before copying; optimization may omit only
+checks it independently proves redundant. The caller currently supplies M explicitly because
 value-generic deduction through nominal class arguments is not available.
 Applications using `std::array` directly also include `<std/array>`:
 
@@ -494,7 +498,7 @@ The current implemented foundation includes:
   separate constructor-rollback coverage limit, not a fallback to the
   declaration location; and
 - `<std/format>` heterogeneous automatic or numeric-indexed replacement for
-  booleans, characters, fixed-width integers, binary32/binary64 values, string
+  booleans, characters, fixed-width integers, integral enums, binary32/binary64 values, string
   views, and transferred owning strings through source-defined `std::format`,
   `std::format_to`, `std::print`, and `std::println`, with recoverable
   `try_format`, `try_format_to`, `try_print`, and `try_println` siblings. Escaped braces and
@@ -564,9 +568,11 @@ into per-component specification sections.
 Some implemented units also carry explicitly documented bodyless declarations
 for a reviewed next API slice. Such a declaration allows frontend checking but
 is not an implemented library operation: using it in a native build fails to
-link until its GTI body is supplied. Array swap and forward-list
-iteration and emplacement remain in that
-category.
+link until its GTI body is supplied. Forward-list iteration and weak-owner
+operations remain in that category. Array swap and forward-list emplacement
+have executable implementations. The retained borrowed constructor-pack
+reproducer now passes current O0/O3 execution; its broader acceptance matrix
+remains open rather than requiring an assumed new compiler feature.
 
 The owned program-entry form names the canonical installed
 `std::vector<std::string>` specialization. This exact type identity is part of
@@ -706,9 +712,11 @@ position is not requested. There is no long-double type or `stold` overload.
 ## 7.4 Allocation And Containers
 
 Public ownership and container classes retain logical state and policy in
-ordinary GTI fields. Compiler-private capabilities may supply unique ownership
-or partially initialized storage without exposing raw addresses, manual
-deallocation, logical size, or capacity policy as public language state.
+ordinary GTI fields. Sparse and prefix bookkeeping are source-defined;
+compiler-private mechanisms retain layout, object-lifetime, relocation and
+checked-loan authority, and some owner/inline-storage families still use private
+representations. The public raw-memory and manual-lifetime APIs are explicit
+unsafe facilities, distinct from safe typed owners.
 
 ### Iteration Type Names
 
@@ -813,7 +821,9 @@ logical bounds at the public boundary and use raw access internally. Growth
 transfers bitwise-relocatable elements as one byte copy; other supported
 elements retain verified per-element relocation. String's physical prefix
 includes one hidden initialized NUL, excluded from public size and capacity.
-Combined S-ALLOC-09 migration and performance acceptance remains in progress.
+S-ALLOC-09 migration and performance acceptance are complete in 0.397.0;
+the preserved measurements and regression evidence are in
+[compiler verification](../architecture/verification.md#source-prefix-ownership-and-allocation-abort-acceptance-03970).
 
 `get_unchecked(size_t index)` on vector, string, array and span returns a
 read-only element reference and requires an explicit `unsafe` context. Vector,
@@ -1097,8 +1107,9 @@ deterministic reverse-slot cleanup. A returned `size_t` is a position, not a
 generation-bearing handle: arena reset or pool erase ends that slot lifetime,
 and later reuse may assign the same number to another value. Receiver-tied
 borrows prevent mutation, movement, or cleanup while an element reference is
-retained. The factories and classes are ordinary GTI source; only their
-underlying typed-storage operations are compiler-private.
+retained. The factories, classes and sparse slot bookkeeping are ordinary GTI
+source; general layout, object-lifetime and checked-reference operations retain
+compiler authority.
 
 `std::vector<T>` requires `vector_element<T>`: a complete independent storage
 element with structural, failure-free relocation. It rejects retained checked
@@ -1216,8 +1227,10 @@ suffix. Clear and ordinary destruction drain the chain iteratively.
 The `<std/forward_list>` declaration-only iterator is explicitly move-only and
 read-only.
 Nullable owner-tied traversal and invalidation remain unavailable; iterator
-operations are still bodyless, and generic emplacement remains scaffolded
-without executable conformance evidence. The declaration-only span is
+operations are still bodyless. `emplace_front` has final-field construction and
+cleanup evidence, including passing current O0/O3 execution of the retained
+borrowed constructor-pack reproducer. `L-UP-10` tracks its remaining broad
+composition/cleanup acceptance, not a currently failing reproducer. The declaration-only span is
 replaced by the executable `std::span<T>` and `std::mutable_span<T>` surfaces
 above; raw address exposure remains absent.
 
@@ -1264,10 +1277,12 @@ syntax. Explicit policy-taking constructors remain usable when those policies
 are not default-constructible. The hooks use ordinary checked `requires`
 clauses rather than compiler recognition of these container names.
 
-The standard library currently has no stable public raw allocator, weak owner,
-or general unsafe memory API. The typed
-`std::allocator`/`std::storage<T>` pair is intentionally not a raw-memory escape
-hatch.
+The standard library exposes programmable raw-region resources and general
+unsafe address, construction, destruction and relocation operations through
+`<std/memory>` and `<std/resource>`; see [raw pointers](raw-pointers.md).
+Those operations do not turn the safe `std::allocator`/`std::storage<T>` pair
+into an unchecked owner-adoption API. `weak_ptr` still has declaration-only
+operations rather than an executable weak-ownership contract.
 
 `<std/functional>` declares the non-callable customization primary `std::hash<T>`.
 A package may provide a complete exact specialization for a nominal type it
@@ -1292,8 +1307,9 @@ pointer, and other unspecialized types is not currently supplied.
 
 Library operations that model environmental or resource conditions callers can
 reasonably handle return `expected`. Operations documented as infallible at the
-type level produce a defined runtime failure for violated checked
-preconditions or allocation failure.
+type level produce a contained defined runtime failure for violated checked
+preconditions. Infallible allocation exhaustion instead follows the explicit
+abort contract below; it is not an ordinary cleanup-propagating failure.
 
 An infallible convenience wrapper over a fallible host service shall not
 discard failure. Formatting and stdout output use explicit panic (`GTI-R0017`)
@@ -1305,7 +1321,9 @@ runtime result as well. No output API implicitly flushes the host stream.
 See [I/O](io.md) for the literal single-text-argument rule and migration details.
 
 Wrong-state `expected.value()` and `expected.error()` access is the checked
-`GTI-R0009` failure. Infallible allocation uses `GTI-R0011`; recoverable
+`GTI-R0009` failure. Infallible allocation exhaustion reports `GTI-R0011`
+best-effort and aborts without cleanup or failure-observer dispatch; allocation
+size overflow remains a contained defined failure. Recoverable
 `std::allocator::try_storage`, `std::try_make_arena`, and
 `std::try_make_pool` return `expected` without invoking the failure observer;
 future recoverable allocation factories use the same error-channel policy.
@@ -1328,7 +1346,7 @@ still-coherent state to a non-resumable terminal quarantine and maps to
 Public vector/string indexing reports `GTI-R0007` against logical size. A
 private-storage `GTI-R0010` is an internal invariant failure and must not leak
 as the public bounds category. The source-defined wrappers perform the trusted,
-identity-bound logical-size check before private storage access; reaching
+identity-bound logical-size check before unsafe source-storage access; reaching
 `GTI-R0010` through a valid public index therefore indicates a broken internal
 storage invariant rather than an alternate public bounds outcome.
 
@@ -1339,10 +1357,11 @@ and report rules are in [Execution And Runtime Semantics](execution.md#410-defin
 
 ## 7.6 Documentation And Conformance
 
-Public library declarations use retained `///` Markdown from GTI source. Hover
-already presents that contract from the compiler symbol; completion, signature
-help, and generated reference material remain consumers to be connected to the
-same value.
+Public library declarations use retained `///` Markdown from GTI source.
+Hover, completion and signature help consume the same symbol-attached value.
+The implemented compiler documentation index projects it for the standalone
+reference website; broader authored website coverage is separate work, not a
+missing declaration-documentation facility.
 
 Before 1.0, every standardized component requires tests covering primitive,
 copyable aggregate, move-only, polymorphic, empty, error, and boundary cases as
@@ -1352,19 +1371,22 @@ applicable.
 
 The following component families remain planned or incomplete:
 
-- weak ownership, shared aliasing/base conversion, and recoverable shared
-  allocation factories;
-- copyable or assignable optional values and general sum types beyond the
-  bounded payload-enum family;
-- mutable or reseatable views, independently shortened projection borrows,
-  and general stored borrowing graphs;
-- complete vector copy, allocator, iterator reassignment, and precise iterator
-  invalidation support;
+- executable weak ownership, shared aliasing, and recoverable unique/shared
+  allocation factories; explicit shared base upcast is already implemented;
+- direct final-slot optional emplacement, immovable inline-payload eligibility,
+  and general sum profiles beyond the implemented payload-enum family;
+- reseatable views, independently shortened projection borrows, broader
+  multi-owner range/proxy composition and general stored borrowing graphs;
+  exclusive mutable spans and conflict-checked stored-reference aggregates
+  already exist;
+- allocator-aware container variants, iterator-position operations, iterator
+  reassignment, and more precise invalidation support;
 - an enforced boundary for library-private `detail` namespaces;
 - the remaining callable, output/random-access complete-range, heterogeneous
   accumulation, and hash generic-capability families;
-- named/dynamic-field formatting, formatter customization, buffered streams,
-  explicit text decoding, and structured I/O;
+- named/dynamic-field formatting, required literal-pattern validation,
+  explicit text decoding, and further structured I/O; public formatter
+  customization, mutable buffers and buffered reader/writer adapters exist;
 - recursive filesystem copy/iteration and permission editing, calendar/time-zone breadth, random distributions and engine
   breadth, connected networking, traffic buffers, atomic wait/notify, pointer
   atomics and fences, safe scoped condition variables, safe recursive mutexes,
@@ -1375,9 +1397,13 @@ The following component families remain planned or incomplete:
   factory functions, generation-bearing pool handles, and heterogeneous arenas;
 - broader native interoperability beyond the current bounded records, opaque
   handles, pointers, C strings, returned fixed arrays, and same-thread
-  callbacks, including general pointer nesting and ownership transfer, array
+  callbacks and indirect native invocation, including ownership transfer, array
   parameters, varargs, alternate calling conventions, native variables, and
   direct C++ linkage.
 
-Their absence is not permission to substitute similarly named C++ facilities
-without a GTI contract.
+Implicit allocating container copies, optional copy/assignment and custom
+copy/move bodies are not automatic completion requirements: current GTI uses
+explicit cloning, structural lifecycle rules and reset/emplacement policy.
+Changing those choices requires its own general contract and acceptance evidence.
+The remaining families above are goals, not permanent restrictions or permission
+to substitute similarly named C++ facilities without a GTI contract.

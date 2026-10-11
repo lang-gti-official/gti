@@ -11,6 +11,29 @@ Review type: read-only. No source file was modified.
 Companion document: [`audit.md`](audit.md) — the architectural audit this plan
 repeatedly refers to. Findings are cited as `audit §N`.
 
+### Historical scope and superseded recommendations (2026-10-11)
+
+Candidate verdicts, source sizes, timing ratios, build flags and dependency
+versions below describe the original review. ADR 006 retains Posture A as a
+standing policy, not a pending vote; private storage is possible without
+making LLVM authoritative. APInt, exact binary32/binary64 computation, target
+parsing, timing, bounded generic dominance and private LSP JSON are adopted.
+HIR lookup uses GTI-owned storage/index identity with private hashing, not an
+intrusive LLVM representation; AST classification helpers are GTI-owned.
+
+The old de-duplication payoff and type-memory attribution were corrected by
+the companion audit: instance copies and tooling occurrences supplied the
+measured wins. Incremental dominance/LLVM loop machinery, public LLVM types,
+emitter stream migration and a blanket type-allocator swap are not approved
+merely because the dependency exists. Current system builds require LLVM 18
+or newer with RTTI and the exact matching Clang package; the old supported
+upper bound and JSON-C/minimal-bundle recipes are not current configuration.
+Use [ADR 006](../decisions/006-llvm-support-adoption.md),
+[driver architecture](../architecture/build-and-driver.md) and the
+[implementation sequence](../plans/implementation-sequence.md) for active
+choices. Crash handlers/guarded analysis do not prove state-safe recovery from
+arbitrary faults; see [LSP limits](../architecture/lsp.md).
+
 ## 0. What this plan is and is not
 
 **In scope.** LLVM's *compiler-engineering support libraries*: `llvm/ADT`,

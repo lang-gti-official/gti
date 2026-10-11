@@ -47,7 +47,8 @@ intrinsic. Typed HIR monomorphizes its concrete callable instance and validates
 the nested allocation and constructor call, reporting both the stdlib body and
 the application instantiation site when that use is invalid. The backend invokes
 the resolved stdlib function rather than replacing the public API with a backend
-allocation call. `std::make_shared` remains planned.
+allocation call. `std::make_shared` is also implemented, with explicit strong
+cloning and read-only shared pointee access as described below.
 
 Scalar allocation admits the fixed-width integers, `float`, `double`, `bool`,
 `char`, plain enums, raw pointers, `nullptr_t`, and named native callbacks.
@@ -76,7 +77,7 @@ The safe ownership surface does not provide:
 - `unique_ptr::release()`;
 - source-level `new` or `delete`.
 
-One-level `T*` and `const T*` values and their lexically gated operations are
+Recursively nested `T*` and `const T*` values and their lexically gated operations are
 specified separately in [`raw-pointers.md`](raw-pointers.md). They are
 non-owning address values, not another ownership category.
 
@@ -92,11 +93,12 @@ rationale in
 
 1. Ordinary application code uses safe standard-library classes such as
    `std::unique_ptr<T>`, `std::storage<T>`, `std::allocator`, and the first
-   source-defined `std::vector<T>` slice.
-2. Those classes are implemented, as the class and generic systems mature, in
-   GTI over compiler-defined capabilities in `gti_internal`, including
-   ownership and partially initialized storage operations.
-3. Lexical `unsafe {}` permits the implemented one-level raw-pointer operations
+   source-defined `std::vector<T>`.
+2. Public policy is implemented in ordinary GTI over general layout, lifetime,
+   checked borrowing and narrow irreducible owner/text capabilities. Sparse and
+   prefix slot bookkeeping and allocation policy are source-defined; their
+   former private storage engines are retired.
+3. Lexical `unsafe {}` permits recursively nested raw-pointer operations
    needed by native wrappers and low-level code without making private
    `gti_internal` capabilities public.
 
@@ -327,9 +329,9 @@ are rejected by GTI semantics, `std::move` transfers it explicitly, and its
 use-after-move state is tracked through control flow. Copyable aggregates remain
 ordinary copyable values.
 
-Borrowed references and unique owners are source-reachable. Shared ownership
-remains reserved in semantic metadata until its syntax, weak observation, and
-lowering rules are implemented.
+Borrowed references, unique owners and strong shared owners are source-reachable.
+Weak ownership is a separate incomplete API; it is not a prerequisite for the
+implemented strong-owner cloning, movement, checked access and final cleanup.
 
 ## References
 
@@ -944,9 +946,11 @@ the pointer binding to be reseated; `T` remains writable. In
 Raw-pointer bindings and fields require explicit initialization so an absent
 address is represented visibly with `nullptr`.
 
-Safe code may carry, compare, pass, return, and copy compatible raw pointers.
-Address formation, dereference, indexing, member access, arithmetic, and calls
-through pointer-bearing C declarations require `unsafe {}`. This gate transfers
+Safe code may form an inert address of an admitted checked place and carry,
+compare, pass, return or copy compatible raw pointers. Raw projections beneath
+address formation, dereference, indexing, member access, arithmetic, and calls
+through pointer-bearing C declarations require `unsafe {}`. The address alone
+extends no lifetime and creates no checked loan. This gate transfers
 the validity, lifetime, alignment, initialization, bounds, provenance, aliasing,
 and native-call obligations listed in
 [`raw-pointers.md`](raw-pointers.md) to the programmer.
@@ -1086,8 +1090,9 @@ Source-defined `std::function<R(Args...) &&>` and
 The wrapper is invoked through an explicit move, and its remaining captures
 survive until the caller's enclosing full expression ends, including later
 sibling evaluation and failure cleanup. This does not permit consuming through
-an arbitrary borrow. Final combined validation and release remain tracked by
-L-CALL-02.
+an arbitrary borrow. The owning wrapper profile is integrated; subsequent
+inline/erasure breadth must retain the same ordered invocation and cleanup
+contract rather than reopening the original L-CALL-02 implementation.
 
 Fixed-array ownership state is tracked per constant element. Moving element
 `i` leaves a different constant element `j` available, but makes the containing
@@ -1237,8 +1242,9 @@ classes, structs, and scalars without stored borrowed state. Direct arrays,
 Expected values, and payload enums are not in this allocation family. The
 current representation allocates the object and its control block separately.
 Failure to allocate the
-block destroys the completed object before reporting `allocation_failure` in
-`shared_owner`; it does not leak or invoke the destructor twice. Last-owner
+block raises an aborting `allocation_failure` report in `shared_owner`; no
+pointee, argument, local or managed-worker cleanup runs before process abort.
+Successful publication still transfers exactly one ownership obligation. Last-owner
 release executes the ordinary verified cleanup recipe, including defined
 failure propagation. Empty dereference/member access raises `empty_owner_access`.
 
@@ -1298,28 +1304,29 @@ This is not a general implicit class conversion. In particular, an ordinary
 call such as `consume(nullptr)` does not construct a `unique_ptr` argument;
 call arguments still require an exact parameter type.
 
-**Planned change.** GTI is adopting Rust's allocation-failure model; see
+GTI implements the Rust-style allocation-failure model adopted by
 [ADR 022](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09).
-Once it is implemented, exhaustion in an infallible allocation such as
-`make_unique` or vector growth will write a `GTI-R0011` report and abort the
-process, with no cleanup. Recoverable allocation will remain the `try_`
-operations' `expected` result. The optimizer will also be allowed to remove
-an unused allocation from the process allocator. The paragraph below
-describes the current contained-failure behavior.
+Exhaustion in an infallible process allocation such as `make_unique`,
+`make_shared` or infallible vector growth produces a best-effort,
+allocation-free `GTI-R0011` report and aborts the entire process at the detector.
+It performs no cleanup, stream flushing, observer invocation or worker-to-join
+handoff. Allocation exhaustion during existing failure cleanup also aborts;
+it is not a contained secondary `GTI-R0014` failure. The optimizer may remove
+unobserved process allocation/release pairs under the recorded allocation
+non-observability contract; calls to application resources retain their
+observable policy/effects.
 
-The default `make_unique` operation is infallible at the type level: allocation
-exhaustion raises `GTI-R0011` with detail `unique_owner`. Future
-`try_make_unique` and `try_make_shared` APIs may return `expected` for programs
-that need recoverable allocation failure. Scalar allocation returns a checked
-status to the verified MIR `Invoke`: the owner becomes live only on success,
-and exhaustion runs caller cleanup before the original allocation record is
-reported. Allocation failure during failure cleanup preserves the primary
-record and reports `GTI-R0014`. Native allocator exceptions are not exposed to
-source. Class/struct allocation with a selected ordinary constructor now
-separates allocation from construction. Prepared arguments are cleaned on
-exhaustion; once construction begins its parameters belong to the constructor.
-Failure frees unconstructed storage, never publishes an owner, and preserves
-the constructor's original failure record. This includes the currently proved
+Recoverable allocation remains an explicit `try_` operation's `expected`
+result. Typed storage and custom resource factories supply such operations;
+`try_make_unique` and `try_make_shared` remain separate completion work.
+Native allocator exceptions do not escape into source.
+
+Class/struct allocation with a selected ordinary constructor separates byte
+allocation from object construction. The owner is published only on success.
+Exhaustion aborts without cleaning prepared arguments. Once construction begins,
+its parameters belong to the constructor: an ordinary **constructor failure**
+is contained, frees unconstructed storage, never publishes an owner, and
+preserves the constructor's original failure record. This includes the currently proved
 constructor rollback family, including generated-cleanup owning fields such
 as strings. Completed fields are cleaned before earlier-created constructor
 parameters, in reverse field order; an enclosing source destructor remains
@@ -1378,12 +1385,14 @@ ordinary caller cleanup. This includes fresh and explicitly moved values,
 direct source-destructor objects, and arrays of unique owners. Unrepresented
 cleanup families remain separate completion work.
 
-The base-construction implementation requires parameterless derived
-construction, cleanup-free derived fields, and generated base/derived
-destruction; combinations outside that existing constructor proof still fail
-closed. Targetless
-generated default/copy/move allocation retains the terminal compatibility
-boundary and remains an implementation gap.
+Argument-bearing base construction, derived owning fields and source cleanup
+have represented direct-construction schedules; generated base defaults and
+selected unique-allocation rollback have their own focused tests. Do not infer
+all allocation/constructor compositions from either one matrix. Generated
+default/copy/move construction is also represented for admitted allocation
+families. There is no terminal compatibility-body fallback: any further
+profile needs exact selected construction, publication and rollback in verified
+MIR before the backend may emit it.
 
 ## Destruction
 
@@ -1512,8 +1521,10 @@ without making its immutable fields individually writable in GTI source.
 The semantic model marks types that require lexical destruction. Typed HIR
 assigns stable values, bindings, callable instances, and class instances. MIR
 now makes moves, projected places, loans, borrow ends, lexical drop points, and
-control-flow cleanup explicit. Concrete object layout and custom lifecycle
-bodies remain deferred rather than being inherited from the C++ backend.
+control-flow cleanup explicit. Object layout facts and ordinary source cleanup
+bodies are implemented; arbitrary user-defined copy/move bodies remain
+unsupported. Neither lifecycle eligibility nor cleanup follows from the C++
+backend's type traits.
 
 ## Structural Relocation
 
@@ -1611,27 +1622,28 @@ replacement authorization, user relocation hook, or pinned/self-referential
 object facility in this slice. Unsafe code retaining a raw address must still
 obey its existing lifetime contract.
 
-Vector/string growth retains its prefix capability over the same structural
-relocation eligibility. Sparse source loops invoke general `relocate_at`. Passive
+Vector/string growth uses source-defined initialized-prefix policy over the
+same structural relocation eligibility. Sparse source loops invoke general `relocate_at`. Passive
 eligible elements can move in bulk; resource-owning elements retain the
 generated transfer and exactly-once cleanup path.
 
 ## Backend Boundary
 
-The C++ backend emits the public wrapper as `__gti_std::unique_ptr<T>`. Its
-compiler-private field and allocation operation currently use C++ RAII:
-
-```cpp
-std::unique_ptr<T>
-std::make_unique<T>(arguments...)
-```
+The current backend represents the unique owner's private handle with a
+native `std::unique_ptr`-shaped carrier. Allocation and selected GTI construction
+are nevertheless separate verified-MIR stages; ordinary class allocation uses
+`mir_object_allocation_v1` rather than delegating GTI constructor selection or
+rollback to `std::make_unique`. Public wrappers are ordinary lowered GTI classes,
+not a stable generated namespace or ABI.
 
 The checked private upcast lowers to a consuming native owner conversion only
 after frontend semantics has proved the public base relation and polymorphic
 destruction; C++ conversion rules never select the GTI operation.
 
-The planned shared-owner implementation may use the corresponding C++ RAII
-types in this backend, but that representation is not source-reachable yet.
+The implemented shared-owner carrier has explicit strong-count, allocation and
+adjusted-view state. Promotion, cloning, upcast and last-release cleanup consume
+verified GTI facts; it is not a public `std::shared_ptr` ABI or host-defined
+ownership policy.
 
 This is lowering, not the GTI ABI or language definition. Smart pointers do not
 cross the C runtime boundary. A C ABI cannot portably represent C++ template
@@ -1769,8 +1781,9 @@ and does not make either public class compiler-recognized.
   bookkeeping through its own raw pointers inside `unsafe`. This is a provider
   obligation, not a new interior-mutability rule: ordinary fields of a shared
   resource stay read-only and no checked reference into the bookkeeping exists.
-- **Owning a region.** Each `resource_storage<T,R>` holds a move-only lease
-  that owns exactly one region and its matching release authority. Many leases
+- **Owning regions.** A move-only lease owns exactly one region and its
+  matching release authority. Sparse `resource_storage<T,R>` holds object and
+  metadata leases; prefix owners need only their object region. Many leases
   from one resource coexist; none needs an exclusive borrow of the resource.
   Moving an owner transfers its region and release obligation without moving
   its elements.
@@ -1795,8 +1808,9 @@ Who guarantees what:
 | Provider returns writable, aligned, disjoint regions valid until matching release; truthful identity; release retires exactly that region; no independent raw reset, reentrancy or race invalidates a live region | unsafe obligation of the provider, accepted once at the binding |
 
 The optional raw-pointer audit may report findings inside a provider's
-implementation, but it never decides acceptance or code generation. The
-binding obligations are listed in full in
+implementation. Warn reports findings without changing acceptance; Strict
+promotes reported findings to errors, but neither mode proves raw validity or
+changes the runtime operation. The binding obligations are listed in full in
 [raw pointers](raw-pointers.md#explicit-resource-binding), and the library API
 in [the standard library](standard-library.md#custom-resource-protocol).
 
@@ -1814,9 +1828,9 @@ They never decay to pointers, and their copy, move, and destruction traits
 follow the element type. The same structural rule applies when the array is a
 class field, including move-only and interface-implementing concrete element
 types: the containing class inherits the array's copy, move, and cleanup
-traits, and each constructed element owns one corresponding drop. This is
-sufficient underlying storage for fixed-size aggregates and a future
-`std::array` alias.
+traits, and each constructed element owns one corresponding drop.
+`std::array<T, N>` is already an ordinary source-defined wrapper over this
+storage, with checked access and nominal cursors; it is not a future alias.
 
 Partially initialized capacity requires a distinction between bytes and live
 objects. Public `std::uninitialized<T>`, `construct_at`, `destroy_at` and
@@ -1862,8 +1876,9 @@ uses source drain guards to preserve first/secondary failure cleanup. A process
 or resource lease releases bytes after the live prefix has been drained. Sparse
 storage remains a distinct policy for arbitrary initialized-slot patterns.
 The private prefix-storage type, operations, construction-preflight instruction
-and optimizer model are retired. Remaining regression migration and full
-admission/performance acceptance are tracked by S-ALLOC-09.
+and optimizer model are retired. S-ALLOC-09's admitted container migration and
+recorded acceptance are delivered; later optimizer precision and new container
+profiles have separate obligations, not an unfinished private-storage cutover.
 
 ## Source-Defined Vector
 
@@ -1908,15 +1923,16 @@ behavior; copyable arguments may be copied at the method boundary, while a
 move-only pack is consumed once.
 
 The read-only iterator retains one checked read-only reference to the backing
-storage. `begin_mut()` returns a distinct ephemeral mutable iterator that
+storage. `begin_mut()` returns a distinct move-only mutable iterator that
 transfers the range's exclusive storage capability and uses checked mutable
 dereference. The range statement adds its dedicated parent range loan and
 per-iteration element child; an owned vector temporary may be transferred into
 its hidden loop owner. Reserve, push, clear, movement, and every other
 overlapping owner operation are rejected while the mutable range is active.
 This is conservative whole-owner invalidation exclusion, not a
-container-specific invalidation trait. Iterator categories, iterator-position
-insertion/erasure remain future work. Read-only and mutable single-owner spans
+container-specific invalidation trait. Read cursors already provide backward
+and signed random-access movement plus exact sentinel distance; iterator-position
+insertion/erasure and additional category relationships remain separate work. Read-only and mutable single-owner spans
 share the same prefix owner and retain checked owner dependencies.
 `std::vector` itself always uses the process allocator; programmable placement
 is provided by the separate `resource_vector` described under
@@ -1944,8 +1960,8 @@ append from a string view, capacity management, checked read-only and mutable
 indexing, clear, comparison, explicit `clone()`, and read-only structural
 iteration. Its source-defined iterator retains a checked read-only storage
 borrow, so a live iterator prevents mutation, replacement, or movement of the
-string. Because its storage field is a unique owner, the compiler derives a
-move-only lifecycle for the class. This avoids a hidden allocation on
+string. Because its source-defined storage owns its region and live prefix,
+the compiler derives a move-only lifecycle for the class. This avoids a hidden allocation on
 assignment; duplication is visible at the call site as `value.clone()`.
 
 Dynamic views may be copied among local bindings and relayed from one exact

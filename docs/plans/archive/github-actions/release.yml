@@ -1,3 +1,7 @@
+# Archived workflow: historical hosting/configuration evidence, not active CI.
+# Current workflows live under .github/workflows/ in lang-gti-official/gti.
+# Do not restore old runner, dependency, sanitizer or publication policy from
+# this record without reconciling current architecture and verification rules.
 name: Release
 
 on:
