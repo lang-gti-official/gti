@@ -2,6 +2,44 @@
 
 ## Container iterator completion: candidate validation (2026-10-12)
 
+The clean `981b1929` unfiltered 669-gate run is deliberately interrupted after
+it exposes two failing regressions: an obsolete consuming-carrier ancestry
+assertion and the JSON iterator matrix's missing worker registration. Raw partial
+CTest evidence remains under
+`/private/tmp/gti-iterator-final-validation.apFz7m/`; this is not a passing
+whole-suite certificate. The repaired exact ownership test, including forged
+consumed-parent and omitted-retirement negatives, passes with a Release compiler,
+as do `ephemeral_carrier_mir` and the complete worker-registration census.
+Reconciliation `5bfbc8a4` preserves main's Expected-conditional fix. Additional
+Expected/member-argument, checked-referent replacement and incomplete-payload
+representation fixes require fresh focused, whole-suite, platform and performance
+acceptance at the resulting clean head; the earlier performance record below
+does not certify those subsequent compiler edits.
+
+The subsequent Release rebuild passes exact formal copy/move forgeries,
+member-receiver/argument transfers, independent consuming-relay dependencies,
+the recursive-layout source checks and the corresponding LSP edit/clear test.
+The twelve direct allocation cases also pass at C++20/O3, C++23/O3 and
+ASan/UBSan, preserving complete state with zero traversal allocations. A new
+independent nominal Expected capture reproduces a concurrency-trait disagreement
+in MIR. Its repair passes scoped semantic controls and aggregate/owning-handle
+pack forgeries without expanding runtime layout-query eligibility. Fresh
+final-head whole-suite, platform and performance acceptance remain required.
+
+The combined development rebuild passes the complete compiler pipeline and both
+non-update 143-example inventories. The new Expected runtime matrices pass all
+native modes, including sanitizers; forged formal traits expose a remaining
+verification gap and are not waived. Optimizer abstract-entry access negatives
+retain their exact current `stored entry dependency` rejection wording instead
+of a stale message fragment. Additional direct allocation windows cover vector,
+array, deque, list, set, unordered_set, pool, resource_storage and SIMD masks;
+their full native/sanitizer acceptance is separate from source-mechanism sharing.
+The older queued Linux run is deliberately cancelled after its successful
+optimized build, and fetched raw results remain under
+`.git/gti-remote-runner/results/run-98998d29aaf747ecbb8c16104a5692fb/`.
+The wrapper removes only that obsolete run's remote checkout/build after fetch.
+It has no platform-suite pass; the combined final source needs a fresh run.
+
 The final exact-head performance check at clean `41dea5d7`, against frozen clean
 `5385c0b0`, passes on an Apple M2 Max with Apple Clang 21, O3/C++23 and strict
 floating-point ordering. Two campaigns each use five warmups and 21 seeded,

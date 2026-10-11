@@ -9,6 +9,13 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+`GTI-S2082` follows inline Expected/Unexpected alternatives as well as fixed
+arrays when detecting a recursive by-value class layout. It anchors the field's
+written type and retains the containing declaration and indirection hint;
+an error-only initializer does not make inline alternative storage indirect.
+The CLI and LSP use this semantic diagnostic, without an automatic ownership
+rewrite, and editor publication clears it after a nonrecursive type edit.
+
 Inferred move-only copy errors (`GTI-S2003`) distinguish plain `auto` value
 construction from checked `auto&` borrowing when the initializer has stable
 storage. Movement advice is limited to available movable whole local/parameter

@@ -1,0 +1,16 @@
+#include <std/vector>
+
+// An Expected carrier keeps its ordinary value ABI even when its alternative
+// needs byte-preserving native-record transport. A retained generic signature
+// must not eagerly instantiate the alternative's layout. This empty-container
+// control compiles the complete transport family without constructing a C
+// record through a nonexistent source default constructor.
+enum class record_errc { absent };
+[[c_abi]] struct ContainerAddress {
+  mut const int* pointer;
+  mut int code;
+};
+int main() {
+  mut std::vector<expected<ContainerAddress, record_errc>> values{};
+  return int(values.size());
+}

@@ -629,6 +629,13 @@ Unsupported operations, places, lifetimes, failure edges, or representation
 facts reject the complete program before output; there is no AST/HIR body
 fallback.
 
+An ordinary by-value parameter is already an owned incoming value. Its exact
+MIR binding traits select native movement when it is movable but noncopyable,
+including cleanup-free wrappers and borrowed carriers. This transport does not
+create another semantic move, loan or cleanup obligation. Reference formals
+and byte-preserving indirect native-record arguments retain their separate
+representation contracts; no public owner or range name selects the prologue.
+
 Admission queries reject structurally inapplicable values before performing
 body-wide ownership searches or instruction lookups. In particular, Expected
 class-extraction receiver searches require an Expected-typed receiver, their
@@ -1090,6 +1097,20 @@ other owners' destructor Invokes without losing the prepared argument's
 already-destroyed state. An Expected returned by a resolved member call can
 likewise occupy the single value-rooted slot consumed by `?`; its receiver
 schedule remains independently verified.
+
+An owning Expected result can also fill an exact ordinary source member's
+by-value parameter. The existing typed member-receiver borrow and staging proof
+is required independently of the argument's single-consumer, activation,
+dominance, transfer and failure-cleanup proof. The receiver is not consumed or
+given a longer lifetime by the argument transfer.
+
+Expected/Unexpected native, byte-preserving and borrowed envelopes follow the
+value ABI; their alternative storage handles any payload byte transport.
+Representation-only `byte_transport` classifications therefore identify those
+envelopes without instantiating a native wrapper through ADL while its payload
+is still incomplete. This agrees with the lowered type's transport decision;
+it neither adds a by-value layout dependency nor changes semantic lifecycle or
+copy/move permission. Recursive pointer-backed container layouts remain finite.
 
 In transformed constructors with owned-parameter fields, passive scalar and
 plain-enum parameter reads remain in the MIR body schedule. They are not
@@ -1694,13 +1715,15 @@ needs cleanup, because that payload is move-only. If such a copy were admitted,
 it would still fail closed here.
 
 The same cleanup-free placement call result may instead replace one whole
-mutable binding of its type. MIR pairs that `Assign` with a
+mutable binding or an exact checked mutable referent of its type. MIR pairs that
+`Assign` with a
 `CleanupBeforeAssign`, whose recipe must be passive: no node has a destructor,
 owned pointee, closure, fixed array, polymorphic or recursive cleanup, or
 active cleanup. An integral enum alternative is such a node, as it is for the
 cleanup-free alternative rule. That cleanup executes nothing and cannot fail. The producer's
-success edge must reach that exact pair directly, as for a class result
-replacing a binding. The producer constructs the slot on success. The `Assign`
+success edge must reach that exact pair directly, allowing only the selected
+referent loan's neutral two-phase activation before the pair. The producer
+constructs the slot on success. The `Assign`
 move-assigns the staged wrapper into the binding, and the moved-from
 representation is retired immediately. A failing producer never constructs the
 slot and leaves the binding to MIR's failure cleanup. Native move assignment
@@ -1721,6 +1744,14 @@ MIR's active `CleanupBeforeAssign` first retires the old value on its own
 success edge. The `Assign` then moves the slot's wrapper in, and the slot's
 `Drop` ends only the moved-from representation. On the cleanup's failure edge
 the result keeps its obligation and is cleaned there.
+
+For checked-reference replacement, the exact mutable parameter reference or
+selected mutable-reference-returning call supplies the destination. A referent's
+enclosing owner retains cleanup, so its owning `Replace` has target zero rather
+than a new binding obligation. The paired old-value cleanup, held RHS, loan
+activation/end and later moved-from-shell Drop keep their original MIR schedule.
+Read-only access, a different producer/dependency, an unpaired cleanup or a forged
+ownership handoff cannot acquire publication support from native assignability.
 
 Owning sources keep MIR's active, possibly fallible replacement cleanup, which
 retires the old value on its own success edge. A move out of another owning

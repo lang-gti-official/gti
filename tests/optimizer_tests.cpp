@@ -4398,6 +4398,13 @@ int main() {
     auto &changed = functions[instance->id - 1];
     mutate(changed, changed.body.loans[entry->id - 1]);
     const auto verified = lang::verifyMirProgram(forged);
+    if (verified.valid() ||
+        std::none_of(verified.errors.begin(), verified.errors.end(),
+                     [&](const auto &error) {
+                       return error.message.find(expected) != std::string::npos;
+                     }))
+      for (const auto &error : verified.errors)
+        std::cerr << "copied-carrier forgery: " << error.message << '\n';
     expect(!verified.valid() &&
                std::any_of(verified.errors.begin(), verified.errors.end(),
                            [&](const lang::MirVerificationError &error) {
@@ -4437,7 +4444,8 @@ int main() {
   reject(
       [](auto &, auto &loan) { loan.access = lang::AccessMode::Mutable; },
       "a shared reference field cannot forge mutable external-owner authority",
-      "abstract stored dependency access does not match");
+      "stored entry dependency access does not match its exact reference "
+      "field");
   reject(
       [&](auto &function, auto &loan) {
         auto *publication = initialize(function.body, loan.carriers.front());
@@ -4664,7 +4672,16 @@ int main() {
         const auto verified = lang::verifyMirProgram(forged);
         const std::string expected =
             forgeLifecycle ? "abstract stored dependency cannot own"
-                           : "abstract stored dependency access does not match";
+                           : "stored entry dependency access does not match "
+                             "its exact reference field";
+        if (verified.valid() ||
+            std::none_of(verified.errors.begin(), verified.errors.end(),
+                         [&](const auto &error) {
+                           return error.message.find(expected) !=
+                                  std::string::npos;
+                         }))
+          for (const auto &error : verified.errors)
+            std::cerr << "lock-carrier forgery: " << error.message << '\n';
         expect(!verified.valid() &&
                    std::any_of(verified.errors.begin(), verified.errors.end(),
                                [&](const auto &error) {
