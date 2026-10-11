@@ -2080,13 +2080,22 @@ positive intermediate outside the target domain. MIR execution shares the
 exact single-use signed-minimum literal query with native emission; ordinary
 negation and its overflow behaviour are not relaxed.
 
-Read-only reference signatures are now potentially constexpr-capable when the
+Read-only and mutable reference signatures are potentially constexpr-capable when the
 referent is supported. Ordinary semantic loans and return-origin checks retain
 authority; the staged MIR evaluator alone executes reference calls and produces
 the observed referent value, not a persistent reference constant. Failed staging
 does not fall back to an AST interpretation of newly admitted reference rules.
-Constructor parameters, mutable references, and stored-reference carriers retain
-their earlier boundaries.
+Mutable and non-consuming receiver methods/operators and `void` helpers use
+that same boundary. Constant execution retains mutable referent origins across
+selected calls; semantic access, loan endpoints and return-origin rules are
+unchanged. Constructor-body edits require the canonical explicit field-write
+schedule. Unsupported executed operations in a mutation-capable staged closure
+are authoritative failures, not an invitation to retry a value-copy AST
+interpretation. The failure is mapped back through HIR to the executing source
+expression, including helpers in another unit. Existing reflection expansion
+and metadata resolution precede this service and are not reimplemented here.
+Constructor reference parameters, declaration-default/in-place constructor
+schedules and stored-reference carriers retain their earlier boundaries.
 
 ## Boundaries
 

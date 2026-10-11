@@ -10122,8 +10122,7 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
   }
   const auto observedType =
       [](const SemanticType &type) -> const SemanticType & {
-    return type.kind == SemanticType::Reference &&
-                   type.arguments.size() == 1
+    return type.kind == SemanticType::Reference && type.arguments.size() == 1
                ? type.arguments.front()
                : type;
   };

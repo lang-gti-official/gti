@@ -1,4 +1,5 @@
 #include <std/array>
+#include <std/meta>
 
 constexpr void add(mut int& value, int amount) { value += amount; }
 constexpr mut int& forward_mut(mut int& value) { return value; }
@@ -54,10 +55,78 @@ constexpr int array_work(int seed) {
   return values[0] + values[1] + values[2] + values[3];
 }
 
+constexpr mut int& choose(bool first, mut Table& owner) {
+  if (first) { return owner.values[0]; }
+  return owner.values[1];
+}
+
+constexpr int alias_work() {
+  mut int values[2] = {1, 4};
+  mut int index = 0;
+  {
+    mut int& selected = values[index];
+    index = 1;
+    add(selected, 3);
+  }
+  mut Table other = Table(7);
+  add(choose(false, other), 2);
+  int independent[2] = values;
+  values[0] = 20;
+  return independent[0] + values[index] + other.values[1];
+}
+
+struct Counter {
+  mut int first;
+  mut int second;
+  constexpr Counter(int seed) : first(seed), second(seed + 1) {}
+  constexpr int operator()(int amount) mut {
+    add(this.first, amount);
+    return this.first;
+  }
+};
+
+constexpr Counter reflected(int seed) {
+  mut Counter result = Counter(seed);
+  constexpr for (auto field : std::meta::fields_of<Counter>()) {
+    add(field.get_mut(result), 2);
+  }
+  return result;
+}
+
+constexpr int callable_work() {
+  mut Counter counter = reflected(2);
+  return counter(3) + counter.second;
+}
+
+constexpr int temporary_work() { return Counter(5)(1); }
+
+constexpr void replace<T>(mut T& value, T replacement)
+  requires std::copyable<T> { value = replacement; }
+struct Box<T> {
+  mut T value;
+  constexpr Box(T value) : value(value) {}
+  constexpr void set(T value) mut
+    requires std::copyable<T> { replace(this.value, value); }
+  constexpr mut T& current() mut { return this.value; }
+};
+constexpr uint64_t generic_work(uint64_t seed) {
+  mut Box<uint64_t> box = Box<uint64_t>(seed);
+  box.set(seed + uint64_t(2));
+  uint64_t next = box.value + uint64_t(3);
+  replace(box.current(), next);
+  return box.value;
+}
+
 constexpr Table baked = build(4);
 static_assert(scalar_work(3) == 9);
 static_assert(baked.total() == 39);
 static_assert(array_work(4) == 29);
+static_assert(alias_work() == 18);
+static_assert(callable_work() == 12);
+static_assert(temporary_work() == 6);
+static_assert(generic_work(uint64_t(4)) == uint64_t(9));
+constexpr Counter reflected_counter = reflected(8);
+static_assert(reflected_counter.first == 10 && reflected_counter.second == 11);
 constexpr uint64_t extent = uint64_t(scalar_work(1));
 int buffer[extent] = {};
 
@@ -65,5 +134,7 @@ int main() {
   int seed = 4;
   Table runtime = build(seed);
   return scalar_work(seed) == 10 && runtime.total() == baked.total() &&
-         array_work(seed) == 29 && buffer.size() == uint64_t(7) ? 0 : 1;
+         array_work(seed) == 29 && alias_work() == 18 && callable_work() == 12 &&
+         temporary_work() == 6 && generic_work(uint64_t(seed)) == uint64_t(9) &&
+         buffer.size() == uint64_t(7) ? 0 : 1;
 }
