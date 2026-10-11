@@ -43,7 +43,7 @@ def main():
                      (root / "tests/fixtures/text_view_iterator_module.gti", []),
                      (root / "tests/fixtures/text_view_iterator_failure.gti",
                       [root / "tests/fixtures/text_view_iterator_support.cpp"]),
-                     (root / "examples/144-counted-text-view-iteration.gti", [])]
+                     (root / "examples/145-counted-text-view-iteration.gti", [])]
             for source, support in cases:
                 executable = output / f"{source.stem}-{name}"
                 command = [compiler, source, *flags, "--progress=never", "--keep-cpp", "-o", executable]

@@ -42,6 +42,7 @@ uint64_t meta_constructor_parameter_count<T, uint64_t I>();
 std::string_view meta_constructor_parameter_name<T, uint64_t I, uint64_t P>();
 uint64_t meta_declaration_line<T, uint64_t Kind, uint64_t I>();
 std::string_view meta_declaration_file<T>();
+std::string_view meta_type_primary_name<T>();
 T meta_construct<T, Values...>(Values... values);
 @compiler_constraint("meta_reflectable") concept meta_reflectable_capability<T>;
 }
@@ -213,6 +214,10 @@ public:
   constexpr uint64_t line() { return gti_internal::meta_declaration_line<T, 0, 0>(); }
   /// The source file of the declaration of `T`, as the compiler names it.
   constexpr std::string_view file() { return gti_internal::meta_declaration_file<T>(); }
+  /// The qualified name of the declaration `T` is an instance of, without
+  /// arguments (`std::vector` for `std::vector<int>`); the type's own
+  /// spelling for a non-generic type.
+  constexpr std::string_view primary_name() { return gti_internal::meta_type_primary_name<T>(); }
 };
 
 /// Describes parameter `P` of method `I` of `T`.
@@ -394,6 +399,7 @@ expected<T, E> construct<T, E, Producer>(mut Producer& producer) {
 
 constexpr type<T> type_of<T>() { return type<T>(); }
 constexpr std::string_view name_of<T>() { return gti_internal::meta_type_name<T>(); }
+constexpr std::string_view primary_name_of<T>() { return gti_internal::meta_type_primary_name<T>(); }
 constexpr bool is_struct<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(1); }
 constexpr bool is_class<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(2); }
 constexpr bool is_enum<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }

@@ -327,6 +327,7 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // MetaConstructorParameterName
     harmless(), // MetaDeclarationLine
     harmless(), // MetaDeclarationFile
+    harmless(), // MetaTypePrimaryName
     harmless(), // MetaFieldAttribute: aliased to a struct construction.
     harmless(), // MetaTypeAttribute
     harmless(), // MetaFieldGet: aliased to the field projection it denotes.
@@ -627,6 +628,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "meta-constructor-parameter-name",
     "meta-declaration-line",
     "meta-declaration-file",
+    "meta-type-primary-name",
     "meta-field-attribute",
     "meta-type-attribute",
     "meta-field-get",

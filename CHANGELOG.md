@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.403.0 — Checked container and view iteration
+## 0.404.0 — Checked container and view iteration
 
 - Standard-library container and view families gain their appropriate shared,
   exclusive, reverse and positioned cursor operations. Forward-only containers
@@ -26,9 +26,27 @@ for what minor and patch releases mean.
   and external owners through iteration and constructor rollback. Endpoint
   failures restore an exclusive cursor before cleanup. Unsupported endpoint
   shapes diagnose at the range-for source rather than failing in the backend.
-- Examples 141–144 demonstrate checked container, view, live-slot/lane and
+- Examples 142–145 demonstrate checked container, view, live-slot/lane and
   counted-text iteration. Movement and cursor duplication have separate
   concepts; random access does not imply contiguous storage.
+
+## 0.403.0 — Experimental reflected JSON
+
+- `<std/experimental/json>` (preview): `std::experimental::json::encode(value)`
+  and `decode<T>(text)` for any `std::meta::reflectable` struct, written
+  entirely over reflection. Keys are declared names or
+  `[[std::experimental::json::name("key")]]`; `[[ignore]]` leaves a field out;
+  nested structs, `std::vector`, integral enums (by enumerator name), strings
+  with escapes, integers, floats and bools are supported; decoding builds the
+  struct through `std::meta::construct` and reports `error{errc, offset}`.
+  Example 141. `std::json` stays the DOM and codec library until the preview
+  covers its uses.
+- `std::meta::primary_name_of<T>()` and `type<T>::primary_name()` name a
+  generic instance's primary without its arguments.
+- A range-for inside an `if constexpr` arm whose condition depends on the
+  enclosing generic parameter no longer fails HIR verification
+  ("range HIR plan differs from semantic owner/loan/protocol facts") in the
+  concrete instance.
 
 ## 0.402.11 — Class results that exist on only one branch
 
