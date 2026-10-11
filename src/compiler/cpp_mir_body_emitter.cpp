@@ -4757,6 +4757,66 @@ expectedConditionalTransportSlot(const MirBody &body, MirValueId valueId) {
   return false;
 }
 
+// The same join's transport may instead replace an existing binding, or a
+// field of one, through one Assign of the join's exact type. MIR orders the
+// paired CleanupBeforeAssign before it and decides the temporary's ownership:
+// an owning join's Replace takes the temporary's obligation and MIR later
+// drops its moved-from shell; a passive join has no obligation at all. Returns
+// the join's shared temporary when `assign` is that consumer.
+[[nodiscard]] const MirPlace *
+expectedConditionalAssignmentJoin(const MirBody &body,
+                                  const MirInstruction &assign) {
+  if (assign.kind != MirInstructionKind::Assign ||
+      assign.operation != MirOperation::Assign || assign.receiver ||
+      !assign.destination || assign.operands.size() != 1 ||
+      assign.operands.front().kind != MirOperandKind::Value ||
+      !assign.localFailureSites.empty() || !assign.definedFailure.empty())
+    return nullptr;
+  const MirOperand &input = assign.operands.front();
+  const MirPlace *destination = body.findPlace(*assign.destination);
+  const MirPlace *join = expectedConditionalTransportSlot(body, input.value);
+  const auto uses = body.usesOf(input.value);
+  return join != nullptr && destination != nullptr &&
+                 destination->root == MirPlaceRootKind::Binding &&
+                 std::all_of(destination->projections.begin(),
+                             destination->projections.end(),
+                             [](const MirPlaceProjection &projection) {
+                               return projection.kind ==
+                                      MirProjectionKind::Field;
+                             }) &&
+                 destination->type == join->type && input.type == join->type &&
+                 assign.info.type == join->type && uses.size() == 1 &&
+                 uses.front().kind == MirValueUseKind::InstructionOperand &&
+                 uses.front().instruction == assign.id
+             ? join
+             : nullptr;
+}
+
+// Whether a join temporary's native shell ends at the consumer of its single
+// transport. A passive join has no MIR obligation, and a consumer whose
+// Reparent takes an owning join's obligation leaves no later Drop of the
+// temporary. An owning join consumed through a Replace instead keeps MIR's
+// later Drop, which ends the moved-from shell.
+[[nodiscard]] bool
+expectedConditionalJoinEndsAtConsumer(const MirBody &body, const MirPlace &join,
+                                      const MirInstruction &consumer) {
+  const MirDropObligation *drop = nullptr;
+  for (const MirDropObligation &candidate : body.dropObligations) {
+    if (candidate.place != join.id)
+      continue;
+    if (drop != nullptr)
+      return false;
+    drop = &candidate;
+  }
+  return drop == nullptr ||
+         std::any_of(consumer.lifecycle.begin(), consumer.lifecycle.end(),
+                     [&](const MirLifecycleEvent &event) {
+                       return event.kind == MirLifecycleEventKind::Reparent &&
+                              event.source == drop->id && !event.conditional &&
+                              !event.failureCleanup;
+                     });
+}
+
 // A class payload move immediately published as Expected's success alternative
 // needs no intermediate native class local. Publish at that exact Move; the
 // adjacent Initialize only records the semantic transfer into the join.
@@ -37656,6 +37716,26 @@ private:
                << canonicalSlotPlaceId(facts.body, *slot) << ".get());\n";
         return;
       }
+      if (const MirPlace *join =
+              expectedConditionalAssignmentJoin(facts.body, instruction)) {
+        // The join's single transport moves its shared temporary into the
+        // replaced binding's live storage, as initializing a new binding
+        // does. A passive join has no MIR obligation, so its moved-from
+        // representation ends here and a loop may construct the join again;
+        // an owning join's Replace took the temporary's obligation, and
+        // MIR's later Drop of the temporary ends its moved-from shell.
+        emitStoragePlaceValue(facts,
+                              *facts.body.findPlace(*instruction.destination));
+        output << " = std::move(";
+        emitOperand(instruction.operands.front());
+        output << ");\n";
+        if (expectedConditionalJoinEndsAtConsumer(facts.body, *join,
+                                                  instruction)) {
+          writeIndent();
+          output << "__gti_mir_p_" << join->id << ".destroy();\n";
+        }
+        return;
+      }
       if (instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Value) {
         const ClassSsaLifetimeSlot staged =
@@ -39030,6 +39110,18 @@ private:
         if (stagedPayload) {
           writeIndent();
           output << "__gti_mir_v_" << input.value << ".destroy();\n";
+        }
+        // A nested join moved into this one ends its moved-from shell here:
+        // MIR reparented its obligation, or it never had one, so no later
+        // Drop of the nested temporary retires it.
+        if (const MirPlace *nested =
+                input.kind == MirOperandKind::Value
+                    ? expectedConditionalTransportSlot(facts.body, input.value)
+                    : nullptr;
+            nested != nullptr && expectedConditionalJoinEndsAtConsumer(
+                                     facts.body, *nested, instruction)) {
+          writeIndent();
+          output << "__gti_mir_p_" << nested->id << ".destroy();\n";
         }
         return;
       }
