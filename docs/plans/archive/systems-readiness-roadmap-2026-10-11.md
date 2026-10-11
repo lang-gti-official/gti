@@ -1108,3 +1108,282 @@ The gates and feature scope may change as the workloads expose missing pieces.
 When every gate and workload is satisfied, 1.0.0 is both a meaningful systems-
 readiness claim and a declared compatibility boundary rather than a statement
 that GTI has accumulated enough syntax.
+
+## Upstream Reconciliation Supplement (0.402.0)
+
+The following milestone excerpt was retained from upstream `fe2d8751` during
+reconciliation of the modern roadmap. It preserves the complete incoming
+planning text, including the later environment and reflection updates, rather
+than dropping it when the active roadmap changes structure. Only relative
+links to the implementation sequence were adjusted for this archive location.
+This is historical context, not a second current queue; use the active roadmap,
+language/architecture contracts and implementation sequence for new work.
+
+## Milestone 5: Standard-Library Foundation
+
+The systems-ready library should be layered. Portable policy belongs in GTI
+source; narrow native C entries exist only for host services that cannot be
+implemented portably and remain behind source-defined GTI wrappers.
+
+### Required foundation modules
+
+| Module area | Minimum systems-ready surface |
+| --- | --- |
+| utility | move, swap, exchange, pair, comparison helpers, limits |
+| ownership | unique ownership, typed recoverable storage allocation, shared ownership, weak observation, and recoverable owner factories |
+| optional values | `std::optional<T>` over checked single-slot storage; `expected<T, E>` observers and combinators |
+| fixed and dynamic storage | complete array, vector, span, string view, and owning string APIs |
+| traversal | structural iterators, sentinels, sized ranges, range-first foundational algorithms |
+| text | byte/UTF-8 policy, parsing, formatting, and explicit owning/view conversion rules |
+| math | portable primitive math functions, constants, integer utilities, and checked edge behavior |
+| diagnostics | implement Execution §4.10's stable runtime failure records and source-facing messages |
+
+`std::optional<T>` is now an ordinary move-only class over private checked
+inline storage, not a nullable reference rule. Its first production slice
+supports empty/engaged construction, checked access, reset/emplace, move-only
+payload transfer, and exactly-once cleanup without allocation. Conditional
+copy and assignment remain later `L-VALUE-01` breadth. `std::variant` and
+arbitrary tuple packs can wait until independent pack element access and
+visitation are justified by real uses.
+
+### Host-service modules
+
+Add narrow, versioned runtime operations and source-defined wrappers for:
+
+- counted stdout/stderr and bounded stdin byte input are implemented;
+- unbuffered file open/read/write/seek/tell/close and
+  process-working-directory path resolution are implemented in `<std/cstdio>`;
+  richer path handling, buffering, and explicit text decoding remain;
+- monotonic and wall-clock time;
+- deterministic pseudo-random engines plus an explicitly nondeterministic seed
+  source are implemented in `<std/random>`; distribution APIs remain;
+- process arguments are implemented through the owned
+  `int main(int, std::vector<std::string>)` entry form; read-only environment
+  lookup returns independent optional strings through `<std/environment>`;
+  environment mutation/enumeration, child-local overrides and any owner-tied
+  process views remain;
+
+Recoverable host failures return `expected`; programmer contract failures such
+as out-of-bounds access retain stable terminating diagnostics. The public
+library must not expose C pointers or backend handles merely because the C ABI
+uses them internally.
+
+### Second container and algorithm wave
+
+- Add a hash table and `std::unordered_map` only after exact hasher/equality
+  capabilities and iterator invalidation are proven.
+- Add a tree map only when ordering capabilities and ownership behavior are
+  stable enough to justify it.
+- Add sorting, binary search, partitioning, accumulation, copy/move algorithms,
+  and range predicates with explicit value/borrow behavior.
+- Prefer complete-range overloads. Add iterator/sentinel pairs only where a
+  real subrange use cannot be expressed cleanly.
+
+Linked lists, deques, regex, broad filesystem traversal/watch, locale-heavy
+text, Unicode grapheme algorithms, parallel algorithms, weak memory-order
+breadth, and detached threads are not required for the first systems-ready
+library. Ordered scalar atomics including integer fetch operations, joined
+tasks/threads, and mutex-guard access are required by the concurrency workload.
+Omitted breadth should be documented
+rather than covered by thin unsafe wrappers.
+
+### Exit gate
+
+At least one nontrivial application can use only documented public GTI APIs for
+dynamic collections, text processing, ownership, error handling, files, time,
+randomness, formatting, and testing. No example imports `gti_internal`.
+
+## Compiler Track A: MIR, Optimization, And Backend Authority
+
+This was originally organized as a parallel track and was serialized while the
+runtime-performance gate was active. The exact compiler sequence in
+[`implementation-sequence.md`](../implementation-sequence.md) closed
+`O-GAME-01` on 2026-08-27, so unrelated language, MIR, backend,
+runtime-representation, and standard-library semantics work is no longer
+parked by that campaign.
+
+Implemented foundation:
+
+1. Deterministic MIR printing, stable typed editing, independent proof replay,
+   pass management, body-revisioned analysis invalidation, and verification.
+2. MIR scalar block parameters/edge arguments, acyclic scalar promotion,
+   literal/compute/branch folding, unreachable cleanup, and dead non-trapping
+   value elimination.
+3. Complete conservative per-instance call effects with exact acyclic static
+   refinement and conservative recursion/virtual/native boundaries.
+4. One optimized `LoweredProgram` consumed by every executable backend, with
+   no source-expression execution authority.
+5. Opt-in pre/post MIR, human remarks, versioned JSON reports, and exact current
+   safety-operation counts.
+6. O2/O3 proof-carrying discharge of exact fixed-array read bounds,
+   sparse-storage read bounds/initialization, and checked integer
+   add/subtract/multiply/negate overflow outcomes.
+7. Deterministic monotone local dataflow with executable-edge tracking and
+   proof-carrying scalar SCCP.
+8. Dominance-derived natural-loop forests with bounded invariant/affine range
+   facts, plus body-local place alias/escape facts used by safety invalidation.
+
+Operational sequence: the exclusive row order, prerequisites, stop conditions,
+and implementation exit gates live only in
+[`implementation-sequence.md`](../implementation-sequence.md). This roadmap keeps
+the durable requirements: use verified MIR proofs, preserve exact failure and
+partial effects, measure end-to-end runtime, and add general loop transforms,
+MemorySSA, devirtualization, or a new backend only when a selected workload
+proves the bounded architecture insufficient.
+
+Systems readiness requires one checked executable representation to control behavior. It does
+not require an LLVM backend or aggressive `-O3`. Correct `-O0`, deterministic
+output, measurable local optimizations, and no semantic dependence on the
+native optimizer are more important.
+
+## Parallel Track B: Project Builds And Packages
+
+Keep direct mode permanently available:
+
+```sh
+gti main.gti -O2 -o main
+```
+
+Add the staged project workflow from the build-system proposal:
+
+1. extract immutable compiler and native-toolchain requests into `gti_driver`;
+2. add `gti.toml`, one executable target, and dev/release profiles;
+3. add project workflow commands: `gti build`, `check`, `run`, `test`, `clean`,
+   and `metadata` are complete; structured native manifest inputs and test
+   targets are complete;
+4. add deterministic whole-program caching — complete;
+5. add workspaces and source-only path dependencies — complete;
+6. add exact Git dependency resolution, `gti.lock`, `fetch`, `--locked`, and
+   `--offline` — complete for pinned full revisions;
+7. make LSP project discovery read-only and use the same target/source-root
+   facts as the CLI.
+
+Steps 1 and 2 are complete: direct mode and project builds route immutable
+compilation and native requests through the separately compiled `gti_driver`
+library. Project mode discovers and validates schema-versioned `gti.toml`
+manifests, resolves executable/test targets and profiles, and publishes
+artifacts under `build/gti/`. Step 3 includes frontend-only
+checking, build-and-run with exact arguments, safe cleanup, read-only
+deterministic metadata, and package/profile/target native inputs with explicit
+target selection, containment, ordering, and automatic compilation of declared
+C and C++ sources. Project test targets build and execute independently in
+deterministic order. Step 4 now adds a verified SHA-256 whole-program cache for
+project build/run/test requests, with exact source-graph, effective policy,
+runtime/toolchain, and admitted-environment identity. Requests with declared
+native sources, native search directories (including dependency-injecting
+environment paths), opaque native argument vectors, native link operands, or
+unresolved library/framework inputs bypass the cache until their transitive
+inputs are modeled. Cache hits skip parsing through
+native linking; corruption rebuilds before replacement; `--no-cache` bypasses
+lookup/publication; and direct mode remains uncached. Step 5 now adds canonical workspace membership, recursive
+source-only path dependency graphs, direct package include aliases,
+deterministic package selection/shared outputs, schema-9 metadata, and package
+cache provenance without network access. Step 6 adds explicit, content-verified
+acquisition of pinned full Git revisions and reproducible locked/offline builds.
+The read-only driver project-facts bridge is the next independent milestone.
+
+The systems-ready build workflow does not need a registry, package build
+scripts, binary GTI libraries, source globbing, or CMake replacement for
+building the GTI compiler.
+
+## Parallel Track C: Specification, Tooling, And Quality
+
+### Language and library specification
+
+- Keep a normative grammar and a semantic contract for every shipped feature.
+- Document evaluation order, ownership state transitions, runtime failures,
+  and target behavior independently of C++.
+- Generate public standard-library API documentation from retained source
+  comments.
+- Implement the bounded source-owned deprecation diagnostic and tooling
+  metadata under the already published Edition 1 retention/removal policy.
+
+### Diagnostics and editor tooling
+
+- Finish compiler-owned semantic tokens and remove confident identifier
+  guessing from the LSP fallback.
+- Add documentation hover, signature help, document symbols, references, and
+  safe rename using compiler symbol identity.
+- Make completion, definition, formatting, and diagnostics project-aware
+  without letting the LSP fetch or build dependencies.
+- Keep Tree-sitter structural highlighting usable without the LSP and keep GTI
+  visuals aligned with equivalent C++ roles.
+- Add a warning/lint policy that does not turn backend C++ warnings into GTI
+  language rules.
+
+### Verification and robustness
+
+- Add parser, semantic, HIR, MIR, backend, CLI, LSP, formatter, Tree-sitter,
+  installed-toolchain, and standard-library tests for each feature.
+- Parse and compile every valid example in CI; keep negative examples tied to
+  stable diagnostic codes and precise spans.
+- Add fuzzing for lexing, parsing, formatting, source loading, and protocol
+  framing; add differential and property tests for numeric and container edge
+  behavior.
+- Run sanitizer builds and platform release smoke tests.
+- Implement the benchmark harness, compiler phase timing, optimization remarks,
+  safety-check reports, and deterministic HIR/MIR dumps before making broad
+  performance claims.
+- Test both supported C++ backend modes where their representations differ.
+
+## C++ Features: Adopt, Adapt, Or Defer
+
+### Adopt or adapt for systems readiness
+
+- bounded `constexpr` and `if constexpr`;
+- range-for, iterators, spans, and algorithms with tracked owner lifetimes;
+- RAII, smart ownership, and deterministic destruction without the rule of
+  five;
+- confined callable parameters and explicit move captures;
+- deprecation attributes and documentation comments;
+- an explicit, audited native service boundary for standard-library host
+  operations.
+
+### Preserve the spelling but improve the rule
+
+- one-level `T*`/`const T*` retain familiar declarators, while dangerous
+  operations require lexical `unsafe` and raw pointers never imply ownership.
+- `T&` is non-null and read-only; `mut T&` is a writable borrow.
+- `std::move(place)` consumes a tracked place instead of producing an
+  unspecified moved-from value.
+- range-for owns temporaries and tracks invalidation.
+- `switch` has no implicit fallthrough.
+- numeric conversions and dangerous arithmetic edges are checked.
+- constructors remain explicit and overloads remain exact.
+- classes use generated lifecycle facts instead of C++ special-member
+  suppression rules.
+- constraints describe exact capabilities without SFINAE or overload ranking.
+
+### Later breadth unless a readiness client proves necessity
+
+- unrestricted pointer-to-pointer and first-class function-pointer types beyond
+  the bounded C out-parameter/callback clients, unchecked casts, source-level
+  `new`/`delete`, placement construction, and manual lifetime;
+- textual macros and general-purpose preprocessing;
+- exceptions and native unwinding;
+- ADL, free operator lookup, rewritten equality, conversion operators, and
+  customization-point objects beyond exact domain-operator capabilities;
+- implicit user conversions and conversion-ranked overload resolution;
+- unrestricted multiple state-bearing inheritance, diamonds, `protected`, and
+  covariant virtual returns;
+- initializer-list preference, aggregate list conversion, CTAD, SFINAE,
+  partial or constraint-selected specialization, and unrestricted compile-time
+  metaprogramming;
+- value packs, non-`uint64_t` value domains, and unrestricted dependent
+  expressions beyond the bounded `L-GEN-01` default/argument model;
+- stored reference captures, general escaping lambdas, and type erasure beyond
+  the bounded owned-callable minimum;
+- mutable, reference, nested, inherited, or partial-move structured bindings
+  whose copy/borrow/move behavior is not represented by the current
+  hidden-owner and projected-place model;
+- coroutines, generators, runtime reflection and source generation
+  (compile-time reflection over declarations is delivered; see the
+  bounded compile-time programming section);
+- unrestricted manual allocation/lifetime policy, varargs, packing/bit-fields,
+  and freestanding execution beyond the bounded systems-readiness clients;
+- binary modules, separate compilation, and a stable native GTI ABI.
+
+“Later breadth” is not “never” and is not tied to a version number. It means no
+current readiness workload requires the broader form. A focused client can
+move it earlier after showing its safety model, IR ownership,
+standard-library need, and tooling impact.

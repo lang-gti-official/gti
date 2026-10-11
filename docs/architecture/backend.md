@@ -1372,7 +1372,20 @@ requires exact target, owner, result, parameter, and operand metadata; one
 single-field projection; a trivial scalar copy load; and no active cleanup,
 lifecycle, borrowed-state, or drop obligation. Additional consumers, nested or
 non-field projections, cleanup-owning temporaries, and incoherent type rows
-reject body emission rather than falling back to native temporary behavior.
+reject this route rather than falling back to native temporary behavior.
+A cleanup-owning class result keeps MIR's value-rooted slot and its
+full-expression Drop, and may instead be read through field views of that
+slot. That covers `make_tracked(7).number`, nested fields, and a field lent to
+one member call as in `make_named().text.size()`. A view is a pure field
+projection of the result's value root with exact field rows. It carries no
+loan or drop and is touched only by copying `Load`s or by read-only borrow
+stages consumed by one call. It declares no local and spells
+`slot.get().field`, so a field class without a default constructor is never
+default-constructed. MIR's verified initialization bounds every read, and the
+result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.
+An owning Expected temporary's payload whose fields alone are read moves into
+the payload's own result slot on the checked extraction's success edge, then is
+read the same way, as in `make_named(true).value().text.size()`.
 Reading a trivial scalar does not transfer its owner: fresh passive immovable
 results use this same proof and storage without requiring a copy or move
 constructor. They cannot carry borrowed state or active drop state through
@@ -1447,18 +1460,80 @@ transfer slot described above.
 The same slot may instead feed one by-value parameter of an exact ordinary
 source constructor, mirroring the owning route's constructor consumer. The
 construction must match the constructor's parameter types and owner, carry no
-local failure site, and publish its own result into MIR's staged or published
-class slot. A raising constructor must cross the failure constructor boundary;
-a non-raising one carries no defined failure. Parameter identity and dominance
-are the shared call-argument conditions. Every construction form that spells
-these arguments moves the wrapper and retires the moved-from representation
-right after the construction. This covers the failure-tag constructor, the
-plain form of a constructor body, and an Initialize-published binding. A class
-value reaches a constructor parameter through MIR's prepared-parameter place
-instead, so only the Expected wrapper, which MIR gives no place, uses this
-consumer. A construction that is assigned to an existing binding, returned
-directly, or used as a member initializer has no such publication slot. Like
-the owning route, it still rejects body emission.
+local failure site, and publish its own result at an exact MIR destination.
+Both routes share that publication rule. The destination is MIR's staged or
+published class slot, a constructor field's result slot, the transformed or
+plain result of the Return that consumes the construction, or the assignment
+slot described below. A raising
+constructor must cross the failure constructor boundary; a non-raising one
+carries no defined failure. Parameter identity and dominance are the shared
+call-argument conditions. Every construction form that spells these arguments
+moves the wrapper. A construction published into a binding, a field or a
+transformed result retires the moved-from representation right after it. A
+plain Return leaves that retirement to the representation slot's scope exit,
+since nothing executes after the return. A class value reaches a constructor
+parameter through MIR's prepared-parameter place instead, so only the Expected
+wrapper, which MIR gives no place, uses this consumer. An owning Expected
+result consumed by a member-initializer construction, as in
+`held(holder(make(ok)))`, keeps its value-rooted transfer slot instead: the
+member's constructor takes the slot's wrapper as its by-value argument, and
+the constructor field's result slot admits that construction because its only
+lifecycle event hands the argument's own value drop to the constructor, as a
+prepared argument would. A failed producer leaves the slot unconstructed, and
+a failing member constructor already owns its parameter, so the result is
+destroyed exactly once on every path.
+
+A cleanup-free class construction whose constructor can fail, consumed by one
+adjacent `Assign` into an existing binding, uses the same representation-only
+slot as a call result that replaces a binding. That covers `h = holder(6)`,
+whatever its arguments are. The failure-tag constructor publishes into the
+slot on its Invoke success edge. The `Assign` then move-assigns the slot's
+value into the binding, and the generated representation retires. A failed
+construction leaves the binding untouched. The class needs a generated move
+constructor and move assignment, no borrowed state and no active drop state.
+The construction's only lifecycle events may transfer its owning arguments'
+own value drops into the constructor, once each, so a consumed owning Expected
+argument is accepted too. A failure-free construction, or any construction
+the fused assignment already spells, keeps that fused route.
+
+The success class of such an Expected often has no default constructor. An
+ordinary SSA local would value-initialize the native wrapper and invent that
+construction, so the declaration fails closed instead, as for a fixed array
+whose element class has none. A failure-free producer, whose plain call
+returns the Expected by value, therefore constructs a staged slot from that
+return value. The guard stays as a backstop: a shape with no exact
+publication rejects body emission rather than emitting native code that cannot
+compile.
+
+The slot also serves an Expected call result that initializes a constructor
+field as that field's selected member initializer, immediately after the
+producer succeeds. The constructor initializer metadata must name exactly that
+field and the producer's value. As for a cleanup-free class result, the field's
+empty representation ends and the field is constructed from the moved wrapper.
+Two cleanup-free Expected call results joined by a conditional publish into the
+join's conditional temporary. MIR gives that temporary no drop, so each
+producer constructs it directly. A failure-free call does this immediately
+before its Initialize, and a checked call on the Invoke success edge leading to
+the Initialize. Grouping the join's transport, as in
+`(ok ? a() : b()).has_value()`, names the same storage, so a state test,
+extraction or by-value consumer reads the join directly. Before each
+publication, the previous representation is retired, which keeps a loop from
+constructing the storage twice. The last one ends at scope exit.
+
+The same representation-only slot serves a cleanup-free call temporary that
+is observed once in place. The single use is either the state test
+(`ExpectedHasValue`, as in `if (make_item())` or `.has_value()`) or the
+receiver of a checked `value()` or `error()` extraction. MIR gives the
+extraction no loan, so nothing borrows the wrapper past that read. The
+producer constructs the slot, the observer reads the wrapper through `get()`,
+and the generated representation is retired right after that read, on both of
+a checked extraction's edges. A scalar result is copied out. A class payload
+is moved out of the temporary: into its binding, prepared argument or returned
+result, through the direct extraction that `std::move(binding).value()` already
+uses, or into the payload's own field-read slot when only a field of it is
+read, as in `make_item().value().number`. An owning temporary instead keeps
+MIR's value-rooted slot and full-expression Drop, and a checked scalar
+extraction reads it in place there.
 
 A named binding of the same cleanup-free placement Expected that is copied into
 either consumer is staged the same way. This is the copied-binding Return rule
