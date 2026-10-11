@@ -230,7 +230,7 @@ The recommended structural baseline is:
 | `T*`, `const T*`, and `void*` | no | no | A nominal unsafe wrapper may assert a stronger contract. |
 | lambda or callable object | when every owned capture and its callable lifecycle are | when every capture is share-capable and concurrent invocation uses only a read-only callable contract | A mutable/exclusive callable may still be transferred for one invocation. |
 | atomic scalar wrapper | yes | yes | It is not necessarily copyable, movable, or lock-free. |
-| `mutex<T>` | no cross-thread move in the bounded surface | yes | Shared mutation is mediated exclusively by its non-transferable guard. |
+| `mutex<T>` | when `T` is transfer-capable | when `T` is transfer-capable | Shared mutation is mediated exclusively by its non-transferable guard; the payload need not itself be share-capable. |
 | future single-thread cell of `T` | when `T` is transfer-capable | no | Interior mutation without synchronization prevents sharing. |
 
 Recursive nominal types use a cycle-aware structural fixed point. A node that
@@ -315,10 +315,10 @@ task invocation without being share-capable. Sharing one callable for
 concurrent invocation requires the callable and every capture to be
 share-capable and its invocation contract to use read-only access.
 
-### Later Scoped Borrowing
+### Scoped Borrowing
 
-No borrow crosses in the first executable model. A later scoped-thread feature
-may permit it only when all of these facts are represented and verified:
+No borrow crosses an ordinary owned-thread entry. The synchronous scoped
+extension permits it only when all of these facts are represented and verified:
 
 1. one lexical concurrency scope owns every child handle and joins every child
    on every normal and failure exit;
@@ -340,8 +340,9 @@ gain this scoped-borrow permission automatically.
 
 #### Scoped-invocation implementation route (2026-10-11)
 
-This is the pending source/compiler part of the scoped-concurrency goal, not
-an available API. The intended first public operation is a synchronous
+The source/compiler path is implemented in the scoped-concurrency candidate;
+broader validation, performance acceptance and PR integration remain required.
+The first public operation is a synchronous
 variadic `std::parallel_invoke(tasks...)`: all admitted tasks complete before
 it returns or propagates a defined failure. Tasks are ordinary callable values,
 including user-defined carriers of checked references. A carrier owning two
@@ -358,22 +359,31 @@ native-resource obligations remain effective. Allowing this confined boundary
 must not mark the carrier globally transferable or permit an erased callback
 to hide its dependencies.
 
-Semantics must select each exact callable entry and retain each dependency's
+Semantics selects each exact callable entry and retains each dependency's
 origin, access and scope endpoint. Concrete HIR preserves the heterogeneous
-task group and its entry identities. MIR needs an explicit combined
+task group and its entry identities. MIR carries an explicit combined
 spawn/join scope contract, child accesses and transfer/drop responsibilities
-on both normal and failure edges; it must verify that all external loans end
+on both normal and failure edges; it verifies that all external loans end
 only after the group has joined. The backend may erase stack-resident contexts
 only from that verified contract. A source wrapper handles recoverable creation
 status; generated adapters preserve the established defined-failure channel.
 
-The runtime group primitive is implemented independently as a prerequisite.
-It does not yet supply semantic admission, adapter lifetime proofs or source
-cleanup. Integration must account for completed, failed and never-started task
-values separately, including a consuming callable and cleanup that fails while
-a worker failure is pending. Reuse managed-task cleanup adapters rather than
-inventing a separate failure interpreter. Every started child is joined before
-caller-side cleanup can invalidate its referenced storage.
+The runtime group primitive and verified backend consumer are connected through
+the source wrapper. Completed, failed and never-started task values retain
+their separate cleanup states, including a consuming callable and cleanup that
+fails while a worker failure is pending. Generated adapters reuse ordinary
+managed-task and failure-cleanup machinery. Every started child is joined
+before caller-side cleanup can invalidate its referenced storage.
+
+Candidate evidence: Release run `run-9cb27359761043d49c86a303d4a1b7b7`
+(snapshot `42b905af00348941423934e82490649f342fe0f3f70f126dcce458c83c46b552`)
+passes the production semantic/HIR/MIR/backend checks, all four scoped runtime
+fixtures at C++23 O3, and the existing managed-thread and mutex semantic/IR
+controls. This includes owned-capture lambdas, erased jobs, borrowed packs,
+normal/consuming cleanup, worker and cleanup failures, and creation failure
+before any worker or after one worker starts. This focused result does not
+certify the remaining optimization/sanitizer, LSP, corpus, installed-toolchain
+or performance gates, nor does it claim the branch has been merged.
 
 The immediate cost model is one native worker per submitted task, stack task
 descriptors and handle slots, and no extra per-task heap box solely for scoped
@@ -818,7 +828,7 @@ column is part of every stage rather than a final test-only pass.
 | M-OWN-03 / C-SYNC-01 | **Done:** scoped `std::mutex<T>`/`std::mutex_guard<T>` over the bounded owner-dependent carrier | Exactly-once unlock on normal/failure edges, no protected-reference escape, move-only guard transfer, two-thread contention, defined lock failure, no-poisoning policy, and TSAN. |
 | C-ORDER-01 | **Done:** static `std` tag types expose only the accepted explicit orders | Complete operation/order compile-fail matrix, exact HIR/MIR pairs, deterministic release/acquire publication, relaxed no-edge metadata, O0/O3 and C++20/C++23 native coverage, optimizer barriers, installed workflows, and TSAN where supported. |
 | C-ATOM-02 | **Done:** fixed-width integer fetch add/subtract/bitwise operations are source-defined verified strong-CAS loops | Every operation/order overload, prior-value semantics, exact CAS order pairs, checked overflow before publication, bool rejection, optimizer preservation, LSP discovery, O0/O3 C++20/C++23 execution, contention stress, installed surface, and TSAN where supported. |
-| later scoped threads | Extend the existing loan graph through structured spawn/join | Shared and exclusive scoped borrow positives; escape/detach/early-drop negatives; parent suspension and reactivation MIR verification. |
+| scoped invocation | **Candidate implemented; final acceptance pending:** existing loan graph through synchronous structured spawn/join | Shared/exclusive borrowed carriers and generic packs, conflict/identity mutations, parent reactivation, join-all failure and exactly-once cleanup; finish broader, installed and performance validation before integration. |
 | general foreign-thread callbacks | Reuse delivered exact ABI thunks/firewalls and bounded registered worker/once entry; add general registration ownership, attach/detach and in-flight completion | Foreign-thread entry stress, post-unregister rejection, TLS cleanup, failure-boundary tests, and no unwind across C. |
 | diagnostics and LSP across public stages | Publish shared frontend capability, boundary, order, and target diagnostics without spelling inference | Deterministic primary/related spans, generic-instance cases, incomplete-source recovery, and protocol snapshots. |
 | C-CONFORM-01 | **Done for `std::thread`, ordered scalar atomics including integer fetch operations, and scoped mutex guards; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
@@ -836,10 +846,10 @@ This proposal does not add or promise:
 - dedicated language keywords for thread creation, atomics or memory orders;
   the delivered public APIs are source-defined, while TLS remains future work;
 - safe owner-tied condition variables, recursive/read-write guard mutexes,
-  scoped cross-thread borrows, stop tokens, typed argument packs or detach in
+  stop tokens, typed thread-entry argument packs or detach in
   the shipped safe profile; unsafe manual mutex/unlock and condition-variable
   APIs are already delivered separately;
-- cross-thread references in the first executable profile;
+- cross-thread references at an unscoped owned-thread entry;
 - pointer atomics without an adopted pointer-domain/access and target-order
   contract; the general raw-pointer/allocation foundation is now implemented,
   but atomic transport must not invent pointee lifetime or checked ownership;
@@ -866,7 +876,7 @@ choice this proposal reserved:
    by explicit or automatic join;
 5. transfer-capable/share-capable are canonical semantic terms, while
    C-TYPE-01 owns final declaration spelling and need not add keywords; and
-6. detach, scoped cross-thread borrows, pointer atomics and general
+6. detach, pointer atomics and general
    foreign-thread callbacks retain their explicit later prerequisites. Mutex
    guards have since completed their bounded profile; broader safe
    synchronization remains separate.

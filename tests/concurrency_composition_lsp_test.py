@@ -14,7 +14,17 @@ SOURCE = """#include <std/functional>
 #include <std/thread>
 [[no_transfer]] struct LocalOnly { int operator()() { return 7; } };
 [[no_share]] struct State { mut int total = 42; };
+class Write {
+  mut int& target;
+public:
+  Write(mut int& target) : target(target) {}
+  void operator()() mut { this.target = 7; }
+};
 int main() {
+  mut int first = 0;
+  mut int second = 0;
+  /*😀*/ [[discard]] std::parallel_invoke(Write(first), Write(second));
+  first = 9;
   std::function<int()> local{LocalOnly()};
   if (local() != 7) return 1;
   auto state = std::make_shared<std::mutex<State>>(State());
@@ -95,9 +105,25 @@ def main():
             assert errors(4), "incomplete call should have a recovered diagnostic"
             change(5, SOURCE)
             assert not errors(5)
+
+            scoped_position = {"textDocument": {"uri": uri}, "position":
+                lsp_position(SOURCE, SOURCE.index("parallel_invoke") + 2)}
+            hover = request("textDocument/hover", scoped_position)
+            assert "parallel_invoke" in str(hover), hover
+            definition = request("textDocument/definition", scoped_position)
+            assert definition and "thread.gti" in str(definition), definition
+            overlap = SOURCE.replace("Write(second)", "Write(first)")
+            change(6, overlap)
+            diagnostics = errors(6)
+            assert any(d.get("code") in ("GTI-S2017", "GTI-S2084")
+                       for d in diagnostics), diagnostics
+            assert not any(d.get("code") == "GTI-B0001"
+                           for d in diagnostics), diagnostics
+            change(7, SOURCE)
+            assert not errors(7)
         finally:
             session.close()
-    print("shared jobs: local targets, transfer contracts, navigation and recovery passed")
+    print("shared/scoped jobs: transfer, borrow conflicts, navigation and recovery passed")
 
 
 if __name__ == "__main__":

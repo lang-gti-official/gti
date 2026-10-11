@@ -16,6 +16,16 @@ public:
   void operator()() { std::println("autojoin task"); }
 };
 
+// Scoped jobs can borrow existing engine data instead of allocating owners
+// for it. These two jobs write disjoint fields of the same parent object.
+struct positions { mut int left = 0; mut int right = 0; };
+class advance_position {
+  mut int& position;
+public:
+  advance_position(mut int& position) : position(position) {}
+  void operator()() mut { this.position += 1; }
+};
+
 int main() {
   auto first_started = std::thread::start(
       []() -> void { std::println("first task"); });
@@ -68,6 +78,13 @@ int main() {
     auto guard = counter->lock();
     if (guard.get() != 1) return 8;
   }
+
+  mut positions frame{};
+  if (!std::parallel_invoke(advance_position(frame.left),
+                            advance_position(frame.right))) return 9;
+  // Join-all has completed, so the parent can access both fields again.
+  if (frame.left != 1 || frame.right != 1) return 10;
+  frame.left += frame.right;
 
   // `third` autojoins at scope exit. GTI intentionally provides no detached
   // public thread handle in this managed-thread slice.

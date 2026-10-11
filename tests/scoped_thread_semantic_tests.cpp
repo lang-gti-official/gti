@@ -1,3 +1,4 @@
+#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
@@ -33,7 +34,7 @@ invocation(std::string body, bool concurrent = true,
   std::ostringstream contents;
   contents << input.rdbuf();
   // Exercise the private declaration from its actual trusted source identity.
-  // No public wrapper is advertised until the executable pipeline is complete.
+  // Direct private calls supplement tests of the production public wrapper.
   std::ostringstream fixture;
   fixture << R"(
 namespace scoped_fixture {
@@ -457,9 +458,96 @@ void checkInvocations() {
            "erase live children");
   }
 }
+
+void checkProductionLowering() {
+  const auto fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "fixtures";
+  lang::FrontendOptions options;
+  options.stopAfter = lang::FrontendPhase::Mir;
+  options.target.executionProfile = lang::ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
+  for (const auto name :
+       {"scoped_parallel_threads.gti", "scoped_parallel_cleanup.gti"}) {
+    const auto path = fixtures / name;
+    std::ifstream input(path);
+    std::ostringstream source;
+    source << input.rdbuf();
+    const auto standardLibrary =
+        fixtures.parent_path().parent_path() / "stdlib";
+    const auto result = lang::Frontend(options).analyze(
+        path, source.str(), {standardLibrary / "prelude.gti"}, {},
+        {standardLibrary});
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << name << ": " << diagnostic.code << ": " << diagnostic.message
+                << '\n';
+    expect(result.canGenerateCode(),
+           "public parallel wrapper has verified source ownership");
+    if (!result.canGenerateCode()) {
+      for (const auto &function : result.mir.functionInstances())
+        if (std::any_of(function.body.blocks.begin(),
+                        function.body.blocks.end(), [](const auto &block) {
+                          return std::any_of(
+                              block.instructions.begin(),
+                              block.instructions.end(),
+                              [](const auto &instruction) {
+                                return instruction.intrinsic ==
+                                       lang::IntrinsicKind::ThreadScope;
+                              });
+                        }))
+          std::cerr << lang::MirPrinter{}.print(function.body);
+      continue;
+    }
+    bool checkedPackCleanup = false;
+    for (const auto &function : result.mir.functionInstances()) {
+      for (const auto &loan : function.body.loans) {
+        const auto *source = function.body.findPlace(loan.source);
+        if (!loan.entry || !loan.lifecycleBound || source == nullptr ||
+            source->projections.size() != 1 ||
+            source->projections.front().kind !=
+                lang::MirProjectionKind::PackElement)
+          continue;
+        checkedPackCleanup = true;
+        auto malformed = result.mir;
+        auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+            malformed.functionInstances());
+        functions[function.id - 1].body.loans[loan.id - 1].lifecycleBound =
+            false;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "owning pack entries cannot lose destructor-bound retention");
+      }
+    }
+    if (std::string_view(name) == "scoped_parallel_cleanup.gti")
+      expect(checkedPackCleanup,
+             "production cleanup fixture checks exact per-element entry loans");
+    try {
+      const auto artifact =
+          gti_test::emitCpp(result, lang::CppStandard::Cpp23, options.target);
+      expect(artifact.contents.find("managed_thread_scope<") !=
+                 std::string::npos,
+             "production scope roots exact generated adapters");
+    } catch (const std::exception &error) {
+      std::cerr << name << ": " << error.what() << '\n';
+      for (const auto &function : result.mir.functionInstances())
+        if (std::any_of(function.body.blocks.begin(),
+                        function.body.blocks.end(), [](const auto &block) {
+                          return std::any_of(
+                              block.instructions.begin(),
+                              block.instructions.end(),
+                              [](const auto &instruction) {
+                                return instruction.intrinsic ==
+                                       lang::IntrinsicKind::ThreadScope;
+                              });
+                        }))
+          std::cerr << lang::MirPrinter{}.print(function.body);
+      expect(false,
+             "public scope is executable through the sealed backend frontier");
+    }
+  }
+}
 } // namespace
 
 int main() {
+  checkProductionLowering();
   checkInvocations();
   const std::string source = R"(
 class PairJob {

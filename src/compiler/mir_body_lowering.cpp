@@ -1768,6 +1768,21 @@ private:
     return 0;
   }
 
+  [[nodiscard]] MirLoanId lifecycleLoanForPlace(const MirPlace &place) const {
+    if (place.root != MirPlaceRootKind::Binding)
+      return 0;
+    if (!place.projections.empty()) {
+      const auto found = packEntryLoans.find(place.id);
+      const auto *loan = found == packEntryLoans.end()
+                             ? nullptr
+                             : output.findLoan(found->second);
+      return loan != nullptr && loan->lifecycleBound && !loan->escapes
+                 ? loan->id
+                 : MirLoanId{0};
+    }
+    return lifecycleLoanForBinding(place.binding);
+  }
+
   [[nodiscard]] MirTemporaryCarrierDependency
   temporaryReceiverCarrier(const MirPlace &place) const {
     const auto carrier = findMirTemporaryCarrierDependency(output, place);
@@ -1989,10 +2004,7 @@ private:
         valid = false;
         continue;
       }
-      const MirLoanId lifecycleLoan =
-          place->root == MirPlaceRootKind::Binding
-              ? lifecycleLoanForBinding(place->binding)
-              : 0;
+      const MirLoanId lifecycleLoan = lifecycleLoanForPlace(*place);
       (void)appendFailureCleanupDrop(
           obligation, *drop,
           ExpressionInfo{.type = place->type,
@@ -2619,10 +2631,7 @@ private:
         valid = false;
         continue;
       }
-      const MirLoanId lifecycleLoan =
-          place->root == MirPlaceRootKind::Binding
-              ? lifecycleLoanForBinding(place->binding)
-              : 0;
+      const MirLoanId lifecycleLoan = lifecycleLoanForPlace(*place);
       (void)appendFailureCleanupDrop(
           entry.obligation, obligation->place,
           ExpressionInfo{.type = place->type,
@@ -9675,9 +9684,7 @@ private:
         cleanup.push_back(obligation);
       }
       const MirLoanId lifecycleLoan =
-          place != nullptr && place->root == MirPlaceRootKind::Binding
-              ? lifecycleLoanForBinding(place->binding)
-              : 0;
+          place != nullptr ? lifecycleLoanForPlace(*place) : 0;
       (void)appendNormalDrop(
           obligation, *drop,
           place == nullptr ? ExpressionInfo{}

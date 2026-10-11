@@ -961,18 +961,18 @@
       }
     },
     "066-managed-threads.gti": {
-      "declarations": 741,
-      "bodies": 116,
-      "generated_items": 60,
+      "declarations": 751,
+      "bodies": 124,
+      "generated_items": 64,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
         "structural_operator_adapter": 2,
-        "callable_adapter": 14,
+        "callable_adapter": 15,
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
-        "thread_task_adapter": 4,
-        "concrete_instance_adapter": 36
+        "thread_task_adapter": 6,
+        "concrete_instance_adapter": 37
       }
     },
     "067-forward-iterators.gti": {
@@ -2057,8 +2057,8 @@
     }
   },
   "totals": {
-    "declarations": 67393,
-    "bodies": 12575,
-    "generated_items": 6678
+    "declarations": 67403,
+    "bodies": 12583,
+    "generated_items": 6682
   }
 }

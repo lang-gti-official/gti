@@ -70,7 +70,8 @@ must precede public execution. The first useful public profile—owned joined
 tasks/threads, sequentially consistent atomics, mutex-guard access, contained
 failure, and its conformance gate—is implemented. The accepted explicit
 relaxed/acquire/release/acq_rel orders and integer fetch operations are also
-implemented. Detach, scoped cross-thread borrows and further native-thread/
+implemented. The synchronous scoped extension now supplies the represented
+borrow/join proof described below; detach and further native-thread/
 reclamation forms remain separate work. Adopting the model is not authorization
 to expose an incomplete API.
 
@@ -155,7 +156,8 @@ The first executable thread model transfers only owned values. A task and its
 arguments are consumed before publication and every transferred value must
 also satisfy the ordinary move/construction rules. `T&`, `mut T&`, current
 iterators/views and other borrowed-state carriers, raw pointers, and borrowed
-captures cannot cross. A later scoped-borrow feature requires an explicit
+captures cannot cross that unscoped ownership boundary. The separate
+synchronous scoped-borrow feature requires an explicit
 structured join proof, child-loan representation, parent suspension, cleanup
 on every exit, and verified reactivation after join.
 
@@ -355,7 +357,7 @@ does not itself claim that borrowed tasks or their join proof are implemented.
   interfaces, globals, and later library constraints.
 - Automatic join preserves structured lifetime at the cost of potentially
   blocking cleanup and participating in deadlock.
-- Stored and scoped cross-thread borrows, detach, safe scoped condition variables, pointer
+- Escaping cross-thread borrows, detach, safe scoped condition variables, pointer
   atomics, shared ownership across threads, and native callbacks retain their
   explicit prerequisite rows.
 

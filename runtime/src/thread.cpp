@@ -34,6 +34,7 @@ namespace {
 thread_local gti_thread_state_v1 *activeWorker = nullptr;
 thread_local bool activeTaskObjectCleanup = false;
 thread_local gti_thread_state_v1 *emergencyHandoffWorker = nullptr;
+thread_local uint64_t scopedTestFailureAfter = UINT64_MAX;
 std::atomic<gti::runtime::detail::ThreadTestFault> testFault{
     gti::runtime::detail::ThreadTestFault::None};
 std::mutex quarantineMutex;
@@ -451,6 +452,10 @@ void setThreadTestFault(ThreadTestFault fault) noexcept {
   testFault.store(fault, std::memory_order_release);
 }
 
+void setScopedThreadTestFailureAfter(std::uint64_t starts) noexcept {
+  scopedTestFailureAfter = starts;
+}
+
 } // namespace gti::runtime::detail
 
 extern "C" gti_thread_spawn_result_v1
@@ -761,7 +766,12 @@ gti_rt_thread_scope_v1(const gti_thread_scoped_task_v1 *tasks,
   // still contains worker failures, but cleanup of the borrowed context is
   // deliberately not part of worker completion or creation failure.
   const auto leaveBorrowedContext = [](void *) {};
+  const auto failAfter = std::exchange(scopedTestFailureAfter, UINT64_MAX);
   for (uint64_t index = 0; index < count; ++index) {
+    if (index == failAfter) {
+      result.spawn_status = GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
+      break;
+    }
     const auto spawned = gti_rt_thread_spawn_v1(
         tasks[index].entry, tasks[index].context, leaveBorrowedContext);
     if (spawned.status != GTI_THREAD_SPAWN_OK_V1) {

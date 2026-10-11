@@ -196,6 +196,29 @@ void testPartialCreation() {
          "native spawn failure retains caller-owned contexts");
 }
 
+void testInjectedCreationPrefix() {
+  for (std::uint64_t starts : {0U, 1U}) {
+    int left = 0, right = 0, destroyed = 0;
+    Borrowed first{left, destroyed}, second{right, destroyed};
+    const gti_thread_scoped_task_v1 tasks[] = {{writeBorrowed, &first},
+                                               {writeBorrowed, &second}};
+    gti_thread_state_v1 *scratch[2]{};
+    gti::runtime::detail::setScopedThreadTestFailureAfter(starts);
+    const auto failed = gti_rt_thread_scope_v1(tasks, scratch, 2);
+    expect(failed.spawn_status == GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1 &&
+               failed.started == starts &&
+               failed.worker.status == GTI_THREAD_JOIN_OK_V1 &&
+               left == (starts == 0 ? 0 : 42) && right == 0 && destroyed == 0 &&
+               scratch[0] == nullptr && scratch[1] == nullptr,
+           "injected creation failure joins exactly the started prefix");
+    const auto retried = gti_rt_thread_scope_v1(tasks, scratch, 2);
+    expect(retried.spawn_status == GTI_THREAD_SPAWN_OK_V1 &&
+               retried.started == 2 && left == 42 && right == 42 &&
+               destroyed == 0 && scratch[0] == nullptr && scratch[1] == nullptr,
+           "creation injection is one-shot and context ownership stays local");
+  }
+}
+
 void nestedScope(void *opaque) {
   const gti_thread_scoped_task_v1 child{writeBorrowed, opaque};
   gti_thread_state_v1 *scratch{};
@@ -252,6 +275,7 @@ int main(int argc, char **argv) {
   testJoinAllBeforeFailure();
   testCleanupEmergencyJoinAll();
   testPartialCreation();
+  testInjectedCreationPrefix();
   testNestedAndEmpty();
   return failures == 0 ? 0 : 1;
 }

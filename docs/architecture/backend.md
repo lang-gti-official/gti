@@ -604,6 +604,18 @@ not a template, so a retained thread-handle declaration selects its complete
 support. `dormant_capability_runtime` builds and runs each family's
 include-only program natively.
 
+Scoped groups select the same managed-thread support from the verified
+`ThreadScope` operation. The body plan retains its ordered adapter identities,
+consumed task operands and task-join failure channel. Generated closure roots
+and detached-program verification match each adapter to its exact group and
+operand, not merely the enclosing function. This permits several heterogeneous
+lambda tasks in one concrete generic body without reusing the owned-spawn
+single-task template path. The preamble implements stack task slots, join-all
+and ordinary verified cleanup as described in the
+[runtime contract](standard-library-and-runtime.md#scoped-worker-execution).
+Provenance-only projected pack places retain exact type/field rows in admission
+but do not form unused C++ accesses to private carrier fields.
+
 ### Executable Bodies
 
 `CppMirBodyEmitter` is the admission and plan-building authority for source

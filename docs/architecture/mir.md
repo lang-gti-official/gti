@@ -270,8 +270,12 @@ entry. Body verification requires all task loans live and rejects overlapping
 exclusive sibling accesses. Neither an empty group nor borrowed transport
 changes the ordinary owned-thread contract. Concrete generic and pack forwarding
 preserve each task's exact entry origins, including multiple reference fields
-and repeated types. The production backend consumer and public wrapper remain
-incomplete; this representation is not yet a public executable scope API.
+and repeated types. The production backend emits the complete group through
+the scoped runtime service; the source-defined `parallel_invoke` wrapper maps
+its recoverable status after join-all and cleanup. Cleanup-bound borrowed pack
+elements retain separate lifecycle loans through their exact element drops or
+owned handoff. Whole-binding identity alone is insufficient to discharge a
+different element's obligation.
 
 Fresh-value transport distinguishes lexical loan lifetime from active object
 cleanup. A freshly constructed borrowed carrier can have no destructor work

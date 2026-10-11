@@ -9761,16 +9761,41 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
     if (loan.entry && !loan.escapes && loan.kind == MirLoanKind::Stored &&
         !producer && loan.producedBy == 0 && loan.parent == 0 && source &&
         source->root == MirPlaceRootKind::Binding &&
-        source->projections.empty() &&
         source->type.kind == SemanticType::Class &&
         std::find(loan.carriers.begin(), loan.carriers.end(),
                   source->binding) != loan.carriers.end() &&
         parameters && parameterTypes) {
       for (std::size_t index = 0;
            index < parameters->size() && index < parameterTypes->size();
-           ++index)
-        ownedEntry = ownedEntry || ((*parameters)[index] == source->binding &&
-                                    (*parameterTypes)[index] == source->type);
+           ++index) {
+        if ((*parameters)[index] != source->binding)
+          continue;
+        const auto &formal = (*parameterTypes)[index];
+        if (source->projections.empty()) {
+          ownedEntry = ownedEntry || formal == source->type;
+        } else if (source->projections.size() == 1 &&
+                   source->projections.front().kind ==
+                       MirProjectionKind::PackElement &&
+                   source->projections.front().constantIndex &&
+                   index + 1 == parameters->size()) {
+          const auto element = *source->projections.front().constantIndex;
+          const auto pack = std::find_if(
+              body.places.begin(), body.places.end(), [&](const auto &place) {
+                return place.root == MirPlaceRootKind::Binding &&
+                       place.binding == source->binding &&
+                       place.projections.empty() &&
+                       place.type.kind == SemanticType::TypePack &&
+                       place.type.concretePack;
+              });
+          const std::vector<SemanticType> remaining(
+              parameterTypes->begin() + index, parameterTypes->end());
+          ownedEntry =
+              ownedEntry || (pack != body.places.end() &&
+                             element < pack->type.arguments.size() &&
+                             pack->type.arguments[element] == source->type &&
+                             exactParameterRoles({pack->type}, remaining));
+        }
+      }
     }
     const SemanticType carrierType = ownedEntry ? source->type
                                      : producer
@@ -10062,7 +10087,8 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
               return drop && drop->kind == MirDropObligationKind::Binding &&
                      drop->binding == binding && place &&
                      place->root == MirPlaceRootKind::Binding &&
-                     place->binding == binding && place->projections.empty();
+                     place->binding == binding &&
+                     (place->id == source->id || place->projections.empty());
             });
         if (!transferred)
           return verificationFailure(

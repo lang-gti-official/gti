@@ -948,7 +948,7 @@ host failure transfers its still-coherent state into a private terminal
 quarantine and raises `GTI-R0012`; this is neither detach nor a resumable
 ownership state.
 
-### Scoped-worker runtime foundation
+### Scoped-worker execution
 
 `gti_rt_thread_scope_v1` adds a synchronous native group boundary over borrowed
 opaque task contexts. The caller supplies task descriptors and scratch handle
@@ -968,12 +968,25 @@ unwinding the caller: borrowed contexts cannot enter the owned-thread terminal
 quarantine, because the borrowing stack must not be destroyed beneath a live
 worker.
 
-This is runtime infrastructure, **not an implemented safe GTI scoped-thread
-API**. Its raw ABI requires the caller to establish context lifetime, disjoint
-or synchronized access, and scratch isolation. Source admission still requires
-general semantic borrow/callable facts and verified HIR/MIR scope ownership;
-calling the runtime does not manufacture that proof. The outstanding source
-work remains in the scoped-concurrency implementation goal.
+The source-defined `std::parallel_invoke` wrapper maps recoverable status over
+the trusted `ThreadScope` capability. Semantics selects concrete callable
+entries and checks all borrowed origins. HIR preserves the group; MIR verifies
+task consumption, exact dependency/access identities and loan endpoints on
+normal and failure paths. Ordinary borrowed carriers and forwarded packs use
+the same place/loan model as other calls. The raw ABI still requires its caller
+to establish context lifetime, disjoint or synchronized access, and scratch
+isolation; calling it does not manufacture a safe GTI proof.
+
+The C++ backend roots every scoped adapter from its exact operand index and
+emits a stack tuple of task lifetime slots plus fixed-size descriptors and
+scratch slots. No per-task box allocation or native destructor supplies GTI
+cleanup. Once the native group has joined, generated cleanup adapters run the
+verified remaining drops in reverse argument order using the ordinary failure
+cleanup context. Consuming-receiver cleanup has already discharged its target;
+moved-from representation shells are retired separately. A worker failure is
+re-raised only after that join-all boundary. Cleanup failure while another
+failure is pending uses the existing emergency rule, not a second failure
+interpreter.
 
 ## Native And Runtime Boundary
 
