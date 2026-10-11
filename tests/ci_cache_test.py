@@ -35,7 +35,7 @@ def main():
                                            "relative/cache", "/cache\nBAD=value",
                                            "/cache\rBAD=value")):
             output = root / f"environment-{index}"
-            environment.update(GITEA_ENV=str(output), GTI_CACHE_DIRECTORY=directory)
+            environment.update(GITHUB_ENV=str(output), GTI_CACHE_DIRECTORY=directory)
             result = subprocess.run([bash, str(script)], env=environment,
                                     capture_output=True, text=True, timeout=10)
             if index:
@@ -53,7 +53,7 @@ def main():
             }
         launcher.unlink()
         output = root / "missing-launcher"
-        environment.update(GITEA_ENV=str(output), GTI_CACHE_DIRECTORY=str(root / "cache"))
+        environment.update(GITHUB_ENV=str(output), GTI_CACHE_DIRECTORY=str(root / "cache"))
         result = subprocess.run([bash, str(script)], env=environment,
                                 capture_output=True, text=True, timeout=10)
         assert result.returncode != 0 and not output.exists()
@@ -62,7 +62,7 @@ def main():
             environment = os.environ.copy()
             environment["PATH"] = str(args.ccache.resolve().parent) + os.pathsep + environment["PATH"]
             output = root / "real-environment"
-            environment.update(GITEA_ENV=str(output), GTI_CACHE_DIRECTORY=str(root / "real-cache"))
+            environment.update(GITHUB_ENV=str(output), GTI_CACHE_DIRECTORY=str(root / "real-cache"))
             subprocess.run([bash, str(script)], env=environment, check=True,
                            capture_output=True, text=True, timeout=10)
             environment.update(values(output))

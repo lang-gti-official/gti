@@ -37,21 +37,23 @@ policy below without bypassing that lifecycle.
 2. Fetch the remote before publication. If the destination branch advanced,
    reconcile it without discarding local or remote work. Do not force-push or
    rewrite shared history.
-   The destination must be GTI's canonical Gitea repository; remove or bypass
-   any legacy GitHub push URL before publication.
+   The destination must be GTI's canonical GitHub repository (`origin`,
+   `gti-lang-official/gti`); the `gitea` remote is a backup mirror the helper
+   pushes to after integration, never a publication target.
 3. Run the proportionate local build, tests, packaging checks, formatting, and
    release-version checks (`python3 scripts/check_release_version.py
-   origin/main HEAD`). Gitea CI is confirmation, not a substitute for local
+   origin/main HEAD`). GitHub CI is confirmation, not a substitute for local
    gates.
 4. Stage only the intended files, review `git diff --cached`, and create a
    focused commit.
 
 ## Initiate The Release
 
-Use the repository's Gitea release workflow as the tag and release authority.
+Use the repository's GitHub release workflow as the tag and release authority.
 For the current workflow, merging a release-bearing PR with an advanced
-`VERSION` into canonical Gitea `main` dispatches packaging and publication of the
-matching `v<VERSION>` tag and Gitea release. Do not also push a competing tag.
+`VERSION` into canonical GitHub `main` dispatches packaging for Linux x64 and
+Apple Silicon and publication of the matching `v<VERSION>` tag and GitHub
+release. Do not also push a competing tag.
 
 Manual workflow dispatch may rebuild the release for the selected commit, but
 the workflow still owns tag creation. Never tag a version mismatch or an

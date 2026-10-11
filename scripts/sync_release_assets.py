@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Prune a GitHub release to the asset set the publication step just uploaded."""
 
 import argparse
 import json
@@ -13,32 +14,46 @@ from typing import Any
 
 
 ApiRequest = Callable[[str, str], Any]
+DEFAULT_API_URL = "https://api.github.com"
+
+
+def repository_parts(repository: str) -> tuple[str, str]:
+    parts = repository.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise ValueError("repository must be owner/name")
+    owner, name = (urllib.parse.quote(part, safe="") for part in parts)
+    return owner, name
 
 
 def release_path(repository: str, tag: str) -> str:
-    parts = repository.split("/")
-    if len(parts) != 2 or not all(parts) or not tag:
-        raise ValueError("repository must be owner/name and tag must not be empty")
-    owner, name = (urllib.parse.quote(part, safe="") for part in parts)
-    encoded_tag = urllib.parse.quote(tag, safe="")
-    return f"/repos/{owner}/{name}/releases/tags/{encoded_tag}"
+    owner, name = repository_parts(repository)
+    if not tag:
+        raise ValueError("tag must not be empty")
+    return f"/repos/{owner}/{name}/releases/tags/{urllib.parse.quote(tag, safe='')}"
+
+
+def asset_path(repository: str, asset_id: int) -> str:
+    # GitHub addresses a release asset by its own id, not through its release.
+    owner, name = repository_parts(repository)
+    return f"/repos/{owner}/{name}/releases/assets/{asset_id}"
 
 
 def make_api_request(api_url: str, token: str) -> ApiRequest:
     base = api_url.rstrip("/")
     parsed = urllib.parse.urlparse(base)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("Gitea API URL must be an absolute HTTP(S) URL")
+        raise ValueError("GitHub API URL must be an absolute HTTP(S) URL")
     if not token:
-        raise ValueError("GTI_GITEA_TOKEN is required")
+        raise ValueError("GITHUB_TOKEN is required")
 
     def request(method: str, path: str) -> Any:
         operation = urllib.request.Request(
             base + path,
             method=method,
             headers={
-                "Accept": "application/json",
-                "Authorization": f"token {token}",
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "X-GitHub-Api-Version": "2022-11-28",
                 "User-Agent": "gti-release-asset-sync",
             },
         )
@@ -48,12 +63,12 @@ def make_api_request(api_url: str, token: str) -> ApiRequest:
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace").strip()
             raise RuntimeError(
-                f"Gitea API {method} {path} failed with HTTP {error.code}: "
+                f"GitHub API {method} {path} failed with HTTP {error.code}: "
                 f"{detail or error.reason}"
             ) from error
         except urllib.error.URLError as error:
             raise RuntimeError(
-                f"Gitea API {method} {path} failed: {error.reason}"
+                f"GitHub API {method} {path} failed: {error.reason}"
             ) from error
         if not payload:
             return None
@@ -61,7 +76,7 @@ def make_api_request(api_url: str, token: str) -> ApiRequest:
             return json.loads(payload)
         except json.JSONDecodeError as error:
             raise RuntimeError(
-                f"Gitea API {method} {path} returned invalid JSON"
+                f"GitHub API {method} {path} returned invalid JSON"
             ) from error
 
     return request
@@ -79,44 +94,39 @@ def sync_assets(
     if not expected:
         raise ValueError(f"asset directory is empty: {asset_directory}")
 
-    path = release_path(repository, tag)
-    release = request("GET", path)
+    release = request("GET", release_path(repository, tag))
     if not isinstance(release, dict) or not isinstance(release.get("id"), int):
-        raise RuntimeError("Gitea release response has no integer release id")
+        raise RuntimeError("GitHub release response has no integer release id")
     assets = release.get("assets")
     if not isinstance(assets, list):
-        raise RuntimeError("Gitea release response has no asset inventory")
+        raise RuntimeError("GitHub release response has no asset inventory")
 
     expected_names = set(expected)
     stale: list[tuple[str, int]] = []
     for asset in assets:
         if not isinstance(asset, dict):
-            raise RuntimeError("Gitea release asset entry is not an object")
+            raise RuntimeError("GitHub release asset entry is not an object")
         name = asset.get("name")
         identifier = asset.get("id")
         if not isinstance(name, str) or not isinstance(identifier, int):
-            raise RuntimeError("Gitea release asset has no stable name and id")
+            raise RuntimeError("GitHub release asset has no stable name and id")
         if name not in expected_names:
             stale.append((name, identifier))
 
     stale.sort()
-    release_id = release["id"]
     for _, identifier in stale:
-        request(
-            "DELETE",
-            f"/repos/{repository}/releases/{release_id}/assets/{identifier}",
-        )
+        request("DELETE", asset_path(repository, identifier))
     return [name for name, _ in stale]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Prune a Gitea release to the asset set already uploaded by the "
-            "publication action."
+            "Prune a GitHub release to the asset set already uploaded by the "
+            "publication step."
         )
     )
-    parser.add_argument("--api-url", required=True)
+    parser.add_argument("--api-url", default=DEFAULT_API_URL)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--asset-directory", required=True, type=pathlib.Path)
@@ -124,7 +134,8 @@ def main() -> int:
 
     try:
         request = make_api_request(
-            arguments.api_url, os.environ.get("GTI_GITEA_TOKEN", "")
+            arguments.api_url,
+            os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN", ""),
         )
         stale = sync_assets(
             arguments.repository,
@@ -133,13 +144,13 @@ def main() -> int:
             request,
         )
     except (OSError, RuntimeError, ValueError) as error:
-        print(f"Gitea release asset synchronization failed: {error}", file=sys.stderr)
+        print(f"GitHub release asset synchronization failed: {error}", file=sys.stderr)
         return 1
 
     if stale:
-        print("Removed stale Gitea release assets: " + ", ".join(stale))
+        print("Removed stale GitHub release assets: " + ", ".join(stale))
     else:
-        print("Gitea release assets already match the current build.")
+        print("GitHub release assets already match the current build.")
     return 0
 
 

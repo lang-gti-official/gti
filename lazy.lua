@@ -1,5 +1,5 @@
 return {
-  "https://git.internal.howetotech.dev/gti-lang/gti.git",
+  "https://github.com/gti-lang-official/gti.git",
   name = "gti",
   lazy = false,
   build = "build.lua",
