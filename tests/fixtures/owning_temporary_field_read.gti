@@ -1,0 +1,87 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// A field of an owning class temporary read before the temporary's
+// full-expression destruction. The field is a view of the result's own
+// lifetime slot: it is copied out or lent read-only to one call, and the
+// temporary is destroyed exactly once, after the read.
+mut int32_t destroyed = 0;
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() { destroyed += 1; }
+};
+
+struct inner_value {
+  int32_t code;
+  inner_value(int32_t code) : code(code) {}
+};
+
+class nested {
+public:
+  inner_value inner;
+  nested(int32_t code) : inner(inner_value(code)) {}
+  ~nested() { destroyed += 1; }
+};
+
+struct named_value {
+  std::string text;
+  int32_t size;
+  named_value(std::string text) : text(std::move(text)), size(7) {}
+};
+
+counted make_counted(int32_t number) { return counted(number); }
+
+// A producer that can fail publishes its result on its success edge.
+counted make_checked(int32_t number) { return counted(number + 1); }
+
+nested make_nested(int32_t code) { return nested(code); }
+
+named_value make_named_value() { return named_value(std::string("abc")); }
+
+expected<named_value, int32_t> make_named(bool ok) {
+  if (ok) { return named_value(std::string("payload")); }
+  return unexpected(int32_t(3));
+}
+
+expected<counted, int32_t> make_counted_result(bool ok) {
+  if (ok) { return counted(8); }
+  return unexpected(int32_t(3));
+}
+
+int32_t bump(int32_t value) { return value + 1; }
+
+int main(int argc, std::vector<std::string> argv) {
+  bool yes = argc > 0;
+  bool no = !yes;
+  if (argc == 2) {
+    return make_named(no).value().size;
+  }
+  if (argc == 3) {
+    return make_counted(1).number + bump(2147483647);
+  }
+  if (argc == 4) {
+    return make_checked(2147483647).number;
+  }
+  if (make_counted(5).number != 5) { return 1; }
+  if (destroyed != 1) { return 2; }
+  if (make_nested(4).inner.code != 4) { return 3; }
+  if (destroyed != 2) { return 4; }
+  if (make_checked(6).number != 7) { return 5; }
+  if (destroyed != 3) { return 6; }
+  if (make_named_value().size != 7) { return 7; }
+  if (int32_t(make_named_value().text.size()) != 3) { return 8; }
+  if (make_named(yes).value().size != 7) { return 9; }
+  if (int32_t(make_named(yes).value().text.size()) != 7) { return 10; }
+  if (make_counted_result(yes).value().number != 8) { return 11; }
+  if (destroyed != 4) { return 12; }
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    total += make_counted(index).number;
+  }
+  if (total != 3 || destroyed != 7) { return 13; }
+  return 0;
+}
