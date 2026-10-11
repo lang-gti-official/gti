@@ -346,6 +346,7 @@ class RemoteRunner(unittest.TestCase):
         def submit(config, action, run_id=None, input_path=None, output_path=None):
             self.assertEqual(action, "submit")
             saved = runner.read_json(local / "runs" / (run_id + ".json"))
+            self.assertEqual(saved["runner"], "ubuntu-8")
             self.assertEqual(saved["connection"], config)
             with tarfile.open(input_path) as archive:
                 submitted.append(json.load(archive.extractfile("request.json")))
@@ -418,6 +419,23 @@ class RunnerConnections(unittest.TestCase):
         runner.save_connection(self.path, "ubuntu-8", runner.HOSTS["ubuntu-8"], make_default=True)
         self.assertEqual(runner.load_settings(self.path)["default"], "ubuntu-8")
 
+    def test_cli_configure_validates_os_and_preserves_default(self):
+        with mock.patch.object(runner, "local_directory", return_value=self.local), \
+                mock.patch.object(runner, "connection", return_value={"platform": "Linux"}) as connection, \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(runner.main(["--runner", "ubuntu-8", "configure"]), 0)
+            self.assertEqual(connection.call_args.args[0]["host"], "root@100.81.111.76")
+            self.assertEqual(runner.load_settings(self.path)["default"], "mini")
+            self.assertEqual(runner.main(["--runner", "ubuntu-8", "configure", "--default"]), 0)
+            self.assertEqual(runner.load_settings(self.path)["default"], "ubuntu-8")
+
+    def test_cli_configure_rejects_wrong_os_without_saving(self):
+        with mock.patch.object(runner, "local_directory", return_value=self.local), \
+                mock.patch.object(runner, "connection", return_value={"platform": "Darwin"}):
+            with self.assertRaisesRegex(runner.RunnerError, "platform differs"):
+                runner.main(["--runner", "ubuntu-6", "configure"])
+        self.assertFalse(self.path.exists())
+
     def test_concurrent_configuration_updates_preserve_every_named_host(self):
         commands = []
         for index in range(3):
@@ -467,6 +485,7 @@ class RunnerConnections(unittest.TestCase):
 
     def test_reject_malformed_settings_connections_names_and_identity(self):
         for value in ([], {"schema": 99}, {"schema": 2, "hosts": {}, "default": []},
+                      dict(runner.HOSTS["mini"], token="must not be printed"),
                       {"schema": 2, "hosts": {"bad name": {}}, "default": "mini"}):
             runner.write_json(self.path, value)
             with self.assertRaises(runner.RunnerError):
@@ -482,6 +501,8 @@ class RunnerConnections(unittest.TestCase):
             with self.assertRaises(runner.RunnerError):
                 runner.select_connection(self.args("--runner", name, "status"), settings, self.local)
         run_id = "run-" + "c" * 32
+        with self.assertRaisesRegex(runner.RunnerError, "invalid run"):
+            runner.record_connection(self.local, run_id, "request.json", runner.HOSTS["mini"])
         runner.record_connection(self.local, run_id, "mini", runner.HOSTS["mini"])
         path = self.local / "runs" / (run_id + ".json")
         record = runner.read_json(path)
@@ -527,14 +548,15 @@ class RunnerConnections(unittest.TestCase):
         request = {"build_type": "Release", "cmake_args": [], "targets": ["gti"],
                    "full_suite": True, "ctest_regex": None, "jobs": 3, "test_jobs": 6}
         with mock.patch.object(runner.platform, "system", return_value="Linux"), \
-                mock.patch.object(runner, "llvm_directory", return_value=str(llvm)), \
-                mock.patch.object(runner.shutil, "which", side_effect=lambda name: "/usr/bin/" + name), \
-                mock.patch.dict(os.environ, {"CC": "", "CXX": ""}):
+                mock.patch.object(runner, "llvm_directory", return_value=str(llvm)):
             steps = runner.default_steps(request)
         self.assertIn("-DLLVM_DIR=" + str(llvm), steps[0]["argv"])
-        self.assertIn("-DCMAKE_CXX_COMPILER=/usr/bin/clang++", steps[0]["argv"])
+        self.assertFalse(any("CMAKE_CXX_COMPILER=" in arg for arg in steps[0]["argv"]))
         self.assertEqual(steps[1]["argv"][4], "3")
         self.assertIn("6", steps[2]["argv"])
+        request["cmake_args"] = ["-DCMAKE_CXX_COMPILER=/custom/cxx"]
+        with mock.patch.object(runner, "llvm_directory", return_value=None):
+            self.assertIn("-DCMAKE_CXX_COMPILER=/custom/cxx", runner.default_steps(request)[0]["argv"])
 
     def test_platform_selection_rejects_wrong_host_before_snapshot(self):
         with mock.patch.object(runner, "local_directory", return_value=self.local), \
@@ -554,7 +576,9 @@ class RunnerConnections(unittest.TestCase):
         def status(config, action):
             if config["host"] == runner.HOSTS["mini"]["host"]:
                 raise runner.RunnerError("offline")
-            return {"platform": "Linux", "window": {"build": [], "suite": []}}
+            return {"platform": "Linux", "window": {"build": [], "suite": []}, "runs": [
+                {"id": "active", "state": "running", "phase": "build", "source": {"large": "metadata"}},
+                {"id": "done", "state": "passed", "phase": "finished", "steps": ["long history"]}]}
 
         with mock.patch.object(runner, "local_directory", return_value=self.local), \
                 mock.patch.object(runner, "connection", side_effect=status), \
@@ -564,6 +588,10 @@ class RunnerConnections(unittest.TestCase):
         self.assertEqual(result["mini"], {"error": "offline"})
         self.assertIn("window", result["ubuntu-6"])
         self.assertIn("window", result["ubuntu-8"])
+        self.assertEqual(result["ubuntu-8"]["active_runs"],
+                         [{"id": "active", "state": "running", "phase": "build"}])
+        self.assertEqual(result["ubuntu-8"]["retained_results"], 1)
+        self.assertNotIn("runs", result["ubuntu-8"])
 
 
 if __name__ == "__main__":

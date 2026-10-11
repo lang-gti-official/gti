@@ -3304,7 +3304,13 @@ contention and cancellation while queued; recovery of crashed workers and
 partial uploads; concurrent recovery serialization; and refusal to sweep
 unmarked/live directories. Fault injection proves cancellation during process
 creation cannot strand the child and cleanup errors cannot report success.
-The [remote-runner contract](agent-workflow.md#mac-mini-remote-runs) describes
+The named-host checks cover legacy connection migration, CLI/environment/default
+precedence, concurrent configuration preservation, immutable detached-run origin
+routing, explicit misrouting rejection, authenticated SSH/Tailscale argument
+vectors, Linux/macOS window counts, Linux LLVM discovery/compiler overrides, platform rejection
+before upload and in the worker, and partial-failure all-host status. Live SSH
+smokes are separate from these deterministic network-free tests.
+The [remote-runner contract](agent-workflow.md#remote-buildtest-hosts) describes
 live SSH usage and the limits of custom command plans.
 
 `agent_workflow` also verifies that remote validation submits the exact plan
