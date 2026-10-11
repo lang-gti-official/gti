@@ -1,7 +1,9 @@
 # GTI
 
 <p align="center">
-  <a href="https://git.internal.howetotech.dev/gti-lang/gti/src/branch/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+  <a href="https://github.com/gti-lang-official/gti/actions/workflows/ci.yml"><img src="https://github.com/gti-lang-official/gti/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://github.com/gti-lang-official/gti/actions/workflows/release.yml"><img src="https://github.com/gti-lang-official/gti/actions/workflows/release.yml/badge.svg?branch=main" alt="Release status"></a>
+  <a href="https://github.com/gti-lang-official/gti/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
 </p>
 
 <p align="center">
@@ -151,7 +153,7 @@ approved support libraries (`LLVMSupport`, `LLVMTargetParser`, and
 [ADR 006](docs/decisions/006-llvm-support-adoption.md) for the boundary.
 
 ```sh
-git clone https://git.internal.howetotech.dev/gti-lang/gti.git gti
+git clone https://github.com/gti-lang-official/gti.git gti
 cd gti
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
@@ -167,6 +169,10 @@ cmake --build build --parallel 4
 ./build/gti examples/050-opaque-native-handles.gti \
   -o /tmp/gti-opaque-handles
 ```
+
+GitHub (`gti-lang-official/gti`) is the canonical repository: pull requests,
+issues, CI and releases live there. The self-hosted Gitea repository at
+https://git.internal.howetotech.dev/gti-lang/gti is a backup mirror of `main` and the tags.
 
 Run the test suite with:
 
@@ -441,7 +447,7 @@ language server, standard library, runtime, and native Tree-sitter parser:
 ```lua
 return {
   {
-    "https://git.internal.howetotech.dev/gti-lang/gti.git",
+    "https://github.com/gti-lang-official/gti.git",
     name = "gti",
     version = "*",
   },

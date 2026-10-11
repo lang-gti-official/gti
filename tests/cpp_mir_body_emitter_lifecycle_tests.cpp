@@ -12429,6 +12429,102 @@ void testCleanupFreeConstructorTemporaryFieldRead() {
   checkCleanupFreeConstructorTemporaryFieldRead(true);
 }
 
+// A generated constructor with two or more owned-parameter fields, one of
+// them a text view, keeps that parameter's entry loan and ends it in the
+// prologue. The record has no runtime effect, so the member-initializer
+// proof admits it; a producer, an escape or any metadata on the record
+// returns the constructor to the ordinary body route.
+void testOwnedPrologueFormalEntryLoanEnd() {
+  const auto frontend = analyzeWithStandardLibrary("text-view-owned.gti", R"(
+struct Player { std::string_view name = ""; uint32_t health = 100; };
+uint32_t read(Player& value) { return value.health; }
+int main() {
+  Player hero = {.health = uint32_t(7)};
+  return read(hero) == 7 ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(), "designated text-view struct must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+         "the whole program must stay inside the C++ text vocabulary");
+  bool checked = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+    const auto *info =
+        owner == nullptr ? nullptr
+                         : frontend.semantics.findClassType(owner->declaration);
+    if (!info || !info->declaration ||
+        info->declaration->name().lexeme != "Player" ||
+        constructor.initializers.size() != 2)
+      continue;
+    checked = true;
+    expect(std::all_of(constructor.initializers.begin(),
+                       constructor.initializers.end(),
+                       [](const lang::MirConstructorInitializer &initializer) {
+                         return initializer.ownedParameter.has_value();
+                       }),
+           "both designated fields publish owned parameters");
+    const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                       constructor.id};
+    const auto admitted = [&](const lang::MirProgram &program) {
+      const lang::CppMirBodyEmitter emitter(program, map);
+      return constructor.mayRaiseDefinedFailure
+                 ? emitter.supportsFailureBodyText(address)
+                 : emitter.supportsBodyText(address);
+    };
+    expect(admitted(frontend.mir),
+           "the text-view parameter's entry loan end is admitted beside the "
+           "owned field moves");
+    const lang::MirInstruction *end = nullptr;
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::EndBorrow)
+          end = &instruction;
+    const auto *loan =
+        end && end->loan ? constructor.body.findLoan(*end->loan) : nullptr;
+    expect(loan != nullptr && loan->entry && !loan->escapes &&
+               loan->producedBy == 0,
+           "the prologue ends exactly the parameter's entry loan");
+    if (loan == nullptr)
+      continue;
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto malformed = frontend.mir;
+      auto *changed = const_cast<lang::MirConstructorInstance *>(
+          malformed.findConstructorInstance(constructor.id));
+      const auto changedLoan =
+          std::find_if(changed->body.loans.begin(), changed->body.loans.end(),
+                       [&](const lang::MirLoan &candidate) {
+                         return candidate.id == loan->id;
+                       });
+      lang::MirInstruction *changedEnd = nullptr;
+      for (auto &block : changed->body.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.kind == lang::MirInstructionKind::EndBorrow)
+            changedEnd = &instruction;
+      expect(changedLoan != changed->body.loans.end() && changedEnd,
+             "copied body keeps the records");
+      if (changedLoan == changed->body.loans.end() || !changedEnd)
+        continue;
+      if (mutation == 0)
+        changedLoan->entry = false;
+      if (mutation == 1)
+        changedLoan->escapes = true;
+      if (mutation == 2)
+        changedLoan->producedBy = 1;
+      if (mutation == 3)
+        changedEnd->cleanupBoundaryEnd = 1;
+      if (mutation == 4)
+        changedEnd->lifecycle.push_back({});
+      expect(!admitted(malformed),
+             "mutation " + std::to_string(mutation) +
+                 " must leave the native member-initializer route");
+    }
+  }
+  expect(checked, "the Player constructor must be inspected");
+}
+
 constexpr NamedTest kTests[] = {
     {"testCheckedReferenceClassAssignment",
      testCheckedReferenceClassAssignment},
@@ -12597,6 +12693,8 @@ constexpr NamedTest kTests[] = {
     {"testPassiveStatusDefaultField", testPassiveStatusDefaultField},
     {"testSelectedConstructorDefaultSchedule",
      testSelectedConstructorDefaultSchedule},
+    {"testOwnedPrologueFormalEntryLoanEnd",
+     testOwnedPrologueFormalEntryLoanEnd},
 };
 
 } // namespace
