@@ -6002,6 +6002,16 @@ observations.
 
 ## Development And Completion Cadence
 
+Native allocation/provider test oracles must be linked before the production
+static runtime archive. `tests/native_fixture_build.py` emits the same verified
+GTI artifact and links the explicitly declared test providers first; on GNU
+linkers, passing replacement definitions through direct mode's trailing `--`
+arguments otherwise extracts the production provider too. Ordinary direct-mode
+tests retain their unchanged command path. The helper preserves the selected
+C++ driver spelling, optimization/standard, strict floating-point flags,
+sanitizer options and both phases' failure diagnostics. Its unit gate checks
+those boundaries; runtime allocation/failure/cleanup assertions are unchanged.
+
 `local_reference_inference` pairs explicit and inferred reference programs,
 checking admission and concrete binding/drop facts, HIR owner dependencies and
 MIR loan records. Detached local-loan source mutations must fail verification.

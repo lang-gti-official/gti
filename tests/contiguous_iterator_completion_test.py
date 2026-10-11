@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from native_fixture_build import build_fixture
 
 
 MODES = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
@@ -112,12 +113,17 @@ def main():
             fixture, label, flags, native = case
             executable = output / f"{fixture}-{label}"
             command = [str(compiler), str(fixtures / f"{fixture}.gti"), *flags,
-                       "--progress=never", "--keep-cpp", "-o", str(executable)]
+                       "--progress=never"]
+            native_sources = []
             if fixture in ("contiguous_iterator_completion", "contiguous_iterator_cost"):
-                native = [*native, str(fixtures / "stdlib_adoption_allocation_counts.cpp")]
-            if native:
-                command += ["--", *native]
-            result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=180)
+                native_sources = [fixtures / "stdlib_adoption_allocation_counts.cpp"]
+            else:
+                command.append("--keep-cpp")
+            result = build_fixture(
+                command, executable, native_sources=native_sources,
+                native_arguments=native, standard=flags[1],
+                optimization=flags[2].removeprefix("-"), env=environment,
+                capture_output=True, text=True, timeout=180)
             assert result.returncode == 0, (fixture, label, result.stdout, result.stderr)
             assert "// GTI verified-MIR body:" in executable.with_suffix(".gti.cpp").read_text()
             return fixture, label, executable
