@@ -134,7 +134,8 @@
     "135-inline-polymorphic-values.gti": 256,
     "136-inline-closure-cells.gti": 116,
     "137-declared-attributes.gti": 188,
-    "138-environment-configuration.gti": 123
+    "138-structural-construction.gti": 185,
+    "139-environment-configuration.gti": 123
   },
-  "total": 12188
+  "total": 12373
 }
