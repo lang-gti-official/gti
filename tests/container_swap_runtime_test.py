@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 
+from native_fixture_build import build_fixture
 
 def run(command):
     environment = os.environ.copy()
@@ -31,8 +32,17 @@ def main():
             for fixture in ("container_swap", "container_swap_cleanup"):
                 binary = root / f"{fixture}-{mode}"
                 native = [fixtures / "container_swap_oracle.cpp"] if fixture == "container_swap" else []
-                built = run([compiler, fixtures / f"{fixture}.gti", *flags,
-                             "--keep-cpp", "-o", binary, "--", *native, *native_flags])
+                command = [compiler, fixtures / f"{fixture}.gti", *flags]
+                if not native:
+                    command.append("--keep-cpp")
+                environment = os.environ.copy()
+                for option in ("ASAN_OPTIONS", "UBSAN_OPTIONS"):
+                    previous = environment.get(option, "")
+                    environment[option] = (previous + ":" if previous else "") + "halt_on_error=1"
+                built = build_fixture(
+                    command, binary, native_sources=native, native_arguments=native_flags,
+                    standard=flags[1], optimization=flags[2][1:],
+                    capture_output=True, text=True, timeout=120, env=environment)
                 assert built.returncode == 0, (mode, fixture, built.stdout, built.stderr)
                 generated = binary.with_suffix(".gti.cpp").read_text()
                 assert "// GTI verified-MIR body:" in generated
