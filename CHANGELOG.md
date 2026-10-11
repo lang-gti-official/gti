@@ -9,7 +9,27 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.399.1 — Returning a construction built from an `expected`
+## 0.399.3 — Observing an `expected` call result directly
+
+- A call's `expected<T, E>` result can now be tested or read in place:
+  `if (make_item())`, `!make_item()`, `make_item() ? a : b`,
+  `make_item().has_value()`, `make_item().value()` and `make_item().error()`,
+  when `T` is a class that needs no cleanup. This works when `T` has no
+  default constructor, for callers that can fail and for class error types,
+  such as `make_coded(false).error().code`. The value of `.value()` can be
+  read through a field, as in `make_item().value().number`, bound to a
+  variable, or passed by value to a function or constructor. Such programs
+  used to report GTI-B0001, and the state tests failed native compilation
+  before 0.399.2. Reading `.value()` or `.error()` of the wrong state still
+  stops with GTI-R0009.
+- `make_named(false).error()` now also builds when the payload owns
+  resources, such as a `std::string` field.
+- Still reporting GTI-B0001: reading a field of `.value()` when the payload
+  owns resources (`make_named(true).value().text`), two `expected`
+  temporaries joined by a conditional before they are used, and an `expected`
+  field initialized directly from a call.
+
+## 0.399.2 — Returning a construction built from an `expected`
 
 - A construction from a by-value `expected<T, E>` argument can now be returned
   directly or used as a member initializer, as in

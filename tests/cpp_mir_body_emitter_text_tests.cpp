@@ -3476,26 +3476,28 @@ int main() {
          "a returned construction consuming a cleanup-owning Expected should "
          "take it from MIR's value-rooted transfer slot");
 
-  // A temporary observed only through its truth value has no exact
-  // uninitialized publication yet; it must fail closed.
+  // Two temporaries joined by a conditional before their state test have no
+  // exact uninitialized publication yet; the join must fail closed.
   const lang::FrontendResult observed =
-      analyze("cpp-mir-expected-class-observed-temporary.gti", R"(
+      analyze("cpp-mir-expected-class-joined-temporary.gti", R"(
 struct item_value {
   int32_t number;
   item_value(int32_t number) : number(number) {}
 };
 
-expected<item_value, int32_t> make_item() { return item_value(7); }
-
-bool observe() {
-  if (make_item()) { return true; }
-  return false;
+expected<item_value, int32_t> make_item(bool ok) {
+  if (ok) { return item_value(7); }
+  return unexpected(int32_t(3));
 }
 
-int main() { return observe() ? 0 : 1; }
+bool observe(bool ok) {
+  return (ok ? make_item(true) : make_item(false)).has_value();
+}
+
+int main() { return observe(true) ? 0 : 1; }
 )");
   expect(observed.canGenerateCode(),
-         "the observed Expected temporary should pass the frontend");
+         "the joined Expected temporary should pass the frontend");
   if (!observed.canGenerateCode()) {
     return;
   }
@@ -3517,9 +3519,113 @@ int main() { return observe() ? 0 : 1; }
         });
   }
   expect(rejected == 1,
-         "an Expected temporary with no exact publication should fail closed "
-         "instead of value-initializing its payload: " +
+         "a joined Expected temporary with no exact publication should fail "
+         "closed instead of value-initializing its payload: " +
              std::to_string(rejected) + " rejected");
+}
+
+// A cleanup-free Expected<Class, E> call temporary read once by its state test
+// or a checked value() or error() lives in representation-only storage: the
+// producer constructs the slot, the observer reads the wrapper there, and the
+// representation retires right after that read. A class payload moves into
+// its own field-read slot. An owning temporary is read in place from MIR's
+// value-rooted slot, which MIR's own Drop retires. (Regression: these
+// value-initialized std::expected<Item, E> or reported GTI-B0001.)
+void testExpectedTemporaryObservationSlot() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-expected-temporary-observation.gti", R"(
+struct item_value {
+  int32_t number;
+  item_value(int32_t number) : number(number) {}
+};
+
+class tracked {
+public:
+  int32_t value = 0;
+  tracked(int32_t value) : value(value) {}
+  ~tracked() {}
+};
+
+expected<item_value, int32_t> make_item(bool ok) {
+  if (ok) { return item_value(7); }
+  return unexpected(int32_t(3));
+}
+
+expected<tracked, int32_t> make_tracked(bool ok) {
+  if (ok) { return tracked(7); }
+  return unexpected(int32_t(3));
+}
+
+int32_t observe(bool ok) {
+  if (make_item(ok)) { return make_item(ok).value().number; }
+  return make_item(ok).error() + make_tracked(ok).error();
+}
+
+int main() { return observe(true) + observe(false) - 13; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the Expected temporary observation fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string slotType =
+      "::gti_internal::backend::mir_lifetime_slot<std::expected<::__gti_"
+      "program::item_value, std::int32_t>, true> __gti_mir_v_";
+  // Each observed slot is constructed by its producer, read once through
+  // get() on the next line, and retired on the line after that read.
+  std::size_t observed = 0;
+  std::string payloadSlot;
+  for (std::size_t at = text.find(slotType); at != std::string::npos;
+       at = text.find(slotType, at + slotType.size())) {
+    const std::size_t idStart = at + slotType.size();
+    const std::string slot =
+        "__gti_mir_v_" +
+        text.substr(idStart, text.find(';', idStart) - idStart);
+    const std::size_t produced = text.find(
+        slot + ".construct_from([&]() { return ::__gti_program::__gti_fn_");
+    const std::size_t read = produced == std::string::npos
+                                 ? std::string::npos
+                                 : text.find(slot + ".get()", produced);
+    const std::size_t lineEnd =
+        read == std::string::npos ? std::string::npos : text.find('\n', read);
+    const std::size_t next = lineEnd == std::string::npos
+                                 ? std::string::npos
+                                 : text.find_first_not_of(' ', lineEnd + 1);
+    if (next == std::string::npos ||
+        text.compare(next, slot.size() + 11, slot + ".destroy();") != 0)
+      continue;
+    ++observed;
+    const std::string move = "mir_expected_value_move_v1(" + slot + ".get(), &";
+    const std::size_t moved = text.rfind(move, lineEnd);
+    if (moved != std::string::npos && moved > produced)
+      payloadSlot =
+          text.substr(moved + move.size(), text.find(')', moved + move.size()) -
+                                               moved - move.size());
+  }
+  expect(observed == 3,
+         "the state test, the value() extraction and the error() extraction "
+         "should each read one constructed slot and retire it: " +
+             std::to_string(observed) + " observed");
+  expect(!payloadSlot.empty() &&
+             text.find("mir_lifetime_slot<::__gti_program::item_value, true> " +
+                       payloadSlot + ";") != std::string::npos &&
+             text.find(payloadSlot + ".get().number") != std::string::npos,
+         "value() should move the payload into its own field-read slot");
+  expect(text.find("std::expected<::__gti_program::item_value, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no observed Expected should value-initialize an ordinary local");
+  expect(text.find("mir_expected_error_v1(__gti_mir_p_") != std::string::npos &&
+             text.find("mir_lifetime_slot<std::expected<::__gti_program::"
+                       "tracked, std::int32_t>, true>") == std::string::npos,
+         "an owning temporary should be read in place from MIR's value-rooted "
+         "slot");
 }
 
 void testCopyableLambdaReturnRetainsSsa() {
@@ -3701,6 +3807,8 @@ constexpr NamedTest kTests[] = {
      testCleanupFreeExpectedClassConstructorArgumentSlot},
     {"testExpectedClassArgumentReturnedConstruction",
      testExpectedClassArgumentReturnedConstruction},
+    {"testExpectedTemporaryObservationSlot",
+     testExpectedTemporaryObservationSlot},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",

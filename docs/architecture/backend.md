@@ -1463,9 +1463,25 @@ ordinary SSA local would value-initialize the native wrapper and invent that
 construction, so the declaration fails closed instead, as for a fixed array
 whose element class has none. A failure-free producer, whose plain call
 returns the Expected by value, therefore constructs a staged slot from that
-return value. A shape with no exact publication, such as a temporary observed
-only through its truth value, rejects body emission rather than emitting
-native code that cannot compile.
+return value. A shape with no exact publication rejects body emission rather
+than emitting native code that cannot compile. Two such temporaries joined by
+a conditional before their use, and an Expected field initialized directly from
+a call, are currently in that position.
+
+The same representation-only slot serves a cleanup-free call temporary that
+is observed once in place. The single use is either the state test
+(`ExpectedHasValue`, as in `if (make_item())` or `.has_value()`) or the
+receiver of a checked `value()` or `error()` extraction. MIR gives the
+extraction no loan, so nothing borrows the wrapper past that read. The
+producer constructs the slot, the observer reads the wrapper through `get()`,
+and the generated representation is retired right after that read, on both of
+a checked extraction's edges. A scalar result is copied out. A class payload
+is moved out of the temporary: into its binding, prepared argument or returned
+result, through the direct extraction that `std::move(binding).value()` already
+uses, or into the payload's own field-read slot when only a field of it is
+read, as in `make_item().value().number`. An owning temporary instead keeps
+MIR's value-rooted slot and full-expression Drop, and a checked scalar
+extraction reads it in place there.
 
 A named binding of the same cleanup-free placement Expected that is copied into
 either consumer is staged the same way. This is the copied-binding Return rule
