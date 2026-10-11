@@ -129,10 +129,19 @@ the standard library observes no application flags. Replay under each domain's
 flags with canonical-syntax comparison is the actual invariant, and it already
 caught the cases flag equality missed.
 
-An aggregate `import std;` is deferred. Every imported unit is lowered and
-emitted in full whether or not the program uses it, and the whole library
-costs several seconds per compile. An aggregate becomes reasonable once
-unreferenced library declarations need not reach lowering.
+An aggregate `import std;` is deferred. Every imported unit used to be lowered
+and emitted in full whether or not the program used it, and the whole library
+cost several seconds per compile.
+
+Artifact builds now lower and emit only reachable library code. Importing
+every standard unit into an empty program takes about 1.0 s (main `f3f85336`,
+M2 Max), against about 0.09 s for one `<std/vector>`. Of that, about 0.6 s is
+semantic analysis of every imported body, and about 0.25 s is C++ emission of
+every generic declaration's template, instantiated or not.
+
+An aggregate becomes reasonable once semantic analysis of unreferenced library
+bodies is also deferred. That is the direction of the deferred lazy
+body-analysis work.
 
 `import` and `module` become reserved GTI keywords; `export` was already a
 reserved C++ keyword. A minor-version migration must call out the two newly

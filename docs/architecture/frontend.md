@@ -128,11 +128,15 @@ HIR/MIR and C++ emission use existing executable contracts; this is not binary
 or separate compilation.
 
 Artifact builds set `FrontendOptions::lowerReachableOnly`. The complete program
-is still analyzed and lowered to HIR, so diagnostics are unchanged, but MIR
-and everything after it receive only the instances reachable from the program
-roots; see [HIR](hir.md#reachable-executable-prefix). An imported or included
-library therefore costs lowering, optimization, and emission only for what the
-program uses.
+is still analyzed, but MIR and everything after it receive only the instances
+reachable from the program roots; see
+[HIR](hir.md#reachable-executable-prefix). Artifact builds also set
+`lowerLibraryReachableOnly`. HIR still lowers the entry unit and every
+application or package unit completely, but lowers compiler-trusted
+declarations only when the roots reach them. `gti check` keeps complete HIR
+lowering. An imported or included library therefore costs HIR lowering,
+optimization and emission only for what the program uses. It still costs
+semantic analysis of every body it declares.
 
 ### Reusable lexical and parsed units
 

@@ -12,7 +12,8 @@ public:
   explicit Impl(TargetInfo target, HirLoweringScope scope)
       : target(std::move(target)),
         reachablePrefixRequested(scope.reachablePrefix),
-        entryDeclarations(scope.entryDeclarations) {}
+        entryDeclarations(scope.entryDeclarations),
+        completeDeclarations(std::move(scope.completeDeclarations)) {}
 
   [[nodiscard]] HirLoweringResult lowerConstantFunction(
       const SemanticModel &semantics, SemanticInstanceProvider &provider,
@@ -125,10 +126,20 @@ public:
     lowerLoans(*baseModel, output.program.moduleBody);
     processPendingInstances();
     const InstanceCounts reachable = instanceCounts();
-    // Every other declaration is still lowered: concrete semantic analysis of
-    // its instances is what reports their diagnostics.
+    // Every other declaration in scope is still lowered: concrete semantic
+    // analysis of its instances is what reports their diagnostics.
     if (reachablePrefixRequested && !entryDeclarations) {
-      seedDeclarations(source.declarations(), std::nullopt);
+      if (completeDeclarations) {
+        const StmtList &declarations = source.declarations();
+        for (const auto &[first, count] : *completeDeclarations) {
+          const std::size_t end = std::min(declarations.size(), first + count);
+          for (std::size_t index = first; index < end; ++index) {
+            seedDeclaration(declarations[index], std::nullopt);
+          }
+        }
+      } else {
+        seedDeclarations(source.declarations(), std::nullopt);
+      }
       processPendingInstances();
     }
     output.program.valid_ =
@@ -6253,6 +6264,10 @@ private:
   // Top-level declaration range of the entry unit when lowering is scoped to
   // it; see `HirLoweringScope`.
   std::optional<std::pair<std::size_t, std::size_t>> entryDeclarations;
+  // Declaration ranges lowered completely after a reachable prefix; see
+  // `HirLoweringScope`.
+  std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
+      completeDeclarations;
   SemanticInstanceProvider *instanceProvider = nullptr;
   const SemanticModel *baseModel = nullptr;
   HirLoweringResult output;
