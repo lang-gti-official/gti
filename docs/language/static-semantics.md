@@ -18,11 +18,12 @@ The implemented language includes:
 - class, struct, interface, and passive union types;
 - fixed arrays whose extents participate in type identity;
 - non-null read-only and mutable reference types;
-- nullable one-level `T*` and `const T*` raw-pointer types;
+- nullable recursive raw-pointer types with per-layer qualification;
 - `expected<T, E>`;
-- compiler-private unique-owner and storage capability types;
+- narrow compiler-private owner, uninitialized-object and host capabilities;
 - generic type and value parameters; and
-- lexical lambda types.
+- lexical lambda types and nominal namespace function-item types;
+- function-signature metadata types, which have no object storage themselves.
 
 Aliases are transparent names and do not introduce new nominal types.
 
@@ -60,34 +61,34 @@ writable borrow. Reference binding and escape are subject to the ownership
 rules in [Ownership And Lifetimes](ownership-and-lifetimes.md).
 
 A local mutable reference may be reborrowed as a mutable or read-only child
-when its source has a stable root with only named-field and checked-dereference
-projections. The mutable parent is suspended while any child loan remains
-active and fully reactivates only after the final active child's proven
+when its source has a stable root with named-field, constant fixed-array-index
+or checked-dereference projections. The mutable parent is suspended while any
+child loan remains active and fully reactivates only after the final active child's proven
 endpoint. Access through a known-disjoint named-field projection remains
 available, and multiple child loans may coexist only over such disjoint
 places. Parent or owner access that overlaps an active child is ill-formed,
-and a read-only loan cannot be upgraded to a mutable child. Indexed, raw, and
-opaque sources do not receive this bounded precise-place treatment. This rule
-does not generally permit mutable stored-reference fields or returning any
-local child reborrow (mutable or read-only) directly or through a stored
-carrier. L-RANGE-02 adds one bounded exception: a compiler-generated mutable
-range iterator may carry the exact exclusive range loan, and its mutable
-dereference creates one iteration-scoped child loan.
-Existing receiver-tied mutable-reference returns remain governed by their
-narrower rules.
+and a read-only loan cannot be upgraded to a mutable child. Dynamic indices
+remain potentially overlapping; raw and opaque sources do not gain this precise
+place proof. Returning a child must satisfy the independently checked
+return-origin contract. Stored carriers and range iteration have the explicit
+contracts below; neither bypasses parent suspension or owner lifetime.
 
-A local borrowed-state carrier may retain an ordinary read-only owner
-dependency, but it may not retain a mutable parent loan or a child reborrow.
-Copy construction of a direct read-only stored-reference carrier creates an
-independent shell alias of the same owner loan; assignment is unavailable and
-does not reseat that dependency. A mutable carrier is noncopyable. When such a
-read-only carrier enters a function by value, a carrier result may transfer
-only that dependency and a reference result may name only its exact designated
-stored referent of the same type. Shell fields, projections, and unrelated or
-type-incompatible references are ill-formed (`GTI-S2085`).
-The mutable range iterator exception is compiler-generated, confined to its
-range plan, and cannot be named as an ordinary escaping local. Other child
-reborrows remain limited to non-retained full-expression temporaries.
+A nominal carrier may retain multiple shared/exclusive owner dependencies,
+including recursively composed nominal fields. Copy construction is available
+only when all dependencies are shared and ordinary fields are copyable; a copy
+aliases the same owner loans, not the source shell. An exclusive carrier moves
+its existing dependency set and is noncopyable. Neither form supports assignment
+that would reseat established dependencies. A single-path shared carrier may
+retain a read-only child of an exclusive parent, keeping that parent suspended
+until every child alias ends. Local mutable cursors are ordinary clients of
+this rule, not a library-name or hidden-range exception.
+
+Checked carrier returns must preserve the complete summarized origin set. The
+separately escaping reference-return rule for a by-value carrier still requires
+its one exact externally borrowed reference path. A shell field, unrelated
+referent or unsupported projection cannot substitute for that origin
+(`GTI-S2085`). The [stored-reference contract](ownership-and-lifetimes.md#references)
+states constructor, nested dependency, child-loan and escape boundaries.
 
 For a receiver- or argument-tied result, the stable place is the selected
 origin expression. The compiler preserves a caller-visible field path such as
@@ -99,9 +100,10 @@ Call and construction arguments are checked under strict left-to-right
 evaluation. If an earlier argument produces a transient borrow, a later
 mutation of an overlapping place is ill-formed because that loan remains active
 through the full-expression. An earlier completed mutation may be followed by
-a later borrow when no other loan conflicts. The current compiler still
-rejects the pair in either written order until the matching ordered MIR/backend
-family implements this distinction.
+a later borrow when no other loan conflicts. Ordered ordinary-call and
+constructor schedules implement this distinction; reversed order does not
+shorten the earlier borrow, and a later read under an exclusive argument is
+also rejected.
 
 Ordinary local value bindings require initialization at their declaration,
 including mutable scalar bindings. `mut` grants write access; it does not
@@ -146,10 +148,11 @@ require an unsafe block. Pointee qualification is not removed implicitly, and
 GTI provides no implicit typed-pointer/`void*` conversion or raw-pointer
 truthiness.
 
-Address formation, raw dereference or store, raw indexing, raw arrow access,
-pointer arithmetic, and a pointer-bearing C call are well-formed only within a
-lexically enclosing `unsafe` block. A nested lambda starts a fresh safety
-context. Unsafe context does not suppress type, access, initialization,
+Inert address formation from an admitted checked place is safe and creates no
+loan or lifetime extension. A raw projection beneath that formation, raw
+dereference or store, raw indexing, raw arrow access, pointer arithmetic, and a
+pointer-bearing C call require a lexically enclosing `unsafe` block. A nested
+lambda starts a fresh safety context. Unsafe context does not suppress type, access, initialization,
 ownership, or control-flow checking.
 
 A GTI free function or ordinary non-polymorphic instance/static method may
@@ -160,8 +163,9 @@ be erased through a native callback or safe function-item conversion. Hosted
 `main` cannot carry it. See [the caller contract](raw-pointers.md#functions-with-a-caller-obligation)
 for the admitted declaration forms and proof obligations.
 
-The ordinary type surface supports exactly one pointer level. Pointer-to-pointer
-locals, parameters, fields, aliases, and unannotated returns, references to raw
+The ordinary type surface supports recursively nested pointer levels, including
+locals, parameters, fields, aliases and native out-pointers, with exact
+per-layer qualification and native-call obligations. References to raw
 pointers, anonymous/general function-pointer declarators, pointer-to-array
 types, implicit fixed-array
 decay, integer/pointer casts, unrelated typed-pointer reinterpretation, and
@@ -169,9 +173,9 @@ source allocation/deallocation expressions are ill-formed. Explicit
 const-preserving typed/`void*` conversions use pointer-alias type calls (or
 concrete dependent target type calls), as specified in
 [Raw pointers](raw-pointers.md#void).
-An exact `[[c_array(count)]] extern "C"` return may add one outer pointer when
-the named parameter is a writable fixed-width integer out pointer; this does
-not admit nested pointers elsewhere. `void*` is opaque and cannot be
+An exact `[[c_array(count)]] extern "C"` return additionally records its counted
+native array contract; it is not the source of general nested-pointer
+permission. `void*` is opaque and cannot be
 dereferenced, indexed, used for member access, or used in pointer arithmetic.
 Namespace-scope aliases may name the distinct bounded native callback type
 specified by [`native-c-interop.md`](native-c-interop.md#native-callback-types).
@@ -264,8 +268,9 @@ forwarding and concrete reanalysis; a non-signature does not become a signature
 by conversion. Read-only and mutable reference elements can flow through named
 parameter packs. Mutable references retain exclusive access to each caller
 argument, and overlapping mutable/read or mutable/mutable arguments are rejected.
-Consuming public wrappers remain incomplete.
-This declaration syntax does not itself implement `std::function`.
+Source-defined owning wrappers implement read, mutable and consuming invocation
+under the separate callable ownership/cleanup contract. The declaration syntax
+alone does not supply storage, erasure or `std::function` policy.
 
 A lambda or nominal `operator()` call can expand a concrete parameter pack. Concrete
 reanalysis checks the flattened arity and each exact argument type, including
@@ -284,9 +289,10 @@ the same rule. Owning or borrow-carrying array transport is not enabled by this
 passive-array staging rule.
 Read-only reference elements forward to the same exact read-only reference
 parameter type. They are not copied, moved, or given callee cleanup obligations;
-the ordinary caller-side borrow rules apply for the invocation. Mutable
-reference elements and fully general stored signature-based invocation remain
-incomplete.
+the ordinary caller-side borrow rules apply for the invocation. Exact mutable
+reference elements likewise preserve exclusive caller access and may be
+forwarded sequentially without consuming the referent. Overlapping arguments
+remain rejected; this is not implicit reference deduction from a value pack.
 
 Namespaces, namespace aliases, and qualified `::` names use lexical declaration
 and source-unit visibility. `namespace outer::inner { ... }` is shorthand for
@@ -1001,8 +1007,10 @@ corresponding operation unavailable.
 
 `T&&` is not a general GTI reference or forwarding-reference type. It is
 permitted only in the exact move constructor policy. A custom copy or move
-constructor body is ill-formed until field places, partial movement, and
-partial initialization have complete language semantics.
+constructor body is not supported. GTI currently uses structural movement and
+relocation; adding arbitrary user move bodies would require a separate language
+decision, not merely completion of the existing field-place and object-lifetime
+facilities.
 
 A class or struct may declare one public destructor as either `~Type() { ... }`
 or `~Type() = default;`. The defaulted form selects structural destruction and
@@ -1014,7 +1022,7 @@ under the current ownership model.
 `[[c_opaque]] struct Name;` is the only incomplete nominal type declaration.
 It is nongeneric, baseless, has no body, layout, members, lifecycle, or
 concurrency capability, and cannot be combined with `[[c_abi]]`. Its resolved
-type may occur only behind one raw pointer, including in an admitted
+type may occur only behind raw-pointer indirection, including in an admitted
 `[[c_abi]]` record field or `extern "C"` signature. The pointer remains
 nullable, non-owning, and subject to lexical unsafe rules. Direct values,
 construction, inheritance, generic arguments, pointee layout queries, and
@@ -1143,7 +1151,7 @@ recurrence remain ill-formed.
 An enum with at least one parameterized alternative is a closed tagged
 sum. It cannot declare an integral backing type or explicit enumerator values.
 Every payload field is named, immutable, and non-variadic. The admitted field
-types are primitive scalars, `std::string_view`, `nullptr_t`, one-level raw
+types are primitive scalars, `std::string_view`, `nullptr_t`, recursive raw
 pointers, integral scoped enums, and ordinary concrete class instances,
 including generic instances. A concrete class
 payload may require active cleanup through its destructor or owned fields; the
@@ -1254,7 +1262,8 @@ same-type assignment with no exact user operator continues to use the class's
 generated copy or move assignment policy.
 
 Unary `+`, `-`, and `~`, and binary arithmetic, remainder, bitwise, and shift
-operators are read-only member calls returning owned values. Binary forms take
+operators are read-only or explicitly consuming member calls returning owned
+values. Binary forms take
 one exact argument. Compound arithmetic, remainder, bitwise, and shift
 operators take one exact argument, return `void`, and require trailing `mut`.
 Prefix `--` has the same `void` and mutable-receiver contract as prefix `++`;
@@ -1386,7 +1395,7 @@ constants; earlier constexpr bindings; grouping; supported scalar unary,
 binary, comparison, and short-circuit logical operations; lazy conditional
 expressions; read-only field and fixed-array indexing; literal-backed
 string-view `size()`, `empty()`, and checked indexing; and explicit numeric
-conversions plus lossless `uint8_t(char)` code-unit extraction.
+conversions plus lossless `uint8_t(char)`/`char(uint8_t)` code-unit conversion.
 Integer operations use the language's checked domains.
 Floating literals, arithmetic, comparisons, integer conversions, signed zero,
 infinities, and NaNs use the selected binary32 or binary64 rules in execution
@@ -1694,9 +1703,11 @@ language evaluation.
 The following require later normative sections rather than inference from the
 current implementation:
 
-- the remaining callable, complete-range, heterogeneous accumulation, and hash
-  capability families plus any general expression-requirement model;
-- complete lifetime relationships for borrowed aggregate values;
+- additional associated-type/range and heterogeneous accumulation contracts,
+  plus a general expression-requirement model; existing complete-range and hash
+  capabilities are not missing foundations;
+- broader lifetime/return-place relationships beyond the implemented nominal
+  multi-origin aggregate and explicit borrow-summary profiles;
 - general place movement, partial initialization, and reinitialization;
 - full owned-callable composition beyond direct by-value generic parameters
   and nominal generic owning-carrier parameters,
@@ -1704,16 +1715,16 @@ current implementation:
   closure movement, and explicit owned move-capture, including general pack
   template-shape composition, broader erased allocation, and general function-pointer values;
 - constexpr execution beyond the bounded concrete-generic, scoped-enum,
-  fixed-array, and structural-aggregate subset, including references,
-  allocation, mutation through aggregate places, payload enums, packs,
-  operators, and polymorphism;
+  fixed-array, passive aggregate mutation, read-only reference and read-only
+  operator profiles: mutable reference/receiver execution, active cleanup,
+  allocation, payload enums, packs and polymorphism remain outside them;
 - audited expansion beyond the bounded scalar, counted-text-input,
-  `[[c_abi]]` record, pointer-only `[[c_opaque]]` handle, one-level raw-pointer,
-  pointer-plus-count, and exact same-thread callback C surface, including
-  array parameters, casts, foreign-thread callbacks, and annotated ownership
+  `[[c_abi]]` record, pointer-only `[[c_opaque]]` handle, recursive raw-pointer,
+  pointer-plus-count, and exact registered callback C surface, including
+  array parameters, foreign-thread callbacks, and annotated ownership
   transfer; and
 - native record field families beyond the closed scalar, nested-record,
-  one-level-pointer, direct-fixed-array, and callback-field set, including C
+  recursive-pointer, fixed-array, and callback-field set, including C
   ABI unions, packing, and bit-fields; record initialization policy remains in
   safe wrappers or native factory functions rather than in the representation
   declaration.
