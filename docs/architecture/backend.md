@@ -1674,7 +1674,16 @@ Two cleanup-free Expected call results joined by a conditional publish into the
 join's conditional temporary. MIR gives that temporary no drop, so each
 producer constructs it directly. A failure-free call does this immediately
 before its Initialize, and a checked call on the Invoke success edge leading to
-the Initialize. Grouping the join's transport, as in
+the Initialize. A callable value invocation (a closure literal, a capturing
+closure or a callable parameter) is such a checked call: its exact lambda
+instance propagates through the callable failure ABI and constructs the
+temporary at its construction address. An arm may also copy or move a named
+`expected` binding. The Load or Move then constructs the temporary directly,
+immediately before the arm's Initialize, and the source keeps its own binding
+drop. For an owning join, the moved value's drop is reparented into the
+temporary's drop at that Initialize, as a source call's owning result is.
+`expectedConditionalArmSlot` names the temporary that each such producer
+constructs. Grouping the join's transport, as in
 `(ok ? a() : b()).has_value()`, names the same storage, so a state test,
 extraction or by-value consumer reads the join directly. Before each
 publication, the previous representation is retired, which keeps a loop from

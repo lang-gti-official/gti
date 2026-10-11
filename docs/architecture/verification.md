@@ -443,6 +443,64 @@ Expected-callable publication repair. Its local Release all-target build passes;
 focused Expected checks run during the iterator source edits are development
 feedback and must not be presented as clean-head integration evidence.
 
+## Expected conditional arms beyond source calls (0.405.3)
+
+- **Defects.** An `expected<Class, E>`-valued conditional reported
+  `GTI-B0001` whether it initialized a new binding or replaced one, when an
+  arm was not a source call. This happened for a cleanup-free success class,
+  with an enum or a scalar error. The rejected arms were:
+  - a closure literal, capturing closure or callable parameter invocation, as
+    in `auto r = ok ? closure(1) : make(2);`;
+  - a copy of a named `expected` binding, as in `auto r = ok ? a : b;`;
+  - a move out of one, as in `auto r = ok ? std::move(a) : make(2);`.
+
+  A move arm with an owning success class failed the same way. An owning
+  closure arm already built.
+- **Causes and rules.** The cleanup-free join temporary has no default
+  alternative, so each arm's producer must construct it directly.
+  `expectedClassResultDestinationSlot` admitted only a static source call on
+  its Invoke success edge. `expectedCopyDestinationSlot` and
+  `expectedMoveDestinationSlot` admitted only a binding destination whose
+  drop the arm's `Initialize` activates. Each rejected arm therefore fell back
+  to a value-initialized SSA local, which the Expected value-initialization
+  guard rejects. The fixes are:
+  - A callable value invocation's checked publication now qualifies on the
+    same Invoke success edge.
+  - A copy or move may construct an Expected join temporary, adjacent to the
+    arm's `Initialize`, while the source keeps its binding drop. A
+    cleanup-free temporary has no drop and its `Initialize` activates
+    nothing. An owning one has a value drop, into which the `Initialize`
+    reparents the moved value's drop.
+  - `expectedConditionalArmSlot` names that temporary for the join's
+    `Initialize`, which then publishes nothing further. Before each
+    cleanup-free producer runs, the temporary's previous representation is
+    retired, which serves loops.
+
+  MIR is unchanged and remains the execution authority. Only native
+  publication of MIR's existing events changes.
+- **Regression tests.** `expected_conditional_arms_runtime` builds a new
+  fixture under C++20 and C++23 at O0, O1 and O3, plus the no-elide and
+  ASan/UBSan modes. It covers:
+  - closure literal, capturing closure and callable parameter arms, and
+    copies and moves of named bindings;
+  - initialization and replacement, through success and both error
+    alternatives of an enum error, and through a scalar error;
+  - nested and grouped conditionals, a loop alternating arm kinds, and a
+    failure-propagating caller;
+  - owning arms initializing and replacing through every alternative pair,
+    nested in a loop.
+
+  Each replaced value and each live moved-from binding is retired exactly
+  once. Two raising runs fail inside a cleanup-free closure arm and inside an
+  owning closure arm. In the owning run, the old value and an untouched named
+  binding are each retired once.
+- **Out of scope.** Inside a generic body, an unconstrained callable
+  parameter's invocation has no result type before instantiation. A
+  conditional pairing it with a non-dependent arm, as in
+  `ok ? produce(1) : make(2)`, is rejected by semantic analysis
+  (`GTI-S2050`). Two invocations of the parameter, assigned to an explicitly
+  typed binding, are covered.
+
 ## Expected conditionals replacing bindings (0.405.2)
 
 - **Defects.** Two families of verified programs failed natively:
@@ -482,10 +540,10 @@ feedback and must not be presented as clean-head integration evidence.
   retired exactly once. Three raising runs fail inside a cleanup-free arm, an
   owning arm and a nested owning arm, retiring the old owning value once.
 - **Out of scope.** Arms that are not call results of a source function, such
-  as a closure invocation, a copy or a move of a named `expected` binding, are
-  still rejected with `GTI-B0001` whether the conditional initializes a new
-  binding or replaces one. They need the Expected join arm vocabulary extended,
-  not assignment publication.
+  as a closure invocation, a copy or a move of a named `expected` binding,
+  were still rejected with `GTI-B0001` whether the conditional initialized a
+  new binding or replaced one. They needed the Expected join arm vocabulary
+  extended, not assignment publication; 0.405.3 does that (see above).
 
 ## Expected call results replacing bindings (0.405.1)
 
