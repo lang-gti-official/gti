@@ -60,7 +60,7 @@ after copying into the public string. An owner-witnessed view covers only that
 copy operation; neither libc storage nor the private handle escapes. Snapshot
 metadata and bytes share one allocation; the GTI string reserves the exact
 required capacity. Missing lookups allocate no snapshot or result string.
-`examples/139-environment-configuration.gti` demonstrates absent, empty and
+`examples/140-environment-configuration.gti` demonstrates absent, empty and
 configured values without printing credentials.
 
 ## Command Construction

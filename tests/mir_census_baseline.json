@@ -135,7 +135,8 @@
     "136-inline-closure-cells.gti": 116,
     "137-declared-attributes.gti": 188,
     "138-structural-construction.gti": 185,
-    "139-environment-configuration.gti": 123
+    "139-ordered-search.gti": 137,
+    "140-environment-configuration.gti": 123
   },
-  "total": 12373
+  "total": 12510
 }

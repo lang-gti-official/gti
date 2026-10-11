@@ -1,0 +1,66 @@
+#include <std/algorithm>
+#include <std/string>
+#include <std/vector>
+
+mut int mode = 0;
+
+class Guard {
+  std::string text;
+public:
+  Guard(std::string text) : text(std::move(text)) {}
+  ~Guard() { std::println(this.text.view()); }
+};
+
+class Ordering {
+  std::string text = std::string("comparator");
+public:
+  Ordering() {}
+  Ordering(Ordering& other) = delete;
+  Ordering(Ordering&& other) = default;
+  ~Ordering() { std::println(this.text.view()); }
+  bool operator()(int& left, int& right) mut {
+    Guard guard{std::string("call")};
+    // In binary_search mode only the final reversed comparison has key 4 on
+    // the left and element 5 on the right. Fail there after two successful
+    // lower-bound comparisons, proving the same owned callback survives.
+    if (mode == 2 || mode == 4 || (mode == 5 && left == 4 && right == 5)) {
+      int failure = 1 / (mode - mode);
+    }
+    return left < right;
+  }
+};
+
+class Partition {
+  std::string text = std::string("predicate");
+public:
+  Partition() {}
+  Partition(Partition& other) = delete;
+  Partition(Partition&& other) = default;
+  ~Partition() { std::println(this.text.view()); }
+  bool operator()(int& value) mut {
+    Guard guard{std::string("call")};
+    if (mode == 3) { int failure = 1 / (mode - 3); }
+    return value < 4;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mode = argc;
+  Guard outer{std::string("outer")};
+  std::vector<int> values = {1, 3, 5, 7};
+  int key = 4;
+  if (mode == 3) {
+    auto found = std::partition_point(values.begin(), values.end(), Partition());
+    std::println(*found);
+  } else if (mode == 4) {
+    auto found = std::upper_bound(values.begin(), values.end(), key, Ordering());
+    std::println(*found);
+  } else if (mode == 5) {
+    int found = std::binary_search(values.begin(), values.end(), key, Ordering()) ? 1 : 0;
+    std::println(found);
+  } else {
+    auto found = std::lower_bound(values.begin(), values.end(), key, Ordering());
+    std::println(*found);
+  }
+  return 0;
+}

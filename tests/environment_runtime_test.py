@@ -48,7 +48,7 @@ def main():
                           'return 0; }\n', encoding="utf-8")
         cases = [(root / "tests/fixtures/stdlib_surface_environment.gti", "surface"),
                  (root / "tests/fixtures/environment_lookup.gti", "lookup"),
-                 (root / "examples/139-environment-configuration.gti", "example"),
+                 (root / "examples/140-environment-configuration.gti", "example"),
                  (module, "module")]
         for standard in ("c++20", "c++23"):
             for level in ("O0", "O3"):
