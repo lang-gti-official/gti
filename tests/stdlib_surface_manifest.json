@@ -655,14 +655,6 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
-      "id": "transfer-function-threads",
-      "mode": "run",
-      "source": "tests/fixtures/transfer_function_threads.gti",
-      "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
-    },
-    {
       "id": "http",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_http.gti",
@@ -1250,6 +1242,14 @@
         "stdout": "first task\n42\nautojoin task\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "transfer-function-threads",
+      "mode": "run",
+      "source": "tests/fixtures/transfer_function_threads.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "unique-ptr",
