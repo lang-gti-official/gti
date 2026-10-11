@@ -1,0 +1,26 @@
+#include <std/environment>
+#include <std/string>
+
+// GTI_DEMO_PROFILE may be absent, empty, or contain a profile spelling.
+// Every successful lookup is an independent owner, not a libc pointer.
+int main() {
+  auto lookup = std::environment::get("GTI_DEMO_PROFILE");
+  if (!lookup) {
+    std::println("Unable to read environment configuration");
+    return 1;
+  }
+  auto profile = std::move(lookup).expect("checked environment lookup");
+  if (!profile) {
+    std::println("profile: default");
+  } else if (profile.value().empty()) {
+    std::println("profile: explicitly empty");
+  } else {
+    std::println(profile.value().view());
+  }
+
+  auto invalid = std::environment::get("NOT=A=NAME");
+  if (invalid || invalid.error() != std::environment::errc::invalid_name) {
+    return 2;
+  }
+  return 0;
+}
