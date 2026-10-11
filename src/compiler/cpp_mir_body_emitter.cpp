@@ -29594,6 +29594,7 @@ classSsaLifetimeSlot(const MirProgram &program,
       producer->dispatch == CallDispatch::Static &&
       producer->intrinsic == IntrinsicKind::None &&
       producer->operation == MirOperation::None &&
+      producer->unsafeOperation == UnsafeOperationKind::None &&
       producer->callableArguments.empty() &&
       producer->localFailureSites.empty() &&
       producer->definedFailure.localOrigins.empty() &&
