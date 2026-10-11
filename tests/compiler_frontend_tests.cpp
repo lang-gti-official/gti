@@ -3068,6 +3068,122 @@ int main() { return 0; }
              lang::hasErrorDiagnostics(deadInstanceError.diagnostics),
          "a generic instance required only by unreachable code is still "
          "analyzed and reports its error");
+
+  // Artifact builds lower compiler-trusted declarations only when the roots
+  // reach them. A trusted unit outside the repository's library stands in for
+  // the standard library. Each check adds one unreferenced function and counts
+  // whether HIR lowered one more function instance.
+  const auto libraryRoot = std::filesystem::weakly_canonical(
+      std::filesystem::temp_directory_path() / "gti-reachable-library-root");
+  std::filesystem::create_directories(libraryRoot / "std");
+  const auto libraryUnit = libraryRoot / "std" / "reachable_probe.gti";
+  const std::string libraryBase = "int library_used() { return 3; }\n";
+  const auto writeLibrary = [&](const std::string &source) {
+    std::ofstream output(libraryUnit);
+    output << source;
+  };
+  struct Lowered {
+    lang::FrontendResult result;
+    std::size_t functions = 0;
+  };
+  const auto analyzeLibrary = [&](const std::filesystem::path &path,
+                                  std::optional<std::string> source,
+                                  bool libraryReachableOnly) {
+    lang::FrontendWorkMetrics metrics;
+    lang::FrontendOptions options;
+    options.workMetrics = &metrics;
+    options.lowerReachableOnly = true;
+    options.lowerLibraryReachableOnly = libraryReachableOnly;
+    Lowered lowered{lang::Frontend(options).analyze(
+        path, std::move(source), {standardLibraryPrelude()}, {},
+        {standardLibraryRoot(), libraryRoot})};
+    lowered.functions = metrics.hirFunctionInstances;
+    return lowered;
+  };
+  const std::string libraryClient =
+      "#include <std/reachable_probe>\n"
+      "int main() { return library_used() - 3; }\n";
+  const std::string unreferenced = "int unreferenced_probe() { return 0; }\n";
+
+  writeLibrary(libraryBase);
+  const auto completeBase = analyzeLibrary(entry, libraryClient, false);
+  const auto reachedBase = analyzeLibrary(entry, libraryClient, true);
+  const auto applicationExtra =
+      analyzeLibrary(entry, libraryClient + unreferenced, true);
+  writeLibrary(libraryBase + unreferenced);
+  const auto completeExtra = analyzeLibrary(entry, libraryClient, false);
+  const auto reachedExtra = analyzeLibrary(entry, libraryClient, true);
+  expect(completeBase.result.canGenerateCode() &&
+             reachedBase.result.canGenerateCode() &&
+             completeExtra.result.canGenerateCode() &&
+             reachedExtra.result.canGenerateCode() &&
+             applicationExtra.result.canGenerateCode(),
+         "the library-reachable fixtures pass the frontend");
+  expect(completeExtra.functions == completeBase.functions + 1 &&
+             reachedExtra.functions == reachedBase.functions &&
+             reachedBase.functions < completeBase.functions,
+         "an unreferenced trusted declaration is lowered only by complete "
+         "lowering");
+  expect(applicationExtra.functions == reachedBase.functions + 1,
+         "application declarations are still lowered completely");
+
+  const auto trustedEntry = analyzeLibrary(
+      libraryUnit, libraryBase + "int main() { return library_used() - 3; }\n",
+      true);
+  const auto trustedEntryExtra =
+      analyzeLibrary(libraryUnit,
+                     libraryBase + unreferenced +
+                         "int main() { return library_used() - 3; }\n",
+                     true);
+  expect(trustedEntry.result.canGenerateCode() &&
+             trustedEntryExtra.result.canGenerateCode() &&
+             trustedEntryExtra.functions == trustedEntry.functions + 1,
+         "a trusted entry unit is still lowered completely");
+
+  // Semantic analysis still checks every trusted body.
+  writeLibrary(libraryBase + "int library_broken() { return missing_name; }\n");
+  const auto brokenLibrary = analyzeLibrary(entry, libraryClient, true);
+  expect(!brokenLibrary.result.canGenerateCode() &&
+             lang::hasErrorDiagnostics(brokenLibrary.result.diagnostics),
+         "an unreferenced trusted body is still semantically checked");
+  writeLibrary(libraryBase +
+               R"(T twice_probe<T>(T value) { return value + value; }
+class ProbePlain {
+public:
+  ProbePlain() {}
+};
+int library_unreached() {
+  ProbePlain plain = ProbePlain();
+  ProbePlain doubled = twice_probe(plain);
+  return 0;
+}
+)");
+  const auto invalidInstance = analyzeLibrary(entry, libraryClient, true);
+  expect(!invalidInstance.result.canGenerateCode() &&
+             lang::hasErrorDiagnostics(invalidInstance.result.diagnostics),
+         "an invalid generic instance inside an unreferenced trusted body is "
+         "still reported");
+
+  // Code the roots reach is emitted exactly as before.
+  const std::string realLibraryClient = R"(#include <std/format>
+#include <std/string>
+#include <std/vector>
+int main() {
+  mut std::vector<std::string> names{};
+  names.push_back(std::string("a"));
+  std::println(std::format("{}", names.size()));
+  return 0;
+}
+)";
+  const auto completeClient = analyzeLibrary(entry, realLibraryClient, false);
+  const auto reachedClient = analyzeLibrary(entry, realLibraryClient, true);
+  expect(completeClient.result.canGenerateCode() &&
+             reachedClient.result.canGenerateCode() &&
+             reachedClient.functions < completeClient.functions &&
+             gti_test::emitCppText(completeClient.result) ==
+                 gti_test::emitCppText(reachedClient.result),
+         "library-reachable lowering emits the same program");
+  std::filesystem::remove_all(libraryRoot);
 }
 
 void testSupportFacilities() {
