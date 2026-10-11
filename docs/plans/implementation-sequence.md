@@ -84,9 +84,10 @@ clients) and phase 3 (`std::meta::construct`, method/constructor/parameter
 metaobjects, source locations, budget hardening). Reflection is no longer
 "later breadth" in the roadmap; what remains restricted (invocation through
 metaobjects, static-field metaobjects, runtime reflection, source generation,
-layout) is recorded in the alignment ledger. Next: `std::experimental::json`
-as the verification gate, after which `std::json` is deprecated, then the
-parked `lsp-lazy-bodies` task. The campaign touches the parser,
+layout) is recorded in the alignment ledger. The verification gate,
+`std::experimental::json`, is built (see the acceptance note in
+`reflection.md`); next it grows to cover `std::json`'s codec use cases, after
+which `std::json` is deprecated, then the parked `lsp-lazy-bodies` task. The campaign touches the parser,
 semantic analysis (declaration-stage attribute evaluation, folded queries,
 aliases), HIR lowering and the trusted standard library; its one MIR change
 materialises direct-initialized temporaries before projection and its one
