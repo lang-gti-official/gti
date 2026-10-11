@@ -956,9 +956,26 @@ using byte_field = std::conditional_t<byte_transport<T>::value,
     output << R"(
 template <typename Value, typename Error> class byte_expected;
 template <typename Error> class byte_unexpected;
+template <typename Value, typename Error> class borrowed_expected;
+
+// These are representations of MIR Expected/Unexpected, not native C-ABI
+// records. Their own alternative storage preserves any required payload bytes;
+// the enclosing carrier follows the ordinary value ABI. Classifying it here
+// also avoids ADL instantiating a native expected with an incomplete payload
+// while a retained source-template member signature is being declared.
+template <typename Value, typename Error>
+struct byte_transport<byte_expected<Value, Error>> : std::false_type {};
+template <typename Error>
+struct byte_transport<byte_unexpected<Error>> : std::false_type {};
+template <typename Value, typename Error>
+struct byte_transport<borrowed_expected<Value, Error>> : std::false_type {};
 template <typename Error> auto make_byte_unexpected(Error &&error);
 )";
     output << (features.standard == CppStandard::Cpp23 ? R"(
+template <typename Value, typename Error>
+struct byte_transport<std::expected<Value, Error>> : std::false_type {};
+template <typename Error>
+struct byte_transport<std::unexpected<Error>> : std::false_type {};
 template <typename Value, typename Error>
 using native_expected_result = std::expected<Value, Error>;
 template <typename Error>
@@ -974,6 +991,10 @@ inline constexpr auto make_unexpected_result(Error &&error) {
 }
 )"
                                                        : R"(
+template <typename Value, typename Error>
+struct byte_transport<::nonstd::expected<Value, Error>> : std::false_type {};
+template <typename Error>
+struct byte_transport<::nonstd::unexpected_type<Error>> : std::false_type {};
 template <typename Value, typename Error>
 using native_expected_result = ::nonstd::expected<Value, Error>;
 template <typename Error>

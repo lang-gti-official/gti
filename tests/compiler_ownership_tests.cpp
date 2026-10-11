@@ -6242,6 +6242,9 @@ int main() {
   bool hasMutableParameterLoan = false;
   bool hasMutableStoredTransfer = false;
   bool hasMutableReturnLoan = false;
+  std::optional<lang::MirBodyAddress> transferAddress;
+  lang::MirLoanId consumedTransfer = 0;
+  lang::MirLoanId publishedTransfer = 0;
   for (const lang::MirBodyAddress address :
        lang::enumerateMirBodyAddresses(valid.mir)) {
     const lang::MirBody *body = lang::findMirBody(valid.mir, address);
@@ -6257,16 +6260,74 @@ int main() {
           hasMutableReturnLoan ||
           (loan.kind == lang::MirLoanKind::Return && loan.escapes &&
            loan.access == lang::AccessMode::Mutable);
-      if (loan.kind != lang::MirLoanKind::Stored || loan.parent == 0 ||
-          loan.access != lang::AccessMode::Mutable) {
-        continue;
+    }
+    for (const lang::MirBlock &block : body->blocks) {
+      for (const lang::MirInstruction &call : block.instructions) {
+        if (call.kind != lang::MirInstructionKind::Call ||
+            !call.functionTarget || !call.loan || call.operands.size() != 1) {
+          continue;
+        }
+        const auto *target =
+            valid.hir.findFunctionInstance(*call.functionTarget);
+        if (target == nullptr || target->source == nullptr ||
+            target->source->name().lexeme != "relay_view") {
+          continue;
+        }
+        const lang::MirLoan *published = body->findLoan(*call.loan);
+        const lang::MirValue *inputValue =
+            body->findValue(call.operands.front().value);
+        const lang::MirInstruction *prepared = nullptr;
+        for (const lang::MirBlock &candidateBlock : body->blocks) {
+          for (const lang::MirInstruction &candidate :
+               candidateBlock.instructions) {
+            if (inputValue != nullptr &&
+                candidate.id == inputValue->definition) {
+              prepared = &candidate;
+            }
+          }
+        }
+        if (published == nullptr || prepared == nullptr ||
+            prepared->kind != lang::MirInstructionKind::CallInput ||
+            prepared->callInputKind != lang::HirCallInputKind::MoveValue ||
+            !prepared->ownership) {
+          continue;
+        }
+        lang::HirBindingId inputBinding = 0;
+        for (const lang::MirPlace &place : body->places) {
+          if (place.root == lang::MirPlaceRootKind::Binding &&
+              place.symbol == prepared->ownership->place.root &&
+              place.projections.empty()) {
+            inputBinding = place.binding;
+          }
+        }
+        const lang::MirLoan *consumed = nullptr;
+        for (const lang::MirLoan &loan : body->loans) {
+          if (loan.kind == lang::MirLoanKind::Stored && inputBinding != 0 &&
+              std::find(loan.carriers.begin(), loan.carriers.end(),
+                        inputBinding) != loan.carriers.end()) {
+            consumed = &loan;
+          }
+        }
+        // A consuming relay preserves the external dependency, not a borrow
+        // of the input shell which is retired on the success continuation.
+        if (consumed != nullptr &&
+            published->kind == lang::MirLoanKind::Stored &&
+            published->access == lang::AccessMode::Mutable &&
+            !published->entry && !published->escapes &&
+            published->id != consumed->id &&
+            published->source == consumed->source &&
+            published->access == consumed->access &&
+            published->parent == consumed->parent &&
+            published->parent != consumed->id &&
+            published->storedDependency == consumed->storedDependency &&
+            published->additionalDependencies ==
+                consumed->additionalDependencies) {
+          hasMutableStoredTransfer = true;
+          transferAddress = address;
+          consumedTransfer = consumed->id;
+          publishedTransfer = published->id;
+        }
       }
-      const lang::MirLoan *parent = body->findLoan(loan.parent);
-      hasMutableStoredTransfer =
-          hasMutableStoredTransfer ||
-          (parent != nullptr && parent->kind == lang::MirLoanKind::Stored &&
-           parent->access == lang::AccessMode::Mutable && !loan.entry &&
-           !loan.escapes);
     }
   }
   expect(hasMutableParameterLoan && hasMutableStoredTransfer &&
@@ -6274,6 +6335,51 @@ int main() {
          "verified MIR should preserve the mutable parameter origin, the "
          "exclusive stored-carrier transfer, and the escaping mutable "
          "return dependency");
+
+  lang::MirProgram forgedConsumedParent = valid.mir;
+  bool changedConsumedParent = false;
+  if (transferAddress) {
+    if (lang::MirBody *body =
+            lang::findMirBody(forgedConsumedParent, *transferAddress)) {
+      for (lang::MirLoan &loan : body->loans) {
+        if (loan.id == publishedTransfer) {
+          loan.parent = consumedTransfer;
+          changedConsumedParent = true;
+        }
+      }
+    }
+  }
+  expect(changedConsumedParent &&
+             !lang::verifyMirProgram(forgedConsumedParent).valid(),
+         "a returned carrier must not retain its consumed input as a parent");
+
+  lang::MirProgram forgedMissingRetirement = valid.mir;
+  bool removedRetirement = false;
+  if (transferAddress) {
+    if (lang::MirBody *body =
+            lang::findMirBody(forgedMissingRetirement, *transferAddress)) {
+      for (lang::MirBlock &block : body->blocks) {
+        if (block.activeFailure || block.failureParameter) {
+          continue;
+        }
+        const auto ending = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const lang::MirInstruction &instruction) {
+              return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                     instruction.loan == consumedTransfer;
+            });
+        if (ending != block.instructions.end()) {
+          block.instructions.erase(ending);
+          removedRetirement = true;
+          break;
+        }
+      }
+    }
+  }
+  expect(removedRetirement &&
+             !lang::verifyMirProgram(forgedMissingRetirement).valid(),
+         "a consuming relay must retire its input before publishing the "
+         "independent result dependency");
 
   lang::MirProgram forgedParent = valid.mir;
   bool changedParent = false;

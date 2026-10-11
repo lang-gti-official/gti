@@ -32,6 +32,16 @@ for what minor and patch releases mean.
 - Examples 143–146 demonstrate checked container, view, live-slot/lane and
   counted-text iteration. Movement and cursor duplication have separate
   concepts; random access does not imply contiguous storage.
+- Fresh `expected<T, E>` results can replace elements through checked mutable
+  cursors, including move-only payloads without default constructors and
+  payloads needing cleanup. Ordinary borrowed-receiver methods can consume
+  owning Expected arguments without consuming the receiver. Pointer-backed
+  recursive containers of Expected values retain finite layout; by-value
+  recursive payloads remain rejected.
+- Inline Expected alternatives, including error alternatives and fixed arrays
+  of the wrapper, now participate in the existing recursive-layout diagnostic.
+  Such invalid fields are reported in source and the editor rather than as a
+  backend internal error.
 
 ## 0.405.2 — Replacing `expected` bindings with conditionals
 

@@ -109,6 +109,37 @@ def measure_traversal(compiler, fixtures, root):
           f"build={build_seconds:.3f}s; bounded observations, no speedup claim", flush=True)
 
 
+def prove_allocation_free_families(compiler, fixtures, root):
+    # Keep each provider-backed translation unit small for GCC sanitizer
+    # optimization. Setup is outside every window; fixtures assert complete
+    # state, independent shared copies and exclusive restoration where legal.
+    families = {
+        "sequence_iterator_allocations": "vector/array",
+        "linked_iterator_allocations": "deque/list",
+        "key_iterator_allocations": "set/unordered_set",
+        "sparse_mask_iterator_allocations": "pool/resource_storage/SIMD masks",
+    }
+    modes = (("c++20-O3", "c++20", "O3", ()),
+             ("c++23-O3", "c++23", "O3", ()),
+             ("sanitized", "c++23", "O1",
+              ("-fsanitize=address,undefined", "-fno-omit-frame-pointer")))
+    for mode, standard, optimization, native in modes:
+        for fixture, label in families.items():
+            binary = root / f"{fixture}-{mode}"
+            built = build_fixture(
+                [str(compiler), str(fixtures / f"{fixture}.gti"),
+                 "--std", standard, f"-{optimization}"], binary,
+                native_sources=[fixtures / "stdlib_adoption_allocation_counts.cpp"],
+                native_arguments=native, standard=standard,
+                optimization=optimization, capture_output=True, text=True,
+                timeout=180)
+            assert built.returncode == 0, (fixture, mode, built.stdout, built.stderr)
+            assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text(), (fixture, mode)
+            completed = run([str(binary)], timeout=30)
+            assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", ""), (fixture, mode, completed)
+            print(f"{label}: {mode}, direct 0 traversal allocations; complete state preserved", flush=True)
+
+
 def main():
     if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--cost-only"):
         raise SystemExit("usage: storage_lane_iterator_runtime_test.py <optimized-gti> [--cost-only]")
@@ -145,6 +176,7 @@ def main():
                         assert "AddressSanitizer" not in failed.stderr and "UndefinedBehaviorSanitizer" not in failed.stderr, failed.stderr
                 print(f"{fixture}: {name} passed", flush=True)
         measure_traversal(compiler, fixtures, root)
+        prove_allocation_free_families(compiler, fixtures, root)
 
 
 if __name__ == "__main__":

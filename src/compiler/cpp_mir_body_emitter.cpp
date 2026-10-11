@@ -21530,8 +21530,8 @@ returnConstructDefinition(const MirBody &body, MirValueId value);
   const bool armedInPlace = plainCallActivates(body, producer, drop.id);
   if (armedOnInvoke == armedInPlace || consumer == nullptr ||
       consumer->lambdaTarget || consumer->bodyTarget ||
-      consumer->callableInvocation || consumer->receiver ||
-      consumer->destination || consumer->intrinsic != IntrinsicKind::None ||
+      consumer->callableInvocation || consumer->destination ||
+      consumer->intrinsic != IntrinsicKind::None ||
       consumer->dispatch != CallDispatch::Static ||
       consumer->operands.size() != consumer->parameterTypes.size() ||
       argumentIndex >= consumer->operands.size() ||
@@ -21551,7 +21551,7 @@ returnConstructDefinition(const MirBody &body, MirValueId value);
             : nullptr;
     const auto *owner =
         target == nullptr ? nullptr : program.findClassInstance(target->owner);
-    if (!consumer->result || consumer->functionTarget ||
+    if (!consumer->result || consumer->functionTarget || consumer->receiver ||
         consumer->constructorKind != ConstructorKind::Ordinary ||
         target == nullptr || owner == nullptr ||
         target->parameterTypes != consumer->parameterTypes ||
@@ -21567,7 +21567,11 @@ returnConstructDefinition(const MirBody &body, MirValueId value);
     if (consumer->constructorTarget || target == nullptr ||
         target->linkage != LanguageLinkage::Gti ||
         target->definitionKind != MirDefinitionKind::Source ||
-        (target->owner && !target->staticMember) ||
+        // A member argument transfer does not consume or extend the receiver.
+        // Reuse the same exact typed borrow/staging contract as passive SSA
+        // arguments, rather than inferring permission from member spelling.
+        !((!consumer->receiver && (!target->owner || target->staticMember)) ||
+          exactMemberBorrowReceiver(program, body, *consumer, *target)) ||
         target->parameterTypes != consumer->parameterTypes ||
         target->returnType != consumer->info.type ||
         // The consumer is either a transformed call or a failure-free one;
@@ -22777,19 +22781,40 @@ valueRootedPlacementCallResultSlot(const MirProgram &program,
           ? soleOwnedResultConsumingCall(program, representations, body, *value,
                                          *producer, *slot, *drop)
           : nullptr;
-  // An owning Expected may instead replace one whole mutable binding of its
-  // type: the Assign moves the slot's wrapper in, and MIR's Replace event
-  // hands the result's obligation to the binding, as for an owning class
-  // result. MIR's paired CleanupBeforeAssign keeps its own cleanup schedule.
+  // An owning Expected may replace a whole mutable binding or an exact checked
+  // mutable referent. A binding owns the target obligation; a referent's owner
+  // retains cleanup, so its Replace has target zero. Keep the same held RHS,
+  // paired replacement cleanup, loan interval and moved-from shell Drop.
   const MirInstruction *assignment = nullptr;
   const auto bindingReplacement = [&](const MirValueUse &use,
                                       const MirInstruction &consumer) {
     const MirPlace *destination =
         consumer.destination ? body.findPlace(*consumer.destination) : nullptr;
+    const MirLifecycleEvent *publication =
+        consumer.lifecycle.size() == 1 ? &consumer.lifecycle.front() : nullptr;
     const MirDropObligation *destinationDrop =
-        consumer.lifecycle.size() == 1
-            ? body.findDropObligation(consumer.lifecycle.front().target)
-            : nullptr;
+        publication != nullptr ? body.findDropObligation(publication->target)
+                               : nullptr;
+    const bool ownedBinding = destination != nullptr &&
+                              destination->root == MirPlaceRootKind::Binding &&
+                              destination->binding != 0 &&
+                              destination->projections.empty() &&
+                              destination->access == AccessMode::Mutable;
+    const bool checkedReferent =
+        destination != nullptr &&
+        (exactMutableReferenceDestination(body, *destination) ||
+         exactMutableCallResultDestination(program, body, *destination)) &&
+        consumer.replacementPair != 0 &&
+        exactReplacementPair(body, consumer, *destination) != nullptr;
+    const bool bindingPublication =
+        ownedBinding && destinationDrop != nullptr &&
+        destinationDrop->kind == MirDropObligationKind::Binding &&
+        destinationDrop->place == destination->id &&
+        destinationDrop->dropType.type == destination->type &&
+        destinationDrop->dropType.requiresActiveCleanup;
+    const bool referentPublication =
+        checkedReferent && publication != nullptr && publication->target == 0 &&
+        destinationDrop == nullptr;
     return value->info.type.kind == SemanticType::Expected &&
            !conditionalTemporary && drop != nullptr &&
            consumingCall == nullptr &&
@@ -22805,19 +22830,13 @@ valueRootedPlacementCallResultSlot(const MirProgram &program,
            consumer.info.type == value->info.type &&
            consumer.localFailureSites.empty() &&
            consumer.definedFailure.empty() && destination != nullptr &&
-           destination->root == MirPlaceRootKind::Binding &&
-           destination->binding != 0 && destination->projections.empty() &&
-           destination->access == AccessMode::Mutable &&
            destination->type == value->info.type &&
            destination->traits.drop == DropKind::Lexical &&
-           destinationDrop != nullptr &&
-           consumer.lifecycle.front().kind == MirLifecycleEventKind::Replace &&
-           consumer.lifecycle.front().source == drop->id &&
-           !consumer.lifecycle.front().conditional &&
-           !consumer.lifecycle.front().failureCleanup &&
-           destinationDrop->kind == MirDropObligationKind::Binding &&
-           destinationDrop->place == destination->id &&
-           destinationDrop->dropType.type == destination->type;
+           publication != nullptr &&
+           publication->kind == MirLifecycleEventKind::Replace &&
+           publication->source == drop->id && !publication->conditional &&
+           !publication->failureCleanup &&
+           (bindingPublication || referentPublication);
   };
   // An owning Expected may instead initialize one constructor field as its
   // selected member initializer, as a cleanup-free one does. MIR's Reparent
@@ -30289,7 +30308,7 @@ classSsaExpectedObserverConsumer(const MirBody &body, const MirValue &value,
                                                             : nullptr;
 }
 
-// The same Expected may instead replace one whole mutable binding of its type.
+// The same Expected may replace a whole mutable binding or checked referent.
 // MIR pairs the Assign with a CleanupBeforeAssign whose passive recipe executes
 // nothing and cannot fail. The native wrapper move-assigns, which needs each
 // class alternative's generated move constructor and move assignment. The
@@ -30313,6 +30332,14 @@ classSsaExpectedObserverConsumer(const MirBody &body, const MirValue &value,
           ? inactiveExpectedReplacement(program, body, *consumer, *destination)
           : nullptr;
   const MirInstruction *cleanup = pair != consumer ? pair : nullptr;
+  const bool ownedBinding = destination != nullptr &&
+                            destination->root == MirPlaceRootKind::Binding &&
+                            destination->projections.empty() &&
+                            destination->access == AccessMode::Mutable;
+  const bool checkedReferent =
+      destination != nullptr &&
+      (exactMutableReferenceDestination(body, *destination) ||
+       exactMutableCallResultDestination(program, body, *destination));
   if (!consumer || consumer->kind != MirInstructionKind::Assign ||
       consumer->operation != MirOperation::Assign || consumer->receiver ||
       consumer->operands.size() != 1 ||
@@ -30330,15 +30357,13 @@ classSsaExpectedObserverConsumer(const MirBody &body, const MirValue &value,
                   [&](const MirDropObligation &drop) {
                     return drop.generatedValue == result->id;
                   }) ||
-      !destination || destination->root != MirPlaceRootKind::Binding ||
-      !destination->projections.empty() ||
+      !destination || (!ownedBinding && !checkedReferent) ||
       destination->type != value.info.type ||
-      destination->access != AccessMode::Mutable ||
       !destination->traits.moveAssignable || pair == nullptr ||
       !cleanupFreeExpectedReplacementType(program, value.info.type, false))
     return nullptr;
-  // The success edge begins with the pair; a non-checked producer is followed
-  // by it in its own block.
+  // Only the selected destination's neutral two-phase activation may precede
+  // the passive cleanup pair. The producer and commit keep their MIR order.
   const MirBlock *invoke = invokeProducerBlock(body, producer);
   const MirBlock *block = invoke ? body.findBlock(invoke->terminator.target)
                                  : body.findBlock(value.definitionBlock);
@@ -30350,6 +30375,21 @@ classSsaExpectedObserverConsumer(const MirBody &body, const MirValue &value,
         block->instructions.begin(), block->instructions.end(),
         [&](const MirInstruction &item) { return item.id == producer.id; });
     if (at == block->instructions.end())
+      return nullptr;
+    ++at;
+  }
+  const MirLoan *destinationLoan =
+      checkedReferent && destination->root == MirPlaceRootKind::Loan
+          ? body.findLoan(destination->loan)
+          : nullptr;
+  if (destinationLoan != nullptr && destinationLoan->twoPhase) {
+    if (at == block->instructions.end())
+      return nullptr;
+    const MirInstruction canonical{.id = at->id,
+                                   .kind = MirInstructionKind::ActivateBorrow,
+                                   .hirValue = consumer->hirValue,
+                                   .loan = destinationLoan->id};
+    if (*at != canonical)
       return nullptr;
     ++at;
   }
@@ -33054,19 +33094,17 @@ public:
                  << *parameter << ");\n";
           continue;
         }
-        // The verifier-certified Expected payload range keeps a by-value,
-        // move-only Expected parameter alive as its root. Transfer that exact
-        // native argument into the MIR binding just as the established unique
-        // owner path does; all other parameter representations are unchanged.
-        const bool expectedRangeTransfer =
-            !place.traits.copyable && place.traits.movable &&
-            expectedPayloadRangeParameterPlace(facts.body,
-                                               facts.parameterBindings, place);
+        // A by-value formal owns its incoming value even when that value has
+        // no runtime cleanup. Its exact MIR traits, not a particular owner or
+        // range family, determine whether native transport must move. This
+        // also preserves entry-loan carriers for move-only borrowed records;
+        // it does not create an additional semantic transfer or loan.
+        const bool noncopyableParameterTransfer =
+            !place.traits.copyable && place.traits.movable;
         const bool payloadEnumTransfer =
             place.traits.movable && cppMirOwningPayloadEnumPlacementResult(
                                         program, representations, place.type);
-        if (place.type.kind == SemanticType::UniqueOwner ||
-            expectedRangeTransfer || payloadEnumTransfer) {
+        if (noncopyableParameterTransfer || payloadEnumTransfer) {
           output << " = std::move(__gti_mir_arg_" << *parameter << ')';
         } else {
           output << " = __gti_mir_arg_" << *parameter;
@@ -53208,6 +53246,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const auto *definition = findInstruction(body, value.definition);
       if (definition && classCopyAssignmentFusion(program_, body, *definition))
         continue;
+      if (classSsaLifetimeSlot(program_, representations_, body, value.id))
+        continue;
     }
     if (expectedOwnedClassExtractionReceiverSlot(body, value.id) != nullptr) {
       continue;
@@ -53221,6 +53261,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     if (ownedExpectedClassReturnBlock(body, value.id) != nullptr) {
       continue;
+    }
+    // A source call's placement Expected needs one of the exact publications
+    // above, even when its success class has an available default constructor.
+    // An ordinary value-initialized SSA fallback could run that constructor's
+    // observable effects outside MIR, not merely fail when it is deleted.
+    // Cleanup-free SSA reuse remains valid MIR; an unsupported publication is
+    // rejected as a representation boundary, not a new copying rule.
+    if (expectedClassPlacementResultType(program_, representations_,
+                                         value.info.type)) {
+      const auto *definition = findInstruction(body, value.definition);
+      if (definition && definition->kind == MirInstructionKind::Call &&
+          definition->functionTarget && !definition->destination &&
+          !definition->successResultDestination &&
+          definition->intrinsic == IntrinsicKind::None) {
+        const auto *callee =
+            program_.findFunctionInstance(*definition->functionTarget);
+        if (callee && callee->definitionKind == MirDefinitionKind::Source &&
+            callee->linkage == LanguageLinkage::Gti)
+          return false;
+      }
     }
     if (value.info.type.kind == SemanticType::Class) {
       if (nativeExpectedValueOrResult(program_, body, value.id) &&

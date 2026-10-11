@@ -1,0 +1,36 @@
+#include <std/string>
+#include <std/vector>
+
+// The payload is incomplete when the source-defined vector's retained member
+// declarations are emitted. There is no by-value cycle: the object region is
+// separately owned and each nested Node has a finite pointer-backed layout.
+enum class tree_errc { absent };
+mut int node_drops = 0;
+class LayoutNode {
+  int id;
+  std::string text;
+  mut std::vector<expected<LayoutNode, tree_errc>> children{};
+public:
+  LayoutNode(int id) : id(id), text(std::string("node")) {}
+  void append(expected<LayoutNode, tree_errc> child) mut {
+    this.children.push_back(std::move(child));
+  }
+  std::size_t count() { return this.children.size(); }
+  ~LayoutNode() { ++node_drops; }
+};
+expected<LayoutNode, tree_errc> make_layout_node(int id) {
+  if (id <= 0) { return unexpected(tree_errc::absent); }
+  return LayoutNode(id);
+}
+
+int main() {
+  {
+    mut LayoutNode root{1};
+    auto named = make_layout_node(2);
+    root.append(std::move(named));
+    root.append(make_layout_node(3));
+    root.append(make_layout_node(0));
+    if (root.count() != 3 || node_drops != 0) { return 1; }
+  }
+  return node_drops == 3 ? 0 : 2;
+}

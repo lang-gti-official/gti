@@ -1409,9 +1409,11 @@ The bounded mutable-carrier extension reuses this explicit loan vocabulary
 rather than adding backend-only lifetime inference. A mutable parameter or
 local origin owns one active loan. Constructing a direct mutable carrier emits
 a non-escaping mutable `Stored` child; moving or returning the carrier
-transfers the exact runtime carrier and origin, and a relay result remains a
-child of the transferred stored loan. The mutable parent is suspended until
-all child reborrows and the carrier child end. Structural and flow verification
+transfers the exact runtime carrier and origin. A reborrow remains a child of
+its live carrier; a consuming by-value relay instead publishes an independent
+result dependency on the same external origin after retiring its input, as
+specified below. The mutable parent is suspended until all child reborrows
+and the carrier child end. Structural and flow verification
 require the selected constructor/call operand to resolve through the declared
 parent, require child-first retirement on every path, and reject copy,
 reseating, forged ancestry, parent use while suspended, or an escaping child
@@ -1825,6 +1827,23 @@ A `MirBody` owns:
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
   intrinsic identity, C linkage, and external symbols;
+- ordinary member calls retain a receiver exactly when their selected target
+  is nonstatic. Whole-program verification checks its typed value or place,
+  staged access mode, and exact owner/base relation; a same-signature method
+  on an unrelated class is not a valid substitute. Verified exact-interface
+  receiver presentations retain their existing dispatch proof, while raw
+  member access retains its explicit unsafe pointer contract. Owning argument
+  transfer is separate from the receiver borrow;
+- source function, constructor and lambda by-value formal roots retain their
+  exact flattened parameter roles and concrete copy/move facts. Verification
+  resolves nominal facts from the class/enum/lambda catalog and follows inline
+  aggregate alternatives rather than trusting independently editable binding
+  flags; references and pack roots preserve their separate carrier contracts;
+- concrete aggregate trait queries fold Expected/Unexpected concurrency
+  capabilities over their resolved alternatives. A unique owning handle follows
+  only its exact pointee's transfer/share policy, without inheriting the
+  pointee's copy, move, drop or borrowed-state traits. Pack and scoped-task
+  verification consume those same published nominal facts;
 - an explicit `MirOperation::PackFold` for the bounded call fold. It retains
   the source HIR fold identity, fixed named-place operands, selected generic
   declaration, source pack identity and argument position, and one concrete
