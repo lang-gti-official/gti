@@ -1,0 +1,114 @@
+// Declared attributes: a struct marked [[attribute]] annotates fields and
+// types with constant arguments, and <std/meta> hands those constants to
+// ordinary GTI code. The compiler stores them and gives them no meaning; every
+// policy below (key renaming, skipping, field widths) is written here.
+#include <std/meta>
+#include <std/string>
+#include <std/vector>
+
+namespace enc {
+[[attribute]] struct key { std::string_view name = ""; };
+[[attribute]] struct skip {};
+}
+namespace binary {
+[[attribute]] struct width { uint64_t bytes = 4; };
+}
+namespace scene {
+[[attribute]] struct version { uint32_t major = 1; uint32_t minor = 0; };
+}
+
+[[scene::version(.major = 2)]]
+struct Player {
+  [[enc::key("display_name")]]
+  uint32_t level = 3;
+  [[binary::width(2)]]
+  uint32_t health = 7;
+  bool alive = true;
+  [[enc::skip]]
+  uint64_t session = 99;
+};
+
+enum class color { red = 1, green = 2, blue = 4 };
+
+void append_unsigned(mut std::string& out, uint64_t value) {
+  std::string_view digits = "0123456789";
+  if (value >= uint64_t(10)) {
+    append_unsigned(out, value / uint64_t(10));
+  }
+  out.push_back(digits[std::size_t(value % uint64_t(10))]);
+}
+
+// A text encoder: every public field becomes `key:value`, renamed by
+// [[enc::key]] and dropped by [[enc::skip]]. `std::meta::reflectable` admits
+// only types whose fields reflection may read.
+std::string encode<std::meta::reflectable T>(T& value) {
+  mut std::string out = std::string("");
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (!field.has_attribute<enc::skip>()) {
+      mut std::string_view key = field.name();
+      if constexpr (field.has_attribute<enc::key>()) {
+        key = field.attribute<enc::key>().name;
+      }
+      out.append(key);
+      out.push_back(':');
+      if constexpr (field.type().is_text()) {
+        out.append(field.get(value));
+      } else if constexpr (field.type().is_bool()) {
+        if (field.get(value)) { out.append("true"); } else { out.append("false"); }
+      } else {
+        append_unsigned(out, uint64_t(field.get(value)));
+      }
+      out.push_back(';');
+    }
+  }
+  return std::move(out);
+}
+
+// A binary writer whose integer widths come from [[binary::width]].
+void write<std::meta::reflectable T>(mut std::vector<uint8_t>& out, T& value) {
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (field.type().is_integral()) {
+      mut uint64_t width = 4;
+      if constexpr (field.has_attribute<binary::width>()) {
+        width = field.attribute<binary::width>().bytes;
+      }
+      mut uint64_t bits = uint64_t(field.get(value));
+      for (mut uint64_t index = 0; index < width; index++) {
+        out.push_back(uint8_t(bits % uint64_t(256)));
+        bits = bits / uint64_t(256);
+      }
+    }
+  }
+}
+
+int main() {
+  Player hero{};
+  std::string text = encode(hero);
+  if (text.view() != "display_name:3;health:7;alive:true;") {
+    return 1;
+  }
+
+  mut std::vector<uint8_t> bytes = std::vector<uint8_t>();
+  write(bytes, hero);
+  // level (4 bytes), health (2 bytes), session (4 bytes): widths are policy.
+  if (bytes.size() != 10) {
+    return 2;
+  }
+
+  // Type attributes fold to constants: no run-time representation exists.
+  static_assert(std::meta::type_of<Player>().attribute<scene::version>().major == uint32_t(2));
+  uint32_t minor = std::meta::type_of<Player>().attribute<scene::version>().minor;
+
+  // Enumerators are metaobjects too: names and values in declaration order.
+  mut uint64_t letters = 0;
+  constexpr for (auto e : std::meta::enumerators_of<color>()) {
+    letters = letters + e.name().size();
+    if constexpr (e.index() == uint64_t(2)) {
+      if (e.value() != color::blue) { return 3; }
+    }
+  }
+  if (letters != 12 || minor != 0) {
+    return 4;
+  }
+  return 0;
+}

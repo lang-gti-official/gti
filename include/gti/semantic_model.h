@@ -341,6 +341,25 @@ enum class IntrinsicKind {
   MetaFieldIsPublic,
   MetaTypeName,
   MetaTypeKind,
+  MetaFieldAttributeCount,
+  MetaFieldHasAttribute,
+  MetaTypeAttributeCount,
+  MetaTypeHasAttribute,
+  // <T, Trait>: 0 payload enum, 1 generic instance, 2 reflectable,
+  // 3 signed integral.
+  MetaTypeTrait,
+  MetaEnumeratorCount,
+  MetaEnumeratorName,
+  // <E, I>: the enumerator as a constant of E (integral enums).
+  MetaEnumeratorValue,
+  MetaPayloadCount,
+  MetaPayloadName,
+  MetaBaseCount,
+  MetaArgumentCount,
+  // Attribute value access: semantics records the attribute's constant on the
+  // call and aliases it to a construction of the attribute struct.
+  MetaFieldAttribute,
+  MetaTypeAttribute,
   // Reflected field access: semantics analyses the field projection it
   // denotes and aliases the call to it.
   MetaFieldGet,
@@ -806,6 +825,9 @@ struct ClassTypeInfo {
   std::optional<SemanticType> transferCondition;
   std::optional<SemanticType> shareCondition;
   bool compilerPrivate = false;
+  // `[[reflect_private]]`: reflected access reaches private instance fields
+  // from anywhere, so the representation must not hide them either.
+  bool reflectPrivate = false;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
 };
@@ -1494,6 +1516,17 @@ struct ConstexprForExpansion {
   std::vector<ConstexprForIteration> iterations;
 };
 
+// One `[[ns::name(args)]]` application on a field or class-like declaration,
+// evaluated to the constant object its arguments denote. The compiler gives
+// it no meaning; libraries read it through <std/meta>.
+struct ResolvedDeclarationAttribute {
+  ClassId type = 0;
+  SemanticType exactType = SemanticType::Unknown;
+  ConstantValue value;
+  SourceSpan span;
+  const DeclarationAttribute *syntax = nullptr;
+};
+
 using SemanticDiagnostic = Diagnostic;
 
 struct SemanticSourceUnitSeal {
@@ -1746,6 +1779,10 @@ public:
   // deferred it to concrete instances or when it was never analysed.
   [[nodiscard]] const ConstexprForExpansion *
   findConstexprForExpansion(const ConstexprForStmt &statement) const;
+  // The declared attributes of a field or class-like declaration; nullptr
+  // when none were recorded.
+  [[nodiscard]] const std::vector<ResolvedDeclarationAttribute> *
+  findDeclarationAttributes(const Stmt &declaration) const;
 
   // An expression that semantic analysis synthesized to stand for another
   // (reflected field access analysed as the field projection it denotes).
@@ -2028,6 +2065,9 @@ private:
   void
   recordConstexprForExpansion(const ConstexprForStmt &statement,
                               std::optional<ConstexprForExpansion> expansion);
+  void recordDeclarationAttributes(
+      const Stmt &declaration,
+      std::vector<ResolvedDeclarationAttribute> attributes);
 
   const Expr &recordExpressionAlias(const Expr &expression,
                                     std::shared_ptr<const Expr> alias);
@@ -2221,6 +2261,8 @@ private:
   std::unordered_map<const ConstexprForStmt *,
                      std::optional<ConstexprForExpansion>>
       constexprForExpansions;
+  std::unordered_map<const Stmt *, std::vector<ResolvedDeclarationAttribute>>
+      declarationAttributes;
   std::unordered_map<const Expr *, std::shared_ptr<const Expr>>
       expressionAliases;
   std::vector<StmtPtr> expansionArena;

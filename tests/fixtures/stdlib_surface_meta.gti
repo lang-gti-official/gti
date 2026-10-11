@@ -1,9 +1,16 @@
 #include <std/meta>
 
+namespace tags {
+[[attribute]] struct key { std::string_view name = ""; };
+}
+
 struct Player {
+  [[tags::key("hp")]]
   uint32_t health = 100;
   bool alive = true;
 };
+
+enum class color { red = 1, green = 2 };
 
 int main() {
   Player player = {.health = uint32_t(7), .alive = false};
@@ -23,5 +30,13 @@ int main() {
     return 5;
   }
   if (std::meta::type_of<Player>().field_count() != uint64_t(2)) { return 6; }
+  mut uint64_t tagged = 0;
+  constexpr for (auto field : std::meta::fields_of<Player>()) {
+    if constexpr (field.has_attribute<tags::key>()) {
+      if (field.attribute<tags::key>().name != "hp") { return 7; }
+      tagged = tagged + 1;
+    }
+  }
+  if (tagged != 1 || std::meta::type_of<color>().enumerator_count() != uint64_t(2)) { return 8; }
   return 0;
 }
