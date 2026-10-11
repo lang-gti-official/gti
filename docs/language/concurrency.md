@@ -568,6 +568,33 @@ layout, C/C++ ABI compatibility, nor that moving a mutex preserves waiter
 identity. A move constructs a fresh unlocked native mutex around the moved
 payload and is legal only when ordinary ownership proves no guard is live.
 
+The synchronization owner is transferable and shareable exactly when `T` is
+transferable. Acquiring the lock grants exclusive access on the acquiring
+thread, so `T` need not itself allow concurrent shared access. A thread-affine
+payload remains usable in a local mutex, but prevents either cross-thread
+capability. Guards remain non-transferable and non-shareable regardless of
+the payload. `std::shared_ptr<std::mutex<T>>` therefore supports dynamically
+owned synchronized state when `T` is transferable, without allowing movement
+of a live lock or bypassing protected-value loans.
+
+## Transfer-Qualified Callable Storage
+
+`<std/functional>` supplies move-only `std::transfer_function<R(Args...)>`,
+`std::transfer_function<R(Args...) mut>` and
+`std::transfer_function<R(Args...) &&>`. Construction and replacement require
+a transferable target; interface erasure retains that requirement. As with
+ordinary owning function wrappers, the signature selects read-only,
+exclusive-repeatable or consuming invocation. Transfer does not grant
+concurrent invocation, sharing, or borrowed captures. Ordinary `function`
+and `move_only_function` keep accepting local-only targets and do not acquire
+a transfer guarantee from their signature alone.
+
+The implementation uses ordinary `[[transfer]]` interfaces and owning models,
+not a compiler rule for a standard-library name. Unrelated interfaces use the
+same capability contract. Repeatable wrappers use the existing inline/boxed
+polymorphic owner; consuming wrappers retain the existing boxed unique-owner
+projection. Empty invocation follows the ordinary checked empty-owner failure.
+
 ## Bounded Production Guarantee
 
 The combination of owned automatic-join tasks (including typed results), the

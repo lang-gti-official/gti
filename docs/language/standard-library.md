@@ -365,6 +365,12 @@ The current implemented foundation includes:
   Borrowed captures/results, inferred fresh-lambda return types, global closure
   storage, and native callback conversion are outside this wrapper contract.
   Combined validation and local-delivery evidence is recorded under L-CALL-02; and
+- `<std/functional>` also provides move-only
+  `std::transfer_function<R(Args...)>`, `R(Args...) mut`, and `R(Args...) &&`
+  owners whose target must be transferable at construction and replacement.
+  Ordinary capability-qualified interfaces retain that proof through erasure;
+  no concurrent invocation or sharing is granted. The repeatable forms use
+  the existing inline/boxed policy, while consuming targets remain boxed; and
 - `<std/numeric>` public `std::accumulates_into<I, T>` and an ordinary
   source-defined default and operation-based `std::accumulate`, homogeneous
   default and operation-based `std::inner_product`, and unary

@@ -813,6 +813,70 @@ lang::MirInstruction *findIntrinsic(lang::MirProgram &program,
   return found;
 }
 
+void testTransferQualifiedCallables() {
+  for (const std::string suffix : {"", " mut", " &&"}) {
+    const auto frontend = analyze(
+        "transfer-function.gti",
+        "#include <std/functional>\n#include <std/thread>\n" + std::string(R"(
+struct Task { int operator()())") +
+            suffix + R"( { return 42; } };
+int main() {
+  std::transfer_function<int())" +
+            suffix + R"(> callback(Task());
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(std::move(callback));
+  if (!started) return 1;
+  auto result = worker.join();
+  return result && result.value() == 42 ? 0 : 2;
+}
+)");
+    if (!frontend.canGenerateCode())
+      printDiagnostics(frontend);
+    expect(frontend.canGenerateCode(),
+           "transfer-qualified erased targets must enter owned workers");
+  }
+  for (const std::string suffix : {"", " mut", " &&"}) {
+    const auto rejected = analyze("affine-erased-task.gti",
+                                  "#include <std/functional>\n[[no_transfer]] "
+                                  "struct Task { int operator()()" +
+                                      suffix + R"( { return 42; } };
+int main() {
+  std::transfer_function<int())" + suffix +
+                                      R"(> callback(Task());
+  return 0;
+}
+)");
+    expect(!rejected.canGenerateCode() && !hasCode(rejected, "GTI-B0001"),
+           "erasure must reject a non-transferable target at construction");
+  }
+  // This is an ordinary interface contract, not a stdlib type-name rule.
+  const auto unrelated = analyze("unrelated-transfer-interface.gti", R"(
+#include <std/memory>
+#include <std/thread>
+[[transfer]] interface Job { int perform(); };
+class Work : public Job { public: int perform() override { return 42; } };
+class Runner {
+  std::unique_ptr<Job> job;
+public:
+  Runner(std::unique_ptr<Job> job) : job(std::move(job)) {}
+  int operator()() { return this.job->perform(); }
+};
+int main() {
+  auto concrete = std::make_unique<Work>();
+  auto erased = std::upcast_unique<Job, Work>(std::move(concrete));
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(Runner(std::move(erased)));
+  if (!started) return 1;
+  auto result = worker.join();
+  return result && result.value() == 42 ? 0 : 2;
+}
+)");
+  if (!unrelated.canGenerateCode())
+    printDiagnostics(unrelated);
+  expect(unrelated.canGenerateCode(),
+         "unrelated interface erasure must retain its transfer requirement");
+}
+
 void testVerifierMutations() {
   const lang::FrontendResult frontend =
       analyze("managed-thread-verifier.gti", validProgram());
@@ -973,6 +1037,7 @@ int main() {
   testTypedResultPipeline();
   testClassTypedResultPipeline();
   testSemanticRejections();
+  testTransferQualifiedCallables();
   testVerifierMutations();
   return failures == 0 ? 0 : 1;
 }

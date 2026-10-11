@@ -1,0 +1,57 @@
+#include <std/functional>
+#include <std/thread>
+#include <std/mutex>
+
+class Once {
+  std::unique_ptr<int> value;
+public:
+  Once(std::unique_ptr<int> value) : value(std::move(value)) {}
+  int operator()() && { return *this.value; }
+};
+
+class Counter {
+  mut int value = 40;
+public:
+  int operator()() mut { this.value += 1; return this.value; }
+};
+
+int main() {
+  std::transfer_function<int()> read([]() -> int { return 42; });
+  mut std::thread_result<int> first{};
+  if (!first.start(std::move(read))) return 1;
+  auto first_result = first.join();
+  if (!first_result || first_result.value() != 42) return 2;
+
+  mut std::transfer_function<int() mut> change(Counter());
+  if (change() != 41) return 3;
+  mut std::thread_result<int> second{};
+  if (!second.start(std::move(change))) return 4;
+  auto second_result = second.join();
+  if (!second_result || second_result.value() != 42) return 5;
+
+  std::transfer_function<int() &&> consume(Once(std::make_unique<int>(42)));
+  mut std::thread_result<int> third{};
+  if (!third.start(std::move(consume))) return 6;
+  auto third_result = third.join();
+  if (!third_result || third_result.value() != 42) return 7;
+
+  // Different concrete targets have one queue element type and retain their
+  // transfer contract through an ordinary source-defined container.
+  mut std::vector<std::transfer_function<int() &&>> jobs{};
+  jobs.push_back(std::transfer_function<int() &&>(Once(std::make_unique<int>(20))));
+  jobs.push_back(std::transfer_function<int() &&>([]() -> int { return 22; }));
+  auto shared = std::make_shared<std::mutex<std::vector<std::transfer_function<int() &&>>>>(
+      std::move(jobs));
+  auto worker_state = shared.clone();
+  mut std::thread_result<int> worker{};
+  auto started = worker.start([state = std::move(worker_state)]() -> int {
+    mut auto guard = state->lock();
+    mut auto& pending = guard.get();
+    int a = std::move(pending[0])();
+    int b = std::move(pending[1])();
+    return a + b;
+  });
+  if (!started) return 8;
+  auto completed = worker.join();
+  return completed && completed.value() == 42 ? 0 : 9;
+}

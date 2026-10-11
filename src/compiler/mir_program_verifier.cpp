@@ -11424,6 +11424,13 @@ verifyMirProgramContracts(const MirProgram &program) {
               ? typeRequiresActiveCleanup(instance.type.arguments.front(),
                                           typeRequiresActiveCleanup)
               : std::nullopt;
+      const auto payloadCapabilities =
+          instance.type.arguments.size() == 1
+              ? conditionalCapabilities(program,
+                                        instance.type.arguments.front())
+              : std::nullopt;
+      const bool mayCrossThreads = storageCapability && payloadCapabilities &&
+                                   payloadCapabilities->transferCapable;
       const bool exactMutexCapability =
           instance.type.arguments.size() == 1 &&
           instance.type.arguments.front() != SemanticType::Void &&
@@ -11435,6 +11442,9 @@ verifyMirProgramContracts(const MirProgram &program) {
           !instance.abstract && !instance.polymorphic && !instance.cAbiRecord &&
           !instance.cAbiLayout && !instance.unionLayout &&
           !instance.destructor && !instance.requiresActiveDropState &&
+          payloadCapabilities &&
+          instance.traits.transferCapable == mayCrossThreads &&
+          instance.traits.shareCapable == mayCrossThreads &&
           payloadRequiresActiveCleanup &&
           instance.requiresActiveCleanup ==
               (storageCapability && *payloadRequiresActiveCleanup);

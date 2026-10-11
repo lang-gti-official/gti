@@ -73,6 +73,36 @@ The earlier historical regression in #169 is not considered fully recovered mere
 this one cause improves. Follow-on RT-2 through RT-10 need their individual
 prerequisites and measured clients; they are not added to this implementation.
 
+## Scoped concurrency and composable shared jobs (2026-10-11)
+
+**State:** implementation in progress; none of the acceptance gates below are
+claimed complete. The owner requested both scoped parallel borrowing and the
+shared-state/callable composition improvements. This is one delivery goal,
+not completion of either item through its prerequisite alone.
+
+1. Synchronization owners derive transfer and sharing from payload transfer
+   safety. Lock guards remain non-transferable. General interface capability
+   contracts preserve transfer requirements through owning callable erasure,
+   enabling heterogeneous owned jobs without granting concurrent invocation.
+2. Structured parallel scopes retain every child borrow and join obligation
+   through normal and failure cleanup. Shared captures require sharing;
+   exclusive captures require transfer and suspend conflicting parent access
+   until completion. Reuse semantic places, loans and callable contracts;
+   HIR/MIR preserve and independently verify those facts. Prove unrelated
+   user-defined borrowed carriers and disjoint engine-data projections, not
+   nominal exceptions for a particular task or container.
+3. Deliver source-defined public APIs, executable examples, negative escape,
+   overlap, thread-affinity and cleanup tests, malformed-MIR controls,
+   compiler-backed editor behavior, optimized native/sanitizer execution and
+   measured allocation/runtime/code-size costs. Ordinary owned threads keep
+   rejecting borrowed state. No detach, async runtime, scheduler or unchecked
+   safe API is implied by this goal.
+
+The initial implementation changes the mutex capability relationship and adds
+shared-mutex worker/affine-payload controls. It is not yet validation evidence.
+The scoped-borrow requirements in the concurrency plan remain the contract for
+the second stage, including join on every exit and parent-loan reactivation.
+
 ## Compile-Time Reflection Delivered (2026-10-11)
 
 The owner accepted [`reflection.md`](reflection.md) with its decisions. All
