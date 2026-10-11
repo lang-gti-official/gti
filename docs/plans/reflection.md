@@ -247,6 +247,19 @@ Q12. On the go: Q13, Q14.
 
 ## Phase 3: Structural Construction, Callable Reflection And Closure
 
+**Status (2026-10-11): implemented.** `std::meta::construct` (static
+semantics §3.12.5), method/operator/constructor/parameter metaobjects and
+source locations (§3.12.6), budget coverage over nested callable expansions,
+and the roadmap/ledger closure. Decoding clients are the byte and text readers
+of `tests/fixtures/reflection_construct.gti` and
+`examples/138-structural-construction.gti`; the JSON decoder waits for
+`std::experimental::json`, the verification gate the owner scheduled after
+this phase. The two reflection defects found by the audit (GitHub #4, dropped
+receiver evaluation; GitHub #5, unchecked owner type) are fixed here.
+Invocation through a metaobject (`invoke`) is not provided (Q16: metadata
+first); static fields, `primary_of<T>()` and a declaration-position type
+spelling (R7) remain open.
+
 Goal: decoding without weakening initialization or ownership, the remaining
 declaration kinds, and the move of reflection from "later breadth" to a
 delivered capability.
@@ -367,6 +380,8 @@ decisions; the residual sub-questions are listed afterwards.
 - **R5 (answered 2026-10-11).** `std::meta::reflectable<T>`, bound to
   `GenericConstraintKind::Reflectable`; `std::meta::is_reflectable<T>()` is
   the same fact as a constant for `static_assert`.
-- **R6 (phase 3, start).** How far structural construction extends past
-  designated construction.
+- **R6 (answered 2026-10-11).** Exactly as far as designated construction:
+  `std::meta::construct` selects the generated constructor of a struct with
+  public value fields and no declared constructors or bases, so nothing is
+  bypassed. Types with constructors are built through them by the client.
 - **R7 (later).** A declaration-position spelling for a type metaobject.
