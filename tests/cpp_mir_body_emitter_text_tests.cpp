@@ -4203,6 +4203,76 @@ int main() {
          "no class result should value-initialize an ordinary local");
 }
 
+void testClassConditionalJoinConsumers() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-class-conditional-join.gti", R"(
+struct plain_value {
+  int32_t number;
+  plain_value(int32_t number) : number(number) {}
+};
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() {}
+};
+
+plain_value make_plain(int32_t number) { return plain_value(number); }
+counted make_counted(int32_t number) { return counted(number); }
+
+plain_value pick(bool ok) { return ok ? make_plain(1) : make_plain(2); }
+
+counted pick_counted(bool ok) {
+  return ok ? make_counted(3) : make_counted(4);
+}
+
+int main() { return pick(true).number + pick_counted(true).number - 4; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the class conditional join fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // Both call arms publish into the cleanup-free join's storage; the joined
+  // value moves into its own staged slot and the join's representation ends.
+  const std::string retire = ".destroy(); // end moved join representation\n";
+  const std::size_t retired = text.find(retire);
+  const std::size_t joinStart = retired == std::string::npos
+                                    ? std::string::npos
+                                    : text.rfind("__gti_mir_p_", retired);
+  const std::string join = joinStart == std::string::npos
+                               ? std::string()
+                               : text.substr(joinStart, retired - joinStart);
+  std::size_t armPublications = 0;
+  for (std::size_t at = join.empty() ? std::string::npos
+                                     : text.find(join + ".construct_from(");
+       at != std::string::npos && at < retired;
+       at = text.find(join + ".construct_from(", at + 1))
+    ++armPublications;
+  expect(armPublications == 2 &&
+             text.rfind(".construct(std::move(" + join + ".get()));",
+                        retired) != std::string::npos,
+         "both call arms should publish into the join's storage, and the "
+         "returned value should move from it before the join retires");
+  // An owning returned join ends its moved-from storage at the transfer.
+  expect(text.find(".destroy(); // GTI MIR returned temporary transfer-out") !=
+             std::string::npos,
+         "an owning conditional returned from a plain body should retire its "
+         "moved-from join storage at the transfer");
+  expect(text.find("::__gti_program::plain_value __gti_mir_v_") ==
+                 std::string::npos &&
+             text.find("::__gti_program::plain_value __gti_mir_p_") ==
+                 std::string::npos,
+         "no join value or storage should value-initialize an ordinary local");
+}
+
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
@@ -4393,6 +4463,7 @@ constexpr NamedTest kTests[] = {
     {"testOwningExpectedFieldPublication", testOwningExpectedFieldPublication},
     {"testCommaDenotesRightOperandObject", testCommaDenotesRightOperandObject},
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
+    {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",

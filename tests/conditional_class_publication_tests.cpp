@@ -304,7 +304,7 @@ int main() {
               lang::verifyHirProgramPlans(frontend.semantics, malformed);
           expect(std::any_of(verified.errors.begin(), verified.errors.end(),
                              [](const auto &error) {
-                               return error.find("class result alias") !=
+                               return error.find("object result alias") !=
                                       std::string::npos;
                              }),
                  "grouping rejects wrong type, missing source/value, erased "
