@@ -43,6 +43,7 @@ if(Python3_Interpreter_FOUND)
     expected_temporary_observation_runtime
     expected_filesystem_prerequisites_runtime expected_passive_publication_runtime
     expected_payload_pair_arguments_runtime expected_payload_pending_cleanup_runtime
+    expected_payload_short_circuit_runtime
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
     generated_base_constructor_runtime generated_constructor_order_runtime generic_algorithm_breadth
     generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
