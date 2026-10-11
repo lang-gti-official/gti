@@ -980,6 +980,10 @@ add_executable("gti_managed_thread_tests"
 target_link_libraries("gti_managed_thread_tests" PRIVATE gti_cpp_backend)
 add_test(NAME managed_thread_semantic_ir COMMAND gti_managed_thread_tests)
 
+add_executable(gti_scoped_thread_semantic_tests scoped_thread_semantic_tests.cpp)
+target_link_libraries(gti_scoped_thread_semantic_tests PRIVATE gti_compiler)
+add_test(NAME scoped_thread_semantic_shapes COMMAND gti_scoped_thread_semantic_tests)
+
 add_executable("gti_function_item_tests"
                "${PROJECT_SOURCE_DIR}/tests/function_item_tests.cpp")
 target_link_libraries("gti_function_item_tests" PRIVATE gti_cpp_backend)

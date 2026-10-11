@@ -26,6 +26,11 @@ class SemanticVisitor::Impl final : public ExprVisitor,
                                     public StmtVisitor,
                                     public SemanticInstanceProvider {
 public:
+  enum class ThreadTransferBoundary { Owned, Scoped };
+
+  [[nodiscard]] std::optional<ScopedThreadTaskShape>
+  scopedThreadTaskShapeFor(const SemanticType &type);
+
   enum class ProgramEffectOwnerKind {
     None,
     Initializer,
@@ -1491,9 +1496,9 @@ private:
   [[nodiscard]] std::optional<ActiveCleanupCause>
   activeCleanupCause(const SemanticType &type) const;
 
-  [[nodiscard]] ConcurrencyCapabilities
-  typeCapabilities(const SemanticType &type,
-                   std::vector<SemanticType> &visiting) const;
+  [[nodiscard]] ConcurrencyCapabilities typeCapabilities(
+      const SemanticType &type, std::vector<SemanticType> &visiting,
+      ThreadTransferBoundary boundary = ThreadTransferBoundary::Owned) const;
 
   [[nodiscard]] SemanticTypeTraits
   typeTraits(const SemanticType &type,

@@ -147,6 +147,22 @@ manifest command omitted the required repository argument; the corrected local
 manifest guard passes. These are focused development results, not completion
 of scoped source support or final publication validation.
 
+After reconciliation with `7f80b257`'s shared MIR failure-cleanup implementation,
+the semantic prerequisite query `scopedThreadTaskShapeFor` selects exact safe
+entries and resolved nested reference paths without granting ordinary transfer
+to borrowed carriers. It reuses the structural capability walker and stored
+dependency map. Independent referent requirements remain checked even when the
+task's cleanup policy has an unsafe positive assertion. Release snapshot
+`61fe4f1a7faa27b405ea264bc5114d8a21a072389c0eb050d73c607082c0f74a`
+passes `scoped_thread_semantic_shapes`, `managed_thread_semantic_ir`,
+`mutex_semantic_ir`, and `scoped_thread_runtime`. The latter now also checks
+exact cleanup-emergency records/descriptors and join-all before borrowed access
+returns. The semantic fixture uses the normal source graph so field identities
+are real resolved symbols, not synthetic indices. This query is not executable
+admission: actual invocation origins/endpoints, HIR/MIR scope records and their
+verification, production adapters, the public source wrapper, scoped examples,
+editor behavior and whole-goal performance/acceptance gates remain unfinished.
+
 ## Compile-Time Reflection Delivered (2026-10-11)
 
 The owner accepted [`reflection.md`](reflection.md) with its decisions. All

@@ -329,8 +329,8 @@ auto SemanticVisitor::Impl::activeCleanupCause(const SemanticType &type) const
 }
 
 auto SemanticVisitor::Impl::typeCapabilities(
-    const SemanticType &type, std::vector<SemanticType> &visiting) const
-    -> ConcurrencyCapabilities {
+    const SemanticType &type, std::vector<SemanticType> &visiting,
+    ThreadTransferBoundary boundary) const -> ConcurrencyCapabilities {
   switch (type.kind) {
   case SemanticType::Int8:
   case SemanticType::Int16:
@@ -359,7 +359,7 @@ auto SemanticVisitor::Impl::typeCapabilities(
     for (const auto &enumerator : concrete->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
         const ConcurrencyCapabilities component =
-            typeCapabilities(payload, visiting);
+            typeCapabilities(payload, visiting, boundary);
         result.transferCapable =
             result.transferCapable && component.transferCapable;
         result.shareCapable = result.shareCapable && component.shareCapable;
@@ -370,7 +370,7 @@ auto SemanticVisitor::Impl::typeCapabilities(
   case SemanticType::Array:
   case SemanticType::UniqueOwner:
     if (type.arguments.size() == 1) {
-      return typeCapabilities(type.arguments.front(), visiting);
+      return typeCapabilities(type.arguments.front(), visiting, boundary);
     }
     return {};
   case SemanticType::Expected:
@@ -386,7 +386,7 @@ auto SemanticVisitor::Impl::typeCapabilities(
         continue;
       }
       const ConcurrencyCapabilities component =
-          typeCapabilities(type.arguments[index], visiting);
+          typeCapabilities(type.arguments[index], visiting, boundary);
       result.transferCapable =
           result.transferCapable && component.transferCapable;
       result.shareCapable = result.shareCapable && component.shareCapable;
@@ -424,7 +424,7 @@ auto SemanticVisitor::Impl::typeCapabilities(
          owner->compilerCapability ==
              CompilerCapabilityTypeKind::UninitializedStorage) &&
         type.arguments.size() == 1) {
-      return typeCapabilities(type.arguments.front(), visiting);
+      return typeCapabilities(type.arguments.front(), visiting, boundary);
     }
     break;
   case SemanticType::Unknown:
@@ -432,7 +432,6 @@ auto SemanticVisitor::Impl::typeCapabilities(
   case SemanticType::StringView:
   case SemanticType::CString:
   case SemanticType::RawPointer:
-  case SemanticType::Reference:
   case SemanticType::SharedPointer:
   case SemanticType::TypePack:
   case SemanticType::TypeName:
@@ -440,6 +439,21 @@ auto SemanticVisitor::Impl::typeCapabilities(
   case SemanticType::FunctionSignature:
   case SemanticType::NativeFunction:
     return {};
+  case SemanticType::Reference: {
+    if (boundary != ThreadTransferBoundary::Scoped ||
+        type.arguments.size() != 1)
+      return {};
+    // A scoped exclusive loan moves access, not ownership of its referent.
+    // Shared access requires sharing. Do not recursively grant scoped
+    // permission to the referent: its own concurrency contract still applies.
+    std::vector<SemanticType> referentVisiting;
+    const auto referent =
+        typeCapabilities(type.arguments.front(), referentVisiting);
+    return {.transferCapable = type.referenceAccess == AccessMode::Mutable
+                                   ? referent.transferCapable
+                                   : referent.shareCapable,
+            .shareCapable = false};
+  }
   }
 
   if (type.classId == 0 || type.classId > classes.size()) {
@@ -518,7 +532,7 @@ auto SemanticVisitor::Impl::typeCapabilities(
   const GenericSubstitution substitution = classSubstitution(type);
   const auto merge = [&](const SemanticType &componentType) {
     const ConcurrencyCapabilities component =
-        typeCapabilities(componentType, visiting);
+        typeCapabilities(componentType, visiting, boundary);
     result.transferCapable =
         result.transferCapable && component.transferCapable;
     result.shareCapable = result.shareCapable && component.shareCapable;
@@ -535,7 +549,8 @@ auto SemanticVisitor::Impl::typeCapabilities(
       merge(substituteType(member->second.symbol.type, substitution));
     }
   }
-  if (hasSourceDestructorBody(owner) || owner.storedReference) {
+  if (hasSourceDestructorBody(owner) ||
+      (owner.storedReference && boundary == ThreadTransferBoundary::Owned)) {
     result = {};
   }
   if (owner.transferPolicy == ConcurrencyCapabilityPolicy::Denied) {
@@ -6381,6 +6396,53 @@ auto SemanticVisitor::Impl::isExactThreadTaskType(
     const SemanticType &type, const SemanticType &resultType) -> bool {
   return type.kind == SemanticType::TypeParameter ||
          exactThreadTaskEntry(type, resultType).has_value();
+}
+
+auto SemanticVisitor::Impl::scopedThreadTaskShapeFor(const SemanticType &type)
+    -> std::optional<ScopedThreadTaskShape> {
+  const auto traits = typeTraits(type);
+  const auto entry = exactThreadTaskEntry(type, SemanticType::Void);
+  if (!traits.movable || !entry)
+    return std::nullopt;
+  if (entry->function != 0) {
+    const auto *function = semanticModel.findFunction(entry->function);
+    if (function == nullptr && instanceBaseModel != nullptr)
+      function = instanceBaseModel->findFunction(entry->function);
+    if (function == nullptr || function->requiresUnsafe)
+      return std::nullopt;
+  }
+  std::vector<SemanticType> visiting;
+  if (!typeCapabilities(type, visiting, ThreadTransferBoundary::Scoped)
+           .transferCapable)
+    return std::nullopt;
+
+  ScopedThreadTaskShape shape{.taskType = type, .entry = *entry};
+  if (!traits.containsBorrowedState) {
+    if (containsDisallowedCallableCaptureState(type))
+      return std::nullopt;
+    return shape;
+  }
+
+  // The invocation layer will map these exact paths to its existing stored
+  // loans. Missing paths are never permission to erase a hidden dependency.
+  const auto paths = storedReferencePaths(type);
+  if (paths.empty())
+    return std::nullopt;
+  for (const auto &path : paths) {
+    visiting.clear();
+    if (!typeCapabilities(path.reference, visiting,
+                          ThreadTransferBoundary::Scoped)
+             .transferCapable)
+      return std::nullopt;
+    auto fields = storedFieldSymbols(type, path.fields);
+    if (fields.size() != path.fields.size() ||
+        std::any_of(fields.begin(), fields.end(),
+                    [](SymbolId field) { return field == 0; }))
+      return std::nullopt;
+    shape.dependencies.push_back(
+        {.fields = std::move(fields), .reference = path.reference});
+  }
+  return shape;
 }
 
 auto SemanticVisitor::Impl::analyzeThreadIntrinsicCall(
