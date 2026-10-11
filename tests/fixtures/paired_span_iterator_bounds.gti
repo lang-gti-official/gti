@@ -34,6 +34,20 @@ int main(int argc, std::vector<std::string> argv) {
     auto selected = reverse[std::ptrdiff_t(2)];
     return selected.first();
   }
+  if (argc == 10) {
+    current += std::ptrdiff_t(2);
+    ++current;
+  }
+  if (argc == 11) {
+    mut auto reverse = pairs.rbegin();
+    ++reverse;
+    ++reverse;
+    ++reverse;
+  }
+  if (argc == 12) {
+    mut auto reverse = pairs.rbegin();
+    --reverse;
+  }
   auto tail = pairs.subspan(std::size_t(1), std::size_t(1));
   mut auto limited = tail.begin();
   limited -= std::ptrdiff_t(1);

@@ -281,13 +281,13 @@ namespace std {
       T& operator->() { return *this; }
 
       void operator++() mut {
-        this.current_position = detail::checked_iterator_position(
-            this.current_position, size_t(0), this.final_position, ptrdiff_t(1), Reverse != 0);
+        this.current_position = detail::checked_iterator_step<Reverse>(
+            this.current_position, size_t(0), this.final_position);
       }
 
       void operator--() mut {
-        this.current_position = detail::checked_iterator_position(
-            this.current_position, size_t(0), this.final_position, ptrdiff_t(-1), Reverse != 0);
+        this.current_position = detail::checked_iterator_step<Reverse, 1>(
+            this.current_position, size_t(0), this.final_position);
       }
 
       void operator+=(ptrdiff_t offset) mut {
@@ -375,12 +375,12 @@ namespace std {
       char& operator->() { return *this; }
       mut char& operator->() mut { return *this; }
       void operator++() mut {
-        this.current_position = detail::checked_iterator_position(
-            this.current_position, size_t(0), this.final_position, ptrdiff_t(1), Reverse != 0);
+        this.current_position = detail::checked_iterator_step<Reverse>(
+            this.current_position, size_t(0), this.final_position);
       }
       void operator--() mut {
-        this.current_position = detail::checked_iterator_position(
-            this.current_position, size_t(0), this.final_position, ptrdiff_t(-1), Reverse != 0);
+        this.current_position = detail::checked_iterator_step<Reverse, 1>(
+            this.current_position, size_t(0), this.final_position);
       }
       void operator+=(ptrdiff_t offset) mut {
         this.current_position = detail::checked_iterator_position(

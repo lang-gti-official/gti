@@ -3,7 +3,7 @@
   "source_fingerprints": {
     "stdlib/prelude.gti": "a33aa3f09d625f30f05d937483d0db075649a2037e45e990ae628ce07f28e448",
     "stdlib/std/algorithm.gti": "c46dc1e269933a154b029b3dd3254aa6335e92cc270cdd17565dc5d369e6a655",
-    "stdlib/std/array.gti": "a85c3742db19d4314f1b177dcf2f227699edc654d52e7ac4b1f2abd93e14d020",
+    "stdlib/std/array.gti": "4da29370213fdd4910ea0b7d85ae5ba63dff767606f261207a6a526bbbbfc22f",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
@@ -11,8 +11,8 @@
     "stdlib/std/cmath.gti": "ce64a3e07f35f48079a95b6784d4e5aa11c7829691f6436d18a3932319e2773d",
     "stdlib/std/cstdio.gti": "8081db343694df6698be59fbc91574fb92cc366e0471681daff43ea17cc7e7f3",
     "stdlib/std/cthread.gti": "8980aedce805131cd3f0a528b55ec31b8e3626b267bfb4321501e236138217d9",
-    "stdlib/std/deque.gti": "19868bdc1be11f9c81df14afce28830fba3ed3271fc813a6625cedc5ed108bf9",
-    "stdlib/std/detail/iterator.gti": "fd3db5132bf1332831a9233f693a35d6bef3e762b5deb30ec59c8d1b37842254",
+    "stdlib/std/deque.gti": "6f649140cb0b34f238f7377f3c0ff0326aed9d3758368fa7b749c5c8f4562fb6",
+    "stdlib/std/detail/iterator.gti": "37ee100c51eb970cdf06df5f79a8a27afab75f977787ec148b752f1a8bb9aab9",
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
@@ -26,31 +26,31 @@
     "stdlib/std/json.gti": "b54226945bf9be04ba527264601234078911dd0dfdde70780ad2f44c048c3fa7",
     "stdlib/std/list.gti": "b670d0cf766d8bfae1cc32c51517510bcd434dc834ed31d8f8a46ff59da800e0",
     "stdlib/std/map.gti": "24bf0e1e969a92e4d6df567d6b13e1e5e2519e3bf2f80c225ca5937dcfeba3cf",
-    "stdlib/std/memory.gti": "d0de60dbd40a2136d7d00bc0346f24bf20ad5fece73679b746917baed50ea1ca",
+    "stdlib/std/memory.gti": "479b7a52d38437db574b236e7addc02ca866745c704ca5299748ffaa4f1aef75",
     "stdlib/std/meta.gti": "93a8f92e250cfb77e56ff3252755509894e54ab40dc0174ca9e8b822e16a27f7",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
-    "stdlib/std/paired_span.gti": "ab28c57598bc28b95564aa0f1f0badf6b2b0accf7f7cbba17c330146980cb319",
+    "stdlib/std/paired_span.gti": "8be5f2ad71d8a36e05203f7899d550fd91b47160f3b2864f060e010a03777e4e",
     "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
     "stdlib/std/polymorphic.gti": "a2194db76d6e36b30e813e6fa46baf4a31937b8362c49764f20ed7f9589a8a77",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/resource.gti": "54fc9c2e5dfe54e81d48f58b1c30d007176d4779fab9d78e34e695c28c21cf2d",
-    "stdlib/std/resource_vector.gti": "4a8fda29fefb3c128cc6a0a537165fdcf03c7ef8e5a5eb5159fc48750105ad3a",
+    "stdlib/std/resource_vector.gti": "62b252d1158a77213a8c7adc071d2dfa556323e1740948c344613b599c37374c",
     "stdlib/std/set.gti": "21ae1fa7f3e6344a2bfe17c0a6f0fc1a274954bfe7a52d6b46e0a44bb84dc779",
-    "stdlib/std/simd.gti": "6e698fd5bf28d48e63d599fa0e8559017b2c2247076bd057eb7e72f6822c2c58",
+    "stdlib/std/simd.gti": "9db37c0d480f519cfcfb44b22a478cf51f19e0c11334e85caf76e23bbe107f3b",
     "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
-    "stdlib/std/span.gti": "f1653435f595e6d96c69d2ca9163151024de00c73d6750a62717f3331e61ea82",
-    "stdlib/std/string.gti": "f6c3fa63e9e9e1c7231409b3f48f77b1414c0345dcb0e0ad25b9cdbfc91cc2f1",
-    "stdlib/std/string_view.gti": "2cdba7c578ac5ec9581946253763439eae656ad8cbd7cf739218891e040f1a6d",
+    "stdlib/std/span.gti": "430adc5e18fd0325a8e7abba92c7edfa031d956d64c16fbb7327da3776d21c6e",
+    "stdlib/std/string.gti": "01460b1e07c079518c7761cd874bba569b13c7192e565db32f507b8eec9b7a0a",
+    "stdlib/std/string_view.gti": "db84934530d41115374ab9f76978a276e7c2c6789b6f2848a25dacf295beba27",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/unordered_map.gti": "8f2b0f540d58b9e2a363c33b1708e31bc13cf4985051f9ae9a82c071bc411bb1",
     "stdlib/std/unordered_set.gti": "d34da5c1a6347dea83c385c536c7eaf217335da2bcab7ba99275a9ea26f52fc4",
     "stdlib/std/utility.gti": "959b87c2cd332ad51a4d1711fb4e94b83ab752cb8af886e2aa3bbf2658815e7d",
-    "stdlib/std/vector.gti": "a7806f68471af6ff6fd65433a12ccdd561ae97ba69a6dc1d5b965e424ae2a395"
+    "stdlib/std/vector.gti": "996de85951a50cb8d24fca822e93082f77981a110212297a46e7bab33d6cb803"
   },
   "cases": [
     {
@@ -2348,7 +2348,8 @@
       "operations": [
         "std::detail::checked_iterator_difference",
         "std::detail::checked_iterator_element",
-        "std::detail::checked_iterator_position"
+        "std::detail::checked_iterator_position",
+        "std::detail::checked_iterator_step"
       ],
       "case_ids": [
         "iterator-checked-position",
@@ -2358,7 +2359,9 @@
         "inclusive endpoint coordinate",
         "reverse one-past base",
         "minimum signed offset and difference",
-        "large unsigned coordinates with small representable signed difference"
+        "large unsigned coordinates with small representable signed difference",
+        "forward/reverse one-step movement across full unsigned coordinates",
+        "invalid starting positions and boundaries preserve state through reverse cleanup"
       ],
       "evidence": [
         "tests/fixtures/iterator_coordinate_boundaries.gti",

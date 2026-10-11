@@ -1375,10 +1375,10 @@ public:
     return this.slots.get(selected);
   }
   void operator++() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), this.limit, ptrdiff_t(1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), this.limit);
   }
   void operator--() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), this.limit, ptrdiff_t(-1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), this.limit);
   }
   void operator+=(ptrdiff_t offset) mut {
     this.position = checked_iterator_position(this.position, size_t(0), this.limit, offset, Reverse != 0);
@@ -1440,10 +1440,10 @@ public:
     return this.slots.get_mut(selected);
   }
   void operator++() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), this.limit, ptrdiff_t(1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), this.limit);
   }
   void operator--() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), this.limit, ptrdiff_t(-1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), this.limit);
   }
   void operator+=(ptrdiff_t offset) mut {
     this.position = checked_iterator_position(this.position, size_t(0), this.limit, offset, Reverse != 0);

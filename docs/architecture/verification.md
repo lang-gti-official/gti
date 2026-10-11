@@ -1,5 +1,47 @@
 # Compiler Verification
 
+## Container iterator completion: candidate validation (2026-10-11)
+
+The clean `0249b92f` Release compiler passes all 17 owning iterator gates in
+the combined 18-gate matrix: contiguous and paired spans, linked and sparse
+storage, lanes, text views, cursor publication/movement, mapped-value
+projection, unrelated two-owner ranges and owning returned-reference
+replacement, plus their MIR/optimizer mutation controls. The remaining gate,
+`stdlib_surface`, fails only its `meta` fixture with an empty lifetime-slot
+drop. That defect also reproduces in the upstream reflection campaign; these
+focused results are not whole-suite acceptance.
+
+After reconciliation through main `82b1fa06`, `macos_installed_runtime` passes
+the relocated CLI/LSP/runtime closure and all ten iterator consumers: examples
+141–144 and a standalone `std.string_view` module consumer, each at O0/C++20
+and O3/C++23. Their sources and working directory are outside the repository,
+with repository/library environment overrides removed. This temporary install
+does not change the user's installed toolchain.
+
+Performance acceptance is deliberately still open. Two frozen Release
+compilers, baseline main `5385c0b0` and candidate `0249b92f`, build the unchanged
+vector-growth/shared-traversal and particles/mutable-traversal workloads.
+Two independent local macOS arm64 campaigns each use five warmups and 21
+seeded, interleaved rounds, holding the shared suite and all build slots.
+The repeat campaign measures 73.60/104.45 ms for baseline/candidate vector
+traversal (1.42×), and 161.47/561.30 ms for particle updates (3.48×). Paired
+bootstrap intervals for the ratios are 1.412–1.436 and 3.469–3.485.
+Every execution has matching checksum output, exit zero and empty stderr;
+these legacy probes do not print complete element state. Exact compiler,
+library/runtime/source identities, generated C++, MIR/optimization reports,
+native assembly, raw samples and build/memory observations are retained in
+`/private/tmp/gti-iterator-performance.hheNJa/report.json` and its assessment.
+
+The new general signed-position helper remains a call in the particle hot
+loop, with result spills and owner-state reloads, and adds movement branches
+to shared traversal. One-step advancement needs a smaller source-defined
+checked contract; arbitrary signed jumps retain the general helper. No
+unchecked API or public-name compiler rule is justified. The repair must pass
+the existing boundary/failure/lifetime matrices and repeat these comparisons
+before the campaign can satisfy runtime acceptance. Full corpus/census,
+unfiltered production, platform and final integration-bound checks remain
+required independently of this candidate evidence.
+
 ## Expected returns across scope cleanup (0.402.4)
 
 - **Defects.** Three verified programs stopped at the C++ backend with

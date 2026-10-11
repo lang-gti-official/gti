@@ -44,9 +44,9 @@ public:
   }
   T& operator->() { return *this; }
   void operator++() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), this.length, ptrdiff_t(1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), this.length);
   }
-  void operator--() mut { this.position = checked_iterator_position(this.position, size_t(0), this.length, ptrdiff_t(-1), Reverse != 0); }
+  void operator--() mut { this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), this.length); }
   T& operator[](ptrdiff_t offset) {
     size_t position = checked_iterator_element(this.position, size_t(0), this.length, offset, Reverse != 0);
     return this.slots[(this.head + position) % this.slots.size()].get();
@@ -87,9 +87,9 @@ public:
     return this.slots[(this.head + selected) % this.slots.size()].get();
   }
   void operator++() mut {
-    this.position = checked_iterator_position(this.position, size_t(0), this.length, ptrdiff_t(1), Reverse != 0);
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), this.length);
   }
-  void operator--() mut { this.position = checked_iterator_position(this.position, size_t(0), this.length, ptrdiff_t(-1), Reverse != 0); }
+  void operator--() mut { this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), this.length); }
   void operator+=(ptrdiff_t offset) mut {
     this.position = checked_iterator_position(this.position, size_t(0), this.length, offset, Reverse != 0);
   }
