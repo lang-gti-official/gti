@@ -122,7 +122,7 @@ def classify(paths: Iterable[str]) -> dict[str, list[str]]:
         if (
             path == "CMakeLists.txt"
             or path == "VERSION"
-            or under(path, "cmake/")
+            or under(path, "cmake/", ".github/workflows/")
             or path in {
                 "scripts/check_release_version.py",
                 "scripts/check_llvm_link_surface.py",
