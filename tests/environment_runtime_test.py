@@ -85,7 +85,7 @@ def main():
                             'int main() { return 0; }\n', encoding="utf-8")
         rejected = run([compiler, dangling, "--emit-cpp", "-o", scratch / "bad.cpp"],
                        environment, status=65)
-        assert "borrow" in rejected.stderr.lower(), rejected.stderr
+        assert "GTI-S2045" in rejected.stderr and "cannot escape" in rejected.stderr, rejected.stderr
         benchmark = scratch / "benchmark"
         started = time.perf_counter()
         run([compiler, root / "tests/fixtures/environment_lookup_benchmark.gti",

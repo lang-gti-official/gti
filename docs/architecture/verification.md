@@ -23,8 +23,9 @@ overrides. Existing process, filesystem and I/O boundaries remain separate
 regression gates.
 
 `environment_target_capability` selects Linux, macOS, Windows and unknown
-targets through the frontend, requiring availability on POSIX and explicit
-import diagnostics elsewhere. Direct compilation has no `--target` switch;
+targets through the frontend, requiring availability on POSIX, an explicit
+Windows import diagnostic and the compiler's early unsupported-target-model
+diagnostic for an unknown OS. Direct compilation has no `--target` switch;
 target-selection testing belongs to this frontend gate instead.
 
 A local M2 Max O3/C++23 observation of the 100,000-lookup workload had a

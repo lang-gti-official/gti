@@ -49,9 +49,10 @@ Unsafe/native code that changes the process-wide environment (`setenv`,
 environment access, including foreign readers, and preserve all host validity
 requirements. Returning an owned copy does not make a racing native mutation
 safe. This slice intentionally provides no setter, enumeration, or child-local
-override. Windows and unknown targets are rejected by the source unit until
-their native encoding/lookup contracts are implemented; the private ABI also
-reports `unsupported` on Windows.
+override. Windows imports are rejected until their native encoding/lookup
+contract is implemented; the private ABI also reports `unsupported` there.
+Unknown targets are rejected by the compiler's target model, with an additional
+defensive source-unit guard.
 
 The runtime's versioned `gti_rt_environment_get_v1` copies a present value into
 one immutable native snapshot. A source-defined temporary owner releases it

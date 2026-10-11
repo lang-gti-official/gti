@@ -27,10 +27,18 @@ int main() {
       return 1;
     }
     if (!supported) {
+      // Unknown OS values fail the compiler's target model before imports.
+      if (os == "unknown") {
+        if (std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code == "GTI-S2062";
+                        }))
+          continue;
+        std::cerr << "missing unsupported target-model diagnostic\n";
+        return 1;
+      }
       const std::string expected =
-          os == "windows"
-              ? "std/environment is not yet available on Windows."
-              : "std/environment requires a supported POSIX target.";
+          "std/environment is not yet available on Windows.";
       if (std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
                        [&](const auto &diagnostic) {
                          return diagnostic.message.find(expected) !=
@@ -38,6 +46,8 @@ int main() {
                        })) {
         std::cerr << "missing explicit environment target diagnostic for " << os
                   << '\n';
+        for (const auto &diagnostic : result.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
         return 1;
       }
     }
