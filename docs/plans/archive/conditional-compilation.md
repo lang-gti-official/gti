@@ -6,6 +6,11 @@
 > canonical grammar. This document retains the design rationale and delivery
 > evidence.
 
+The prior-baseline grammar, paths and motivation below describe the proposal
+checkpoint. They are not current absences: configuration flags and boolean
+conditions are delivered. Later build/editor configuration uses the canonical
+language and driver contracts, not this archived phase order.
+
 This plan extends GTI's existing compile-time conditional to carry named
 configuration flags — `#define DEBUG`, `#ifdef DEBUG` — so that a unit can vary
 by build configuration as well as by target triple. It also specifies the LSP
@@ -14,7 +19,7 @@ work that makes inactive branches visibly inactive in the editor.
 Function-like macros, token pasting, stringification, and textual substitution
 are **out of scope and rejected by design**. See *Decisions*.
 
-## Why this matters
+## Historical Motivation
 
 Platform independence is the stated motivation, and half of it already works:
 `target.os` and `target.arch` cover *where the code is being built for*. What
@@ -67,7 +72,7 @@ Three properties follow from that structure, all recorded in
 3. **Directives do not lower to C++ preprocessor directives.** The backend
    never sees them.
 
-The condition grammar today is exactly:
+At the prior baseline, the condition grammar was exactly:
 
 ```
 target . ( os | vendor | arch )  ( == | != )  STRING

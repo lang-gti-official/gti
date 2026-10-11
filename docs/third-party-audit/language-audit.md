@@ -7,6 +7,28 @@
 
 Reviewed at `origin/main` commit `5f4666c` (`VERSION` 0.92.0).
 Review type: read-only. No source file was modified.
+
+### Historical scope and current disposition (2026-10-11)
+
+The "verified" probes, runtime status 134, absence lists and recommendations
+below describe `5f4666c`/0.92.0 only. They are preserved external evidence, not
+today's specification or acceptance run. Concurrency contracts and owned
+threads/atomics/mutexes, layout queries/manual lifetime/source allocation,
+native records/opaque handles/callbacks/out-parameters, owned callables,
+payload enums/matching, explicit integer modes, domain operators, binary64,
+mutable traversal, Expected propagation, constraints, static assertions and
+source modules have since landed within their canonical profiles.
+
+The later raw-address and owner-witness rules preserve proved safety facts
+while stating explicit unsafe obligations; the old "no escape hatch" framing
+does not define current GTI. The original absence of a failure contract is
+also superseded, with allocation exhaustion retaining its distinct abort
+policy. Remaining embedding, native retention/ownership, general borrow,
+range, compile-time and linkage breadth must be selected from the current
+[restriction ledger](../plans/language-alignment.md),
+[implementation sequence](../plans/implementation-sequence.md) and
+[language contracts](../language/index.md). No historical restriction becomes
+a permanent ban or a new lifetime-annotation requirement by appearing here.
 Companion documents: [`audit.md`](audit.md) (compiler architecture),
 [`llvm-audit.md`](llvm-audit.md), [`implementation-plan.md`](implementation-plan.md).
 
