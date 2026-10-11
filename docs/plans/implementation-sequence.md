@@ -92,7 +92,47 @@ deferral, constant folding, designated construction or class registration
 should reconcile with it. Status and residual questions live in the plan
 document.
 
+## Ready Queue
+
+### Reconciled Current Queue (2026-10-11)
+
+This is the sole prompt-sized queue. Choose an unfinished outcome against current
+canonical main, not the first historical paragraph using the word "next".
+The dated stabilization, issue-campaign, structural and performance checkpoints
+preserve their original evidence; they are not standing concurrency or release
+instructions for a new task. Current owner instructions and the repository
+workflow determine task scope and integration.
+
+| Outcome / owner | Current readiness | Prerequisite and first useful slice |
+| --- | --- | --- |
+| Reflection phase 3 | next in the accepted campaign | Phases 1/2 delivered. Resolve actual field receiver/owner correctness defects as needed, then structural construction/decoding with declaration-order initialization and rollback. Callable metadata and budget hardening follow within the [reflection plan](reflection.md). |
+| `L-UP-10` -> `L-UP-11` | acceptance closure, then adoption; may be co-validated | The retained borrowed-pack reproducer passes current O0/O3 probes. Complete the relevant constructor/cleanup composition matrix while adopting final-node emplacement; do not presume another compiler fix. |
+| `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
+| `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
+| `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
+| `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
+| `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
+| `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
+| Native import `C-08B` | ready for a bounded language/import slice | Native scalar, recursive pointer and indirect-call identities delivered. Introduce true foreign-storage identity and unsafe loads/stores, then import actual external variables; retain TLS/volatile exclusions until specified. |
+| `L-CONST-01` extension | ready to select one execution profile | Use the staged verified-MIR executor and semantic query timing. Select one missing mutable-reference, pack, owning/sum or operator profile with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
+| `T-LSP` latency client | lazy trusted-body prerequisite met | Body-order/demand facts and editor-scoped HIR exist. Demand/memoize trusted body facts, apply the same scope to completion and measure diagnostics/latency. Cross-snapshot semantic reuse follows only if simpler steps leave it necessary. See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
+| `RT-2` through `RT-10` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. |
+| Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; environment/process capture; required text/range/service breadth. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
+
+This is priority/readiness information, not an artificial dependency chain.
+Reflection and independent library/performance work need not wait for one
+another; overlapping ownership/constant/construction changes must reconcile.
+M05–M10 in the operation ledger are migration candidates whose per-operation
+invariants still need proof, not an automatic instruction to remove every
+compiler-private capability. No row claims completion from planning, a bodyless
+API or an unmerged branch.
+
 ## Stabilization Reset: 2026-10-08
+
+Historical coordination record: its pause, agent limits and PR inventory apply
+to that dated campaign, not to new tasks after subsequent integration. Use the
+current queue above and present owner/repository instructions. Preserve the
+recorded candidate evidence without treating it as a fresh main validation.
 
 The owner paused new issue-campaign work to finish the existing lifetime/storage
 and payload-enum features, consolidate their handoffs, run the complete suite,
@@ -2042,42 +2082,7 @@ production emission starts. Design rows may run in parallel. Rows that edit the
 same semantic or lowering authority must serialize even if the graph has no
 logical edge between them.
 
-## Ready Queue
-
-### Reconciled Current Queue (2026-10-11)
-
-This is the sole prompt-sized queue. Choose an unfinished outcome against current
-canonical main, not the first historical paragraph using the word "next".
-The dated stabilization, issue-campaign, structural and performance checkpoints
-preserve their original evidence; they are not standing concurrency or release
-instructions for a new task. Current owner instructions and the repository
-workflow determine task scope and integration.
-
-| Outcome / owner | Current readiness | Prerequisite and first useful slice |
-| --- | --- | --- |
-| Reflection phase 3 | next in the accepted campaign | Phases 1/2 delivered. Resolve actual field receiver/owner correctness defects as needed, then structural construction/decoding with declaration-order initialization and rollback. Callable metadata and budget hardening follow within the [reflection plan](reflection.md). |
-| `L-UP-10` -> `L-UP-11` | acceptance closure, then adoption; may be co-validated | The retained borrowed-pack reproducer passes current O0/O3 probes. Complete the relevant constructor/cleanup composition matrix while adopting final-node emplacement; do not presume another compiler fix. |
-| `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
-| `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
-| `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
-| `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
-| `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
-| `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
-| Native import `C-08B` | ready for a bounded language/import slice | Native scalar, recursive pointer and indirect-call identities delivered. Introduce true foreign-storage identity and unsafe loads/stores, then import actual external variables; retain TLS/volatile exclusions until specified. |
-| `L-CONST-01` extension | ready to select one execution profile | Use the staged verified-MIR executor and semantic query timing. Select one missing mutable-reference, pack, owning/sum or operator profile with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
-| `T-LSP` latency client | lazy trusted-body prerequisite met | Body-order/demand facts and editor-scoped HIR exist. Demand/memoize trusted body facts, apply the same scope to completion and measure diagnostics/latency. Cross-snapshot semantic reuse follows only if simpler steps leave it necessary. See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
-| `RT-2` through `RT-10` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. |
-| Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; environment/process capture; required text/range/service breadth. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
-
-This is priority/readiness information, not an artificial dependency chain.
-Reflection and independent library/performance work need not wait for one
-another; overlapping ownership/constant/construction changes must reconcile.
-M05–M10 in the operation ledger are migration candidates whose per-operation
-invariants still need proof, not an automatic instruction to remove every
-compiler-private capability. No row claims completion from planning, a bodyless
-API or an unmerged branch.
-
-### Historical Completed Campaigns
+## Historical Completed Campaign Baselines
 
 At adoption, already in-flight work completed its original scope before the
 reconciled main activated the exclusive structural gate. That gate passed;
@@ -2740,7 +2745,7 @@ analysis, HIR, MIR, and the backend.
   O0/O3 × C++20/C++23 native execution; `<std/cstdio>` chunk traversal; and
   versioned LSP diagnostic publication/clearing.
 - **Design owner:** the exact contract and phase map live in
-  [`place-and-ownership-state.md`](place-and-ownership-state.md#9-proposed-m-own-04-named-expected-payload-range-slice).
+  [`place-and-ownership-state.md`](place-and-ownership-state.md#9-implemented-m-own-04-named-expected-payload-range-slice).
 
 ### M-FAIL-01: Failure Operations And Cleanup Edges
 
@@ -8960,7 +8965,7 @@ owned by the rows and domain plans above.
 | Owned callables and capture | **owning read/mut/once wrappers, retained invocation, exact items and bounded inline/boxed storage delivered** | `L-CALL-01/02` admitted contracts exist. Borrowed capture/results and inline consuming projection remain general lifetime/origin goals, not the original one-field-only transport boundary. |
 | Allocator/provenance model | **general raw/lifetime, programmable allocation and source storage delivered** | `S-ALLOC-01` through `S-ALLOC-09` admitted contracts and arena/pool/resource clients exist. Remaining allocator-aware variants, fallible owners and source-policy candidates have separate acceptance. |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
-| Payload enums/matching | **in progress:** passive payloads plus concrete owning-class construction, variant-aware exactly-once drop, whole-enum move construction/assignment, checked-reference observation, direct by-value ordinary free-function/non-polymorphic method/constructor/exact-lambda transport, ordinary direct-field containment with construction rollback and containing-value movement, copied bindings, and tag-only exhaustive matching are complete; generic/polymorphic callable transport, capture, arrays/indirect wrappers, consuming/borrowed bindings, recursive owning aggregates, generics, and stable layout remain | `L-SUM-01` |
+| Payload enums/matching | **generic, recursively owned and borrowed-pattern profiles delivered** | `L-SUM-01` and ADR 014 cover substituted alternative identity, owning class payloads, finite recursive containment, storage/source-wrapper transport and read/mut arm-scoped bindings. Polymorphic transport, direct capture, non-class owning payloads/fixed arrays, stored reference payloads, consuming patterns and stable layout remain distinct goals. |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
@@ -8984,7 +8989,7 @@ owned by the rows and domain plans above.
 | Project dependencies/cache | **project/tests/cache/path/Git/registry workflows delivered** | Further registry governance/backends, native cache profile coverage and library publication remain; do not repeat foundational stages. |
 | LSP project index/process isolation | **project facts/crash-safe snapshots delivered; broader index/isolation client-gated** | Lazy trusted-body and scoped-completion latency work comes before speculative cross-snapshot infrastructure. |
 | Separate compilation/stable GTI ABI | later-breadth proposal | deterministic names, layout/ABI, package model, concrete emission |
-| Module vocabulary | Source interfaces implemented; standard-library modules implemented in 0.393.0 | ADR 024 defines imports, explicit exports/re-exports, package maps, and `export #include` republication; every public `<std/name>` unit is importable as `std.name`, and legacy includes remain unchanged. Remaining: an aggregate `import std;`. Its lowering prerequisite landed in 0.393.0, so artifacts lower only reachable code, but every imported unit is still analyzed, and the platform-gated units (`tcp`, `process`) need a selection rule. Also remaining: migrating standard units from republished legacy sources to real exports; separate compilation and independent module linkage identities. |
+| Module vocabulary | Source interfaces implemented; standard-library modules implemented in 0.393.0 | ADR 024 defines imports, exports/re-exports, package maps and `export #include` republication; legacy includes remain unchanged. Artifact MIR/emission selects reached roots, but complete checking/HIR still processes the declaration tail. Remaining: avoid unnecessary trusted-library HIR work, select platform-gated units for aggregate `import std;`, migrate republished sources to real exports where useful, and define independent linkage if separate compilation needs it. |
 
 ## Required Architectural Corrections
 

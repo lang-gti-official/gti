@@ -225,8 +225,10 @@ The versioned `gti_rt_http_*_v1` C ABI owns one easy handle per client and one
 fully buffered result per response. GTI passes URL, body, CA path, and an
 encoded header sequence as counted non-retained views. Fixed 4096-byte private
 buffers copy response data into public `std::string` and `std::vector` values.
-Raw pointers appear only inside trusted `unsafe` blocks and cannot be named by
-application source.
+Native handle identities and runtime declarations remain private to trusted
+source, whose accesses use explicit `unsafe` blocks. Applications can use GTI's
+general raw-pointer facilities; that does not expose the HTTP runtime's private
+handles or confer access to their storage.
 
 The runtime maps libcurl outcomes to the stable `errc` ordinals, disables
 redirects, enables strict TLS verification, bounds response accumulation, and

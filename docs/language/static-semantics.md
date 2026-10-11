@@ -657,8 +657,12 @@ requirements, and untyped braces do not supply deductions. Repeated
 occurrences must infer one canonical type, and every local type parameter must
 occur in an inferable parameter position. A local parameter is visible only in
 that constructor's parameters, requirements, defaults, initializer list, and
-body and cannot shadow an owner parameter. Constructor-local packs remain
-unsupported.
+body and cannot shadow an owner parameter. A final constructor-local type pack
+and final by-value parameter-pack expansion are implemented within the ordinary
+owned pack/selected-constructor contract, including final-field construction.
+Concrete pack elements retain exact copy/move/borrow roles, source order and
+cleanup; this does not add explicit constructor-local arguments, local generic
+defaults, CTAD, parameter reference packs or native variadic forwarding.
 
 The selected constructor declaration, concrete owner, and ordered local
 type/value arguments form one concrete constructor identity. Distinct local
@@ -849,11 +853,14 @@ polymorphic contract equivalence require separate representation rules.
 
 Constraints affect candidate validity but do not rank overloads, distinguish
 otherwise identical signatures, provide SFINAE, or select specializations.
-Exact safe read-only nullary member signatures can be declared with
+Exact member signatures can be declared with
 `requires (T& x) { { x.snapshot() } -> R; }`, either in concepts or as a
 boolean static query. `R` is an exact owned result type; the query does not
-execute the method. See [concepts](concepts.md#exact-read-only-member-requirements)
-for the bounded syntax, composition and ownership rules.
+execute the method. The current profile additionally admits argument-bearing
+read/mut signatures, checked reference parameters, dependent compound types and
+explicit unsafe requirements. See
+[concepts](concepts.md#exact-member-signature-requirements) for the bounded
+syntax, composition and ownership rules.
 Negation, general requires-expressions, arbitrary expression requirements,
 value constraints, constraint subsumption, forwarding
 references, and unrestricted metaprogramming are not part of the implemented
@@ -1314,8 +1321,11 @@ flow rules. GTI does not have implicit switch fallthrough. A payload-enum
 switch without `default` covers every value only when all alternatives are
 present; such a switch has no reachable unmatched path.
 
-Every non-`void` call result is used unless intentionally suppressed with the
-specified discard form.
+Non-`void` calls are non-discardable by default. `[[discard]]` permits one
+ignored result; a selected `[[discardable]]` declaration permits omission under
+its function/method contract. Neither suppresses the call's other checks. The
+complete selected-target/virtual-contract rule is in
+[execution semantics](execution.md#optional-api-results).
 
 ## 3.11 Bounded Constant Evaluation
 
@@ -1331,7 +1341,7 @@ After transparent alias resolution, the bounded operand set is:
 
 - `bool`, `char`, `float`, `double`, `int`, `uint`, and every canonical or
   compatibility spelling of the fixed-width signed and unsigned integers;
-- one-level `T*` or `const T*` raw pointers, including `void*` and pointers
+- recursive raw pointers, including `void*`, qualified pointer slots and pointers
   whose pointee does not itself have a queryable layout; and
 - integral scoped enums, whose layout is the layout of their exact underlying
   fixed-width integer type;

@@ -46,14 +46,15 @@ are defined by the incorporated grammar and lexer contract.
 
 `delete` is accepted only in a copy or move constructor policy. It is reserved
 as an identifier everywhere else and does not introduce a raw deallocation
-expression. The `&&` token retains its logical-operator role except in the
-exact move constructor policy form defined by the grammar.
+expression. The `&&` token also marks the exact move-constructor policy and
+consuming receiver/signature forms defined by the grammar; these contexts do
+not introduce general C++ rvalue-reference parameters.
 
 `unsafe` introduces an ordinary lexical block, a GTI function or ordinary
 method's caller-obligation modifier, or an unsafe compound member-signature
 requirement. `[[unsafe]]` is not
 an accepted attribute spelling. `const` is a
-keyword only for the implemented raw-pointer pointee qualifier; its presence
+keyword for the implemented raw-pointer pointee/slot qualifiers; its presence
 does not introduce general C++ cv-qualified values or declarators.
 
 `sizeof` and `alignof` are reserved word operators. They cannot be used as
@@ -78,10 +79,11 @@ compatibility spellings for the same primitive types. The formatter may
 normalize compatibility spellings to the canonical `_t` form. `float` names
 IEEE-754 binary32 and `double` names IEEE-754 binary64.
 
-One-level raw pointers use the declarator spellings `T*` and `const T*`.
-Address formation uses unary `&`. The grammar accepts the shape independently
-of semantic restrictions such as the rejection of `T**`, references to raw
-pointers, implicit fixed-array decay, and unsupported pointee types.
+Raw pointers use recursive declarators such as `T*`, `const T*`, `T**` and
+`T* const*`, with independent qualification at each layer. Address formation
+uses unary `&`. Pointer depth is not a boundary-position restriction; references
+to raw pointers, implicit fixed-array decay and unsupported pointee types still
+follow their distinct semantic restrictions.
 
 ## 2.4 Literals
 

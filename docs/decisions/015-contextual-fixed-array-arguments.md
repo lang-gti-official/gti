@@ -2,6 +2,12 @@
 
 Status: Accepted
 
+Scope note (2026-10-11): explicit function/constructor value arguments and
+bounded constant expressions have since landed in the ordinary generic system.
+The original exclusions below describe this brace-argument slice, not a current
+absence list for generics. Untyped standalone braces and broader contextual
+callable forms remain separate; current spelling lives in static semantics.
+
 ## Context
 
 GTI needs concise construction of containers and other APIs from a finite set
