@@ -76,9 +76,6 @@ def main():
              "-fsanitize=address,undefined", "-fno-omit-frame-pointer"], environment)
         run([binary], environment, output="")
 
-        windows = run([compiler, module, "--target", "x86_64-pc-windows-msvc",
-                       "--emit-cpp", "-o", scratch / "windows.cpp"], environment, status=65)
-        assert "std/environment is not yet available on Windows" in windows.stderr
         dangling = scratch / "dangling.gti"
         dangling.write_text('#include <std/environment>\n#include <std/string>\n'
                             'std::string_view bad() {\n'
@@ -101,7 +98,7 @@ def main():
             times.append(time.perf_counter() - started)
         print(f"100000 owned lookups: median {statistics.median(times):.6f}s; "
               f"build {build_seconds:.3f}s; executable {benchmark.stat().st_size} bytes")
-    print("owned environment lookup, module, example, target and lifetime contracts passed")
+    print("owned environment lookup, module, example and lifetime contracts passed")
 
 
 if __name__ == "__main__":

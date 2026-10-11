@@ -13,14 +13,19 @@ independently compiles and links the header as C17.
 `environment_runtime` builds the public source API, its `std.environment`
 module and runnable configuration example at O0/O3 under C++20/C++23. It checks
 controlled empty, spaced, Unicode and 16-KiB values, movement of returned
-owners, verified-MIR/native cleanup witnesses, sanitizer execution, Windows
-import rejection and a rejected view escaping a local returned string owner.
+owners, verified-MIR/native cleanup witnesses, sanitizer execution,
+and a rejected view escaping a local returned string owner.
 It also reports runtime and executable/build costs for 100,000 successful
 owned lookups at O3. This is a new-service cost measurement, not a speedup
 comparison to a borrowed libc pointer. `macos_installed_runtime` checks the
 new module and runtime symbols from a relocated install without repository
 overrides. Existing process, filesystem and I/O boundaries remain separate
 regression gates.
+
+`environment_target_capability` selects Linux, macOS, Windows and unknown
+targets through the frontend, requiring availability on POSIX and explicit
+import diagnostics elsewhere. Direct compilation has no `--target` switch;
+target-selection testing belongs to this frontend gate instead.
 
 A local M2 Max O3/C++23 observation of the 100,000-lookup workload had a
 five-run median of 0.0368 seconds (including process startup), a 125,864-byte

@@ -277,6 +277,9 @@ add_executable(gti_runtime_environment_header_smoke runtime_environment_header_s
 target_compile_features(gti_runtime_environment_header_smoke PRIVATE c_std_17)
 target_link_libraries(gti_runtime_environment_header_smoke PRIVATE gti_runtime)
 add_test(NAME environment_c_header COMMAND gti_runtime_environment_header_smoke)
+add_executable(gti_environment_target_tests environment_target_tests.cpp)
+target_link_libraries(gti_environment_target_tests PRIVATE gti_compiler)
+add_test(NAME environment_target_capability COMMAND gti_environment_target_tests)
 
 add_executable("gti_runtime_failure_header_smoke"
                "${PROJECT_SOURCE_DIR}/tests/runtime_failure_header_smoke.cpp")
