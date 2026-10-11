@@ -603,6 +603,75 @@ int main() {
          "a guard should not cross the thread-transfer boundary");
 }
 
+void testPayloadConcurrencyCapabilities() {
+  for (const std::string policy : {"", "[[no_share]]", "[[no_transfer]]"}) {
+    const auto frontend =
+        analyze("mutex-payload-capabilities.gti",
+                "#include <std/mutex>\n#include <std/memory>\n" + policy + R"(
+struct Payload { mut int value = 0; };
+int main() {
+  auto owned = std::make_shared<std::mutex<Payload>>(Payload());
+  return 0;
+}
+)");
+    if (!frontend.canGenerateCode())
+      printDiagnostics(frontend);
+    expect(frontend.canGenerateCode(),
+           "local mutex/shared ownership must accept thread-affine payloads");
+    const bool transferable = policy != "[[no_transfer]]";
+    bool sawStorage = false;
+    bool sawShared = false;
+    for (const auto &instance : frontend.mir.classInstances()) {
+      if (instance.compilerCapability !=
+              lang::CompilerCapabilityTypeKind::MutexStorage &&
+          instance.compilerCapability !=
+              lang::CompilerCapabilityTypeKind::SharedOwner)
+        continue;
+      sawStorage |= instance.compilerCapability ==
+                    lang::CompilerCapabilityTypeKind::MutexStorage;
+      sawShared |= instance.compilerCapability ==
+                   lang::CompilerCapabilityTypeKind::SharedOwner;
+      expect(
+          instance.traits.transferCapable == transferable &&
+              instance.traits.shareCapable == transferable,
+          "mutex and its shared owner require payload transfer, not sharing");
+    }
+    expect(sawStorage && sawShared,
+           "capability checks require both concrete owners");
+    for (const bool transfer : {false, true}) {
+      auto forged = frontend.mir;
+      bool changed = false;
+      for (auto &instance : const_cast<std::vector<lang::MirClassInstance> &>(
+               forged.classInstances())) {
+        if (instance.compilerCapability !=
+            lang::CompilerCapabilityTypeKind::MutexStorage)
+          continue;
+        if (transfer)
+          instance.traits.transferCapable = !transferable;
+        else
+          instance.traits.shareCapable = !transferable;
+        changed = true;
+      }
+      expect(changed && !lang::verifyMirProgram(forged).valid(),
+             "MIR must reject forged mutex payload concurrency capabilities");
+    }
+  }
+  const auto denied = analyze("mutex-affine-worker.gti", R"(
+#include <std/mutex>
+#include <std/memory>
+#include <std/thread>
+[[no_transfer]] struct Affine { int value = 0; };
+int main() {
+  auto owner = std::make_shared<std::mutex<Affine>>(Affine());
+  auto started = std::thread::start([value = std::move(owner)]() -> void {});
+  return 0;
+}
+)");
+  expect(!denied.canGenerateCode() && hasCode(denied, "GTI-S2084") &&
+             !hasCode(denied, "GTI-B0001"),
+         "a mutex must not erase its payload's thread affinity");
+}
+
 void testVerifierMutations() {
   const lang::FrontendResult frontend =
       analyze("mutex-verifier.gti", validProgram());
@@ -667,6 +736,7 @@ int main() {
   testPreparedMutexPayload();
   testMutexCleanupRecipe();
   testSemanticBoundaries();
+  testPayloadConcurrencyCapabilities();
   testVerifierMutations();
   return failures == 0 ? 0 : 1;
 }

@@ -468,8 +468,17 @@ auto SemanticVisitor::Impl::typeCapabilities(
     return {.transferCapable = allowed, .shareCapable = allowed};
   }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+    const auto payload =
+        type.arguments.size() == 1
+            ? typeCapabilities(type.arguments.front(), visiting)
+            : ConcurrencyCapabilities{};
     visiting.pop_back();
-    return {.transferCapable = false, .shareCapable = true};
+    // Locking grants exclusive access on whichever thread acquires the lock.
+    // Consequently sharing the synchronization owner requires transfer, not
+    // concurrent read access, of its payload. A live guard still forbids
+    // moving the owner; moving an unlocked owner transfers its payload too.
+    return {.transferCapable = payload.transferCapable,
+            .shareCapable = payload.transferCapable};
   }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexLockToken) {
     visiting.pop_back();
@@ -733,8 +742,8 @@ auto SemanticVisitor::Impl::typeTraits(
                               .copyAssignable = false,
                               .moveAssignable = false,
                               .containsBorrowedState = false,
-                              .transferCapable = false,
-                              .shareCapable = true};
+                              .transferCapable = element.transferCapable,
+                              .shareCapable = element.transferCapable};
   }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::OptionalStorage) {
     const bool relocatable =

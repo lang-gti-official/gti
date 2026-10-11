@@ -538,6 +538,12 @@ without naming private implementation iterator types.
 
 ## Raw text views with source-owned lifetime witnesses
 
+[`066-managed-threads.gti`](066-managed-threads.gti) also demonstrates a
+transfer-qualified erased job carrying an owned shared mutex. The payload is
+accessed only while its scoped guard is live; no global or unchecked pointer
+is needed. A transfer-qualified callable does not grant shared invocation,
+and a mutex containing a thread-affine value stays local.
+
 [`133-raw-text-owner-views.gti`](133-raw-text-owner-views.gti) derives counted
 text and zero-terminated views from an unrelated inline byte owner. The unsafe
 bridge retains the owner relationship through an ordinary source helper; the

@@ -1,5 +1,7 @@
 #include <std/thread>
 #include <std/memory>
+#include <std/mutex>
+#include <std/functional>
 
 class message {
   int32_t value;
@@ -47,6 +49,25 @@ int main() {
     return 5;
   }
   mut std::thread third = std::move(third_started).value();
+
+  // Dynamic shared state does not require a global. The mutex serializes
+  // payload access; the shared owner keeps it alive until all workers finish.
+  auto counter = std::make_shared<std::mutex<int>>(0);
+  auto worker_counter = counter.clone();
+  std::transfer_function<void()> job(
+      [state = std::move(worker_counter)]() -> void {
+        mut auto guard = state->lock();
+        mut int& value = guard.get();
+        value += 1;
+      });
+  auto fourth_started = std::thread::start(std::move(job));
+  if (!fourth_started) return 6;
+  mut auto fourth = std::move(fourth_started).value();
+  if (!fourth.join()) return 7;
+  {
+    auto guard = counter->lock();
+    if (guard.get() != 1) return 8;
+  }
 
   // `third` autojoins at scope exit. GTI intentionally provides no detached
   // public thread handle in this managed-thread slice.

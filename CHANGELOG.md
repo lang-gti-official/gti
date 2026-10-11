@@ -9,6 +9,15 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.403.0 — Cross-thread ownership composition
+
+- Mutex transfer and sharing follow the protected payload's transfer
+  capability. This enables owned shared mutexes while preserving thread-affine
+  payload restrictions and thread-local lock guards.
+- `std::transfer_function` retains an explicit transfer requirement through
+  read-only, mutable, and consuming owning callable erasure. Ordinary local
+  function wrappers do not acquire permission to cross threads implicitly.
+
 ## 0.401.6 — Member initializers taking owning `expected` results
 
 - A member initializer that constructs its field from an `expected<T, E>`

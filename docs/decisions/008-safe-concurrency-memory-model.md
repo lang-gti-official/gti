@@ -324,6 +324,22 @@ O0/O3 runtime equivalence, installed-toolchain coverage on each advertised
 target, optimizer-ordering assertions, and sanitizer/stress coverage where
 supported. No timing-only test is a correctness oracle.
 
+## Mutex capability composition revision (2026-10-11)
+
+The initial mutex slice denied transfer and granted sharing independently of
+its payload. This is not the intended general ownership contract: another
+thread acquires exclusive payload access through locking, and may become its
+final owner through shared ownership. Both owner capabilities instead require
+payload transfer; payload sharing is unnecessary because the mutex serializes
+access. Guards remain thread-local and their existing loans prevent owner
+movement while locked. This permits an owned shared mutex without global
+storage and preserves thread-affine payload restrictions. Callable erasure
+likewise retains explicit interface transfer requirements instead of deriving
+permission from movement or a signature.
+
+The scoped-concurrency campaign tracks validation and delivery; this revision
+does not itself claim that borrowed tasks or their join proof are implemented.
+
 ## Consequences
 
 - GTI can preserve one ownership and optimization model while delivering public

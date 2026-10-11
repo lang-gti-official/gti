@@ -1,0 +1,46 @@
+#include <std/memory>
+#include <std/mutex>
+#include <std/thread>
+
+// This payload cannot be shared directly. The lock grants exclusive access,
+// so its transfer capability is the relevant cross-thread requirement.
+[[no_share]] struct State {
+  mut int total = 0;
+};
+
+void increment(std::shared_ptr<std::mutex<State>> state) {
+  for (mut int i = 0; i < 1000; i++) {
+    mut auto guard = state->lock();
+    mut State& value = guard.get();
+    value.total += 1;
+  }
+}
+
+int main() {
+  auto state = std::make_shared<std::mutex<State>>(State());
+  auto left_state = state.clone();
+  auto right_state = state.clone();
+  auto left_started = std::thread::start(
+      [owned = std::move(left_state)]() -> void { increment(owned.clone()); });
+  if (!left_started) return 1;
+  mut auto left = std::move(left_started).value();
+  auto right_started = std::thread::start(
+      [owned = std::move(right_state)]() -> void { increment(owned.clone()); });
+  if (!right_started) return 2;
+  mut auto right = std::move(right_started).value();
+  if (!left.join() || !right.join()) return 3;
+  {
+    auto guard = state->lock();
+    if (guard.get().total != 2000) return 4;
+  }
+  std::mutex<State> local{State()};
+  mut std::thread_result<int> result{};
+  auto started = result.start([owned = std::move(local)]() -> int {
+    auto guard = owned.lock();
+    return guard.get().total;
+  });
+  if (!started) return 5;
+  auto joined = result.join();
+  if (!joined || joined.value() != 0) return 6;
+  return 0;
+}
