@@ -92,6 +92,13 @@ installed consumption and performance evidence. The owner requested both scoped 
 shared-state/callable composition improvements. This is one delivery goal,
 not completion of either item through its prerequisite alone.
 
+Nested failure-path composition now passes its focused Release regression
+(`run-0bb60840f66f490f8d1dae0f8f922a5d`): an incoming reference-field borrow
+retains its exact parent proof when constructing a cleanup-owning child.
+Ordinary guard construction and wrong-field/access MIR mutations cover the
+same general rule without threading. Final full-suite, installed and quiet
+performance validation remain outstanding; this is not release completion.
+
 1. Synchronization owners derive transfer and sharing from payload transfer
    safety. Lock guards remain non-transferable. General interface capability
    contracts preserve transfer requirements through owning callable erasure,

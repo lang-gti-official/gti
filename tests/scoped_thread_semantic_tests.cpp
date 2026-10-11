@@ -467,7 +467,8 @@ void checkProductionLowering() {
   options.target.executionProfile = lang::ExecutionProfile::Concurrent;
   options.target.runtimeCapabilities.threads = true;
   for (const auto name :
-       {"scoped_parallel_threads.gti", "scoped_parallel_cleanup.gti"}) {
+       {"scoped_parallel_threads.gti", "scoped_parallel_cleanup.gti",
+        "scoped_parallel_failure.gti"}) {
     const auto path = fixtures / name;
     std::ifstream input(path);
     std::ostringstream source;
@@ -483,18 +484,11 @@ void checkProductionLowering() {
     expect(result.canGenerateCode(),
            "public parallel wrapper has verified source ownership");
     if (!result.canGenerateCode()) {
-      for (const auto &function : result.mir.functionInstances())
-        if (std::any_of(function.body.blocks.begin(),
-                        function.body.blocks.end(), [](const auto &block) {
-                          return std::any_of(
-                              block.instructions.begin(),
-                              block.instructions.end(),
-                              [](const auto &instruction) {
-                                return instruction.intrinsic ==
-                                       lang::IntrinsicKind::ThreadScope;
-                              });
-                        }))
-          std::cerr << lang::MirPrinter{}.print(function.body);
+      for (const auto &error : lang::verifyMirProgram(result.mir).errors) {
+        std::cerr << error.message << '\n';
+        if (const auto *function = result.mir.findFunctionInstance(error.owner))
+          std::cerr << lang::MirPrinter{}.print(function->body);
+      }
       continue;
     }
     bool checkedPackCleanup = false;

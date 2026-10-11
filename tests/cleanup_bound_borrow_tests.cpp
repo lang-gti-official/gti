@@ -97,6 +97,37 @@ void negative(const std::string &name, const std::string &source,
 } // namespace
 
 int main() {
+  const std::string projectedGuard = R"gti(
+class MutGuard {
+  mut int& target;
+public:
+  MutGuard(mut int& target) : target(target) {}
+  ~MutGuard() { this.target += 1; }
+};
+class Parent {
+  mut int& target;
+public:
+  Parent(mut int& target) : target(target) {}
+  void apply() mut { MutGuard child{this.target}; }
+  void conflict() mut { MutGuard child{this.target}; this.target += 1; }
+};
+)gti";
+  // Keep the invalid method out of the positive program: bodies are checked
+  // independently of whether a particular caller selects them.
+  const auto conflict = projectedGuard.find("  void conflict()");
+  auto validGuard = projectedGuard;
+  validGuard.erase(conflict, validGuard.find('\n', conflict) - conflict);
+  positive("cleanup-owning child reborrows an incoming receiver field",
+           validGuard + R"gti(
+void apply(mut Parent& parent) { parent.apply(); }
+int main() { mut int value = 7;
+  { mut Parent parent{value}; apply(parent); }
+  return value - 8;
+}
+)gti");
+  negative("child cleanup retains its projected parent dependency",
+           projectedGuard + "int main() { return 0; }");
+
   positive("by-value guard moves retain their formal provenance", R"gti(
 void consume(Guard guard) {
   auto first = std::move(guard);
