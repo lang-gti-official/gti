@@ -64,7 +64,8 @@ public:
       FrontendWorkMetrics *workMetrics = nullptr,
       const SourceManager *sources = nullptr,
       RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
-      bool requireFunctionDefinitions = false);
+      bool requireFunctionDefinitions = false,
+      TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete);
   ~SemanticVisitor();
 
   SemanticVisitor(const SemanticVisitor &) = delete;
