@@ -2681,10 +2681,10 @@ analysis, HIR, MIR, and the backend.
   defines creation,
   parent suspension, movement, explicit copy/assignment rejection, call/return
   propagation, path joins, child-first cleanup, and reactivation in semantics,
-  HIR, and MIR. Start with
-  one origin and one carrier shape before considering nesting or multiple
-  owners.
-- **Non-goals:** raw or opaque origins, dynamic-index precision, multi-origin
+  HIR, and MIR. The initial proof used one origin and one carrier shape; later
+  delivered work generalizes nominal field dependencies and cleanup as
+  recorded below.
+- **Original slice non-goals:** raw or opaque origins, dynamic-index precision, multi-origin
   carriers, arbitrary lifetime parameters, mutex syntax, or treating every
   stored reference as safe merely because the backend can represent it.
 - **Focused tests:** stored view/guard-shaped carrier, returned mutable carrier,
@@ -2702,9 +2702,17 @@ analysis, HIR, MIR, and the backend.
   retirement. Compiler ownership tests cover owner conflict, child reborrow,
   move, return, unsupported shape diagnostics, and MIR mutation; the dedicated
   runtime fixture passes O0/O3 under C++20/C++23, and example 41 demonstrates a
-  source-defined exclusive view. Raw/opaque/dynamic-index, nested, captured,
-  global, custom-destructor, reseatable, and multi-origin carriers remain
-  rejected.
+  source-defined exclusive view. Those gates certify the original bounded
+  slice, not the complete current carrier profile.
+- **Current disposition (2026-10-11):** multiple direct/nested shared and
+  exclusive field paths, constructor-tree composition, physical carrier
+  references and cleanup-bound borrowed classes are now integrated. Raw/opaque
+  origins, dynamic-index precision, inherited/captured/global/array borrowed
+  storage and reseating remain outside the documented profile. Independent
+  per-field owner release is `L-UP-16`; it is not a prerequisite for using
+  current multi-owner service contexts. See
+  [the place plan](place-and-ownership-state.md#current-generalization-and-remaining-precision)
+  and [current ownership semantics](../language/ownership-and-lifetimes.md).
 - **Unlocks:** consumed by `C-SYNC-01` and scoped-thread guards; richer
   one-origin mutable views may build on the completed contract.
 

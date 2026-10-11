@@ -1024,8 +1024,14 @@ The source-private `runtime/src/cthread_state.cpp` now supplies the native
 create/join, identity, and registered-entry implementation. It is a separate archive member,
 so C consumers referencing only the yield ABI do not acquire the registry.
 Executable lowering follows reached roots rather than emitting every unused
-ordinary wrapper. Linking this archive member depends on reached runtime and
-adapter requirements; importing the module does not itself start the service.
+ordinary wrapper, but native C declarations remain roots. `MirProgram` derives
+the C-thread service requirement from retained native operation/adapter
+records. Consequently a concurrent program importing `<std/cthread>` still
+conservatively includes the empty begin/end lifecycle, even for yield-only
+use; a default-profile yield/identity/sleep-only program does not start the
+service. Demand-only native-service selection is not established by pruning
+ordinary wrapper bodies alone. The C archive-member separation remains useful
+to native consumers and must not be confused with that GTI startup policy.
 `cthread_internal.h` is not
 installed. The stable C boundary now exposes create/join plus compiler-generated
 begin/end/enter/leave entries. Ordinary `unsafe` GTI wrappers expose
