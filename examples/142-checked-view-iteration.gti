@@ -1,0 +1,86 @@
+#include <std/string>
+#include <std/vector>
+#include <std/span>
+#include <std/paired_span>
+#include <std/resource_vector>
+#include <std/resource>
+
+// Cursor direction does not change its access permission: these read-only
+// cursors can be copied independently while keeping their owner borrowed.
+int main() {
+  mut std::string text{"abcd"};
+  {
+    auto first = text.cbegin();
+    mut auto backwards = text.crbegin();
+    auto copy = backwards;
+    backwards += std::ptrdiff_t(2);
+    if (*first != 'a' || *backwards != 'b' || *copy != 'd') { return 1; }
+    if (backwards - text.crend() != std::ptrdiff_t(2)) { return 2; }
+  }
+
+  // An exclusive subview grants writable characters, not permission to grow
+  // or move the string. Reverse movement stays inside this subview's extent.
+  {
+    mut auto whole = text.as_mutable_span();
+    mut auto middle = whole.subspan(std::size_t(1), std::size_t(2));
+    auto finish = middle.rend();
+    mut auto output = middle.rbegin_mut();
+    while (output != finish) {
+      *output = 'x';
+      ++output;
+    }
+  }
+  if (text != "axxd" || text.size() != std::size_t(4)) { return 3; }
+
+  std::vector<int> ids = {10, 20, 30};
+  std::vector<std::string> names = {
+    std::string("alpha"), std::string("beta"), std::string("gamma")
+  };
+  {
+    auto whole = ids.as_span();
+    auto tail = whole.subspan(std::size_t(1), std::size_t(2));
+    auto backwards = tail.rbegin();
+    if (*backwards != 30 || backwards[std::ptrdiff_t(1)] != 20) { return 4; }
+  }
+
+  // Each entry is a checked proxy, not a copied pair of owning values.
+  // The pair view and every derived cursor protect both original owners.
+  auto rows = std::paired_span<int, std::string>(ids.as_span(), names.as_span());
+  mut int total = 0;
+  mut std::size_t visited = 0;
+  for (auto& entry : rows) {
+    total += entry.first();
+    if (entry.second().empty()) { return 5; }
+    visited++;
+  }
+  if (total != 60 || visited != std::size_t(3)) { return 6; }
+  {
+    mut auto backwards = rows.rbegin();
+    if ((*backwards).second() != "gamma") { return 7; }
+    ++backwards;
+    if ((*backwards).first() != 20 || (*backwards).second() != "beta") { return 8; }
+  }
+
+  std::process_resource process{};
+  unsafe {
+    // The one-time binding acknowledges the provider's allocation contract.
+    // Subsequent resource-vector operations retain checked owner/resource loans.
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> steps{resource};
+    steps.push_back(7);
+    steps.push_back(9);
+    {
+      auto first = steps.cbegin();
+      auto backwards = steps.rbegin();
+      if (*first != 7 || *backwards != 9 || backwards[std::ptrdiff_t(1)] != 7) { return 9; }
+    }
+    {
+      mut auto final = steps.end_mut();
+      --final;
+      *final = 11;
+    }
+    if (steps.back() != 11) { return 10; }
+  }
+  std::println("Checked view iteration passed");
+  return 0;
+}
