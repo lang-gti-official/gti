@@ -2,6 +2,13 @@
 
 Status: Accepted
 
+Implementation revision (2026-10-11): the original nullary read-only leaf below
+has been generalized to exact argument-bearing read-only or mutable instance
+methods, including checked reference parameters, dependent compound types and
+explicit unsafe requirements. The result remains exact and owned; no expression
+execution, overload ranking or conditional operator availability is implied.
+See [the current concept contract](../language/concepts.md#exact-member-signature-requirements).
+
 ## Context
 
 Unary concepts can describe properties of one generic type but cannot state
@@ -16,7 +23,7 @@ overload ordering, and specialization machinery that GTI does not need.
 
 GTI supports source concepts with one or more type parameters and a trailing
 function clause limited to a Boolean tree of concept applications and bounded
-exact read-only member requirements:
+exact member signature requirements:
 
 ```gti
 requires Concept<A> && (Relation<B, A> || Alternate<B, A>)

@@ -2,6 +2,13 @@
 
 Status: Accepted
 
+Implementation update (2026-10-11): C-05 target/include/provenance discovery and
+bounded native enum representation are delivered. The requested target governs
+native preprocessing and the selected data model; the libclang declaration
+reader still parses under its canonical LP64/LLP64 profile as described below.
+Do not confuse preprocessing target selection with a completed exact-triple
+reader migration. See [the current binding contract](../language/native-c-interop.md).
+
 ## Context
 
 `gti bindgen` imports the bounded-ABI surface of C headers as ordinary GTI
@@ -83,8 +90,8 @@ never modified.
 - `gti bindgen` parses C with a real C compiler: macros, conditionals, and
   declaration forms have their native meaning, native errors carry Clang's
   message text, and the bounded reader's private preprocessing policy notes
-  for conditionals and pragmas are gone. Includes remain unresolved at the
-  reader seam until C-05 owns include discovery and source provenance.
+  for conditionals and pragmas are gone. C-05 now owns include discovery and
+  source provenance through the same reader seam.
 - The `gti` executable now requires libclang at runtime. Distribution
   packages already ship it beside the LLVM libraries GTI links; bundled
   releases carry their own copy.

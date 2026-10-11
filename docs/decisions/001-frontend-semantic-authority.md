@@ -24,7 +24,9 @@ emitter may choose representation but may not repeat semantic selection.
 
 ## Consequences
 
-`FrontendResult` must own syntax and semantic side tables together. New features
-must preserve resolved identities through HIR/MIR. The transitional emitter can
-continue walking AST, but it must consume frontend decisions until MIR becomes
-complete enough to replace that path.
+`FrontendResult` owns syntax and semantic side tables together. New features
+preserve resolved identities through HIR/MIR. The original allowance for a
+transitional AST-walking emitter is historical: [ADR 016](016-single-lowered-backend-input.md)
+completed the cutover to a self-contained `LoweredProgram`. Executable backends
+consume verified MIR and lowered representation tables; they do not regain
+AST execution or semantic selection authority for a new feature.
