@@ -79,8 +79,14 @@ int many(int divisor) {
     std::size_t primaryEntries = 0;
     std::size_t fallibleDrops = 0;
     for (const auto &block : function.body.blocks) {
+      // A shared cleanup continuation runs under the context its entering
+      // producer already activated.
+      const auto *entered =
+          function.body.findFailureRecord(block.failureParameter);
       primaryEntries += block.activeFailure != 0 &&
-                        block.failureParameter == block.activeFailure;
+                        block.failureParameter == block.activeFailure &&
+                        entered != nullptr &&
+                        entered->kind == lang::MirFailureRecordKind::Producer;
       terminalEdges += block.terminator.kind ==
                        lang::MirTerminatorKind::TerminateCleanupFailure;
       for (const auto &instruction : block.instructions)
@@ -96,9 +102,12 @@ int many(int divisor) {
                  "initialized at entry for native phi construction");
         }
     }
-    expect(secondaryDrops > 32 && fallibleDrops > secondaryDrops &&
+    // Every failure edge reaches one shared reverse chain, so each guard has
+    // exactly one fallible cleanup drop however many failures keep it live.
+    expect(secondaryDrops >= 31 && secondaryDrops <= 32 &&
+               fallibleDrops > secondaryDrops &&
                terminalEdges == secondaryDrops,
-           "the fixture must contain many alternative secondary failures");
+           "the fixture shares one cleanup-failure alternative per guard");
     expect(
         occurrences("::gti_failure_record_v2 "
                     "__gti_mir_cleanup_failure_record{};") == 1 &&

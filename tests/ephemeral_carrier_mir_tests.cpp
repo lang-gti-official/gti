@@ -2,6 +2,25 @@
 
 namespace {
 
+// Blocks one failure's primary cleanup runs after `from`, through ordinary
+// edges, fallible-drop continuations and shared cleanup continuations.
+bool failurePathReaches(const lang::MirBody &body, lang::MirBlockId from,
+                        lang::MirBlockId to) {
+  const lang::MirBlock *cursor = body.findBlock(from);
+  for (std::size_t steps = 0; cursor != nullptr && steps <= body.blocks.size();
+       ++steps) {
+    if (cursor->id == to)
+      return true;
+    const auto &terminator = cursor->terminator;
+    if (terminator.kind != lang::MirTerminatorKind::Goto &&
+        terminator.kind != lang::MirTerminatorKind::Invoke &&
+        terminator.kind != lang::MirTerminatorKind::ContinueFailure)
+      return false;
+    cursor = body.findBlock(terminator.target);
+  }
+  return false;
+}
+
 const std::string declarations = R"gti(
 struct Counter { mut int value = 4; };
 class Service {
@@ -613,30 +632,38 @@ Cursor cursor(int& source) { return Cursor(source); }
                              lang::MirInstructionKind::EndBorrow &&
                          instruction.loan == loan.id;
                 });
-            const auto drop = std::find_if(
-                block.instructions.begin(), block.instructions.end(),
-                [&](const auto &instruction) {
-                  return instruction.kind == lang::MirInstructionKind::Drop &&
-                         instruction.destination == temporary.drop->place;
-                });
-            if (end == block.instructions.end() ||
-                drop == block.instructions.end() || end >= drop)
+            if (end == block.instructions.end())
               continue;
-            auto malformed = frontend.mir;
-            auto *instance = const_cast<lang::MirFunctionInstance *>(
-                malformed.findFunctionInstance(function.id));
-            auto &instructions =
-                instance->body.blocks[block.id - 1].instructions;
-            const auto saved = *drop;
-            const auto endIndex =
-                static_cast<std::size_t>(end - block.instructions.begin());
-            instructions.erase(instructions.begin() +
-                               (drop - block.instructions.begin()));
-            instructions.insert(instructions.begin() + endIndex, saved);
-            expect(!lang::verifyMirProgram(malformed).valid(),
-                   "temporary cannot be destroyed before its interior result "
-                   "loan ends on success or failure");
-            checkedEndpoint = true;
+            // The temporary's drop follows the loan end in the same block or,
+            // on a failure path, in a later block of the same cleanup, which
+            // may be a shared continuation.
+            for (const auto &later : body.blocks) {
+              const auto drop = std::find_if(
+                  later.instructions.begin(), later.instructions.end(),
+                  [&](const auto &instruction) {
+                    return instruction.kind == lang::MirInstructionKind::Drop &&
+                           instruction.destination == temporary.drop->place;
+                  });
+              if (drop == later.instructions.end() ||
+                  (later.id == block.id
+                       ? end >= drop
+                       : block.activeFailure == 0 ||
+                             !failurePathReaches(body, block.id, later.id)))
+                continue;
+              auto malformed = frontend.mir;
+              auto *instance = const_cast<lang::MirFunctionInstance *>(
+                  malformed.findFunctionInstance(function.id));
+              const auto saved = *drop;
+              auto &from = instance->body.blocks[later.id - 1].instructions;
+              from.erase(from.begin() + (drop - later.instructions.begin()));
+              auto &into = instance->body.blocks[block.id - 1].instructions;
+              into.insert(into.begin() + (end - block.instructions.begin()),
+                          saved);
+              expect(!lang::verifyMirProgram(malformed).valid(),
+                     "temporary cannot be destroyed before its interior "
+                     "result loan ends on success or failure");
+              checkedEndpoint = true;
+            }
           }
         }
       }

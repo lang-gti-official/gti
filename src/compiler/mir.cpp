@@ -10,6 +10,7 @@
 #include "mir_verification_support.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -746,6 +747,7 @@ failure(const MirBody &body, std::size_t owner, std::string message,
     };
     switch (terminator.kind) {
     case MirTerminatorKind::Goto:
+    case MirTerminatorKind::ContinueFailure:
       enqueue(terminator.target);
       break;
     case MirTerminatorKind::Branch:
@@ -1642,6 +1644,7 @@ ownershipSuccessors(const MirBody &body, const MirTerminator &terminator) {
   };
   switch (terminator.kind) {
   case MirTerminatorKind::Goto:
+  case MirTerminatorKind::ContinueFailure:
     append(terminator.target);
     break;
   case MirTerminatorKind::Branch:
@@ -2231,6 +2234,8 @@ successors(const MirTerminator &terminator) {
   }
   case MirTerminatorKind::Invoke:
     return {terminator.target, terminator.elseTarget};
+  case MirTerminatorKind::ContinueFailure:
+    return {terminator.target};
   case MirTerminatorKind::None:
   case MirTerminatorKind::Return:
   case MirTerminatorKind::PropagateFailure:
@@ -4696,6 +4701,7 @@ rewriteMirScalarPlace(MirBody &body, MirPlaceId placeId) {
       break;
     case MirTerminatorKind::None:
     case MirTerminatorKind::Invoke:
+    case MirTerminatorKind::ContinueFailure:
     case MirTerminatorKind::Return:
     case MirTerminatorKind::PropagateFailure:
     case MirTerminatorKind::Unreachable:
@@ -6695,6 +6701,13 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
   }
 
   for (const MirFailureRecord &record : body.failureRecords) {
+    // The generated hosted boundary keeps one unshared cleanup schedule per
+    // contained failure; it never shares a cleanup continuation.
+    if (record.kind != MirFailureRecordKind::Producer) {
+      return failure(body, owner,
+                     "hosted-startup failure record is not an exact producer",
+                     record.parameterBlock);
+    }
     const MirBlock *parameter = body.findBlock(record.parameterBlock);
     if (parameter == nullptr) {
       continue;
@@ -7749,11 +7762,19 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   }
   for (std::size_t index = 0; index < body.failureRecords.size(); ++index) {
     const MirFailureRecord &record = body.failureRecords[index];
-    if (record.id != index + 1 || record.producerBlock == 0 ||
-        record.producerBlock > body.blocks.size() ||
-        record.producerInstruction == 0 || record.parameterBlock == 0 ||
-        record.parameterBlock > body.blocks.size() ||
-        record.producerBlock == record.parameterBlock) {
+    // A shared cleanup continuation has a parameter block and no producer.
+    const bool validProducer = record.kind == MirFailureRecordKind::Producer &&
+                               record.producerBlock != 0 &&
+                               record.producerBlock <= body.blocks.size() &&
+                               record.producerInstruction != 0 &&
+                               record.producerBlock != record.parameterBlock;
+    const bool validContinuation =
+        record.kind == MirFailureRecordKind::Continuation &&
+        record.producerBlock == 0 && record.producerInstruction == 0 &&
+        record.hostedStartupOperation == 0;
+    if (record.id != index + 1 || (!validProducer && !validContinuation) ||
+        record.parameterBlock == 0 ||
+        record.parameterBlock > body.blocks.size()) {
       return failure(body, owner,
                      "failure-record table has an invalid identity or edge");
     }
@@ -10228,19 +10249,34 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (block.failureParameter != 0) {
         const MirFailureRecord *parameter =
             body.findFailureRecord(block.failureParameter);
+        const bool producerRecord =
+            parameter != nullptr &&
+            parameter->kind == MirFailureRecordKind::Producer;
         const MirBlock *producer =
-            parameter == nullptr ? nullptr
-                                 : body.findBlock(parameter->producerBlock);
+            !producerRecord ? nullptr
+                            : body.findBlock(parameter->producerBlock);
         const bool primary = block.failureParameter == block.activeFailure &&
                              producer != nullptr &&
                              producer->activeFailure == 0;
         const bool secondary = block.failureParameter != block.activeFailure &&
                                producer != nullptr &&
                                producer->activeFailure == block.activeFailure;
-        if (!primary && !secondary) {
+        // A shared cleanup suffix binds its own continuation record. It has
+        // no producer: the failures entering it keep their own records, and
+        // its entry is reached only by ContinueFailure edges (checked below).
+        const bool continuation =
+            parameter != nullptr &&
+            parameter->kind == MirFailureRecordKind::Continuation &&
+            block.failureParameter == block.activeFailure &&
+            parameter->producerBlock == 0 &&
+            parameter->producerInstruction == 0 &&
+            parameter->hostedStartupOperation == 0 &&
+            body.kind != MirBodyKind::HostedStartup;
+        if (!primary && !secondary && !continuation) {
           return failure(body, owner,
-                         "failure parameter does not bind a primary or the "
-                         "first cleanup secondary",
+                         "failure parameter does not bind a primary, the "
+                         "first cleanup secondary, or a shared cleanup "
+                         "continuation",
                          block.id);
         }
       }
@@ -11096,6 +11132,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         block.terminator.kind != MirTerminatorKind::PropagateFailure &&
         block.terminator.kind != MirTerminatorKind::ContainFailure &&
         block.terminator.kind != MirTerminatorKind::TerminateCleanupFailure &&
+        block.terminator.kind != MirTerminatorKind::ContinueFailure &&
         hasFailureTerminatorState) {
       return failure(body, owner,
                      "non-failure terminator retains failure-edge state",
@@ -11116,6 +11153,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           block.terminator.target == block.terminator.elseTarget ||
           block.terminator.value || block.terminator.returnLoan ||
           !block.terminator.switchTargets.empty() || record == nullptr ||
+          record->kind != MirFailureRecordKind::Producer ||
           record->producerBlock != block.id ||
           record->producerInstruction != block.terminator.invokeInstruction ||
           record->parameterBlock != block.terminator.elseTarget ||
@@ -11301,8 +11339,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const MirBlock *producer = secondary == nullptr
                                      ? nullptr
                                      : body.findBlock(secondary->producerBlock);
-      if (secondary == nullptr || block.activeFailure == 0 ||
-          block.failureParameter == 0 ||
+      if (secondary == nullptr ||
+          secondary->kind != MirFailureRecordKind::Producer ||
+          block.activeFailure == 0 || block.failureParameter == 0 ||
           block.failureParameter != block.terminator.failureRecord ||
           block.activeFailure == block.terminator.failureRecord ||
           producer == nullptr ||
@@ -11314,6 +11353,39 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                        block.id);
       }
       ++failureEndpointCounts[block.terminator.failureRecord - 1];
+    }
+    if (block.terminator.kind == MirTerminatorKind::ContinueFailure) {
+      // The source is primary cleanup of any record: a producer's private
+      // cleanup prefix or an earlier shared suffix. Its own record's chain
+      // ends here; the continuation carries that failure on unchanged. A
+      // secondary cleanup failure never continues: it terminates at once.
+      const MirFailureRecord *continuation =
+          body.findFailureRecord(block.terminator.failureRecord);
+      const MirBlock *entry =
+          continuation == nullptr
+              ? nullptr
+              : body.findBlock(continuation->parameterBlock);
+      if (continuation == nullptr ||
+          continuation->kind != MirFailureRecordKind::Continuation ||
+          body.kind == MirBodyKind::HostedStartup || block.activeFailure == 0 ||
+          (block.failureParameter != 0 &&
+           block.failureParameter != block.activeFailure) ||
+          block.activeFailure == continuation->id || entry == nullptr ||
+          entry->id != block.terminator.target ||
+          entry->failureParameter != continuation->id ||
+          entry->activeFailure != continuation->id ||
+          block.terminator.invokeInstruction != 0 || block.terminator.value ||
+          block.terminator.returnLoan || block.terminator.elseTarget != 0 ||
+          !block.terminator.targetArguments.empty() ||
+          !block.terminator.elseArguments.empty() ||
+          !block.terminator.switchTargets.empty() ||
+          !block.terminator.successLifecycle.empty()) {
+        return failure(body, owner,
+                       "failure continuation does not enter its exact shared "
+                       "cleanup from primary cleanup",
+                       block.id);
+      }
+      ++failureEndpointCounts[block.activeFailure - 1];
     }
     if ((block.terminator.returnLoan &&
          block.terminator.kind != MirTerminatorKind::Return) ||
@@ -11364,13 +11436,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const bool invokeFailure =
           block.terminator.kind == MirTerminatorKind::Invoke &&
           block.terminator.elseTarget == successor;
+      const bool continuationEdge =
+          block.terminator.kind == MirTerminatorKind::ContinueFailure;
       const MirFailureRecordId expectedActive =
           invokeFailure
               ? (block.activeFailure == 0 ? block.terminator.failureRecord
                                           : block.activeFailure)
-              : block.activeFailure;
+          : continuationEdge ? block.terminator.failureRecord
+                             : block.activeFailure;
       if (target.activeFailure != expectedActive ||
-          (!invokeFailure && parameter != 0)) {
+          (!invokeFailure && !continuationEdge && parameter != 0)) {
         return failure(body, owner,
                        "control-flow edge does not preserve exact active "
                        "failure state",
@@ -11379,8 +11454,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (parameter == 0) {
         continue;
       }
-      const bool exactFailureEdge =
-          invokeFailure && block.terminator.failureRecord == parameter;
+      const bool exactFailureEdge = (invokeFailure || continuationEdge) &&
+                                    block.terminator.failureRecord == parameter;
       if (!exactFailureEdge) {
         return failure(body, owner,
                        "failure-record parameter has a non-failure "
@@ -11396,6 +11471,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     blocksByActiveFailure[candidate.activeFailure].push_back(&candidate);
   }
   static const std::vector<const MirBlock *> noBlocks;
+  // Each record's own chain ends at its endpoint or enters one shared
+  // continuation. Its first and last failure drops let reverse construction
+  // order be checked across those edges without walking a shared suffix
+  // once per record that enters it.
+  constexpr std::size_t noChainDrop = std::numeric_limits<std::size_t>::max();
+  std::vector<std::size_t> firstChainDrop(body.failureRecords.size(),
+                                          noChainDrop);
+  std::vector<std::size_t> lastChainDrop(body.failureRecords.size(),
+                                         noChainDrop);
+  std::vector<MirFailureRecordId> continuesInto(body.failureRecords.size(), 0);
   for (const MirFailureRecord &record : body.failureRecords) {
     const MirBlock *parameter = body.findBlock(record.parameterBlock);
     if (parameter == nullptr) {
@@ -11448,6 +11533,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                          cursor->id, instruction.id);
         }
         previousConstructionOrder = obligation->constructionOrder;
+        if (firstChainDrop[record.id - 1] == noChainDrop) {
+          firstChainDrop[record.id - 1] = obligation->constructionOrder;
+        }
+        lastChainDrop[record.id - 1] = obligation->constructionOrder;
       }
 
       if (cursor->terminator.kind == expectedEndpoint) {
@@ -11457,6 +11546,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                          "record",
                          cursor->id);
         }
+        break;
+      }
+      if (cursor->terminator.kind == MirTerminatorKind::ContinueFailure) {
+        continuesInto[record.id - 1] = cursor->terminator.failureRecord;
         break;
       }
       if (cursor->terminator.kind == MirTerminatorKind::Goto) {
@@ -11502,13 +11595,63 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
     }
   }
+  // A complete cleanup path may cross several continuations; drops along it
+  // stay in strictly reverse construction order. Continuations must form an
+  // acyclic graph, so each one's first drop ahead is memoized once.
+  std::vector<std::size_t> firstDropAhead(body.failureRecords.size(),
+                                          noChainDrop);
+  std::vector<std::uint8_t> aheadState(body.failureRecords.size(), 0);
+  for (const MirFailureRecord &record : body.failureRecords) {
+    std::vector<MirFailureRecordId> path;
+    MirFailureRecordId cursor = record.id;
+    while (cursor != 0 && aheadState[cursor - 1] != 2) {
+      if (aheadState[cursor - 1] == 1) {
+        return failure(body, owner,
+                       "shared failure-cleanup continuations form a cycle",
+                       body.failureRecords[cursor - 1].parameterBlock);
+      }
+      aheadState[cursor - 1] = 1;
+      path.push_back(cursor);
+      cursor = continuesInto[cursor - 1];
+    }
+    std::size_t ahead = cursor == 0 ? noChainDrop : firstDropAhead[cursor - 1];
+    for (auto id = path.rbegin(); id != path.rend(); ++id) {
+      if (firstChainDrop[*id - 1] != noChainDrop) {
+        ahead = firstChainDrop[*id - 1];
+      }
+      firstDropAhead[*id - 1] = ahead;
+      aheadState[*id - 1] = 2;
+    }
+  }
+  for (const MirFailureRecord &record : body.failureRecords) {
+    const MirFailureRecordId next = continuesInto[record.id - 1];
+    if (next != 0 && lastChainDrop[record.id - 1] != noChainDrop &&
+        firstDropAhead[next - 1] != noChainDrop &&
+        lastChainDrop[record.id - 1] <= firstDropAhead[next - 1]) {
+      return failure(body, owner,
+                     "shared failure-cleanup continuation is not in reverse "
+                     "construction order after its predecessor",
+                     record.parameterBlock);
+    }
+  }
   for (std::size_t index = 0; index < body.failureRecords.size(); ++index) {
-    if (failureParameterCounts[index] != 1 || failureInvokeCounts[index] != 1 ||
-        failurePredecessorCounts[index] != 1 ||
-        failureEndpointCounts[index] != 1) {
+    // A producer has exactly one Invoke and predecessor. A shared
+    // continuation has no Invoke and is entered only by its continuation
+    // edges, at least one. Each has one parameter block and one endpoint:
+    // its propagation or the continuation edge that ends its own chain.
+    const bool continuation =
+        body.failureRecords[index].kind == MirFailureRecordKind::Continuation;
+    if (failureParameterCounts[index] != 1 ||
+        failureEndpointCounts[index] != 1 ||
+        (continuation ? failureInvokeCounts[index] != 0 ||
+                            failurePredecessorCounts[index] == 0
+                      : failureInvokeCounts[index] != 1 ||
+                            failurePredecessorCounts[index] != 1)) {
       return failure(body, owner,
                      "failure record must have one invoke, predecessor, "
-                     "parameter, and terminal endpoint");
+                     "parameter, and terminal endpoint, or as a shared "
+                     "continuation one parameter, continuation entries and "
+                     "one endpoint");
     }
   }
   if (std::any_of(primaryFullExpressionMarkers.begin(),

@@ -9,13 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.402.2 — Returning `expected` results across scope cleanup
+## 0.402.3 — Returning `expected` results across scope cleanup
 
 - A function that returns an `expected<T, E>` call result while
   another local still needs cleanup now builds. This covers
   `return parse(input);` and `mut auto r = parse(input); return std::move(r);`
   when `T` is a struct or an `enum`, including inside a loop. These programs
   previously stopped with internal compiler error `GTI-B0001`.
+
+## 0.402.2 — Smaller, faster builds for functions with many owned locals
+
+- A function that owns many values with destructors no longer repeats the
+  same cleanup code for every point where it can fail. The JSON
+  standard-library test program now generates 4.3 MB of C++ instead of
+  33.5 MB, and its optimized native build takes about 8 seconds instead of
+  about 150. Behaviour on failure is unchanged: the same resources are
+  released in the same order, and the same failure is reported.
 
 ## 0.402.1 — Owning `expected` fields initialized from calls
 
