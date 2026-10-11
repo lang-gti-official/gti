@@ -5868,8 +5868,12 @@ two builds at a time across every worktree on the host:
 ```sh
 cmake -S . -B build -DGTI_TEST_CASE_JOBS=4
 cmake --build build --parallel 12
-ctest --test-dir build --parallel 12 --output-on-failure
+ctest --test-dir build --parallel 12 --test-load 12 --output-on-failure
 ```
+
+`--test-load` makes CTest wait to start a test while the host's load average
+is at or above the given value, so the wide allocation shrinks on its own when
+other builds share the host.
 
 The per-suite default remains two for smaller hosts. Higher values are a
 resource choice, not permission to change timeouts or assert fewer outcomes.
