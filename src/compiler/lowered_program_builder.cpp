@@ -1143,7 +1143,9 @@ private:
         source.functionTarget != lowered.functionTarget ||
         source.lambdaTarget != lowered.lambdaTarget ||
         source.targetInvocation != lowered.targetInvocation ||
-        source.invocation != lowered.invocation) {
+        source.invocation != lowered.invocation ||
+        source.scoped != lowered.scoped ||
+        source.scopeArgument != lowered.scopeArgument) {
       return reject("thread task adapter " + std::to_string(index + 1) +
                     " differs");
     }

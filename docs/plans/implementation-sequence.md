@@ -83,6 +83,186 @@ The earlier historical regression in #169 is not considered fully recovered mere
 this one cause improves. Follow-on RT-2 through RT-10 need their individual
 prerequisites and measured clients; they are not added to this implementation.
 
+## Scoped concurrency and composable shared jobs (2026-10-11)
+
+**State:** the public APIs and production execution paths are implemented and
+validated in PR #20 for 0.405.0. The reflected-JSON reconciliation passes all 51
+combined-head integration gates and all 648 remote full-sweep checks, plus the
+separate local debugger check. Subsequent constexpr-builder and owning-class
+conditional integration passes all 125 selected checks on `8eaa07a3`, including
+complete corpus, native/sanitizer, editor and installed-consumer coverage.
+Final reconciliation with main's expected-payload fix (0.404.1) passes all 35
+affected backend/concurrency checks on `e76e1493`, direct example O0/O3 execution
+and conclusive exact-head runtime/allocation/code-size evidence. Scoped and
+owned-thread runtime is effectively equal; scoped transport uses fewer counted
+allocations. Linux build-time/RSS measurements retain their original source
+identity. None of the earlier full sweeps is relabeled as a run of later source.
+See [the acceptance record](../architecture/verification.md#scoped-concurrency-04050).
+The owner requested both scoped parallel borrowing and shared-state/callable
+composition. This is one delivery goal, not completion of either item through
+its prerequisite alone.
+
+The checkpoint chronology below records earlier development states; current
+acceptance is stated above and in the verification record.
+
+Nested failure-path composition now passes its focused Release regression
+(`run-0bb60840f66f490f8d1dae0f8f922a5d`): an incoming reference-field borrow
+retains its exact parent proof when constructing a cleanup-owning child.
+Ordinary guard construction and wrong-field/access MIR mutations cover the
+same general rule without threading. Final full-suite, installed and quiet
+performance validation remain outstanding; this is not release completion.
+
+1. Synchronization owners derive transfer and sharing from payload transfer
+   safety. Lock guards remain non-transferable. General interface capability
+   contracts preserve transfer requirements through owning callable erasure,
+   enabling heterogeneous owned jobs without granting concurrent invocation.
+2. Structured parallel scopes retain every child borrow and join obligation
+   through normal and failure cleanup. Shared captures require sharing;
+   exclusive captures require transfer and suspend conflicting parent access
+   until completion. Reuse semantic places, loans and callable contracts;
+   HIR/MIR preserve and independently verify those facts. Prove unrelated
+   user-defined borrowed carriers and disjoint engine-data projections, not
+   nominal exceptions for a particular task or container.
+3. Deliver source-defined public APIs, executable examples, negative escape,
+   overlap, thread-affinity and cleanup tests, malformed-MIR controls,
+   compiler-backed editor behavior, optimized native/sanitizer execution and
+   measured allocation/runtime/code-size costs. Ordinary owned threads keep
+   rejecting borrowed state. No detach, async runtime, scheduler or unchecked
+   safe API is implied by this goal.
+
+The initial implementation changes the mutex capability relationship and adds
+shared-mutex worker/affine-payload controls. It is not yet validation evidence.
+The scoped-borrow requirements in the concurrency plan remain the contract for
+the second stage, including join on every exit and parent-loan reactivation.
+
+The runtime group foundation now starts and joins borrowed opaque contexts
+without taking their ownership. Focused native tests cover concurrent disjoint
+writes, deterministic worker-failure selection, join-all on partial creation,
+nested scopes and terminal native join failure. A Release snapshot also builds
+and runs the shared-mutex/owned move-only capture regression at O3. These are
+prerequisite results, not scoped-source acceptance: semantic admission, the
+public API, verified scope records, source failure/borrow controls, editor and
+full performance evidence remain incomplete. Release snapshot
+`fe54139368e01eeccb8662364cf6a8cf4e5b7d9d30153002a3002b9340e0a461`
+passes `mutex_semantic_ir` (including passive-closure malformed-MIR controls),
+`scoped_thread_c_header`, `scoped_thread_runtime`,
+`scoped_thread_join_boundary`, `managed_thread_runtime`, and
+`shared_ownership_threads`. The latter executes shared owners, shared mutexes
+and transferable read/mut/once jobs in C++20/C++23 at O0/O1/O3, no-elide and
+ASan/UBSan modes (24 fixture/mode combinations). This is focused checkpoint
+evidence, not final current-head validation or a TSan/performance claim.
+
+The shared-job checkpoint also corrects generic `void` task entry to retain
+the existing transformed-function result-channel ABI. Snapshot
+`5ccecc13419a96c9b637ba830dcd7d45d3443a7c116106ea6c2695f575a02268`
+passes the 24 native fixture/mode combinations with read/mutable/consuming
+void jobs, both shared-mutex and transfer-function TSan gates, exact inline
+allocation counts, semantic/MIR and erased-storage controls, and compiler-backed
+LSP diagnostics/repair. Example 066 builds/runs at O3 with its expected output;
+its individually measured census is 114 emitted bodies and 741 declarations,
+116 representation bodies and 60 generated items. Only that example's baseline
+and arithmetic totals are updated; the complete corpus remains a final gate.
+Snapshot `2590074e82b8528f362a8bbec6afbed5ee7232cd7a39dff9a7122966f320a57b`
+additionally passes local non-transferable target/replacement controls for all
+three invocation forms of ordinary owning function wrappers. Its separate
+manifest command omitted the required repository argument; the corrected local
+manifest guard passes. These are focused development results, not completion
+of scoped source support or final publication validation.
+
+After reconciliation with `7f80b257`'s shared MIR failure-cleanup implementation,
+the semantic prerequisite query `scopedThreadTaskShapeFor` selects exact safe
+entries and resolved nested reference paths without granting ordinary transfer
+to borrowed carriers. It reuses the structural capability walker and stored
+dependency map. Independent referent requirements remain checked even when the
+task's cleanup policy has an unsafe positive assertion. Release snapshot
+`61fe4f1a7faa27b405ea264bc5114d8a21a072389c0eb050d73c607082c0f74a`
+passes `scoped_thread_semantic_shapes`, `managed_thread_semantic_ir`,
+`mutex_semantic_ir`, and `scoped_thread_runtime`. The latter now also checks
+exact cleanup-emergency records/descriptors and join-all before borrowed access
+returns. The semantic fixture uses the normal source graph so field identities
+are real resolved symbols, not synthetic indices. This query is not executable
+admission: actual invocation origins/endpoints, HIR/MIR scope records and their
+verification, production adapters, the public source wrapper, scoped examples,
+editor behavior and whole-goal performance/acceptance gates remain unfinished.
+
+The next checkpoint admits identity-bound private scope calls through semantics
+and HIR, pairing each consumed task's resolved borrowed field paths with its
+actual body-local origins and checking sibling overlap. This is still not a
+public executable scope. Ordinary named and nested carriers constructed from
+independent reference parameters now retain every input authority in MIR instead
+of incorrectly requiring the second input to lie within the first. The same
+ordinary-source tests reject parent mutation and live overlapping children;
+verifier mutations reject collapsed origins and early release of a secondary
+input. Release snapshot
+`31a0353b62cf5b57bc3431fd3c8a257440ad3f4b01d57aa0133cd8b1c13965ca`
+passes scoped semantic/HIR shapes, ordinary carrier MIR including parent
+reactivation, managed-thread and mutex controls, and the scoped runtime gate.
+Snapshot `88b2f6ef86c39db9738e354193183077e051550832cee27999a39dd7f6d1e6e3`
+also passes borrowing composition and both cleanup-bound borrowing gates; its
+broad ownership suite remains queued in the remote shared window. Full MIR
+scope lowering/verification, production adapters, public generic forwarding,
+examples, editor and final runtime/performance acceptance remain required.
+
+The private scope now lowers through verified MIR with a consumed task group,
+exact adapter/operand identities, retained dependency loans, sibling-overlap
+checks and `TaskJoin` failure propagation. Fresh borrowed carriers with no
+active cleanup use their proven unique SSA consumption rather than requiring
+a nonexistent destructor slot. Ordinary shared children of a plain mutable
+reference coexist and permit parent reads while still rejecting parent writes
+and overlapping exclusive children; borrowed-carrier shell authority remains
+separate. Release snapshot
+`c6a5b73e8ae6b82f92ee0f5b69596edb592fa0681b9a2125cc1d55e5711d4c72`
+passes `scoped_thread_semantic_shapes`, `managed_thread_semantic_ir`,
+`mutex_semantic_ir` and `scoped_thread_runtime`, including malformed scope
+records, nested/disjoint carriers and ordinary reborrow controls. This is
+focused prerequisite evidence, not an executable public API or whole-goal
+acceptance. Serialization advances to MIR 100/body 83 with matching version
+assertions. Next, generic forwarding must retain each concrete borrowed pack
+element's entry origins, followed by production adapter/cleanup integration,
+public source wrappers, runnable scoped examples, editor and runtime/performance
+gates. The broad ownership job for the earlier snapshot is still live/queued;
+it does not certify these newer changes.
+
+Concrete generic/pack forwarding now retains separate semantic stored entry
+loans and canonical MIR places for each borrowed class element, including all
+reference-field dependencies. Repeated task types, mixed owned/borrowed tasks,
+nested forwarding, disjoint projections and empty groups pass through verified
+MIR. Forwarding cannot hide aliasing or thread affinity. Release snapshot
+`e83e0429ada6a2698cb4c232f9b201cd994b435fe41e70a0d6ac7cda4c9723d6`
+passes scoped shapes, managed-thread and mutex controls, and scoped runtime.
+This was focused prerequisite evidence; production adapters, task cleanup/public
+scope execution, examples, editor and whole-goal performance gates were still open
+at that checkpoint.
+
+The public wrapper, generated exact-entry adapters and stack-resident scoped
+transport now execute through verified MIR. Join-all precedes reverse caller-side
+cleanup, including partial creation failure and worker/cleanup failure. Concrete
+pack entry loans retain destructor dependencies. Published checkpoint `9536a6b5`
+contains this path and example 066; reconciliation `beb81fd2` includes main
+0.402.8. macOS Release runs `run-9cb27359761043d49c86a303d4a1b7b7`
+and `run-c7104bc26b4e4535bfb697a000a57bed` pass focused semantics/IR,
+C++23 O3 execution, compiler-backed editor checks and both scoped TSan gates
+(executed, not skipped). Linux Release run
+`run-59ea826829bf4d4c9d397febd4711ae8` passes the complete four-fixture
+scoped C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan matrix, plus twelve
+selected concurrency/borrowing/cleanup CTests. These are candidate snapshots,
+not final current-head full-suite evidence.
+
+The allocation oracle additionally passes on macOS O3 and ASan/UBSan in
+`run-f9e9fb05746d4c17a5b374167d413858`: two owned workers use four
+instrumented no-throw C++ transport/state allocations, two scoped workers use
+two, and an empty scope uses zero. Native host-thread and libc allocation are
+outside that counter. The equal-work benchmark now includes sequential,
+owned-thread and scoped-borrow variants; stable timings, code size and compiler
+memory costs remain to be measured. A subsequent nested-source probe exposed
+a general contextual function-item deduction defect for trailing pack elements;
+its correction and ordinary non-threading positive/negative controls pass in
+`run-54f2b63c198b44ea996f81f2c8878dbc`. That run also passes all five
+scoped O3 fixtures, including actual nested scopes and free-function tasks,
+after correcting the general passive copyable call-input consumption check.
+Installed-toolchain and complete corpus/full-suite gates
+remain open; these results do not imply a worker pool or cheap fine-grained jobs.
+
 ## Compile-Time Reflection Delivered (2026-10-11)
 
 The owner accepted [`reflection.md`](reflection.md) with its decisions. All

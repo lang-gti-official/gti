@@ -579,8 +579,15 @@ MirLowerer::lowerProgram(const HirProgram &source,
         const auto found = std::find_if(
             block.instructions.begin(), block.instructions.end(),
             [&](const MirInstruction &instruction) {
-              return instruction.hirValue == adapter.spawnValue &&
-                     instruction.threadTaskAdapter == adapter.id &&
+              if (instruction.hirValue != adapter.spawnValue)
+                return false;
+              if (adapter.scoped)
+                return instruction.intrinsic == IntrinsicKind::ThreadScope &&
+                       adapter.scopeArgument <
+                           instruction.scopedThreadTasks.size() &&
+                       instruction.scopedThreadTasks[adapter.scopeArgument]
+                               .adapter == adapter.id;
+              return instruction.threadTaskAdapter == adapter.id &&
                      instruction.intrinsic == IntrinsicKind::ThreadSpawn;
             });
         if (found != block.instructions.end()) {
@@ -613,7 +620,9 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .targetInvocation = adapter.targetInvocation,
          .invocation = adapter.invocation,
          .catchesWorkerFailure = true,
-         .catchesNativeExceptions = true});
+         .catchesNativeExceptions = true,
+         .scoped = adapter.scoped,
+         .scopeArgument = adapter.scopeArgument});
   }
   result.program.valid_ = valid;
   const MirProgramEffectSummaries effectSummaries =

@@ -395,6 +395,15 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.startsLoan = true,
                     .dependsOnLoan = true}, // CStringFromAddress
     MirEffectTraits{.mayTrap = true},       // RequireAllocation
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .allocates = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .dependsOnLoan = true,
+                    .movesValue = true,
+                    .invokesUserCode = true,
+                    .maySynchronize = true}, // ThreadScope
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -446,6 +455,15 @@ constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
                     .invokesRuntime = true,
                     .mayTrap = true,
                     .maySynchronize = true}, // ConditionNotify
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .allocates = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .dependsOnLoan = true,
+                    .movesValue = true,
+                    .invokesUserCode = true,
+                    .maySynchronize = true}, // ThreadScope
 });
 
 constexpr auto instructionNames = std::to_array<std::string_view>({
@@ -657,6 +675,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "text-view-from-address",
     "c-string-from-address",
     "require-allocation",
+    "thread-scope",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
@@ -671,6 +690,7 @@ constexpr auto synchronizationNames = std::to_array<std::string_view>({
     "mutex-unlock",
     "condition-wait",
     "condition-notify",
+    "thread-scope",
 });
 
 constexpr auto atomicMemoryOrderNames = std::to_array<std::string_view>({

@@ -604,6 +604,18 @@ not a template, so a retained thread-handle declaration selects its complete
 support. `dormant_capability_runtime` builds and runs each family's
 include-only program natively.
 
+Scoped groups select the same managed-thread support from the verified
+`ThreadScope` operation. The body plan retains its ordered adapter identities,
+consumed task operands and task-join failure channel. Generated closure roots
+and detached-program verification match each adapter to its exact group and
+operand, not merely the enclosing function. This permits several heterogeneous
+lambda tasks in one concrete generic body without reusing the owned-spawn
+single-task template path. The preamble implements stack task slots, join-all
+and ordinary verified cleanup as described in the
+[runtime contract](standard-library-and-runtime.md#scoped-worker-execution).
+Provenance-only projected pack places retain exact type/field rows in admission
+but do not form unused C++ accesses to private carrier fields.
+
 ### Executable Bodies
 
 `CppMirBodyEmitter` is the admission and plan-building authority for source
@@ -2167,8 +2179,11 @@ definition scheduler emits every payload class before its enum
 and that enum before a class embedding it, rejecting a recursive by-value
 cycle. Concrete generic owners/callables use the same exact lifecycle proofs;
 generic arguments are not a reason to bypass or reject those proofs. The
-declaration-bound inline optional capability contributes its payload as a
-native layout dependency, while pointer-backed storage does not. Exact static
+declaration-bound inline optional, uninitialized and mutex storage capabilities
+contribute their payload as a native layout dependency, while pointer-backed
+storage does not. This also orders retained generic-owner member specializations:
+a mutex embedding a vector needs the complete vector representation before a
+concrete mutex constructor declaration can instantiate that owner. Exact static
 consuming methods retain their receiver capability alongside enum result
 placement. If a later argument fails, a prepared enum obligation still drops
 at its verified MIR point even when direct native parameter construction
@@ -3256,8 +3271,13 @@ the complete program declaration/definition region so the direct target is
 declared before adapter text.
 For an overloaded nominal callable the adapter invokes the already selected
 generated member spelling with its verified read, mutable, or consuming
-receiver; C++ overload resolution is not authority. The backend boxes the
-concrete task only at that boundary and passes an opaque context plus
+receiver; C++ overload resolution is not authority. Its failure call uses the same
+`cppFunctionHasFailureResultChannel` query as ordinary source calls: a
+class-bound generic return keeps its uniform output parameter even when the
+selected instance returns `void`, so that adapter passes a null result slot.
+Concrete non-generic `void` targets retain their no-result-channel signature.
+This is backend ABI agreement, not a different GTI result or task contract.
+The backend boxes the concrete task only at that boundary and passes an opaque context plus
 entry/destroy callbacks to the version-one runtime thread ABI. Creation
 failure destroys the box on the spawning thread exactly once; success invokes
 it once and destroys it on the worker. A typed adapter additionally constructs

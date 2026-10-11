@@ -258,6 +258,7 @@ struct HirValue {
   std::optional<SemanticType> nativeCalleeType;
   std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<HirThreadTaskAdapterId> threadTaskAdapter;
+  std::vector<HirThreadTaskAdapterId> scopedThreadTasks;
   std::optional<HirConstructorInstanceId> constructorTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   // Semantics resolved a full-field construction; stage all inputs before
@@ -599,6 +600,11 @@ struct HirThreadTaskAdapter {
   CallableInvocationCapability targetInvocation =
       CallableInvocationCapability::Read;
   CallableInvocationCapability invocation = CallableInvocationCapability::Once;
+  // A scoped adapter is rooted at one operand of a synchronous join-all call.
+  // Ordinary spawn adapters must not carry these borrowed-place dependencies.
+  bool scoped = false;
+  std::size_t scopeArgument = 0;
+  std::vector<SemanticLoanDependency> scopeDependencies;
 
   friend bool operator==(const HirThreadTaskAdapter &,
                          const HirThreadTaskAdapter &) = default;

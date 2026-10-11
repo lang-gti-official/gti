@@ -373,6 +373,11 @@ Read-only reference pack elements retain their exact reference type and a
 MIR projects their existing parameter carrier and stages that borrow at the
 selected call. A reference element cannot acquire a copy/move role from the
 referent's traits.
+Borrowed class elements may retain a copy/move expansion role only with their
+exact semantic stored entry loan. HIR preserves the selected element's complete
+reference-field dependencies; ownership of the carrier shell does not grant
+ownership or mutable access to its referents. MIR retains the same element
+identity across preparation, invocation and cleanup.
 Concrete function-instance signatures flatten pack elements in order, including
 zero elements, whether discovered through a scalar call, forwarded pack, or
 virtual declaration. This does not flatten the body's source bindings: a named
@@ -635,6 +640,17 @@ nonzero, type-complete, referenced by its exact spawn, rooted in that exact
 function/lambda instance and owner type, and ordered deterministically. HIR
 does not erase the task, invent a native entry point, reopen `operator()`
 selection, or recognize the source-defined `std::thread` wrapper.
+
+The scoped-invocation path retains one ordered adapter list on its
+`ThreadScope` value. Each adapter identifies that call, its exact task operand,
+selected callable instance/capability and body-qualified semantic dependency
+places. The `scoped` discriminator prevents reusing those adapters at an
+ordinary owned spawn. HIR verification checks group/operand/type identity,
+unique adapter roots, exact zero-argument `void` entries and dependency domains.
+`ThreadScope` is a distinct synchronization identity with conservative memory,
+user-code, failure and loan effects. MIR lowers this to one combined spawn/join
+contract, including the exact entry dependencies of forwarded pack elements.
+The backend consumes the verified MIR group, not these HIR records alone.
 
 ## Executable Values
 

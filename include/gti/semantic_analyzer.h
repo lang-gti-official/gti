@@ -92,6 +92,11 @@ public:
   [[nodiscard]] std::optional<EnumTypeInfo>
   enumTypeFor(const SemanticType &type) const override;
 
+  // Semantic type/entry selection only; callers still need a represented
+  // invocation loan and join-all lifetime proof before executable admission.
+  [[nodiscard]] std::optional<ScopedThreadTaskShape>
+  scopedThreadTaskShapeFor(const SemanticType &type);
+
   [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId functionId,
       const std::vector<SemanticType> &classTypeArguments,

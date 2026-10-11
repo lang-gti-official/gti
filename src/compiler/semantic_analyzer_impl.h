@@ -26,6 +26,11 @@ class SemanticVisitor::Impl final : public ExprVisitor,
                                     public StmtVisitor,
                                     public SemanticInstanceProvider {
 public:
+  enum class ThreadTransferBoundary { Owned, Scoped };
+
+  [[nodiscard]] std::optional<ScopedThreadTaskShape>
+  scopedThreadTaskShapeFor(const SemanticType &type);
+
   enum class ProgramEffectOwnerKind {
     None,
     Initializer,
@@ -559,6 +564,9 @@ private:
     const ExprPtr *expression = nullptr;
     bool forwardedPackElement = false;
     bool deferred = false;
+    // The exact element identity of a flattened concrete pack argument.
+    // A type alone cannot recover origins when repeated element types occur.
+    std::vector<std::size_t> packPath;
   };
 
   struct ContextualCallArguments {
@@ -1491,9 +1499,9 @@ private:
   [[nodiscard]] std::optional<ActiveCleanupCause>
   activeCleanupCause(const SemanticType &type) const;
 
-  [[nodiscard]] ConcurrencyCapabilities
-  typeCapabilities(const SemanticType &type,
-                   std::vector<SemanticType> &visiting) const;
+  [[nodiscard]] ConcurrencyCapabilities typeCapabilities(
+      const SemanticType &type, std::vector<SemanticType> &visiting,
+      ThreadTransferBoundary boundary = ThreadTransferBoundary::Owned) const;
 
   [[nodiscard]] SemanticTypeTraits
   typeTraits(const SemanticType &type,
@@ -1653,6 +1661,8 @@ private:
 
   [[nodiscard]] std::vector<SemanticLoanDependency>
   storedBorrowDependencies(const ExprPtr &expression);
+  [[nodiscard]] std::vector<SemanticLoanDependency>
+  storedBorrowDependencies(const AnalyzedCallArgument &argument);
 
   [[nodiscard]] const Variable *
   borrowedOwnerVariable(const ExprPtr &expression) const;
@@ -1906,6 +1916,8 @@ private:
   void analyzeThreadIntrinsicCall(const Call &expr,
                                   const CallableCandidate &declaration);
 
+  void analyzeThreadScopeCall(const Call &expr);
+
   void analyzeAtomicIntrinsicCall(const Call &expr,
                                   const CallableCandidate &declaration);
 
@@ -2019,7 +2031,8 @@ private:
   [[nodiscard]] bool
   appendConcreteCallArgument(const SemanticType &type,
                              const ExprPtr &expression,
-                             std::vector<AnalyzedCallArgument> &result) const;
+                             std::vector<AnalyzedCallArgument> &result,
+                             std::vector<std::size_t> packPath = {}) const;
 
   [[nodiscard]] std::optional<std::vector<AnalyzedCallArgument>>
   concreteCallArguments(const std::vector<SemanticType> &types,

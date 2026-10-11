@@ -1,16 +1,18 @@
 # Managed-thread parallelism
 
 This workload compares the same 2,800,000-pixel-visit Mandelbrot computation
-in two GTI binaries built at the same optimization level, C++ standard, native
+in three GTI binaries built at the same optimization level, C++ standard, native
 compiler, and `concurrent` execution profile:
 
 - `gti-sequential` evaluates four interleaved 175-row partitions, four passes
   each, one after another;
-- `gti-four-threads` starts four owned `std::thread` tasks, then joins them.
+- `gti-four-threads` starts four owned `std::thread` tasks, then joins them;
+- `gti-four-scoped` starts four `std::parallel_invoke` tasks that exclusively
+  borrow independent result locals and write their checksums before join-all.
 
 One work unit is one pixel whose escape count contributes to its partition
 checksum in one of four complete passes. Rows are distributed by `row % 4`,
-which keeps the two iteration-heavy center bands balanced across workers. Both
+which keeps the two iteration-heavy center bands balanced across workers. All
 variants validate the same four checked-in repeated-partition checksums and
 publish exactly:
 
@@ -18,13 +20,17 @@ publish exactly:
 GTI-BENCH-1 digest:000000097bfbb42c work-units:2800000
 ```
 
-This workload deliberately uses neither shared mutable state nor the typed
+The owned-thread variant deliberately uses neither shared mutable state nor the typed
 `std::thread_result<Result>` channel. Each worker therefore computes and
 validates its checksum privately.
 A mismatch raises a defined failure inside that worker, and `join()` re-raises
 it in the parent. The parent adds a partition checksum to the published digest
 only after that worker joins successfully. This keeps the benchmark in safe
 GTI and prevents a successful record from hiding missing or incorrect work.
+The scoped variant instead checks the computed results after the common join
+boundary. Neither uses a pool: both create four native threads per process.
+These are equal successful computations with different result/lifetime APIs,
+not a claim that failure semantics or scheduling policy are identical.
 
 The descriptor declares a conservative `minimum_sample_seconds` of `0.10`.
 Work was increased by four complete deterministic passes; an exploratory run
