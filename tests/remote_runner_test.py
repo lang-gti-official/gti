@@ -157,6 +157,36 @@ class RemoteRunner(unittest.TestCase):
             self.assertIn("output" if expected else "success", (destination / "logs/fixture.log").read_text())
             self.assertFalse((self.root / "runs" / run_id).exists())
 
+    def test_worker_builds_actual_dirty_snapshot_with_original_head(self):
+        (self.repo / "tracked.txt").write_text("changed\n")
+        (self.repo / "deleted.txt").unlink()
+        (self.repo / "new.txt").write_text("new\n")
+        head = runner.git(self.repo, "rev-parse", "HEAD").decode().strip()
+        code = ("from pathlib import Path;import subprocess;"
+                "assert Path('tracked.txt').read_text() == 'changed\\n';"
+                "assert not Path('deleted.txt').exists();"
+                "assert Path('new.txt').read_text() == 'new\\n';"
+                f"assert subprocess.check_output(['git','rev-parse','HEAD']).decode().strip() == '{head}';"
+                "print(subprocess.check_output(['git','status','--porcelain']).decode())")
+        run_id = self.submit(code)
+        self.assertEqual(self.wait(run_id)["exit_code"], 0)
+        self.assert_clean(run_id)
+
+    def test_invalid_step_plans_and_optimized_defaults(self):
+        for steps in ([], {}, [{"name": None, "kind": "suite", "cwd": "source", "argv": ["true"]}],
+                      [{"name": "bad", "kind": "unknown", "cwd": "source", "argv": ["true"]}],
+                      [{"name": "bad", "kind": "suite", "cwd": "../", "argv": ["true"]}]):
+            with self.assertRaises(runner.RunnerError):
+                runner.validate_steps(steps)
+        steps = runner.default_steps({"build_type": "Release", "cmake_args": [], "targets": ["gti"],
+                                      "full_suite": True, "ctest_regex": None})
+        self.assertIn("-DCMAKE_BUILD_TYPE=Release", steps[0]["argv"])
+        self.assertIn("--no-tests=error", steps[-1]["argv"])
+        self.assertIn("--test-load", steps[-1]["argv"])
+        with mock.patch.object(runner, "local_directory", return_value=self.directory):
+            with self.assertRaises(runner.RunnerError):
+                runner.main(["--host", "example", "run", "--cmake-arg=-DCMAKE_BUILD_TYPE=Debug"])
+
     def test_fetch_failure_retains_remote_evidence(self):
         run_id = self.submit()
         self.wait(run_id)
@@ -224,8 +254,8 @@ class RemoteRunner(unittest.TestCase):
         run_id = self.abandoned({"state": "running", "started": time.time() - 120, "pid": None})
         commands = [[sys.executable, str(SCRIPT), "_remote", "clean", str(self.root)]] * 3
         processes = [subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE) for argv in commands]
-        for process in processes:
-            out, err = process.communicate(timeout=10)
+        outputs = [process.communicate(timeout=10) for process in processes]
+        for process, (out, err) in zip(processes, outputs):
             self.assertEqual(process.returncode, 0, err.decode())
             json.loads(out)
         self.assert_clean(run_id)

@@ -215,7 +215,7 @@ def validate_steps(steps):
         raise RunnerError("steps must be a nonempty JSON array (at most 50 steps)")
     for step in steps:
         if (not isinstance(step, dict) or set(step) != {"name", "kind", "argv", "cwd"}
-                or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", step["name"])
+                or not isinstance(step["name"], str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", step["name"])
                 or step["kind"] not in ("build", "suite") or step["cwd"] not in ("source", "build")
                 or not isinstance(step["argv"], list) or not step["argv"]
                 or any(not isinstance(a, str) or not a or "\0" in a for a in step["argv"])):
