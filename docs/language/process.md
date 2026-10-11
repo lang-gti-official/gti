@@ -1,11 +1,67 @@
-# Child Processes
+# Processes And Environment
 
-Status: Implemented bounded POSIX process slice.
+Status: Implemented bounded POSIX process execution and read-only environment access.
 
 `<std/process>` provides synchronous child-process execution through exact
 argument vectors. It exists for programs such as command-line clients that
 need to invoke an editor, pager, or another tool without importing shell
 parsing into GTI.
+
+## Environment Observation
+
+`<std/environment>` (or `import std.environment;`) provides
+`std::environment::get(std::string_view name)`, returning
+`expected<std::optional<std::string>, std::environment::errc>`:
+
+- A missing variable is a successful empty optional.
+- A present variable is an engaged optional holding an independent owned
+  string, including when the value is empty.
+- An empty name, `=` anywhere in a name, or an embedded NUL returns
+  `errc::invalid_name`. No prefix lookup, shell expansion, or assignment occurs.
+- Failure to allocate the native name/snapshot returns `errc::out_of_memory`.
+  Allocating the ordinary GTI result string follows GTI's normal allocation
+  failure contract instead; the temporary snapshot participates in ordinary
+  cleanup, with allocation exhaustion retaining its abort policy.
+
+```gti
+#include <std/environment>
+#include <std/string>
+
+int main() {
+  auto lookup = std::environment::get("APP_PROFILE");
+  if (!lookup) { return 1; }
+  auto profile = std::move(lookup).expect("checked lookup");
+  if (profile) { std::println(profile.value().view()); }
+  return 0;
+}
+```
+
+Names are case-sensitive native POSIX bytes, not restricted to shell identifier
+syntax. Values preserve native bytes without UTF-8 validation or replacement.
+The owned result survives later lookups and subsequent environment changes;
+any view made from it retains the ordinary checked string-owner lifetime.
+Lookups observe the current environment, not a cached startup copy. Reading
+configuration does not make its value trustworthy or suitable for shell use.
+
+Safe GTI can query concurrently: this API never changes the environment.
+Unsafe/native code that changes the process-wide environment (`setenv`,
+`unsetenv`, `putenv`, or direct `environ` edits) must exclude concurrent
+environment access, including foreign readers, and preserve all host validity
+requirements. Returning an owned copy does not make a racing native mutation
+safe. This slice intentionally provides no setter, enumeration, or child-local
+override. Windows imports are rejected until their native encoding/lookup
+contract is implemented; the private ABI also reports `unsupported` there.
+Unknown targets are rejected by the compiler's target model, with an additional
+defensive source-unit guard.
+
+The runtime's versioned `gti_rt_environment_get_v1` copies a present value into
+one immutable native snapshot. A source-defined temporary owner releases it
+after copying into the public string. An owner-witnessed view covers only that
+copy operation; neither libc storage nor the private handle escapes. Snapshot
+metadata and bytes share one allocation; the GTI string reserves the exact
+required capacity. Missing lookups allocate no snapshot or result string.
+`examples/140-environment-configuration.gti` demonstrates absent, empty and
+configured values without printing credentials.
 
 ## Command Construction
 

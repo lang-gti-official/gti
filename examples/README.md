@@ -194,6 +194,7 @@ is a teaching helper, not a production server.
 | `137-declared-attributes.gti` | `[[attribute]]` structs applied to fields and types with constant arguments, read through `<std/meta>` by a text encoder and a binary writer, with enumerator metaobjects and the `std::meta::reflectable` constraint |
 | `138-structural-construction.gti` | `std::meta::construct` building structs field by field from a byte reader and a text reader, with `expected` failures stopping production before construction |
 | `139-ordered-search.gti` | partition-point discovery and comparator bounds/binary search over application records without `operator<`, using the same descending order as sorting |
+| `140-environment-configuration.gti` | read-only owned environment configuration, missing versus explicitly empty values, and invalid-name rejection; try `GTI_DEMO_PROFILE=development` when running it |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
