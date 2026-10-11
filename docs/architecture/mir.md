@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v99`, `mir-body-v82`).
+instruction, body, and caller-assignment facts (`mir-v100`, `mir-body-v83`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -259,8 +259,10 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v99`/`mir-body-v82`,
-with `lowered-program-v17` declaration metadata. Version 99 records each
+The combined deterministic serialization is currently `mir-v100`/`mir-body-v83`,
+with `lowered-program-v17` declaration metadata. Version 100 combines the
+checked range endpoint parking/publication inventory with shared failure
+cleanup. Version 99 records each
 failure record's kind, producer or shared-cleanup continuation, and adds the
 `ContinueFailure` terminator; see
 [shared failure cleanup](#shared-failure-cleanup). It retains exact concrete
@@ -306,7 +308,7 @@ from actual alternative fields; nominal generic metadata does not become a
 stored component. Missing exact rows remain invalid rather than granting a
 storage or capability exemption.
 
-The combined serialization is `mir-v99`/`lowered-program-v17`, preserving
+The combined serialization is `mir-v100`/`lowered-program-v17`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,
@@ -2910,6 +2912,27 @@ names its exact obligation, whose cleanup type is the owner's type; that
 includes passive cleanup, where the class has no source destructor and no
 field needing cleanup.
 
+Read-only reference bindings over independent value yields additionally name
+their iteration-local `elementOwner`, original `elementAccessSource`/value,
+selected dereference declaration, and exact producer/owner drop obligations.
+The producer is the selected read-only dereference on the hidden cursor, not
+an arbitrary same-type call. A lexical result transfers its existing drop
+obligation into the hidden owner through ordinary verified publication;
+primitive values retain their trivial cleanup. The written element borrows
+that owned place. Parent, stored and additional dependency paths must all end
+before condition, increment, range cleanup or exit, and a body-local guard must
+drop before the value it borrows. Both source and owner obligations are retired
+at those boundaries. Out-of-body place accesses and escaping loans are invalid.
+Reference yields instead preserve the producer's exact physical loan through
+the hidden alias without copying or shortening its dependency set.
+
+`mirRangePublishedInstruction` and `mirRangePublishedElementOwner` expose these
+authoritative publication identities to the editor and optimizer. Current
+canonical replacements preserve the producer, initialization and stable owner;
+independent evidence replay checks the same rule. Unrelated computations in the
+loop body remain optimization candidates. An actual scalar-promotion miss for
+this owned binding reports its stable per-iteration publication requirement.
+
 For a fresh hidden exclusive cursor, a zero-argument read-only endpoint may
 need the range shell while the cursor retains its exclusive child dependency.
 Semantics/HIR explicitly prove that the selected endpoint returns a value with
@@ -3152,7 +3175,7 @@ part of the hosted schedule; it does not discover lifecycle from public wrapper
 names. The detached declaration/adapter contract is serialized as
 `lowered-program-v9`.
 
-`mir-v99`/`lowered-program-v17` retain `ProcessMemoryRuntimeOperation` on the
+`mir-v100`/`lowered-program-v17` retain `ProcessMemoryRuntimeOperation` on the
 exact private native declarations of the process allocator's runtime ABI
 (`std/memory`'s `gti_internal::runtime` block): the native size and address
 alignment queries, the POSIX pointer-size/`ENOMEM`/`EINVAL` queries, POSIX

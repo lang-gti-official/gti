@@ -55,7 +55,7 @@ return retained.left().value();
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=pathlib.Path)
-    parser.add_argument("--fixture", action="append", choices=("user_dual_range_direct", "user_dual_range_minimal", "user_dual_range_completion", "user_single_owner_inline_proxy", "user_external_borrowed_element", "user_dual_range_scalar_siblings"))
+    parser.add_argument("--fixture", action="append", choices=("user_dual_range_direct", "user_dual_range_minimal", "user_dual_range_completion", "user_single_owner_inline_proxy", "user_external_borrowed_element", "user_dual_range_scalar_siblings", "user_scalar_default_move"))
     parser.add_argument("--mode", action="append", choices=[mode[0] for mode in MODES])
     parser.add_argument("--jobs", type=positive_jobs, default=configured_jobs())
     parser.add_argument("--negative-only", action="store_true")
@@ -68,7 +68,7 @@ def main():
     environment = dict(os.environ, GTI_STDLIB_PATH=str(repository / "stdlib"),
                        ASAN_OPTIONS="halt_on_error=1", UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     modes = [mode for mode in MODES if not options.mode or mode[0] in options.mode]
-    selected = options.fixture or ("user_dual_range_direct", "user_dual_range_minimal", "user_dual_range_completion", "user_single_owner_inline_proxy", "user_external_borrowed_element", "user_dual_range_scalar_siblings")
+    selected = options.fixture or ("user_dual_range_direct", "user_dual_range_minimal", "user_dual_range_completion", "user_single_owner_inline_proxy", "user_external_borrowed_element", "user_dual_range_scalar_siblings", "user_scalar_default_move")
     with tempfile.TemporaryDirectory(prefix="gti-user-dual-range-") as directory:
         output = pathlib.Path(directory)
 
@@ -94,6 +94,7 @@ def main():
                 "user_single_owner_inline_proxy": events(100, 100, 100, 200, 200),
                 "user_external_borrowed_element": "",
                 "user_dual_range_scalar_siblings": "",
+                "user_scalar_default_move": "",
             }[fixture]
             assert (result.returncode, result.stdout, result.stderr) == (0, expected, ""), (fixture, label, result)
             if fixture in ("user_dual_range_direct", "user_dual_range_completion"):

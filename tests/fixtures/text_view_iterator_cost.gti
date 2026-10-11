@@ -12,10 +12,8 @@ extern "C" {
 
 uint64_t traverse_text(std::string_view& text, std::size_t rounds) {
   mut uint64_t checksum = 0;
-  auto end = text.end();
   for (mut std::size_t round = 0; round < rounds; round++) {
-    mut auto cursor = text.begin();
-    while (cursor != end) { checksum += uint64_t(*cursor); ++cursor; }
+    for (auto& character : text) { checksum += uint64_t(uint8_t(character)); }
   }
   return checksum;
 }

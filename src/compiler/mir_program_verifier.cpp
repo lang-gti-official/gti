@@ -13630,6 +13630,31 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       check(iteration.iteratorType);
       check(iteration.sentinelType);
       check(iteration.elementType);
+      if (!iteration.materializesElementValue)
+        continue;
+      const auto *value = body->findValue(iteration.elementAccessValue);
+      const MirInstruction *producer = nullptr;
+      if (value)
+        if (const auto *block = body->findBlock(value->definitionBlock))
+          for (const auto &instruction : block->instructions)
+            if (instruction.id == value->definition)
+              producer = &instruction;
+      const auto *selected =
+          producer && producer->functionTarget
+              ? program.findFunctionInstance(*producer->functionTarget)
+              : nullptr;
+      if (!selected || selected->declaration != iteration.dereferenceFunction ||
+          selected->overloadedOperator != OverloadedOperator::Dereference ||
+          selected->receiverMutability != ReceiverMutability::ReadOnly ||
+          !selected->parameterTypes.empty() ||
+          selected->returnType != iteration.elementType ||
+          selected->returnBorrowOrigin != BorrowOriginKind::None)
+        result.errors.push_back(
+            {.bodyKind = address.kind,
+             .owner = address.owner,
+             .instruction = producer == nullptr ? 0 : producer->id,
+             .message = "materialized iteration value has no exact independent "
+                        "readonly dereference declaration"});
     }
     for (const auto &obligation : body->dropObligations) {
       checkDrop(checkDrop, obligation.dropType);

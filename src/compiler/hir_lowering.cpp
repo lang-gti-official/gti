@@ -3165,6 +3165,8 @@ private:
       const ResolvedRangeIterationInfo *resolved =
           model.findRangeIteration(*rangeFor);
       const auto bindingFor = [&](const VariableDecl *declaration) {
+        if (declaration == nullptr)
+          return HirBindingId{0};
         const auto found =
             std::find_if(body.bindings.begin(), body.bindings.end(),
                          [&](const HirBinding &binding) {
@@ -3180,6 +3182,8 @@ private:
         return found == nullptr ? HirValueId{0} : found->id;
       };
       const auto statementFor = [&](const Stmt *source) {
+        if (source == nullptr)
+          return HirStatementId{0};
         const auto found =
             std::find_if(body.statements.begin(), body.statements.end(),
                          [&](const HirStatement &candidate) {
@@ -3197,6 +3201,7 @@ private:
         range.elementAccess = resolved->elementAccess;
         range.rangeLoan = resolved->rangeLoan;
         range.elementLoan = resolved->elementLoan;
+        range.elementOwnerLoan = resolved->elementOwnerLoan;
         range.beginFunction = resolved->beginFunction;
         range.endFunction = resolved->endFunction;
         range.compareFunction = resolved->compareFunction;
@@ -3206,12 +3211,16 @@ private:
         range.ownsRangeTemporary = resolved->ownsRangeTemporary;
         range.expectedPayloadProjection = resolved->expectedPayloadProjection;
         range.nonBorrowingEndpoint = resolved->nonBorrowingEndpoint;
+        range.materializesElementValue = resolved->materializesElementValue;
       }
       range.owner = bindingFor(rangeFor->ownerBinding());
       range.rangeCarrier = bindingFor(rangeFor->rangeBinding());
       range.iterator = bindingFor(rangeFor->iteratorBinding());
       range.sentinel = bindingFor(rangeFor->sentinelBinding());
       range.element = bindingFor(rangeFor->elementBinding());
+      range.elementOwner = bindingFor(rangeFor->elementOwnerBinding());
+      range.elementOwnerStatement =
+          statementFor(rangeFor->elementOwnerBinding());
       range.source = rangeFor->ownerBinding() == nullptr
                          ? 0
                          : valueFor(rangeFor->ownerBinding()->initializer());
@@ -3221,10 +3230,11 @@ private:
       range.end = rangeFor->sentinelBinding() == nullptr
                       ? 0
                       : valueFor(rangeFor->sentinelBinding()->initializer());
+      const auto *accessBinding = rangeFor->elementOwnerBinding() == nullptr
+                                      ? rangeFor->elementBinding()
+                                      : rangeFor->elementOwnerBinding();
       range.elementAccessValue =
-          rangeFor->elementBinding() == nullptr
-              ? 0
-              : valueFor(rangeFor->elementBinding()->initializer());
+          accessBinding == nullptr ? 0 : valueFor(accessBinding->initializer());
       range.coreLoop = statementFor(rangeFor->coreLoop());
       if (rangeFor->coreLoop() != nullptr) {
         range.comparison = valueFor(rangeFor->coreLoop()->condition());

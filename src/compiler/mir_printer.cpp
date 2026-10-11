@@ -270,7 +270,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v99 valid=" << program.valid() << '\n';
+    output << "mir-v100 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -787,7 +787,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v82\n";
+    output << "mir-body-v83\n";
     body(value, 0);
   }
 
@@ -1831,6 +1831,14 @@ private:
              << item.owner << " carrier=p" << item.rangeCarrier
              << " iterator-place=p" << item.iterator << " sentinel-place=p"
              << item.sentinel << " element-place=p" << item.element
+             << " element-owner=p" << item.elementOwner
+             << " element-owner-statement=s" << item.elementOwnerStatement
+             << " element-owner-loan=loan" << item.elementOwnerLoan
+             << " element-access=%" << item.elementAccessValue
+             << " element-access-source=v" << item.elementAccessSource
+             << " dereference-function=f" << item.dereferenceFunction
+             << " element-owner-drop=drop" << item.elementOwnerDrop
+             << " element-source-drop=drop" << item.elementSourceDrop
              << " range-loan=loan" << item.rangeLoan << " element-loan=loan"
              << item.elementLoan << " expected-payload-extraction=%"
              << item.expectedPayloadExtraction << " owner-drop=drop"
@@ -1841,6 +1849,7 @@ private:
              << " owns-temporary=" << item.ownsRangeTemporary
              << " expected-payload-projection="
              << item.expectedPayloadProjection;
+      output << " materializes-element-value=" << item.materializesElementValue;
       if (item.endpointParking) {
         const auto &parking = *item.endpointParking;
         output << " endpoint-parking=loan" << parking.cursor

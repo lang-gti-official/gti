@@ -47,6 +47,29 @@ void forged(const lang::FrontendResult &frontend, Mutation mutation,
   expect(changed && rejected,
          "backend refuses forged independent value-yield call");
 }
+template <typename Mutation>
+void forgedRange(const lang::FrontendResult &frontend, Mutation mutation,
+                 std::string_view label, bool owning = false) {
+  auto mir = frontend.mir;
+  bool changed = false;
+  for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+           mir.functionInstances()))
+    for (auto &range : function.body.rangeIterations)
+      if (!changed && range.materializesElementValue &&
+          (range.elementOwnerDrop != 0) == owning) {
+        mutation(function.body, range);
+        changed = true;
+      }
+  expect(changed && !lang::verifyMirProgram(mir).valid(), label);
+  bool rejected = false;
+  try {
+    (void)gti_test::emitCpp(frontend, frontend.mir, mir);
+  } catch (const std::exception &) {
+    rejected = true;
+  }
+  expect(changed && rejected,
+         "backend refuses forged iteration materialization");
+}
 } // namespace
 
 int main() {
@@ -55,6 +78,7 @@ int main() {
   const std::string source = R"(
 #include <std/string_view>
 using IndependentText = std::string_view;
+char unrelated_yield() { return 'a'; }
 class UserAdapter {
   IndependentText& text;
 public:
@@ -67,7 +91,12 @@ int main() {
   auto middle = view.iterator_at(std::size_t(1));
   UserAdapter adapter{view};
   auto user = adapter.cursor();
-  return *cursor == 'a' && *middle == 'b' && *user == 'a' ? 0 : 1;
+  mut int count = 0;
+  for (char& character : view) {
+    char independent = unrelated_yield();
+    if (character != '\0' && independent == 'a') { count++; }
+  }
+  return *cursor == 'a' && *middle == 'b' && *user == 'a' && count == 3 ? 0 : 1;
 }
 )";
   const auto frontend = lang::Frontend().analyze(
@@ -124,6 +153,108 @@ int main() {
             lang::SemanticType::Char, lang::AccessMode::ReadOnly);
       },
       "independent value yield cannot forge typed reference materialization");
+  forgedRange(
+      frontend,
+      [](auto &body, auto &range) {
+        for (const auto &place : body.places)
+          if (place.root == lang::MirPlaceRootKind::Binding &&
+              place.type == range.elementType &&
+              place.id != range.elementOwner) {
+            range.elementOwner = place.id;
+            return;
+          }
+      },
+      "same-type source binding cannot replace the exact hidden value owner");
+  forgedRange(
+      frontend, [](auto &, auto &range) { range.elementOwnerStatement = 0; },
+      "iteration storage must retain its synthetic declaration identity");
+  forgedRange(
+      frontend, [](auto &, auto &range) { range.elementAccessSource++; },
+      "iteration storage cannot substitute another source expression");
+  forgedRange(
+      frontend, [](auto &, auto &range) { range.dereferenceFunction++; },
+      "iteration value requires the actual selected dereference declaration");
+  forgedRange(
+      frontend,
+      [](auto &body, auto &range) {
+        body.loans[range.elementLoan - 1].escapes = true;
+      },
+      "an iteration-local value cannot publish its checked borrow");
+  forgedRange(
+      frontend,
+      [](auto &body, auto &range) {
+        for (auto &block : body.blocks)
+          std::erase_if(block.instructions, [&](const auto &instruction) {
+            return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                   instruction.loan == range.elementLoan;
+          });
+      },
+      "iteration loan retirement is required at every body exit");
+  auto malformedHir = frontend.hir;
+  bool malformedStaging = false;
+  for (auto &function : const_cast<std::vector<lang::HirFunctionInstance> &>(
+           malformedHir.functionInstances()))
+    for (auto &statement : function.body.statements)
+      if (!malformedStaging && statement.rangeIteration &&
+          statement.rangeIteration->materializesElementValue) {
+        statement.rangeIteration->elementOwner =
+            statement.rangeIteration->element;
+        malformedStaging = true;
+      }
+  expect(malformedStaging &&
+             !lang::verifyHirProgramPlans(frontend.semantics, malformedHir)
+                  .valid(),
+         "HIR rejects a forged hidden iteration owner before MIR");
+  const auto records = lang::Frontend().analyze(
+      root / "tests/fixtures/text_view_iterator_completion.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  expect(
+      records.canGenerateCode(),
+      "unrelated scalar, record and virtual cursors compose with algorithms");
+  if (records.canGenerateCode()) {
+    forgedRange(
+        records, [](auto &, auto &range) { range.elementOwnerDrop = 0; },
+        "owned record materialization cannot erase its lexical drop", true);
+    forgedRange(
+        records,
+        [](auto &, auto &range) {
+          range.elementSourceDrop = range.elementOwnerDrop;
+        },
+        "owned record materialization cannot invent pending-result publication",
+        true);
+    forgedRange(
+        records,
+        [](auto &body, auto &range) {
+          const auto *access = body.findValue(range.elementAccessValue);
+          for (auto &block : body.blocks)
+            for (auto &instruction : block.instructions)
+              if (access && instruction.id == access->definition)
+                instruction.successResultDestination.reset();
+        },
+        "direct record publication retains its exact success destination",
+        true);
+    forgedRange(
+        records,
+        [](auto &body, auto &range) {
+          range.elementOwnerDrop = body.dropObligations.size() + 1;
+        },
+        "invalid owned iteration lifetime identity fails closed", true);
+    forgedRange(
+        records,
+        [](auto &body, auto &range) {
+          for (auto &block : body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.kind == lang::MirInstructionKind::Initialize &&
+                  instruction.destination == range.elementOwner)
+                instruction.lifecycle.clear();
+        },
+        "record initialization must transfer its exact existing cleanup "
+        "obligation",
+        true);
+  } else {
+    for (const auto &diagnostic : records.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
   bool normalized = false;
   for (const auto &function : frontend.hir.functionInstances()) {
     for (const auto &value : function.body.values) {

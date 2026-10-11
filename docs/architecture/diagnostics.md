@@ -845,6 +845,14 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   diagnostics may accompany an invalid nominal class, but the LSP must publish
   this compiler diagnostic unchanged and clear it when a newer snapshot
   becomes valid.
+  For an exclusive inline-proxy cursor whose endpoint cannot be evaluated by
+  the implemented parking/restoration profile, point at the source `:`, relate
+  the selected `end` declaration, and explain the required statically selected
+  read-only, argument-free, independent-sentinel result. Diagnose defaulted
+  arguments, virtual dispatch, mutable endpoints, borrowed results and declared
+  terminal endpoints before backend entry. An empty concrete variadic endpoint
+  is eligible when its resolved call has no arguments. Do not suggest a
+  mechanically unsafe access or signature change as a fix-it.
 - `GTI-S2084` owns the trusted concurrency boundary. Point at an invalid
   handle/task argument, explicit type argument, or unavailable execution/
   target capability. Atomic construction/use requires the concurrent profile,

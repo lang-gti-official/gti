@@ -53,10 +53,16 @@ def main():
                 cpp = executable.with_suffix(".gti.cpp").read_text()
                 assert "// GTI verified-MIR body:" in cpp
                 if source.stem == "text_view_iterator_failure":
-                    for count in range(6):
+                    for count in range(12):
                         failed = run([executable, *(["failure"] * count)], timeout=30)
-                        assert (failed.returncode, failed.stdout) == (70, "2\n1\n"), (name, count, failed)
-                        assert "runtime error[GTI-R" in failed.stderr, failed.stderr
+                        expected_status = 0 if count == 11 else 70
+                        expected_output = "2\n1\n" if count <= 5 or count == 7 else "3\n2\n1\n"
+                        assert (failed.returncode, failed.stdout) == (expected_status, expected_output), (name, count, failed)
+                        if expected_status == 0:
+                            assert failed.stderr == "", (name, count, failed.stderr)
+                        else:
+                            assert "runtime error[GTI-R" in failed.stderr, failed.stderr
+                        assert ("GTI-R0014" in failed.stderr) == (count == 9), (name, count, failed.stderr)
                         assert not any(word in failed.stderr for word in
                                        ("AddressSanitizer", "UndefinedBehaviorSanitizer", "double-free")), failed.stderr
                 else:
@@ -75,10 +81,22 @@ def main():
             "escaped-view-shell": ('#include <std/string>\n#include <std/string_view>\nstd::detail::text_view_iterator<0> escape(std::string& owner) { '
                 'std::string_view view = owner.view(); return view.begin(); } int main() { return 0; }', "GTI-S2045"),
             "temporary-view-shell": ('#include <std/string_view>\nint main() { auto cursor = "abc".begin(); return int(*cursor); }', "GTI-S2017"),
-            "value-range-reference": ('#include <std/string_view>\nint main() { std::string_view view = "abc"; '
-                'for (char& character : view) {} return 0; }', "GTI-S2017"),
+            "ordinary-value-temporary-reference": ('#include <std/string_view>\nint main() { std::string_view view = "abc"; '
+                'auto cursor = view.begin(); char& character = *cursor; return int(character); }', "GTI-S2017"),
+            "value-iterator-reference-callback": ('#include <std/string>\n#include <std/algorithm>\n'
+                'class RefCounter { public: void operator()(char& value) mut {} }; '
+                'int main() { std::string_view view = "abc"; '
+                'auto visits = std::for_each(view.begin(), view.end(), RefCounter()); return 0; }', "GTI-S2029"),
             "value-range-mutable-reference": ('#include <std/string_view>\nint main() { std::string_view view = "abc"; '
                 'for (mut char& character : view) {} return 0; }', "GTI-S2083"),
+            "mutable-value-dereference": ('class ValueCursor { public: int operator*() mut { return 1; } }; '
+                'int main() { return 0; }', "GTI-S2022"),
+            "value-arrow": ('class ValueCursor { public: int operator->() { return 1; } }; '
+                'int main() { return 0; }', "GTI-S2022"),
+            "borrowed-value-dereference": ('struct Borrowed { int& value; }; '
+                'class ValueCursor { public: Borrowed operator*(); }; int main() { return 0; }', "GTI-S2022"),
+            "move-only-value-dereference": ('#include <std/string>\nclass ValueCursor { public: '
+                'std::string operator*() { return std::string("owned"); } }; int main() { return 0; }', "GTI-S2022"),
         }
         for name, (source, code) in invalid.items():
             path = output / f"{name}.gti"

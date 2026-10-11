@@ -1,4 +1,4 @@
-// C++-familiar API scaffold for <std/iterator>.
+// C++-familiar iterator and range vocabulary for <std/iterator>.
 // Iterator behavior remains structural in GTI; these names are ordinary
 // library vocabulary rather than compiler-recognized category tags.
 

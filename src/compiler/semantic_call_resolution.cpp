@@ -5139,7 +5139,8 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
   const auto callableSatisfies = [&](const SemanticType &callable,
                                      std::span<const SemanticType> parameters,
                                      const SemanticType &result,
-                                     CallableInvocationCapability required) {
+                                     CallableInvocationCapability required,
+                                     bool referenceArguments = true) {
     if (result.kind == SemanticType::Reference ||
         typeTraits(result).containsBorrowedState ||
         containsLambdaType(result)) {
@@ -5156,8 +5157,10 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
         return true;
       }
       for (std::size_t index = 0; index < parameters.size(); ++index) {
-        if (!readableCallableParameter(candidate.parameterTypes[index],
-                                       parameters[index])) {
+        if (referenceArguments
+                ? !readableCallableParameter(candidate.parameterTypes[index],
+                                             parameters[index])
+                : candidate.parameterTypes[index] != parameters[index]) {
           return true;
         }
       }
@@ -5421,9 +5424,10 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     const SemanticType &result =
         kind == StructuralConstraintKind::IndirectPredicate ? SemanticType::Bool
                                                             : arguments[2];
-    return callableSatisfies(arguments[0],
-                             std::span<const SemanticType>(&*element, 1),
-                             result, CallableInvocationCapability::Mutable);
+    return callableSatisfies(
+        arguments[0], std::span<const SemanticType>(&*element, 1), result,
+        CallableInvocationCapability::Mutable,
+        dereference->returnType.kind == SemanticType::Reference);
   }
   case StructuralConstraintKind::RangePredicate:
   case StructuralConstraintKind::RangeOperation: {

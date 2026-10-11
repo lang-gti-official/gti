@@ -7731,20 +7731,33 @@ consumer, and release refreshes remain outstanding for the full campaign.
 - **Remaining scope:** structural complete-range
   relations for `transform`, `reverse`, and `sort`; and further
   iterator/sentinel overloads behind a demonstrated subrange client.
-  Forward-list traversal, heterogeneous search keys/projections and indirect
-  binary callable relations remain separate prerequisites, not compiler
-  exceptions for these APIs. Iterator-pair in-place spellings remain
-  excluded because `begin_mut()` and `end()` from one container overlap by
-  design; semantics now diagnoses that conflict before MIR, while read-only
-  methods on a parameter-held mutable cursor are supported. Iterator
-  assignment, implicit conversions, overload ranking, and a parallel C++
-  iterator-category hierarchy remain unauthorized.
+  Heterogeneous search keys/projections and indirect binary callable relations
+  need their own exact callable and borrowing contracts, not compiler
+  exceptions for these APIs. Iterator-pair in-place overloads still need
+  coherent writable endpoint, subrange and return-origin contracts. An
+  independent end sentinel can be acquired before a mutable cursor; reading
+  the owner through `end()` after acquiring that cursor remains an overlapping
+  access. Read-only methods on a parameter-held mutable cursor are supported.
+  Iterator assignment, implicit conversions and overload ranking remain
+  outside this profile; movement categories compose ordinary source concepts
+  rather than introducing a parallel compiler-owned C++ trait hierarchy.
   Restoring indexed exchange and move-only vector reverse/sort are delivered
   by `L-UP-07/08`; they do not require general un-restored element move-out.
   Start a new algorithm from those operations before proposing partial-move
   semantics solely to work around a historical implementation limitation.
 - **Exit gate:** no public algorithm name is recognized by the compiler and
   value/borrow/move behavior is covered for every supported range category.
+- **Container-completion campaign (2026-10-11, in progress):** the current
+  task covers forward-list iteration and the remaining container/view cursor
+  families, including sparse live slots, lane storage and two-owner reference
+  proxies. Movement is separate from cursor duplication. General independent
+  copyable value yields and exact indirect-callback categories enable counted
+  text views without fabricated native character references. Focused evidence
+  is recorded by the task; body-local value-borrow cleanup, full native and
+  corpus/census validation, current-main reconciliation and PR integration
+  remain acceptance requirements. See the existing
+  [iterator completion plan](iterators-and-ranges.md#container-completion-campaign-in-progress-2026-10-11)
+  for the family matrix; partial passes are not delivery evidence.
 
 ### L-NUM-01: Defined Integer Arithmetic Modes
 

@@ -1,21 +1,74 @@
 #include <std/string>
 #include <std/vector>
+#include <std/panic>
 
-extern "C" void text_view_drop(int32_t value);
+extern "C" {
+  void text_view_drop(int32_t value);
+  void text_view_note_dereference();
+  int32_t text_view_dereferences();
+}
 class TextViewDrop {
   int32_t value;
 public:
   TextViewDrop(int32_t value) : value(value) {}
   ~TextViewDrop() { text_view_drop(this.value); }
 };
+class ValueBorrowGuard {
+  char& value;
+  bool fails;
+public:
+  ValueBorrowGuard(char& value, bool fails) : value(value), fails(fails) {}
+  ~ValueBorrowGuard() {
+    if (this.value != 'a') { std::panic("unexpected value guard referent"); }
+    if (text_view_dereferences() != 1) { std::panic("value dereference was not evaluated once"); }
+    text_view_drop(3);
+    if (this.fails) { std::panic("value range guard cleanup failure"); }
+  }
+};
+class FailValueSentinel {};
+class FailValueCursor {
+  bool dereference_fails;
+  bool increment_fails;
+public:
+  FailValueCursor(bool dereference_fails, bool increment_fails)
+      : dereference_fails(dereference_fails), increment_fails(increment_fails) {}
+  char operator*() {
+    if (this.dereference_fails) { std::panic("value range dereference failure"); }
+    text_view_note_dereference();
+    return 'a';
+  }
+  void operator++() mut {
+    if (this.increment_fails) { std::panic("value range increment failure"); }
+  }
+  bool operator!=(FailValueSentinel end) { return true; }
+  bool operator==(FailValueSentinel end) { return false; }
+};
+class FailValueRange {
+  bool dereference_fails;
+  bool increment_fails;
+public:
+  FailValueRange(bool dereference_fails, bool increment_fails)
+      : dereference_fails(dereference_fails), increment_fails(increment_fails) {}
+  FailValueCursor begin() { return FailValueCursor(this.dereference_fails, this.increment_fails); }
+  FailValueSentinel end() { return FailValueSentinel(); }
+};
 
 int main(int argc, std::vector<std::string> argv) {
   TextViewDrop first{1};
   TextViewDrop second{2};
   std::string_view view = "abc";
+  if (argc >= 7) {
+    FailValueRange values{argc == 8, argc == 11};
+    for (char& character : values) {
+      ValueBorrowGuard guard{character, argc == 9 || argc == 10};
+      if (argc == 7 || argc == 10) { std::panic("value range body failure"); }
+      if (argc != 11) { break; }
+    }
+    return 0;
+  }
   if (argc == 1) {
     auto end = view.end_iterator();
-    return int(*end);
+    return int(uint8_t(*end));
   }
   if (argc == 2) {
     mut auto begin = view.begin();
@@ -29,12 +82,12 @@ int main(int argc, std::vector<std::string> argv) {
   }
   if (argc == 4) {
     auto bad = view.iterator_at(std::size_t(4));
-    return int(*bad);
+    return int(uint8_t(*bad));
   }
   if (argc == 5) {
     std::string_view empty = "";
     auto reverse = empty.rbegin();
-    return int(*reverse);
+    return int(uint8_t(*reverse));
   }
   mut auto begin = view.begin();
   begin += std::ptrdiff_t(-9223372036854775807) - std::ptrdiff_t(1);

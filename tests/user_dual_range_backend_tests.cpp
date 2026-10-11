@@ -123,6 +123,99 @@ void testMixedCarrierParameterPrefix() {
   }
 }
 
+void testExclusiveGeneratedShell() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/user_mutable_inline_proxy_endpoint.gti";
+  std::ifstream input(path);
+  std::string source((std::istreambuf_iterator<char>(input)), {});
+  const auto main = source.find("\nint main(");
+  expect(main != std::string::npos,
+         "exclusive shell fixture has an entry point");
+  if (main == std::string::npos)
+    return;
+  // The exact same source classes exercise shell retirement independently of
+  // the structural range protocol and its separate endpoint marker proof.
+  source.replace(main, std::string::npos, R"(
+int main() {
+  mut MutableOwnerRange range{0};
+  { auto cursor = range.begin_mut(); }
+  return range.at(std::size_t(0)) == 101 ? 0 : 1;
+}
+)");
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "exclusive generated shell has verified MIR without range lowering");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::MirConstructorInstance *cleanupConstructor = nullptr;
+  lang::HirClassInstanceId exclusiveShell = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+    if (!owner || !owner->destructor || owner->declaredFields.size() != 1)
+      continue;
+    const lang::MirClassInstance *child = nullptr;
+    for (const auto &candidate : frontend.mir.classInstances())
+      if (candidate.type == owner->declaredFields.front().type)
+        child = &candidate;
+    if (!child || child->requiresActiveCleanup || child->destructor ||
+        child->traits.copyable ||
+        std::none_of(child->declaredFields.begin(), child->declaredFields.end(),
+                     [](const auto &field) {
+                       return field.type.kind ==
+                                  lang::SemanticType::Reference &&
+                              field.type.referenceAccess ==
+                                  lang::AccessMode::Mutable;
+                     }))
+      continue;
+    expect(cleanupConstructor == nullptr,
+           "exclusive shell constructor fixture is unique");
+    cleanupConstructor = &constructor;
+    exclusiveShell = child->id;
+  }
+  expect(cleanupConstructor && exclusiveShell,
+         "cleanup-bearing cursor uses an inline exclusive generated shell");
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(frontend, frontend.mir, standard));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    if (cleanupConstructor && exclusiveShell) {
+      const lang::MirBodyAddress constructorAddress{
+          .kind = lang::MirBodyKind::Constructor,
+          .owner = cleanupConstructor->id};
+      expect(emitter.supportsFailureBodyText(constructorAddress),
+             "exclusive generated shell has exact constructor rollback "
+             "representation");
+      const auto rejectShell = [&](auto mutate, std::string_view reason) {
+        auto malformed = frontend.mir;
+        auto *child = const_cast<lang::MirClassInstance *>(
+            malformed.findClassInstance(exclusiveShell));
+        auto *constructor = const_cast<lang::MirConstructorInstance *>(
+            malformed.findConstructorInstance(cleanupConstructor->id));
+        mutate(*child, *constructor);
+        const lang::CppMirBodyEmitter changedEmitter(malformed, map);
+        expect(!changedEmitter.supportsFailureBodyText(constructorAddress),
+               reason);
+        expect(!changedEmitter.analyzeProgram().ready(),
+               "detached representation planning rejects the forged exclusive "
+               "shell");
+      };
+      rejectShell([](auto &child, auto &) { child.traits.copyable = true; },
+                  "exclusive shell cannot claim copyable reference state");
+      rejectShell(
+          [](auto &child, auto &) {
+            child.destructorStatus = lang::SpecialMemberStatus::Deleted;
+          },
+          "exclusive shell requires generated observation-free destruction");
+      rejectShell(
+          [](auto &, auto &constructor) {
+            constructor.initializers.front().field = 0;
+          },
+          "exclusive shell cannot bypass exact native field publication");
+    }
+  }
+}
+
 void testRangeEndpointMarkerAuthority() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/user_mutable_inline_proxy_endpoint.gti";
@@ -249,11 +342,133 @@ void testScalarSiblingPositions() {
   }
 }
 
+void testSourceLiteralScalarSiblings() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/user_scalar_default_move.gti";
+  std::ifstream input(path);
+  const std::string source((std::istreambuf_iterator<char>(input)), {});
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "unrelated generic owners and view defaults have verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::MirConstructorInstance *mixed = nullptr;
+  for (const auto &constructor : frontend.mir.constructorInstances())
+    if (constructor.initializers.size() == 3 &&
+        constructor.initializers[0].ownedParameter &&
+        !constructor.initializers[1].ownedParameter &&
+        constructor.initializers[1].targetType == lang::SemanticType::UInt64 &&
+        constructor.initializers[2].ownedParameter) {
+      expect(mixed == nullptr, "literal-between-view fixture is unique");
+      mixed = &constructor;
+    }
+  expect(mixed != nullptr,
+         "literal scalar sibling separates two native field moves");
+  if (!mixed)
+    return;
+  lang::MirInstructionId literal = 0, initialize = 0, boundary = 0;
+  for (const auto &block : mixed->body.blocks)
+    for (const auto &member : block.instructions) {
+      if (member.hirValue == mixed->initializers[1].arguments.front() &&
+          member.kind == lang::MirInstructionKind::Compute &&
+          member.operation == lang::MirOperation::Literal)
+        literal = member.id;
+      if (member.constructorInitializer == 2)
+        initialize = member.id;
+      if (member.fullExpressionEnd)
+        for (const auto &expression : mixed->body.fullExpressions)
+          if (expression.id == member.fullExpressionEnd &&
+              expression.constructorInitializer == 2)
+            boundary = member.id;
+    }
+  expect(literal && initialize && boundary,
+         "source literal has an exact executable publication triple");
+  if (!literal || !initialize || !boundary)
+    return;
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(frontend, frontend.mir, standard));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    std::size_t checked = 0;
+    for (const auto &constructor : frontend.mir.constructorInstances()) {
+      const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+      if (!owner)
+        continue;
+      const bool genericNode =
+          constructor.initializers.size() == 3 &&
+          owner->declaredFields.size() == 3 &&
+          constructor.initializers[0].ownedParameter &&
+          owner->declaredFields[1].type == lang::SemanticType::UInt64 &&
+          owner->declaredFields[2].type == lang::SemanticType::UInt64;
+      const bool leadingLiteral = constructor.initializers.size() == 2 &&
+                                  !constructor.initializers[0].ownedParameter &&
+                                  constructor.initializers[0].targetType ==
+                                      lang::SemanticType::UInt64 &&
+                                  constructor.initializers[1].ownedParameter;
+      if (!genericNode && !leadingLiteral && constructor.id != mixed->id)
+        continue;
+      const auto bindings =
+          lang::cppMirOwnedParameterFieldBindings(frontend.mir, constructor);
+      expect(bindings &&
+                 bindings->size() == (constructor.id == mixed->id ? 2u : 1u),
+             "passive defaults preserve exact native move binding");
+      expect(emitter.supportsFailureBodyText(
+                 {.kind = lang::MirBodyKind::Constructor,
+                  .owner = constructor.id}),
+             "scalar and owning generic payloads preserve constructor "
+             "representation beside source defaults");
+      ++checked;
+    }
+    expect(checked == 4,
+           "scalar, owning, leading and interleaved defaults are covered");
+    const auto reject = [&](auto mutate, std::string_view reason) {
+      auto malformed = frontend.mir;
+      auto *changed = const_cast<lang::MirConstructorInstance *>(
+          malformed.findConstructorInstance(mixed->id));
+      mutate(changed->body);
+      (void)lang::rebuildMirValueUses(changed->body);
+      expect(!lang::cppMirOwnedParameterFieldBindings(malformed, *changed),
+             reason);
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "independent MIR verification rejects forged scalar literal "
+             "publication");
+      const lang::CppMirBodyEmitter changedEmitter(malformed, map);
+      expect(!changedEmitter.supportsFailureBodyText(
+                 {.kind = lang::MirBodyKind::Constructor, .owner = mixed->id}),
+             "backend scalar prefix gate rejects malformed literal siblings");
+    };
+    reject([&](auto &body) { instruction(body, literal)->literal.reset(); },
+           "literal sibling requires its exact typed value");
+    reject(
+        [&](auto &body) {
+          instruction(body, literal)->operation = lang::MirOperation::Add;
+        },
+        "scalar prefix cannot hide runtime computation");
+    reject(
+        [&](auto &body) {
+          instruction(body, literal)->literalProvenance.kind =
+              lang::MirLiteralProvenanceKind::None;
+        },
+        "literal sibling requires canonical source provenance");
+    reject(
+        [&](auto &body) {
+          instruction(body, initialize)->constructorInitializer = 0;
+        },
+        "literal publication retains its selected field identity");
+    reject(
+        [&](auto &body) { instruction(body, boundary)->fullExpressionEnd = 0; },
+        "literal sibling retains its exact expression endpoint");
+  }
+}
+
 } // namespace
 
 int main() {
   testMixedCarrierParameterPrefix();
   testScalarSiblingPositions();
+  testSourceLiteralScalarSiblings();
+  testExclusiveGeneratedShell();
   testRangeEndpointMarkerAuthority();
   if (failures)
     return 1;
