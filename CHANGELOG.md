@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.402.8 — Class results that exist on only one branch
+## 0.402.9 — Class results that exist on only one branch
 
 - A call that returns a class needing no cleanup, used directly as the
   receiver of a method on only one side of `||`, `&&` or `?:`, as in
@@ -18,6 +18,18 @@ for what minor and patch releases mean.
   was dropped while empty" at every optimization level. This also affected
   `constexpr for` loops over `std::meta` metaobjects that test, for example,
   `m.name() != "get" || !m.result().is_integral()`.
+
+## 0.402.8 — Field reads of temporaries inside `&&`, `||` and conditionals
+
+- A field of a temporary whose class has a destructor or owns resources can
+  now be read inside the right operand of `&&` or `||`, or inside a
+  conditional arm, as in `ok || make_tracked(5).number == 5`,
+  `ok ? make_tracked(5).number : 0` or `ok || make_named().text.size() == 3`.
+  The temporary exists only when its operand runs and is destroyed exactly
+  once, including when a later operand fails. Such programs used to report
+  GTI-B0001.
+- Still reporting GTI-B0001: reading a field of an owning `expected` payload
+  in those positions, as in `ok || make_named(true).value().text.size() == 7`.
 
 ## 0.402.7 — Moving `expected` values of plain structs and classes
 
