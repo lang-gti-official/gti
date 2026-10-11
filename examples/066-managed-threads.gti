@@ -54,12 +54,12 @@ int main() {
   // payload access; the shared owner keeps it alive until all workers finish.
   auto counter = std::make_shared<std::mutex<int>>(0);
   auto worker_counter = counter.clone();
-  std::transfer_function<void()> job(
+  std::transfer_function<void()> job{
       [state = std::move(worker_counter)]() -> void {
         mut auto guard = state->lock();
         mut int& value = guard.get();
         value += 1;
-      });
+      }};
   auto fourth_started = std::thread::start(std::move(job));
   if (!fourth_started) return 6;
   mut auto fourth = std::move(fourth_started).value();

@@ -1460,6 +1460,11 @@ named-native-callback conversion retain their existing resolution paths.
 
 ## Owned Managed-Thread Tasks
 
+Concrete callable-entry matching expands substituted parameter packs before
+testing the exact zero-argument signature. An empty pack is eligible; a
+nonempty or unresolved pack is not. The rule applies equally to user-defined
+callable classes and capability-qualified library erasure.
+
 Selection of the trusted private thread-spawn declaration extends the existing
 `Owned` callable boundary with
 `CallableOwnedTransportKind::ThreadTask`; it does not recognize

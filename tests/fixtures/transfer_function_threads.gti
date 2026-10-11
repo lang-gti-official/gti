@@ -16,20 +16,34 @@ public:
 };
 
 int main() {
-  std::transfer_function<int()> read([]() -> int { return 42; });
+  mut std::transfer_function<int()> read{};
+  if (!read.empty()) return 10;
+  read.replace([]() -> int { return 1; });
+  if (read.empty() || read() != 1) return 11;
+  read.reset();
+  if (!read.empty()) return 12;
+  read.replace([]() -> int { return 42; });
   mut std::thread_result<int> first{};
   if (!first.start(std::move(read))) return 1;
   auto first_result = first.join();
   if (!first_result || first_result.value() != 42) return 2;
 
-  mut std::transfer_function<int() mut> change(Counter());
+  mut std::transfer_function<int() mut> change{Counter()};
+  change.reset();
+  if (!change.empty()) return 13;
+  change.replace(Counter());
   if (change() != 41) return 3;
   mut std::thread_result<int> second{};
   if (!second.start(std::move(change))) return 4;
   auto second_result = second.join();
   if (!second_result || second_result.value() != 42) return 5;
 
-  std::transfer_function<int() &&> consume(Once(std::make_unique<int>(42)));
+  mut std::transfer_function<int() &&> consume{};
+  if (!consume.empty()) return 14;
+  consume.replace(Once(std::make_unique<int>(1)));
+  consume.reset();
+  if (!consume.empty()) return 15;
+  consume.replace(Once(std::make_unique<int>(42)));
   mut std::thread_result<int> third{};
   if (!third.start(std::move(consume))) return 6;
   auto third_result = third.join();
