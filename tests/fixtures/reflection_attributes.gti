@@ -1,0 +1,245 @@
+// Declared attributes read by three structurally different clients written in
+// ordinary GTI on top of <std/meta>: a JSON-shaped text encoder, an XML-like
+// encoder and a binary writer. The compiler stores each `[[ns::name(args)]]`
+// as a constant of its `[[attribute]]` struct and gives it no meaning; every
+// policy below lives in the client.
+#include <std/meta>
+#include <std/string>
+#include <std/vector>
+
+namespace enc {
+[[attribute]] struct key { std::string_view name = ""; };
+[[attribute]] struct skip {};
+}
+namespace xml {
+[[attribute]] struct attribute {};
+}
+namespace binary {
+[[attribute]] struct skip {};
+[[attribute]] struct width { uint64_t bytes = 4; };
+}
+namespace scene {
+[[attribute]] struct version { uint32_t major = 1; uint32_t minor = 0; };
+}
+
+// Field defaults are the test values (`Player hero{}` below); text appears
+// only as attribute arguments here.
+[[scene::version(.major = 2)]]
+struct Player {
+  [[enc::key("display_name")]]
+  uint32_t level = 3;
+  [[xml::attribute, binary::width(2)]]
+  uint32_t health = 7;
+  [[xml::attribute]]
+  bool alive = true;
+  [[enc::skip, binary::skip]]
+  uint64_t session = 99;
+};
+
+[[reflect_private]] class Account {
+public:
+  Account(uint32_t balance) : hidden(balance) {}
+private:
+  uint32_t hidden;
+};
+
+class Base { public: uint32_t base_field = 1; };
+class Derived : public Base { public: uint32_t own = 2; };
+
+enum class color { red = 1, green = 2, blue = 4 };
+enum class shape { dot, box(uint32_t width, uint32_t height) };
+
+void append_unsigned(mut std::string& out, uint64_t value) {
+  std::string_view digits = "0123456789";
+  if (value >= uint64_t(10)) {
+    append_unsigned(out, value / uint64_t(10));
+  }
+  out.push_back(digits[std::size_t(value % uint64_t(10))]);
+}
+
+void append_scalar<F>(mut std::string& out, F& item) {
+  if constexpr (std::meta::is_bool<F>()) {
+    if (item) { out.append("true"); } else { out.append("false"); }
+  } else if constexpr (std::meta::is_integral<F>()) {
+    append_unsigned(out, uint64_t(item));
+  } else if constexpr (std::meta::is_text<F>()) {
+    out.push_back('"');
+    out.append(item);
+    out.push_back('"');
+  }
+}
+
+// Client 1: JSON-shaped text with renamed and skipped members.
+std::string encode_text<std::meta::reflectable T>(T& value) {
+  mut std::string out = std::string("{");
+  mut bool first = true;
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (!field.has_attribute<enc::skip>()) {
+      if (!first) { out.push_back(','); }
+      first = false;
+      mut std::string_view key = field.name();
+      if constexpr (field.has_attribute<enc::key>()) {
+        key = field.attribute<enc::key>().name;
+      }
+      out.push_back('"');
+      out.append(key);
+      out.append("\":");
+      append_scalar(out, field.get(value));
+    }
+  }
+  out.push_back('}');
+  return std::move(out);
+}
+
+// Client 2: XML-like text; `[[xml::attribute]]` fields become attributes of
+// the element, the rest child elements.
+std::string encode_xml<std::meta::reflectable T>(T& value) {
+  mut std::string out = std::string("<");
+  out.append(std::meta::name_of<T>());
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (field.has_attribute<xml::attribute>()) {
+      out.push_back(' ');
+      out.append(field.name());
+      out.append("=\"");
+      if constexpr (field.type().is_bool()) {
+        if (field.get(value)) { out.append("true"); } else { out.append("false"); }
+      } else {
+        append_unsigned(out, uint64_t(field.get(value)));
+      }
+      out.push_back('"');
+    }
+  }
+  out.push_back('>');
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (!field.has_attribute<xml::attribute>()) {
+      out.push_back('<');
+      out.append(field.name());
+      out.push_back('>');
+      if constexpr (field.type().is_text()) {
+        out.append(field.get(value));
+      } else {
+        append_unsigned(out, uint64_t(field.get(value)));
+      }
+      out.append("</");
+      out.append(field.name());
+      out.push_back('>');
+    }
+  }
+  out.append("</");
+  out.append(std::meta::name_of<T>());
+  out.push_back('>');
+  return std::move(out);
+}
+
+// Client 3: a binary writer whose field widths and skips are attribute-driven.
+void write_bytes(mut std::vector<uint8_t>& out, uint64_t value, uint64_t width) {
+  mut uint64_t bits = value;
+  for (mut uint64_t index = 0; index < width; index++) {
+    out.push_back(uint8_t(bits % uint64_t(256)));
+    bits = bits / uint64_t(256);
+  }
+}
+
+void write_binary<std::meta::reflectable T>(mut std::vector<uint8_t>& out, T& value) {
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (field.has_attribute<binary::skip>() || field.type().is_text()) {
+      // Text has no fixed width here; skipped fields are policy.
+    } else {
+      mut uint64_t width = 4;
+      if constexpr (field.has_attribute<binary::width>()) {
+        width = field.attribute<binary::width>().bytes;
+      }
+      if constexpr (field.type().is_bool()) {
+        mut uint64_t flag = 0;
+        if (field.get(value)) { flag = uint64_t(1); }
+        write_bytes(out, flag, uint64_t(1));
+      } else {
+        write_bytes(out, uint64_t(field.get(value)), width);
+      }
+    }
+  }
+}
+
+uint32_t sum_private<std::meta::reflectable T>(T& value) {
+  mut uint32_t total = 0;
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    total = total + field.get(value);
+  }
+  return total;
+}
+
+int main() {
+  Player hero{};
+
+  if (encode_text(hero).view() != "{\"display_name\":3,\"health\":7,\"alive\":true}") {
+    return 1;
+  }
+  if (encode_xml(hero).view() !=
+      "<Player health=\"7\" alive=\"true\"><level>3</level><session>99</session></Player>") {
+    return 2;
+  }
+  mut std::vector<uint8_t> bytes = std::vector<uint8_t>();
+  write_binary(bytes, hero);
+  // level (4 bytes), health (2 bytes), alive (1 byte); session is skipped.
+  if (bytes.size() != 7 || bytes[std::size_t(0)] != uint8_t(3) ||
+      bytes[std::size_t(4)] != uint8_t(7) || bytes[std::size_t(6)] != uint8_t(1)) {
+    return 3;
+  }
+
+  // Type attributes, read at compile time and at run time.
+  static_assert(std::meta::type_of<Player>().has_attribute<scene::version>());
+  static_assert(std::meta::type_of<Player>().attribute<scene::version>().major == uint32_t(2));
+  static_assert(std::meta::type_of<Player>().attribute_count() == uint64_t(1));
+  if (std::meta::type_of<Player>().attribute<scene::version>().minor != 0) {
+    return 4;
+  }
+  mut uint64_t applied = 0;
+  constexpr for (auto field : std::meta::fields_of<Player>()) {
+    applied = applied + field.attribute_count();
+    constexpr for (auto tag : field.attributes()) {
+      applied = applied + 1;
+    }
+  }
+  if (applied != 12) {
+    return 5;
+  }
+
+  // [[reflect_private]] opens private fields to reflected access.
+  Account account{uint32_t(5)};
+  if (sum_private(account) != 5) {
+    return 6;
+  }
+
+  // Enumerators, bases and generic arguments.
+  mut uint64_t names = 0;
+  constexpr for (auto e : std::meta::enumerators_of<color>()) {
+    names = names + e.name().size();
+    if constexpr (e.index() == uint64_t(2)) {
+      if (e.value() != color::blue) { return 7; }
+    }
+  }
+  if (names != 12) {
+    return 8;
+  }
+  static_assert(std::meta::is_payload_enum<shape>());
+  mut uint64_t payload_fields = 0;
+  constexpr for (auto alt : std::meta::alternatives_of<shape>()) {
+    constexpr for (auto field : alt.payload_fields()) {
+      payload_fields = payload_fields + field.name().size();
+      static_assert(field.type().is_integral());
+    }
+  }
+  if (payload_fields != 11) {
+    return 9;
+  }
+  static_assert(std::meta::type_of<Derived>().base_count() == uint64_t(1));
+  constexpr for (auto base : std::meta::bases_of<Derived>()) {
+    if (base.name() != "Base" || base.field_count() != uint64_t(1)) { return 10; }
+  }
+  static_assert(std::meta::is_generic_instance<std::vector<uint8_t>>());
+  static_assert(!std::meta::is_generic_instance<Player>());
+  constexpr for (auto argument : std::meta::arguments_of<std::vector<uint8_t>>()) {
+    if (!argument.is_integral()) { return 11; }
+  }
+  return 0;
+}

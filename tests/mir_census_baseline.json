@@ -132,7 +132,8 @@
     "133-raw-text-owner-views.gti": 39,
     "134-standard-library-modules.gti": 227,
     "135-inline-polymorphic-values.gti": 256,
-    "136-inline-closure-cells.gti": 116
+    "136-inline-closure-cells.gti": 116,
+    "137-declared-attributes.gti": 188
   },
-  "total": 11877
+  "total": 12065
 }
