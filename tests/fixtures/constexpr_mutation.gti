@@ -1,0 +1,68 @@
+#include <std/array>
+
+constexpr void add(mut int& value, int amount) { value += amount; }
+constexpr mut int& forward_mut(mut int& value) { return value; }
+
+constexpr int scalar_work(int seed) {
+  mut int value = seed;
+  add(value, 4);
+  {
+    mut int& same = forward_mut(value);
+    add(same, 2);
+  }
+  return value;
+}
+
+struct Table {
+  mut int values[4];
+  constexpr Table(int seed) : values({}) {
+    for (mut int index = 0; index < 4; index++) {
+      this.values[index] = seed + index;
+    }
+  }
+  constexpr void offset(int amount) mut {
+    for (mut int index = 0; index < 4; index++) {
+      add(this.values[index], amount);
+    }
+  }
+  constexpr mut int& at(int index) mut { return this.values[index]; }
+  constexpr int total() {
+    mut int result = 0;
+    for (mut int index = 0; index < 4; index++) {
+      result += this.values[index];
+    }
+    return result;
+  }
+};
+
+constexpr Table build(int seed) {
+  mut Table table = Table(seed);
+  table.offset(2);
+  add(table.at(0), 3);
+  table.at(1) = table.at(2) + 5;
+  return table;
+}
+
+constexpr int array_work(int seed) {
+  mut std::array<int, 4> values = std::array<int, 4>();
+  values.fill(seed);
+  add(values.front(), 1);
+  values[1] = values[0] + 2;
+  values.at(std::size_t(2)) *= 3;
+  values.back()++;
+  return values[0] + values[1] + values[2] + values[3];
+}
+
+constexpr Table baked = build(4);
+static_assert(scalar_work(3) == 9);
+static_assert(baked.total() == 39);
+static_assert(array_work(4) == 29);
+constexpr uint64_t extent = uint64_t(scalar_work(1));
+int buffer[extent] = {};
+
+int main() {
+  int seed = 4;
+  Table runtime = build(seed);
+  return scalar_work(seed) == 10 && runtime.total() == baked.total() &&
+         array_work(seed) == 29 && buffer.size() == uint64_t(7) ? 0 : 1;
+}

@@ -2365,6 +2365,27 @@ void testConstexprOperators() {
       "location");
 }
 
+void testConstexprMutation() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/constexpr_mutation.gti";
+  std::ifstream input(fixture);
+  const std::string source((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+  lang::FrontendWorkMetrics metrics;
+  const auto result = lang::Frontend({.workMetrics = &metrics})
+                          .analyze(fixture, source, {standardLibraryPrelude()},
+                                   {}, {standardLibraryRoot()});
+  if (!result.canGenerateCode()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.primary.line << ": " << diagnostic.code << ": "
+                << diagnostic.message << '\n';
+  }
+  expect(!source.empty() && result.canGenerateCode() &&
+             metrics.constexprMirExecutions >= 5,
+         "mutable references, void helpers, mutable methods and constructor "
+         "bodies build constants through canonical MIR");
+}
+
 void testConstexprReadOnlyReferences() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constexpr_readonly_references.gti";
@@ -4731,6 +4752,7 @@ constexpr NamedTest kTests[] = {
     {"testConstexprOperators", testConstexprOperators},
     {"testDependentConstexprBranches", testDependentConstexprBranches},
     {"testConstexprReadOnlyReferences", testConstexprReadOnlyReferences},
+    {"testConstexprMutation", testConstexprMutation},
     {"testStaticAssertions", testStaticAssertions},
     {"testStaticStorageAndMembers", testStaticStorageAndMembers},
     {"testConcurrentGlobalPolicy", testConcurrentGlobalPolicy},
