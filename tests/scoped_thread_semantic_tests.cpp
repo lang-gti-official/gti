@@ -302,6 +302,22 @@ void checkInvocations() {
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(sharedLocals.canGenerateCode(),
          "ordinary read-only carriers may coexist through a mutable input");
+  for (const auto &source : {"int& local = first; auto carrier = Read(first); "
+                             "carrier(); return local;",
+                             "auto carrier = Read(first); int& local = first; "
+                             "carrier(); return local;"}) {
+    const auto mixed =
+        invocation(source, true, lang::FrontendPhase::Mir, false);
+    for (const auto &diagnostic : mixed.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    if (!mixed.canGenerateCode())
+      for (const auto &error : lang::verifyMirProgram(mixed.mir).errors)
+        if (const auto *function = mixed.mir.findFunctionInstance(error.owner))
+          std::cerr << source << '\n'
+                    << lang::MirPrinter{}.print(function->body);
+    expect(mixed.canGenerateCode(),
+           "shared local and stored children coexist in either source order");
+  }
   const auto sharedRead = invocation(
       "auto child = Read(first); int copy = first; child(); return copy;", true,
       lang::FrontendPhase::Mir, false);
