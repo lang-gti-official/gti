@@ -1,0 +1,70 @@
+// Callable metadata and source locations through <std/meta>: methods,
+// operators, constructors and their parameters as metaobjects, with source
+// lines, all folded to constants; no invocation through a metaobject.
+#include <std/meta>
+
+class Counter {
+public:
+  Counter(uint32_t start) : value(start) {}
+  uint32_t get() { return this.value; }
+  void add(uint32_t amount, bool twice) mut {
+    this.value = this.value + amount;
+    if (twice) { this.value = this.value + amount; }
+  }
+  static uint32_t zero() { return uint32_t(0); }
+  bool operator==(Counter& other) { return this.value == other.value; }
+private:
+  mut { uint32_t value; }
+};
+
+int main() {
+  static_assert(std::meta::type_of<Counter>().method_count() == uint64_t(4));
+  static_assert(std::meta::type_of<Counter>().constructor_count() == uint64_t(1));
+  static_assert(std::meta::type_of<Counter>().line() == uint64_t(6));
+  mut uint64_t parameters = 0;
+  mut uint64_t statics = 0;
+  mut uint64_t operators = 0;
+  mut uint64_t mutating = 0;
+  constexpr for (auto m : std::meta::methods_of<Counter>()) {
+    parameters = parameters + m.parameter_count();
+    if constexpr (m.is_static()) { statics = statics + 1; }
+    if constexpr (m.is_operator()) {
+      operators = operators + 1;
+      if (m.name() != "operator==") { return 1; }
+    }
+    if constexpr (m.is_mutating()) {
+      mutating = mutating + 1;
+      constexpr for (auto p : m.parameters()) {
+        if constexpr (p.index() == uint64_t(1)) {
+          if (p.name() != "twice" || !p.type().is_bool()) { return 2; }
+        }
+      }
+    }
+    if constexpr (m.index() == uint64_t(0)) {
+      if (m.name() != "get" || !m.result().is_integral() || m.line() != uint64_t(9) || !m.is_public()) { return 3; }
+    }
+  }
+  if (parameters != 3 || statics != 1 || operators != 1 || mutating != 1) {
+    return 4;
+  }
+  mut uint64_t operator_count = 0;
+  constexpr for (auto op : std::meta::operators_of<Counter>()) {
+    operator_count = operator_count + 1;
+  }
+  if (operator_count != 1) {
+    return 5;
+  }
+  constexpr for (auto c : std::meta::constructors_of<Counter>()) {
+    if (c.parameter_count() != uint64_t(1) || c.line() != uint64_t(8)) { return 6; }
+    constexpr for (auto p : c.parameters()) {
+      if (p.name() != "start" || !p.type().is_integral()) { return 7; }
+    }
+  }
+  constexpr for (auto f : std::meta::fields_of<Counter>()) {
+    if (f.line() != uint64_t(17)) { return 8; }
+  }
+  if (std::meta::type_of<Counter>().file().size() == 0) {
+    return 9;
+  }
+  return 0;
+}

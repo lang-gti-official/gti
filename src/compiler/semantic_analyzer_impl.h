@@ -1033,6 +1033,21 @@ private:
     MetaPayloadType,
     MetaBaseList,
     MetaArgumentList,
+    MetaMethod,
+    MetaParameter,
+    MetaConstructor,
+    MetaConstructorParameter,
+    MetaMethodList,
+    MetaOperatorList,
+    MetaParameterList,
+    MetaParameterType,
+    MetaReturnType,
+    MetaConstructorList,
+    MetaConstructorParameterList,
+    MetaConstructorParameterType,
+    // `list<First, Rest...>` -> First / `list<Rest...>`.
+    MetaListFirst,
+    MetaListRest,
   };
 
   struct ClassInfo {
@@ -1061,6 +1076,10 @@ private:
     std::vector<FieldInfo> staticFields;
     std::vector<ConstructorInfo> constructors;
     std::optional<ConstructorInfo> designatedConstructor;
+    // The same generated constructor with its parameters in reverse field
+    // order; std::meta::construct selects it because a GTI call can only
+    // extend a parameter pack at its front.
+    std::optional<ConstructorInfo> reversedDesignatedConstructor;
     std::optional<ConstructorInfo> copyConstructor;
     std::optional<ConstructorInfo> moveConstructor;
     std::optional<DestructorInfo> destructor;
@@ -3562,6 +3581,52 @@ private:
   // The expanded type arguments of a class or enum instance.
   [[nodiscard]] std::vector<SemanticType>
   metaTypeArguments(const SemanticType &type) const;
+  struct MetaMethodFacts {
+    std::string name;
+    const FunctionDecl *declaration = nullptr;
+    bool staticMember = false;
+    bool operatorMethod = false;
+    bool constexprFunction = false;
+    bool virtualMethod = false;
+    bool mutableReceiver = false;
+    bool publicAccess = false;
+    SemanticType returnType = SemanticType::Unknown;
+    std::vector<SemanticType> parameterTypes;
+    std::vector<std::string> parameterNames;
+  };
+  // Method `index` of class `type` in declaration order (operators and
+  // static methods included; constructors and destructors excluded), with
+  // the instance's substitution applied; nullopt when out of range.
+  [[nodiscard]] std::optional<MetaMethodFacts>
+  metaMethodFacts(const SemanticType &type, std::uint64_t index) const;
+  [[nodiscard]] std::vector<const FunctionDecl *>
+  metaMethodDeclarations(const SemanticType &type) const;
+  struct MetaConstructorFacts {
+    const ConstructorDecl *declaration = nullptr;
+    std::vector<SemanticType> parameterTypes;
+    std::vector<std::string> parameterNames;
+  };
+  [[nodiscard]] std::optional<MetaConstructorFacts>
+  metaConstructorFacts(const SemanticType &type, std::uint64_t index) const;
+  // Source line of a reflected declaration: kind 0 type, 1 field,
+  // 2 enumerator, 3 method, 4 constructor; nullopt when unavailable.
+  [[nodiscard]] std::optional<std::uint64_t>
+  metaDeclarationLine(const SemanticType &type, std::uint64_t kind,
+                      std::uint64_t index) const;
+  [[nodiscard]] std::string metaDeclarationFile(const SemanticType &type) const;
+  // std::meta::construct: the call constructs `T` through its designated
+  // constructor from the call's arguments.
+  void analyzeMetaConstructCall(const Call &expr);
+  // Set while analyzeMetaConstructCall resolves the construction: the
+  // designated constructor is the only candidate.
+  bool selectingDesignatedConstructor = false;
+  // Whether the receiver of a reflected access can be dropped without
+  // changing observable behaviour (no call that is not a metaobject default
+  // construction).
+  [[nodiscard]] bool isEffectFreeMetaReceiver(const Expr &expression) const;
+  // Whether `type` is `owner` or publicly derives from it.
+  [[nodiscard]] bool isSameOrDerivedClass(const SemanticType &type,
+                                          const SemanticType &owner) const;
   void analyzeMetaFieldAccess(const Call &expr, const Get &member,
                               const SemanticType &fieldObject,
                               bool mutableAccess);
@@ -3594,6 +3659,10 @@ private:
   [[nodiscard]] ExprPtr constantLiteralExpression(const ConstantValue &value,
                                                   const SemanticType &type,
                                                   const Token &anchor) const;
+  // The keyword token naming a builtin scalar type (`uint32_t`, `bool`...),
+  // generated at `anchor`; nullopt for every other type.
+  [[nodiscard]] static std::optional<Token>
+  builtinTypeToken(const SemanticType &type, const Token &anchor);
   // std::meta::reflectable: a struct or class whose instance fields are all
   // public, or one declared [[reflect_private]].
   [[nodiscard]] bool isReflectableType(const SemanticType &type) const;
