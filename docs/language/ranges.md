@@ -552,6 +552,8 @@ Bounds and partition point advance and return the original first cursor,
 preserving its owner dependency. Defined failure in a callback or iterator
 operation performs ordinary deterministic cleanup, including the retained
 callback. The sorted/partitioned preconditions are not dynamically validated;
+without them, the query result is not promised to identify the requested
+boundary or membership. This does not authorize undefined native behavior:
 all cursor accesses still obey their checked protocol.
 
 See [`examples/138-ordered-search.gti`](../../examples/138-ordered-search.gti)
