@@ -14,7 +14,8 @@ replacement for those abstractions.
 
 ## Type And Binding Model
 
-The implemented raw-pointer types are `T*` and `const T*`:
+Each raw-pointer layer is `T*` or `const T*`; its pointee may itself be an
+admitted pointer type:
 
 ```gti
 mut int32_t value = 7;
@@ -327,7 +328,9 @@ storage may be conservatively flagged when an input has contradictory known
 facts. This is a bounded provenance analysis, not a complete interprocedural
 alias proof or a claim that every invalid unsafe program is diagnosed. Storing
 an address in an object's pointer field does not establish ownership of its
-pointee. Broader memory-campaign work remains tracked under `S-ALLOC-04`.
+pointee. `S-ALLOC-04`'s general raw-address and owner-witness facilities are
+delivered; broader audit precision remains extension work, not a prerequisite
+for using them.
 
 ## Safe Operations
 
@@ -403,8 +406,9 @@ result type is `int64_t`; its same-allocation and representability conditions
 remain programmer proof obligations.
 
 Address formation requires a supported addressable place. GTI does not form a
-pointer to a temporary, function, fixed array as a whole, or another raw
-pointer. Taking the address of a supported checked array element does not
+pointer to a temporary, function or fixed array as a whole. Raw-pointer slots
+are addressable under the recursive type and access rules above. Taking the
+address of a supported checked array element does not
 itself require `unsafe`.
 
 ## Explicit Owner-Witness Borrowing
@@ -465,8 +469,9 @@ and dynamic indices weakly retain both old and incoming origins.
 These helpers assert a checked lifetime relationship; they do not allocate,
 initialize or release memory. They retain the bounded interprocedural analysis
 described above, rather than promising arbitrary source-call provenance
-inference. Typed allocation and object-lifetime operations are provided
-separately by `std::allocator` and `std::storage<T>`.
+inference. Typed allocation policy is provided separately by `std::allocator`
+and `std::storage<T>`; the general public construction, destruction and
+relocation operations above also serve unrelated source-defined owners.
 
 ## Owner-Witness Text Views
 
@@ -721,8 +726,9 @@ the native API's obligations for the values stored there.
 A declaration is not itself an unsafe operation. Calling a pointer-bearing C
 function is unsafe because the declaration cannot express native bounds,
 retention, nullability, ownership transfer, or aliasing requirements. A C call
-whose source-level signature contains only the existing fixed-width scalars,
-`float`, `double`, `void`, or the special non-retained `std::string_view` input
+whose source-level signature contains only admitted C ABI scalar types,
+pointer-free C ABI records, `float`, `double`, `void`, or the special
+non-retained `std::string_view` input
 remains valid in safe code.
 
 See [`native-c-interop.md`](native-c-interop.md) for symbol, ABI, and linking
@@ -780,7 +786,10 @@ This feature does not add:
 - implicit fixed-array decay;
 - implicit typed-pointer/`void*` conversion, integer/pointer casts, or unrelated
   typed-pointer reinterpretation;
-- general C arrays, unions, bit-fields, packing, or platform-layout imports;
+- pointers to whole C arrays, C ABI unions, bit-fields or arbitrary packed
+  foreign storage. Bounded C17 LP64/LLP64 header import, native enum aliases,
+  and fixed-array fields of admitted C ABI records are already provided by
+  `gti bindgen`; those are not general GTI layout or C++ ABI guarantees;
 - direct C++ class ABI calls or exception passage;
 - source-level `new`, `delete`, or C++ placement-construction syntax (explicit
   object lifetime is available through the typed construction, destruction and

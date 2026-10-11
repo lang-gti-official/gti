@@ -134,9 +134,12 @@ reachable from the program roots; see
 `lowerLibraryReachableOnly`. HIR still lowers the entry unit and every
 application or package unit completely, but lowers compiler-trusted
 declarations only when the roots reach them. `gti check` keeps complete HIR
-lowering. An imported or included library therefore costs HIR lowering,
-optimization and emission only for what the program uses. It still costs
-semantic analysis of every body it declares.
+lowering. Unreached compiler-trusted bodies therefore avoid HIR lowering;
+application and dependency-package bodies do not gain that exemption.
+Optimization and executable emission use the reached artifact prefix, with
+the retained declaration/physical-carrier dependencies documented in HIR and
+backend contracts. Imported trusted units still cost semantic analysis of
+every body they declare.
 
 ### Reusable lexical and parsed units
 
@@ -317,12 +320,14 @@ list. Semantics owns their nested scope, exact inference, constraint
 validation, and whether a constructor value parameter is inferable from one
 fixed-array context.
 
-`FunctionDecl` also retains one receiver mode. Ordinary members are read-only
-or use trailing `mut`; `operator()` alone may use trailing `&&` for the
-consuming mode. The parser recognizes `operator()() &&` structurally rather
-than treating `&&` as a general reference type, and rejects that qualifier on
-free functions, ordinary methods, other operators, and conflicting receiver
-qualifiers before semantics.
+`FunctionDecl` also retains one receiver mode. Non-static members are read-only
+by default, use trailing `mut` for mutable access, or trailing `&&` for owned
+consumption. Consuming ordinary methods and admitted operators are general
+source facilities, not an `operator()`-only exception. The parser records that
+mode rather than treating `&&` as a general reference type, rejects it on
+free/static functions and with a conflicting `mut`, and leaves structural
+eligibility and escape rules to semantics. Constructors retain their separate
+special-member move-policy syntax.
 
 `LambdaCapture` retains the capture target plus an owned initializer subtree.
 A bare `[value]` capture uses a generated source-variable initializer so copy
