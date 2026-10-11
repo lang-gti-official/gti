@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
+from native_fixture_build import build_fixture
 
 def run(command, *, timeout=300):
     result = subprocess.run(command, text=True, capture_output=True,
@@ -97,13 +98,17 @@ def main():
                     continue
                 binary = Path(directory) / f"{label}-{number}"
                 command = [str(args.compiler.resolve()), str(source), "--std", standard,
-                           f"-{level}", "-o", str(binary)]
-                native_arguments = list(native)
+                           f"-{level}"]
+                native_sources = []
                 if label in ("url", "url-failure", "sort"):
-                    native_arguments.append(str(fixtures / "stdlib_adoption_allocation_counts.cpp"))
-                if native_arguments:
-                    command += ["--", *native_arguments]
-                built = run(command)
+                    native_sources.append(fixtures / "stdlib_adoption_allocation_counts.cpp")
+                compiled = build_fixture(
+                    command, binary, native_sources=native_sources,
+                    native_arguments=native, standard=standard, optimization=level,
+                    text=True, capture_output=True, timeout=300,
+                    env=dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
+                             UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+                built = compiled.returncode, compiled.stdout, compiled.stderr
                 assert built[0] == 0, (command, built)
                 for arguments, expected in outcomes:
                     actual = run([str(binary), *arguments], timeout=30)

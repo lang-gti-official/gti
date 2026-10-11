@@ -53,7 +53,7 @@ def main() -> None:
 
     runner = Path(sys.argv[1]).resolve(strict=True)
     gti = Path(sys.argv[2]).resolve(strict=True)
-    cxx = Path(sys.argv[3]).resolve(strict=True)
+    cxx = Path(sys.argv[3]).absolute()
     repository = runner.parents[1]
 
     with tempfile.TemporaryDirectory(prefix="gti-runtime-performance-") as raw:
