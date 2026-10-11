@@ -1,0 +1,141 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// A comma expression yields its right operand. When that operand is a class
+// or Expected value, the comma denotes the operand's own object: no copy and
+// no second lifetime. The left operand runs first and its result is
+// discarded; its temporaries live until the end of the full expression.
+mut int32_t destroyed = 0;
+mut int32_t steps = 0;
+
+// Reports its destruction, to show order.
+class traced {
+public:
+  int32_t number;
+  traced(int32_t number) : number(number) {}
+  ~traced() { std::println(this.number); }
+};
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() { destroyed += 1; }
+};
+
+// A cleanup-free class without a default constructor.
+struct plain_value {
+  int32_t number;
+  plain_value(int32_t number) : number(number) {}
+};
+
+struct item_value {
+  int32_t number;
+  item_value(int32_t number) : number(number) {}
+};
+
+struct named_value {
+  std::string text;
+  named_value(std::string text) : text(std::move(text)) {}
+};
+
+int32_t step(int32_t value) {
+  steps += 1;
+  return value;
+}
+
+// The checked addition can fail.
+int32_t bump(int32_t value) { return value + 1; }
+
+traced make_traced(int32_t number) { return traced(number); }
+
+counted make_counted(int32_t number) { return counted(number); }
+
+plain_value make_plain(int32_t number) { return plain_value(number); }
+
+expected<item_value, int32_t> make_item(bool ok) {
+  if (ok) { return item_value(7); }
+  return unexpected(int32_t(3));
+}
+
+expected<named_value, int32_t> make_named(bool ok) {
+  if (ok) { return named_value(std::string("payload")); }
+  return unexpected(int32_t(6));
+}
+
+int32_t take(counted value) { return value.number; }
+
+plain_value pass_plain(int32_t number) {
+  return (step(number), make_plain(number + 1));
+}
+
+counted pass_counted(int32_t number) {
+  return (step(number), make_counted(number + 1));
+}
+
+// The left operand's temporary outlives the right operand and is destroyed
+// at the end of the full expression, after the right operand's.
+int32_t order() { return (make_traced(1), make_traced(2)).number; }
+
+int32_t check(bool yes) {
+  bool no = !yes;
+  plain_value plain = (step(1), make_plain(2));
+  if (plain.number != 2 || steps != 1) { return 1; }
+  counted owned = (step(2), make_counted(3));
+  if (owned.number != 3 || destroyed != 0) { return 2; }
+  // A temporary is destroyed at the end of its full expression.
+  if (pass_plain(4).number != 5) { return 3; }
+  if (pass_counted(5).number != 6) { return 3; }
+  if (destroyed != 1) { return 3; }
+  if (take((step(6), make_counted(7))) != 7) { return 4; }
+  if (destroyed != 2) { return 4; }
+  if ((step(7), make_counted(8)).number != 8) { return 5; }
+  if (destroyed != 3) { return 5; }
+  mut plain_value assigned = make_plain(0);
+  assigned = (step(8), make_plain(9));
+  if (assigned.number != 9) { return 6; }
+  if ((step(1), (step(2), make_plain(3))).number != 3) { return 7; }
+  // A discarded class left operand.
+  if ((make_counted(10), step(3)) != 3) { return 8; }
+  if (destroyed != 4) { return 8; }
+  if ((make_plain(11), make_plain(12)).number != 12) { return 9; }
+  // Expected results, observed in place or bound.
+  if (!(step(4), make_item(yes)).has_value()) { return 10; }
+  if ((make_item(no), make_item(yes)).value().number != 7) { return 11; }
+  if (int32_t((step(5), make_named(yes)).value().text.size()) != 7) {
+    return 12;
+  }
+  expected<named_value, int32_t> bound = (step(6), make_named(no));
+  if (bound.error() != 6) { return 13; }
+  // A grouped Expected, and explicitly discarded cleanup-free results.
+  if ((make_item(yes)).value().number != 7) { return 14; }
+  [[discard]] make_plain(13);
+  [[discard]] make_item(yes);
+  // A conditional arm.
+  counted chosen = yes ? (step(7), make_counted(14)) : make_counted(15);
+  if (chosen.number != 14) { return 15; }
+  // A loop constructs and destroys each result once.
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    total += (make_counted(index), make_counted(index + 1)).number;
+  }
+  if (total != 6 || destroyed != 10) { return 16; }
+  if (steps != 14) { return 17; }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) {
+    // The left operand fails, so the right operand never runs.
+    return (bump(2147483647), make_traced(9)).number;
+  }
+  if (argc == 3) {
+    // The right operand fails after the left operand's temporary exists.
+    return (make_traced(8), make_traced(bump(2147483647))).number;
+  }
+  if (order() != 2) { return 20; }
+  int32_t status = check(argc > 0);
+  std::println(destroyed);
+  return status;
+}
