@@ -562,6 +562,28 @@ Iterator search_n<Iterator, Sentinel, T>(
 
 // Returning the original parameter preserves its exact owner identity. Cursor
 // positions are advanced, never reassigned or reseated to a different owner.
+// A partitioned range has a true prefix followed by a false suffix. Count
+// first, then narrow without requiring subtraction or random-access movement:
+// O(log n) predicate calls, O(n) increments, no allocation or element copies.
+Iterator partition_point<Iterator, Sentinel, Predicate>(
+    mut Iterator first, Sentinel last, mut Predicate predicate)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::indirect_predicate<Predicate, Iterator> {
+  mut Iterator scan = first;
+  mut size_t remaining = 0;
+  while (scan != last) { ++scan; remaining++; }
+  while (remaining > 0) {
+    size_t half = remaining / 2;
+    mut Iterator middle = first;
+    for (mut size_t step = 0; step < half; step++) { ++middle; }
+    if (predicate(*middle)) {
+      for (mut size_t step = 0; step <= half; step++) { ++first; }
+      remaining -= half + 1;
+    } else { remaining = half; }
+  }
+  return std::move(first);
+}
+
 Iterator lower_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::totally_ordered<T> {
@@ -596,6 +618,69 @@ Iterator upper_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T
     } else { remaining = half; }
   }
   return std::move(first);
+}
+
+// Comparator-ordered queries require only the supplied exact order, not T's
+// operator<. One owned, repeatable comparator lives for the complete search;
+// move-only elements are only borrowed. The range must be partitioned for the
+// bound's comparison (and sorted under the strict weak order for binary_search).
+Iterator lower_bound<Iterator, Sentinel, T, Compare>(
+    mut Iterator first, Sentinel last, T& value, mut Compare compare)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::comparator<Compare, T> {
+  mut Iterator scan = first;
+  mut size_t remaining = 0;
+  while (scan != last) { ++scan; remaining++; }
+  while (remaining > 0) {
+    size_t half = remaining / 2;
+    mut Iterator middle = first;
+    for (mut size_t step = 0; step < half; step++) { ++middle; }
+    if (compare(*middle, value)) {
+      for (mut size_t step = 0; step <= half; step++) { ++first; }
+      remaining -= half + 1;
+    } else { remaining = half; }
+  }
+  return std::move(first);
+}
+
+Iterator upper_bound<Iterator, Sentinel, T, Compare>(
+    mut Iterator first, Sentinel last, T& value, mut Compare compare)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::comparator<Compare, T> {
+  mut Iterator scan = first;
+  mut size_t remaining = 0;
+  while (scan != last) { ++scan; remaining++; }
+  while (remaining > 0) {
+    size_t half = remaining / 2;
+    mut Iterator middle = first;
+    for (mut size_t step = 0; step < half; step++) { ++middle; }
+    if (!compare(value, *middle)) {
+      for (mut size_t step = 0; step <= half; step++) { ++first; }
+      remaining -= half + 1;
+    } else { remaining = half; }
+  }
+  return std::move(first);
+}
+
+bool binary_search<Iterator, Sentinel, T, Compare>(
+    mut Iterator first, Sentinel last, T& value, mut Compare compare)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::comparator<Compare, T> {
+  mut Iterator scan = first;
+  mut size_t remaining = 0;
+  while (scan != last) { ++scan; remaining++; }
+  // Find the lower bound without transferring or copying the comparator:
+  // its state must also survive the final reverse-order equivalence check.
+  while (remaining > 0) {
+    size_t half = remaining / 2;
+    mut Iterator middle = first;
+    for (mut size_t step = 0; step < half; step++) { ++middle; }
+    if (compare(*middle, value)) {
+      for (mut size_t step = 0; step <= half; step++) { ++first; }
+      remaining -= half + 1;
+    } else { remaining = half; }
+  }
+  return first != last && !compare(value, *first);
 }
 
 Iterator min_element<Iterator, Sentinel>(mut Iterator first, Sentinel last)

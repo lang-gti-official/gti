@@ -19,6 +19,7 @@ set(gti_heavy_case_suites
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
     operator_relay_runtime
+    ordered_search_runtime
     abstract_generic_failure_contract_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
     associative_ownership_runtime borrow_origin_runtime borrowing_composition charconv_runtime
