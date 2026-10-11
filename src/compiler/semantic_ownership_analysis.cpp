@@ -3360,6 +3360,15 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
     const bool suspendedParentUse = parent != nullptr &&
                                     loanIsAncestor(parent->id, id) &&
                                     parentIsExclusive();
+    // A plain reference's exclusive permission is suspended by shared
+    // children, not its ability to lend/read shared access. A reference to a
+    // borrowed carrier has a separate dependency contract: reading that shell
+    // can invoke operations on its stored exclusive referents, so it does not
+    // acquire this permission merely from the receiver's spelling.
+    const bool sharedReferenceAccess =
+        requested == AccessMode::ReadOnly && accessParent != nullptr &&
+        accessParent->kind == SemanticLoanKind::Reference &&
+        accessParent->storedDependency == 0;
     // Permission belongs to the overlapping dependency, not to whichever
     // reference happened to be the carrier's first field. In particular, a
     // shared first field cannot hide an exclusive later field, and an
@@ -3377,7 +3386,8 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
                                  loanPlacesOverlap(dependency.place, source);
                         })));
       return protectsStorage && overlaps &&
-             (suspendedParentUse || requested == AccessMode::Mutable ||
+             ((suspendedParentUse && !sharedReferenceAccess) ||
+              requested == AccessMode::Mutable ||
               access == AccessMode::Mutable);
     };
     if (conflicts(loan->place, loan->access, loan->protectsStorage) ||

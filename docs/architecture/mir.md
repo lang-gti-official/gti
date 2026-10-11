@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v99`, `mir-body-v82`).
+instruction, body, and caller-assignment facts (`mir-v100`, `mir-body-v83`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -259,8 +259,26 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v99`/`mir-body-v82`,
-with `lowered-program-v17` declaration metadata. Version 99 records each
+The combined deterministic serialization is currently `mir-v100`/`mir-body-v83`,
+with `lowered-program-v17` declaration metadata. Version 100/body 83 adds exact
+scoped-task adapter/loan groups and each adapter's scoped operand identity.
+The private synchronous `ThreadScope` call consumes each exact task once and
+retains its checked dependency loan through the operation's normal and failure
+continuations. Program verification replays the operand's actual origins,
+field paths, access modes, structural scoped eligibility and exact callable
+entry. Body verification requires all task loans live and rejects overlapping
+exclusive sibling accesses. Neither an empty group nor borrowed transport
+changes the ordinary owned-thread contract. Public generic forwarding and the
+production backend consumer remain incomplete; this representation is not yet
+a public executable scope API.
+
+Fresh-value transport distinguishes lexical loan lifetime from active object
+cleanup. A freshly constructed borrowed carrier can have no destructor work
+or cleanup slot. Its unique SSA consumption remains required, and the concrete
+class's independently verified active-cleanup fact controls whether a slot is
+necessary. Absence of a drop instruction alone never proves trivial cleanup.
+
+Version 99 records each
 failure record's kind, producer or shared-cleanup continuation, and adds the
 `ContinueFailure` terminator; see
 [shared failure cleanup](#shared-failure-cleanup). It retains exact concrete
@@ -306,7 +324,7 @@ from actual alternative fields; nominal generic metadata does not become a
 stored component. Missing exact rows remain invalid rather than granting a
 storage or capability exemption.
 
-The combined serialization is `mir-v99`/`lowered-program-v17`, preserving
+The combined serialization is `mir-v100`/`lowered-program-v17`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,
@@ -3139,7 +3157,7 @@ part of the hosted schedule; it does not discover lifecycle from public wrapper
 names. The detached declaration/adapter contract is serialized as
 `lowered-program-v9`.
 
-`mir-v99`/`lowered-program-v17` retain `ProcessMemoryRuntimeOperation` on the
+`mir-v100`/`lowered-program-v17` retain `ProcessMemoryRuntimeOperation` on the
 exact private native declarations of the process allocator's runtime ABI
 (`std/memory`'s `gti_internal::runtime` block): the native size and address
 alignment queries, the POSIX pointer-size/`ENOMEM`/`EINVAL` queries, POSIX

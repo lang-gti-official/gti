@@ -181,6 +181,26 @@ broad ownership suite remains queued in the remote shared window. Full MIR
 scope lowering/verification, production adapters, public generic forwarding,
 examples, editor and final runtime/performance acceptance remain required.
 
+The private scope now lowers through verified MIR with a consumed task group,
+exact adapter/operand identities, retained dependency loans, sibling-overlap
+checks and `TaskJoin` failure propagation. Fresh borrowed carriers with no
+active cleanup use their proven unique SSA consumption rather than requiring
+a nonexistent destructor slot. Ordinary shared children of a plain mutable
+reference coexist and permit parent reads while still rejecting parent writes
+and overlapping exclusive children; borrowed-carrier shell authority remains
+separate. Release snapshot
+`c6a5b73e8ae6b82f92ee0f5b69596edb592fa0681b9a2125cc1d55e5711d4c72`
+passes `scoped_thread_semantic_shapes`, `managed_thread_semantic_ir`,
+`mutex_semantic_ir` and `scoped_thread_runtime`, including malformed scope
+records, nested/disjoint carriers and ordinary reborrow controls. This is
+focused prerequisite evidence, not an executable public API or whole-goal
+acceptance. Serialization advances to MIR 100/body 83 with matching version
+assertions. Next, generic forwarding must retain each concrete borrowed pack
+element's entry origins, followed by production adapter/cleanup integration,
+public source wrappers, runnable scoped examples, editor and runtime/performance
+gates. The broad ownership job for the earlier snapshot is still live/queued;
+it does not certify these newer changes.
+
 ## Compile-Time Reflection Delivered (2026-10-11)
 
 The owner accepted [`reflection.md`](reflection.md) with its decisions. All

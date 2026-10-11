@@ -270,7 +270,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v99 valid=" << program.valid() << '\n';
+    output << "mir-v100 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -358,6 +358,8 @@ public:
       output << " entry-capability="
              << callableCapabilityName(adapter.targetInvocation)
              << " invocation=" << callableCapabilityName(adapter.invocation)
+             << " scoped=" << adapter.scoped
+             << " scope-argument=" << adapter.scopeArgument
              << " worker-failure="
              << (adapter.catchesWorkerFailure ? "catch" : "leak")
              << " native-exception="
@@ -787,7 +789,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v82\n";
+    output << "mir-body-v83\n";
     body(value, 0);
   }
 
@@ -1552,6 +1554,13 @@ private:
              << value.sourceLocation->column;
     } else {
       output << '-';
+    }
+    if (!value.scopedThreadTasks.empty()) {
+      output << " scoped-tasks=[";
+      for (const auto &task : value.scopedThreadTasks)
+        output << "(adapter=" << task.adapter << ";loan=" << task.dependency
+               << ")";
+      output << ']';
     }
     output << " synchronization=" << name(value.synchronization.kind)
            << " atomic-order=";
