@@ -15,6 +15,11 @@ int forward<Args...>(Args... args) {
   return invoke_with(operations::unique_add, args...);
 }
 int next(mut int& counter) { counter++; return counter; }
+int accept_items<Functions...>(int base, Functions... functions) { return base; }
+int forward_items<Functions...>(int base, Functions... functions) {
+  return accept_items(base, functions...);
+}
+int four() { return 4; }
 
 int main() {
   if (invoke_with(operations::add3, 1, 2, 3) != 6) { return 1; }
@@ -24,5 +29,8 @@ int main() {
   if (forward(1, 2, 3) != 6) { return 5; }
   mut int counter = 0;
   if (invoke_with(operations::ordered, next(counter), next(counter), next(counter)) != 123) { return 6; }
+  if (forward_items(1, operations::empty, four) != 1) { return 8; }
+  auto item = operations::empty;
+  if (forward_items(1, item, four) != 1) { return 9; }
   return counter == 3 ? 0 : 7;
 }

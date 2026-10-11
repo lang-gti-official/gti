@@ -5518,13 +5518,20 @@ movedValueIntoInstruction(const MirBody &body, const MirOperand &operand,
   const MirInstruction *producer = definition;
   const MirInstruction *preparation = nullptr;
   MirOperand producerResult = operand;
-  // Copy preparation creates a new owned parameter object. The input retains
-  // its own lifetime; the prepared SSA result must be consumed exactly once.
-  // The CallInput verifier separately checks exact copyability, source and
-  // any prepared cleanup slot, just as for the move preparation below.
+  // Copy preparation creates an independent owned parameter value. Passive
+  // copyable values use Value rather than CopyValue because they need no
+  // cleanup slot (including zero-state callable values in a forwarded pack).
+  // The input retains its own lifetime; the prepared SSA result is consumed
+  // exactly once. CallInput verification separately checks the concrete traits,
+  // source and any prepared cleanup slot, just as for move preparation below.
   if (definition != nullptr &&
       definition->kind == MirInstructionKind::CallInput &&
-      definition->callInputKind == HirCallInputKind::CopyValue &&
+      (definition->callInputKind == HirCallInputKind::CopyValue ||
+       (definition->callInputKind == HirCallInputKind::Value &&
+        definition->info.traits.drop == DropKind::Trivial &&
+        !definition->info.traits.containsBorrowedState &&
+        !definition->destination && !definition->preparedParameterDrop &&
+        definition->lifecycle.empty())) &&
       definition->callInputRole == MirCallInputRole::Argument &&
       definition->info.type == operand.type &&
       definition->info.traits.copyable &&

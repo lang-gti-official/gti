@@ -2959,6 +2959,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(scoped_parallel_threads PROPERTIES TIMEOUT 480)
   add_test(
+    NAME scoped_concurrency_installed
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/scoped_concurrency_install_test.py"
+            "${PROJECT_BINARY_DIR}"
+  )
+  set_tests_properties(scoped_concurrency_installed PROPERTIES TIMEOUT 300)
+  add_test(
     NAME http_url_operators
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/http_url_operators_test.py"

@@ -29,8 +29,34 @@ not evidence of final integration or full release acceptance:
 - The older `run-e7f4050d2b064973bae6874092cc885c` passed the borrowing,
   cleanup-bound-borrow/mutation and complete compiler-ownership checks on its
   earlier snapshot. It does not certify the current backend/public-API work.
+- Linux x64 Release run `run-59ea826829bf4d4c9d397febd4711ae8`, snapshot
+  `68d88f15f065507e58e9ae1b94d3f41ba23c6177782b47aa41266adc019bf8cf`,
+  passes twelve selected CTests: the complete four-fixture scoped native matrix
+  (C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan), scoped runtime/join/C-header,
+  borrowing composition, cleanup-bound borrows and mutations, scoped semantic
+  shapes, and managed-thread/mutex semantic and end-to-end controls. Example
+  066's O3 execution and exact inventories and the LSP test pass separately.
+- macOS Release run `run-f9e9fb05746d4c17a5b374167d413858`, snapshot
+  `25a3aa9e84d26e94a12179cc02338a5b1ae84f155389cb05ebd0aa2d9c95b069`,
+  passes the allocation oracle at O3 and ASan/UBSan and the native scoped test
+  including deterministic injected creation failure. Two owned workers use
+  four instrumented no-throw C++ allocations (task boxes plus worker states);
+  two scoped workers use two (worker states), and an empty group uses zero.
+  This excludes native thread-library and libc allocations, not total heap
+  accounting. The new scoped Mandelbrot variant builds/runs at O3 with the
+  same digest and 2,800,000 work units as both existing variants.
+- macOS Release run `run-54f2b63c198b44ea996f81f2c8878dbc`, snapshot
+  `ec844b8d972690526a7c690435b280707b1388a20a48df964c4b7ca11de2b08e`,
+  passes function-item semantic/IR controls, scoped semantic/HIR/MIR/backend
+  checks and all five scoped fixtures at C++23 O3, now including nested scopes,
+  nested carriers and free-function tasks. This exposed and repairs two general
+  composition defects: contextual names were indexed against unexpanded formal
+  packs, and passive copyable call-input values were wrongly required to carry
+  a move. Ordinary overload/unsafe negatives remain rejected. The relocated
+  install step stopped before consumer execution because this targeted build
+  omitted `gti.so`; all-target build plus installation remains required.
 
-The remaining acceptance includes the full native mode matrix, current-head
+The remaining acceptance includes the extended nested-source native matrix, current-head
 ownership/backend/corpus controls, installed consumption, runtime/allocation/
 code-size measurements and final reconciled-head validation. The native group
 still creates OS threads; these results do not establish cheap job dispatch

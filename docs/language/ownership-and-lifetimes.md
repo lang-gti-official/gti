@@ -1237,6 +1237,12 @@ types describe invocation arguments, not stored borrowed state. The existing
 managed-thread boundary retains its once-task contract. None of this exposes a
 native address or allows an unsafe function to become a safe callable.
 
+Contextual function names can also fill individual positions in a generic
+parameter pack, including after a fixed parameter or another pack element.
+Each name retains its own exact nominal identity. An unconstrained pack still
+requires one eligible unambiguous function; its position does not provide an
+overload preference or permit an unsafe function to become safe.
+
 ### Shared Ownership
 
 `std::shared_ptr<T>` uses explicit `clone()` to add a strong owner of the same

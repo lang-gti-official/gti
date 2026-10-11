@@ -85,8 +85,10 @@ prerequisites and measured clients; they are not added to this implementation.
 
 ## Scoped concurrency and composable shared jobs (2026-10-11)
 
-**State:** implementation in progress; none of the acceptance gates below are
-claimed complete. The owner requested both scoped parallel borrowing and the
+**State:** the public APIs and production execution paths are implemented in
+PR #20; focused native, semantic/IR, failure, editor and sanitizer checks pass.
+Whole-goal completion still requires the final reconciled-head full suite,
+installed consumption and performance evidence. The owner requested both scoped parallel borrowing and the
 shared-state/callable composition improvements. This is one delivery goal,
 not completion of either item through its prerequisite alone.
 
@@ -208,8 +210,38 @@ nested forwarding, disjoint projections and empty groups pass through verified
 MIR. Forwarding cannot hide aliasing or thread affinity. Release snapshot
 `e83e0429ada6a2698cb4c232f9b201cd994b435fe41e70a0d6ac7cda4c9723d6`
 passes scoped shapes, managed-thread and mutex controls, and scoped runtime.
-This is focused prerequisite evidence; production adapters, task cleanup/public
-scope execution, examples, editor and whole-goal performance gates remain open.
+This was focused prerequisite evidence; production adapters, task cleanup/public
+scope execution, examples, editor and whole-goal performance gates were still open
+at that checkpoint.
+
+The public wrapper, generated exact-entry adapters and stack-resident scoped
+transport now execute through verified MIR. Join-all precedes reverse caller-side
+cleanup, including partial creation failure and worker/cleanup failure. Concrete
+pack entry loans retain destructor dependencies. Published checkpoint `9536a6b5`
+contains this path and example 066; reconciliation `beb81fd2` includes main
+0.402.8. macOS Release runs `run-9cb27359761043d49c86a303d4a1b7b7`
+and `run-c7104bc26b4e4535bfb697a000a57bed` pass focused semantics/IR,
+C++23 O3 execution, compiler-backed editor checks and both scoped TSan gates
+(executed, not skipped). Linux Release run
+`run-59ea826829bf4d4c9d397febd4711ae8` passes the complete four-fixture
+scoped C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan matrix, plus twelve
+selected concurrency/borrowing/cleanup CTests. These are candidate snapshots,
+not final current-head full-suite evidence.
+
+The allocation oracle additionally passes on macOS O3 and ASan/UBSan in
+`run-f9e9fb05746d4c17a5b374167d413858`: two owned workers use four
+instrumented no-throw C++ transport/state allocations, two scoped workers use
+two, and an empty scope uses zero. Native host-thread and libc allocation are
+outside that counter. The equal-work benchmark now includes sequential,
+owned-thread and scoped-borrow variants; stable timings, code size and compiler
+memory costs remain to be measured. A subsequent nested-source probe exposed
+a general contextual function-item deduction defect for trailing pack elements;
+its correction and ordinary non-threading positive/negative controls pass in
+`run-54f2b63c198b44ea996f81f2c8878dbc`. That run also passes all five
+scoped O3 fixtures, including actual nested scopes and free-function tasks,
+after correcting the general passive copyable call-input consumption check.
+Installed-toolchain and complete corpus/full-suite gates
+remain open; these results do not imply a worker pool or cheap fine-grained jobs.
 
 ## Compile-Time Reflection Delivered (2026-10-11)
 
