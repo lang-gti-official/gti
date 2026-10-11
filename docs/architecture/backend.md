@@ -1437,6 +1437,14 @@ through field views, that temporary is its storage: the views spell
 `temporary.get().field`, the result declares no local, and MIR's conditional
 Drop destroys the temporary exactly once if its operand ran, on the normal path
 or on a failure-cleanup edge.
+An owning Expected call result in such a position is held by its own
+conditional temporary. A checked extraction of a class alternative whose
+result is read only through field views moves that alternative into the
+extraction's conditional temporary on its Invoke success edge, as in
+`ok || make_named(true).value().text.size() == 7`. The extraction is the
+Expected's sole use. MIR's conditional Drops destroy the payload and the
+moved-from Expected, and a wrong-state failure edge destroys the Expected
+alone. This route is admitted only in the failure body form.
 Reading a trivial scalar does not transfer its owner: fresh passive immovable
 results use this same proof and storage without requiring a copy or move
 constructor. They cannot carry borrowed state or active drop state through

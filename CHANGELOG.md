@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.404.1 — Field reads of `expected` payloads inside `&&`, `||` and conditionals
+
+- A field of an `expected` payload whose class has a destructor or owns
+  resources can now be read inside the right operand of `&&` or `||`, or
+  inside a conditional arm, as in
+  `ok || make_named(true).value().text.size() == 7`. `error()` reads an
+  owning error the same way. The `expected` result and its payload exist
+  only when their operand runs and are destroyed exactly once, including
+  when the extraction finds the wrong alternative or a later operand fails.
+  Such programs used to report GTI-B0001.
+
 ## 0.404.0 — Mutable constexpr value builders
 
 - Pure constexpr helpers may return `void`, edit checked mutable references,

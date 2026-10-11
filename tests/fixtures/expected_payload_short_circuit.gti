@@ -1,0 +1,98 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// A field of an owning expected payload read inside the right operand of &&
+// or ||, or inside a conditional arm. The expected result and its extracted
+// payload exist only when their operand runs; the field is read in place,
+// and each is destroyed exactly once at the end of the full expression, or
+// by the failure cleanup if the extraction or a later operand fails.
+mut int32_t destroyed = 0;
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() { destroyed += 1; }
+};
+
+// Reports its destruction.
+class traced {
+public:
+  int32_t number;
+  traced(int32_t number) : number(number) {}
+  ~traced() { std::println(this.number); }
+};
+
+struct named_value {
+  std::string text;
+  named_value(std::string text) : text(std::move(text)) {}
+};
+
+// The checked addition can fail.
+int32_t bump(int32_t value) { return value + 1; }
+
+expected<counted, int32_t> make_counted(bool ok, int32_t number) {
+  if (ok) { return counted(number); }
+  return unexpected(number);
+}
+
+expected<int32_t, counted> make_error(int32_t number) {
+  return unexpected(counted(number));
+}
+
+expected<traced, int32_t> make_traced(bool ok, int32_t number) {
+  if (ok) { return traced(number); }
+  return unexpected(number);
+}
+
+expected<named_value, int32_t> make_named(bool ok) {
+  if (ok) { return named_value(std::string("payload")); }
+  return unexpected(int32_t(6));
+}
+
+int32_t check(bool yes) {
+  bool no = !yes;
+  if (!(no || make_counted(true, 5).value().number == 5)) { return 1; }
+  if (destroyed != 1) { return 2; }
+  // The right operand does not run, so no result exists.
+  if (!(yes || make_counted(true, 6).value().number == 0)) { return 3; }
+  if (destroyed != 1) { return 4; }
+  if (!(yes && make_counted(true, 7).value().number == 7)) { return 5; }
+  if (destroyed != 2) { return 6; }
+  int32_t chosen = yes ? make_counted(true, 8).value().number : 0;
+  if (chosen != 8 || destroyed != 3) { return 7; }
+  // An owning error alternative is read the same way.
+  if (!(no || make_error(9).error().number == 9)) { return 8; }
+  if (destroyed != 4) { return 9; }
+  // A field lent to one call while the payload is live.
+  if (!(no || int32_t(make_named(true).value().text.size()) == 7)) {
+    return 10;
+  }
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    if (index > 5 || make_counted(true, index).value().number == index) {
+      total += 1;
+    }
+  }
+  if (total != 3 || destroyed != 7) { return 11; }
+  if (!(no || make_traced(true, 1).value().number == 1)) { return 12; }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  bool yes = argc > 0;
+  if (argc == 2) {
+    // The payload is live when the later operand fails.
+    return (!yes || make_traced(true, 7).value().number + bump(2147483647) == 0)
+               ? 1
+               : 0;
+  }
+  if (argc == 3) {
+    // The extraction fails; only the expected result exists.
+    return (!yes || make_traced(false, 9).value().number == 9) ? 1 : 0;
+  }
+  int32_t status = check(yes);
+  std::println(destroyed);
+  return status;
+}
