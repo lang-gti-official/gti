@@ -131,6 +131,7 @@ workflow determine task scope and integration.
 | `L-CONST-01` extension | ready to select one execution profile | Use the staged verified-MIR executor and semantic query timing. Select one missing mutable-reference, pack, owning/sum or operator profile with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | lazy trusted-body prerequisite met | Body-order/demand facts and editor-scoped HIR exist. Demand/memoize trusted body facts, apply the same scope to completion and measure diagnostics/latency. Cross-snapshot semantic reuse follows only if simpler steps leave it necessary. See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
 | `RT-2` through `RT-10` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. |
+| Shared failure-cleanup tails (`M-FAIL-01`) | ready to define and implement one bounded record-flow profile | Reuse verified obligations and block-parameter machinery; carry the original failure record across each incoming edge before sharing an exact cleanup suffix. Prove record/phase/drop identity, secondary-failure behavior and linear growth on synthetic owners, then validate the JSON client's generated-size/native-build costs. The preserved measurements below are a baseline, not fresh current-head results. |
 | Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
 
 This is priority/readiness information, not an artificial dependency chain.
@@ -409,10 +410,10 @@ Rows with unmet prerequisites cannot be marked complete by a source-only workaro
 | 17 / `L-UP-17` | ready / new capability | typed allocation status, lifecycle rollback and exact owner publication | Recoverable unique-owner allocation rather than terminal allocation failure only. |
 | 18 / `L-UP-18` | allocated storage delivered; inline portion planned | `L-UP-12`; inline wrapper lifecycle eligibility proof | A deliberately bounded immovable inline optional; stable allocated-owner movement is already implemented. |
 
-The order is priority, not an artificial dependency chain. Rows 1–6 can land
-independently; do not wait for exchange to repair sort complexity or for a new
-borrow engine to remove URL copies. Complete one coherent row, update its
-state/evidence here, then choose the earliest unfinished eligible row.
+The order is priority, not an artificial dependency chain. Rows 1–9 have
+delivered their bounded outcomes; their former independence is not another
+adoption queue. Complete one coherent unfinished row, update its state/evidence
+here, then choose the next eligible outcome with its actual prerequisites.
 `L-UP-10` now needs acceptance closure, not an assumed new compiler facility:
 the retained reproducer passes on the current optimized compiler. Required pack
 cases may be validated alongside a dependent adoption; repair only an actual
@@ -446,8 +447,10 @@ and select an independent row.
   deliberate category conversion already exists. Keep straightforward control
   flow where mapping needs custom path/location context. Do not remove a move
   into Expected merely because exact whole-local returns now move implicitly.
-- **Boundary:** parsing, I/O, HTTP, randomness, allocation and thread startup
-  remain recoverable. Plain formatting/stdout panic adoption is already done;
+- **Boundary:** recoverable parsing, I/O, HTTP, randomness, `try_` allocation
+  and thread-start APIs retain their domain errors. Infallible allocation
+  exhaustion follows S-ALLOC-08's explicit abort policy, not generic panic.
+  Plain formatting/stdout panic adoption is already done;
   do not convert ordinary domain errors or bounds failures into generic panic.
 - **Exit:** original error categories and JSON paths/locations match; exact
   once-only evaluation, success/error movement and reverse cleanup match for
@@ -2584,6 +2587,10 @@ make the proposal feel concrete.
 
 - **State/role:** done; independent release-policy decision adopted in
   [ADR 011](../decisions/011-language-compatibility-and-editions.md).
+- **Current disposition:** source `import`/`export` modules are implemented
+  alongside the retained include workflow. They did not require a new edition
+  selector. The future edition-selection discussion below is compatibility
+  policy, not a prerequisite for using current modules.
 - **Prerequisites:** `D-LANG-01`, `D-EXEC-01`, `D-FAIL-01`, and `D-MEM-02`,
   all complete.
 - **Scope:** Define how a 1.x compiler preserves old source meaning and how a
@@ -2607,9 +2614,11 @@ make the proposal feel concrete.
 
 ## Phase M: Places, Lifecycles, And Executable MIR Authority
 
-This is the principal implementation critical path. The work should land in
-small complete operation families, not as one replacement of semantic
-analysis, HIR, MIR, and the backend.
+This is the delivered executable foundation. Extensions still land as complete
+operation families, not a replacement of semantics, HIR, MIR and the backend.
+The dated slices below retain their original scope; current missing profiles
+are identified by their specific proof or representation requirement, not by
+rescheduling the completed cutover.
 
 ### M-OWN-01: Ownership-State And Place Authority Decision
 
@@ -2802,6 +2811,17 @@ analysis, HIR, MIR, and the backend.
 
 ### M-FAIL-01: Failure Operations And Cleanup Edges
 
+**Current disposition (2026-10-11):** ordered argument/result publication,
+partial-constructor rollback, owning cleanup and first/secondary failure are
+implemented for the currently admitted source families. The original prefix
+construction paragraph below predates source sparse lifetimes and raw-buffer
+sequences; its blanket insert/sparse gap is not current status. New input or
+publication profiles still need their own proof. The unscheduled generated-
+initializer representation boundary and shared-cleanup-tail proposal below
+remain distinct work; neither reopens ordinary failure containment. See the
+current [MIR](../architecture/mir.md) and [backend](../architecture/backend.md)
+contracts for exact admitted shapes.
+
 - **In-place storage construction:** the everyday stabilization candidate now
   carries the selected zero-argument or staged scalar/owning/reference/text/raw
   prefix-append constructor's failure
@@ -2821,55 +2841,42 @@ analysis, HIR, MIR, and the backend.
   into their own initialization schedule. This supports owning class-value calls
   including `std::make_unique<T>()`, caller propagation, reverse sibling/parameter
   cleanup, and explicit override suppression without duplicate execution.
-  **Remaining:** generated/defaulted constructors still have no concrete MIR
-  constructor body and retain their declaration schedule; fallible class-value
-  calls on that route still report `GTI-B0003`. Materialize that route's exact
-  constructor/initializer failure channel before claiming universal support.
-  A terminal wrapper is not completion. This remains M-FAIL-01/M-BACK-02 work,
-  not a change to source-language validity.
+  **Current remaining boundary:** selected generated/default constructor
+  schedules now have concrete verified initialization and rollback contracts.
+  A fallible source class-value call left in an unscheduled declaration-time
+  initializer still has the classified `GTI-B0003` representation boundary;
+  it is not a blanket rejection of generated defaults. Extend that exact
+  initializer channel before claiming universal support. A terminal wrapper
+  is not completion; the remaining work concerns MIR/representation, not a
+  new restriction on valid source.
 
-- **Shared failure cleanup (Gitea #222, 2026-10-11):** failure cleanup is
-  lowered separately for every failure edge, so a body's size grows
-  quadratically with its live owners. Each failure-capable operation gets its
-  own reverse drop chain over every owner live at that point. Every block of
-  that chain is bound to the edge's failure record (`MirBlock::activeFailure`).
-  Each failure-capable drop in the chain adds a secondary record and a
-  `TerminateCleanupFailure` block. Measured on main `f3f85336` at `-O0`:
-  - A function whose N owning locals are each built by a failure-capable
-    constructor lowers to 1,261 blocks for N = 20 and 4,921 for N = 40.
-  - With an early return after each local, it lowers to 4,861 and 29,721
-    blocks.
-  - `tests/fixtures/stdlib_surface_json.gti`'s 240-line `main` has 146 calls
-    and about 25 returns. It lowers to 31,299 drops in 61,225 blocks, and emits
-    30 MB of the 33.5 MB generated C++ unit. That unit's native `-O3` build
-    takes 117 s on a lightly loaded M2 Max and has passed 300 s under
-    concurrent suite load. The `json` surface case therefore records a
-    600-second build limit instead of the default 300.
+- **Shared failure cleanup (Gitea #222), delivered in 0.402.2:**
+  - Function and lambda bodies emit each distinct failure-cleanup suffix once,
+    as a continuation record entered by `ContinueFailure`; see
+    [MIR](../architecture/mir.md#shared-failure-cleanup).
+  - Failure cleanup is now one drop per owner, against failure sites times
+    owners before.
+  - The `stdlib_surface_json` fixture's generated C++ fell from 33.5 MB to
+    4.3 MB, and its native `-O3` build from 153 s to 7.7 s; see
+    [verification](../architecture/verification.md#shared-failure-cleanup-0402-2).
 
-  **Direction:** edges whose remaining obligations and cleanup phase are the
-  same should share one cleanup tail, like a drop tree. That makes a body's
-  cleanup linear in its owners. Prerequisite: a shared block cannot be bound to
-  one static `activeFailure`, so the record it propagates must travel with the
-  edge, for example as a block parameter. The verifier, failure effects,
-  optimizer replay and the C++ emitter's cleanup admission must then accept a
-  cleanup block reached from several records. They must still preserve exact
-  record identity, reverse cleanup order, loan ending, and termination when
-  cleanup itself fails.
+  **Remaining:**
+  - Constructor, field-initializer, destructor, module and hosted-startup
+    bodies keep one chain per failure edge.
+  - Moved-shell drops, prepared-argument drops and lifecycle-bound loan ends
+    keep the cleanup before them private, because verification proves their
+    meaning along their own producer's path.
+  - Normal-path exits still each destroy their own live owners. Sharing those
+    exit drops would be a separate normal-path change.
 
-  **Acceptance:**
-  - The synthetic N-owner body grows linearly in N.
-  - The JSON unit shrinks proportionally, and the `json` case returns to the
-    default build limit.
-  - Runtime output and failure attribution are unchanged.
-  - Verifier mutations reject a shared tail with a mismatched obligation
-    suffix, phase or record.
-
-- **State/role:** active for broader failure semantics; `D-FAIL-01`,
+- **State/role:** delivered foundation with bounded extensions; `D-FAIL-01`,
   `I-CAP-01`, `M-LIFE-01`, and the source-body backend cutover are done. Exact
   origin/site metadata, propagation and cleanup edges, hosted containment, and
   the versioned runtime record/report/firewall substrate are implemented for
-  all currently admitted source forms. Double failure and newly introduced
-  operation/result families still require explicit MIR contracts.
+  all currently admitted source forms, including their secondary-failure
+  contracts. Newly introduced operation/result families still require
+  explicit MIR contracts. Shared failure-cleanup record flow has one for
+  function and lambda bodies (above); other body kinds do not share cleanup.
 - **Scope:** Represent exact local categories/details and canonical frontend
   source anchors in HIR, then assign deterministic artifact-local site IDs for
   MIR through the failure-metadata builder. Represent call-like propagation
@@ -2934,8 +2941,9 @@ analysis, HIR, MIR, and the backend.
   General compound argument evaluation, assignment destinations, borrowed and
   owning results, constructors, partial rollback, hosted origins, generated
   containment, descriptor emission, and executable backend use have since
-  landed through the general MIR route. Double failure and any operation shape
-  not represented by current MIR remain open.
+  landed through the general MIR route, including secondary-failure termination.
+  Further shapes must extend the current contracts; the historical bounded
+  exclusions above are not a current inventory of missing source families.
 - **Exit gate:** every current failure family has exact semantic/HIR
   local-origin and source-anchor snapshots plus MIR outcome/site snapshots;
   artifact descriptor/digest tests are stable across optimization levels;
@@ -2948,18 +2956,22 @@ analysis, HIR, MIR, and the backend.
 
 ### M-EXEC-01: Ordered Expression And Call Lowering
 
-- **State/role:** in progress; `M-LIFE-01` and `D-EXEC-01` are done. Concrete
+- **State/role:** delivered foundation; `M-LIFE-01` and `D-EXEC-01` are done. Concrete
   non-intrinsic ordinary calls, concrete ordinary constructors, and concretely
   resolved class `operator()` calls with scalar/reference parameters and
   eligible non-borrowed class-value parameters now retain exact HIR input roles
   and verified MIR receiver/argument/invocation order. Direct self-contained
   class-value construction/call results now also have verified read/mutable
-  temporary receiver materialization and full-expression cleanup; the
-  remaining families are systems-readiness implementation.
+  temporary receiver materialization and full-expression cleanup. Ordered
+  operators, one-time assignment places, compound CFG and supported partial-
+  construction/failure schedules also reach the general MIR production route.
+  The following bullets preserve individual delivery stages, not remaining
+  prerequisites for those already admitted forms.
 - **Scope:** Decompose one complete expression family into ordered MIR values
   and temporaries, including receivers, arguments, transient loans, and cleanup.
-  Remaining work includes operators and one-time assignment places, compound
-  expressions, and wider partial-construction/failure schedules. The semantic
+  Extend that authority for a specifically missing profile, such as new inline
+  publication/rollback or immovable parameter transport, with exact storage,
+  transfer, failure and cleanup facts. The semantic
   `ProgramInitializationPlan`, `HostedProgramEntryPlan`, closed later-storage
   effect proof, HIR plan copies, exact constant-substitution lowering, merged
   module MIR body, and production verification are landed. New slices extend
@@ -3020,8 +3032,9 @@ analysis, HIR, MIR, and the backend.
   constants rather than early loads. HIR exact-compares the semantic/HIR
   analysis seal, initialization/hosted plans, module inventory, and
   provenance. The generated hosted startup executes the merged verified
-  `Module/0` body inside the containment boundary; generic static-storage
-  scheduling remains a separate open contract.
+  `Module/0` body inside the containment boundary. Any new generic static-
+  storage family must preserve its initialization contract; this original
+  checkpoint does not certify or prohibit later bounded static profiles.
 - **Implemented bounded follow-on (`M-TEMP-ARG-01`; GTI 0.297.0):** A
   direct fresh, self-contained class/struct result may initialize one exact
   read-only `T&` call parameter through a full-expression-owned ephemeral
@@ -3776,7 +3789,7 @@ analysis, HIR, MIR, and the backend.
   risk.
 - **Exit gate:** all reachable GTI bodies have one executable authority; every
   current checked family preserves exact record, prior effects, and cleanup at
-  O0/O1/O3 and C++20/C++23; native expected/assert/abort paths and duplicated
+  O0/O1/O3 and C++20/C++23; legacy native expected/assert/abort paths and duplicated
   emitter failure helpers are gone; closed-call-graph and verifier mutations
   prove that no failure channel crosses an unconverted caller.
 - **Unlocks:** the backend-independent systems-readiness execution gate, generated embedding,
@@ -3823,6 +3836,12 @@ do not expose C++ object layout as GTI semantics.
 
 - **State/role:** done; prerequisites `D-LANG-01` and `S-LAYOUT-01` are
   complete; bounded systems-readiness substrate.
+- **Current disposition:** recursive raw pointers, exact integral scoped enums,
+  valid passive unions and concrete native records now share the query contract,
+  beyond the initial scalar/array profile below. Ordinary-object placement
+  uses runtime `layout_of<T>()`; it does not make ordinary class `sizeof` a
+  frontend constant or promise stable foreign ABI. See
+  [static semantics §3.11](../language/static-semantics.md#311-bounded-constant-evaluation).
 - **Scope:** Add grammar, semantic, constexpr, HIR, MIR, formatter,
   Tree-sitter, LSP, and backend support for types whose layout is already a GTI
   fact: primitives, one-level raw pointers, transparent aliases, and recursive
@@ -3918,6 +3937,13 @@ do not expose C++ object layout as GTI semantics.
 ### S-CALL-01: Function Items And C Callback Boundary
 
 - **State/role:** done for the bounded same-thread C-library client.
+- **Current disposition:** native function-pointer values also support direct
+  unsafe invocation, with once-only callee staging and exact ordered inputs.
+  This is separate from exposing GTI targets to C: the existing adapter's
+  terminating failure firewall and thread-entry restrictions remain. The
+  original non-goals below describe the first adapter slice, not a current
+  prohibition on indirect calls. See
+  [native function invocation](../language/native-c-interop.md#invoking-native-function-pointers).
 - **Scope:** A namespace-scope `using` declaration names an exact nullable
   native function type. The type may appear in passive native records and C
   parameters/results. Contextual conversion selects exactly one non-generic,
@@ -3944,6 +3970,13 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-FFI-02: Additional C ABI Families
 
+- **Current disposition:** ordinary recursive raw pointers and qualified
+  pointer slots are implemented. `[[c_array(count)]]` is optional count metadata,
+  not permission for otherwise forbidden pointer nesting. The original F3
+  exception and durable-exclusion rationale below is historical and explicitly
+  superseded by the general [native boundary](../language/native-c-interop.md).
+  Opaque handles remain nominal incomplete terminal pointees, not restricted
+  to one pointer level in the current recursive ABI.
 - **State/role:** done for the selected bounded families and GLFW 3.4
   acceptance client. The independent pointer-only opaque-handle family landed
   in 0.119.0. The demonstrated C-library API this row's families are selected
@@ -4038,16 +4071,17 @@ do not expose C++ object layout as GTI semantics.
       `glfwGetJoystickGUID`, `glfwUpdateGamepadMappings`, `glfwGetGamepadName`,
       `glfwSetClipboardString`, `glfwGetClipboardString`, and
       `glfwExtensionSupported`.
-  - **F3 — out-parameter and returned pointer-plus-count (complete).** C's "returns an
-    array, writes the length through an out parameter" idiom. Admit it as one
-    bounded boundary form rather than admitting `T**` generally, which would
-    import pointer nesting and aliasing that `R-RAW-POINTERS` excludes as a
-    durable rule.
-    - *Diagnostics.* `GTI-S2073` `[[c_array]]` names something that is not an
-      integer out-parameter of the same declaration; `GTI-S2074` a two-level
-      pointer appears outside an annotated `[[c_array]]` boundary, which keeps
-      the general `R-RAW-POINTERS` rejection intact and explains the one
-      exception.
+  - **F3 — original out-parameter and returned pointer-plus-count slice
+    (complete; pointer-depth restriction superseded).** C's "returns an array,
+    writes the length through an out parameter" idiom first used a bounded
+    annotated form. Its former `R-RAW-POINTERS` nesting exclusion was later
+    revised: recursive raw pointers are now general non-owning values, and
+    dereference/aliasing obligations remain explicit unsafe contracts.
+    - *Original diagnostics.* `GTI-S2073` checks that `[[c_array]]` names the
+      proper integer out parameter; `GTI-S2074` originally rejected a two-level
+      pointer outside an annotated boundary. That historical depth restriction
+      no longer governs recursive pointer declarations; current count metadata
+      validity is documented in the native boundary.
     - *Obligations.* Initialization: GTI's ordinary definite-initialization
       rule still requires storage for the count before its address is passed;
       the native call may overwrite it, and the returned pointer exists only
@@ -4070,7 +4104,8 @@ do not expose C++ object layout as GTI semantics.
       admissible. Semantics, HIR, MIR, the MIR verifier, C++ emission, native
       header generation, formatter, Tree-sitter, LSP hover/definition/tokens,
       and C17/C++20/C++23 oracle coverage agree. Explicit nested-pointer locals,
-      parameters, fields, and unannotated returns remain rejected.
+      parameters, fields and unannotated returns were excluded by that initial
+      slice; the later general recursive-pointer contract supersedes it.
   - Callback semantics remain owned by completed `S-CALL-01`; this row consumes
     that type family when exact callback aliases occur in records and C
     parameters/results.
@@ -4116,6 +4151,13 @@ do not expose C++ object layout as GTI semantics.
 
 - **State/role:** complete first public slice; `S-ALLOC-01` and `I-CAP-01` are
   done; systems-readiness implementation.
+- **Current disposition:** `std::storage<T>` now owns source-defined sparse
+  policy over general object-lifetime operations and accepts independent
+  immovable elements through final-address construction. Moving the allocation
+  owner does not move those elements. Completed-value insertion and relocating
+  clients still require their structural movement capabilities; arena/pool's
+  original value-insertion profile is not automatically immovable emplacement.
+  `S-ALLOC-06/07` supersede the original specialized sparse implementation below.
 - **Scope:** Implement one GTI-owned allocator interface over narrow trusted
   operations, plus a recoverable factory returning `expected` and a typed
   partial-storage owner on which an arena, pool, or container can build policy.
@@ -4309,7 +4351,8 @@ do not expose C++ object layout as GTI semantics.
   unsafe raw-reference helpers, malformed-contract diagnostics, ordinary
   wrapper/generic preservation, and compiler/LSP/syntax-tooling agreement.
 - **Boundaries:** no stable foreign ABI promise, arbitrary integer/address
-  conversion, implicit ownership inference, or new lifetime syntax. Private
+  conversion, implicit ownership inference, or general lifetime parameters. The
+  bounded `borrowed_from` declaration attribute is implemented. Private
   mechanisms retain declaration-bound identity; public policy remains source
   defined. No requirement to null moved-from pointers. Stateful allocator
   protocols, resource leases and allocator-aware containers belong to Phase 2,
@@ -4553,6 +4596,15 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-06: General Object Lifetimes And Source-Defined Storage
 
+- **Current disposition:** `uninitialized`, `construct_at`, `destroy_at` and
+  `relocate_at` are implemented public facilities over general trusted
+  mechanisms; their names are no longer proposals. Sparse slot policy and
+  metadata live in ordinary source, and the legacy sparse operations are
+  retired. The retained audit/design text records the original baseline and
+  acceptance path, not a second active implementation campaign. Sparse owners
+  retain separate object/metadata leases; later `resource_vector` raw-prefix
+  policy uses one region per capacity reservation under the approved policy
+  revision. Do not copy the sparse two-region count into the current vector.
 - **State/role:** implemented through PR #94 and the subsequent issue-campaign
   integration, following completed `S-ALLOC-04/05`. The combined
   [release gate](../architecture/verification.md#combined-lifetimestorage-and-payload-enum-release-gate)
@@ -4977,6 +5029,13 @@ unless requested.
 
 ### S-ALLOC-07: Source-Defined Process Allocation Over Native Byte Providers
 
+- **Current disposition:** the frozen 2026-10-08 slowdown remains historical
+  evidence, not proof of today's runtime ratio or permission to accept a new
+  regression. RT-1 and subsequent raw-buffer/container work change affected
+  costs; consult their exact-head comparisons. ADR 012 now makes any material
+  runtime regression a failed acceptance gate unless the owner explicitly
+  accepts the documented tradeoff. Remaining provider/owner migrations follow
+  the current operation ledger, not the old prefix allocation inventory.
 - **State/role:** source-provider migration and completion acceptance are done
   through PR #94, the issue reconciliation release and PR #162. The final local
   gates pass; unavailable native-platform evidence and the measured performance
@@ -5782,13 +5841,14 @@ or MIR prerequisite.
   coverage where supported. Timing and scheduler fairness are not correctness
   oracles. `C-CONFORM-01` reopens for the new families as they land.
 
-The following are further goals beyond the initial concurrency profile: detached
-threads; scoped borrowed captures; recursive/read-write locks; condition
-variables before guard release/reacquisition is modeled; cross-thread shared
-ownership before shared/weak ownership is specified; pointer atomics before
-public pointer provenance; native callbacks before `S-CALL-01`; volatile/MMIO,
-signals, coroutines, lock-free guarantees, atomic aggregates, and reclamation
-schemes.
+Further goals are scoped borrowed captures, safe condition-variable guard
+release/reacquisition, safe recursive/read-write locks, cross-thread shared
+ownership with an explicit synchronization/lifetime contract, pointer atomics,
+safe general foreign-thread entry, volatile/MMIO, signals, coroutines, lock-free
+guarantees, atomic aggregates and reclamation. Manual C-style mutex/condition
+operations, registered C-worker entry and same-thread C callbacks are already
+implemented; none supplies those broader safe contracts. Thread-specific
+storage and explicit exit/detach retain the owner's C-CTHREAD-01 deferral.
 
 ## Phase L: Owner-Dependent Library And Language Completion
 
@@ -5803,6 +5863,19 @@ older completion checkpoints below are not an instruction to redo shipped
 facilities or to infer that all constructor-pack compositions now pass.
 
 ### Active Request: Complete The Existing Standard Library
+
+**Current disposition (2026-10-11):** the following section is the historical
+stdlib delivery journal, not an unpublished working tree or a fresh branch
+inventory. Core numeric/text/list operations, restoring swap/exchange, owning
+callables, shared ownership, generic payload enums and the staged constexpr
+foundation have since shipped. The borrowed forward-list reproducer now passes
+the recorded current-head probes; its full acceptance closure is `L-UP-10`,
+not the old unresolved backend failure asserted below. Weak ownership,
+recoverable owners, inline optional publication and unfinished traversal/
+invalidation profiles remain genuine goals in the Ready Queue and current
+library gaps. Further C-thread completion retains the owner's explicit scope
+override. Preserve the journal's exact failures, measurements and recoveries as
+history; it does not authorize replaying its release or branch-deletion steps.
 
 The forward-list emplacement work is in progress and unpublished. The current
 vertical slice adds constructor-local packs and ordinary GTI node construction,
@@ -6000,12 +6073,14 @@ findings describe the historical compiler they audited, not a current
 acceptance baseline. Production compiler and runtime code were unchanged by
 that merge.
 
-The canonical remote is now
-`https://git.internal.howetotech.dev/gti-lang/gti.git`. Its prepared
+At that historical 0.333.1 checkpoint, the canonical remote moved to
+`https://git.internal.howetotech.dev/gti-lang/gti.git`. Its then-prepared
 `codex/gitea-primary-migration` branch is integrated with the newer stdlib
 checkpoints, retaining their changes and advancing the installer/release fix
-to 0.333.1 instead of restoring the branch's older 0.331.1. Gitea owns release
-dispatch; the former GitHub remote is no longer a publication destination.
+to 0.333.1 instead of restoring the branch's older 0.331.1. Gitea then owned
+release dispatch. That host selection is superseded: current branches, PRs,
+issues, CI and releases use `lang-gti-official/gti` on GitHub, with Gitea only
+the backup main/tag mirror under the repository workflow.
 The Gitea topic branches require their own reachability and patch review before
 cleanup. Their presence is not evidence that the previous cleanup was undone.
 The 0.334.1 publication includes the first Gitea cleanup batch: 20 topic tips
@@ -6965,6 +7040,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 - **State/role:** completed for the bounded initial release; prerequisite
   `L-RANGE-02` is done; systems-readiness implementation.
+- **Current disposition:** mutable spans/buffers and general direct/nested
+  reference-field carriers with conflict-checked multiple owners are also
+  delivered. They do not make dynamic built-in text views reseatable or permit
+  their nonlocal storage. Precise result-projection dependencies and proxy
+  iteration remain separate goals; the initial deferred span/carrier breadth
+  below is not current status. See current ownership and `L-UP-16`.
 - **Implemented scope:** Source-defined read-only `std::span<T>` values come
   from `std::vector<T>::as_span()` and `std::string::as_span()`, support checked
   access, iteration, subviews, empty ranges, local copies/moves, and exact
@@ -6989,7 +7070,7 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-CALL-01: Foundational Owned Callables And Captures
 
-- **State/role:** in progress; `D-CALL-01`, `M-LIFE-01`, explicit confined
+- **State/role:** foundational admitted profiles delivered; `D-CALL-01`, `M-LIFE-01`, explicit confined
   boundary records, exact context-supplied and directly nested callable value
   results (concretized before HIR), repeatable read/mut
   invocation, consuming once-callable cardinality, and ordered local
@@ -7003,8 +7084,10 @@ consumer, and release refreshes remain outstanding for the full campaign.
   free-function name may now contextually satisfy one of those confined
   contracts or an exact managed-thread task contract as a nominal zero-state
   item, with exact target identity through HIR/MIR/backend and no general
-  storage or function-pointer conversion. External callable owners remain
-  systems-readiness implementation shared by algorithms, tasks, and callbacks.
+  storage or function-pointer conversion in that initial slice. Owning storage
+  and read/mut/once erasure now ship under `L-CALL-02`. Borrowed capture/result
+  escape and wider inline consuming/cleanup profiles still need their own
+  origin and lifecycle proofs; they are not unfinished basic owning wrappers.
 - **Scope:** Implement the accepted callable contract for exact return types,
   read/mut/once invocation capability, owned storage, and explicit move capture
   one independently tested sub-slice at a time. Keep callable identity,
@@ -7023,9 +7106,10 @@ consumer, and release refreshes remain outstanding for the full campaign.
 ### L-CALL-02: Source-Defined Owning Function Wrappers
 
 - **State/role:** agreed API implemented, validated, and installed locally.
-  The fresh combined production suite passes all 294 tests. Repository
-  publication includes the other tasks' shared-checkout work with explicit
-  user approval; Gitea owns the release tag and asynchronous packaging.
+  The recorded 0.346.0 combined production suite passed all 294 tests. That
+  historical publication included other tasks' shared-checkout work with
+  explicit user approval and used Gitea's then-current release workflow.
+  Current publication follows the GitHub PR/nightly/stable lifecycle.
   The earlier owning-wrapper deferral in L-CALL-01 is superseded.
 - **Unlocks:** a command schema with an owned handler and an object API such as
   `set_auth_login_callback(lambda)` that retains and invokes the callback later.
@@ -7643,7 +7727,7 @@ consumer, and release refreshes remain outstanding for the full campaign.
   repeatable callback in ordinary GTI. Example 139 demonstrates custom-record
   ordering. Callback failure, exact returned-owner rejection, and allocation/
   traversal-cost fixtures cover the same rules with unrelated cursors.
-- **Remaining scope:** indexed element move-out; structural complete-range
+- **Remaining scope:** structural complete-range
   relations for `transform`, `reverse`, and `sort`; and further
   iterator/sentinel overloads behind a demonstrated subrange client.
   Forward-list traversal, heterogeneous search keys/projections and indirect
@@ -7654,6 +7738,10 @@ consumer, and release refreshes remain outstanding for the full campaign.
   methods on a parameter-held mutable cursor are supported. Iterator
   assignment, implicit conversions, overload ranking, and a parallel C++
   iterator-category hierarchy remain unauthorized.
+  Restoring indexed exchange and move-only vector reverse/sort are delivered
+  by `L-UP-07/08`; they do not require general un-restored element move-out.
+  Start a new algorithm from those operations before proposing partial-move
+  semantics solely to work around a historical implementation limitation.
 - **Exit gate:** no public algorithm name is recognized by the compiler and
   value/borrow/move behavior is covered for every supported range category.
 
@@ -7715,7 +7803,13 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-SUM-01: Payload Enums And Exhaustive Matching
 
-- **State/role:** in progress; prerequisites `D-LANG-01`, `M-OWN-02`,
+- **Current disposition:** the generic declaration, recursive owning payload
+  and borrowed-pattern campaigns are integrated, including the combined
+  lifetime/storage release. Their branch/reconciliation narrative below is
+  historical. Direct capture, consuming patterns, excluded transport/storage
+  profiles and stable-layout work remain bounded separately by ADR 014 and the
+  current language contract; do not reopen generic declaration acceptance.
+- **State/role:** bounded profiles delivered; prerequisites `D-LANG-01`, `M-OWN-02`,
   `M-LIFE-01`, and `S-LAYOUT-01` are done. The first passive, non-generic
   payload family is implemented across syntax, semantics, HIR, MIR, C++20/23,
   formatter, Tree-sitter, and LSP tooling. The cleanup-free class-payload
@@ -7752,9 +7846,9 @@ consumer, and release refreshes remain outstanding for the full campaign.
   exhaustiveness survive through HIR/MIR; the C++ backend uses a replaceable
   `std::variant` wrapper without making that library type source semantics.
 - **Remaining scope:** Add direct enum lambda capture, consuming payload
-  bindings, fixed-array and direct result-alternative transport, generic
-  payload declaration completion gates, and deterministic layout in separately proven families.
-  The general generic-declaration campaign is active in
+  bindings, fixed-array and direct result-alternative transport, and
+  deterministic layout in separately proven families.
+  The historical general generic-declaration campaign was developed in
   `codex/generic-payload-enums`. The candidate retains ordinary semantic binders
   and exact substituted alternative signatures, including defaults, type/value
   arguments and a final metadata pack. Concrete construction/matching, HIR
@@ -7892,6 +7986,11 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 - **State/role:** complete in 0.311.0; `M-LIFE-01`, `D-LANG-01`, and
   `D-EXEC-01` provide the cleanup and evaluation substrate.
+- **Current disposition:** 0.366.0 additionally delivers checked read-only
+  `expected<T&, E>` success extraction through `?` and `expect`. The loan keeps
+  its external owner identity after the expected shell ends; this is not owned
+  payload movement or general borrowed combinator support. See `L-UP-09` and
+  the current Expected contract.
 - **Scope:** Define one explicit propagation form over `expected`, including
   conversion prohibition, early-return cleanup, source spans, HIR/MIR control
   flow, formatter, Tree-sitter, and LSP behavior.
@@ -8049,10 +8148,13 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-VALUE-01: Optional And Foundational Value Utilities
 
-- **State/role:** in progress. The production move-only `std::optional<T>`
-  sub-slice is complete over exact declaration-bound inline one-slot storage;
-  pair breadth, swap/exchange, limits, and broader `expected` observers remain
-  systems-readiness standard-library work.
+- **State/role:** bounded optional, pair, limits, restoring swap/exchange and
+  admitted Expected observer/helper profiles are delivered. Further optional
+  direct inline publication and immovable wrapper eligibility are
+  `L-UP-12/18`; broader assignment, borrowed combinators and constant-execution
+  profiles retain distinct lifecycle/origin requirements. The production
+  move-only optional uses declaration-bound inline one-slot storage; do not
+  repeat foundational value utilities as an unfinished whole-module slice.
 - **Scope:** Implement `optional<T>` over checked one-slot storage, then
   complete pair, comparison, swap/exchange, limits, and `expected` observers
   without compiler-recognized public names.
@@ -8068,8 +8170,8 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
-- **State/role:** the staged MIR constexpr foundation is implemented and locally
-  validated; publication is held at the user's request. It enables source-defined numeric helpers,
+- **State/role:** the staged MIR constexpr foundation is delivered; the original
+  publication hold is historical. It enables source-defined numeric helpers,
   passive records and fixed-array metadata tables, including read-only text
   inspection for game-engine asset descriptions. Declaration-owned generic
   defaults retain exact identity through the same frontend-owned constant
@@ -8285,7 +8387,8 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-HOST-01: Remaining Hosted Services
 
-- **State/role:** active. Counted stdin/stdout/stderr, file open/read/write,
+- **State/role:** listed minimum delivered; further service profiles planned.
+  Counted stdin/stdout/stderr, file open/read/write,
   seek/tell, standard-stream flush, and exact synchronous child-process
   execution are implemented through ordinary GTI wrappers over versioned
   runtime ABIs. Exact signed-nanosecond monotonic and wall-clock observation is
@@ -8314,11 +8417,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-CONT-01: Vector And String Completion
 
-- **State/role:** active bounded vector slice; complete range integration still
-  depends on `L-RANGE-03`; systems-readiness implementation for the
-  renderer/game workload.
+- **State/role:** indexed vector/string operations and admitted range/view
+  integration delivered. Iterator-position mutation and finer invalidation are
+  separate profiles, not an unfinished private-storage or view prerequisite.
 - **Scope:** Indexed vector insertion/erasure for move-only elements is
-  implemented through checked private slot shifts. Complete iterator-position
+  implemented in source prefix policy over general object-lifetime operations.
+  Complete iterator-position
   forms and corresponding string operations still require exact invalidation,
   owner-dependency, failure, and range behavior. Range
   sorting/search/partition/copy/move algorithms remain owned by `L-RANGE-04`.
@@ -8342,12 +8446,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
   external-owner dependency through a nested nominal field path. Concrete
   class aliases expose the corresponding iterator and key/value aliases.
 - **Safety boundary:** iterator and reference loans conservatively protect the
-  whole container. Nested carriers retain exactly one borrow path; multiple
-  borrowed fields, reseating, nested lifecycle guards, and hidden owner escapes
-  remain rejected. This does not adopt C++ iterator invalidation rules or permit
-  unchecked embedded references.
+  whole container. The original insertion-result profile retains one nested
+  iterator path. General multi-field carriers and cleanup-bound borrowed guards
+  have since shipped; this does not admit borrowed-state container elements,
+  reseating, hidden owner escape or independent container invalidation rules.
 - **Remaining breadth:** allocator customization, `operator[]` (which needs
-  conditional operator requirements), multi-owner carriers, finer-grained
+  conditional operator requirements), finer-grained
   invalidation, and comparative performance tuning are separate follow-ups.
   The current gates cover capability rejection, tree balancing, hash collisions,
   ownership/cleanup, failure behavior, all selected native modes, and editor
@@ -8415,8 +8519,9 @@ complete.
   The pass/analysis manager revisions and conservatively invalidates all
   current analysis families. Current transformations are deterministic, typed,
   independently replayed, and consumed through the one lowered backend input.
-- **Scope:** this row is closed; further CFG/value work requires its own
-  numbered row, proof records, verifier coverage, and measured client.
+- **Scope:** this row is closed; further CFG/value work names its own outcome,
+  proof records, verifier coverage, cost model and performance acceptance.
+  A prior benchmark regression is not a prerequisite for general architecture.
 - **Non-goals:** inlining, devirtualization, bounds-check removal, or loop
   analysis without a concrete proof/client.
 - **Exit gate:** satisfied for the implemented local pipeline by verifier,
@@ -8426,6 +8531,15 @@ complete.
 ### O-MIR-04: Proof-Carrying Safety Optimization
 
 Historical tracking ID: issue #36.
+
+**Current disposition:** the original sparse-storage capability and initialized-
+slot analysis were retired by S-ALLOC-06. Source sparse checks remain conservative
+policy barriers; source prefix/container proofs use the general call/place,
+range and provider-effect contracts. Later arithmetic, array and closed-call
+proof families have shipped. The first-slice scope and remaining list below
+are historical, not a claim that today's optimizer lacks all of those families.
+The current proof vocabulary and replay rules live in
+[optimization architecture](../architecture/optimization.md).
 
 - **State/role:** first production slice complete. O2/O3 run separate bounds,
   initialized-storage-state, and arithmetic-overflow discharge passes over one
@@ -8918,7 +9032,7 @@ it is not a competing active queue.
 
 | ID | State | Scope and gate |
 | --- | --- | --- |
-| `A-ID-01` | ready | Add GTI-owned AST kind tags and `gti::isa/cast/dyn_cast`; migrate one heavy cluster at a time, serialized with any active `C-MIG-02/03` slice. Do not use LLVM casting. |
+| `A-ID-01` | core delivered; residual cleanup bounded | `ExprKind`/`StmtKind` and GTI-owned `exprAs`/`stmtAs` classification are implemented. Four compiler `dynamic_cast` sites remain; any cleanup preserves recovery and exact node identity. This is not a missing AST-tag facility or a reason to add LLVM casting. |
 | `A-ID-02` | planned | After `C-MIG-02`, first define source-unit and snapshot lifetime/serialization, then replace path strings in token/span identity with `SourceUnitId`, preserving deterministic diagnostics. |
 | `A-ID-03` | planned | After `A-ID-02`, add snapshot-local `NodeId` and migrate side tables incrementally to dense vectors. Raw AST pointers may remain local implementation details during transition, not cross-snapshot identity. |
 | `A-FLOW-01` | measured defer | After `A-ID-03`, adopt dense binding state only if profiles still justify it; do not couple it to TypeContext. |
@@ -8938,6 +9052,14 @@ it is not a competing active queue.
 
 Prefix-storage historical tracking ID: issue #37.
 
+The `P-STORAGE-01` row preserves the original private-capability delivery.
+Those sparse/prefix types, algorithms and optimizer models were subsequently
+retired by S-ALLOC-06/09 in favor of source policy over general lifetime/raw
+operations. Its original ban on trusted unchecked access is not current policy:
+public unsafe unchecked accessors now have explicit bounds/initialization
+obligations and retain checked owner loans. Do not recreate the retired
+capabilities or use this history to bypass a safe API's checks.
+
 | ID | State | Scope and gate |
 | --- | --- | --- |
 | `P-MEASURE-01` | complete benchmark substrate | The standard-library-only runner, strict descriptors, correctness digests, controlled output paths, raw samples, compiler/build identity, and GTI/semantic-C++/idiomatic-C++ workloads are implemented with threshold-free smoke coverage. `O-PERF-00` owns the fixed-native attribution mode and runtime workload breadth; `O-GAME-01` closed the exclusive campaign. |
@@ -8945,12 +9067,15 @@ Prefix-storage historical tracking ID: issue #37.
 
 - Existing `--time-trace` and deterministic MIR printing count as completed
   foundations; do not reimplement them under the older performance plan.
-- Add structured optimization/safety reports only when the first real MIR pass
-  produces decisions worth reporting.
-- `TypeContext` becomes ready only after a written snapshot/context lifetime,
-  a type-allocation/churn benchmark, and evidence that identity migration pays
-  for its cross-phase cost. Start with a GTI-owned interface and ordinary
-  storage; compare private LLVM allocation/indexing only afterward.
+- Structured optimization/safety reports and replayable proof remarks already
+  exist. Extend them for a new transform's actual decisions, rather than
+  scheduling the original report foundation again.
+- `TypeContext` needs a written snapshot/context lifetime, canonical identity
+  and invalidation contract before implementation can be accepted. Define its
+  operation/cost model and measure the result; an old retained-memory share is
+  not an admission threshold and a prior benchmark is not a design prerequisite.
+  Start with a GTI-owned interface and ordinary storage; private LLVM allocation/indexing
+  is an implementation option only when clearly better.
 - Shrinking `MirInstruction`, LLVM VFS, `lit`/`FileCheck`, private allocators,
   and sparse bitsets remain measured options rather than queued work.
 
@@ -8961,9 +9086,9 @@ The next order resolves drift between the build proposal and checkpoint:
 | ID | State | Scope and gate |
 | --- | --- | --- |
 | `B-PROJECT-01` | complete | Project test targets and `gti test` use driver-owned immutable build plans. Deterministic all/named selection, independent outputs, runtime-failure continuation/propagation, metadata kind publication, direct-mode preservation, and installed CLI/library coverage pass. |
-| `B-PROJECT-02` | complete | Project build/run/test requests use a deterministic SHA-256 whole-program cache over the compiler-owned loaded source graph, including ordered configured prelude-root provenance, effective target/profile/backend policy, runtime/toolchain identity, and admitted native environment. Verified generated-C++/executable payloads publish atomically under `build/gti/cache/v2`; hits skip frontend/backend/native compilation, corruption rebuilds before replacement, legacy schema entries are ignored, and `--no-cache` bypasses read/write. Requests with declared native sources, native search directories (including dependency-injecting environment paths), opaque native argument vectors, native link operands, or unresolved libraries/frameworks conservatively bypass the cache until their transitive inputs are modeled; pure-GTI checkout moves retain content identity, and direct mode remains uncached. |
-| `B-PROJECT-03` | complete | Manifest schema 1 resolves canonical workspace members and recursive source-only path dependencies without network access. Direct aliases feed the compiler-owned source graph, transitive/quoted cross-package access is rejected, cycles/duplicate names/roots/nested workspaces fail before compilation, `--package` selection and shared collision-free outputs are deterministic, schema-9 metadata publishes the graph, and cache identity includes package provenance. Direct mode remains manifest-independent. |
-| `B-PROJECT-04` | complete | Exact pinned-revision Git resolution, `gti.lock`, explicit `gti fetch`, `--locked`, and `--offline` use immutable content-verified checkouts and have reproducible CLI and installed-toolchain coverage. Registry ranges, mutable branch/tag selectors, and dependency code execution remain out of scope. |
+| `B-PROJECT-02` | complete, native profiles extended | Project build/run/test requests use the loaded GTI graph, ordered prelude roots, effective policy and exact runtime/toolchain inputs in a SHA-256 whole-program cache. Verified payloads publish atomically under `build/gti/cache/v2`; hits skip compilation, corruption rebuilds and `--no-cache` bypasses read/write. Declared native sources/directories, complete exact link files, unambiguous declared-search `-l` inputs and bounded Apple framework traces now participate through exact dependency/content discovery. Opaque native arguments, unresolved/incomplete link inputs, dependency-injecting environment paths and debug sidecars retain conservative bypasses. Direct compilation and `check` remain uncached; see the current driver cache contract. |
+| `B-PROJECT-03` | complete | The initial schema-1 manifest/path slice resolved canonical workspace members and recursive source dependencies without network access. Direct aliases feed the source graph; transitive/quoted cross-package access, cycles, duplicates and nested workspaces fail early. Deterministic package selection/output identity and package cache provenance remain. Its original metadata schema 9 is now extended to schema 14 by later driver features; use the current metadata contract, not the first-delivery number. Direct mode remains manifest-independent. |
+| `B-PROJECT-04` | complete | Exact pinned-revision Git resolution, `gti.lock`, explicit `gti fetch`, `--locked` and `--offline` use immutable content-verified checkouts. Registry ranges were outside this Git-only slice but are now delivered by B-PROJECT-06. Mutable Git branch/tag selectors and arbitrary dependency code execution are not implied. |
 | `B-PROJECT-05` | complete | `gti/driver/project_facts.h` publishes the resolved workspace as read-only values: package closure with membership/roots/selectability/git provenance/alias edges, the package source-root graph, the selected package's profiles and targets, package-level configuration flags, the default profile name, per-profile analysis configuration, and the workspace-graph model identity. Resolution runs no native tool, git process, or build and creates no directories, using `gti metadata`'s dependency policy. Library tests cover workspace members, path dependencies, standalone packages, discovery/manifest/selection failures, build-plan agreement, and installed-package consumption; `T-LSP-04` now consumes the same facts. |
 | `B-LIB-01` | complete | Dormant shared-library targets and exact exports cross immutable project/compiler facts through LoweredProgram. Public manifests remain gated; embedding_foundation owns the structural gate. |
 | `B-LIB-02` | blocked | After E-EMBED-01C, publish, cache, report and clean the shared library/header, then activate library targets. |
@@ -8976,13 +9101,13 @@ artifact policy stay in `gti_driver`, never `gti_compiler` or the LSP.
 
 | ID | State | Scope and dependency |
 | --- | --- | --- |
-| `T-LSP-01` | hover/completion/signature help complete; API docs ready | `///` Markdown is retained once on declarations and exact compiler symbols; hover publishes it at declarations and resolved uses across dirty dependency overlays, and completion items and signature help publish the same symbol-attached value under the client's declared documentation format. Generated API docs remain a consumer of the same value. |
+| `T-LSP-01` | symbol documentation and index projection delivered | `///` Markdown is retained once on declarations/exact symbols and shared by hover, completion, signature help and the compiler-owned documentation index consumed by the reference site. Dirty dependency overlays retain current identity. More authored API coverage is content work, not a missing projection facility. |
 | `T-LSP-02` | complete for current snapshots | Current-snapshot references, document highlights, hierarchical document symbols over parser-recorded extents, fail-closed function-local rename, and signature help from the selected overload and argument position are implemented through `LanguageQueries` with protocol tests. Project-wide coverage remains gated on `T-LSP-05`. |
 | `T-LSP-03` | measured defer | Extract document/snapshot service boundaries when a concrete feature makes the current server class costly to evolve. |
 | `T-LSP-04` | complete | Analysis and completion consume driver-owned `ProjectFacts` without fetching/building, publish project-resolution failures, preserve standalone mode, watch manifest/lock changes, and keep dirty dependency buffers authoritative. |
 | `T-EMBED-01` | blocked | Extend the completed T-LSP-04 ProjectFacts integration to library/export facts after B-LIB-02; dirty roots must use the exact no-main and export contract. |
 | `T-LSP-05` | measured defer | A durable project index only after unopened-file references/rename proves a client. |
-| `T-LSP-06` | measured defer | Process-isolated analysis only if in-process crash recovery must guarantee containment of heap corruption. The current guard is state-safe, not process isolation. |
+| `T-LSP-06` | state-safety hardening planned; isolation separate | The crash guard/handlers exist, but recovery across shared-cache locks, partial mutation and C++ stack lifetimes is not proven state-safe. Define the recoverable boundary and run fault-injection checks for stranded locks/workers, rejected partial snapshots and a healthy following query. No current test establishes heap-corruption recovery; process isolation remains the stronger boundary when that containment is required. This is a source-audit finding, not a reproduced new crash. |
 | `T-LSP-07` | complete | Missing-include actions discover actual declarations across the selected project, direct package aliases and public standard-library units. Structured semantic lookup requests, canonical parsing, exact definition identity and speculative frontend reanalysis replace the hardcoded standard-type catalog. Dirty/new/deleted files invalidate discovery results; module/private/incompatible candidates fail closed. No durable project index is introduced. |
 
 Every new syntax/semantic feature still updates formatter, Tree-sitter, LSP
@@ -9036,13 +9161,13 @@ owned by the rows and domain plans above.
 | Production generic functions | **complete bounded production system:** type/value/pack declarations, exact inference and explicit expressions, inferred array extents, defaults/dependent values, bounded `&&`/`||` concept expressions, concrete reanalysis, HIR/MIR/lowered identity, callable confinement and public relations, verified-MIR execution, deterministic ordinary free/class/member/constructor emission, ownership/failure evidence, and the stdlib/tooling/runtime matrix are implemented | `L-GEN-01`, `E-SYM-01`, and `E-INST-01` done; general requires-expressions, partial specialization, subsumption/ranking, nested-type direct emission, and removal of the audited closure/incomplete-owner physical carriers remain later breadth |
 | Wider generics, block statics, generalized borrow graphs and wider integers | **bounded-first or later breadth as classified** | `static_assert` and bounded reflection exist; unsupported constexpr profiles remain. Custom copy/move bodies were withdrawn, not automatically scheduled by this row. |
 | Shared/weak ownership and optional | **shared/optional admitted APIs delivered; weak/fallible-owner/inline-construction work remains** | `L-OWN-01`, `L-UP-12/17/18`; preserve explicit clone and compiler-controlled movement policy. |
-| Formatting, text, host services | **formatter customization, buffered I/O, HTTP/JSON, filesystem, clocks and processes delivered; selected breadth remains** | `L-UP-14`, `L-TEXT-01`, `L-HOST-01`; environment/process capture and text/range clients have their own contracts. |
+| Formatting, text, host services | **formatter customization, buffered I/O, HTTP/JSON, filesystem, clocks, processes and owned environment lookup delivered; selected breadth remains** | `L-UP-14`, `L-TEXT-01`, `L-HOST-01`; process capture, environment mutation/enumeration/child overrides and text/range clients need their own contracts. |
 | Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
 | Associative containers | **AVL map and bucketed unordered_map delivered** | `L-UP-11/15` own direct node emplacement and conditional indexing; allocator/layout variants require borrowing/failure/performance acceptance, not a benchmark-first design gate. |
 | Runtime performance | **ongoing design and delivery requirement** | Earlier O-PERF/O-GAME campaigns are historical completions; ADR 012 permits proactive general optimization architecture and requires performance acceptance |
 | MIR transformations | **bounded local production pipeline** | `O-MIR-01` through `O-MIR-07` provide current transforms/analyses; `O-MIR-08/09` are measured-defer; the closed interprocedural client was subsumed by `O-PERF-02` |
 | MIR-backed C++ emission | **ADR 016 complete** | every body in `tests/mir_census_baseline.json` uses the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
-| Type interning | **measured defer** | context lifetime and allocation benchmark |
+| Type interning | **design-first context/identity goal** | snapshot/context lifetime, canonical identity and invalidation; validate implementation costs rather than treating an old memory share as an admission gate |
 | Natural-loop/range facts | **complete bounded analysis; transform not implemented** | `O-MIR-06`; `O-MIR-08` may proceed from architectural need with replayable source-MIR facts and performance acceptance |
 | Place alias/escape facts | **complete bounded analysis** | `O-MIR-07`; first standalone memory transform is gated by `O-MIR-09` |
 | Incremental dominance | **measured defer** | add only when a measured transform makes full recomputation material |
@@ -9050,7 +9175,7 @@ owned by the rows and domain plans above.
 | Source/semantic/HIR/MIR compiled migration | **complete foundation** | `C-MIG-02` through `C-MIG-07`; internal decomposition is owned by `R-STRUCT` |
 | Deterministic names/concrete instance emission | **self-contained lowered declaration/instance/symbol tables delivered** | Future independent linkage/library ABI profiles reuse them; the executable cutover is not pending. |
 | Project dependencies/cache | **project/tests/cache/path/Git/registry workflows delivered** | Further registry governance/backends, native cache profile coverage and library publication remain; do not repeat foundational stages. |
-| LSP project index/process isolation | **project facts/crash-safe snapshots delivered; broader index/isolation client-gated** | Lazy trusted-body and scoped-completion latency work comes before speculative cross-snapshot infrastructure. |
+| LSP project index/process isolation | **project facts/snapshot foundation delivered; fault-state safety incomplete** | `T-LSP-06` owns containment hardening or isolation; lazy trusted-body/scoped-completion work addresses latency before speculative cross-snapshot reuse. |
 | Separate compilation/stable GTI ABI | later-breadth proposal | deterministic names, layout/ABI, package model, concrete emission |
 | Module vocabulary | Source interfaces implemented; standard-library modules implemented in 0.393.0 | ADR 024 defines imports, exports/re-exports, package maps and `export #include` republication; legacy includes remain unchanged. Artifact MIR/emission selects reached roots. Since 0.399.3 artifact HIR also skips unreached compiler-trusted declarations; application/package lowering and `gti check` remain complete. Remaining: demand-driven trusted semantic bodies, select platform-gated units and validate latency for aggregate `import std;`, migrate republished sources to real exports where useful, and define independent linkage if separate compilation needs it. |
 
@@ -9069,10 +9194,12 @@ until the correction passes; do not claim completion or bypass the invariant.
   target contract;
 - a concurrency API relies on a borrow, capture, global, or cleanup capability
   not represented in semantics/HIR/MIR;
-- proof, restriction, or framework work has no named user-facing consumer or
-  current correctness defect;
-- an optimizer wants a pass manager, incremental analysis, or LLVM container
-  before the first client and measurement exist;
+- proof, restriction or framework work has no named user-facing outcome or
+  general operation family and no reasoned architecture/cost model;
+- an optimizer introduces a pass manager, incremental analysis or LLVM
+  container without a necessary contract, consumer and cost model, or treats
+  LLVM availability as sufficient justification; a pre-existing measured
+  regression is not required to start general architecture;
 - a “mechanical” compiled-library move changes behavior; or
 - a new executable language feature would add or extend AST/semantic/HIR-only
   C++ emission, or would treat MIR ignored by the production backend as
