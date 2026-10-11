@@ -3094,6 +3094,71 @@ int main() {
          "ordinary SSA local");
 }
 
+// Moving a cleanup-free Expected<Class, E> binding into a new binding
+// constructs the new binding's lifetime slot from the moved source at the
+// Move; the adjacent Initialize only activates the binding's drop. The
+// success payload has no default constructor, so no value-initialized
+// Expected local may exist. (Regression: the move raised GTI-B0001 "Expected
+// value has no exact uninitialized publication".)
+void testCleanupFreeExpectedClassMoveSlot() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-expected-class-move.gti", R"(
+#include <std/utility>
+
+struct point {
+  mut int32_t x;
+  mut int32_t y;
+};
+
+expected<point, int32_t> make_point(int32_t x) {
+  point made = {.x = x, .y = x + 1};
+  return made;
+}
+
+int main() {
+  mut auto first = make_point(3);
+  auto moved = std::move(first);
+  return moved.value().y - 4;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the cleanup-free Expected move fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  const std::string marker =
+      "// GTI MIR moved cleanup-free Expected initializes p";
+  const std::size_t initialized = text.find(marker);
+  expect(initialized != std::string::npos,
+         "the moved binding's Initialize should only activate its drop");
+  if (initialized == std::string::npos) {
+    return;
+  }
+  const std::size_t idStart = initialized + marker.size();
+  const std::string destination =
+      "__gti_mir_p_" + text.substr(idStart, text.find('\n', idStart) - idStart);
+  const std::size_t declared =
+      text.find("::gti_internal::backend::mir_lifetime_slot<std::expected<"
+                "::__gti_program::point, std::int32_t>> " +
+                destination + ";");
+  const std::size_t constructed = text.rfind(
+      destination + ".construct(std::move(__gti_mir_p_", initialized);
+  expect(declared != std::string::npos && constructed != std::string::npos &&
+             declared < constructed &&
+             text.find('\n', constructed) == text.rfind('\n', initialized),
+         "the Move should construct the new binding's lifetime slot from the "
+         "moved source immediately before its Initialize");
+  expect(text.find("std::expected<::__gti_program::point, std::int32_t> "
+                   "__gti_mir_v_") == std::string::npos,
+         "no Expected should value-initialize an ordinary local");
+}
+
 // Every other source replacing a whole Expected<Class, E> binding spells the
 // native wrapper's own assignment after MIR's replacement cleanup, with no
 // value-initialized Expected local. A cleanup-free copy, move, Unexpected and
@@ -4534,6 +4599,8 @@ constexpr NamedTest kTests[] = {
      testCleanupFreeExpectedClassCopiedArgumentSlot},
     {"testCleanupFreeExpectedClassAssignmentSlot",
      testCleanupFreeExpectedClassAssignmentSlot},
+    {"testCleanupFreeExpectedClassMoveSlot",
+     testCleanupFreeExpectedClassMoveSlot},
     {"testExpectedClassReplacementSources",
      testExpectedClassReplacementSources},
     {"testOwningExpectedReplacementSources",
