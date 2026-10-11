@@ -6813,6 +6813,7 @@ private:
     for (const auto loan : movedArgumentLoans) {
       const auto *previous = output.findLoan(loan);
       const auto *published = output.findLoan(publishedLoan);
+      const auto resultIdentity = retainedInitializerLoans.find(value.id);
       if (exactCarrierRelay && loan == originLoan && previous != nullptr &&
           published != nullptr && published->kind == MirLoanKind::Stored &&
           previous->access == published->access &&
@@ -6824,14 +6825,21 @@ private:
           sameBorrowSource(previous->source, published->source)) {
         // Semantic carrier membership describes the completed source flow;
         // intermediate moved locals can have no retained-loan annotation.
-        // Transport its identity at the exact consuming call, not by later
-        // resurrecting an already retired formal's runtime capability.
+        // Transport a preserved identity at the exact consuming call, not by
+        // later resurrecting an already retired formal's runtime capability.
+        // A distinct retained result has its own semantic endpoint: redirecting
+        // the input identity would let the input's last use retire that result.
+        bool transported = false;
         for (auto &[semantic, currentLoan] : semanticLoans) {
-          (void)semantic;
-          if (currentLoan == loan)
+          if (currentLoan == loan &&
+              (resultIdentity == retainedInitializerLoans.end() ||
+               resultIdentity->second == semantic)) {
             currentLoan = publishedLoan;
+            transported = true;
+          }
         }
-        output.loans[loan - 1].semanticLoan = 0;
+        if (transported)
+          output.loans[loan - 1].semanticLoan = 0;
       }
       (void)appendInstruction(
           {.kind = MirInstructionKind::EndBorrow, .loan = loan});
