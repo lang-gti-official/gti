@@ -85,6 +85,33 @@ are retained at
 The fresh owning matrix, repaired Linux gates, performance comparison,
 unfiltered suite and integration-bound validation still remain separate gates.
 
+The clean `d60a6965` Mini snapshot then builds every Release target and passes
+all 22 selected iterator/compiler gates, including the complete native
+ownership, failure, rollback and sanitizer matrices, optimizer/verifier
+mutations, module/manifest checks and throughput registration. Its configure,
+all-target build and CTest steps exit zero; the CTest step completes in
+247.74 seconds. Raw commands, clean source snapshot and test results are
+retained at
+`.git/gti-remote-runner/results/run-47f568d7961c43548b8c2c60d8aaa572/`.
+The helper has retrieved the evidence and removed this task's disposable remote
+run. This is owning-matrix acceptance at that checkpoint, not unfiltered or
+performance acceptance. Reconciliation `ac249d35` subsequently incorporates
+main's cleanup-free Expected-copy fix (`2f543052`); its resulting source still
+requires fresh integration-bound checks.
+
+An independent review now reconciles every candidate census row and generated
+family with that evidence: there are no missing, removed, null, zero or
+decreasing example counts, and the existing nine-body difference between the
+emitted-MIR and LoweredProgram totals is unchanged. After the native corpus
+and owning matrix pass, the exact reviewed datasets are promoted to the two
+checked-in baselines; fresh non-update checks must still compare the reconciled
+compiler with those fixed expectations. They must not regenerate baselines to
+absorb unrelated drift. The local reconciled Release all-target build passes,
+as do `expected_cleanup_free_copy_runtime` (7.84 seconds),
+`cpp_mir_body_emitter_text` (3.56 seconds), relocated
+`macos_installed_runtime` (26.90 seconds), the 554-file formatting check and
+release-version policy. Performance and unfiltered acceptance remain open.
+
 ## Expected returns across scope cleanup (0.402.4)
 
 - **Defects.** Three verified programs stopped at the C++ backend with
