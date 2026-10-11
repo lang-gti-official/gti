@@ -1,0 +1,117 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// Class-valued conditionals. Each arm publishes into the conditional's shared
+// storage, and the joined object reaches its consumer without a default
+// constructor or an invented copy: bound, returned, passed, read, assigned,
+// nested, or used as a member initializer.
+mut int32_t destroyed = 0;
+
+// A cleanup-free class without a default constructor.
+struct plain_value {
+  int32_t number;
+  plain_value(int32_t number) : number(number) {}
+};
+
+class counted {
+public:
+  int32_t number;
+  counted(int32_t number) : number(number) {}
+  ~counted() { destroyed += 1; }
+};
+
+// Reports its destruction.
+class traced {
+public:
+  int32_t number;
+  traced(int32_t number) : number(number) {}
+  ~traced() { std::println(this.number); }
+};
+
+int32_t tick(int32_t value) { return value; }
+
+plain_value make_plain(int32_t number) { return plain_value(number); }
+
+// The checked addition can fail.
+plain_value checked_plain(int32_t number) { return plain_value(number + 1); }
+
+counted make_counted(int32_t number) { return counted(number); }
+
+traced make_traced(int32_t number) { return traced(number); }
+
+int32_t take(plain_value value) { return value.number; }
+
+plain_value pick(bool ok) { return ok ? make_plain(2) : plain_value(3); }
+
+counted pick_counted(bool ok) {
+  return ok ? make_counted(4) : make_counted(5);
+}
+
+struct holder {
+  plain_value plain;
+  counted owned;
+  holder(bool ok)
+      : plain(ok ? make_plain(6) : make_plain(7)),
+        owned(ok ? make_counted(8) : make_counted(9)) {}
+};
+
+// A later member can fail after the conditional member was published.
+struct failing_holder {
+  traced first;
+  int32_t sum;
+  failing_holder(bool ok, int32_t number)
+      : first(ok ? make_traced(3) : make_traced(4)), sum(number + 1) {}
+};
+
+int32_t check(bool yes) {
+  bool no = !yes;
+  plain_value local = make_plain(10);
+  plain_value bound = yes ? make_plain(1) : make_plain(0);
+  if (bound.number != 1) { return 1; }
+  if (pick(yes).number != 2 || pick(no).number != 3) { return 2; }
+  if (take(no ? make_plain(0) : make_plain(4)) != 4) { return 3; }
+  if ((yes ? make_plain(5) : make_plain(0)).number != 5) { return 4; }
+  mut plain_value assigned = make_plain(0);
+  assigned = no ? make_plain(0) : make_plain(6);
+  if (assigned.number != 6) { return 5; }
+  plain_value nested = yes ? (no ? make_plain(0) : make_plain(7)) : make_plain(0);
+  if (nested.number != 7) { return 6; }
+  plain_value copied = yes ? local : make_plain(0);
+  if (copied.number != 10) { return 7; }
+  plain_value checked = yes ? checked_plain(7) : make_plain(0);
+  if (checked.number != 8) { return 8; }
+  plain_value comma = yes ? (tick(1), make_plain(9)) : make_plain(0);
+  if (comma.number != 9) { return 9; }
+  // Owning results returned and used as member initializers.
+  if (pick_counted(yes).number != 4) { return 10; }
+  if (destroyed != 1) { return 11; }
+  holder held{yes};
+  if (held.plain.number != 6 || held.owned.number != 8) { return 12; }
+  holder other{no};
+  if (other.plain.number != 7 || other.owned.number != 9) { return 13; }
+  // A loop constructs and destroys each joined object once.
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    total += (index == 1 ? make_plain(10) : make_plain(index)).number;
+    counted joined = index == 1 ? make_counted(1) : make_counted(2);
+    total += joined.number;
+  }
+  if (total != 17 || destroyed != 4) { return 14; }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) {
+    // The selected arm fails before it publishes.
+    plain_value failing = argc > 0 ? checked_plain(2147483647) : make_plain(0);
+    return failing.number;
+  }
+  if (argc == 3) {
+    failing_holder failing{argc > 0, 2147483647};
+    return failing.sum;
+  }
+  int32_t status = check(argc > 0);
+  std::println(destroyed);
+  return status;
+}
