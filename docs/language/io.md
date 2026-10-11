@@ -514,7 +514,9 @@ errors detected only by a later flush remain observable through
 and owning-string print callers can obtain a recoverable alternative by
 formatting through `try_print("{}", value)` (borrow strings with `.view()`).
 Allocation failure while constructing an owning result follows the current
-defined-failure allocation policy rather than becoming a format or print error.
+allocation policy: infallible exhaustion reports `GTI-R0011` and aborts without
+cleanup, rather than becoming a format or print error. `try_format` recovers
+formatting errors; its name does not make result allocation fallible.
 
 Migration: code handling the old `format` or `format_to` expected result should
 use `try_format` or `try_format_to`. Code intentionally terminating on failure
@@ -525,8 +527,9 @@ panic adoption is not a blanket rename of environmental operations.
 
 Composable buffered streams are provided by `<std/io>` as described above;
 they build on the byte boundary without exposing the runtime ABI as the public
-GTI API. Encoding conversion and named/dynamic formatting fields remain future
-library layers.
+GTI API. `<std/encoding>` already implements counted-byte Base64 and hexadecimal
+encoding/decoding. Unicode transcoding and named/dynamic formatting fields are
+separate unfinished capabilities.
 
 ## User-defined formatters
 

@@ -2,7 +2,7 @@
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
     "stdlib/prelude.gti": "a33aa3f09d625f30f05d937483d0db075649a2037e45e990ae628ce07f28e448",
-    "stdlib/std/algorithm.gti": "086493320ed1a6f40cc2ea35f0497f5bb1e42f96ca0356aadd8341635e683e26",
+    "stdlib/std/algorithm.gti": "c46dc1e269933a154b029b3dd3254aa6335e92cc270cdd17565dc5d369e6a655",
     "stdlib/std/array.gti": "19d4eee0136cd3a66c4a088057d7467de9eac847a4c526104471c43edeb70846",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
@@ -14,6 +14,7 @@
     "stdlib/std/deque.gti": "51fc37f145409c7fd8d20da63a73c8ffdf73fa59459b4044cd358350e2e1c0b3",
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
+    "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
     "stdlib/std/experimental/json.gti": "a1faa23f53df367bef773470765778333e74bd6927a6568248ac873779ba0db3",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
@@ -25,7 +26,7 @@
     "stdlib/std/json.gti": "b54226945bf9be04ba527264601234078911dd0dfdde70780ad2f44c048c3fa7",
     "stdlib/std/list.gti": "af8267642b50d09da74eab812a5f51bf56919153623a80dd78b4f4bbdd52693c",
     "stdlib/std/map.gti": "24c860882d65a76914308ac562762073574cbc7ccb1bc0b0ca61ba4eeaaa52c2",
-    "stdlib/std/memory.gti": "d83a3ed1e4666f2d16cd5a8e83ad1d3e6f099a4feab7e6b0cca0c92c57fbd9e5",
+    "stdlib/std/memory.gti": "91c4b08a85dbf59f2e121e093dedf0e33ac579b4ffe82cc11566b645ce258844",
     "stdlib/std/meta.gti": "13d0f4dbb6aaa319a4052043a7c6084a8853924956af343d9319528d4dd4fef7",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
@@ -48,7 +49,7 @@
     "stdlib/std/unordered_map.gti": "fd284db99a49ce10538568d589254921fbdda810860ffd4719efb4fc477b6fd6",
     "stdlib/std/unordered_set.gti": "af95482466d952b670a69fdecad5ab905935cc4c1ee082c19f37e97741e2e84c",
     "stdlib/std/utility.gti": "142fb40869c5b2f4d0a431035ae7af5128c99426e9adb2abb2f9fa9d4b3b382d",
-    "stdlib/std/vector.gti": "9a3ee85933fc78c681b9ea4a3ac67bb1985a4b209c37aec08d6ae9288c0c0049"
+    "stdlib/std/vector.gti": "9a9cea018dd2641764feaed4c7f58efaded85f1767ca80f07a03c26d6e1c8e36"
   },
   "cases": [
     {
@@ -69,6 +70,35 @@
       "id": "algorithm-mutation",
       "mode": "run",
       "source": "tests/fixtures/algorithm_mutation.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-ordered-search",
+      "mode": "run",
+      "source": "tests/fixtures/ordered_search.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-ordered-search-cost",
+      "mode": "run",
+      "source": "tests/fixtures/ordered_search_cost.gti",
+      "native_sources": ["tests/fixtures/stdlib_adoption_allocation_counts.cpp"],
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-ordered-search-example",
+      "mode": "run",
+      "source": "examples/139-ordered-search.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "urgent jobs: 2\njobs at priority 5: 2\npriority found\n", "stderr": ""}
+    },
+    {
+      "id": "algorithm-ordered-search-user-types",
+      "mode": "run",
+      "source": "tests/fixtures/ordered_search_user_types.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -529,6 +559,13 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "environment",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_environment.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "experimental-json",
       "mode": "run",
       "source": "tests/fixtures/experimental_json.gti",
@@ -665,8 +702,6 @@
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_json.gti",
       "optimizations": ["O0", "O3"],
-      "build_timeout_seconds": 600,
-      "build_timeout_reason": "main's failure cleanup is quadratic in its owning locals (M-FAIL-01 shared failure cleanup), so its generated C++ is about 33 MB; the native O3 build takes about 120 seconds on a quiet M2 Max and can pass 300 seconds under concurrent load",
       "expected": {"exit_code": 0, "stdout": "demo\n{\"name\":\"demo\",\"private\":true,\"count\":42,\"items\":[\"one\",2]}\n", "stderr": ""}
     },
     {
@@ -1382,6 +1417,7 @@
         "std::min",
         "std::min_element",
         "std::none_of",
+        "std::partition_point",
         "std::remove_copy",
         "std::remove_copy_if",
         "std::replace",
@@ -1396,9 +1432,9 @@
         "std::transform",
         "std::upper_bound"
       ],
-      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types", "constexpr-library", "algorithm-owned-transform", "algorithm-owned-example", "restoring-indexed", "restoring-order", "restoring-order-example"],
-      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "application-defined and fixed-array predicate/operation/mutable complete-range clients"],
-      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_breadth_test.py", "tests/generic_algorithm_errors_test.py", "stdlib/std/algorithm.gti"]
+      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types", "constexpr-library", "algorithm-ordered-search", "algorithm-ordered-search-cost", "algorithm-ordered-search-example", "algorithm-ordered-search-user-types", "algorithm-owned-transform", "algorithm-owned-example", "restoring-indexed", "restoring-order", "restoring-order-example"],
+      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "application-defined and fixed-array predicate/operation/mutable complete-range clients", "forward cursors with owning unordered records and move-only mutable query callbacks"],
+      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_breadth_test.py", "tests/generic_algorithm_errors_test.py", "tests/ordered_search_runtime_test.py", "tests/fixtures/ordered_search.gti", "tests/fixtures/ordered_search_user_types.gti", "examples/139-ordered-search.gti", "stdlib/std/algorithm.gti"]
     },
     {
       "id": "array.executable",
@@ -1719,6 +1755,27 @@
       ]
     },
     {
+      "id": "environment.executable",
+      "source": "stdlib/std/environment.gti",
+      "status": "executable",
+      "operations": ["std::environment::errc", "std::environment::get"],
+      "case_ids": ["environment"],
+      "required_instantiations": [
+        "missing versus present empty owned optional strings",
+        "invalid empty, equals and embedded-NUL names",
+        "independent owners surviving subsequent lookups"
+      ],
+      "evidence": [
+        "docs/language/process.md",
+        "examples/139-environment-configuration.gti",
+        "runtime/src/environment.cpp",
+        "tests/fixtures/stdlib_surface_environment.gti",
+        "tests/fixtures/environment_lookup.gti",
+        "tests/environment_runtime_test.py",
+        "tests/runtime_environment_tests.cpp"
+      ]
+    },
+    {
       "id": "experimental-json.executable",
       "source": "stdlib/std/experimental/json.gti",
       "status": "executable",
@@ -1739,7 +1796,7 @@
       ],
       "evidence": [
         "docs/language/json.md#experimental-reflected-json",
-        "examples/139-reflected-json.gti",
+        "examples/141-reflected-json.gti",
         "stdlib/std/experimental/json.gti",
         "tests/fixtures/experimental_json.gti",
         "tests/reflection_runtime_test.py"

@@ -1,22 +1,27 @@
 # Place Identity And Ownership-State Authority
 
-Status: M-OWN-01 design, M-OWN-02 bounded implementation, M-LIFE-01
-normal-exit lifecycle substrate, and M-OWN-04 named Expected-payload range
-slice complete. The `M-BACK-01/02` executable-body
-cutover is also complete: every accepted body reaches the backend through
-verified MIR. Remaining per-family M-EXEC, failure rollback, provenance, and
-aggregate lifecycle work extends the represented schedule without restoring a
-backend fallback. M-OWN-04 is the implemented bounded exception for read-only
-range loans over the active value of one stable named `expected<T, E>`; it
-does not generalize retained nested-owner borrows.
+Status reconciled against integrated source on 2026-10-11: M-OWN-01/02,
+M-LIFE-01, M-OWN-03's initial exclusive carrier, M-OWN-04's named
+Expected-payload range, and the executable-body MIR cutover are delivered.
+Subsequent work admits multiple shared/exclusive nominal field dependencies,
+nested constructor composition, physical carrier references, cleanup-bound
+borrowed classes, and normal/failure cleanup for the admitted families. The
+original one-field and normal-exit-only limits below are historical slice
+boundaries, not current language-wide restrictions. General projection
+precision and additional provenance/escape profiles remain goals; they must
+extend the same semantic authority and verified MIR schedule.
 
 This plan fixes one backend-independent identity and relation contract for GTI
 places. It also assigns ownership-state validity to semantic analysis, concrete
 place/event transport to HIR, and CFG fixed-point verification to MIR.
 M-OWN-02 implements the directly owned fixed-array constant-index slice.
-M-LIFE-01 adds body-local normal-exit temporary and active-drop obligations.
-Raw/opaque provenance, dynamic-index precision, failure rollback, and broader
-aggregate lifecycle trees remain later work.
+M-LIFE-01 introduced body-local temporary and active-drop obligations; later
+failure and aggregate work extends those obligations rather than restarting
+their design. Raw-pointer obligation auditing and source-defined typed storage
+are also implemented. Neither establishes a general raw-pointer alias proof
+or per-slot static loan precision. See the current
+[ownership contract](../language/ownership-and-lifetimes.md) and
+[raw-pointer contract](../language/raw-pointers.md) for supported source forms.
 
 The implementation order and release horizon remain authoritative in
 [`implementation-sequence.md`](implementation-sequence.md). Language meaning
@@ -36,8 +41,8 @@ Before M-OWN-02, the stable-place slice had three related representations:
 - MIR owns `MirPlace`, then privately rebuilds `MirCanonicalPlace` to compare
   roots and projections during verification.
 
-Those representations intentionally support only the bounded existing slice.
-Semantic index expressions currently collapse to their containing place. MIR
+Those representations supported only the pre-M-OWN-02 slice.
+Semantic index expressions then collapsed to their containing place. MIR
 retains field, index, dereference, raw-index, and raw-dereference projections,
 but its loan overlap check proves only distinct named fields disjoint. Its
 equality and containment helpers separately compare index value IDs. HIR
@@ -49,9 +54,10 @@ ownership event types from semantic authority. Semantics still uses a private
 working place while resolving source, but durable semantic facts, HIR, and MIR
 share the value-owned key. Constant fixed-array indices are exact; distinct
 constants are disjoint; dynamic selections remain may-alias. MIR carries the
-same event and checks the reachable CFG fixed point. M-LIFE-01 now owns the
-supported failure-free temporary identities, transfer events, and active-drop
-state; complete failure cleanup and wider lifetime epochs remain downstream.
+same event and checks the reachable CFG fixed point. M-LIFE-01 and later
+failure integration own represented temporary identities, transfer events,
+active-drop state and rollback. More precise slot epochs and raw/opaque place
+identities remain extension work, not missing cleanup for every current body.
 
 ## 2. Adopted Invariants
 
@@ -103,11 +109,23 @@ MIR text normalizes it while preserving body and revision. A future persistent
 cache must replace it with that cache's own content identity rather than
 serializing the process-local number.
 
+The implemented `PlaceKey` in `semantic_core.h` contains a `PlaceDomain`, a
+symbol root or receiver flag, and field/constant-index/dynamic-index/dereference
+projections. It does not contain the full tagged root taxonomy or explicit
+pointee/slot epoch fields described as the extension target below. The shared
+relation operates on normalized tracked keys; raw addresses must not be
+invented as distinct symbol roots to obtain a disjointness proof. Existing
+loans, lifecycle obligations, raw-pointer auditing and source slot state retain
+their respective authority until a coherent generalization replaces them.
+
 The future concrete representation may intern keys and expose a body-local
 `PlaceId`, but interning is storage optimization. Equality and relation follow
 the value described here.
 
 ### 3.1 Roots
+
+This is the adopted identity-domain design for extending tracked places, not
+an inventory of distinct tags already present in `PlaceKey`.
 
 | Root | Identity and boundary |
 | --- | --- |
@@ -162,6 +180,10 @@ result root. A result with neither property is opaque.
 
 ### 3.3 Lifetime Epoch
 
+The explicit epoch representation below is a precision target. Current
+checked loans and lifecycle state enforce the admitted invalidation rules
+without a general epoch field in `PlaceKey`.
+
 `PlaceKey` names storage and remains stable across move and restoration of that
 storage. Separately, ownership state owns a lifetime epoch for derived loans
 and checked-owner pointees. Initialization, replacement, move, destruction, or
@@ -178,8 +200,11 @@ prior contents.
 
 ### 3.4 Typed Allocation And Slot Provenance
 
-ADR 022's public `std::storage<T>` value is an owning allocation-origin
-capability, not an address. A successful allocation creates one origin carrying
+ADR 022's public `std::storage<T>` value is a source-defined owning allocation
+abstraction, not an address. General byte-provider leases, typed lifetime
+operations and checked owner-witness borrowing underpin its policy; the
+compiler no longer supplies a private sparse-storage handle. A successful
+allocation creates one owner carrying
 the element type, capacity, effective alignment, slot-live bookkeeping, and
 release authority. Moving the storage transfers that origin to the destination
 owner and closes the moved-from owner's epoch. No public operation splits the
@@ -198,17 +223,18 @@ earlier value. Owner destruction closes every remaining slot epoch in reverse
 index order before closing the allocation origin. Allocation failure publishes
 no origin or epoch.
 
-The first S-ALLOC-02 implementation intentionally maps a returned slot borrow
+The first S-ALLOC-02 implementation mapped a returned slot borrow
 to the exact storage receiver origin but retains owner-wide conflict precision.
 Consequently, a live `get`/`get_mut` result blocks storage mutation, movement,
 and destruction even when another constant index might eventually be proved
-disjoint. This is conservative and sound. A later indexed-place slice may add
+disjoint. The current source-defined implementation retains that conservative
+owner-wide checked-loan contract. A later indexed-place slice may add
 constant-index disjointness or one evaluated dynamic-selection identity, but it
 must preserve the slot-epoch rule and keep distinct dynamic evaluations
 may-alias unless a named proof relates them.
 
 Arena reset generations and pool-handle generations are not silently equated
-with slot epochs. S-ALLOC-03 must model those public policy generations in the
+with slot epochs. Delivered S-ALLOC-03 clients model public policy generations in the
 arena/pool owner or handle and then translate a valid operation to the
 underlying storage slot lifetime. An integer index alone is never provenance.
 
@@ -228,6 +254,12 @@ PlaceRelation =
 `LeftStrictPrefix` means the left key names an ancestor containing the right;
 `RightStrictPrefix` is the reverse. The relation is deterministic and symmetric
 apart from that direction.
+
+The full-domain extension algorithm is below. The implemented shared relation
+already handles compatible domains, exact tracked roots, named fields,
+constant indices, dynamic selections and prefix overlap. Epoch rejection and
+raw/opaque root classification require the explicit extension representation;
+they are not extra checks performed by today's `placeRelation()`.
 
 The algorithm is:
 
@@ -399,8 +431,9 @@ The bounded implementation now:
 
 Checked-owner field projections continue to use their existing exact source
 place behavior. Raw-pointer partial movement, vector slot extraction, general
-provenance, return-field inference, a general alias solver, and complete drop
-obligations remain non-goals of this row.
+provenance, a general alias solver, and complete drop obligations were non-goals
+of this row. Later lifecycle, return-origin and source-storage work must not be
+misclassified as absent merely because M-OWN-02 did not implement it.
 
 ## 9. Implemented M-OWN-04 Named Expected-Payload Range Slice
 
@@ -491,16 +524,17 @@ for a general nested-owner graph.
 
 Status: implemented through verified MIR and exercised by ordinary
 `std::pair<iterator, bool>` insertion results from both associative containers.
-The focused native, ownership-negative, LSP and verifier gates pass; combined
-publication remains subject to the production completion gates.
+This first slice is integrated, not awaiting combined publication. Its
+single-path restriction has since been generalized as described below.
 
-An ordinary class or struct may nest a carrier through nominal fields when
-there is exactly one path to one stored reference. The dependency is on the
+The first slice admitted a nominal field chain with exactly one path to one
+stored reference. Its dependency is on the
 external owner, not on the temporary or parameter shell used to construct the
-aggregate. Multiple borrowed fields remain rejected even if two particular
-values happen to borrow the same owner. Arrays, inherited borrowed state,
-captures, global/static storage, dependency-reseating assignment and custom
-carrier destructors keep their existing restrictions.
+aggregate. Current ordinary carriers may have multiple direct or nested
+reference paths, including mixed shared/exclusive access, repeated shared
+origins and destructor-bound cleanup. Arrays, inherited borrowed state,
+captures, global/static storage and dependency-reseating assignment retain
+their documented restrictions.
 
 Semantics resolves the entire field-declaration path after generic
 substitution. Each explicit constructor initializes the containing borrowed
@@ -523,7 +557,35 @@ verifier mutations (wrong path, wrong source, duplicate borrow, premature end),
 and O0/O1/O3 C++20/C++23, no-elide and sanitizer execution of both reduced
 carriers and production map insertion results. A carrier with an owning
 non-borrowed sibling retains that sibling's independent move/copy and cleanup
-rules. Lifecycle-bound mutex guards remain direct carriers only.
+rules. Compiler-trusted mutex guards remain direct carriers only; their stronger
+synchronization permission is not inferred from ordinary shared field layout.
+
+### Current Generalization And Remaining Precision
+
+Constructor-origin summaries compose explicit nominal constructor trees whose
+inputs terminate in exact enclosing reference/carrier parameters. Every result
+field preserves its parameter, source field path and access mode, including
+reordered inputs. Shared copies retain aliases; any exclusive path makes the
+whole carrier noncopyable, and movement transfers its complete dependency set.
+Cleanup-owning carriers keep those dependencies through destruction and failed
+construction rollback. References to carrier shells additionally protect
+physical storage; an external owner surviving cannot make a destroyed shell
+safe to reference.
+
+These rules are exercised by unrelated service/guard classes as well as library
+clients (`nested_borrow_fields_test.py`, `cleanup_bound_borrow_tests.cpp`,
+`borrowing_composition_tests.cpp` and their runtime/LSP/verifier gates).
+They do not authorize factories/defaults/packs to fabricate constructor-origin
+summaries, reseating assignments, raw origins or arbitrary escaping lifetimes.
+
+Precise per-field release from a composed carrier remains a separate goal:
+today a receiver-based projection can conservatively retain the complete owner
+set. `L-UP-16` must carry selected dependency paths and independently verified
+endpoints before unrelated owners can be released earlier. Per-slot static
+loan precision additionally requires evaluated selection identity, lifetime
+invalidation and compatible source-storage contracts. Broader escape profiles
+must name their origin set, access, endpoint and transfer/cleanup obligations;
+neither C++ layout nor nominal library names supply those facts.
 
 ## 11. Decision Summary
 
@@ -537,4 +599,6 @@ dynamic-index precision, arbitrary provenance, or general custom-lifecycle
 semantics. M-OWN-04 adds only the exact checked active-value relation needed by
 one read-only range plan over a named Expected local or by-value parameter; its
 complete-root conflict rule and semantic/HIR/MIR verification do not imply a
-general nested-owner graph.
+general nested-owner graph. Subsequent ordinary carrier generalizations are
+independent delivered extensions, while more precise field/slot projections
+remain in the current queue.

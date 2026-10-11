@@ -275,5 +275,5 @@ Decoding reports `std::experimental::json::error{code, offset}`: an `errc`
 `trailing_characters`) and the byte offset into the input where decoding
 stopped; `describe(errc)` spells each kind. The library does not yet offer
 optional fields, `null`, maps, pretty printing or a DOM; use `<std/json>` for
-those. Example 139 and `tests/fixtures/experimental_json.gti` cover the
+those. Example 141 and `tests/fixtures/experimental_json.gti` cover the
 surface.

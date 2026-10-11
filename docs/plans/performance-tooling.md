@@ -1,9 +1,33 @@
-# GTI Performance Measurement And Optimization Tooling Proposal
+# GTI Performance Measurement And Optimization Tooling Plan
+
+## Current Status and Evidence Policy (2026-10-11)
+
+The benchmark foundation, complete-state/provenance validation, compile-time
+comparison runner, frontend tracing, deterministic optimizer reports, pre/post
+MIR inspection, build progress, direct/project build reports and first
+source-line debugging slice are implemented. Broader workloads, pass/global
+phase timing, symbol mapping and native inspection remain work.
+
+The dated measurements below retain their exact compiler, source, host and
+method. An integrated feature does not turn its original targeted validation
+into a fresh full-suite/platform or current-head performance claim. Temporary
+paths may no longer exist; hashes, checked-in reproduction inputs and recorded
+limitations remain historical evidence.
+
+[ADR 012](../decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09)
+supersedes historical benchmark/proxy-first admission and stopping rules.
+General infrastructure can begin from an operation-family cost model and
+correctness obligations. Optimized runtime, allocation, code-size and relevant
+compile/memory measurements validate acceptance; material runtime regressions
+require correction or explicit owner acceptance. Noisy shared CI remains a
+correctness/report gate, not a timing oracle. The sole live queue is
+[the implementation sequence](implementation-sequence.md).
 
 ## Inline std::function targets (2026-10-09)
 
-Status: implemented through the general `<std/polymorphic>` owner, with
-targeted validation. The full suite is deferred to reconciliation.
+Status: integrated through the general `<std/polymorphic>` owner. The
+measurement below records the original targeted validation; it does not claim
+a fresh current-head full suite.
 
 The allocation screen below found `std::function` construct+call 14x slower
 than C++, because every target was boxed. The four repeatable wrappers now
@@ -27,18 +51,22 @@ with four `int64_t` captures and a `unique_ptr` capture each still perform 1.
 bytes and boxed. Invocation is about 7% slower in a hot loop because each call
 first branches on inline versus boxed storage. Programs that include
 `<std/functional>` parse 26 more declarations; bodies change only where the
-wrappers are used.
+wrappers are used. The recorded hot-invocation 7% cost is a real tradeoff in
+this profile, not waived by the allocation improvement. Revalidate it on a
+current exact baseline before claiming performance acceptance; if material
+cost persists, correct it or obtain explicit owner acceptance under ADR 012.
 
 ## Allocation-lean formatting (2026-10-09)
 
-Status: implemented as a stdlib-only change (`<std/format>`), with targeted
-validation. The full suite is deferred to reconciliation.
+Status: integrated as a stdlib-only change (`<std/format>`). The original
+measurement used targeted validation; later integration does not retroactively
+make it a current-head full-suite result.
 
 The allocation screen ran against idiomatic C++ on the same machine as the
 entries below, and it avoided files in Codex's in-flight source-ownership and
 allocation branches. Single runs, after a warm-up:
 
-| Workload | GTI | C++ | Disposition |
+| Workload | GTI | C++ | Disposition at the historical screen |
 | --- | ---: | ---: | --- |
 | `unordered_map<int64,int64>` insert/lookup/erase | 0.16 s | 0.15 s | At parity; no change. |
 | `map<int64,int64>` same operations | 1.24 s | 0.50 s | Tree descent dominates, not `malloc`. Each step loads a slot pointer, then the node. Inline nodes need generic relocation of `K`/`V`, which the S-ALLOC-09 raw-buffer layering provides, so this is deferred to that work. |
@@ -63,9 +91,12 @@ rounds, `-O3`, matching outputs.
 | `interface` probe (control) | 120.43 | 120.82 | 1.003 | unchanged |
 | `soa` probe (control) | 314.77 | 314.10 | 0.998 | unchanged |
 
-The remaining `format` gap to C++ is the single result allocation, which C++
-avoids with its short-string buffer, plus per-byte appends. A short-string
-representation belongs to the S-ALLOC-09 string layering.
+At this checkpoint the remaining format gap was attributed to result
+allocation and per-byte appends. Short-string and inline-node representation
+work should reuse the delivered raw-buffer/object-lifetime foundation; that
+foundation is not still a missing prerequisite. Representation policy,
+relocation, failure, address/borrow guarantees and exact performance acceptance
+remain separate obligations.
 
 While building the output matrix, about 1,100 formatting calls in a single
 `main` took more than 18 CPU-minutes to compile. The same calls split across
@@ -237,8 +268,9 @@ away (RT-5/RT-6) or vectorizing checked arithmetic is separate work.
 
 ## Closed-world exact parameter receivers (2026-10-09)
 
-Status: implemented as a proposal; targeted validation only. The full suite is
-deferred to reconciliation. The change adds
+Status: integrated bounded exact-reference-receiver refinement. These numbers
+remain the proposal checkpoint's targeted evidence, not a new full-suite or
+current-head claim. The change adds
 [closed-world call-site facts](../architecture/optimization.md#closed-world-call-site-facts)
 and their first client,
 [exact parameter receivers](../architecture/optimization.md#exact-parameter-receivers).
@@ -932,7 +964,9 @@ passes whitespace checks. The full-run log is `full-tests.log` beside the
 measurement records. No additional non-gating language audit or clean local
 installation was run for this internal storage-only change. These are local
 arm64 macOS results, not Linux/Windows evidence. `VERSION` is unchanged;
-publication and installation remain held.
+publication and installation were held at this original checkpoint. The later
+publication authorization is recorded below; installation is never implied by
+a new documentation task.
 
 ## O-MEASURE-02: exact-head runtime facility campaign (2026-10-01)
 
@@ -1114,13 +1148,17 @@ limitations are in [verification](../architecture/verification.md).
 `O-MEASURE-02` is complete for this measured bounded facility. The evidence
 supports local arm64 macOS behavior and performance only; it neither proves
 an absolute best optimization for arbitrary programs nor substitutes for a
-future whole-engine workload. Publication and installation remain held.
+future whole-engine workload. The original publication hold is historical;
+see the subsequent authorization at this section's start.
 
 > **Plan status:** Non-canonical future tooling plan. Existing verification is
 > documented in [`docs/architecture/verification.md`](../architecture/verification.md).
 
-Status: Milestone 1 remains in progress; the deterministic GTI optimization
-reporting and pre/post MIR subset of Milestones 3 and 4 is implemented.
+Status: the general benchmark harness foundation is delivered; workload and
+measurement breadth remain in progress. Deterministic GTI optimization reports,
+pre/post MIR, frontend traces, direct/project build reports and live progress
+are implemented; complete pass/global timing and native/symbol inspection are
+not.
 `O-PERF-00` through `O-PERF-03`, `O-PERF-05`, and `O-GAME-01` are complete and
 `O-PERF-04` is measured defer: the runtime workload set,
 fixed-native attribution mode, loop and closed-call safety clients, single-bound
@@ -1175,10 +1213,10 @@ build equivalent variants, verify results, enforce matching toolchains, or
 record GTI compiler telemetry; making it the core harness would leave the most
 important correctness and reproducibility work elsewhere.
 
-Do not add `gti bench` before project mode exists. The initial runner should be
-a repository script. A future project command may call the same runner model,
-but direct compilation must remain independent of manifests and benchmark
-configuration.
+Project mode is implemented. A future `gti bench` command may reuse the
+existing runner model after target/workload selection, trust and report
+publication are specified; it does not need another project-mode foundation.
+Direct compilation remains independent of manifests and benchmark configuration.
 
 ## Goals
 
@@ -1246,15 +1284,16 @@ Derived:
   the idiomatic variant omits GTI's bounds and overflow guarantees, as
   `benchmarks/README.md` already states.
 - **`cpp-semantic` is 6.88x `cpp-idiomatic`.** Most of the distance between
-  GTI and unchecked C++ is the cost of checking itself, not GTI's
-  implementation of it. Any language making these guarantees pays this;
-  the 2.20x is the part that belongs to GTI.
+  GTI and unchecked C++ in this experiment is the selected checking
+  implementation, not a universal cost every safe language must pay. Proof,
+  representation and native optimization can change that cost; the observed
+  2.20x additionally includes GTI lowering overhead in this old profile.
 
 That decomposition is what makes the number actionable. The 6.88x is the
-budget `optimization.md`'s `-O2` range proofs and check elimination are meant
-to reclaim, and reclaiming it needs MIR-level range and alias facts that no
-C++ compiler can derive from the emitted checks. The 2.20x is the current
-implementation overhead, measured before any of that exists.
+budget that GTI range proofs and check elimination can reclaim. GTI-owned
+proofs can expose facts unavailable across some emitted boundaries; native
+optimization may also erase checks it can prove redundant. The 2.20x is the
+observed historical overhead in that profile, not the current optimizer's cost.
 
 The run reported `inconclusive` for one reason: `cpp-idiomatic`'s 8.32 ms
 median falls below the workload's declared `minimum_sample_seconds` of 0.01,
@@ -1267,8 +1306,9 @@ This historical measurement predates compiler source-head binding and is not
 exact-head evidence. It remains a transparent first baseline rather than being
 rewritten under the newer rule.
 
-Re-measure and update this section when check elimination lands, and when the
-MIR cutover completes. A single point is a baseline, not a trend.
+Check elimination and the MIR cutover have since landed. Their later
+measurements are recorded separately below; preserve this first baseline
+rather than relabeling it as current evidence. A single point is not a trend.
 
 ## Exact-Main O-MIR-08 Audit
 
@@ -1287,7 +1327,8 @@ The compiler and exact-main baselines were built with:
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target gti --parallel 8
+python3 scripts/build_window.py --kind build -- \
+  cmake --build build --target gti --parallel 8
 ```
 
 The runtime baselines used five warmups, twenty measured repetitions,
@@ -1396,9 +1437,10 @@ manual-discharge proxy samples: [119266750, 120276083, 120000084, 120121208, 120
 ```
 
 The measured decision is to defer O-MIR-08. Instruction counts are supporting
-evidence only; the runtime result is decisive. The next audit must first gain
-a production loop-carried MIR client and then demonstrate a workload whose
-native backend does not already erase the retained check.
+evidence only for that historical decision. Further loop/SSA architecture may
+be justified by general systems workloads under ADR 012, without this old
+minimum-saving gate; a transformation still needs real source-MIR proof and
+optimized correctness/performance acceptance.
 
 ## Reconciled Runtime-Performance Evidence
 
@@ -2062,9 +2104,10 @@ The comparison variants answer different questions:
 - GTI versus idiomatic C++ is the systems-competitiveness result and cannot be
   omitted merely because semantic C++ is also slow.
 
-Every implementation row must record an exact-head baseline, optimization
-counters, profiles and relevant native code, one disposable upper-bound proxy,
-the smallest justified implementation, and a complete remeasurement. The
+The historical campaign required an exact-head baseline, counters, profiles,
+native code, a disposable ceiling proxy and complete remeasurement. Current
+work retains exact identity and optimized acceptance; a proxy is optional
+attribution evidence, not mandatory permission to implement infrastructure. The
 runner must support holding native optimization fixed while GTI optimization
 changes. Workloads below 50 ms should be scaled before they establish a gate.
 A cache hit, pass count, discharged operation, instruction-count change, or
@@ -2234,8 +2277,8 @@ design.
 
 ## Benchmark Runner
 
-`scripts/benchmark_compare.py` should use only the Python standard library in
-the first milestone. It should accept:
+The implemented `scripts/benchmark_compare.py` uses Python's standard library
+and accepts:
 
 ```text
 --gti <path>                 compiler under test
@@ -2296,8 +2339,10 @@ Record the complete argument vectors. Do not parse `--verbose` human output to
 discover compiler facts. The implemented direct-build `--build-report` sidecar
 provides the exact loaded source graph, consumed source text, native depfile
 runtime closure, runtime archive, native command, executable identities, and
-build-time compiler source identity. Project-mode exposure and additional
-target metadata remain possible follow-up work.
+captured compiler source identity. Project-mode build reports and recorded
+project verification are also implemented. This benchmark runner deliberately
+uses direct builds and requires their `project` field to be null; project
+measurement is a distinct invocation contract.
 
 ### Measurement method
 
@@ -2306,7 +2351,7 @@ Run every variant once for correctness, perform the requested warmups, then
 shuffle one occurrence of every variant per round using the recorded seed.
 Interleaving reduces bias from temperature, frequency, and background drift.
 
-Version 1 should store all raw samples and summarize:
+The implemented runner stores all raw samples and summarizes:
 
 - count;
 - minimum and maximum;
@@ -2321,9 +2366,9 @@ exclude them transparently. Refuse a performance conclusion when the sample is
 shorter than the workload minimum, too few samples succeeded, checksums differ,
 or variance exceeds a documented threshold.
 
-The runner should encourage at least five warmups and twenty measured runs for
-local comparisons. Exact defaults should be chosen after exercising the first
-workloads on macOS, Linux, and Windows.
+The current defaults are five warmups and twenty measured runs. Descriptor
+minimum duration and sample-count/variance checks classify inconclusive runs;
+those defaults are not evidence of validation on every host platform.
 
 ### Reproducibility metadata
 
@@ -2379,10 +2424,14 @@ Benchmarking reports what happened. Compiler telemetry should explain why.
 
 ### Phase timing
 
-Add an optional compiler-owned telemetry sink at phase boundaries. It should be
-caller-owned, synchronous, non-owning, and unable to affect compiler results.
-With no sink, phase timing adds no clock calls and only one predictable null
-check per coarse phase.
+Frontend `--time-trace` and CLI live progress already observe coarse phases.
+Complete global/pass timing remains proposed: extend observational
+compiler/driver sinks without treating terminal elapsed rendering as a complete
+profiler. The sink should be caller-owned, synchronous, non-owning and unable
+to affect compiler results.
+The proposed complete timing facility should add no clock calls with no sink
+and only one predictable null check per coarse phase; this is a design
+requirement, not a new measurement of current frontend/progress overhead.
 
 Initial phase names are:
 
@@ -2402,7 +2451,7 @@ Lexing currently occurs inside `SourceLoader`; expose a separate lexer timing
 only after there is a real boundary rather than estimating it. Native compiler
 timing belongs to the driver, not `Frontend`.
 
-CLI forms should be explicit and scriptable:
+The following CLI forms are proposed, not currently accepted options:
 
 ```sh
 gti main.gti -O2 --time-passes -o main
@@ -2536,10 +2585,11 @@ Useful driver/reporting options include:
 --build-report <path>
 ```
 
-`--build-report` is implemented for successful direct executable builds. It
-uses structured driver data and never parses the human-readable `--verbose`
-stream. Assembly, retained-temp, optimization-report, and project-mode build
-report surfaces remain future work.
+`--build-report` is implemented for successful direct and project executable
+builds, with project reproduction through `gti verify --build-report`. It uses
+structured driver data, never the human-readable `--verbose` stream.
+Assembly, retained-temp-directory and structured native-optimization reports
+remain proposed. Existing `--keep-cpp` is not a general retained-temp option.
 
 ## Profiling And Source Mapping
 
@@ -2597,9 +2647,10 @@ Generated line count is diagnostic only. Templates and inline helpers may add
 source without producing machine code, while one long generated line may hold
 large static data. Never use line count as a performance regression gate.
 
-Make backend helper emission demand-driven only after measurements show a
-meaningful compile-time or artifact benefit. Unconditional helper text is not
-automatically a runtime defect.
+Demand-driven helper emission may be designed from its representation and
+compile/artifact cost model; validate actual benefits and costs at acceptance.
+Unconditional text alone does not establish a runtime defect, and helper
+selection must preserve every runtime/failure dependency.
 
 ## CI Policy
 
@@ -2637,10 +2688,12 @@ correctness before measurement, and gives ordinary CI a threshold-free smoke
 path. This establishes a reproducible baseline; it does not remove a safety
 check or select a new storage representation.
 
-Milestone 1 remains in progress. Integer-kernel, fixed-array-scan, and
-method/branch-dispatch workloads still need to exercise the same descriptor and
-runner without workload-specific code. Compiler-, LSP-, and project-driver
-smoke workloads likewise remain part of the milestone exit gate.
+The harness foundation is complete. Checked scalar-chain, fixed-array proof
+and overflow, exact interface dispatch, vector, string, game-update and
+managed-thread descriptors already exercise it without domain-specific runner
+rules. Compiler comparison is also implemented separately. Broader LSP,
+project-driver, native-boundary and real-application measurements remain
+coverage work, not evidence the runner has never exited its first slice.
 
 The managed-thread schema-2 workload and report-hardening slice is implemented.
 Its 2,800,000 deterministic pixel visits keep the fixed 0.10-second minimum
@@ -2648,7 +2701,8 @@ conservative; an exploratory fastest result of about 225 ms leaves more than
 twice that floor. Both variants use the concurrent execution profile, and the
 threaded variant shares no mutable state: each owned task validates private
 state before its deterministic join. A 5-warmup, 20-run managed-thread
-campaign from the final clean commit is a publication gate. Its generated
+campaign from the final clean commit was that slice's publication gate; the
+completed measured campaign is recorded above. Its generated
 reports belong under the configured build output and in review evidence rather
 than in source control. Earlier exploratory runs must not be presented as
 exact-head evidence.
@@ -2674,7 +2728,10 @@ Acceptance criteria:
 
 ### Milestone 2: compiler phase timing
 
-- Add the optional coarse-phase telemetry sink.
+Status: frontend traces and live progress are delivered; complete pass/global
+structured timing remains proposed. Reuse their observational boundary.
+
+- Extend the optional coarse-phase telemetry sink.
 - Instrument frontend, optimization, backend, native compilation, and total
   driver time.
 - Add human and versioned JSON CLI output.
@@ -2716,7 +2773,8 @@ planned.
 - Deterministic MIR printing and explicit pre/post optimizer dumps are
   implemented.
 - Add deterministic HIR printing.
-- Add retained temporary/assembly and structured build-report options.
+- Direct/project structured build reports are implemented. Add the remaining
+  retained-temporary-directory and assembly inspection options.
 - Support optional native optimization records when the selected compiler
   advertises them.
 - Add a generated-symbol sidecar map.
@@ -2730,9 +2788,11 @@ Acceptance criteria:
 
 ### Milestone 5: measurement-driven optimization
 
-The local production slice includes proof-carrying scalar SCCP, exact
-fixed-array reads, exact-slot sparse-storage reads, and proved non-overflowing
-checked add/subtract/multiply/negate. Natural-loop/range and place
+The production optimizer includes proof-carrying scalar SCCP, bounded
+fixed-array safety, arithmetic overflow, contextual source-prefix/logical-size
+and indexed-content facts, plus exact local/closed-reference dispatch.
+The original sparse/private-prefix storage proof clients are retired.
+Natural-loop/range and place
 alias/escape facts are implemented analysis prerequisites but do not yet claim
 a runtime improvement by themselves. Structural reports, O0/O2/O3
 native-`-O0` differential tests, and the completed campaign evidence establish
@@ -2747,7 +2807,8 @@ benchmark remeasurement.
 - The first bounded `O-MIR-08` fixed-array bounds client remains measured-
   defer. The reconciled overflow evidence was consumed by the now-complete
   performance campaign rather than being relabeled as that no-op bounds client.
-- Add benchmark coverage for each optimization before implementing it.
+- Name affected operations and a cost model before implementation; ship
+  representative optimized correctness/performance evidence before acceptance.
 - Report when a check is discharged and the proof that allowed it.
 - Compare GTI against semantic C++ before and after each pass.
 
@@ -2777,9 +2838,12 @@ When milestones land, update:
 Keep benchmark corpora and local performance reports out of release archives
 unless they become an explicit supported developer component.
 
-## Open Decisions To Resolve With Milestone 1 Data
+## Remaining Measurement Goals
 
-- the default warmup and repetition counts per platform;
+Defaults and the runner foundation are delivered; these are refinements and
+new clients, not decisions waiting for a harness to exist:
+
+- calibrate warmup/repetition policy for each newly supported platform;
 - the minimum acceptable sample duration;
 - whether median absolute deviation is sufficient for warnings or a bootstrap
   confidence interval is warranted;
@@ -2791,5 +2855,15 @@ unless they become an explicit supported developer component.
 - whether project mode should eventually expose `gti bench` or keep benchmark
   orchestration as a developer script.
 
-Resolve these from recorded measurements rather than committing policy before
-the harness exists.
+Resolve policy refinements from recorded measurements without postponing
+architecturally justified compiler facilities. New telemetry/inspection work
+must preserve source identity, independent verification and supported
+production behavior.
+
+| Next useful outcome | Prerequisite and acceptance |
+| --- | --- |
+| Explain an optimized full build's time | Extend compiler/driver observation across optimizer/replay, backend and native phases, with explicit nesting/schema and no result/cache effect. Validate phase presence/order rather than elapsed thresholds. |
+| Close remaining source-storage and hot-callable performance questions | Fresh frozen current-head comparisons with complete allocation/lifetime oracles, cold/build/size/RSS controls and no representation normalization that hides executable differences. The historical SBO invocation cost is not silently accepted. |
+| Profiles that name GTI declarations | Reuse delivered source-line maps and lowered identities for one symbol/declaration sidecar, then test instantiated functions, lambdas, cleanup and synthetic glue. Do not parse generated names as authority. |
+| Larger build/edit and native-boundary evidence | One stable redistributable integration workload or protocol harness with exact overlays, acquisition/cache policy and tool identities. Keep runtime, compile latency and no-op reuse as separate observations. |
+| General optimization infrastructure | Select from the current RT/MIR proof goals, not an old minimum-speedup gate; record operation costs, bounded replay/invalidation and representative optimized acceptance. |

@@ -543,8 +543,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     for (const auto &alias : body.directInitializations) {
       const auto *value = body.findValue(alias.value);
       const Expr *input = nullptr;
+      const Binary *comma = alias.source == nullptr
+                                ? nullptr
+                                : semantics.builtinComma(*alias.source);
       if (const auto *group = exprAs<Grouping>(alias.source))
         input = group->expression().get();
+      else if (comma != nullptr)
+        input = comma->right().get();
       else if (const auto *call = exprAs<Call>(alias.source);
                call != nullptr && call->arguments().size() == 1)
         input = call->arguments().front().get();
@@ -568,7 +573,18 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto *selected = alias.source == nullptr
                                  ? nullptr
                                  : semantics.findConstruction(*alias.source);
-      const bool grouping = exprAs<Grouping>(alias.source) != nullptr;
+      const bool grouping =
+          exprAs<Grouping>(alias.source) != nullptr || comma != nullptr;
+      // A comma alias's producer sequences exactly the comma's left operand
+      // before it begins.
+      const HirValue *discarded = comma == nullptr || comma->left() == nullptr
+                                      ? nullptr
+                                      : body.valueForSource(*comma->left());
+      const bool sequencedLeft =
+          comma == nullptr ||
+          (value != nullptr && discarded != nullptr &&
+           std::count(value->sequencedInputs.begin(),
+                      value->sequencedInputs.end(), discarded->id) == 1);
       const auto &proof = alias.constructionProof;
       const bool exactConstruction =
           grouping ? !proof
@@ -605,14 +621,16 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                value->functionTarget.has_value());
       if (alias.source == nullptr || !seen.insert(alias.source).second ||
           input == nullptr || input != alias.producer || value == nullptr ||
-          value->source != producer || alias.type.kind != SemanticType::Class ||
-          value->info.type != alias.type ||
+          value->source != producer ||
+          (alias.type.kind != SemanticType::Class &&
+           (!grouping || alias.type.kind != SemanticType::Expected)) ||
+          !sequencedLeft || value->info.type != alias.type ||
           value->info.category != ValueCategory::Value ||
           (!grouping && (!fresh || value->intrinsic == IntrinsicKind::Move)) ||
           !semanticMatch || ids == nullptr ||
           std::find(ids->begin(), ids->end(), alias.value) == ids->end())
         result.errors.emplace_back(
-            "class result alias lost its exact source/type "
+            "object result alias lost its exact source/type, sequencing "
             "and shared value identity");
     }
   };
@@ -880,13 +898,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       std::unordered_set<HirValueId> sequenced;
       for (const HirValueId inputId : value.sequencedInputs) {
         const HirValue *input = body.findValue(inputId);
-        if (input == nullptr || input->info.type != SemanticType::Void ||
-            input->neverReturns ||
+        if (input == nullptr || input->neverReturns ||
             input->fullExpression != value.fullExpression ||
             value.programConstantSubstitution ||
             !sequenced.insert(inputId).second) {
           result.errors.emplace_back(
-              "sequenced HIR inputs must be distinct normally completing void "
+              "sequenced HIR inputs must be distinct normally completing "
               "evaluations in the same full expression");
         }
         std::unordered_set<HirValueId> visited;

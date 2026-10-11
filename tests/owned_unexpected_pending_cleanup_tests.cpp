@@ -322,14 +322,37 @@ void testExpectedConstructorArguments() {
           continue;
         const auto dropId = *producer->successResultDrop;
         const auto *drop = function.body.findDropObligation(dropId);
+        // Count the failures whose cleanup path destroys the pending
+        // argument; the branches may share one copy of that cleanup.
         std::size_t cleanups = 0;
-        for (const auto &cleanupBlock : function.body.blocks)
-          for (const auto &cleanup : cleanupBlock.instructions)
-            if (drop && cleanup.kind == lang::MirInstructionKind::Drop &&
-                cleanup.destination == drop->place)
+        for (const auto &record : function.body.failureRecords) {
+          if (!drop || record.kind != lang::MirFailureRecordKind::Producer)
+            continue;
+          const lang::MirBlock *cursor =
+              function.body.findBlock(record.parameterBlock);
+          for (std::size_t steps = 0;
+               cursor != nullptr && steps <= function.body.blocks.size();
+               ++steps) {
+            if (std::any_of(
+                    cursor->instructions.begin(), cursor->instructions.end(),
+                    [&](const lang::MirInstruction &cleanup) {
+                      return cleanup.kind == lang::MirInstructionKind::Drop &&
+                             cleanup.destination == drop->place;
+                    })) {
               ++cleanups;
+              break;
+            }
+            const auto &terminator = cursor->terminator;
+            if (terminator.kind != lang::MirTerminatorKind::Goto &&
+                terminator.kind != lang::MirTerminatorKind::Invoke &&
+                terminator.kind != lang::MirTerminatorKind::ContinueFailure)
+              break;
+            cursor = function.body.findBlock(terminator.target);
+          }
+        }
         expect(cleanups >= 2,
-               "both later-argument branches carry their own failure cleanup");
+               "both later-argument branches run the pending argument's "
+               "failure cleanup");
         for (int mutation = 0; mutation != 4; ++mutation) {
           auto forged = frontend.mir;
           auto *body = lang::findMirBody(forged, address);

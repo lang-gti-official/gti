@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.401.0 — Experimental reflected JSON
+## 0.403.0 — Experimental reflected JSON
 
 - `<std/experimental/json>` (preview): `std::experimental::json::encode(value)`
   and `decode<T>(text)` for any `std::meta::reflectable` struct, written
@@ -18,7 +18,7 @@ for what minor and patch releases mean.
   nested structs, `std::vector`, integral enums (by enumerator name), strings
   with escapes, integers, floats and bools are supported; decoding builds the
   struct through `std::meta::construct` and reports `error{errc, offset}`.
-  Example 139. `std::json` stays the DOM and codec library until the preview
+  Example 141. `std::json` stays the DOM and codec library until the preview
   covers its uses.
 - `std::meta::primary_name_of<T>()` and `type<T>::primary_name()` name a
   generic instance's primary without its arguments.
@@ -26,6 +26,145 @@ for what minor and patch releases mean.
   enclosing generic parameter no longer fails HIR verification
   ("range HIR plan differs from semantic owner/loan/protocol facts") in the
   concrete instance.
+
+## 0.402.4 — Returning `expected` results across scope cleanup
+
+- A function that returns an `expected<T, E>` call result while
+  another local still needs cleanup now builds. This covers
+  `return parse(input);` and `mut auto r = parse(input); return std::move(r);`
+  when `T` is a struct or an `enum`, including inside a loop. These programs
+  previously stopped with internal compiler error `GTI-B0001`.
+
+## 0.402.3 — Comma expressions that yield class values
+
+- A comma expression whose right operand is a class or `expected` value now
+  builds: binding it, as in `plain_value v = (log(), make_value());`,
+  returning it, passing it by value, reading a field of it, assigning it, or
+  observing an `expected`, as in `(step(), make_item(ok)).has_value()`. The
+  comma's value is the right operand's object itself, neither copied nor
+  moved. The left operand runs first, and its temporaries are destroyed at the
+  end of the full expression. Such programs used to report GTI-B0001.
+- A class or `expected` value can also be the discarded left operand of a
+  comma, as in `(make_owned(1), step())`.
+- A parenthesized `expected` call result, as in `(make_item(ok)).has_value()`,
+  and an explicitly discarded result that needs no cleanup, as in
+  `[[discard]] make_value();`, now build too. These also used to report
+  GTI-B0001.
+- Still reporting GTI-B0001, with or without a comma: a member initializer
+  built from a call that cannot fail, such as `p(make_value(n))`, a class-valued
+  conditional whose arms need no cleanup, and a field read of an owning
+  temporary on the right of `&&` or `||`.
+
+## 0.402.2 — Smaller, faster builds for functions with many owned locals
+
+- A function that owns many values with destructors no longer repeats the
+  same cleanup code for every point where it can fail. The JSON
+  standard-library test program now generates 4.3 MB of C++ instead of
+  33.5 MB, and its optimized native build takes about 8 seconds instead of
+  about 150. Behaviour on failure is unchanged: the same resources are
+  released in the same order, and the same failure is reported.
+
+## 0.402.1 — Owning `expected` fields initialized from calls
+
+- A constructor's `expected<T, E>` field can now be initialized directly from
+  a call when `T` owns resources, as in
+  `box(bool ok) : named(make_named(ok)) {}` with a `std::string` in the
+  payload, or when `T` has a destructor. The result is constructed in the
+  field without a default value. If a later member fails, the field is
+  destroyed exactly once. Such constructors used to report GTI-B0001.
+
+## 0.401.6 — Member initializers taking owning `expected` results
+
+- A member initializer that constructs its field from an `expected<T, E>`
+  call result whose payload owns resources, as in
+  `outer(bool ok) : held(holder(make_named(ok))) {}` with a `std::string` in
+  the payload, now builds. The result is moved into the member's constructor
+  and destroyed exactly once, including when that constructor or a later
+  member fails. Such constructors used to fail MIR verification with
+  GTI-B0001.
+
+## 0.401.5 — `expected` results in member initializers and conditionals
+
+- A constructor's `expected<T, E>` field can now be initialized directly from
+  a call, as in `box(bool ok) : item(make_item(ok)) {}`, when `T` is a class
+  that needs no cleanup, including one without a default constructor. Such
+  programs used to report GTI-B0001.
+- Two such `expected` results joined by a conditional can now be used
+  directly: `(ok ? make_item(true) : make_item(false)).has_value()`, its
+  `.value()` and `.error()`, passing it by value, binding it, returning it,
+  and nesting conditionals, in loops and with callers that can fail. These
+  also used to report GTI-B0001.
+- Still reporting GTI-B0001: an `expected` field initialized from a call when
+  the payload owns resources, such as a `std::string` field.
+
+## 0.401.4 — Assigning a construction whose constructor can fail
+
+- Assigning a construction to an existing variable, as in
+  `h = holder(6)`, now builds when the constructor can fail, for any
+  arguments. Such assignments used to report GTI-B0001, while a constructor
+  that cannot fail already worked. A failed construction leaves the variable
+  unchanged and stops with its runtime error.
+- This includes constructions from a call's `expected<T, E>` result, as in
+  `h = holder(make_item())`, whether `T` needs no cleanup or owns resources.
+  The consumed payload is destroyed exactly once.
+
+## 0.401.3 — Reading a field of a temporary that owns resources
+
+- A field of a temporary class value can now be read directly when the class
+  has a destructor or owns resources, as in `make_counted(5).number`,
+  `make_nested(4).inner.code` or `make_named().text.size()`. Such programs
+  used to report GTI-B0001. The temporary is destroyed exactly once, after the
+  read, including in loops, when a later operand of the same expression fails,
+  and when the call producing it can fail.
+- The same now works for the payload of a call's `expected` result, as in
+  `make_named(true).value().text.size()`, when the payload owns resources.
+  Reading `.value()` of an error still stops with GTI-R0009.
+
+## 0.401.2 — Observing an `expected` call result directly
+
+- A call's `expected<T, E>` result can now be tested or read in place:
+  `if (make_item())`, `!make_item()`, `make_item() ? a : b`,
+  `make_item().has_value()`, `make_item().value()` and `make_item().error()`,
+  when `T` is a class that needs no cleanup. This works when `T` has no
+  default constructor, for callers that can fail and for class error types,
+  such as `make_coded(false).error().code`. The value of `.value()` can be
+  read through a field, as in `make_item().value().number`, bound to a
+  variable, or passed by value to a function or constructor. Such programs
+  used to report GTI-B0001, and the state tests failed native compilation
+  before 0.400.1. Reading `.value()` or `.error()` of the wrong state still
+  stops with GTI-R0009.
+- `make_named(false).error()` now also builds when the payload owns
+  resources, such as a `std::string` field.
+- Still reporting GTI-B0001: reading a field of `.value()` when the payload
+  owns resources (`make_named(true).value().text`), two `expected`
+  temporaries joined by a conditional before they are used, and an `expected`
+  field initialized directly from a call.
+
+## 0.401.1 — Returning a construction built from an `expected`
+
+- A construction from a by-value `expected<T, E>` argument can now be returned
+  directly or used as a member initializer, as in
+  `return Holder(make_item());` or `owner() : held(Holder(make_item())) {}`,
+  when `T` is a class that needs no cleanup. Such programs used to fail
+  native compilation, or report GTI-B0001, depending on how the `expected`
+  was produced. It also works when `T` has no default constructor, in
+  both the value and the error state, and for a named local copied or moved
+  in. A returned construction whose payload owns resources, such as a
+  `std::string` field, now builds too.
+- A remaining unsupported use of such an `expected`, such as testing a call's
+  result directly in `if (make_item())`, now reports GTI-B0001 instead of
+  emitting C++ that the native compiler rejects. Assigning such a
+  construction to an existing variable still reports GTI-B0001, and so does a
+  member initializer whose `expected` payload owns resources.
+
+## 0.401.0 — Comparator-ordered search and partition points
+
+- `<std/algorithm>` adds `partition_point` and comparator overloads of
+  `lower_bound`, `upper_bound` and `binary_search`. Applications can discover
+  predicate boundaries or search records without defining `operator<`,
+  including descending orders and move-only records/callbacks. Returned
+  cursors retain checked owner loans; the queries allocate no element storage.
+- Example 139 demonstrates sorting and searching with the same custom order.
 
 ## 0.400.0 — Structural construction and callable reflection
 
@@ -84,6 +223,7 @@ for what minor and patch releases mean.
 - A direct-initialized struct temporary can be projected (`make().x` style
   reads of `{.x = 1}` values) without an internal compiler error.
 - Example 137 shows attribute-driven text and binary encoders.
+
 ## 0.398.7 — Parenthesized lambdas
 
 - A lambda wrapped in parentheses, such as `auto f = ([]() { ... });`,
