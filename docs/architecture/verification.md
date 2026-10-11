@@ -2,6 +2,32 @@
 
 ## Container iterator completion: candidate validation (2026-10-12)
 
+The final exact-head performance check at clean `41dea5d7`, against frozen clean
+`5385c0b0`, passes on an Apple M2 Max with Apple Clang 21, O3/C++23 and strict
+floating-point ordering. Two campaigns each use five warmups and 21 seeded,
+interleaved rounds while holding the suite and all build slots. Paired median
+candidate/baseline vector ratios are 0.990064 and 0.987969 (95% bootstrap
+intervals 0.985614–0.993630 and 0.987142–0.992685); particle ratios are
+1.000481 and 1.000992 (0.999242–1.001718 and 0.998631–1.002500). There is no
+material runtime regression in these workloads. All six separate complete-state
+cases and the negative oracle pass; all 305 retained artifacts are hash-verified.
+The raw assessment, samples, source/tool identities and artifact index are under
+`/private/tmp/gti-iterator-final-performance.6yRKqh/`.
+
+Baseline/candidate vector and particle generated C++ sizes are
+842,023/924,913 and 874,944/960,265 bytes; native text sizes are
+48,332/49,392 and 47,524/48,540 bytes. Instrumented single builds take
+1.285/1.839 and 1.330/1.394 seconds, with peak build RSS
+235,995,136/250,560,512 and 235,290,624/259,194,880 bytes. Median runtime RSS
+is 3,801,088/3,784,704 and 5,668,864/5,668,864 bytes. Single build observations
+are not statistical compile-time claims; these timing probes do not count
+allocations, so the dedicated allocation-counted traversal gates remain
+required. Idiomatic C++ is a successful-observation control, not an identical
+defined-failure contract. Whole-suite/platform acceptance and integration are
+still separate requirements. The independent final coverage review identifies
+manifest omissions for map endpoints and counted-text free wrappers; their
+records and direct wrapper cases are added without changing production code.
+
 The records below are chronological checkpoint evidence, not a blanket final
 certification. After checkpoint `c689a9a8` repairs all seven failures described
 below, focused fresh gates pass for borrowed-class range verification,

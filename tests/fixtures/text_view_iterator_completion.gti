@@ -95,6 +95,28 @@ std::size_t select_position(mut int& events) {
 }
 
 int inspect(std::string_view& view) {
+  // The public free wrappers retain the same view shell and dynamic owner as
+  // member spelling. Exercise every wrapper for both literal and owned text.
+  { mut auto cursor = std::begin(view); auto end = std::end(view);
+    if (*cursor != 'a' || std::distance(cursor, end) != std::ptrdiff_t(5)) { return 33; }
+    cursor += std::ptrdiff_t(5);
+    if (cursor != end) { return 34; }
+  }
+  { mut auto cursor = std::cbegin(view); auto end = std::cend(view);
+    if (*cursor != 'a') { return 35; }
+    cursor += std::ptrdiff_t(5);
+    if (cursor != end) { return 36; }
+  }
+  { mut auto cursor = std::rbegin(view); auto end = std::rend(view);
+    if (*cursor != 'e' || std::distance(cursor, end) != std::ptrdiff_t(5)) { return 37; }
+    cursor += std::ptrdiff_t(5);
+    if (cursor != end) { return 38; }
+  }
+  { mut auto cursor = std::crbegin(view); auto end = std::crend(view);
+    if (*cursor != 'e') { return 39; }
+    cursor += std::ptrdiff_t(5);
+    if (cursor != end) { return 40; }
+  }
   require_random(view.begin());
   require_random(view.rbegin());
   mut auto first = view.cbegin();

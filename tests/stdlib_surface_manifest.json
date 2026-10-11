@@ -2561,14 +2561,21 @@
         "std::detail::map_entry_projection::key",
         "std::detail::map_entry_projection::mapped",
         "std::detail::map_entry_projection::second",
+        "std::map::cbegin",
+        "std::map::cend",
         "std::map::crbegin",
         "std::map::crend",
+        "std::map::end_iterator",
         "std::map::end_mut",
+        "std::map::rbegin",
         "std::map::rbegin_mut",
+        "std::map::rend",
         "std::map::rend_mut"
       ],
       "case_ids": [
-        "iterator-projected-map"
+        "iterator-checked-position",
+        "iterator-projected-map",
+        "iterator-reverse"
       ],
       "required_instantiations": [
         "readonly key",
@@ -2577,7 +2584,10 @@
         "reverse mapped projection"
       ],
       "evidence": [
+        "tests/fixtures/container_iterator_movement.gti",
+        "tests/fixtures/container_reverse_probe.gti",
         "tests/fixtures/map_mutable_entry_projection.gti",
+        "tests/container_iterator_movement_test.py",
         "tests/map_mutable_entry_projection_test.py",
         "examples/087-associative-containers.gti"
       ]
@@ -3570,6 +3580,14 @@
       "source": "stdlib/std/string_view.gti",
       "status": "executable",
       "operations": [
+        "std::begin",
+        "std::cbegin",
+        "std::cend",
+        "std::crbegin",
+        "std::crend",
+        "std::end",
+        "std::rbegin",
+        "std::rend",
         "std::string_view::begin",
         "std::string_view::cbegin",
         "std::string_view::cend",
@@ -3746,6 +3764,7 @@
         "std::detail::unordered_map_entry_projection::second",
         "std::unordered_map::cbegin",
         "std::unordered_map::cend",
+        "std::unordered_map::end_iterator",
         "std::unordered_map::end_mut"
       ],
       "case_ids": [
