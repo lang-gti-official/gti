@@ -362,6 +362,10 @@
       "suite": "text"
     },
     {
+      "name": "testOwningConditionalJoinConsumers",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },
