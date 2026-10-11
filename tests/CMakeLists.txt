@@ -875,6 +875,11 @@ add_test(NAME expected_class_argument_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_argument_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_class_argument_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_cleanup_free_move_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_cleanup_free_move_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_cleanup_free_move_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_constructor_return_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_constructor_return_runtime_test.py"
@@ -915,6 +920,16 @@ add_test(NAME comma_class_results_runtime
                  "${PROJECT_SOURCE_DIR}/tests/comma_class_results_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(comma_class_results_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME plain_call_member_initializer_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/plain_call_member_initializer_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(plain_call_member_initializer_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME class_conditional_join_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/class_conditional_join_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(class_conditional_join_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_class_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"
