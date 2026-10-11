@@ -92,20 +92,20 @@ int main() {
   }
   mut auto bad_number = std::experimental::json::decode<position>("{\"x\": 1, \"y\": \"no\"}");
   if (bad_number || bad_number.error().code != std::experimental::json::errc::invalid_number ||
-      bad_number.error().offset != std::size_t(15)) {
+      bad_number.error().offset != std::size_t(14)) {
     return 8;
   }
-  std::string_view valid = "{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":false,\"kind\":\"npc\",\"where\":{},\"scores\":[],\"path\":[]}";
+  std::string_view valid = "{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":false,\"kind\":\"npc\",\"where\":{\"x\":0,\"y\":0},\"scores\":[],\"path\":[]}";
   mut auto minimal = std::experimental::json::decode<entity>(valid);
   if (!minimal || minimal.value().kind != role::npc || minimal.value().alive ||
       minimal.value().where.x != 0 || minimal.value().path.size() != std::size_t(0)) {
     return 9;
   }
-  if (!failed_with("{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":1,\"kind\":\"npc\",\"where\":{},\"scores\":[],\"path\":[]}",
+  if (!failed_with("{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":1,\"kind\":\"npc\",\"where\":{\"x\":0,\"y\":0},\"scores\":[],\"path\":[]}",
                    std::experimental::json::errc::type_mismatch)) {
     return 10;
   }
-  if (!failed_with("{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":true,\"kind\":\"king\",\"where\":{},\"scores\":[],\"path\":[]}",
+  if (!failed_with("{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":true,\"kind\":\"king\",\"where\":{\"x\":0,\"y\":0},\"scores\":[],\"path\":[]}",
                    std::experimental::json::errc::invalid_enumerator)) {
     return 11;
   }
@@ -118,11 +118,11 @@ int main() {
   if (!failed_with("{\"display_name\":\"a\" \"health\":1}", std::experimental::json::errc::unexpected_character)) {
     return 14;
   }
-  if (!failed_with("{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":true,\"kind\":\"npc\",\"where\":{},\"scores\":[],\"path\":[]} x",
+  if (!failed_with("{\"display_name\":\"a\",\"health\":1,\"stamp\":2,\"ratio\":0.25,\"alive\":true,\"kind\":\"npc\",\"where\":{\"x\":0,\"y\":0},\"scores\":[],\"path\":[]} x",
                    std::experimental::json::errc::trailing_characters)) {
     return 15;
   }
-  if (!failed_with("{\"display_name\":\"a\",\"health\":-1,\"stamp\":2,\"ratio\":0.25,\"alive\":true,\"kind\":\"npc\",\"where\":{},\"scores\":[],\"path\":[]}",
+  if (!failed_with("{\"display_name\":\"a\",\"health\":-1,\"stamp\":2,\"ratio\":0.25,\"alive\":true,\"kind\":\"npc\",\"where\":{\"x\":0,\"y\":0},\"scores\":[],\"path\":[]}",
                    std::experimental::json::errc::invalid_number)) {
     return 16;
   }
