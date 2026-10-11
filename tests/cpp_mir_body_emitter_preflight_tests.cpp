@@ -2389,6 +2389,37 @@ int main() {
          "the fixture should exercise the nested native-base vocabulary proof");
 
   metrics.programVerifications = 0;
+  const lang::CppMirProgramEmissionAnalysis structural =
+      emitter.analyzeProgramStructure();
+  const auto addresses = lang::enumerateMirBodyAddresses(program);
+  expect(structural.ready() && structural.issues.empty() &&
+             structural.bodies.size() == addresses.size() &&
+             metrics.programVerifications == 1,
+         "one structural batch must validate the exact immutable MIR/map once "
+         "and retain the complete body inventory");
+  for (std::size_t index = 0; index < structural.bodies.size(); ++index) {
+    const auto &batch = structural.bodies[index];
+    expect(index < addresses.size() && batch.body == addresses[index],
+           "structural batching must not drop, substitute or duplicate a body");
+    const lang::CppMirBodyEmissionAnalysis standalone =
+        emitter.analyze(batch.body);
+    expect(batch.body == standalone.body &&
+               batch.readiness == standalone.readiness &&
+               batch.issues.size() == standalone.issues.size() &&
+               std::equal(batch.issues.begin(), batch.issues.end(),
+                          standalone.issues.begin(),
+                          [](const lang::CppMirBodyEmissionIssue &left,
+                             const lang::CppMirBodyEmissionIssue &right) {
+                            return left.kind == right.kind &&
+                                   left.body == right.body &&
+                                   left.block == right.block &&
+                                   left.instruction == right.instruction &&
+                                   left.detail == right.detail;
+                          }),
+           "batch and standalone structural analysis must match every body and "
+           "exact issue identity/detail");
+  }
+  metrics.programVerifications = 0;
   const lang::CppMirProgramEmissionPlan plan = emitter.buildProgramPlan();
   expect(plan.ready() && metrics.programVerifications == 1,
          "one complete program plan should verify MIR exactly once, including "
@@ -2422,6 +2453,13 @@ int main() {
     expect(!emitter.analyze(fields.front()).ready() &&
                metrics.programVerifications == before + 3,
            "standalone analysis cannot reuse prior successful validation");
+    const lang::CppMirProgramEmissionAnalysis rejectedStructure =
+        emitter.analyzeProgramStructure();
+    expect(!rejectedStructure.ready() && !rejectedStructure.issues.empty() &&
+               rejectedStructure.bodies.empty() &&
+               metrics.programVerifications == before + 4,
+           "a globally invalid MIR/map must fail fresh structural validation "
+           "without any independently Ready child");
   };
 
   const lang::MirFunctionInstance *function = firstSourceFunction(program);
@@ -2455,6 +2493,46 @@ int main() {
   map = lang::CppMirBodyEmissionMap(std::move(duplicate));
   expectRejected("a changed incoherent representation map must not reuse "
                  "successful admission or leave any Ready child plan");
+
+  program = frontend.mir;
+  lang::CppMirBodyEmissionMapRows missing = rows;
+  const lang::MirBodyAddress missingAddress{
+      .kind = lang::MirBodyKind::Function,
+      .owner = firstSourceFunction(frontend.mir)->id};
+  const std::size_t beforeMissing = missing.bodies.size();
+  std::erase_if(missing.bodies,
+                [&](const auto &row) { return row.address == missingAddress; });
+  expect(missing.bodies.size() + 1 == beforeMissing,
+         "the negative must remove exactly one real body representation");
+  map = lang::CppMirBodyEmissionMap(std::move(missing));
+  metrics.programVerifications = 0;
+  const auto incomplete = emitter.analyzeProgramStructure();
+  expect(incomplete.issues.empty() &&
+             incomplete.bodies.size() == addresses.size() &&
+             metrics.programVerifications == 1,
+         "a locally missing representation must retain the complete structural "
+         "inventory rather than be confused with global invalidity");
+  bool rejectedMissing = false;
+  for (const auto &batch : incomplete.bodies) {
+    const auto standalone = emitter.analyze(batch.body);
+    expect(batch.readiness == standalone.readiness &&
+               batch.issues.size() == standalone.issues.size() &&
+               std::equal(batch.issues.begin(), batch.issues.end(),
+                          standalone.issues.begin(),
+                          [](const lang::CppMirBodyEmissionIssue &left,
+                             const lang::CppMirBodyEmissionIssue &right) {
+                            return left.kind == right.kind &&
+                                   left.body == right.body &&
+                                   left.block == right.block &&
+                                   left.instruction == right.instruction &&
+                                   left.detail == right.detail;
+                          }),
+           "batching must preserve exact body-local rejection issues");
+    if (batch.body == missingAddress)
+      rejectedMissing = !batch.ready();
+  }
+  expect(rejectedMissing,
+         "structural batching must not independently admit the missing body");
 }
 
 void testImmutableBodyPlanOutlivesAdmissionInputs() {

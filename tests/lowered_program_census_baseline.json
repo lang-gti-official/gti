@@ -2071,18 +2071,18 @@
       }
     },
     "141-reflected-json.gti": {
-      "declarations": 1168,
-      "bodies": 384,
-      "generated_items": 229,
+      "declarations": 1429,
+      "bodies": 389,
+      "generated_items": 246,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
-        "structural_operator_adapter": 15,
+        "structural_operator_adapter": 31,
         "callable_adapter": 10,
         "lifecycle_cleanup": 7,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 195
+        "concrete_instance_adapter": 196
       }
     },
     "143-checked-view-iteration.gti": {
@@ -2132,8 +2132,8 @@
     }
   },
   "totals": {
-    "declarations": 89730,
-    "bodies": 14465,
-    "generated_items": 8859
+    "declarations": 89991,
+    "bodies": 14470,
+    "generated_items": 8876
   }
 }

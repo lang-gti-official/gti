@@ -683,7 +683,16 @@ family labels and indentation is therefore formatting, not a second
 admission path.
 
 Whole-program admission validates MIR and the copied representation map once
-per `analyzeProgram`/`buildProgramPlan` operation. Initializer vocabulary probes
+per `analyzeProgram`/`buildProgramPlan` operation. The separate
+`analyzeProgramStructure` operation batches the same structural results and
+canonical body order as standalone `analyze(address)`, including hosted startup,
+with one fresh whole-program validation. Structural readiness is not complete
+text admission: field-initializer bodies can be structurally ready while outside
+the text vocabulary. Production preflight continues to use `analyzeProgram`,
+and production emission continues to require a sealed `buildProgramPlan`.
+Global MIR/map failure returns no independently ready body results; missing
+body-local representation rows retain their exact structural issues.
+Initializer vocabulary probes
 and plan assembly reuse that operation's body analysis; nested base-constructor
 probes use a private body-local vocabulary helper, not the standalone validating
 entry point. Invalid global input stops before body plans are constructed.
@@ -691,6 +700,11 @@ Standalone `analyze`, `buildPlan`, and `initializerSchedule` still validate thei
 inputs on every call. No validation cache survives an operation or is keyed only
 by a program address. Optional caller-owned metrics count actual whole-program
 verifications for deterministic regression checks without changing admission.
+The emitter corpus uses one structural batch for its readiness sweep and one
+immutable program plan for its production/general-text agreement sweep rather
+than revalidating the whole program separately for each body. Exact standalone
+result/text comparisons and global/body-local forgery tests guard this reuse;
+there is no persistent certificate or change to the admission predicate.
 
 Before spelling a body, the backend derives a pointer-free
 `CppMirControlFlowPlan` solely from that body's sealed optimized MIR. The plan

@@ -59103,6 +59103,16 @@ CppMirProgramEmissionPlan CppMirBodyEmitter::buildProgramPlan() const {
 }
 
 CppMirProgramEmissionAnalysis CppMirBodyEmitter::analyzeProgram() const {
+  return analyzeProgramImpl(true);
+}
+
+CppMirProgramEmissionAnalysis
+CppMirBodyEmitter::analyzeProgramStructure() const {
+  return analyzeProgramImpl(false);
+}
+
+CppMirProgramEmissionAnalysis
+CppMirBodyEmitter::analyzeProgramImpl(bool includeTextVocabulary) const {
   const MirBodyLookupScope lookups;
   CppMirProgramEmissionAnalysis analysis;
   analysis.readiness = CppMirBodyEmissionReadiness::Ready;
@@ -59133,7 +59143,7 @@ CppMirProgramEmissionAnalysis CppMirBodyEmitter::analyzeProgram() const {
   analysis.bodies.reserve(addresses.size());
   for (const MirBodyAddress address : addresses) {
     CppMirBodyEmissionAnalysis body;
-    if (address.kind == MirBodyKind::HostedStartup) {
+    if (includeTextVocabulary && address.kind == MirBodyKind::HostedStartup) {
       // Hosted startup is a compiler-generated adapter schedule, not a
       // callable basic-block body. Its dedicated verifier below is its exact
       // text authority and intentionally needs no emitted body-name row.
@@ -59142,6 +59152,11 @@ CppMirProgramEmissionAnalysis CppMirBodyEmitter::analyzeProgram() const {
     } else {
       body =
           BodyAnalysisBuilder(program_, representations_, address).run(false);
+    }
+    if (!includeTextVocabulary) {
+      analysis.readiness = mergeReadiness(analysis.readiness, body.readiness);
+      analysis.bodies.push_back(std::move(body));
+      continue;
     }
     bool textSupported = false;
     if (body.ready()) {

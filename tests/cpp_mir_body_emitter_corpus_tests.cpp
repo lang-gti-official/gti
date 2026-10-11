@@ -1,6 +1,58 @@
 #include "cpp_mir_body_emitter_test_fixture.h"
 
+#include <chrono>
+#include <cstdlib>
+#include <iomanip>
+
 namespace {
+
+// Optional evidence only: admission, both sweeps and their assertions remain
+// unchanged. Flush at bounded checkpoints so a CTest timeout retains the tail.
+class CorpusProgress {
+public:
+  CorpusProgress(const std::filesystem::path &source, std::string_view sweep)
+      : source_(source.filename().string()), sweep_(sweep),
+        enabled_(std::getenv("GTI_CPP_MIR_CORPUS_PROGRESS") != nullptr),
+        started_(std::chrono::steady_clock::now()) {
+    checkpoint("start");
+  }
+
+  void checkpoint(std::string_view stage, std::size_t bodies = 0,
+                  std::size_t programVerifications = 0) const {
+    if (!enabled_)
+      return;
+    const double seconds = std::chrono::duration<double>(
+                               std::chrono::steady_clock::now() - started_)
+                               .count();
+    std::cerr << "GTI_CPP_MIR_CORPUS_PROGRESS_V1 source="
+              << std::quoted(source_) << " sweep=" << sweep_
+              << " stage=" << stage << " seconds=" << seconds
+              << " bodies=" << bodies
+              << " program_verifications=" << programVerifications << std::endl;
+  }
+
+private:
+  std::string source_;
+  std::string_view sweep_;
+  bool enabled_;
+  std::chrono::steady_clock::time_point started_;
+};
+
+bool sameAnalysis(const lang::CppMirBodyEmissionAnalysis &left,
+                  const lang::CppMirBodyEmissionAnalysis &right) {
+  return left.body == right.body && left.readiness == right.readiness &&
+         left.issues.size() == right.issues.size() &&
+         std::equal(left.issues.begin(), left.issues.end(),
+                    right.issues.begin(),
+                    [](const lang::CppMirBodyEmissionIssue &left,
+                       const lang::CppMirBodyEmissionIssue &right) {
+                      return left.kind == right.kind &&
+                             left.body == right.body &&
+                             left.block == right.block &&
+                             left.instruction == right.instruction &&
+                             left.detail == right.detail;
+                    });
+}
 
 void testExampleCorpusEmissionReadiness() {
   const std::filesystem::path repository =
@@ -14,6 +66,7 @@ void testExampleCorpusEmissionReadiness() {
   std::size_t incoherent = 0;
   std::size_t invalidIssues = 0;
   for (const std::filesystem::path &source : sources) {
+    const CorpusProgress progress(source, "readiness");
     std::ifstream input(source);
     std::stringstream buffer;
     buffer << input.rdbuf();
@@ -30,6 +83,7 @@ void testExampleCorpusEmissionReadiness() {
             // exactly as they do when compiling this example from the CLI.
             .analyze(source.string(), buffer.str(),
                      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+    progress.checkpoint("frontend");
     if (!frontend.canGenerateCode()) {
       ++rejected;
       std::cerr << "corpus source no longer reaches MIR: "
@@ -41,11 +95,14 @@ void testExampleCorpusEmissionReadiness() {
       continue;
     }
     lang::CppMirBodyEmissionMapRows rows = completeRows(frontend.mir);
+    progress.checkpoint("complete-rows");
     const lang::CppMirBodyEmissionMapRows productionRows =
         buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23, target);
+    progress.checkpoint("production-rows");
     const lang::CppMirBodyEmissionMap productionMap(productionRows);
     const auto productionPlan =
         lang::CppMirBodyEmitter(frontend.mir, productionMap).buildProgramPlan();
+    progress.checkpoint("production-plan");
     for (const auto &body : productionPlan.analysis().bodies) {
       if (body.ready())
         continue;
@@ -67,12 +124,38 @@ void testExampleCorpusEmissionReadiness() {
       }
     }
     const lang::CppMirBodyEmissionMap map(std::move(rows));
-    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
-    for (const lang::MirBodyAddress address :
-         lang::enumerateMirBodyAddresses(frontend.mir)) {
-      const lang::CppMirBodyEmissionAnalysis analysis =
-          emitter.analyze(address);
+    lang::CppMirBodyEmissionMetrics metrics;
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map, &metrics);
+    const auto addresses = lang::enumerateMirBodyAddresses(frontend.mir);
+    const lang::CppMirProgramEmissionAnalysis batch =
+        emitter.analyzeProgramStructure();
+    progress.checkpoint("batch-analysis", batch.bodies.size(),
+                        metrics.programVerifications);
+    expect(batch.issues.empty(),
+           "corpus structural batch must retain every global rejection");
+    expect(batch.bodies.size() == addresses.size(),
+           "structural batch must cover the exact complete body census");
+    for (const auto &issue : batch.issues) {
+      std::cerr << "global structural batch issue in "
+                << source.filename().string() << ": " << issue.detail << '\n';
+    }
+    std::size_t sourceBodies = 0;
+    for (const lang::CppMirBodyEmissionAnalysis &analysis : batch.bodies) {
+      expect(sourceBodies < addresses.size() &&
+                 analysis.body == addresses[sourceBodies],
+             "structural batch must retain exact body identities and order");
+      ++sourceBodies;
+      const lang::MirBodyAddress address = analysis.body;
+      if (std::getenv("GTI_CPP_MIR_CORPUS_COMPARE_BATCH") != nullptr) {
+        expect(sameAnalysis(analysis, emitter.analyze(address)),
+               "structural batch must exactly match standalone readiness and "
+               "every issue identity/detail");
+      }
       ++bodies;
+      if (bodies % 100 == 0) {
+        progress.checkpoint("body-analysis", bodies,
+                            metrics.programVerifications);
+      }
       if (analysis.ready()) {
         ++ready;
       } else {
@@ -122,6 +205,7 @@ void testExampleCorpusEmissionReadiness() {
         }
       }
     }
+    progress.checkpoint("complete", bodies, metrics.programVerifications);
   }
 
   std::cout << "GTI_CPP_MIR_CORPUS_READINESS_V1 sources=" << sources.size()
@@ -168,6 +252,7 @@ void testGeneralTextStepMatchesProductionEmission() {
   bool loanBodies = false;
   bool directControlFlowBodies = true;
   for (const std::filesystem::path &source : sources) {
+    const CorpusProgress progress(source, "agreement");
     std::ifstream input(source);
     std::stringstream buffer;
     buffer << input.rdbuf();
@@ -175,27 +260,39 @@ void testGeneralTextStepMatchesProductionEmission() {
     const lang::FrontendResult frontend = lang::Frontend().analyze(
         source.string(), buffer.str(), {standardLibrary / "prelude.gti"}, {},
         {standardLibrary});
+    progress.checkpoint("frontend");
     if (!frontend.canGenerateCode()) {
       continue;
     }
     const lang::OptimizationResult optimizations =
         lang::OptimizationPipeline().run(frontend.hir,
                                          lang::OptimizationLevel::O0);
+    progress.checkpoint("optimization");
     const lang::BackendArtifact artifact =
         gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+    progress.checkpoint("production-artifact");
 
     lang::CppMirBodyEmissionMapRows rows =
         buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
+    progress.checkpoint("production-rows-first");
     const lang::CppMirBodyEmissionMapRows again =
         buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
+    progress.checkpoint("production-rows-again");
     deterministic =
         deterministic && rows.types == again.types &&
         rows.bodies == again.bodies && rows.symbols == again.symbols &&
         rows.enums == again.enums && rows.capabilities == again.capabilities;
 
     const lang::CppMirBodyEmissionMap map(std::move(rows));
-    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    lang::CppMirBodyEmissionMetrics metrics;
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map, &metrics);
     const std::string &generated = artifact.contents;
+    const lang::CppMirProgramEmissionPlan batchPlan =
+        emitter.buildProgramPlan();
+    progress.checkpoint("batch-text-plan", batchPlan.bodies().size(),
+                        metrics.programVerifications);
+    expect(batchPlan.ready() && batchPlan.issues().empty(),
+           "agreement text plan must retain global and per-body admission");
     for (std::size_t position = generated.find(markerPrefix);
          position != std::string::npos;
          position = generated.find(markerPrefix, position + 1)) {
@@ -229,11 +326,31 @@ void testGeneralTextStepMatchesProductionEmission() {
       }
       const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                          .owner = instance};
+      const lang::CppMirBodyEmissionPlan *plan = batchPlan.find(address);
+      expect(plan != nullptr,
+             "agreement must retain every production-selected body identity");
       const lang::CppMirBodyEmissionText emission =
-          failureForm
-              ? emitter.emitFailureBodyText(address, label,
-                                            markerIndent / 2 - 1)
-              : emitter.emitBodyText(address, label, markerIndent / 2 - 1);
+          plan == nullptr
+              ? lang::CppMirBodyEmissionText{}
+              : (failureForm ? emitter.emitFailureBodyText(*plan, label,
+                                                           markerIndent / 2 - 1)
+                             : emitter.emitBodyText(*plan, label,
+                                                    markerIndent / 2 - 1));
+      if (std::getenv("GTI_CPP_MIR_CORPUS_COMPARE_BATCH") != nullptr) {
+        const lang::CppMirBodyEmissionText standalone =
+            failureForm
+                ? emitter.emitFailureBodyText(address, label,
+                                              markerIndent / 2 - 1)
+                : emitter.emitBodyText(address, label, markerIndent / 2 - 1);
+        expect(emission.text == standalone.text &&
+                   sameAnalysis(emission.analysis, standalone.analysis),
+               "immutable planned text must exactly match standalone text and "
+               "every admission issue");
+      }
+      if (generalBodies % 100 == 0) {
+        progress.checkpoint("general-text", generalBodies,
+                            metrics.programVerifications);
+      }
       if (emission.text.find("::gti_internal::backend::wrapping_add(") !=
               std::string::npos ||
           emission.text.find("::gti_internal::backend::saturating_sub(") !=
@@ -267,6 +384,8 @@ void testGeneralTextStepMatchesProductionEmission() {
                   << source.filename().string() << '\n';
       }
     }
+    progress.checkpoint("complete", generalBodies,
+                        metrics.programVerifications);
   }
 
   std::cout << "GTI_CPP_MIR_CORPUS_AGREEMENT_V1 sources=" << sources.size()
