@@ -3081,7 +3081,8 @@ task checkpoint while validation is in progress.
 slot files record owner pid, time, kind and command and disappear on release;
 a waiter blocks until a full window frees a slot and prints who holds it; a
 bounded wait reports the holders; a slot of an exited pid is reclaimed while a
-live one never is; the suite and build counts come from defaults, the
+live one never is; a mutex in its owner-publication gap and an old live mutex
+cannot be reclaimed; the suite and build counts come from defaults, the
 `GTI_BUILD_WINDOW_*` environment and overriding flags; the CLI holds its slot
 for the whole wrapped command, propagates the command's exit status and lists
 holders with `--status`; and an interrupt delivered to the process group

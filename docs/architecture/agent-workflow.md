@@ -115,8 +115,10 @@ slot kind has its own subdirectory, `suite/` or `build/`, and each holder owns
 one JSON file there named `<pid>-<token>.json` recording `pid`, `time`, `kind`,
 `command` (argv), `cwd` and, for helper validation, the `worktree` and
 `checks`. The count-and-claim step is serialized by a short `lock` directory
-with its own `owner.json`; it is held for milliseconds and reclaimed when its
-owner has exited or it is older than a minute.
+with its own `owner.json`; it is normally held for milliseconds and reclaimed
+when its owner has exited. A live owner is never reclaimed because of age;
+an absent/unreadable owner gets a one-minute initialization grace period before
+reclamation, so peers cannot steal the gap between `mkdir` and owner publication.
 
 Acquisition polls with a bounded sleep. While waiting it prints, on standard
 error, which processes hold the slots, with their pids, start times and
