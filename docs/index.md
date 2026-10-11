@@ -184,8 +184,9 @@ than mixed into the active queue.
 - [LSP evolution](plans/lsp-evolution.md)
 - [Compile-time semantic reflection](plans/reflection.md) — three-phase
   campaign: metaobjects, `constexpr for`, attributes and enum/base/generic
-  queries delivered in phases 1/2; construction, decoding and callable
-  metadata remain in phase 3
+  queries, structural construction and callable/source metadata are delivered;
+  further invocation/runtime reflection and the experimental JSON client remain
+  separate goals
 - [Performance tooling](plans/performance-tooling.md)
 - [Archived plan records](plans/archive/README.md) — completed delivery plans,
   migrations, and historical checkpoints retained without presenting them as

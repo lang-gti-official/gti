@@ -346,7 +346,7 @@ assertion diagnostics; lexically classifies the spelling as a keyword; and
 uses ordinary semantic occurrences for hover, definition, and references in
 the condition. A newer passing document snapshot clears the prior diagnostic.
 
-`constexpr` constructors and read-only aggregate methods use the same compiler
+`constexpr` constructors and read-only or non-consuming mutable aggregate methods use the same compiler
 signature printer as ordinary calls, so declaration and selected-call hover
 retain the qualifier and canonical concrete signature. Unsupported aggregate
 evaluation publishes compiler-owned `GTI-S2057` detail, hints, and related

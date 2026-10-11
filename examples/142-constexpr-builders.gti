@@ -1,0 +1,61 @@
+#include <std/array>
+#include <std/meta>
+
+// Pure helpers can edit a checked referent during constant execution. The
+// same helper is an ordinary safe function when called at runtime.
+constexpr void add(mut int& value, int amount) { value += amount; }
+
+namespace engine {
+struct budgets {
+  mut int draw_calls;
+  mut int particles;
+
+  constexpr budgets(int base) : draw_calls(base), particles(base) {
+    // Fields are initialized before the body edits them.
+    this.particles *= 2;
+  }
+
+  constexpr mut int& draws() mut { return this.draw_calls; }
+};
+
+constexpr budgets prepare_budgets(int base) {
+  mut budgets result = budgets(base);
+  // Existing reflection expands this loop. Constant execution then runs the
+  // ordinary checked field projections, not a separate reflection interpreter.
+  constexpr for (auto field : std::meta::fields_of<budgets>()) {
+    add(field.get_mut(result), 1);
+  }
+  add(result.draws(), 2);
+  return result;
+}
+
+constexpr std::array<int, 4> prepare_curve(int step) {
+  mut std::array<int, 4> curve = std::array<int, 4>();
+  curve.fill(0);
+  mut int current = 0;
+  for (mut std::size_t index = 0; index < curve.size(); index++) {
+    add(current, step);
+    curve.at(index) = current;
+  }
+  curve[0] += 1;
+  return curve;
+}
+}
+
+constexpr engine::budgets limits = engine::prepare_budgets(6);
+constexpr std::array<int, 4> curve = engine::prepare_curve(2);
+static_assert(limits.draw_calls == 9 && limits.particles == 13);
+static_assert(curve.front() == 3 && curve.back() == 8);
+
+// Constants are immutable. A reference cannot be retained as a constexpr
+// binding or escape its owner. Allocation, active cleanup and host I/O are not
+// admitted by this passive-value profile; step/depth limits still apply.
+int main() {
+  engine::budgets runtime_limits = engine::prepare_budgets(6);
+  std::array<int, 4> runtime_curve = engine::prepare_curve(2);
+  for (mut std::size_t index = 0; index < curve.size(); index++) {
+    if (runtime_curve[index] != curve[index]) { return 1; }
+  }
+  return runtime_limits.draw_calls == limits.draw_calls &&
+         runtime_limits.particles == limits.particles ? 0 : 2;
+}
