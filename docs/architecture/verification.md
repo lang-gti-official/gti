@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Expected call results replacing bindings (0.403.1)
+## Expected call results replacing bindings (0.403.2)
 
 - **Defects.** Two families of verified programs failed in the C++ backend:
   - `r = make(7);` replacing an `expected<point, errc>` binding, where `point`

@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.403.1 — Replacing `expected` bindings with call results
+## 0.403.2 — Replacing `expected` bindings with call results
 
 - Assigning a fresh `expected<T, E>` call result to an existing binding, as in
   `r = make(7);`, now builds when `T` is a struct or class without cleanup and
@@ -25,6 +25,16 @@ for what minor and patch releases mean.
   or `error()`, or is discarded. Each replaced or temporary value is destroyed
   exactly once. These programs previously stopped with `GTI-B0001`; only
   initializing a new binding from such a call built.
+
+## 0.403.1 — Conditionals of classes with destructors
+
+- A conditional whose arms are class values with destructors, such as
+  `ok ? make_tracked(1) : make_tracked(2)`, can now be read through a field,
+  assigned to an existing variable, or nested in another conditional. An arm
+  may also move a local, as in `ok ? std::move(local) : make_tracked(3)`,
+  whether the conditional is bound or returned. The selected object is
+  destroyed exactly once, including when a later operand or the local's
+  cleanup fails. These used to report GTI-B0001.
 
 ## 0.403.0 — Experimental reflected JSON
 
