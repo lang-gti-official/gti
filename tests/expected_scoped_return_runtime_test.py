@@ -19,7 +19,7 @@ if __name__ == "__main__":
     guard_site = next(i + 1 for i, text in enumerate(lines)
                       if "int32_t checked = 2 / divisor;" in text)
     scoped = [
-        ((), (0, "72\n-1\n33\n-1\n1\n-1\n0\n-1\n12\n-2\n0\n-2\n1\n-1\n", "")),
+        ((), (0, "72\n-1\n33\n-1\n1\n-1\n0\n-1\n12\n-2\n0\n-2\n1\n-1\n72\n-1\n", "")),
         (("guard",), (0, "2\n73\n2\n1\n", "")),
         (("guard", "fail"),
          (70, "2\n",
