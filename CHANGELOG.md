@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.398.3 — Generic callees declared after their caller
+
+- A generic function that returns a moved by-value parameter, such as an
+  iterator-returning `find`, can now be declared after the function that calls
+  it. Such a program used to be rejected with GTI-S2045 ("Stored-reference
+  value is derived from temporary storage") while the same program with the
+  callee first was accepted. The caller now asks for the callee's body
+  analysis on demand; declaration-order rules are unchanged, so namespace
+  globals and `constexpr` definitions must still precede their uses.
+
 ## 0.398.2 — Faster C++ emission for long function bodies
 
 - The C++ backend no longer re-derives two per-body facts for every

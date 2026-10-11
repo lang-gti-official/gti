@@ -5,10 +5,12 @@ namespace lang {
 SemanticVisitor::SemanticVisitor(
     TargetInfo target, const SourceGraph *sourceGraph, bool toolingOccurrences,
     FrontendWorkMetrics *workMetrics, const SourceManager *sources,
-    RawPointerAuditMode rawPointerAudit, bool requireFunctionDefinitions)
-    : impl(std::make_unique<Impl>(
-          std::move(target), sourceGraph, toolingOccurrences, workMetrics,
-          sources, rawPointerAudit, requireFunctionDefinitions)) {}
+    RawPointerAuditMode rawPointerAudit, bool requireFunctionDefinitions,
+    TrustedBodyAnalysis trustedBodies)
+    : impl(std::make_unique<Impl>(std::move(target), sourceGraph,
+                                  toolingOccurrences, workMetrics, sources,
+                                  rawPointerAudit, requireFunctionDefinitions,
+                                  trustedBodies)) {}
 
 SemanticVisitor::~SemanticVisitor() = default;
 SemanticVisitor::SemanticVisitor(SemanticVisitor &&) noexcept = default;

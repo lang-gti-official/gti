@@ -30,6 +30,14 @@ struct FrontendWorkMetrics;
 // never changes typing, checked loans, MIR verification, or runtime semantics.
 enum class RawPointerAuditMode { Off, Warn, Strict };
 
+// When one semantic check analyses compiler-trusted (prelude and
+// standard-library) function bodies. `Complete` analyses every body in
+// lexical order. `Deferred` analyses every trusted body after the application
+// bodies, in reverse lexical order; it is a test mode that proves analysis
+// results do not depend on body order. Registration, declaration facts and
+// finalization are the same in both modes.
+enum class TrustedBodyAnalysis { Complete, Deferred };
+
 [[nodiscard]] constexpr std::optional<RawPointerAuditMode>
 parseRawPointerAuditMode(std::string_view name) {
   if (name == "off")
