@@ -191,6 +191,7 @@ is a teaching helper, not a production server.
 | `135-inline-polymorphic-values.gti` | an application interface owned by `std::inline_polymorphic`, with small sensors inline, an owning sensor boxed, state preserved across vector growth, and replacement |
 | `136-inline-closure-cells.gti` | an application-defined inline cell holding a bitwise-relocatable closure through raw-address lifetime helpers and `std::layout_of`, moved by its bytes |
 | `137-declared-attributes.gti` | `[[attribute]]` structs applied to fields and types with constant arguments, read through `<std/meta>` by a text encoder and a binary writer, with enumerator metaobjects and the `std::meta::reflectable` constraint |
+| `138-environment-configuration.gti` | read-only owned environment configuration, missing versus explicitly empty values, and invalid-name rejection; try `GTI_DEMO_PROFILE=development` when running it |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
