@@ -112,6 +112,21 @@ as do `expected_cleanup_free_copy_runtime` (7.84 seconds),
 `macos_installed_runtime` (26.90 seconds), the 554-file formatting check and
 release-version policy. Performance and unfiltered acceptance remain open.
 
+The repaired Ubuntu-6 run at clean `aa821063` subsequently passes five of six
+selected gates: paired spans, sparse/lane storage, mapped-value projections,
+the surface manifest and native-provider helper. All 31 other positive
+contiguous fixture/mode cases pass, including its sanitized bounds, cost and
+arrow cases; the combined positive alone reaches its unchanged 180-second
+native sanitizer compilation limit. Its GTI emission succeeds, and no native
+link or sanitizer-execution defect is reported. Because the harness stops
+before its negative-source phase after that timeout, the complete contiguous
+gate still needs validation. This run is not Linux acceptance. Exact output
+and the clean source/command record are retained at
+`.git/gti-remote-runner/results/run-4426855953d6469eb3b71e656793e819/`.
+An isolated single-worker reproduction, fixed-baseline census and both corpus
+oracles are scheduled on the reconciled head; sanitizer flags, allocation
+observations and all test assertions remain unchanged.
+
 ## Expected returns across scope cleanup (0.402.4)
 
 - **Defects.** Three verified programs stopped at the C++ backend with
