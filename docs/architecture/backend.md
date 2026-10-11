@@ -1441,18 +1441,31 @@ transfer slot described above.
 The same slot may instead feed one by-value parameter of an exact ordinary
 source constructor, mirroring the owning route's constructor consumer. The
 construction must match the constructor's parameter types and owner, carry no
-local failure site, and publish its own result into MIR's staged or published
-class slot. A raising constructor must cross the failure constructor boundary;
-a non-raising one carries no defined failure. Parameter identity and dominance
-are the shared call-argument conditions. Every construction form that spells
-these arguments moves the wrapper and retires the moved-from representation
-right after the construction. This covers the failure-tag constructor, the
-plain form of a constructor body, and an Initialize-published binding. A class
-value reaches a constructor parameter through MIR's prepared-parameter place
-instead, so only the Expected wrapper, which MIR gives no place, uses this
-consumer. A construction that is assigned to an existing binding, returned
-directly, or used as a member initializer has no such publication slot. Like
-the owning route, it still rejects body emission.
+local failure site, and publish its own result at an exact MIR destination.
+Both routes share that publication rule. The destination is MIR's staged or
+published class slot, a constructor field's result slot, or the transformed or
+plain result of the Return that consumes the construction. A raising
+constructor must cross the failure constructor boundary; a non-raising one
+carries no defined failure. Parameter identity and dominance are the shared
+call-argument conditions. Every construction form that spells these arguments
+moves the wrapper. A construction published into a binding, a field or a
+transformed result retires the moved-from representation right after it. A
+plain Return leaves that retirement to the representation slot's scope exit,
+since nothing executes after the return. A class value reaches a constructor
+parameter through MIR's prepared-parameter place instead, so only the Expected
+wrapper, which MIR gives no place, uses this consumer. A construction assigned
+to an existing binding still has no such publication and rejects body
+emission. MIR lowering separately rejects an owning Expected payload consumed
+by a member-initializer construction.
+
+The success class of such an Expected often has no default constructor. An
+ordinary SSA local would value-initialize the native wrapper and invent that
+construction, so the declaration fails closed instead, as for a fixed array
+whose element class has none. A failure-free producer, whose plain call
+returns the Expected by value, therefore constructs a staged slot from that
+return value. A shape with no exact publication, such as a temporary observed
+only through its truth value, rejects body emission rather than emitting
+native code that cannot compile.
 
 A named binding of the same cleanup-free placement Expected that is copied into
 either consumer is staged the same way. This is the copied-binding Return rule
