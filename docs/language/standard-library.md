@@ -188,7 +188,8 @@ The current implemented foundation includes:
   reference; see [raw pointers](raw-pointers.md#void); and
 
 - `<std/meta>` compile-time reflection: `std::meta::fields_of<T>()`,
-  `std::meta::type_of<T>()`, `std::meta::name_of<T>()`, type predicates, the
+  `std::meta::type_of<T>()`, `std::meta::name_of<T>()`,
+  `std::meta::primary_name_of<T>()`, type predicates, the
   `field` and `type` metaobjects with `name()`, `index()`, `is_public()`,
   `type()`, `get()` and `get_mut()`, declared attributes
   (`has_attribute<A>()`, `attribute<A>()`, `attributes()`),
@@ -484,7 +485,13 @@ The current implemented foundation includes:
   `std::json::codec<T>` specializations without reflection or implicit field
   mapping. Its source-defined surface executes through verified MIR and native
   C++ emission, including move-only owning error alternatives;
-  see [JSON](json.md); and
+  see [JSON](json.md);
+- `<std/experimental/json>` (preview) `encode<T>(T&)` and
+  `decode<T>(string_view)` for any `std::meta::reflectable` struct, driven by
+  reflection alone: declared names or `[[name("key")]]` as keys,
+  `[[ignore]]`d fields, nested structs, vectors, enums by enumerator name,
+  and `error{errc, offset}` decoding failures; see
+  [experimental reflected JSON](json.md#experimental-reflected-json); and
 - `<std/source_location>` immutable, owned call-site snapshots containing the
   source file, qualified function name, one-based line, and a column value.
   `std::source_location::current()` and defaults that call it are expanded at

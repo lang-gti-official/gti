@@ -2153,8 +2153,17 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_construct.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_callables.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_receiver_effects.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_deferred_range.gti"
   )
   set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
+  add_test(
+    NAME experimental_json_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/reflection_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/experimental_json.gti"
+  )
+  set_tests_properties(experimental_json_runtime PROPERTIES TIMEOUT 900)
   add_test(
     NAME constexpr_text_runtime
     COMMAND "${Python3_EXECUTABLE}"

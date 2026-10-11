@@ -747,6 +747,16 @@ the source graph. The computed types `method_list`, `operator_list`,
 `parameter_list`, `parameter_type`, `return_type`, `constructor_list`,
 `constructor_parameter_list`, `constructor_parameter_type`, `list_first` and
 `list_rest` are rewritten like the field computed types.
+`MetaTypePrimaryName` folds the primary's qualified name without arguments.
+
+A reflection client dispatches on an open parameter with `if constexpr`, so
+the symbolic primary defers the branch (`recordConstexprBranch` with no
+selection) and only concrete reanalysis analyzes the statements inside it.
+Such statements have no primary semantic record; HIR verification
+(`verifyHirProgramPlans`) collects the statements under a `CompileTimeBranch`
+whose source the primary deferred and verifies a range iteration there on the
+instance's own concrete types, structure, loans and strategy instead of
+comparing it with a primary plan.
 
 ## Request Sessions
 
