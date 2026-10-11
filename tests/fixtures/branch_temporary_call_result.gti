@@ -1,0 +1,35 @@
+#include <std/string>
+#include <std/vector>
+
+// A class result that exists only on one branch of `||`, `&&` or `?:` and is
+// used as a receiver publishes into a hidden temporary place. Its value has no
+// other use, yet it is not a discarded result: it must be constructed there,
+// observed by the receiver call, and retired exactly once, including when
+// that call fails.
+
+// A cleanup-free class without a default constructor.
+class reading {
+public:
+  reading(uint32_t value) : value(value) {}
+  // Checked arithmetic makes this receiver call fallible.
+  bool even() { return (this.value + uint32_t(1)) % uint32_t(2) == uint32_t(1); }
+  uint32_t get() { return this.value; }
+private:
+  uint32_t value;
+};
+
+// A failure-free source call returning the class by value.
+reading make_reading(uint32_t value) { return reading(value); }
+
+int main(int argc, std::vector<std::string> argv) {
+  bool live = argc > 0;
+  // Any extra argument makes the first receiver call overflow.
+  uint32_t first = argc == 1 ? uint32_t(4) : uint32_t(4294967295);
+  if (!live || !make_reading(first).even()) { return 1; }
+  if (live && make_reading(uint32_t(3)).even()) { return 2; }
+  bool chosen = live ? make_reading(uint32_t(6)).even() : false;
+  if (!chosen) { return 3; }
+  if (!live || make_reading(uint32_t(5)).get() != uint32_t(5)) { return 4; }
+  std::println(first);
+  return 0;
+}
