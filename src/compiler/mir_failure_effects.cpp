@@ -663,6 +663,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         break;
       case MirTerminatorKind::None:
       case MirTerminatorKind::PropagateFailure:
+      case MirTerminatorKind::ContinueFailure:
       case MirTerminatorKind::Exit:
       case MirTerminatorKind::ContainFailure:
       case MirTerminatorKind::TerminateCleanupFailure:
@@ -1307,6 +1308,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                 block.terminator.failureRecord != 0;
         break;
       case MirTerminatorKind::PropagateFailure:
+      case MirTerminatorKind::ContinueFailure:
       case MirTerminatorKind::None:
       case MirTerminatorKind::Exit:
       case MirTerminatorKind::ContainFailure:
@@ -1891,6 +1893,7 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
       break;
     }
     case MirTerminatorKind::None:
+    case MirTerminatorKind::ContinueFailure:
     case MirTerminatorKind::Exit:
     case MirTerminatorKind::ContainFailure:
     case MirTerminatorKind::TerminateCleanupFailure:

@@ -758,6 +758,12 @@ add_executable("gti_failure_metadata_tests"
 target_link_libraries("gti_failure_metadata_tests" PRIVATE gti_compiler)
 add_test(NAME failure_metadata COMMAND gti_failure_metadata_tests)
 
+add_executable("gti_mir_shared_failure_cleanup_tests"
+               "${PROJECT_SOURCE_DIR}/tests/mir_shared_failure_cleanup_tests.cpp")
+target_link_libraries("gti_mir_shared_failure_cleanup_tests" PRIVATE gti_compiler)
+add_test(NAME mir_shared_failure_cleanup
+         COMMAND gti_mir_shared_failure_cleanup_tests)
+
 add_executable("gti_mir_program_initialization_tests"
                "${PROJECT_SOURCE_DIR}/tests/mir_program_initialization_tests.cpp")
 target_link_libraries("gti_mir_program_initialization_tests"
@@ -1629,6 +1635,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(source_destructor_cleanup_failure_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME shared_failure_cleanup_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/shared_failure_cleanup_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(shared_failure_cleanup_runtime PROPERTIES TIMEOUT 600)
 
   add_test(
     NAME recursive_cleanup_failure_runtime
