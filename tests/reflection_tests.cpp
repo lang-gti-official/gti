@@ -440,6 +440,124 @@ struct Player {
          "a split attribute line is joined with its declaration");
 }
 
+void checkPhase3(const std::filesystem::path &root,
+                 const std::filesystem::path &directory) {
+  // GitHub #5: the owner argument must be the described type (or derive
+  // from it); a same-named field of another type is rejected.
+  const auto owner =
+      analyzeSource(root, directory, "wrong_owner.gti", R"(#include <std/meta>
+struct First { int32_t payload = int32_t(1); };
+struct Second { double payload = 2.0d; };
+class Base { public: int32_t payload = int32_t(3); };
+class Derived : public Base { public: int32_t other = int32_t(4); };
+int main() {
+  std::meta::field<First, 0> field{};
+  Second other{};
+  auto wrong = field.get(other);
+  std::meta::field<Base, 0> base{};
+  Derived derived{};
+  auto fine = base.get(derived);
+  return 0;
+}
+)");
+  expect(countCode(owner, "GTI-S2003") == 1,
+         "an unrelated owner is rejected and a derived owner accepted");
+
+  // GitHub #4: a receiver with effects is kept (semantics accepts it; the
+  // runtime fixture proves the evaluation order).
+  const auto receiver =
+      analyzeSource(root, directory, "receiver.gti", R"(#include <std/meta>
+mut int32_t observations = int32_t(0);
+struct Owner { mut { int32_t payload = int32_t(7); } };
+std::meta::field<Owner, 0> make_field() {
+  observations = observations + int32_t(1);
+  return std::meta::field<Owner, 0>();
+}
+int main() {
+  mut Owner owner{};
+  auto value = make_field().get(owner);
+  make_field().get_mut(owner) = int32_t(9);
+  return value + owner.payload;
+}
+)");
+  expect(receiver.diagnostics.empty(),
+         "a side-effecting metaobject receiver is accepted");
+  for (const lang::Diagnostic &diagnostic : receiver.diagnostics) {
+    std::cerr << "  receiver: " << diagnostic.code << ": " << diagnostic.message
+              << '\n';
+  }
+
+  // Structural construction is limited to designated-eligible structs.
+  const auto construct =
+      analyzeSource(root, directory, "construct.gti", R"(#include <std/meta>
+class Guarded {
+public:
+  Guarded(int32_t start) : value(start) {}
+private:
+  int32_t value;
+};
+struct Plain { int32_t a = 0; bool b = false; };
+enum class fail { nope };
+struct producer {
+  expected<std::meta::field_type<T, I>, fail> produce<T, uint64_t I>(std::meta::field<T, I> field) mut {
+    return std::meta::field_type<T, I>(1);
+  }
+};
+int main() {
+  mut producer source{};
+  mut auto fine = std::meta::construct<Plain, fail, producer>(source);
+  mut auto rejected = std::meta::construct<Guarded, fail, producer>(source);
+  return fine ? 0 : 1;
+}
+)");
+  expect(hasCode(construct, "GTI-S2118"),
+         "construct rejects a class with declared constructors");
+  if (!hasCode(construct, "GTI-S2118")) {
+    for (const lang::Diagnostic &diagnostic : construct.diagnostics) {
+      std::cerr << "  construct: " << diagnostic.code << ": "
+                << diagnostic.message << '\n';
+    }
+  }
+
+  // Callable metadata: out-of-range indices and the trait selector.
+  const auto callables =
+      analyzeSource(root, directory, "callables.gti", R"(#include <std/meta>
+class Counter {
+public:
+  Counter(uint32_t start) : value(start) {}
+  uint32_t get() { return this.value; }
+private:
+  mut { uint32_t value; }
+};
+int main() {
+  std::meta::method<Counter, 5> missing{};
+  std::meta::constructor<Counter, 3> absent{};
+  return int(missing.parameter_count() + absent.parameter_count());
+}
+)");
+  expect(countCode(callables, "GTI-S2111") >= 2,
+         "method and constructor indices out of range are rejected");
+
+  // Budget hardening: nested expansions over methods and parameters still
+  // stop at the per-declaration copy budget with a located diagnostic.
+  std::string wide = "#include <std/meta>\nclass Wide {\npublic:\n";
+  for (int index = 0; index < 70; ++index) {
+    wide += "  void m" + std::to_string(index) + "(";
+    for (int parameter = 0; parameter < 70; ++parameter) {
+      wide += (parameter == 0 ? "" : ", ") + std::string("int p") +
+              std::to_string(parameter);
+    }
+    wide += ") {}\n";
+  }
+  wide += "};\nint main() {\n  mut uint64_t total = 0;\n"
+          "  constexpr for (auto m : std::meta::methods_of<Wide>()) {\n"
+          "    constexpr for (auto p : m.parameters()) {\n"
+          "      total = total + p.index();\n    }\n  }\n  return 0;\n}\n";
+  const auto budget = analyzeSource(root, directory, "wide.gti", wide);
+  expect(hasCode(budget, "GTI-S2108"),
+         "nested callable expansions respect the copy budget");
+}
+
 } // namespace
 
 int main() {
@@ -454,6 +572,7 @@ int main() {
   checkFormatter();
   checkAttributes(root, directory);
   checkAttributeFormatter();
+  checkPhase3(root, directory);
   std::filesystem::remove_all(directory);
   if (failures != 0) {
     std::cerr << failures << " failure(s)\n";

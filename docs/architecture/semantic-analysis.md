@@ -708,6 +708,42 @@ MIR lowering now materialises before rooting a place at it
 (`emitPlaceDependencies` treats `HirValueKind::DirectInitializer` like a
 call); previously only call-like producers were emitted there.
 
+Reflected field access checks its owner argument against the described owner
+(`isSameOrDerivedClass`, following the public base chain) before aliasing,
+and keeps a receiver with effects: when the metaobject expression is not a
+binding, a literal, a projection of one or a default construction of a
+compiler type (`isEffectFreeMetaReceiver`), the alias is the grouped comma
+`(receiver, owner.field)` so the receiver runs once, before the owner, and the
+projection stays the place (`semanticPlace` and `classifyExpression` follow a
+comma to its right operand; MIR lowering already did).
+
+Structural construction (`std::meta::construct`) is library recursion over
+the field list with the compiler-private `meta_construct<T>(values...)` at
+the base. Since a GTI call can only extend a parameter pack at its front, the
+library prepends each produced value and the compiler selects a second
+generated constructor, `ClassInfo::reversedDesignatedConstructor`, whose
+parameters are in reverse field order while its initializers stay in
+declaration order (`registerDesignatedConstructors` generates both).
+`analyzeMetaConstructCall` resolves the call through
+`analyzeConstructorCall` with `selectingDesignatedConstructor` set, so the
+generated constructor is the only candidate and ordinary argument, ownership
+and rollback rules apply; the call then carries a `ResolvedConstructionInfo`
+and HIR lowers it as a construction (a resolved construction's callee is never
+lowered as a runtime value). A type-name call whose computed type rewrites to
+a scalar (`std::meta::field_type<T, I>(value)`) is aliased to the
+`Conversion` that scalar's keyword spells, and is deferred while the computed
+type is still open.
+
+Callable and location queries reuse the query shape table:
+`metaMethodDeclarations` orders a class's `FunctionDecl` members (active
+conditional branches included), `metaMethodFacts`/`metaConstructorFacts`
+substitute the instance's arguments into parameter and return types, and
+`metaDeclarationLine`/`metaDeclarationFile` read the declaration tokens and
+the source graph. The computed types `method_list`, `operator_list`,
+`parameter_list`, `parameter_type`, `return_type`, `constructor_list`,
+`constructor_parameter_list`, `constructor_parameter_type`, `list_first` and
+`list_rest` are rewritten like the field computed types.
+
 ## Request Sessions
 
 Function-signature syntax has a distinct `TypeRef` shape and resolves to

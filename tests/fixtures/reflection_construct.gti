@@ -1,0 +1,135 @@
+// Structural construction through <std/meta>: a binary reader and a text
+// reader build the same struct field by field with std::meta::construct, in
+// declaration order, under ordinary initialization. A short input fails
+// before construction and the values produced so far are cleaned up.
+#include <std/meta>
+#include <std/string>
+#include <std/vector>
+
+struct Point {
+  int32_t x = 0;
+  int32_t y = 0;
+  bool visible = true;
+};
+
+struct Frame {
+  uint32_t index = 0;
+  Point origin{};
+};
+
+enum class read_error { short_input, bad_text };
+
+// Client 1: little-endian bytes, one byte per scalar field here; nested
+// structs recurse through construct.
+struct byte_reader {
+  mut {
+    std::vector<uint8_t> bytes;
+    std::size_t cursor;
+  }
+  byte_reader(std::vector<uint8_t> input) : bytes(std::move(input)), cursor(0) {}
+
+  expected<uint8_t, read_error> next() mut {
+    if (this.cursor >= this.bytes.size()) {
+      return unexpected(read_error::short_input);
+    }
+    uint8_t raw = this.bytes[this.cursor];
+    this.cursor = this.cursor + 1;
+    return raw;
+  }
+
+  expected<std::meta::field_type<T, I>, read_error> produce<T, uint64_t I>(std::meta::field<T, I> field) mut {
+    if constexpr (std::meta::type_of<std::meta::field_type<T, I>>().is_bool()) {
+      uint8_t raw = ?this.next();
+      return raw != uint8_t(0);
+    } else if constexpr (std::meta::type_of<std::meta::field_type<T, I>>().is_struct()) {
+      return std::meta::construct<std::meta::field_type<T, I>, read_error, byte_reader>(this);
+    } else {
+      uint8_t raw = ?this.next();
+      return std::meta::field_type<T, I>(raw);
+    }
+  }
+};
+
+// Client 2: `key=value;` text matched against field names, scanned with the
+// text view's size and indexing only.
+struct text_reader {
+  mut { std::string_view text; }
+  text_reader(std::string_view input) : text(input) {}
+
+  // The index just past `key=` in the text, or the text size when absent.
+  std::size_t locate(std::string_view key) {
+    mut std::size_t at = 0;
+    while (at + key.size() < this.text.size()) {
+      mut bool matches = this.text[at + key.size()] == '=';
+      mut std::size_t offset = 0;
+      while (matches && offset < key.size()) {
+        matches = this.text[at + offset] == key[offset];
+        offset = offset + std::size_t(1);
+      }
+      if (matches && (at == std::size_t(0) || this.text[at - std::size_t(1)] == ';')) {
+        return at + key.size() + std::size_t(1);
+      }
+      at = at + std::size_t(1);
+    }
+    return this.text.size();
+  }
+
+  expected<std::meta::field_type<T, I>, read_error> produce<T, uint64_t I>(std::meta::field<T, I> field) mut {
+    std::size_t start = this.locate(field.name());
+    if (start >= this.text.size()) {
+      return unexpected(read_error::bad_text);
+    }
+    if constexpr (std::meta::type_of<std::meta::field_type<T, I>>().is_bool()) {
+      return this.text[start] == 't';
+    } else if constexpr (std::meta::type_of<std::meta::field_type<T, I>>().is_struct()) {
+      return std::meta::construct<std::meta::field_type<T, I>, read_error, text_reader>(this);
+    } else {
+      mut int32_t value = 0;
+      mut std::size_t at = start;
+      while (at < this.text.size() && this.text[at] != ';') {
+        value = value * int32_t(10) + int32_t(uint8_t(this.text[at]) - uint8_t('0'));
+        at = at + std::size_t(1);
+      }
+      return std::meta::field_type<T, I>(value);
+    }
+  }
+};
+
+int main() {
+  mut std::vector<uint8_t> bytes = std::vector<uint8_t>();
+  bytes.push_back(uint8_t(5));
+  bytes.push_back(uint8_t(3));
+  bytes.push_back(uint8_t(4));
+  bytes.push_back(uint8_t(1));
+  mut byte_reader binary{std::move(bytes)};
+  mut auto frame = std::meta::construct<Frame, read_error, byte_reader>(binary);
+  if (!frame) {
+    return 1;
+  }
+  Frame decoded = std::move(frame).value();
+  if (decoded.index != 5 || decoded.origin.x != 3 || decoded.origin.y != 4 || !decoded.origin.visible) {
+    return 2;
+  }
+
+  mut byte_reader short_input{std::vector<uint8_t>()};
+  mut auto failed = std::meta::construct<Frame, read_error, byte_reader>(short_input);
+  if (failed) {
+    return 3;
+  }
+
+  mut text_reader text{"y=7;x=6;visible=false;"};
+  mut auto point = std::meta::construct<Point, read_error, text_reader>(text);
+  if (!point) {
+    return 4;
+  }
+  Point parsed = std::move(point).value();
+  if (parsed.x != 6 || parsed.y != 7 || parsed.visible) {
+    return 5;
+  }
+  mut text_reader missing{"x=1;"};
+  mut auto incomplete = std::meta::construct<Point, read_error, text_reader>(missing);
+  if (incomplete) {
+    return 6;
+  }
+  return 0;
+}
