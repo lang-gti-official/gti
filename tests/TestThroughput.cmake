@@ -66,6 +66,7 @@ if(Python3_Interpreter_FOUND)
     owning_function_resource_result_runtime owning_function_runtime
     owned_argument_member_initializer_runtime
     owning_expected_field_runtime
+    owning_conditional_join_runtime
     owning_temporary_field_read_runtime
     plain_call_member_initializer_runtime
     short_circuit_field_view_runtime
