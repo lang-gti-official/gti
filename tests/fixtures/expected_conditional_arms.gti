@@ -1,0 +1,218 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// An arm of an Expected-valued conditional may be a callable value
+// invocation (a closure literal, a capturing closure or a callable parameter)
+// or a copy or move of a named Expected binding, as well as a source call.
+// Each arm constructs the conditional's one shared temporary directly, whether
+// the conditional initializes a new binding or replaces an existing one. A
+// cleanup-free success class without a default constructor needs no default
+// alternative, whether the error is an integral enum or a scalar. An owning
+// success class retires each replaced value and each moved-from binding
+// exactly once.
+
+enum class errc { bad, missing };
+
+struct point {
+  int32_t x;
+  int32_t y;
+  point(int32_t x, int32_t y) : x(x), y(y) {}
+};
+
+// An owning payload whose destructor reports each retirement.
+class noisy {
+public:
+  int32_t id;
+  noisy(int32_t id) : id(id) {}
+  ~noisy() { std::println(std::to_string(this.id)); }
+};
+
+int32_t bump(int32_t value) { return value + 1; }
+
+expected<point, errc> make(int32_t v) {
+  if (v == 0) { return unexpected(errc::missing); }
+  if (v < 0) { return unexpected(errc::bad); }
+  return point(v, 2);
+}
+
+expected<point, int32_t> make_scalar(int32_t v) {
+  if (v < 0) { return unexpected(v); }
+  return point(v, 4);
+}
+
+expected<noisy, errc> make_noisy(int32_t id) {
+  if (id > 0) { return noisy(id); }
+  return unexpected(errc::bad);
+}
+
+int32_t observe(expected<point, errc> &result) {
+  if (!result) { return result.error() == errc::missing ? -1 : -2; }
+  return result.value().x * 10 + result.value().y;
+}
+
+int32_t observe_scalar(expected<point, int32_t> &result) {
+  if (!result) { return result.error(); }
+  return result.value().x * 10 + result.value().y;
+}
+
+int32_t observe_noisy(expected<noisy, errc> &result) {
+  return result ? result.value().id : -1;
+}
+
+// A callable parameter's invocations are the arms of a new binding and of a
+// replacement.
+int32_t through<F>(F produce, bool pick, int32_t v) {
+  expected<point, errc> fresh = pick ? produce(v) : produce(v + 1);
+  mut expected<point, errc> replaced = make(1);
+  replaced = pick ? produce(v + 2) : produce(-v);
+  return observe(fresh) * 1000 + observe(replaced);
+}
+
+// A failure-propagating caller joins a closure result and a copy.
+expected<int32_t, errc> relay(bool pick) {
+  auto closure = [](int32_t v) -> expected<point, errc> { return make(v); };
+  mut auto kept = make(3);
+  mut auto current = pick ? closure(4) : kept;
+  current = pick ? kept : closure(-4);
+  return observe(current);
+}
+
+// Owning arms: callable results and moves out of named bindings. Each
+// replaced value and each live moved-from binding's value is retired once.
+int32_t owned(bool yes, bool no) {
+  auto produce = [](int32_t id) -> expected<noisy, errc> {
+    if (id > 0) { return noisy(id); }
+    return unexpected(errc::missing);
+  };
+  mut auto first = make_noisy(200);
+  mut auto held = yes ? std::move(first) : make_noisy(201);
+  mut auto second = make_noisy(202);
+  held = no ? make_noisy(203) : std::move(second);
+  held = yes ? produce(204) : make_noisy(205);
+  held = no ? produce(206) : produce(-1);
+  mut auto third = make_noisy(207);
+  held = no ? std::move(third) : produce(208);
+  auto fresh = no ? make_noisy(209) : produce(210);
+  for (mut int32_t i = 0; i < 3; i += 1) {
+    mut auto local = make_noisy(220 + i);
+    held = i == 1 ? std::move(local) : produce(230 + i);
+  }
+  return observe_noisy(held) * 1000 + observe_noisy(fresh) % 1000;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  bool yes = argc > 0;
+  bool no = argc < 0;
+  auto closure = [](int32_t v) -> expected<point, errc> {
+    if (v == 0) { return unexpected(errc::missing); }
+    if (v < 0) { return unexpected(errc::bad); }
+    return point(v, 3);
+  };
+  auto raising = [](int32_t v) -> expected<point, errc> {
+    return point(bump(v), 0);
+  };
+  auto raising_noisy = [](int32_t v) -> expected<noisy, errc> {
+    return noisy(bump(v));
+  };
+  if (argc == 2) {
+    // A cleanup-free closure arm raises before the binding is replaced.
+    mut auto replaced = make(1);
+    replaced = yes ? raising(int32_t(2147483647)) : make(2);
+    return observe(replaced);
+  }
+  if (argc == 3) {
+    // An owning closure arm raises; the old value and the untouched named
+    // binding are each retired once.
+    mut auto owned = make_noisy(9);
+    mut auto spare = make_noisy(8);
+    owned = no ? std::move(spare) : raising_noisy(int32_t(2147483647));
+    return owned ? owned.value().id : 1;
+  }
+
+  // Closure literal arms, initializing and replacing, through success and
+  // both error alternatives.
+  mut auto r = yes ? closure(1) : make(2);
+  std::println(observe(r));
+  r = no ? make(1) : closure(-2);
+  std::println(observe(r));
+  r = yes ? closure(0) : closure(5);
+  std::println(observe(r));
+  mut auto s = no ? closure(4) : closure(6);
+  std::println(observe(s));
+
+  // A capturing closure.
+  int32_t offset = 4;
+  auto shifted = [offset](int32_t v) -> expected<point, errc> {
+    if (v == 0) { return unexpected(errc::missing); }
+    return point(v + offset, offset);
+  };
+  r = yes ? shifted(1) : make(9);
+  std::println(observe(r));
+  mut auto t = no ? make(9) : shifted(0);
+  std::println(observe(t));
+
+  // Copies of named bindings: both arms, one arm, and a failing source.
+  auto a = make(5);
+  auto b = make(-5);
+  mut auto c = yes ? a : b;
+  std::println(observe(c));
+  c = no ? a : b;
+  std::println(observe(c));
+  c = yes ? b : make(7);
+  std::println(observe(c));
+  mut auto d = no ? closure(8) : a;
+  std::println(observe(d));
+
+  // Moves out of named bindings.
+  mut auto m1 = make(11);
+  mut auto m2 = make(0);
+  mut auto e = yes ? std::move(m1) : make(12);
+  std::println(observe(e));
+  e = no ? make(13) : std::move(m2);
+  std::println(observe(e));
+  mut auto m3 = make(14);
+  e = yes ? std::move(m3) : closure(15);
+  std::println(observe(e));
+
+  // Nested conditionals and a grouped conditional.
+  r = yes ? (no ? closure(16) : a) : make(17);
+  std::println(observe(r));
+  r = (no ? b : closure(18));
+  std::println(observe(r));
+
+  // The same binding replaced on every loop iteration, alternating arm kinds.
+  for (mut int32_t i = 0; i < 4; i += 1) {
+    mut auto local = make(i + 30);
+    r = i % 2 == 0 ? closure(i + 20) : std::move(local);
+    std::println(observe(r));
+    r = i % 2 == 0 ? a : shifted(i);
+    std::println(observe(r));
+  }
+
+  // A scalar error alternative.
+  auto scalar_closure = [](int32_t v) -> expected<point, int32_t> {
+    if (v < 0) { return unexpected(v); }
+    return point(v, 5);
+  };
+  auto sa = make_scalar(3);
+  mut auto sc = yes ? scalar_closure(-7) : make_scalar(1);
+  std::println(observe_scalar(sc));
+  sc = yes ? sa : scalar_closure(2);
+  std::println(observe_scalar(sc));
+  mut auto sm = make_scalar(-9);
+  sc = no ? scalar_closure(2) : std::move(sm);
+  std::println(observe_scalar(sc));
+
+  // Callable parameters, a failure-propagating caller and owning arms.
+  std::println(through(closure, true, 3));
+  std::println(through(closure, false, 3));
+  std::println(through(shifted, true, 0));
+  std::println(through(make, false, 6));
+  auto relayed = relay(true);
+  std::println(relayed ? relayed.value() : 99);
+  auto relayed_error = relay(false);
+  std::println(relayed_error ? relayed_error.value() : 99);
+  std::println(owned(yes, no));
+  return 0;
+}
