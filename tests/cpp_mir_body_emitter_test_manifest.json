@@ -358,6 +358,10 @@
       "suite": "text"
     },
     {
+      "name": "testClassConditionalJoinConsumers",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeExpectedClassCopiedArgumentSlot",
       "suite": "text"
     },
