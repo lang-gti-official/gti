@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.402.9 — Copying `expected` values of plain structs and classes
+
+- Copying an `expected<T, E>` into a new variable, as in
+  `auto copy = original;`, now builds when `T` is a struct or class without
+  cleanup. It used to stop with internal compiler error `GTI-B0001` unless `T`
+  was a pointer-bearing `[[c_abi]]` record. The new variable is constructed
+  directly from the original, and both keep their own values.
+- Moving an `expected<T, E>` whose `T` is a number and whose `E` is a struct
+  into a new variable, and then assigning that variable to another one, builds
+  again. 0.402.7 had made this stop with `GTI-B0001`.
+
 ## 0.402.8 — Field reads of temporaries inside `&&`, `||` and conditionals
 
 - A field of a temporary whose class has a destructor or owns resources can
