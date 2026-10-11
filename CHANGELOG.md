@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.402.5 — `expected` results from lambdas and of C ABI records
+
+- A lambda or other callable that returns `expected<T, E>`, where `T` has no
+  default constructor, can now be called where its result is passed by value,
+  as in `code(make(a))` or `boxed b{make(a)};`, tested, as in `if (make(a))`,
+  read through `make(a).value()`, or discarded with `[[discard]]`. These
+  programs previously stopped with internal compiler error `GTI-B0001`.
+- Binding and moving an `expected<T, E>` whose `T` is a `[[c_abi]]` record
+  with a raw-pointer field builds again. A recent regression made it report
+  `GTI-B0001`.
+- Still reporting `GTI-B0001`: assigning a fresh `expected<T, E>` result to an
+  existing binding, as in `r = make(7);`, when `T` has no default constructor.
+
 ## 0.402.4 — Returning `expected` results across scope cleanup
 
 - A function that returns an `expected<T, E>` call result while

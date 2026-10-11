@@ -1,5 +1,49 @@
 # Compiler Verification
 
+## Expected publication for passive records and callable results (0.402.5)
+
+- **Defects.**
+  - `raw_record_containers_runtime` failed on `main` with `GTI-B0001`,
+    "Expected value has no exact uninitialized publication", in `main`. The
+    reduced program binds `success(native)`, an `expected<NativeAddress, int>`
+    whose success is a passive `[[c_abi]]` record with a raw-pointer field,
+    and moves it into another binding.
+  - A lambda returning `expected<point, errc>`, where `point` has no default
+    constructor, could not be called as a by-value argument, as in
+    `point_code(make(7))`, nor used as a constructor argument, observed,
+    extracted from or discarded. The SSA result declared a value-initialized
+    `std::expected<point, errc>`, which the native compiler rejects. The
+    declaration guard described next now reports `GTI-B0001` for it instead.
+- **Causes and rules.**
+  - The Expected value-initialization guard, added with the Expected
+    constructor consumers, tested only MIR's default-constructor status. MIR
+    gives a passive C ABI record a deleted default constructor because its
+    raw-pointer field needs an explicit initializer, yet the representation
+    snapshot's 0.215 boundary proof already declares every passive-record
+    local value-initialized, to zeroed bytes, without running source code.
+    The guard now consults the success row's `boundaryConstructible` proof
+    and rejects only classes that proof does not cover.
+  - The cleanup-free `Expected<Class, E>` staging slot
+    (`classSsaLifetimeSlot`) and the fresh-temporary extraction receiver
+    (`freshExpectedTemporaryReceiverShape`) admitted only static source-call
+    producers. A callable value invocation now qualifies under the same
+    consumer, dominance and cleanup-free proofs. The invocation emitter passes
+    the slot's construction address in the transformed ABI, or constructs it
+    from the returned value in the plain ABI, and retires a discarded result
+    once published.
+- **Regression tests.** `expected_lambda_class_argument_runtime` builds a new
+  fixture under C++20 and C++23 at O0, O1 and O3, plus the no-elide and
+  ASan/UBSan modes. It covers a closure literal, a capturing closure and a
+  callable parameter whose results pass to a function and a constructor, are
+  state-tested, extracted and discarded, on both alternatives. It also checks
+  a later argument that raises after the result exists and a callable that
+  raises before publishing. `expected_scoped_return` now also returns a
+  class-payload lambda result across scope cleanup.
+  `raw_record_containers_runtime` passes again unchanged.
+- **Out of scope.** Replacing a binding with a fresh result, as in
+  `r = make(7);`, still reports `GTI-B0001` for a source function and a
+  lambda alike when the success class has no default constructor.
+
 ## Expected returns across scope cleanup (0.402.4)
 
 - **Defects.** Three verified programs stopped at the C++ backend with
