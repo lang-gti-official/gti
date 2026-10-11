@@ -30,6 +30,16 @@ for what minor and patch releases mean.
   counted-text iteration. Movement and cursor duplication have separate
   concepts; random access does not imply contiguous storage.
 
+## 0.402.11 — Class results that exist on only one branch
+
+- A call that returns a class needing no cleanup, used directly as the
+  receiver of a method on only one side of `||`, `&&` or `?:`, as in
+  `if (!ready || !make_reading(n).even())`, runs correctly again. Since
+  0.402.3 such programs aborted at run time with "verified MIR lifetime slot
+  was dropped while empty" at every optimization level. This also affected
+  `constexpr for` loops over `std::meta` metaobjects that test, for example,
+  `m.name() != "get" || !m.result().is_integral()`.
+
 ## 0.402.10 — `expected` results returned from lambdas
 
 - A lambda or other callable that returns `expected<T, E>`, where `T` has no
