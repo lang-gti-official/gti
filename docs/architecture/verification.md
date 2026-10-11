@@ -9,6 +9,24 @@ shared-accessor runtime, generic algorithms, composed coverage and container
 failure/cleanup contracts. The sanitized contiguous partition passes locally
 with all 21 source negatives; its Linux run remains a separate platform gate.
 
+Reconciliation with scoped concurrency and expected replacement exposes a
+multi-dependency relay regression in example 109. The repaired lowering
+transports only a semantic identity that the result actually preserves; a
+distinct retained result keeps its own endpoint rather than inheriting its
+consumed input's last use. Mixed shared/exclusive and multiple-exclusive
+unrelated carriers pass independent MIR/backend admission and runtime tests;
+omitted dependencies and premature result retirement are rejected. Every
+Release target rebuilds successfully. Both full non-update example censuses
+then pass across 143 examples: 94,250 declarations, 14,656 lowered bodies,
+9,175 generated items and 14,645 emitted MIR bodies. Independent stable-name
+and multiplicity audits explain all 59 changed inventories through imported
+transfer-callable declarations/adapters, the expanded scoped-concurrency
+example, JSON projections/traversal and the paired reverse common endpoint;
+no named row disappears. The mixed-parent provisional inventory for example
+66 is corrected without changing its existing two-body lowered/emitted
+distinction. Final whole-suite, platform and performance acceptance remain
+separate gates, not consequences of these passing census checks.
+
 The subsequent clean `e67961cf` Mini run builds every Release target and
 finishes the unfiltered 653-test suite with 650 passes and three failures.
 The complete native cutover oracle passes all 142 sources at O0/C++20 and
