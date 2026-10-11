@@ -3115,9 +3115,10 @@ cleanupFreeExpectedClassAlternatives(const MirProgram &program,
 
 // A replacement-cleanup recipe executes nothing observable: no node has a
 // destructor, owned pointee, closure, fixed array, polymorphic or recursive
-// cleanup, or active cleanup, and each node is an Expected, a scalar, a
-// natively transported record or a class with a generated, inactive
-// destructor.
+// cleanup, or active cleanup, and each node is an Expected, a scalar, an
+// integral enum, a natively transported record or a class with a generated,
+// inactive destructor. An integral enum is payload-free scalar-like storage
+// with no lifecycle, as cleanupFreeExpectedClassAlternatives admits it.
 [[nodiscard]] bool passiveReplacementRecipe(const MirProgram &program,
                                             const MirDropType &recipe) {
   const MirClassInstance *instance =
@@ -3132,6 +3133,9 @@ cleanupFreeExpectedClassAlternatives(const MirProgram &program,
           cppRequiresIndirectValueTransport(program, recipe.type) ||
           expectedTypeRepresentation(recipe.type) ==
               CppMirTypeRepresentationKind::Scalar ||
+          (expectedTypeRepresentation(recipe.type) ==
+               CppMirTypeRepresentationKind::Enum &&
+           program.findIntegralEnum(recipe.type) != nullptr) ||
           (instance != nullptr &&
            instance->destructorStatus == SpecialMemberStatus::Generated &&
            !instance->destructor && !instance->requiresActiveCleanup &&
@@ -19184,16 +19188,25 @@ ownedExpectedClassExtractionProducer(const MirBody &body, MirValueId valueId) {
     // Its independent call-admission proof resolves the exact callee; this
     // body-local proof retains the activation and sole observer/drop use. A
     // checked call activates the shell on its Invoke success edge, a
-    // failure-free one by its own lifecycle.
+    // failure-free one by its own lifecycle. A callable value invocation's
+    // result is the same fresh shell, activated on its Invoke success edge
+    // under callable propagation.
     const auto *producer = receiverProducer;
+    const bool callableProducer = callableValueInvocation(*producer) &&
+                                  producer->lambdaTarget &&
+                                  producer->definedFailure.propagation ==
+                                      FailurePropagationKind::Callable &&
+                                  invokePairedInstruction(body, producer->id);
     if (producer->kind != MirInstructionKind::Call ||
-        !producer->functionTarget || producer->constructorTarget ||
-        producer->lambdaTarget || producer->bodyTarget ||
-        producer->callableInvocation ||
+        (!callableProducer &&
+         (!producer->functionTarget || producer->lambdaTarget ||
+          producer->callableInvocation)) ||
+        producer->constructorTarget || producer->bodyTarget ||
         producer->intrinsic != IntrinsicKind::None ||
         producer->dispatch != CallDispatch::Static ||
         producer->info.type != receiver->info.type ||
-        (producer->definedFailure.propagation !=
+        (!callableProducer &&
+         producer->definedFailure.propagation !=
              FailurePropagationKind::DirectCall &&
          !producer->definedFailure.empty()) ||
         !producer->definedFailure.localOrigins.empty() ||
@@ -22180,6 +22193,24 @@ valueRootedPlacementCallResultSlot(const MirProgram &program,
       callee->linkage == LanguageLinkage::Gti &&
       !callee->mayRaiseDefinedFailure && producer->definedFailure.empty() &&
       !invokePairedInstruction(body, producer->id);
+  // A callable value invocation (a closure literal, a stored closure or a
+  // callable parameter) produces the same owning Expected result. Its exact
+  // lambda instance supplies the signature, and its Invoke success edge
+  // activates the result's drop under callable propagation, as the success
+  // edge of a transformed source call does.
+  const MirLambdaInstance *lambda =
+      producer != nullptr && callableValueInvocation(*producer) &&
+              producer->lambdaTarget
+          ? program.findLambda(*producer->lambdaTarget)
+          : nullptr;
+  const bool callableProducer =
+      lambda != nullptr && value != nullptr &&
+      value->info.type.kind == SemanticType::Expected &&
+      lambda->returnType == value->info.type &&
+      lambda->parameterTypes == producer->parameterTypes &&
+      producer->definedFailure.propagation ==
+          FailurePropagationKind::Callable &&
+      invokePairedInstruction(body, producer->id);
   if (value == nullptr ||
       !(expectedClassPlacementResultType(program, representations,
                                          value->info.type) ||
@@ -22193,22 +22224,26 @@ valueRootedPlacementCallResultSlot(const MirProgram &program,
       // success destination instead.
       (producer->destination && !(plainProducer && conditionalTemporary &&
                                   *producer->destination == slot->id)) ||
-      !producer->functionTarget || producer->constructorTarget ||
-      producer->lambdaTarget || producer->bodyTarget ||
-      producer->callableInvocation ||
+      (!callableProducer &&
+       (!producer->functionTarget || producer->lambdaTarget ||
+        producer->callableInvocation)) ||
+      producer->constructorTarget || producer->bodyTarget ||
       producer->intrinsic != IntrinsicKind::None ||
       producer->dispatch != CallDispatch::Static ||
-      (!plainProducer && producer->definedFailure.propagation !=
-                             FailurePropagationKind::DirectCall) ||
+      (!plainProducer && !callableProducer &&
+       producer->definedFailure.propagation !=
+           FailurePropagationKind::DirectCall) ||
       !producer->definedFailure.localOrigins.empty() ||
       !producer->localFailureSites.empty() ||
       !exactPreparedInputTransfers(body, *producer) ||
-      producer->successResultDestination || callee == nullptr ||
-      (!plainProducer && transformedFailureCallee(program, representations,
-                                                  *producer) != callee) ||
-      callee->returnType != value->info.type ||
-      callee->parameterTypes != producer->parameterTypes ||
-      callee->parameterTypes.size() != producer->operands.size() ||
+      producer->successResultDestination ||
+      (!callableProducer &&
+       (callee == nullptr ||
+        (!plainProducer && transformedFailureCallee(program, representations,
+                                                    *producer) != callee) ||
+        callee->returnType != value->info.type ||
+        callee->parameterTypes != producer->parameterTypes)) ||
+      producer->parameterTypes.size() != producer->operands.size() ||
       !hasCompleteCallInputSchedule(body, *producer) ||
       (drop != nullptr &&
        (drop->kind != MirDropObligationKind::Value || drop->initiallyActive ||
@@ -41247,8 +41282,21 @@ private:
           (instruction.result &&
            expectedPayloadInitialize(program, facts.body,
                                      *instruction.result) != nullptr);
-      const MirPlace *temporaryResult =
+      // An owning Expected result that does not initialize a binding
+      // directly constructs in its value-rooted placement slot, as a source
+      // call's does; MIR's value drop then governs that slot.
+      const ValueRootedPlacementCallResultSlot ownedInvocationSlot =
           instruction.result &&
+                  instruction.info.type.kind == SemanticType::Expected &&
+                  expectedClassResultDestinationSlot(
+                      program, facts.body, *instruction.result) == nullptr
+              ? valueRootedPlacementCallResultSlot(
+                    program, representations, facts.body, *instruction.result)
+              : ValueRootedPlacementCallResultSlot{};
+      const MirPlace *temporaryResult =
+          ownedInvocationSlot.producer == &instruction
+              ? ownedInvocationSlot.slot
+          : instruction.result &&
                   instruction.info.type.kind == SemanticType::Expected
               ? expectedClassResultDestinationSlot(program, facts.body,
                                                    *instruction.result)
