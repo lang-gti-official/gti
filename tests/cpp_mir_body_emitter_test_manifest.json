@@ -370,6 +370,10 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeExpectedClassMoveSlot",
+      "suite": "text"
+    },
+    {
       "name": "testExpectedClassReplacementSources",
       "suite": "text"
     },
