@@ -11,14 +11,14 @@ The range foundation and substantial algorithm breadth are implemented.
 Remaining work is not a repeat of range syntax, vector construction or the
 original one-owner borrowing slice.
 
-## Container completion campaign (in progress, 2026-10-11)
+## Container completion campaign (delivered, 2026-10-12)
 
-The active outcome is complete, checked iteration for every current standard
+The delivered outcome is complete, checked iteration for every current standard
 library sequence/container family, not just the easiest contiguous containers.
 The original single-owner staging described below is historical: the current
 ownership model already represents shared/exclusive stored references, nested
-carriers and multiple external origins. The campaign must use those general
-facts rather than introduce public container-name exceptions.
+carriers and multiple external origins. The campaign uses those general facts
+rather than public container-name exceptions.
 
 | Family | Required traversal | Required access |
 | --- | --- | --- |
@@ -53,7 +53,7 @@ C++20/C++23 optimization and sanitizer matrices, and zero-allocation traversal
 controls. Runnable examples, corpus/census registration and the reviewed stdlib
 surface manifest accompany the completed implementation.
 
-Current source checkpoints cover the listed nominal container families.
+The completed source covers the listed nominal container families.
 Shared/exclusive contiguous traversal, sparse/lane traversal, paired proxy
 traversal and unrelated two-owner inline proxies have focused native/sanitizer
 evidence. Associative mutation now uses source-defined mapped-value projections
@@ -64,9 +64,22 @@ proof tests. Counted text views read through their existing checked byte
 operation, not reinterpret native `char` storage as GTI-character references.
 The latest mapped owning-value replacement additionally exercises the ordinary
 mutable-reference accessor destination rather than a container-specific path.
-Final cross-phase/corpus/census, whole container matrices and integration remain
-required. Partial focused passes do not establish campaign completion or
-shipped support.
+Final local acceptance passes all 672 registered gates, including the whole
+container matrices, independent batch/standalone emitter comparison and native
+cutover oracle over 143 examples. Examples 143–146 demonstrate the four new
+traversal families. The source/module manifests and both non-update censuses
+pass. Fresh optimized vector/particle and counted-text controls show no material
+runtime regression within their measured contracts.
+
+Final Linux reconciliation passes its Release build and 44/45 gates. The
+remaining atomic JSON sanitizer compile-time budget failure is retained, not
+relabeled as a pass; the owner explicitly accepts that validation limitation
+and requests integration in PR #24 / version 0.406.0. Final closure changes only
+documentation and verifies exact equivalence to the fully tested implementation.
+See the [delivery acceptance record](../architecture/verification.md#container-iterator-completion-delivery-acceptance-2026-10-12)
+for source identities, measurements and the scope of that exception. Remaining
+adaptor, subrange-rewrite and dependency-reseating goals below are not required
+to give current container families their appropriate traversal operations.
 
 The prerequisite order for the remaining dynamic-view and foundational
 range-algorithm work is maintained in

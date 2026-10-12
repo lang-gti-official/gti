@@ -7928,17 +7928,22 @@ consumer, and release refreshes remain outstanding for the full campaign.
   semantics solely to work around a historical implementation limitation.
 - **Exit gate:** no public algorithm name is recognized by the compiler and
   value/borrow/move behavior is covered for every supported range category.
-- **Container-completion campaign (2026-10-11, in progress):** the current
+- **Container-completion campaign (2026-10-12, delivered):** the completed
   task covers forward-list iteration and the remaining container/view cursor
   families, including sparse live slots, lane storage and two-owner reference
   proxies. Movement is separate from cursor duplication. General independent
   copyable value yields and exact indirect-callback categories enable counted
-  text views without fabricated native character references. Focused evidence
-  is recorded by the task; body-local value-borrow cleanup, full native and
-  corpus/census validation, current-main reconciliation and PR integration
-  remain acceptance requirements. See the existing
-  [iterator completion plan](iterators-and-ranges.md#container-completion-campaign-in-progress-2026-10-11)
-  for the family matrix; partial passes are not delivery evidence.
+  text views without fabricated native character references. Body-local
+  value-borrow cleanup and forged-IR tests pass, along with the unfiltered local
+  672-gate suite, both 143-example censuses, independent emitter/cutover oracles
+  and measured runtime controls. Final Linux reconciliation passes its Release
+  build and 44/45 gates; the owner accepts the retained atomic JSON sanitizer
+  compile-budget failure and requests PR #24 integration at version 0.406.0.
+  This is not an all-green Linux certification, and no assertion or time limit
+  is weakened. Documentation-only closure preserves the tested implementation.
+  See the existing
+  [iterator completion plan](iterators-and-ranges.md#container-completion-campaign-delivered-2026-10-12)
+  and its linked acceptance record for the family matrix and exact evidence.
 
 ### L-NUM-01: Defined Integer Arithmetic Modes
 
