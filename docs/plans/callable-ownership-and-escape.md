@@ -252,8 +252,8 @@ confined slice is narrower: it requires an exact contextual non-reference type
 with no tracked borrowed state or lambda identity. Unconstrained direct `auto`
 result inference through an unknown generic callable remains rejected.
 Conditional value initializers now defer direct callable-arm results to
-concrete semantics, which requires exact agreement between arm types before
-HIR; this does not add common-type inference.
+concrete semantics, which applies the existing conditional-arm compatibility
+rules before HIR; this does not add common-type inference.
 Reference or borrowed-state results require an ordinary owner-dependency
 summary naming a receiver or argument origin; a closure capture is not an
 implicit lifetime origin. The initial bounded callable slice therefore keeps lambda

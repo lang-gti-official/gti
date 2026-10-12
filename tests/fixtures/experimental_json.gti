@@ -50,8 +50,12 @@ int main() {
                  .where = {.x = -3, .y = 7},
                  .scores = std::move(scores),
                  .path = std::move(path)};
-  std::string text = std::experimental::json::encode(hero);
-  std::string_view expected_text = "{\"display_name\":\"Ada \\\"the\\\"\\nBrave\",\"health\":42,\"stamp\":18446744073709551615,\"ratio\":1.500000,\"alive\":true,\"kind\":\"boss\",\"where\":{\"x\":-3,\"y\":7},\"scores\":[10,-2],\"path\":[{\"x\":1,\"y\":2},{\"x\":-3,\"y\":4}]}";
+  mut auto encoded = std::experimental::json::encode(hero);
+  if (!encoded) {
+    return 20;
+  }
+  std::string text = std::move(encoded).value();
+  std::string_view expected_text = "{\"display_name\":\"Ada \\\"the\\\"\\nBrave\",\"health\":42,\"stamp\":18446744073709551615,\"ratio\":1.5,\"alive\":true,\"kind\":\"boss\",\"where\":{\"x\":-3,\"y\":7},\"scores\":[10,-2],\"path\":[{\"x\":1,\"y\":2},{\"x\":-3,\"y\":4}]}";
   if (text.view() != expected_text) {
     std::print(text.view());
     std::print("\n");
@@ -123,7 +127,7 @@ int main() {
     return 15;
   }
   if (!failed_with("{\"display_name\":\"a\",\"health\":-1,\"stamp\":2,\"ratio\":0.25,\"alive\":true,\"kind\":\"npc\",\"where\":{\"x\":0,\"y\":0},\"scores\":[],\"path\":[]}",
-                   std::experimental::json::errc::invalid_number)) {
+                   std::experimental::json::errc::number_out_of_range)) {
     return 16;
   }
   return 0;

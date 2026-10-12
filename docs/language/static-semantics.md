@@ -725,8 +725,9 @@ add an explicit signature requirement.
 A conditional in an `auto` value initializer can defer a direct open callable
 arm's result until concrete semantic instantiation. Either or both arms may
 be callable invocations, including parenthesized invocations and nested
-conditionals. Each concrete instance must produce the same exact arm type;
-there is no common-type conversion or overload ranking from an unknown result.
+conditionals. Each concrete instance must satisfy the existing arm-compatibility
+rules: exact types apart from the established raw-pointer joins. This adds no
+common-type conversion or overload ranking from an unknown result.
 The inferred callable results must be non-void, non-reference values without
 tracked borrowed state or lambda identity. An explicitly typed initializer or
 enclosing return still supplies an exact result requirement immediately.

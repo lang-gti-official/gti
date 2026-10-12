@@ -275,9 +275,10 @@ metaobjects, source locations, budget hardening). Reflection is no longer
 "later breadth" in the roadmap; what remains restricted (invocation through
 metaobjects, static-field metaobjects, runtime reflection, source generation,
 layout) is recorded in the alignment ledger. The verification gate,
-`std::experimental::json`, is built (see the acceptance note in
-`reflection.md`); next it grows to cover `std::json`'s codec use cases, after
-which `std::json` is deprecated, then the parked `lsp-lazy-bodies` task. The campaign touches the parser,
+`std::experimental::json`, is built and covers `std::json`'s codec use cases
+(see the acceptance note in `reflection.md`); deprecating `std::json`'s
+explicit codecs is the owner's decision, then the parked `lsp-lazy-bodies`
+task resumes. The campaign touches the parser,
 semantic analysis (declaration-stage attribute evaluation, folded queries,
 aliases), HIR lowering and the trusted standard library; its one MIR change
 materialises direct-initialized temporaries before projection and its one
