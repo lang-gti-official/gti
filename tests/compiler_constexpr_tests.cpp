@@ -2691,6 +2691,152 @@ int main() { return result - 2; }
          "callee and silently lose its writes");
 }
 
+void testConstexprEnumBuilders() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/constexpr_enum_builders.gti";
+  std::ifstream input(fixture);
+  const std::string source((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+  lang::FrontendWorkMetrics metrics;
+  const auto result = lang::Frontend({.workMetrics = &metrics})
+                          .analyze(fixture, source, {standardLibraryPrelude()},
+                                   {}, {standardLibraryRoot()});
+  for (const auto &d : result.diagnostics)
+    std::cerr << d.primary.line << ": " << d.message << '\n';
+  expect(!source.empty() && result.canGenerateCode() &&
+             result.diagnostics.empty() && metrics.constexprMirExecutions >= 8,
+         "enum constants, branches and mutable builders execute staged MIR");
+  if (!result.canGenerateCode())
+    return;
+  lang::FrontendWorkMetrics earlyMetrics;
+  const auto early =
+      lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics,
+                      .workMetrics = &earlyMetrics})
+          .analyze(fixture, source, {standardLibraryPrelude()}, {},
+                   {standardLibraryRoot()});
+  expect(early.semanticValid && early.hir.functionInstances().empty() &&
+             earlyMetrics.constexprMirExecutions ==
+                 metrics.constexprMirExecutions,
+         "enum builders execute before whole-program HIR, not in the backend");
+  const auto functionId = [&](std::string_view name) {
+    for (const auto &function : result.hir.functionInstances()) {
+      if (function.source && function.source->name().lexeme == name)
+        return function.id;
+    }
+    return lang::HirFunctionInstanceId{0};
+  };
+  const auto advanceId = functionId("advance");
+  const auto *advance = result.mir.findFunctionInstance(advanceId);
+  expect(advance != nullptr, "enum transition has a canonical MIR instance");
+  if (!advance)
+    return;
+  const auto mode = advance->returnType;
+  const lang::ConstantEnum stopped{
+      .enumId = mode.enumId,
+      .value = lang::makeConstantInteger({.negative = true, .magnitude = 128},
+                                         {.width = 8, .signedValue = true})};
+  const std::array<lang::ConstantValue, 1> arguments{stopped};
+  const auto next =
+      lang::evaluateMirConstantFunction(result.mir, advanceId, arguments);
+  const lang::ConstantValue ready =
+      lang::ConstantEnum{.enumId = mode.enumId,
+                         .value = lang::makeConstantInteger(
+                             {}, {.width = 8, .signedValue = true})};
+  expect(next && next.value == ready,
+         "MIR enum switch preserves signed discriminants and nominal identity");
+  const auto checkId = functionId("check");
+  const auto checked =
+      lang::evaluateMirConstantFunction(result.mir, checkId, arguments);
+  expect(checked && checked.value == lang::ConstantValue{true},
+         "enum record/array copies and mutable references compose in MIR");
+  for (std::size_t budget = 0; next && budget < next.steps; ++budget) {
+    const auto limited = lang::evaluateMirConstantFunction(
+        result.mir, advanceId, arguments, {.steps = budget});
+    expect(!limited && limited.failure ==
+                           lang::ConstantEvaluationFailure::ResourceLimit,
+           "enum execution shares the scalar step limit");
+  }
+  const auto depth = lang::evaluateMirConstantFunction(
+      result.mir, functionId("endless"), arguments, {.callDepth = 1});
+  expect(!depth &&
+             depth.failure == lang::ConstantEvaluationFailure::ResourceLimit,
+         "enum builders share the existing call-depth limit");
+  const auto endless = lang::evaluateMirConstantFunction(
+      result.mir, functionId("endless"), arguments, {.steps = 100});
+  expect(!endless &&
+             endless.failure == lang::ConstantEvaluationFailure::ResourceLimit,
+         "enum mutation cannot bypass the work budget");
+  for (int corruption = 0; corruption < 5; ++corruption) {
+    auto forged = stopped;
+    if (corruption == 0)
+      forged.enumId = 0;
+    else if (corruption == 1)
+      forged.value.domain.width = 16;
+    else if (corruption == 2)
+      forged.value.magnitude = 129;
+    else if (corruption == 3)
+      forged.value.magnitude = 0; // noncanonical negative zero
+    else
+      forged.value.domain.signedValue = false;
+    const std::array<lang::ConstantValue, 1> invalid{forged};
+    const auto rejected =
+        lang::evaluateMirConstantFunction(result.mir, advanceId, invalid);
+    expect(!rejected, "enum input retains exact identity/domain/value checks");
+  }
+  auto malformed = result.mir;
+  bool changed = false;
+  for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+           malformed.functionInstances())) {
+    if (function.id != advanceId)
+      continue;
+    for (auto &block : function.body.blocks) {
+      for (auto &instruction : block.instructions) {
+        if (instruction.operation == lang::MirOperation::EnumConstant) {
+          instruction.enumOwner = 0;
+          changed = true;
+        }
+      }
+    }
+  }
+  expect(changed && !lang::evaluateMirConstantFunction(malformed, advanceId,
+                                                       arguments),
+         "malformed MIR enum identities fail closed before constant execution");
+  const std::string prefix =
+      "enum class E : uint8_t { low, high }; "
+      "enum class F : uint8_t { low, high }; "
+      "constexpr void set(mut E& value) { value = E::high; } ";
+  for (const auto &body :
+       {"constexpr bool bad() { mut E value = E::low; E& view = value; "
+        "set(value); return view == E::high; }",
+        "constexpr E& bad() { E local = E::low; return local; }",
+        "constexpr E bad() { mut E value = E::low; value = F::low; return "
+        "value; }",
+        "E runtime = E::low; constexpr E bad = runtime;",
+        "constexpr bool inspect(E& value) { return value == E::low; } "
+        "constexpr bool bad() { return inspect(E::low); } "
+        "static_assert(bad());",
+        "constexpr void bad() { set(E::low); }",
+        "E runtime() { return E::low; } constexpr E bad() { mut E value = "
+        "E::low; set(value); return runtime(); } constexpr E value = bad();"}) {
+    const auto rejected =
+        lang::Frontend().analyze("constexpr-enum-invalid.gti",
+                                 prefix + body + " int main() { return 0; }");
+    expect(!rejected.canGenerateCode() &&
+               std::any_of(rejected.diagnostics.begin(),
+                           rejected.diagnostics.end(),
+                           [](const auto &d) {
+                             return d.phase == lang::DiagnosticPhase::Semantics;
+                           }) &&
+               std::none_of(rejected.diagnostics.begin(),
+                            rejected.diagnostics.end(),
+                            [](const auto &d) {
+                              return d.phase == lang::DiagnosticPhase::Backend;
+                            }),
+           "enum builders preserve type, lifetime and constant eligibility: " +
+               std::string(body));
+  }
+}
+
 void testConstexprReadOnlyReferences() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constexpr_readonly_references.gti";
@@ -5056,6 +5202,7 @@ constexpr NamedTest kTests[] = {
     {"testDependentConstexprBranches", testDependentConstexprBranches},
     {"testConstexprReadOnlyReferences", testConstexprReadOnlyReferences},
     {"testConstexprMutation", testConstexprMutation},
+    {"testConstexprEnumBuilders", testConstexprEnumBuilders},
     {"testStaticAssertions", testStaticAssertions},
     {"testStaticStorageAndMembers", testStaticStorageAndMembers},
     {"testConcurrentGlobalPolicy", testConcurrentGlobalPolicy},

@@ -40,12 +40,41 @@ constexpr std::array<int, 4> prepare_curve(int step) {
   curve[0] += 1;
   return curve;
 }
+
+// Enum states now compose with the same mutable constexpr helpers. The table
+// is built by GTI at compile time; no startup allocation or native constexpr
+// execution is involved. This ordinary enum is not a library capability.
+enum class phase : uint8_t { idle, loading, running };
+
+constexpr phase next(phase current) {
+  switch (current) {
+  case phase::idle: return phase::loading;
+  case phase::loading: return phase::running;
+  case phase::running: return phase::idle;
+  default: return phase::idle;
+  }
+}
+
+constexpr void advance(mut phase& current) { current = next(current); }
+
+constexpr std::array<phase, 3> prepare_phases(phase first) {
+  mut std::array<phase, 3> result = std::array<phase, 3>({first, first, first});
+  mut phase current = first;
+  for (mut std::size_t index = 0; index < result.size(); index++) {
+    result.at(index) = current;
+    advance(current);
+  }
+  return result;
+}
 }
 
 constexpr engine::budgets limits = engine::prepare_budgets(6);
 constexpr std::array<int, 4> curve = engine::prepare_curve(2);
+constexpr std::array<engine::phase, 3> phases = engine::prepare_phases(engine::phase::idle);
 static_assert(limits.draw_calls == 9 && limits.particles == 13);
 static_assert(curve.front() == 3 && curve.back() == 8);
+static_assert(phases.front() == engine::phase::idle);
+static_assert(phases.back() == engine::phase::running);
 
 // Constants are immutable. A reference cannot be retained as a constexpr
 // binding or escape its owner. Allocation, active cleanup and host I/O are not
@@ -53,8 +82,12 @@ static_assert(curve.front() == 3 && curve.back() == 8);
 int main() {
   engine::budgets runtime_limits = engine::prepare_budgets(6);
   std::array<int, 4> runtime_curve = engine::prepare_curve(2);
+  std::array<engine::phase, 3> runtime_phases = engine::prepare_phases(engine::phase::idle);
   for (mut std::size_t index = 0; index < curve.size(); index++) {
     if (runtime_curve[index] != curve[index]) { return 1; }
+  }
+  for (mut std::size_t index = 0; index < phases.size(); index++) {
+    if (runtime_phases[index] != phases[index]) { return 3; }
   }
   return runtime_limits.draw_calls == limits.draw_calls &&
          runtime_limits.particles == limits.particles ? 0 : 2;

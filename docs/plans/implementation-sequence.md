@@ -331,7 +331,7 @@ workflow determine task scope and integration.
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
 | Native import `C-08B` | ready for a bounded language/import slice | Native scalar, recursive pointer and indirect-call identities delivered. Introduce true foreign-storage identity and unsafe loads/stores, then import actual external variables; retain TLS/volatile exclusions until specified. |
-| `L-CONST-01` extension | mutable-builder profile implemented; further profiles ready to select | Checked mutable references, void helpers, non-consuming mutable methods/operators and explicit constructor-body writes use staged verified MIR. Select the remaining enum/Expected operation migration, stored-reference, pack, owning/sum or operator profile with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
+| `L-CONST-01` extension | mutable-builder and ordinary-enum profiles implemented; further profiles ready to select | Checked mutable references, void helpers, non-consuming mutable methods/operators, explicit constructor-body writes and ordinary enums use staged verified MIR. Select remaining Expected operation migration, stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | reachable trusted bodies implemented in 0.411.0 | Snapshots and completion use demand-driven trusted bodies, with explicit HIR-to-semantics requests and a bounded complete-check fallback. Cross-snapshot semantic reuse remains separate work. See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
 | `RT-2` through `RT-10` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2 | Continuation records entered by `ContinueFailure` share identical cleanup suffixes; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; path-dependent steps stay private. |
@@ -8565,11 +8565,17 @@ consumer, and release refreshes remain outstanding for the full campaign.
   tooling evidence is tracked in the verification document; this does not claim
   allocation, stored borrows, every constructor schedule or complete constexpr
   support.
-- **Remaining scope:** Existing ordinary-enum and checked-integer `expected`
-  profiles need MIR value/operation migration before joining mutable builders.
-  That prerequisite must preserve exact enum identity, checked-result state,
-  shared budgets and compile-time/runtime parity rather than extend AST
-  mutation. Stored references, constructor reference parameters,
+- **Ordinary-enum builder profile:** Payload-free enum constants, comparisons
+  and switches now execute canonical MIR, preserving nominal identity and the
+  exact semantic underlying integer domain. They compose with mutable references,
+  passive record fields, array elements and generic source methods. Example 142
+  includes a compile-time state sequence with runtime parity. This migrates the
+  earlier enum profile without adding a second AST mutation rule.
+- **Remaining scope:** Existing checked-integer `expected` profiles need MIR
+  value/operation migration before joining mutable builders. That prerequisite
+  must preserve exact error identity, checked-result state, shared budgets and
+  compile-time/runtime parity rather than extend AST mutation.
+  Stored references, constructor reference parameters,
   declaration-default/in-place constructor schedules, allocation,
   payload enums, unions, inherited or cleanup-owning aggregates, generic packs,
   arrow/contextual-bool operators, consuming receivers, and polymorphism remain
