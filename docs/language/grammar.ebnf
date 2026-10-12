@@ -103,7 +103,7 @@ empty-declaration      = ";" ;
 
 unsafe-function-modifier = "unsafe" ;
 (* GTI free functions and ordinary non-polymorphic instance/static methods;
-   not constructors, destructors, operators, virtual/interface/override methods,
+   not constructors, destructors, operators, virtual/interface-instance/override methods,
    runtime bindings, extern-C declarations or hosted main. Every call requires a
    lexical unsafe block. The modifier grants no unsafe permission to the body
    and cannot be erased by callback or safe function-item conversion. *)
@@ -501,10 +501,12 @@ access-specifier       = ( "public" | "private" ) ":" ;
    and diamonds are invalid. Private inheritance is accepted by the parser only
    so semantics can recommend composition; `protected` is not a keyword.
 
-   An interface is a public behavior-only contract. It cannot contain access
-   labels, fields, constructors, destructors, static methods, or method bodies.
-   Every interface method is a declaration-only signature ending with `;`.
-   The enclosing `interface` makes the method implicitly virtual and pure, so
+   An interface is a public instance behavior-only contract. It cannot contain
+   fields, constructors, destructors or instance method bodies. Its static
+   methods are ordinary receiver-free functions with ordinary access labels,
+   constraints, defaults and definition-closure rules, not virtual requirements.
+   Every interface instance method is public and a declaration-only signature
+   ending with `;`. The enclosing `interface` makes it implicitly virtual and pure, so
    the C++ pure specifier `= 0;` is redundant and ill-formed in an interface.
 
    An attribute list may precede only a class, struct, or interface. Semantics

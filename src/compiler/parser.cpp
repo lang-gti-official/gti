@@ -1188,7 +1188,8 @@ private:
 
     if (unsafeKeyword &&
         (operatorName || virtualKeyword || overrideKeyword ||
-         currentClassKind == ClassKind::Interface || check(TokenKind::EQUAL))) {
+         (currentClassKind == ClassKind::Interface && !staticKeyword) ||
+         check(TokenKind::EQUAL))) {
       throw error(*unsafeKeyword,
                   "Unsafe methods must be non-polymorphic named methods; "
                   "operators and virtual/interface methods are not supported.");

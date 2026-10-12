@@ -2,6 +2,7 @@
 #include "gti/lowered_program.h"
 #include "gti/lowered_program_builder.h"
 #include "gti/lowered_program_printer.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
 #include "lowered_program_contract_client.h"
@@ -902,6 +903,150 @@ void testMutationRejection() {
                     lang::LoweredProgramIssueKind::InvalidSymbolInventory),
            "duplicate lowered symbol identities should be rejected");
   }
+
+  // Static method invariants are structural, not an exception for one owner
+  // kind. Exercise both a normal class and an unrelated interface factory.
+  auto staticFrontend = lang::Frontend().analyze("static-method-contracts.gti",
+                                                 R"gti(
+class Factory {
+public:
+  static int Build(int value) { return value; }
+};
+interface FactoryApi {
+  static int Select(int value) { return Factory::Build(value); }
+  int value();
+};
+class Signal : public FactoryApi {
+public:
+  int value() override { return 3; }
+};
+int main() {
+  Signal signal;
+  return Factory::Build(1) + FactoryApi::Select(2) + signal.value() - 6;
+}
+)gti");
+  expect(staticFrontend.canGenerateCode(),
+         "class and interface static methods share ordinary executable rules");
+  if (!staticFrontend.canGenerateCode()) {
+    for (const auto &diagnostic : staticFrontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  auto staticBuild = lang::LoweredProgramBuilder().build(
+      staticFrontend.program, staticFrontend.semantics, staticFrontend.hir,
+      staticFrontend.mir, staticFrontend.mir, {}, lang::TargetInfo::host());
+  expect(staticBuild.valid(),
+         "class and interface static contracts cross the lowered boundary");
+  if (!staticBuild.valid()) {
+    for (const auto &issue : staticBuild.issues)
+      std::cerr << issue.detail << '\n';
+    return;
+  }
+  const lang::LoweredProgram staticOriginal = *staticBuild.program;
+  std::size_t staticTargets = 0;
+  for (const auto &candidate : staticOriginal.mir().functionInstances()) {
+    if (!candidate.staticMember)
+      continue;
+    ++staticTargets;
+    expect(
+        candidate.owner && !candidate.virtualMethod && !candidate.pureVirtual &&
+            !candidate.overrideMethod && candidate.virtualRoots.empty() &&
+            candidate.receiverMutability == lang::ReceiverMutability::ReadOnly,
+        "static methods preserve an owner without a receiver or dispatch "
+        "contract");
+    const std::size_t functionIndex = candidate.id - 1;
+    for (int mutation = 0; mutation < 8; ++mutation) {
+      lang::MirProgram forged = staticOriginal.mir();
+      auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+          forged.functionInstances());
+      auto &function = functions.at(functionIndex);
+      switch (mutation) {
+      case 0:
+        function.virtualMethod = true;
+        break;
+      case 1:
+        function.pureVirtual = true;
+        break;
+      case 2:
+        function.overrideMethod = true;
+        break;
+      case 3:
+        function.virtualRoots.push_back(function.declaration);
+        break;
+      case 4:
+        function.receiverMutability = lang::ReceiverMutability::Mutable;
+        break;
+      case 5:
+        function.receiverMutability = lang::ReceiverMutability::Consuming;
+        break;
+      case 6:
+        function.owner.reset();
+        break;
+      case 7: {
+        lang::MirPlace receiver;
+        receiver.id = function.body.places.size() + 1;
+        receiver.root = lang::MirPlaceRootKind::This;
+        receiver.type = forged.findClassInstance(*candidate.owner)->type;
+        function.body.places.push_back(std::move(receiver));
+        break;
+      }
+      }
+      const auto verification = lang::verifyMirProgram(forged);
+      expect(!verification.valid() &&
+                 std::any_of(
+                     verification.errors.begin(), verification.errors.end(),
+                     [&](const lang::MirVerificationError &error) {
+                       return error.owner == candidate.id &&
+                              error.message.find("static method must") !=
+                                  std::string::npos;
+                     }),
+             "MIR must reject forged static dispatch, receiver or owner "
+             "metadata for every owner kind");
+    }
+    for (int mutation = 0; mutation < 6; ++mutation) {
+      lang::LoweredProgram forged = staticOriginal;
+      auto &declarations = lang::LoweredProgramTestAccess::declarations(forged);
+      const auto row =
+          std::find_if(declarations.begin(), declarations.end(),
+                       [&](const lang::LoweredDeclaration &declaration) {
+                         const auto *payload =
+                             std::get_if<lang::LoweredFunctionDeclaration>(
+                                 &declaration.payload);
+                         return payload && payload->id == candidate.declaration;
+                       });
+      expect(row != declarations.end(),
+             "static method has one exact lowered declaration");
+      if (row == declarations.end())
+        continue;
+      auto &payload = std::get<lang::LoweredFunctionDeclaration>(row->payload);
+      switch (mutation) {
+      case 0:
+        payload.staticMember = false;
+        break;
+      case 1:
+        payload.virtualMethod = true;
+        break;
+      case 2:
+        payload.pureVirtual = true;
+        break;
+      case 3:
+        payload.overrideMethod = true;
+        break;
+      case 4:
+        payload.virtualRoots.push_back(payload.id);
+        break;
+      case 5:
+        payload.receiverMutability = lang::ReceiverMutability::Mutable;
+        break;
+      }
+      expect(hasIssue(lang::verifyLoweredProgram(forged),
+                      lang::LoweredProgramIssueKind::InvalidInstanceInventory),
+             "lowered signatures cannot disagree with static-method MIR "
+             "dispatch or receiver authority");
+    }
+  }
+  expect(staticTargets == 2,
+         "mutations cover both class and interface static method instances");
 }
 
 void testConcreteBranchSymbols() {

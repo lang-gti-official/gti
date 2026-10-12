@@ -134,6 +134,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testInterfaceStaticMethods",
+      "suite": "declarations"
+    },
+    {
       "name": "testInheritedGenericTargetInstances",
       "suite": "declarations"
     },

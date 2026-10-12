@@ -1785,6 +1785,158 @@ int main() {
          "free functions should reject receiver mutability qualifiers");
 }
 
+void testInterfaceStaticMethods() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("interface-static-methods.gti", R"(
+interface Reading {
+  static int initial(int value = 7) { return private_helper(value); }
+  static T identity<T>(T value) requires std::copyable<T> { return value; }
+  static constexpr int twice(int value) { return value * 2; }
+  unsafe static int unchecked() { return 9; }
+  static int unselected();
+  int read();
+private:
+  static int private_helper(int value) { return value; }
+};
+class Meter : public Reading {
+public:
+  Meter() {}
+  int read() override { return Reading::initial(); }
+};
+static_assert(Reading::twice(3) == 6);
+int invoke() { return Reading::initial(); }
+int main() {
+  Meter meter{};
+  unsafe { if (Reading::unchecked() != 9) { return 1; } }
+  if (Reading::identity<int>(meter.read()) != 7) { return 2; }
+  return invoke() - 7;
+}
+interface Marker { static int code() { return 1; } };
+class Marked : public Marker {};
+)");
+  expect(frontend.canGenerateCode(),
+         "interface statics should reuse ordinary access, default, generic, "
+         "requires, constexpr and unsafe rules");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  const auto *reading = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(0).get());
+  const auto *meter = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(1).get());
+  const auto *meterType = frontend.semantics.findClassType(*meter);
+  expect(meterType != nullptr && !meterType->abstract,
+         "statics and unselected bodyless declarations must not add "
+         "implementation requirements");
+  const auto *marker = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(5).get());
+  const auto *marked = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(6).get());
+  const auto *markerType = frontend.semantics.findClassType(*marker);
+  const auto *markedType = frontend.semantics.findClassType(*marked);
+  expect(markerType && markerType->abstract && markerType->polymorphic &&
+             markedType && !markedType->abstract && markedType->polymorphic,
+         "an interface without instance requirements still has polymorphic "
+         "destruction, without making its implementation abstract");
+  const lang::FunctionDecl *initial = nullptr;
+  const lang::FunctionDecl *read = nullptr;
+  for (const auto &member : reading->members()) {
+    const auto *function =
+        dynamic_cast<const lang::FunctionDecl *>(member.get());
+    if (function && function->name().lexeme == "initial")
+      initial = function;
+    if (function && function->name().lexeme == "read")
+      read = function;
+  }
+  const auto *initialInfo = frontend.semantics.findFunction(*initial);
+  const auto *readInfo = frontend.semantics.findFunction(*read);
+  expect(initialInfo && initialInfo->staticMember &&
+             !initialInfo->virtualMethod && !initialInfo->pureVirtual &&
+             initialInfo->virtualRoots.empty() && readInfo &&
+             !readInfo->staticMember && readInfo->virtualMethod &&
+             readInfo->pureVirtual && readInfo->virtualRoots.size() == 1,
+         "semantics must distinguish direct static functions from pure "
+         "instance contracts");
+  const auto *invoke = findTopLevelFunction(frontend.program, "invoke");
+  bool hirStatic = false, hirDirect = false, mirStatic = false,
+       mirDirect = false;
+  for (const auto &instance : frontend.hir.functionInstances()) {
+    if (instance.source == initial)
+      hirStatic = instance.staticMember && !instance.virtualMethod &&
+                  !instance.pureVirtual && instance.virtualRoots.empty();
+    if (instance.source == invoke)
+      for (const auto &value : instance.body.values)
+        if (value.kind == lang::HirValueKind::Call)
+          hirDirect = value.dispatch == lang::CallDispatch::Static &&
+                      !value.receiver.has_value();
+  }
+  for (const auto &instance : frontend.mir.functionInstances()) {
+    if (instance.declaration == initialInfo->id)
+      mirStatic = instance.staticMember && !instance.virtualMethod &&
+                  !instance.pureVirtual && instance.virtualRoots.empty();
+    if (instance.declaration != frontend.semantics.findFunction(*invoke)->id)
+      continue;
+    for (const auto &block : instance.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call)
+          mirDirect = instruction.dispatch == lang::CallDispatch::Static &&
+                      !instruction.receiver.has_value();
+  }
+  expect(hirStatic && hirDirect && mirStatic && mirDirect,
+         "HIR and MIR must preserve static identity and receiver-free direct "
+         "calls, not rediscover purity from the owner kind");
+  const auto artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
+                        lang::OptimizationPipeline().run(
+                            frontend.hir, lang::OptimizationLevel::O0));
+  expect(artifact.contents.find("static std::int32_t initial(") !=
+                 std::string::npos &&
+             artifact.contents.find("virtual std::int32_t read() const = 0;") !=
+                 std::string::npos &&
+             artifact.contents.find("Reading::initial(") != std::string::npos,
+         "verified static methods should emit ordinary static declarations "
+         "and definitions alongside pure instance declarations");
+
+  const auto rejected = [](std::string_view source, std::string_view code) {
+    const auto result = lang::Frontend().analyze("invalid-interface-static.gti",
+                                                 std::string(source));
+    expect(!result.canGenerateCode() &&
+               findDiagnosticByCode(result.diagnostics, code),
+           "invalid interface static boundary must be rejected by " +
+               std::string(code));
+  };
+  rejected("interface I { static int invalid() = 0; };", "GTI-S2042");
+  rejected("interface I { virtual static int invalid() { return 1; } };",
+           "GTI-S2042");
+  rejected("interface I { static int invalid() override { return 1; } };",
+           "GTI-S2042");
+  rejected("interface I { int invalid() { return 1; } };", "GTI-S2041");
+  rejected("interface I { int invalid() = 0; };", "GTI-S2041");
+  rejected("interface I { private: int invalid(); };", "GTI-S2041");
+  rejected("interface I { static int state = 1; };", "GTI-S2041");
+  rejected("interface I { I() {} };", "GTI-S2041");
+  rejected("interface I { ~I() {} };", "GTI-S2041");
+  rejected("interface I { static int missing(); }; int main() { return "
+           "I::missing(); }",
+           "GTI-S2106");
+  for (const auto source :
+       {"interface I { static int read() { return this.read(); } };",
+        "interface I { static int read() mut { return 1; } };",
+        "interface I { static int read() && { return 1; } };",
+        "interface I { private: static int hidden() { return 1; } }; int "
+        "main(){ return I::hidden(); }",
+        "interface I { unsafe static int raw() { return 1; } }; int main(){ "
+        "return I::raw(); }"}) {
+    const auto result =
+        lang::Frontend().analyze("invalid-static-receiver.gti", source);
+    expect(
+        !result.canGenerateCode(),
+        "ordinary static access, receiver and unsafe restrictions must apply");
+  }
+}
+
 void testInheritanceAndInterfaces() {
   const std::string source = R"(
 interface Renderable {
@@ -11798,6 +11950,7 @@ constexpr NamedTest kTests[] = {
     {"testConstructorsAndReceiverMutability",
      testConstructorsAndReceiverMutability},
     {"testInheritanceAndInterfaces", testInheritanceAndInterfaces},
+    {"testInterfaceStaticMethods", testInterfaceStaticMethods},
     {"testInheritedGenericTargetInstances",
      testInheritedGenericTargetInstances},
     {"testDirectBraceConstruction", testDirectBraceConstruction},

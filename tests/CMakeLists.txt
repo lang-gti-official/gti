@@ -2970,6 +2970,21 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(polymorphic_owner_cleanup_runtime PROPERTIES TIMEOUT 180)
   add_test(
+    NAME interface_static_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/interface_static_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(interface_static_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME interface_static_performance
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/interface_static_performance_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_BINARY_DIR}/Testing/interface-static-cost"
+  )
+  set_tests_properties(interface_static_performance PROPERTIES TIMEOUT 180)
+  add_test(
     NAME lambda_pack_invocation_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/lambda_pack_invocation_runtime_test.py"
@@ -3974,6 +3989,12 @@ if(Python3_Interpreter_FOUND)
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>"
     )
+    add_test(
+      NAME interface_static_lsp
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
+              "$<TARGET_FILE:gti_lsp>" interface-static
+    )
+    set_tests_properties(interface_static_lsp PROPERTIES TIMEOUT 120)
     add_test(
       NAME atomic_lsp
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
