@@ -228,7 +228,7 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 gcc_sanitizer_arguments(environment)
 
-    def test_json_policy_and_generic_hook_preserve_native_modes_input_order_and_budget(self):
+    def test_generic_hook_preserves_native_modes_input_order_and_budget(self):
         commands = []
         callbacks = []
 
@@ -241,25 +241,26 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
             callbacks.append((name, label))
             self.assertEqual(environment["ASAN_OPTIONS"], "halt_on_error=1")
             self.assertEqual(environment["UBSAN_OPTIONS"], "halt_on_error=1:print_stacktrace=1")
-            return accessor.native_arguments_by_case(name, label, environment)
+            self.assertEqual(accessor.native_arguments_by_case(name, label, environment), ())
+            if name == "with_provider" and label == "sanitized":
+                return ("-fno-inline-functions-called-once", "-fno-inline")
+            return ()
 
         with patch.object(sys, "argv", ["matrix", "fake-gti", "--jobs", "1"]), \
                 patch.object(matrix.subprocess, "run", process), \
-                patch.object(accessor, "gcc_sanitizer_arguments",
-                             return_value=("-fno-inline-functions-called-once", "-fno-inline")), \
                 contextlib.redirect_stdout(io.StringIO()):
-            matrix.main(names=("json_borrowed_range", "other"),
-                        native_inputs_by_name={"json_borrowed_range": ("provider.cpp",)},
+            matrix.main(names=("with_provider", "other"),
+                        native_inputs_by_name={"with_provider": ("provider.cpp",)},
                         native_arguments_by_case=extra)
         self.assertEqual(len(commands), 16)
         self.assertEqual(len(callbacks), 16)
         for command, options in commands:
             self.assertEqual(options["timeout"], 120)
-            json = Path(command[1]).stem == "json_borrowed_range"
+            provided = Path(command[1]).stem == "with_provider"
             sanitized = "-fsanitize=address,undefined" in command
-            self.assertEqual("-fno-inline-functions-called-once" in command, json and sanitized)
-            self.assertEqual("-fno-inline" in command, json and sanitized)
-            if json and sanitized:
+            self.assertEqual("-fno-inline-functions-called-once" in command, provided and sanitized)
+            self.assertEqual("-fno-inline" in command, provided and sanitized)
+            if provided and sanitized:
                 self.assertLess(command.index("-fno-omit-frame-pointer"), command.index("provider.cpp"))
                 self.assertLess(command.index("provider.cpp"), command.index("-fno-inline-functions-called-once"))
                 self.assertLess(command.index("-fno-inline-functions-called-once"), command.index("-fno-inline"))
