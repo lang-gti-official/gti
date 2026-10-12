@@ -1817,7 +1817,8 @@ interface LeftFactory { static int create() { return 1; } };
 interface RightFactory { static int create() { return 2; } };
 class BothFactories : public LeftFactory, public RightFactory {};
 concept Number<T> = std::numeric<T>;
-)");
+)",
+                               {standardLibraryPrelude()});
   expect(frontend.canGenerateCode(),
          "interface statics should reuse ordinary access, default, generic, "
          "requires, constexpr and unsafe rules");
@@ -1826,26 +1827,21 @@ concept Number<T> = std::numeric<T>;
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return;
   }
-  const auto *reading = dynamic_cast<const lang::ClassDecl *>(
-      frontend.program.declarations().at(0).get());
-  const auto *meter = dynamic_cast<const lang::ClassDecl *>(
-      frontend.program.declarations().at(1).get());
+  const auto *reading = findTopLevelClass(frontend.program, "Reading");
+  const auto *meter = findTopLevelClass(frontend.program, "Meter");
   const auto *meterType = frontend.semantics.findClassType(*meter);
   expect(meterType != nullptr && !meterType->abstract,
          "statics and unselected bodyless declarations must not add "
          "implementation requirements");
-  const auto *marker = dynamic_cast<const lang::ClassDecl *>(
-      frontend.program.declarations().at(5).get());
-  const auto *marked = dynamic_cast<const lang::ClassDecl *>(
-      frontend.program.declarations().at(6).get());
+  const auto *marker = findTopLevelClass(frontend.program, "Marker");
+  const auto *marked = findTopLevelClass(frontend.program, "Marked");
   const auto *markerType = frontend.semantics.findClassType(*marker);
   const auto *markedType = frontend.semantics.findClassType(*marked);
   expect(markerType && markerType->abstract && markerType->polymorphic &&
              markedType && !markedType->abstract && markedType->polymorphic,
          "an interface without instance requirements still has polymorphic "
          "destruction, without making its implementation abstract");
-  const auto *both = dynamic_cast<const lang::ClassDecl *>(
-      frontend.program.declarations().at(9).get());
+  const auto *both = findTopLevelClass(frontend.program, "BothFactories");
   expect(frontend.semantics.findClassType(*both) &&
              !frontend.semantics.findClassType(*both)->abstract,
          "unselected ambiguous inherited statics must not become instance "
