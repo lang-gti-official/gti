@@ -646,6 +646,13 @@ struct Generic<T> {
   T value;
   unsafe Generic(T source) : value(source) {}
 };
+struct LocalGeneric {
+  unsafe LocalGeneric<T>(T source) {}
+};
+struct ConstantContract {
+  int value;
+  unsafe constexpr ConstantContract(int source) : value(source) {}
+};
 )";
   const std::string source = declaration + R"(
 int main() {
@@ -653,6 +660,8 @@ int main() {
   unsafe {
     ReadByte read{&value};
     auto other = Generic<int>(1);
+    LocalGeneric local{1};
+    ConstantContract constant{1};
     return read.value + other.value == 42 ? 0 : 1;
   }
 }
@@ -694,6 +703,9 @@ int main() {
   expectRejected(declaration +
                      "int main() { auto x = Generic<int>(1); return 0; }",
                  "GTI-S2055", "generic constructor calls require unsafe");
+  expectRejected(declaration +
+                     "int main() { auto x = LocalGeneric(1); return 0; }",
+                 "GTI-S2055", "constructor-local generics preserve unsafe");
   expectRejected("struct R { int n; unsafe R(const int* p) { n = *p; } };",
                  "GTI-S2055",
                  "unsafe constructors do not authorize their bodies");
