@@ -16,6 +16,7 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -2005,7 +2006,7 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
   validateFields(document,
                  {"manifest-version", "package", "targets", "profiles",
                   "dependencies", "workspace", "build", "bindgen", "toolchains",
-                  "modules"},
+                  "modules", "module-implementations"},
                  "top-level manifest", sourceName, source, result.diagnostics);
 
   if (const toml::node *version =
@@ -2287,6 +2288,87 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
           continue;
         }
         package.modules.emplace_back(name, resolved);
+      }
+    }
+  }
+
+  if (const auto *node = document.get("module-implementations")) {
+    const auto *table = node->as_table();
+    if (table == nullptr) {
+      result.diagnostics.push_back(
+          buildDiagnostic("GTI-B1004", sourceSpan(sourceName, source, *node),
+                          "'module-implementations' must map registered module "
+                          "names to arrays of .gti paths."));
+    } else {
+      std::set<std::filesystem::path> seen;
+      for (const auto &[key, pathsNode] : *table) {
+        const std::string name(key.str());
+        const auto declaration = sourceSpan(sourceName, source, pathsNode);
+        const auto module = std::find_if(
+            package.modules.begin(), package.modules.end(),
+            [&](const auto &entry) { return entry.first == name; });
+        if (module == package.modules.end()) {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1005", declaration,
+              "An implementation must name a module registered in [modules]."));
+          continue;
+        }
+        const auto *paths = pathsNode.as_array();
+        if (paths == nullptr) {
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1004", declaration,
+                              "Module implementations must be an array of "
+                              "relative .gti paths."));
+          continue;
+        }
+        std::vector<std::filesystem::path> implementations;
+        for (const auto &pathNode : *paths) {
+          const auto spelling = pathNode.value<std::string>();
+          const auto where = sourceSpan(sourceName, source, pathNode);
+          if (!spelling) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1004", where,
+                "A module implementation path must be a string."));
+            continue;
+          }
+          const std::filesystem::path relative(*spelling);
+          if (spelling->empty() || spelling->find('\0') != std::string::npos ||
+              isAbsoluteOnSupportedHost(*spelling, relative) ||
+              relative.extension() != ".gti") {
+            result.diagnostics.push_back(
+                buildDiagnostic("GTI-B1103", where,
+                                "A module implementation must be a relative "
+                                ".gti path inside its package."));
+            continue;
+          }
+          std::error_code error;
+          const auto resolved =
+              std::filesystem::canonical(packageRoot / relative, error);
+          if (error || !std::filesystem::is_regular_file(resolved, error)) {
+            result.diagnostics.push_back(
+                buildDiagnostic("GTI-B1103", where,
+                                "Module implementation does not name an "
+                                "existing regular file: " +
+                                    *spelling + "."));
+          } else if (!pathIsWithin(packageRoot, resolved)) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1104", where,
+                "Module implementation escapes its owning package."));
+          } else if (!seen.insert(resolved).second ||
+                     std::any_of(package.modules.begin(), package.modules.end(),
+                                 [&](const auto &entry) {
+                                   return entry.second == resolved;
+                                 })) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1005", where,
+                "An implementation file must be distinct from every interface "
+                "and other implementation registration."));
+          } else {
+            implementations.push_back(resolved);
+          }
+        }
+        package.moduleImplementations.emplace_back(name,
+                                                   std::move(implementations));
       }
     }
   }

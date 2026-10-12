@@ -128,11 +128,14 @@ std::vector<PackageSourceRoot> ProjectWorkspace::packageSourceRoots() const {
   std::vector<PackageSourceRoot> roots;
   roots.reserve(resolvedPackages.size());
   for (const ResolvedProjectPackage &package : resolvedPackages) {
-    PackageSourceRoot root{.identity = package.identity(),
-                           .name = package.manifest.package().name,
-                           .packageRoot = package.manifest.packageRoot(),
-                           .sourceRoot = package.manifest.package().sourceRoot,
-                           .modules = package.manifest.package().modules};
+    PackageSourceRoot root{
+        .identity = package.identity(),
+        .name = package.manifest.package().name,
+        .packageRoot = package.manifest.packageRoot(),
+        .sourceRoot = package.manifest.package().sourceRoot,
+        .modules = package.manifest.package().modules,
+        .moduleImplementations =
+            package.manifest.package().moduleImplementations};
     root.dependencies.reserve(package.dependencies.size());
     for (const ResolvedProjectDependency &dependency : package.dependencies) {
       root.dependencies.push_back(
@@ -200,6 +203,14 @@ std::string ProjectWorkspace::modelIdentity() const {
       identity += "\nmodule:" + package.identity() + ":" + name + "=" +
                   path.lexically_relative(package.manifest.packageRoot())
                       .generic_string();
+    }
+    for (const auto &[name, paths] :
+         package.manifest.package().moduleImplementations) {
+      for (const auto &path : paths)
+        identity += "\nimplementation:" + package.identity() + ":" + name +
+                    "=" +
+                    path.lexically_relative(package.manifest.packageRoot())
+                        .generic_string();
     }
     if (const std::optional<std::string> source = package.sourceIdentity()) {
       // A git-sourced package's exact acquisition identity participates so

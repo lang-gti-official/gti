@@ -146,7 +146,8 @@
     "147-standard-library-import.gti": 387,
     "148-nested-configuration.gti": 428,
     "149-interface-static-factories.gti": 69,
-    "150-c-string-import.gti": 120
+    "150-out-of-class-methods.gti": 116,
+    "151-c-string-import.gti": 120
   },
-  "total": 16115
+  "total": 16231
 }

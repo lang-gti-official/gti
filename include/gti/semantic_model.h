@@ -698,6 +698,12 @@ struct FunctionInfo {
   FunctionId id = 0;
   SourceUnitId sourceUnit = 0;
   const FunctionDecl *declaration = nullptr;
+  // The declaration owns the API; a separate definition owns executable
+  // syntax, parameter bindings and definition-site lookup.
+  const FunctionDecl *definition = nullptr;
+  [[nodiscard]] const FunctionDecl *bodyDeclaration() const {
+    return definition != nullptr ? definition : declaration;
+  }
   std::string qualifiedName;
   std::vector<std::string> namespaceScope;
   SemanticType returnType = SemanticType::Unknown;
@@ -2279,6 +2285,8 @@ private:
   void recordExplicitMove(const Parameter &parameter);
 
   void record(const FunctionDecl &declaration, FunctionInfo info);
+  void bindFunctionDefinition(const FunctionDecl &declaration,
+                              const FunctionDecl &definition);
 
   void record(const Lambda &declaration, LambdaInfo info);
 
@@ -2415,6 +2423,9 @@ private:
 
   void finalizeCallableForwardings();
 
+  [[nodiscard]] const FunctionDecl &
+  canonicalFunctionDeclaration(const FunctionDecl &declaration) const;
+
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
   std::unordered_map<const Stmt *, std::vector<SemanticFullExpression>>
       statementFullExpressions;
@@ -2469,6 +2480,8 @@ private:
   std::unordered_map<const RangeForStmt *, ResolvedRangeIterationInfo>
       rangeIterations;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
+  std::unordered_map<const FunctionDecl *, const FunctionDecl *>
+      functionDeclarations;
   std::unordered_map<FunctionId, const FunctionDecl *> functionsById;
   std::unordered_map<const Lambda *, LambdaInfo> lambdas;
   std::unordered_map<LambdaId, const Lambda *> lambdasById;

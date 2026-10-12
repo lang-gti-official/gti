@@ -156,6 +156,20 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   registerNamespaceSymbols(program.declarations(), {});
   collectRootNativeStorageSymbols(program.declarations());
   collectClassMembers(program.declarations(), {});
+  bindOutOfClassDefinitions(program.declarations(), {});
+  if (requireFunctionDefinitions) {
+    for (const auto &owner : classes) {
+      for (const auto &[name, member] : owner.members) {
+        for (const auto &candidate : member.symbol.overloads) {
+          if (candidate.virtualMethod && !candidate.pureVirtual &&
+              candidate.bodyDeclaration() != nullptr &&
+              !candidate.bodyDeclaration()->body()) {
+            requireFunctionDefinition(candidate, candidate.declaration->name());
+          }
+        }
+      }
+    }
+  }
   recordClassFieldSymbols();
   validateOrdinaryClassLayouts();
   registerGlobalBorrowStorage(program.declarations(), {});
@@ -406,7 +420,7 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     }
   }
   semanticModel.record(*function->declaration, std::move(concreteFunction));
-  function->declaration->accept(*this);
+  function->bodyDeclaration()->accept(*this);
   validateDefaultArgumentCycles();
   finalizeRawBorrowContracts();
   semanticModel.finalizeCallableArguments();
@@ -2666,6 +2680,31 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
 auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     -> void {
   FunctionDemandScope pauseDemand(semanticModel, nullptr);
+  const FunctionInfo *definitionInfo = semanticModel.findFunction(stmt);
+  if (stmt.definitionOwner() && definitionInfo == nullptr)
+    return; // The registration diagnostic owns an unmatched definition.
+  struct DefinitionContext {
+    Impl &self;
+    std::vector<std::string> namespaceScope;
+    SourceUnitId unit;
+    std::optional<ClassId> owner;
+    bool active;
+    ~DefinitionContext() {
+      if (!active)
+        return;
+      self.exitDeclarationContext(self.currentClass);
+      self.currentNamespace = std::move(namespaceScope);
+      self.currentSourceUnit = unit;
+      self.currentClass = owner;
+    }
+  } context{*this, currentNamespace, currentSourceUnit, currentClass,
+            stmt.definitionOwner().has_value() && !instanceAnalysisActive};
+  if (context.active) {
+    validateType(TypeRef(*stmt.definitionOwner()));
+    enterDeclarationContext(definitionInfo->namespaceScope,
+                            sourceUnitFor(stmt.name()),
+                            definitionInfo->ownerClass);
+  }
   const DeclarationOrderScope declarationOrder{*this, stmt};
   // A declaration analysed on demand (see ensureBodyAnalyzed) is complete;
   // the lexical pass must not process it a second time. Concrete-instance
@@ -2680,6 +2719,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       genericParametersFor(stmt);
   beginTypeParameterScope(genericParameters);
   const FunctionInfo *functionInfo = semanticModel.findFunction(stmt);
+  const bool staticMethod =
+      functionInfo != nullptr && functionInfo->staticMember;
   const bool requirementsValid = beginRequirementScope(functionInfo);
   const Token &functionToken =
       stmt.operatorName() ? stmt.operatorName()->symbol : stmt.name();
@@ -2797,7 +2838,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   const bool polymorphic =
       methodDeclaration &&
       (stmt.isVirtual() || stmt.isPure() || stmt.isOverride() ||
-       (!stmt.isStatic() &&
+       (!staticMethod &&
         classInfo(*currentClass).kind == ClassKind::Interface));
   const bool directOwningPayloadTransport =
       stmt.body() != nullptr && !intrinsicDeclaration &&
@@ -2865,7 +2906,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     if (!stmt.returnType().reference) {
       report(stmt.name(), "A mutable function return must be a reference type.",
              "GTI-S2017");
-    } else if (methodDeclaration && !stmt.isStatic() &&
+    } else if (methodDeclaration && !staticMethod &&
                stmt.receiverMutability() != ReceiverMutability::Mutable) {
       report(stmt.name(),
              "A mutable reference return requires a mutable receiver.",
@@ -3066,6 +3107,8 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
       stmt.operatorName() ? stmt.operatorName()->symbol : stmt.name();
   const bool isEntryPoint = functionInfo != nullptr && functionInfo->entryPoint;
   const bool methodDeclaration = currentClass && functionDepth == 0;
+  const bool staticMethod =
+      functionInfo != nullptr && functionInfo->staticMember;
   const auto reportContract = [&](const Token &where, std::string message) {
     diagnostics.push_back(makeDiagnostic(DiagnosticId::InvalidFunctionContract,
                                          where, {std::move(message)}));
@@ -3090,7 +3133,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   auto enclosingRawProgramStorage = saveRawProgramStorage();
   if (currentClass && functionDepth == 0) {
     currentReceiverMutability = stmt.receiverMutability();
-    currentStaticMemberFunction = stmt.isStatic();
+    currentStaticMemberFunction = staticMethod;
   }
   loanFlow = {};
   valueControlFlow.clear();
@@ -3102,7 +3145,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   }
   ++functionDepth;
   beginScope();
-  if (methodDeclaration && !stmt.isStatic()) {
+  if (methodDeclaration && !staticMethod) {
     declareReceiverState();
     if (Symbol *receiver = receiverStateSymbol();
         receiver != nullptr && isDirectStoredReferenceType(receiver->type)) {
@@ -3166,7 +3209,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
                typeSpelling(currentReturnType) + "'.",
            "GTI-S2031");
   }
-  if (methodDeclaration && !stmt.isStatic() && canFallThrough) {
+  if (methodDeclaration && !staticMethod && canFallThrough) {
     requireInitializedReceiver(functionToken);
   }
   finalizeLoanFlow();
@@ -3416,7 +3459,7 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
 // unavailable, exactly as before.
 auto SemanticVisitor::Impl::ensureBodyAnalyzed(const FunctionInfo &function)
     -> void {
-  const FunctionDecl *declaration = function.declaration;
+  const FunctionDecl *declaration = function.bodyDeclaration();
   if (!bodyPhaseActive || instanceAnalysisActive || declaration == nullptr ||
       declaration->body() == nullptr || analyzedBodies.contains(declaration) ||
       bodiesInProgress.contains(declaration)) {
@@ -3796,12 +3839,12 @@ auto SemanticVisitor::Impl::pendingDeferredBody(
 auto SemanticVisitor::Impl::finalizesFunction(
     const FunctionInfo &function) const -> bool {
   if (lateFinalization != nullptr)
-    return function.declaration != nullptr &&
-           lateFinalization->functions->contains(function.declaration);
+    return function.bodyDeclaration() != nullptr &&
+           lateFinalization->functions->contains(function.bodyDeclaration());
   // A pending body has no analysed facts yet. Inferring its callable
   // contracts from the bare declaration would pre-empt the ones its body
   // establishes if a late demand analyses it; no analysed body calls it.
-  return !pendingDeferredBody(function.declaration);
+  return !pendingDeferredBody(function.bodyDeclaration());
 }
 
 auto SemanticVisitor::Impl::finalizesCall(const Call *call) const -> bool {
@@ -5586,7 +5629,7 @@ auto SemanticVisitor::Impl::analyzeCollectionInitializer(
     const CallableCandidate &candidate = symbol.overloads.front();
     if (!candidate.staticMember || candidate.compilerPrivate ||
         candidate.declaration == nullptr ||
-        candidate.declaration->body() == nullptr ||
+        candidate.bodyDeclaration()->body() == nullptr ||
         candidate.declaration->hasCLinkage() ||
         candidate.record().requiresUnsafe ||
         candidate.record().intrinsic != IntrinsicKind::None ||
@@ -10500,7 +10543,12 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
     }
     valid = false;
   };
-  if (!function.body()) {
+  const auto *functionInfo = semanticModel.findFunction(function);
+  const auto *definition =
+      functionInfo == nullptr ? &function : functionInfo->bodyDeclaration();
+  const bool staticMethod =
+      functionInfo != nullptr && functionInfo->staticMember;
+  if (!definition->body()) {
     reject(function.name(),
            "A constexpr function requires a body at its declaration.");
   }
@@ -10517,7 +10565,7 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
            "Constexpr generic parameter packs are outside the bounded "
            "constexpr subset.");
   }
-  if (methodDeclaration && !function.isStatic() &&
+  if (methodDeclaration && !staticMethod &&
       function.receiverMutability() == ReceiverMutability::Consuming) {
     reject(function.operatorName() ? function.operatorName()->keyword
                                    : function.name(),
@@ -10528,7 +10576,7 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
   // constexpr does not forbid using an owning T at runtime. Required constant
   // calls independently check their exact types and executed operations.
   // Syntax, receiver, linkage and ordinary ownership checks are never deferred.
-  if (methodDeclaration && !function.isStatic() && currentClass &&
+  if (methodDeclaration && !staticMethod && currentClass &&
       !instanceAnalysisActive &&
       !isSupportedConstexprType(openClassType(*currentClass), true)) {
     reject(function.operatorName() ? function.operatorName()->keyword
@@ -11752,7 +11800,11 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
       return constexprSuccess(source, *zero, context);
     }
   }
-  const FunctionDecl *declaration = resolved->declaration;
+  const FunctionInfo *functionInfo =
+      semanticModel.findFunction(resolved->function);
+  const FunctionDecl *declaration = functionInfo != nullptr
+                                        ? functionInfo->bodyDeclaration()
+                                        : resolved->declaration;
   if (declaration == nullptr || !declaration->isConstexpr()) {
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
@@ -11765,8 +11817,6 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
         "The constexpr definition of '" + declaration->name().lexeme +
             "' must be available before this constant-evaluated call.");
   }
-  const FunctionInfo *functionInfo =
-      semanticModel.findFunction(resolved->function);
   if (functionInfo == nullptr) {
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
@@ -12179,6 +12229,12 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
     const GenericSubstitution &substitution,
     const std::optional<ConstantValue> &receiver, const Token &callSite,
     ConstexprInterpreter &context) -> ConstexprEvaluation {
+  if (const auto *info = semanticModel.findFunction(function);
+      info != nullptr && info->bodyDeclaration() != &function) {
+    return executeConstexprFunction(*info->bodyDeclaration(), returnType,
+                                    arguments, substitution, receiver, callSite,
+                                    context);
+  }
   if (context.callDepth >= constexprCallDepthLimit) {
     return constexprFailure(
         callSite, ConstantEvaluationFailure::ResourceLimit,

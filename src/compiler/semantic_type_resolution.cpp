@@ -880,7 +880,7 @@ auto SemanticVisitor::Impl::ephemeralBorrowResultSupported(
 auto SemanticVisitor::Impl::ephemeralBorrowTargetSupported(
     const CallableCandidate &function) const -> bool {
   if (function.id == 0 || function.declaration == nullptr ||
-      function.declaration->body() == nullptr ||
+      function.bodyDeclaration()->body() == nullptr ||
       function.declaration->runtimeBinding() ||
       function.declaration->hasCLinkage() ||
       function.declaration->operatorName() ||
@@ -894,7 +894,7 @@ auto SemanticVisitor::Impl::ephemeralBorrowTargetSupported(
   }
   return target != nullptr && target->linkage == LanguageLinkage::Gti &&
          target->declaration != nullptr &&
-         target->declaration->body() != nullptr;
+         target->bodyDeclaration()->body() != nullptr;
 }
 
 auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
@@ -2584,7 +2584,7 @@ auto SemanticVisitor::Impl::textViewMemberFactory(std::string_view member) const
   if (unit == nullptr || unit->role != SourceUnitRole::StandardLibrary ||
       unit->standardLibraryName != "std/string_view" ||
       candidate.ownerClass != 0 || candidate.declaration == nullptr ||
-      candidate.declaration->body() == nullptr ||
+      candidate.bodyDeclaration()->body() == nullptr ||
       candidate.record().intrinsic != IntrinsicKind::None ||
       candidate.record().requiresUnsafe || candidate.parameterPack ||
       !candidate.record().genericParameters.empty() ||
@@ -4534,10 +4534,10 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
         function->returnBorrowOrigin == BorrowOriginKind::Argument &&
         function->returnBorrowParameter < function->parameterTypes.size() &&
         function->returnBorrowParameter <
-            function->declaration->parameters().size()) {
+            function->bodyDeclaration()->parameters().size()) {
       const auto index = function->returnBorrowParameter;
-      const auto *binding =
-          semanticModel.findBinding(function->declaration->parameters()[index]);
+      const auto *binding = semanticModel.findBinding(
+          function->bodyDeclaration()->parameters()[index]);
       validShell =
           binding != nullptr &&
           function->parameterTypes[index].kind == SemanticType::Reference &&
@@ -4656,10 +4656,10 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
         function->declaration != nullptr &&
         function->returnBorrowParameter < function->parameterTypes.size() &&
         function->returnBorrowParameter <
-            function->declaration->parameters().size()) {
+            function->bodyDeclaration()->parameters().size()) {
       const auto index = function->returnBorrowParameter;
-      const auto *binding =
-          semanticModel.findBinding(function->declaration->parameters()[index]);
+      const auto *binding = semanticModel.findBinding(
+          function->bodyDeclaration()->parameters()[index]);
       validShell =
           binding != nullptr &&
           function->parameterTypes[index].kind == SemanticType::Reference &&
@@ -4715,12 +4715,13 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
                         return false;
                     } else if (expected.origin == BorrowOriginKind::Argument) {
                       if (function->declaration == nullptr ||
-                          expected.parameter >=
-                              function->declaration->parameters().size() ||
+                          expected.parameter >= function->bodyDeclaration()
+                                                    ->parameters()
+                                                    .size() ||
                           dependency.place.receiver ||
                           dependency.place.root !=
                               symbolForDeclaration(
-                                  function->declaration
+                                  function->bodyDeclaration()
                                       ->parameters()[expected.parameter]
                                       .name))
                         return false;
@@ -4754,18 +4755,18 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     const SymbolId parameterSymbol =
         function->declaration != nullptr &&
                 function->returnBorrowParameter <
-                    function->declaration->parameters().size()
+                    function->bodyDeclaration()->parameters().size()
             ? symbolForDeclaration(
-                  function->declaration
+                  function->bodyDeclaration()
                       ->parameters()[function->returnBorrowParameter]
                       .name)
             : 0;
     std::vector<SymbolId> parameterSymbols{parameterSymbol};
     if (function->declaration != nullptr) {
       for (const auto parameter : function->returnBorrowParameters) {
-        if (parameter < function->declaration->parameters().size()) {
+        if (parameter < function->bodyDeclaration()->parameters().size()) {
           parameterSymbols.push_back(symbolForDeclaration(
-              function->declaration->parameters()[parameter].name));
+              function->bodyDeclaration()->parameters()[parameter].name));
         }
       }
     }
@@ -4845,11 +4846,11 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
 
   if (function->declaration == nullptr ||
       function->returnBorrowParameter >=
-          function->declaration->parameters().size()) {
+          function->bodyDeclaration()->parameters().size()) {
     return;
   }
-  const Parameter &source =
-      function->declaration->parameters()[function->returnBorrowParameter];
+  const Parameter &source = function->bodyDeclaration()
+                                ->parameters()[function->returnBorrowParameter];
   const bool storedValueSource =
       function->returnBorrowParameter < function->parameterTypes.size() &&
       isDirectStoredReferenceType(
@@ -6753,6 +6754,8 @@ auto SemanticVisitor::Impl::prepareInstanceContext(
     currentNamespace = function.namespaceScope;
     currentSourceUnit = function.sourceUnit;
   }
+  if (function.definition != nullptr)
+    currentSourceUnit = sourceUnitFor(function.definition->name());
 
   const bool functionTypePack = !function.genericParameters.empty() &&
                                 function.genericParameters.back().pack;

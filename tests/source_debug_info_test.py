@@ -119,7 +119,8 @@ def main():
             result = debugger(command, root)
             output = result.stdout + result.stderr
             unavailable = ("personality set failed", "Operation not permitted",
-                           "Not allowed to attach", "Developer mode is disabled")
+                           "Not allowed to attach", "Developer mode is disabled",
+                           "non-interactive debug session, cannot get permission to debug processes")
             if any(reason in output for reason in unavailable):
                 print(f"SKIP: host prohibits debugger launch:\n{output}")
                 return 77

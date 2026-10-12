@@ -2252,7 +2252,8 @@ public:
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
-      std::vector<FunctionAttribute> functionAttributes = {})
+      std::vector<FunctionAttribute> functionAttributes = {},
+      std::optional<NamePath> definitionOwner = std::nullopt)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
@@ -2269,13 +2270,17 @@ public:
         nativeCArray_(std::move(nativeCArray)),
         nativeLinkName_(std::move(nativeLinkName)),
         unsafeKeyword_(std::move(unsafeKeyword)),
-        functionAttributes_(std::move(functionAttributes)) {}
+        functionAttributes_(std::move(functionAttributes)),
+        definitionOwner_(std::move(definitionOwner)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
   }
 
   [[nodiscard]] const TypeRef &returnType() const { return returnType_; }
+  [[nodiscard]] const std::optional<NamePath> &definitionOwner() const {
+    return definitionOwner_;
+  }
   [[nodiscard]] const Token &name() const { return name_; }
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
     return genericParameters_;
@@ -2374,6 +2379,7 @@ private:
   std::optional<NativeLinkNameAttribute> nativeLinkName_;
   std::optional<Token> unsafeKeyword_;
   std::vector<FunctionAttribute> functionAttributes_;
+  std::optional<NamePath> definitionOwner_;
 };
 
 class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {

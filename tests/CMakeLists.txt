@@ -463,6 +463,9 @@ if(TARGET gti_lsp)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/member_requirement_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME source_modules_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_modules_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  add_test(NAME out_of_class_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(out_of_class_lsp PROPERTIES TIMEOUT 120)
   add_test(NAME nested_borrow_fields_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME borrowing_composition_lsp
@@ -472,6 +475,16 @@ if(TARGET gti_lsp)
 endif()
 add_test(NAME source_modules_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_modules_runtime_test.py" $<TARGET_FILE:gti>)
+add_test(NAME out_of_class_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(out_of_class_runtime PROPERTIES TIMEOUT 600)
+add_test(NAME out_of_class_cleanup
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_cleanup_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(out_of_class_cleanup PROPERTIES TIMEOUT 600)
+add_test(NAME out_of_class_performance
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_performance_test.py" $<TARGET_FILE:gti>
+          "${PROJECT_BINARY_DIR}/Testing/out-of-class-performance")
+set_tests_properties(out_of_class_performance PROPERTIES TIMEOUT 180)
 add_executable(gti_borrowing_composition_tests borrowing_composition_tests.cpp)
 target_link_libraries(gti_borrowing_composition_tests PRIVATE gti_cpp_backend)
 add_test(NAME borrowing_composition_pipeline COMMAND gti_borrowing_composition_tests)

@@ -2190,7 +2190,22 @@
         "concrete_instance_adapter": 10
       }
     },
-    "150-c-string-import.gti": {
+    "150-out-of-class-methods.gti": {
+      "declarations": 1114,
+      "bodies": 116,
+      "generated_items": 75,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 26,
+        "callable_adapter": 13,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 31
+      }
+    },
+    "151-c-string-import.gti": {
       "declarations": 1113,
       "bodies": 120,
       "generated_items": 78,
@@ -2207,8 +2222,8 @@
     }
   },
   "totals": {
-    "declarations": 104140,
-    "bodies": 16128,
-    "generated_items": 9937
+    "declarations": 105254,
+    "bodies": 16244,
+    "generated_items": 10012
   }
 }

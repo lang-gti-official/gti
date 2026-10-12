@@ -134,6 +134,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testOutOfClassMethods",
+      "suite": "declarations"
+    },
+    {
       "name": "testInterfaceStaticMethods",
       "suite": "declarations"
     },

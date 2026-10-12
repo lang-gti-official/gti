@@ -203,6 +203,14 @@ must match the target's module declaration. Names never trigger filesystem
 search or implicit manifest discovery. Quoted imports cannot cross package
 boundaries. See the [manifest contract](../architecture/build-and-driver.md#source-module-registration).
 
+`[module-implementations]` may register ordinary private source files alongside
+an interface. Importing that interface loads its registered implementations;
+they explicitly import the interface and can define its existing ordinary
+methods using `ReturnType Owner::method(...) { ... }`. This is optional, and
+does not introduce a second module-header form, implicit source discovery or
+visibility of private helpers to importers. See
+[out-of-class definitions](static-semantics.md#optional-out-of-class-method-definitions).
+
 `export import ...;` is allowed only in an interface and deliberately re-exports
 the imported public surface. Ordinary imports do not re-export. Import cycles
 and multiple interface files declaring the same name in one package are errors.

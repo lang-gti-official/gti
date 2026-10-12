@@ -272,7 +272,7 @@
     {
       "id": "c-string-import",
       "mode": "run",
-      "source": "examples/150-c-string-import.gti",
+      "source": "examples/151-c-string-import.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "foreign-style text\n", "stderr": ""}
     },
@@ -3641,7 +3641,7 @@
       "operations": ["std::c_string_errc", "std::string::string(c_string)", "std::string::try_from_c_string"],
       "case_ids": ["c-string-import"],
       "required_instantiations": ["foreign callback", "null and empty", "all non-NUL bytes", "embedded NUL", "size overflow", "recoverable allocation exhaustion", "one exact allocation", "owned copy independent of foreign storage"],
-      "evidence": ["examples/150-c-string-import.gti", "tests/c_string_import_runtime_test.py", "tests/fixtures/c_string_import.gti", "tests/fixtures/c_string_import_null.gti", "tests/fixtures/c_string_import_exhausted.gti"]
+      "evidence": ["examples/151-c-string-import.gti", "tests/c_string_import_runtime_test.py", "tests/fixtures/c_string_import.gti", "tests/fixtures/c_string_import_null.gti", "tests/fixtures/c_string_import_exhausted.gti"]
     },
     {
       "id": "string.checked-iteration",

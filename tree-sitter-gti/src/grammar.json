@@ -4451,7 +4451,7 @@
           "name": "name",
           "content": {
             "type": "SYMBOL",
-            "name": "identifier"
+            "name": "_qualified_identifier"
           }
         },
         {
@@ -4477,6 +4477,35 @@
             "type": "SYMBOL",
             "name": "parameter_clause"
           }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "FIELD",
+                  "name": "mutable",
+                  "content": {
+                    "type": "STRING",
+                    "value": "mut"
+                  }
+                },
+                {
+                  "type": "FIELD",
+                  "name": "consuming",
+                  "content": {
+                    "type": "STRING",
+                    "value": "&&"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         },
         {
           "type": "CHOICE",
