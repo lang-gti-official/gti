@@ -32,7 +32,9 @@ if __name__ == "__main__":
         (("x",), (70, "2\n1\n3\n", bounds("vector", "left"))),
         (("x",) * 2, (70, "2\n1\n3\n", bounds("vector", "right"))),
         (("x",) * 3, (70, "2\n1\n3\n", bounds("vector", "left"))),
-        (("x",) * 4, (70, "3\n1\n2\n", panic("comparison failed"))),
+        # Insertion sort has ordered all three elements when its third
+        # comparison panics; destruction then visits them in reverse.
+        (("x",) * 4, (70, "3\n2\n1\n", panic("comparison failed"))),
         (("x",) * 5, (70, "10\n", panic("array element construction"))),
         (("x",) * 6, (70, "40\n30\n20\n10\n1\n2\n3\n", bounds("array", "left"))),
         (("x",) * 7, (70, "40\n30\n20\n10\n1\n2\n3\n", bounds("array", "right"))),

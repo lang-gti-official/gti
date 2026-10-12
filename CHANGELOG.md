@@ -24,6 +24,16 @@ for what minor and patch releases mean.
   identity can retain the enclosing specialization. Anonymous records and
   nested interfaces/unions are not part of this release.
 
+## 0.410.1 — Faster `std::sort`
+
+- `std::sort` now uses introsort instead of heapsort. It partitions around a
+  sampled median, uses insertion sort for short ranges, and falls back to
+  heapsort so that the worst case stays at O(n log n) comparisons. Sorting a
+  million integers is about 1.8 times as fast, and sorting strings about 2.1
+  times as fast. Results, the comparator contract, failure behaviour and the
+  absence of allocation are unchanged. The order of equal elements was never
+  specified and may differ.
+
 ## 0.409.0 — `<std/json>` is the reflection-driven library
 
 - `std::experimental::json` is now `<std/json>` (`std::json::encode`,
