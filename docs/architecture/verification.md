@@ -1987,9 +1987,11 @@ failure stops callee-local cleanup immediately on a second failure, including
 managed task destruction. They retain exact output and both failure identities.
 Native scope probes independently check earliest-primary preservation,
 thread isolation, scope restoration and rejection of forged managed envelopes.
-`cleanup_context_scope_runtime` also checks that the one outlined incoming
-failure helper retains a non-`noexcept` signature, can return for a first
-failure, and receives only its guarded cold/noinline hint. The ordinary
+`cleanup_context_scope_runtime` also checks that the outlined incoming-failure
+and failure-publication helpers retain non-`noexcept` signatures, can return for
+a first failure, and receive only their guarded cold/noinline hints. It also
+checks that the publication helper writes the exact record and preserves a
+propagated one. The ordinary
 scope-restoration and managed-handoff checks still run at native O0/O3 under
 C++20/C++23; inherited cleanup and panic matrices exercise real second-failure
 reporting. Performance hints never replace these behavioral checks.

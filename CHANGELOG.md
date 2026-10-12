@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.413.1 — Failure checks stay off the fast path
+
+- Operations that can fail, such as checked arithmetic, bounds checks and
+  container growth, now keep their failure handling out of the fast path. The
+  native compiler treats every failure branch as unlikely, and a failure's
+  record is written by one out-of-line call. Short operations such as
+  `std::string::push_back` therefore inline into loops.
+- On the runtime probes, building a string one character at a time takes about
+  a third less time, sorting about 15% less, and hash-map lookups about 4%
+  less. Failure behaviour, messages and cleanup order are unchanged.
+- Moving cold code can shift where an unrelated hot loop lands in memory, so
+  some loops measure a few percent faster or slower. Two probes are about 10%
+  slower for that reason alone.
+
 ## 0.413.0 — Named nested structs and classes
 
 - Non-generic classes and structs can define named child classes and structs,

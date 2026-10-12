@@ -71,6 +71,84 @@ checked arithmetic now uses overflow builtins and no longer emits the
 `if (overflow) {` guard it rewrites. Its `inline` variant still works; the other
 rewrites need current guard patterns.
 
+## RT-1: cold failure paths (2026-10-12)
+
+Every emitted `Invoke` failure alternate is now an `[[unlikely]]` branch. A
+detector's failure record and incoming-cleanup check are now one cold
+out-of-line call, `mir_publish_failure_v1`, instead of an inline 568-byte record
+assignment followed by the check. The checks, records, cleanup order and
+propagation are unchanged; see [backend.md](../architecture/backend.md).
+
+**Where the headroom was.** On main `2f4f50ae`, raising the native inline
+threshold to 2000 changes almost nothing except two probes:
+
+| Probe | Default | Threshold 2000 |
+| --- | ---: | ---: |
+| `strings` | 31.5 ms | 18.9 ms |
+| `hashmap` | 110.0 ms | 80.3 ms |
+
+The 2026-10-08 audit's other inlining gaps (`vector-push`, `calls`, `sort`)
+are gone. Clang remarks show the hot `string::push_back` failure sibling
+missing the threshold by 5 (cost 230 against 225). The hot `unordered_map`
+lookups miss it by 20 to 75.
+
+**Screening.** Textual patches of the emitted C++ separated the effects.
+- Outlining the record alone, or an `inline` hint alone, makes `strings` 1.38x
+  *slower*. `push_back` then inlines into the hot loop with its failure code
+  laid out in line.
+- `[[unlikely]]` alone makes `sort` 14% faster.
+- Only the two together give the `strings` gain.
+
+**Frozen comparison.**
+- *Hardware and toolchain.* Mac mini, macOS arm64, AppleClang 21
+  (`clang-2100.3.34.2`), `-O2`, `-std=c++23`.
+- *Compilers.* The baseline compiler is built from main `2f4f50ae`, and the
+  candidate from the same tree with this change. Each uses its own standard
+  library and runtime.
+- *Builds.* Every probe is built three times per compiler, and the outputs
+  must match.
+- *Runs.* Two warmups, then 11 randomized interleaved rounds, once with the
+  default layout and once with loops aligned to 64 bytes
+  (`-falign-loops=64`).
+
+| Probe | Baseline min | Candidate min | Ratio | Ratio, loops aligned |
+| --- | ---: | ---: | ---: | ---: |
+| `strings` | 31.0 ms | 19.8 ms | 0.640 | 0.643 |
+| `sort` | 490.4 ms | 415.7 ms | 0.848 | 0.850 |
+| `hashmap` | 106.0 ms | 101.0 ms | 0.953 | 0.969 |
+| `expected` | 67.5 ms | 66.9 ms | 0.992 | 1.000 |
+| `lambda` | 118.3 ms | 121.2 ms | 1.025 | 0.989 |
+| `conversions` | 82.7 ms | 84.7 ms | 1.024 | 1.004 |
+| `particles` | 105.5 ms | 116.7 ms | 1.106 | 1.015 |
+| `vector-push` | 51.0 ms | 55.6 ms | 1.091 | 1.064 (median 0.991) |
+| `calls`, `dispatch`, `division`, `matrix`, `shifts` | | | 0.999 to 1.003 | 1.000 to 1.003 |
+
+Binaries are about 1% smaller (`hashmap` 168K to 165K), and complete build
+times are unchanged within 0.01 s.
+
+**Code placement, not code.** The `particles` and `vector-push` hot loops are
+instruction-for-instruction identical in the two compilers' assembly. The
+default layout aligns code only to 4 bytes, so moving cold code earlier in a
+function moves an unchanged loop across fetch boundaries. With loops aligned,
+both regressions mostly disappear while the gains hold.
+
+A control confirms how large this effect is. Two emitted `hashmap` programs
+that differ only in where the cold helper is defined measure within 4% of each
+other in both layouts. An earlier screening ratio of 0.84 for `hashmap` was
+this effect, not a gain. On 2026-10-12 the owner accepted the default-layout
+regressions as placement effects.
+
+**Loop alignment is a separate lever.** With 64-byte loop alignment, the
+baseline compiler's own programs run 1 to 3% faster on `calls`, `dispatch`,
+`division`, `hashmap`, `particles` and `sort`, at negligible size cost. It also
+makes unrelated changes less able to swing results. That is recorded for a
+future native-policy decision, not adopted here.
+
+**Remaining RT-1 headroom.** `strings` now runs within 5% of its
+threshold-2000 ceiling. `hashmap` still runs 101 ms against an 80 ms ceiling,
+which is the remaining case for an inline decision from the MIR success-path
+size.
+
 ## Inline std::function targets (2026-10-09)
 
 Status: integrated through the general `<std/polymorphic>` owner. The
