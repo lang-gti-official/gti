@@ -93,6 +93,51 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   first. Explicitly mark and publish abandoned/superseded work; never silently
   discard it. See [the lifecycle contract](docs/architecture/agent-workflow.md).
 
+## Execution Discipline
+
+- Preserve analysis quality and every required validation gate. There is no
+  arbitrary cap on design review, reasoning depth, or reconsidering a decision.
+  Counterexamples, uncertain invariants, alternative designs, performance and
+  maintainability concerns are valid reasons to investigate further, even when
+  no external code has changed. At checkpoints, retain the question, findings
+  and remaining proof obligations so review resumes from evidence.
+- Bound routine tool/log output to at most 200 lines and 16 KiB per response,
+  including the aggregate of nested tool results. Save build/test output and
+  structured evidence under the normal local/remote retention contract; expose
+  a summary and log path, then targeted excerpts. Use
+  `python3 scripts/bounded_log.py <log>` for saved log tails (default 40 lines,
+  8 KiB). Line limits alone do not bound giant JSON lines. A larger investigation
+  needs a stated question and focused chunks, not a wholesale dump of logs,
+  ignored files, session history, or repository trees. These are display limits,
+  not permission to shorten execution or conceal failures/truncated evidence.
+- Read activated skill instructions completely. Use the documentation index
+  and heading/search queries to select relevant canonical-document sections;
+  do not dump entire manuals by default. Preserve read/decision state across
+  compaction within a turn, and revisit changed or unresolved material.
+- Retain each live session handle or remote run ID. Resume/wait on that same
+  operation; do not launch duplicate validation because output is quiet. Use
+  interruptible product waits, with individual waits no longer than 60 seconds.
+  For remote status polling, start at 30–60 seconds and back off to 2–5 minutes
+  when unchanged, using bounded interruptible waits between polls. A normal
+  queue is not a blocker. Investigate stalls from elapsed time, timeouts and
+  liveness evidence, not silence alone; never steal another agent's slot.
+- If only an external result remains, wait rather than filling time with
+  repeated status/document reads or artificial review work. Independent,
+  useful analysis may continue; waiting is not a prohibition on deeper review.
+  Keep a compact acceptance/evidence ledger with source identities, commands,
+  results, log paths, unresolved findings and pending handles. Resume that
+  ledger after compaction instead of restarting completed audits.
+- Reconcile near the final validation boundary. If main advances during a run,
+  retain its exact-head evidence, inspect the upstream delta, then perform fresh
+  proportionate validation on the reconciled head/base. Re-run every affected,
+  failed or required broad/platform gate; never relabel old evidence as current
+  or weaken safety, performance, optimized-compiler or PR requirements to save
+  time. Explain materially increased cost or duration to the user with the
+  reason, completed evidence and remaining work.
+
+Detailed procedures live in the
+[execution contract](docs/architecture/agent-workflow.md#bounded-output-analysis-and-waiting).
+
 ## Documentation Roles
 
 - `docs/architecture/` describes implemented compiler and tooling
