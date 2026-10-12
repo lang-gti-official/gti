@@ -64,8 +64,9 @@ class Submissions:
             pr = self.flow.pull(record)
             if pr["state"] != "open":
                 raise WorkflowError("Only an open task PR can be submitted to preview")
-            history = sorted((self.load(path.parent.name) for path in self.directory.glob("*/state.json")
-                              if json.loads(path.read_text())["task"] == task), key=lambda row: row["created"])
+            history = sorted((row for row in (json.loads(path.read_text())
+                              for path in self.directory.glob("*/state.json")) if row["task"] == task),
+                             key=lambda row: row["created"])
             checks = tests(checks if checks is not None else (history[-1]["tests"] if history else None))
             if "preview_admission" in checks:
                 raise WorkflowError("Choose owning focused tests, not the aggregate preview_admission gate")
@@ -83,7 +84,8 @@ class Submissions:
             # Detached workers must survive normal task worktree cleanup.
             for name in SCRIPTS:
                 shutil.copyfile(Path(__file__).with_name(name), scripts / name)
-            state = {"id": identity, "task": task, "task_record": record,
+            state = {"id": identity, "task": task,
+                     "task_record": {key: record[key] for key in ("pr", "branch")},
                      "head": pr["head"]["sha"], "tests": checks, "created": self.flow.now(),
                      "phase": "queued", "attempts": [], "log": str(root / "worker.log"),
                      "note": "Optional preview only; continue the normal PR workflow without waiting"}

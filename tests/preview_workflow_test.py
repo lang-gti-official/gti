@@ -4,9 +4,11 @@
 from contextlib import nullcontext
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -163,6 +165,82 @@ class PreviewTests(unittest.TestCase):
             runner.return_value.main.side_effect = remote_run
             result = Preview(self.flow).verify(candidate["id"], [], remote=True, automatic=True)
         self.assertEqual(result["verified"]["steps"][0]["argv"], ["cmake", "host-defaults"])
+
+    def test_preview_queue_does_not_hold_normal_build_or_lifecycle_slots(self):
+        self.feature()
+        jobs, state = self.submit(["task_focused"])
+        window = lifecycle.module.build_window.Window(jobs.preview.directory / "queue", slots={"suite": 1}, poll=0.01)
+        entered = threading.Event()
+        original_acquire = window.acquire
+
+        def acquire(*args, **kwargs):
+            entered.set()
+            return original_acquire(*args, **kwargs)
+
+        slot = window.take("suite", ["other-preview"])
+        with patch("preview_submit.build_window.Window", return_value=window), \
+                patch.object(window, "acquire", side_effect=acquire), \
+                patch.object(jobs.preview, "prepare", side_effect=WorkflowError("stop after dequeue")):
+            worker = threading.Thread(target=jobs.run, args=(state["id"],))
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(5))
+                self.assertEqual(jobs.load(state["id"])["phase"], "queued")
+                with self.flow.lock(), self.flow.window.acquire("suite", ["normal-pr"]):
+                    self.assertTrue(worker.is_alive())
+            finally:
+                window.release(slot)
+                worker.join(5)
+            self.assertFalse(worker.is_alive())
+        self.assertEqual(jobs.load(state["id"])["phase"], "failed")
+
+    def test_cleanup_preserves_modifications_after_publication(self):
+        self.feature()
+        jobs, state = self.submit(["task_focused"])
+        original_publish = jobs.preview.publish
+
+        def publish(identity):
+            candidate = original_publish(identity)
+            (Path(candidate["worktree"]) / "user-note.txt").write_text("preserve")
+            return candidate
+
+        with patch.object(jobs.preview, "verify", side_effect=lambda identity, *a, **kw:
+                          self.verify(jobs.preview.load(identity))[0]), \
+                patch.object(jobs.preview, "publish", side_effect=publish):
+            result = jobs.run(state["id"])
+        self.assertEqual(result["phase"], "published")
+        self.assertIn("Preserved", result["cleanup"])
+        self.assertEqual((Path(result["attempts"][0]) / "user-note.txt").read_text(), "preserve")
+
+    def test_preview_gate_registered_only_for_candidates(self):
+        source = self.root / "cmake-preview"
+        source.mkdir()
+        registration = re.search(r'  if\(EXISTS "\$\{PROJECT_SOURCE_DIR\}/\.gti-preview.json"\).*?  endif\(\)',
+                                 (ROOT / "tests/CMakeLists.txt").read_text(), re.S).group()
+        (source / "CMakeLists.txt").write_text('cmake_minimum_required(VERSION 3.20)\n'
+            'project(PreviewRegistration NONE)\nenable_testing()\n'
+            f'set(Python3_EXECUTABLE "{sys.executable}")\n' + registration)
+        for candidate in (False, True):
+            if candidate:
+                (source / ".gti-preview.json").write_text('{}')
+            build = source / str(candidate)
+            subprocess.run(["cmake", "-S", str(source), "-B", str(build)], check=True, capture_output=True)
+            inventory = json.loads(subprocess.run(["ctest", "--test-dir", str(build), "--show-only=json-v1"],
+                                                 check=True, capture_output=True, text=True).stdout)
+            self.assertEqual([test["name"] for test in inventory["tests"]], ["preview_admission"] if candidate else [])
+            if candidate:
+                self.assertIn("--manifest", inventory["tests"][0]["command"])
+
+    def test_manifest_replays_every_features_exact_focused_tests(self):
+        manifest = self.root / "manifest.json"
+        manifest.write_text(json.dumps({"schema": 1, "features": [
+            {"tests": ["first_check"]}, {"tests": ["second_check", "first_check"]}]}))
+        self.assertEqual(preview_examples.manifest_tests(manifest), ["first_check", "second_check", "first_check"])
+        for document in ({"schema": 2, "features": []}, {"schema": 1, "features": [
+                {"tests": []}]}, {"schema": 1, "features": [{"tests": [".*"]}]}):
+            manifest.write_text(json.dumps(document))
+            with self.assertRaises(ValueError):
+                preview_examples.manifest_tests(manifest)
 
     def verify(self, candidate, failure=False):
         original = subprocess.run

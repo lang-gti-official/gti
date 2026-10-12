@@ -49,6 +49,20 @@ def validate_results(path, required):
         raise ValueError("A required example gate failed or was skipped")
 
 
+def manifest_tests(path):
+    manifest = json.loads(path.read_text())
+    if manifest.get("schema") != 1 or not isinstance(manifest.get("features"), list):
+        raise ValueError("Invalid preview manifest")
+    focused = []
+    for feature in manifest["features"]:
+        names = feature.get("tests")
+        if not isinstance(names, list) or not names or any(
+                not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name) for name in names):
+            raise ValueError("Invalid focused preview checks")
+        focused.extend(names)
+    return focused
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build")
@@ -64,15 +78,7 @@ def main():
         raise ValueError("Example gate requires this candidate's optimized compiler build")
     focused = list(args.focused)
     if args.manifest:
-        manifest = json.loads((root / ".gti-preview.json").read_text())
-        if manifest.get("schema") != 1 or not isinstance(manifest.get("features"), list):
-            raise ValueError("Invalid preview manifest")
-        for feature in manifest["features"]:
-            names = feature.get("tests")
-            if not isinstance(names, list) or not names or any(
-                    not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name) for name in names):
-                raise ValueError("Invalid focused preview checks")
-            focused.extend(names)
+        focused.extend(manifest_tests(root / ".gti-preview.json"))
     if "preview_admission" in focused:
         raise ValueError("Preview admission cannot recursively select itself")
     required = required_tests(sys.platform) | set(focused)
