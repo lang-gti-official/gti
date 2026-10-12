@@ -56,7 +56,8 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     build = Path(args.build).resolve()
-    cache = dict(re.findall(r"^([^/#][^:]*):[^=]+=(.*)$", (build / "CMakeCache.txt").read_text(), re.M))
+    cache = dict(re.findall(r"^([^/#\r\n][^:\r\n]*):[^=\r\n]+=([^\r\n]*)$",
+                            (build / "CMakeCache.txt").read_text(), re.M))
     if Path(cache.get("CMAKE_HOME_DIRECTORY", "")).resolve() != root or cache.get("CMAKE_BUILD_TYPE") not in {
             "Release", "RelWithDebInfo", "MinSizeRel"}:
         raise ValueError("Example gate requires this candidate's optimized compiler build")
