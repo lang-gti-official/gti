@@ -5,6 +5,10 @@
 
 // No arguments: offline URL recipe. URL: GET. URL post: POST a JSON object.
 // See README.md for a reproducible local-server demo (no credentials needed).
+struct named {
+  std::string name = std::string("");
+};
+
 int main(int argc, std::vector<std::string> argv) {
   if (argc == 1) {
     auto base = std::http::url::https("example.com");
@@ -27,11 +31,11 @@ int main(int argc, std::vector<std::string> argv) {
   auto accept = request.set_header("Accept", "application/json");
   if (!accept) { return 3; }
   if (argc == 3) {
-    mut auto body = std::json::value::object();
-    auto name = body.set("name", "tea");
+    named body = {.name = std::string("tea")};
+    auto text = std::json::encode(body);
     auto content_type = request.set_header("Content-Type", "application/json");
-    if (!name || !content_type) { return 3; }
-    request.set_body(std::json::stringify(body));
+    if (!text || !content_type) { return 3; }
+    request.set_body(std::move(text).value());
   }
   auto created = std::http::client::create();
   if (!created) { std::println("HTTP client unavailable"); return 4; }
@@ -47,11 +51,18 @@ int main(int argc, std::vector<std::string> argv) {
     return 6;
   }
   std::string body = response.body();
-  auto document = std::json::parse(body.view());
-  if (!document) { std::println("Invalid JSON response"); return 7; }
-  auto name = document.value().get_string("name");
-  if (!name) { std::println("Missing or invalid name"); return 8; }
-  std::println(name.value());
+  auto document = std::json::decode<named>(body.view());
+  if (!document) {
+    // A schema failure names the field; anything else is malformed text.
+    if (document.error().code == std::json::errc::missing_field ||
+        document.error().code == std::json::errc::type_mismatch) {
+      std::println("Missing or invalid name");
+      return 8;
+    }
+    std::println("Invalid JSON response");
+    return 7;
+  }
+  std::println(document.value().name.view());
   // HTTPS certificate and hostname verification are always enabled.
   return 0;
 }

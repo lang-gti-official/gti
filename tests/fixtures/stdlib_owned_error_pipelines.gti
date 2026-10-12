@@ -2,35 +2,39 @@
 #include <std/json>
 #include <std/memory>
 #include <std/string>
+#include <std/vector>
 
-expected<std::json::value, std::json::error> build_document(
-    std::string_view text) {
-  mut auto object = std::json::value::object();
-  ?object.set("name", text);
-  mut auto children = std::json::value::array();
-  ?children.push(text);
-  ?object.set("children", std::move(children));
-  return std::move(object);
+struct document {
+  std::string name = std::string("");
+  std::vector<std::string> children = std::vector<std::string>();
+};
+
+struct inventory {
+  std::vector<std::string> items = std::vector<std::string>();
+};
+
+expected<std::string, std::json::error> build_document(std::string_view text) {
+  mut std::vector<std::string> children = std::vector<std::string>();
+  children.push_back(std::string(text));
+  document value = {.name = std::string(text), .children = std::move(children)};
+  return std::json::encode(value);
 }
 
 int main() {
   auto good = build_document("tea");
-  if (!good) { return 1; }
-  auto name = good.value().get_string("name");
-  if (!name || name.value() != "tea" ||
-      good.value().at("children").size() != std::size_t(1)) { return 1; }
+  if (!good || good.value().view() != "{\"name\":\"tea\",\"children\":[\"tea\"]}") { return 1; }
   mut std::string invalid = std::string("");
   invalid.push_back(char(uint8_t(192)));
   auto bad = build_document(invalid.view());
-  if (bad || bad.error().code() != std::json::errc::invalid_unicode ||
+  if (bad || bad.error().code != std::json::errc::invalid_unicode ||
       bad.error().has_source_location()) { return 2; }
 
-  // The recursive parser must retain the original child path and byte site.
-  auto malformed = std::json::parse("{\"items\":[\"ok\",\"\\q\"]}");
-  if (malformed || malformed.error().code() != std::json::errc::invalid_escape ||
-      malformed.error().path() != "/items/1" ||
+  // Decoding retains the failing member's path and byte site.
+  auto malformed = std::json::decode<inventory>("{\"items\":[\"ok\",\"\\q\"]}");
+  if (malformed || malformed.error().code != std::json::errc::invalid_escape ||
+      malformed.error().path.view() != "/items/1" ||
       !malformed.error().has_source_location() ||
-      malformed.error().line() != std::size_t(1)) { return 3; }
+      malformed.error().line != std::size_t(1)) { return 3; }
 
   int64_t low = int64_t(-9223372036854775807) - int64_t(1);
   int64_t high = int64_t(9223372036854775807);

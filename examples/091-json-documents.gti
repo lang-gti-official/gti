@@ -1,62 +1,66 @@
 #include <std/json>
+#include <std/optional>
 #include <std/string>
+#include <std/vector>
+
+// A JSON document is an ordinary struct: its fields are the members, their
+// types are the value kinds, and <std/json> maps both ways through
+// reflection. No schema, codec or field list is written anywhere.
+struct repository {
+  std::string name = std::string("");
+  uint64_t stars = 0;
+  std::optional<std::string> license = std::optional<std::string>();
+};
+
+struct issue {
+  std::string title = std::string("");
+  bool open = true;
+  std::vector<std::string> labels = std::vector<std::string>();
+};
 
 int main() {
-  auto parsed = std::json::parse("{\"name\":\"tea\",\"stars\":42,\"license\":null}");
+  auto parsed = std::json::decode<repository>("{\"name\":\"tea\",\"stars\":42,\"license\":null}");
   if (!parsed) {
     std::println(parsed.error().description());
     return 1;
   }
-  // The document owns its contents; it does not borrow the input text.
-  auto document = std::move(parsed).value();
-  auto name = document.get_string("name");
-  auto stars = document.get_uint64("stars");
-  if (!name || !stars) { return 2; }
-  std::println(name.value());
-  std::println(stars.value());
+  // The struct owns its contents; it does not borrow the input text.
+  repository document = std::move(parsed).value();
+  std::println(document.name.view());
+  std::println(document.stars);
 
-  // Missing and null differ. get() is fallible; at() requires a known shape.
-  auto missing = document.get_string("missing");
-  if (missing || missing.error().code() != std::json::errc::missing_key ||
-      !document.contains("license") || !document.at("license").is_null()) { return 3; }
+  // `null` and an absent member both leave an optional empty; a required
+  // field that is absent is an error with the field's path.
+  if (document.license.has_value()) { return 2; }
+  auto missing = std::json::decode<repository>("{\"stars\":1}");
+  if (missing || missing.error().code != std::json::errc::missing_field ||
+      missing.error().path.view() != "/name") { return 3; }
 
-  // Every builder returns a recoverable result; do not silently discard it.
-  mut auto issue = std::json::value::object();
-  auto title = issue.set("title", "Improve examples");
-  auto open = issue.set("open", true);
-  mut auto labels = std::json::value::array();
-  auto first = labels.push("documentation");
-  auto second = labels.push("good first issue");
-  if (!title || !open || !first || !second) { return 4; }
-  for (mut std::size_t index = 0; index < labels.size(); index++) {
-    auto text = labels.at(index).as_string();
-    if (!text) { return 5; }
-    std::println(text.value());
+  // Building text is encoding a value; the result is recoverable because
+  // strings must be valid UTF-8 and floating values finite.
+  mut std::vector<std::string> labels = std::vector<std::string>();
+  labels.push_back(std::string("documentation"));
+  labels.push_back(std::string("good first issue"));
+  issue report = {.title = std::string("Improve examples"), .labels = std::move(labels)};
+  auto compact = std::json::encode(report);
+  if (!compact) { return 4; }
+  std::println(compact.value().view());
+  for (auto& label : report.labels) {
+    std::println(label.view());
   }
-  auto stored = issue.set("labels", std::move(labels));
-  if (!stored) { return 4; }
-  std::println(std::json::stringify(issue));
+  auto readable = std::json::encode_pretty(report);
+  if (!readable) { return 4; }
+  std::println(readable.value().view());
 
-  // Clone is an independent document; modifying it leaves issue unchanged.
-  mut auto edited = issue.clone();
-  auto changed = edited.set("open", false);
-  auto original_open = issue.get_boolean("open");
-  if (!changed || !original_open || !original_open.value()) { return 6; }
-  // Member proxies borrow both sequences without cloning keys or descendants.
-  // Key names and the object's extent remain immutable during traversal.
-  mut std::size_t members = 0;
-  for (auto& member : edited.members()) {
-    if (member.first().empty()) { return 8; }
-    members++;
-  }
-  if (members != edited.object_size()) { return 9; }
-  // Exclusive value traversal may replace descendants, but cannot resize the
-  // object or rewrite its keys. The document is usable again when it finishes.
-  for (mut auto& member : edited.values_mut()) {
-    member = std::json::value::boolean(false);
-  }
-  if (!edited.contains("title") || !edited.contains("labels")) { return 10; }
-  auto invalid = std::json::parse("{\"x\":1,\"x\":2}");
-  if (invalid || !invalid.error().has_source_location()) { return 7; }
+  // A round trip reproduces the value; member order in the text is free.
+  auto back = std::json::decode<issue>("{\"labels\":[\"documentation\",\"good first issue\"],\"open\":true,\"title\":\"Improve examples\"}");
+  if (!back || back.value().title.view() != report.title.view() ||
+      back.value().labels.size() != std::size_t(2)) { return 5; }
+
+  // Strict grammar: repeated keys, leading zeros and raw control characters
+  // are errors with a line and column.
+  auto invalid = std::json::decode<repository>("{\"name\":\"a\",\n \"name\":\"b\"}");
+  if (invalid || invalid.error().code != std::json::errc::duplicate_key ||
+      !invalid.error().has_source_location() || invalid.error().line != std::size_t(2)) { return 6; }
   return 0;
 }
