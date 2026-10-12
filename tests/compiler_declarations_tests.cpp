@@ -1903,7 +1903,7 @@ class Marked : public Marker {};
     const auto result = lang::Frontend().analyze("invalid-interface-static.gti",
                                                  std::string(source));
     expect(!result.canGenerateCode() &&
-               findDiagnosticByCode(result.diagnostics, code),
+               findDiagnosticByCode(result.diagnostics, std::string(code)),
            "invalid interface static boundary must be rejected by " +
                std::string(code));
   };
