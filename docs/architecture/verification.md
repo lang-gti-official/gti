@@ -1,5 +1,47 @@
 # Compiler Verification
 
+## Owned C-string imports and unsafe constructors (0.417.0)
+
+`unsafe_function_contract` covers unrelated ordinary, class-generic,
+constructor-generic and constexpr unsafe constructors, exact caller permission,
+MIR permission-erasure rejection, hover and formatter reanalysis. Negative cases
+cover implicit defaults, base initializers, nested lambdas, and generic raw
+emplacement hiding an unsafe constructor. Moving an explicitly completed value
+into raw storage remains supported. `unsafe_function_lsp` checks the diagnostic's
+UTF-16 range, related declaration and recovery after edits.
+
+`c_string_import_runtime` runs the source-defined constructor and factory through
+C++20/C++23 O0/O1/O3 and O1 ASan/UBSan. It verifies native callbacks, all non-NUL
+byte values, embedded NUL, empty/null input, storage independence, size overflow,
+recoverable allocation exhaustion and the constructor's panic/abort policies.
+The allocator oracle requires no allocation for empty strings and exactly one
+`length + 1` allocation otherwise, including 64 KiB inputs. An unrelated unsafe
+constructor verifies initialized-field and caller cleanup on checked failure.
+`resource_memory_runtime` checks the representation-only native byte bridge;
+`macos_installed_runtime` runs example 151 from a relocated installation.
+
+Before the out-of-class definition reconciliation, the reviewed 147-example
+inventory was 16,115 unique emitted MIR bodies and
+104,140 LoweredProgram declarations, 16,128 bodies and 9,937 generated items.
+The new native bridge adds one adapter to each of 87 existing memory clients;
+no existing body is removed. Example 151 adds 120 bodies and 78 generated items.
+Both production corpus endpoints execute every example successfully.
+
+After reconciliation with out-of-class definitions, all 148 examples pass both
+native endpoints and backend admission. Existing rows remain unchanged; the
+upstream split-method example adds 116 bodies, 1,114 declarations and 75
+generated items. The combined totals are 16,231 emitted MIR bodies and 105,254
+LoweredProgram declarations, 16,244 bodies and 10,012 generated items. A split
+unsafe static factory also constructs an unrelated unsafe-constructor value;
+its caller permission is retained across the declaration/body association.
+
+An optimized arm64 probe copied a 64 KiB input 2,000 times in 61.2–62.5 ms
+through either new API (one allocation each), versus 40.4–41.0 ms for the existing
+known-length view constructor. The latter does not scan for NUL: these are
+different contracts, not a speedup claim. The combined probe built in 2.26 s,
+used 343 MiB peak compiler RSS and produced a 206,032-byte executable. Timings
+are local observations, not portable thresholds or a claim of failure-path parity.
+
 ## Optional out-of-class method definitions (0.416.0)
 
 `testOutOfClassMethods` covers canonical declaration/body association, private

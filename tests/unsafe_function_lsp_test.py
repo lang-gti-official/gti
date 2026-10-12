@@ -147,6 +147,25 @@ def main():
             broken_members = fixed_members.replace("unsafe int read()", "unsafe int read(")
             assert change(broken_members, 11)
             assert change(fixed_members, 12) == []
+            constructor = (
+                "// 😀 UTF-16 control\n"
+                "struct Packet { int n; unsafe Packet(int v) : n(v) {} };\n"
+                "int main() { Packet packet{1}; return packet.n; }\n"
+            )
+            error = next(d for d in change(constructor, 13) if d["code"] == "GTI-S2055")
+            keyword = constructor.index("unsafe")
+            assert error["relatedInformation"][0]["location"] == {
+                "uri": uri, "range": {"start": lsp_position(constructor, keyword),
+                                         "end": lsp_position(constructor, keyword + 6)}}, error
+            fixed = constructor.replace("Packet packet{1}; return packet.n;",
+                                        "unsafe { Packet packet{1}; return packet.n; }")
+            assert change(fixed, 14) == []
+            session.send({"jsonrpc": "2.0", "id": 15, "method": "textDocument/hover", "params": {
+                "textDocument": {"uri": uri}, "position": lsp_position(fixed, fixed.index("Packet(int") + 1)}})
+            hover = session.receive_until(lambda message: message.get("id") == 15)["result"]
+            assert "unsafe Packet(" in hover["contents"]["value"], hover
+            assert change(fixed.replace("Packet(int v)", "Packet(int"), 15)
+            assert change(fixed, 16) == []
         finally:
             session.close()
 

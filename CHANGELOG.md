@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.417.0 — Owned C-string imports
+
+- Unsafe `std::string(c_string)` copies foreign text into owned storage.
+- `std::string::try_from_c_string` returns recoverable null, size-overflow and
+  allocation-exhaustion errors without routing through infallible allocation.
+- Ordinary source constructors can declare an `unsafe` caller contract.
+  Their bodies still require explicit unsafe blocks for unsafe operations.
+- `std::c_string_bytes` exposes a non-owning byte address for other source-defined
+  consumers. Example 151 demonstrates copying and constructor contracts.
+
 ## 0.416.1 — Generic return formatting for split methods
 
 - Formatting out-of-class definitions keeps generic return types tight, as in

@@ -348,6 +348,7 @@ struct LoweredConstructorDeclaration {
   std::optional<SpecialMemberSpecifierKind> specifier;
   bool hasRequiresClause = false;
   bool constexprConstructor = false;
+  bool requiresUnsafe = false;
   bool compilerPrivate = false;
 
   friend bool operator==(const LoweredConstructorDeclaration &,

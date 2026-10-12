@@ -407,6 +407,18 @@ int main() {
   std::size_t pendingReturns = 0;
   bool expectedRecipe = false;
   bool unexpectedRecipe = false;
+  const lang::SemanticType *fixtureError = nullptr;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    if (hir && hir->source && hir->source->name().lexeme == "make" &&
+        function.returnType.kind == lang::SemanticType::Expected &&
+        function.returnType.arguments.size() == 2)
+      fixtureError = &function.returnType.arguments.back();
+  }
+  expect(fixtureError != nullptr,
+         "fixture retains its exact owning error type");
+  if (fixtureError == nullptr)
+    return 1;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &selected : function.body.dropObligations) {
       const bool expected =
@@ -415,6 +427,11 @@ int main() {
           selected.dropType.type.kind == lang::SemanticType::Unexpected;
       if ((!expected && !unexpected) || (expected && expectedRecipe) ||
           (unexpected && unexpectedRecipe))
+        continue;
+      // Other library factories may return expected<Owner, TrivialError>.
+      // The mutation oracle specifically targets this fixture's owning Error.
+      if (selected.dropType.type.arguments.empty() ||
+          selected.dropType.type.arguments.back() != *fixtureError)
         continue;
       expectedRecipe |= expected;
       unexpectedRecipe |= unexpected;

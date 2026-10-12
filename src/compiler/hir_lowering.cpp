@@ -792,6 +792,8 @@ private:
          .source = generatedBody ? nullptr : construction.declaration,
          .generatedDefault = generatedBody,
          .constexprConstructor = constant,
+         .requiresUnsafe =
+             declaration != nullptr && declaration->requiresUnsafe,
          .owner = *owner,
          .typeArguments = construction.typeArguments,
          .valueArguments = construction.valueArguments,

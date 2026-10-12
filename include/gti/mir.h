@@ -1460,6 +1460,7 @@ struct MirConstructorInstance {
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
   bool constexprConstructor = false;
+  bool requiresUnsafe = false;
   bool generatedDefault = false;
   // Constructor-local generic arguments are part of the concrete instance
   // identity just as owner arguments are part of the class instance. Keep
