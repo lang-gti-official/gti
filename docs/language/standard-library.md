@@ -878,9 +878,12 @@ indices are checked against the initialized length before mutation. Equal
 uses ordinary defined-failure cleanup and leaves the sequence unchanged.
 
 Whole-vector `std::reverse` and both `std::sort` overloads accept relocatable
-move-only elements. Sort uses iterative heapsort, O(n log n) comparisons and
-constant auxiliary storage, without copying a pivot or cloning elements. It
-is not stable. The default relation requires `std::totally_ordered<T>`; an
+move-only elements. Sort uses iterative introsort: median-of-three quicksort
+partitions, insertion sort for ranges of at most 16 elements, and heapsort for
+any range that exhausts 2*floor(log2(n)) partition levels. Comparisons are
+O(n log n) in the worst case, auxiliary storage is a fixed-size stack, and
+elements move only by checked swaps, without copying a pivot or cloning
+elements. It is not stable. The default relation requires `std::totally_ordered<T>`; an
 explicit comparator must satisfy `std::comparator<Compare, T>` and define a
 strict weak ordering. Each comparison borrows elements read-only, ending those
 loans before any swap. A failed comparator leaves a valid permutation, not a

@@ -221,6 +221,16 @@ tags select `relaxed`, `acquire`, `release`, `acq_rel`, and `seq_cst`; there is
 no `consume`. Operation-specific legality is checked by source overload
 resolution and again in MIR before lowering.
 
+Safe atomic wait/notify extends this contract without changing borrowing.
+Waiting holds an ordinary shared storage loan and performs load-ordered
+observations, returning only after observing a different scalar. Notifications
+schedule rechecks but confer no publication edge or retained event credit.
+The wait operation and notifications have distinct verified MIR identities and
+optimizer barriers; they are not modeled as a removable load or unknown call.
+Host parking is irreducible runtime support; state/predicate loops and higher
+level completion protocols remain ordinary source policy. Guard-aware condition
+variables require their own release/reacquire and child-loan exclusion contract.
+
 HIR and MIR must represent recognized synchronization operations and their
 orders explicitly. An unknown call or `maySynchronize` effect is a conservative
 optimization barrier; it is not proof of a language-level synchronization

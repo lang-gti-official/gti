@@ -3820,6 +3820,15 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(atomic_end_to_end PROPERTIES TIMEOUT 600)
     add_test(
+      NAME atomic_wait_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/atomic_wait_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_wait.gti"
+              "${PROJECT_SOURCE_DIR}/examples/076-scalar-atomics.gti"
+    )
+    set_tests_properties(atomic_wait_runtime PROPERTIES TIMEOUT 600)
+    add_test(
       NAME atomic_tsan
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/atomic_tsan_test.py"
@@ -3828,6 +3837,7 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_orders.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_fetch.gti"
               "${CMAKE_CXX_COMPILER}"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_wait.gti"
     )
     set_tests_properties(atomic_tsan PROPERTIES TIMEOUT 600)
     add_test(

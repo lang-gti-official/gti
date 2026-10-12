@@ -1,0 +1,19 @@
+#include <std/atomic>
+
+extern "C" {
+  void gti_scoped_alloc_reset();
+  uint64_t gti_scoped_allocations();
+}
+
+int main() {
+  std::atomic<int32_t> state{1};
+  unsafe { gti_scoped_alloc_reset(); }
+  for (mut int32_t i = 0; i < 10000; i++) {
+    state.wait(0);
+    state.notify_one();
+    state.notify_all();
+  }
+  mut uint64_t allocations = uint64_t(0);
+  unsafe { allocations = gti_scoped_allocations(); }
+  return allocations == uint64_t(0) ? 0 : 1;
+}

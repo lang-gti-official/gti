@@ -68,7 +68,8 @@ int exercise(int count, int shape, bool descending) {
     }
   }
   for (auto& remaining : frequencies) { if (remaining != 0) { return 4; } }
-  // 2*n*(ceil(log2(n))+1) bounds both heap construction and extraction.
+  // Introsort stays within 2*n*(ceil(log2(n))+1) comparisons on these shapes;
+  // algorithm_sort_adversary.gti checks its O(n log n) worst case.
   mut uint64_t levels = uint64_t(0);
   mut std::size_t width = std::size_t(1);
   while (width < values.size()) { width *= std::size_t(2); levels++; }

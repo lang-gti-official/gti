@@ -5,8 +5,10 @@ These probes preserve the evidence behind the 2026-10-08
 They are screening programs, not benchmark workloads or timing gates. Each
 directory pairs an ordinary GTI program (`main.gti`) with an idiomatic C++
 twin (`idiomatic.cpp`) that prints the same checksum line. `sort-heap` reuses
-the `sort` program but its twin runs GTI's exact heapsort, separating the
-library algorithm from compiler overhead.
+the `sort` program but its twin runs the iterative heapsort that `std::sort`
+used before introsort. It isolated the library algorithm from compiler
+overhead in the original audit and now compares GTI's introsort with that
+earlier algorithm.
 
 | Probe | Everyday shape it exercises |
 | --- | --- |
