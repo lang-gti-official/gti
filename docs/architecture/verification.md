@@ -1,5 +1,41 @@
 # Compiler Verification
 
+## Container iterator completion: delivery acceptance (2026-10-12)
+
+The owner accepts integration of the completed container campaign after the
+unfiltered local 672/672 pass, independent corpus/census and runtime-cost review,
+and final Linux reconciliation. The implementation remains byte-for-byte
+unchanged from clean `a051a13b`; `c4796024` adds only documentation and the
+measured native-test policy/tooling checks. Final closure is documentation-only.
+The four new examples and every current container/view family remain in the
+reviewed inventories and full local acceptance.
+
+The final clean Linux run `run-7dc91326373d4f77abf8061c8488ecc5` passes its
+Release GCC 14/LLVM 21 build and 44/45 platform gates. All eleven actual-GCC
+native-tooling controls pass without skips. Only the atomic JSON borrowed-range
+sanitizer compile exceeds its unchanged 120-second limit, despite both measured
+GCC-only inlining flags. This remains a failed platform case, not a runtime or
+sanitizer pass. No assertion, mode, compiler selection or time budget is weakened.
+
+The retained failing native invocation uses GCC 15, C++23/O1, strict FP and both
+sanitizers. Its 229 samples record 116.83 seconds accumulated `cc1plus` CPU over
+116.85 seconds native elapsed before the outer GTI timeout, with an unfinished
+sampled RSS maximum of 1.055 GiB. Host idle averages 47.94%, steal 0.127%, and
+available memory stays above 6.833 GiB; no memory-pressure or cgroup-throttling
+evidence is present. At most four native compiler processes overlap. These
+observations do not establish worker starvation, so scheduler accounting is
+unchanged. They are not a completed compilation's time or peak-memory measure.
+The exact 2,399,661-byte C++ input, invocation, source/tool identities, full
+45-entry log and untruncated resource records are retained under
+`/private/tmp/agent109-linux-c479-results/`; managed remote cleanup is confirmed.
+
+The owner explicitly requests merging with this remaining native compile-budget
+limitation rather than extending the campaign. That accepts this validation
+exception; it does not claim an all-green Linux result or resolve the native-cost
+problem. The full local success and representative runtime parity remain valid
+through exact implementation equivalence. Final documentation/test-policy checks
+run on the Mac mini before PR integration; no new laptop build is needed.
+
 ## Container iterator completion: full-run reconciliation (2026-10-12)
 
 The clean final implementation candidate `a051a13b`, reconciled with canonical
@@ -84,7 +120,9 @@ The checked-member variant additionally returns its result across local
 fallible cleanup: both backend standards explicitly construct the independent
 slot only on Invoke success, and all eight native modes preserve complete
 success and producer-failure cleanup observations.
-Fresh final-source whole-suite/platform and integration evidence remain required.
+This repair checkpoint required fresh final-source whole-suite/platform and
+integration evidence. The final records and explicit accepted platform exception
+are described above; the failed historical runs remain failures.
 
 ## Container iterator completion: candidate validation (2026-10-12)
 
