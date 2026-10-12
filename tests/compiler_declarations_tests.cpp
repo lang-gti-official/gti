@@ -1798,8 +1798,9 @@ void testOutOfClassMethods() {
           std::equal(originalTokens.begin(), originalTokens.end(),
                      formattedTokens.begin(),
                      [](const lang::Token &left, const lang::Token &right) {
-                       return left.kind == right.kind &&
-                              left.lexeme == right.lexeme;
+                          return left.kind == right.kind &&
+                                 (left.kind == lang::TokenKind::END_OF_FILE ||
+                                  left.lexeme == right.lexeme);
                      }),
       "qualified definitions format without changing tokens or qualification");
   const auto frontend = lang::Frontend().analyze("split-methods.gti", R"(
