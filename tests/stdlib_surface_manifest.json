@@ -26,7 +26,7 @@
     "stdlib/std/json.gti": "0baff47898a7646937e3fff4e8425d1a3b51b80b92fd1160653e765bc001b82d",
     "stdlib/std/list.gti": "b670d0cf766d8bfae1cc32c51517510bcd434dc834ed31d8f8a46ff59da800e0",
     "stdlib/std/map.gti": "24bf0e1e969a92e4d6df567d6b13e1e5e2519e3bf2f80c225ca5937dcfeba3cf",
-    "stdlib/std/memory.gti": "479b7a52d38437db574b236e7addc02ca866745c704ca5299748ffaa4f1aef75",
+    "stdlib/std/memory.gti": "35f518ab05bb831bb0e80ede535d030caae7cb6a806f5388f21258d2081d9b1d",
     "stdlib/std/meta.gti": "a153608856dee42b8a5e72d66b6af77167b0e226c6893147158a130400a26a3e",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
@@ -43,7 +43,7 @@
     "stdlib/std/simd.gti": "9db37c0d480f519cfcfb44b22a478cf51f19e0c11334e85caf76e23bbe107f3b",
     "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
     "stdlib/std/span.gti": "430adc5e18fd0325a8e7abba92c7edfa031d956d64c16fbb7327da3776d21c6e",
-    "stdlib/std/string.gti": "01460b1e07c079518c7761cd874bba569b13c7192e565db32f507b8eec9b7a0a",
+    "stdlib/std/string.gti": "7ec8b841a3f108884bba2aadc86908e13572222716143443120f1523e4df88e9",
     "stdlib/std/string_view.gti": "db84934530d41115374ab9f76978a276e7c2c6789b6f2848a25dacf295beba27",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "8cbe5f5b4807a6e2480213c04f0ff09f692f72c55527b3b75198d92a8027a732",
@@ -268,6 +268,13 @@
       "source": "tests/fixtures/stdlib_surface_build.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "c-string-import",
+      "mode": "run",
+      "source": "examples/150-c-string-import.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "foreign-style text\n", "stderr": ""}
     },
     {
       "id": "charconv-float",
@@ -2645,6 +2652,15 @@
       ]
     },
     {
+      "id": "memory.c-string-bytes",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": ["std::c_string_bytes"],
+      "case_ids": ["c-string-import"],
+      "required_instantiations": ["null pointer", "non-owning immutable foreign byte address"],
+      "evidence": ["tests/c_string_import_runtime_test.py", "tests/fixtures/c_string_import.gti", "tests/resource_memory_runtime_tests.cpp"]
+    },
+    {
       "id": "memory.executable",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
@@ -3617,6 +3633,15 @@
         "tests/text_view_iterator_compiler_tests.cpp",
         "examples/146-counted-text-view-iteration.gti"
       ]
+    },
+    {
+      "id": "string.c-string-import",
+      "source": "stdlib/std/string.gti",
+      "status": "executable",
+      "operations": ["std::c_string_errc", "std::string::string(c_string)", "std::string::try_from_c_string"],
+      "case_ids": ["c-string-import"],
+      "required_instantiations": ["foreign callback", "null and empty", "all non-NUL bytes", "embedded NUL", "size overflow", "recoverable allocation exhaustion", "one exact allocation", "owned copy independent of foreign storage"],
+      "evidence": ["examples/150-c-string-import.gti", "tests/c_string_import_runtime_test.py", "tests/fixtures/c_string_import.gti", "tests/fixtures/c_string_import_null.gti", "tests/fixtures/c_string_import_exhausted.gti"]
     },
     {
       "id": "string.checked-iteration",

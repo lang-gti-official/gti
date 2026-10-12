@@ -641,6 +641,7 @@ struct HirConstructorInstance {
   // Such instances have no source constructor declaration.
   bool generatedDefault = false;
   bool constexprConstructor = false;
+  bool requiresUnsafe = false;
   HirClassInstanceId owner = 0;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;

@@ -773,6 +773,7 @@ private:
       output << '-';
     }
     output << ";requires=" << value.hasRequiresClause
+           << ";unsafe=" << value.requiresUnsafe
            << ";private=" << value.compilerPrivate << ')';
   }
 
@@ -826,7 +827,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v17\n";
+  output << "lowered-program-v18\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

@@ -27,6 +27,23 @@
 #include <variant>
 
 namespace lang {
+namespace {
+bool exactConstructorPermission(const MirProgram &program,
+                                const MirInstruction &instruction) {
+  if (instruction.unsafeOperation == UnsafeOperationKind::None)
+    return true;
+  const auto *target =
+      instruction.constructorTarget
+          ? program.findConstructorInstance(*instruction.constructorTarget)
+          : nullptr;
+  return instruction.kind == MirInstructionKind::Construct &&
+         instruction.unsafeOperation ==
+             UnsafeOperationKind::DeclaredUnsafeConstruction &&
+         target != nullptr && target->requiresUnsafe &&
+         !instruction.rawMemoryAccess;
+}
+} // namespace
+
 std::string cppMirCleanupValueExpression(const MirProgram &program,
                                          const MirDropType &type,
                                          std::string_view value,
@@ -3837,7 +3854,7 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
       owner->traits == value->info.traits &&
       owner->traits == destination->traits && !construct->loan &&
       !construct->rawMemoryAccess &&
-      construct->unsafeOperation == UnsafeOperationKind::None;
+      exactConstructorPermission(program, *construct);
   const std::optional<CheckedArrayElementDestination> checkedDestination =
       destination == nullptr
           ? std::nullopt
@@ -29513,7 +29530,7 @@ valueRootedClassPrvalueAssignmentSlot(
            FailurePropagationKind::Constructor) ||
       producer->preparedParameterDrop || producer->successResultDestination ||
       producer->ownership || producer->loan ||
-      producer->unsafeOperation != UnsafeOperationKind::None ||
+      !exactConstructorPermission(program, *producer) ||
       producer->rawMemoryAccess || producer->fullExpressionEnd != 0 ||
       producer->cleanupBoundaryEnd != 0 || drop == nullptr ||
       drop->kind != MirDropObligationKind::Value || drop->initiallyActive ||
@@ -30882,7 +30899,7 @@ classSsaLifetimeSlot(const MirProgram &program,
       producer->dispatch == CallDispatch::Static &&
       producer->intrinsic == IntrinsicKind::None &&
       producer->operation == MirOperation::None &&
-      producer->unsafeOperation == UnsafeOperationKind::None &&
+      exactConstructorPermission(program, *producer) &&
       producer->callableArguments.empty() &&
       producer->localFailureSites.empty() &&
       producer->definedFailure.localOrigins.empty() &&
@@ -53846,8 +53863,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           [&](const ConditionalClassBindingJoinArm &arm) {
             return !arm.construct->receiver && !arm.construct->loan &&
                    !arm.construct->rawMemoryAccess &&
-                   arm.construct->unsafeOperation ==
-                       UnsafeOperationKind::None &&
+                   exactConstructorPermission(program_, *arm.construct) &&
                    std::all_of(arm.construct->operands.begin(),
                                arm.construct->operands.end(),
                                [&](const MirOperand &input) {
@@ -54066,7 +54082,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             (cleanupFreeResult(nestedResult) ||
              owningConstructorResult(nestedResult)) &&
             !instruction.rawMemoryAccess &&
-            instruction.unsafeOperation == UnsafeOperationKind::None &&
+            exactConstructorPermission(program_, instruction) &&
             (invokePairedInstruction(body, instruction.id) ||
              (instruction.kind == MirInstructionKind::Construct &&
               instruction.constructorTarget &&

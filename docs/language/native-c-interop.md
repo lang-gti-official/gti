@@ -414,6 +414,29 @@ callbacks or broader foreign-thread entry. See runnable example
 
 ## NUL-Terminated C Strings
 
+`<std/string>` supports explicit inbound copies. `unsafe string(c_string)`
+copies through the first NUL into independent owned storage; null causes a
+defined panic and allocation exhaustion follows ordinary string allocation
+policy (an allocation-failure report and process abort). The unsafe static
+factory `std::string::try_from_c_string(c_string)` instead returns
+`expected<std::string, std::c_string_errc>`, with `null_pointer`, `size_overflow`
+and `resource_exhausted` errors. It uses fallible allocation directly. Empty
+input allocates nothing; nonempty input allocates one `length + 1` byte region.
+No UTF-8 validation or implicit conversion is introduced.
+
+Both entry points require a lexical `unsafe` block. The caller must establish
+that the non-null input remains readable and stable through its first NUL for
+the whole scan and copy. Dangling addresses, unreadable memory and missing
+terminators are unsafe precondition violations, not recoverable error values.
+Neither result retains the input address or its owner. Example
+[150](../../examples/150-c-string-import.gti) demonstrates both APIs.
+
+`unsafe const uint8_t* std::c_string_bytes(c_string)` in `<std/memory>` exposes
+the same non-owning byte address, preserving null without scanning, allocating,
+reading or extending storage lifetime. It establishes no checked reference or
+owner witness. Subsequent pointer reads remain unsafe. This general bridge also
+lets user-defined byte consumers operate without constructing a string.
+
 `c_string` is a compiler-owned boundary type with the native representation
 `const char*`. It is not `std::string`, does not own storage, and exposes no
 derefencing or indexing operations. A value returned by C may be null; GTI can

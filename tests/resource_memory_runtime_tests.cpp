@@ -18,6 +18,12 @@ int main() {
   expect(gti_rt_native_size_max_v1() ==
              (std::numeric_limits<std::size_t>::max)(),
          "native size conversion uses the target size_t limit");
+  const char text[] = {'a', static_cast<char>(255), '\0'};
+  const auto *bytes = gti_rt_c_string_bytes_v1(text);
+  expect(gti_rt_c_string_bytes_v1(nullptr) == nullptr &&
+             bytes == reinterpret_cast<const std::uint8_t *>(text) &&
+             bytes[0] == 97 && bytes[1] == 255 && bytes[2] == 0,
+         "C-string bridge preserves null, address and all byte values");
   expect(!gti_rt_address_is_aligned_v1(nullptr, 1),
          "null does not satisfy nonempty-region alignment");
   alignas(64) unsigned char aligned[128]{};

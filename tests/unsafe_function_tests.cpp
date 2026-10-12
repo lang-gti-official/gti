@@ -105,7 +105,7 @@ int main() {
       unsafeFunctions == 3 && unsafeCalls == 3,
       "only exact unsafe overloads and concrete instances carry the contract");
   const auto dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v101 ") &&
+  expect(dump.starts_with("mir-v102 ") &&
              dump.find("requires-unsafe=1") != std::string::npos,
          "the deterministic MIR snapshot includes the unsafe contract");
   const auto lowered =
@@ -254,7 +254,7 @@ void testDiagnosticsAndBoundaries() {
         "extern \"C\" { unsafe void raw(); }",
         "class Value { public: unsafe virtual void raw() {} };",
         "class Value { public: unsafe void operator()() {} };",
-        "class Value { public: unsafe Value() {} };",
+        "class Value { public: unsafe Value() = default; };",
         "class Value { public: unsafe ~Value() {} };",
         "interface Value { unsafe void raw(); };",
         "class Value { public: unsafe void raw() override {} };",
@@ -634,6 +634,87 @@ int main() {
                  "GTI-S2000",
                  "bound method values cannot erase unsafe effects");
 }
+void testUnsafeConstructors() {
+  const std::string declaration = R"(
+struct ReadByte {
+  mut int value = 0;
+  unsafe ReadByte(const int* address) {
+    unsafe { value = *address; }
+  }
+};
+struct Generic<T> {
+  T value;
+  unsafe Generic(T source) : value(source) {}
+};
+)";
+  const std::string source = declaration + R"(
+int main() {
+  int value = 41;
+  unsafe {
+    ReadByte read{&value};
+    auto other = Generic<int>(1);
+    return read.value + other.value == 42 ? 0 : 1;
+  }
+}
+)";
+  const auto frontend = analyze(source);
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "ordinary and generic unsafe constructors");
+  if (frontend.canGenerateCode()) {
+    expect(!gti_test::emitCppText(frontend).empty(),
+           "unsafe constructors use the verified MIR emitter");
+    auto erased = frontend.mir;
+    bool changed = false;
+    for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+             erased.functionInstances()))
+      for (auto &block : function.body.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.unsafeOperation ==
+              lang::UnsafeOperationKind::DeclaredUnsafeConstruction) {
+            instruction.unsafeOperation = lang::UnsafeOperationKind::None;
+            changed = true;
+          }
+    expect(changed && !lang::verifyMirProgram(erased).valid(),
+           "MIR rejects erasure of a constructor's unsafe contract");
+    const auto hover = lang::LanguageQueries().hover(
+        frontend, frontend.sourceGraph.entryUnit(),
+        source.find("ReadByte(const") + 1);
+    expect(hover && hover->signature.starts_with("unsafe "),
+           "constructor hover preserves unsafe");
+  }
+  const auto formatted = lang::Formatter().format(source);
+  expect(formatted == lang::Formatter().format(formatted) &&
+             analyze(formatted).canGenerateCode(),
+         "unsafe constructors format and reanalyze");
+  expectRejected(declaration +
+                     "int main() { int n = 1; ReadByte x{&n}; return 0; }",
+                 "GTI-S2055", "direct initialization requires unsafe");
+  expectRejected(declaration +
+                     "int main() { auto x = Generic<int>(1); return 0; }",
+                 "GTI-S2055", "generic constructor calls require unsafe");
+  expectRejected("struct R { int n; unsafe R(const int* p) { n = *p; } };",
+                 "GTI-S2055",
+                 "unsafe constructors do not authorize their bodies");
+  expectRejected(
+      "struct B { unsafe B(int n) {} }; struct D : public B { D() : B(1) {} };",
+      "GTI-S2055", "base initializer lists do not erase unsafe obligations");
+  const auto zero = analyze(
+      "struct Z { unsafe Z() {} }; int main() { unsafe { Z z{}; } return 0; }");
+  expect(zero.canGenerateCode(), "explicit zero-argument unsafe construction");
+  expectRejected("struct Z { unsafe Z() {} }; int main() { Z z{}; return 0; }",
+                 "GTI-S2055", "zero-argument constructor requires unsafe");
+  expectRejected(
+      "struct Z { unsafe Z() {} }; struct Owner { Z z; }; int main() { Owner "
+      "x{}; return 0; }",
+      "GTI-S2012",
+      "implicit member initialization cannot hide unsafe construction");
+  expectRejected(
+      declaration + "int main() { unsafe { auto f = []() -> int { auto x = "
+                    "Generic<int>(1); return x.value; }; return f(); } }",
+      "GTI-S2055", "nested lambdas cannot inherit constructor permission");
+}
 } // namespace
 
 int main() {
@@ -643,5 +724,6 @@ int main() {
   testCallbackMutation();
   testAdditionalCallForms();
   testUnsafeMembersAndRequirements();
+  testUnsafeConstructors();
   return failures == 0 ? 0 : 1;
 }

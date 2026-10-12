@@ -208,6 +208,7 @@ is a teaching helper, not a production server.
 | `147-standard-library-import.gti` | one portable standard-library import, vector, owning strings and formatting, without importing platform-only APIs |
 | `148-nested-configuration.gti` | named nested structs/classes, public qualified type paths, three-level nesting, and recursive reflected JSON configuration decoding and encoding |
 | `149-interface-static-factories.gti` | concrete static interface factories, recoverable backend selection, explicit owning upcasts and ordinary virtual dispatch |
+| `150-c-string-import.gti` | unsafe C-string construction, recoverable null/allocation errors, independent owned copies and an unrelated unsafe constructor |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run

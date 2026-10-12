@@ -1,0 +1,32 @@
+#include <std/string>
+
+// Unsafe constructors are a general caller contract, not string-specific.
+struct ByteCopy {
+  mut char value = '\0';
+  unsafe ByteCopy(const char* address) {
+    unsafe { this.value = *address; }
+  }
+};
+
+int main() {
+  mut std::string original{"foreign-style text"};
+  mut std::string copy{};
+  unsafe {
+    // A real native callback supplies the c_string directly. Here the checked
+    // owner supplies valid terminated bytes for a self-contained example.
+    copy = std::string(original.c_string());
+    auto attempted = std::string::try_from_c_string(original.c_string());
+    if (!attempted) { return 1; }
+    if (attempted.value().view() != original.view()) { return 2; }
+    c_string null_text = nullptr;
+    auto missing = std::string::try_from_c_string(null_text);
+    if (missing || missing.error() != std::c_string_errc::null_pointer) { return 3; }
+    char byte = 'x';
+    ByteCopy copied_byte{&byte};
+    if (copied_byte.value != 'x') { return 4; }
+  }
+  // Both imports copied their bytes; no foreign pointer/owner is retained.
+  original.clear();
+  std::println(copy.view());
+  return 0;
+}

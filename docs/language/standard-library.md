@@ -1238,6 +1238,13 @@ They expose no safe dereference or indexing operation, and native APIs that
 retain a pointer beyond a call still require an explicit binding-level lifetime
 contract.
 
+The inverse copy is available as an unsafe `string(c_string)` constructor or
+the unsafe static `string::try_from_c_string(c_string)` factory. The latter
+returns `expected<string, c_string_errc>` and preserves allocation exhaustion
+as `resource_exhausted` rather than aborting; null and size overflow are also
+recoverable. Both copy byte-for-byte through the first NUL and return an owner
+independent of the input. See the [inbound C-string contract](native-c-interop.md#nul-terminated-c-strings).
+
 `std::forward_list<T>` uses an exclusive `std::unique_ptr` node chain. Node
 algorithms detach and reattach owners without retaining traversal borrows.
 `reverse`, `remove`, adjacent `unique`, and sorted `merge` are linear; `sort`
