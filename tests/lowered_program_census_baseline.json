@@ -1112,7 +1112,7 @@
     },
     "076-scalar-atomics.gti": {
       "declarations": 259,
-      "bodies": 51,
+      "bodies": 49,
       "generated_items": 18,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2148,7 +2148,7 @@
   },
   "totals": {
     "declarations": 96996,
-    "bodies": 15042,
+    "bodies": 15040,
     "generated_items": 9388
   }
 }
