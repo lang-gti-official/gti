@@ -54,6 +54,10 @@ class GitHub:
             return [{k: v for k, v in pr.items() if k != "merged"} for pr in self.prs]
         if path == "/pulls":
             head = git(self.remote, "rev-parse", "refs/heads/" + payload["head"])
+            if git(self.remote, "rev-list", "--count", "main.." + head) == "0":
+                # GitHub answers 422 Validation Failed for a branch without
+                # commits beyond the base.
+                raise Error("Validation Failed: No commits between main and " + payload["head"])
             number = len(self.prs) + 1
             pr = {**payload, "number": number, "node_id": f"PR_{number}",
                   "html_url": f"https://example.invalid/pull/{number}", "state": "open",
@@ -285,6 +289,48 @@ class Lifecycle(unittest.TestCase):
         self.assertTrue(self.worktree.exists())
         with self.assertRaises(Error):
             self.flow.cleanup("task")
+
+    def test_abandon_retires_a_task_without_commits(self):
+        self.start()
+        self.advance_remote()
+        state = self.flow.abandon("task", "superseded before any commit")
+        self.assertEqual(state["phase"], "abandoned")
+        self.assertEqual(state["reason"], "superseded before any commit")
+        self.assertEqual(self.api.prs, [])
+        self.assertFalse(self.worktree.exists())
+        self.assertFalse(git(self.primary, "ls-remote", "origin", "refs/heads/" + self.branch))
+        local = git(self.primary, "rev-parse", "--verify", "refs/heads/" + self.branch, check=False)
+        self.assertNotEqual(local.returncode, 0)
+        repeated = self.flow.abandon("task", "repeated")
+        self.assertEqual(repeated["reason"], "superseded before any commit")
+
+    def test_abandon_without_commits_refuses_unpreserved_files(self):
+        self.start()
+        (self.worktree / "notes.txt").write_text("draft\n")
+        with self.assertRaisesRegex(Error, "Uncommitted changes"):
+            self.flow.abandon("task", "superseded")
+        (self.worktree / "notes.txt").unlink()
+        (self.worktree / "build").mkdir()
+        (self.worktree / "build" / "cache").write_text("generated\n")
+        with self.assertRaisesRegex(Error, "ignored files"):
+            self.flow.abandon("task", "superseded")
+        self.assertEqual(self.flow.load("task")["phase"], "active")
+        self.assertTrue(self.worktree.exists())
+        self.assertTrue(git(self.primary, "ls-remote", "origin", "refs/heads/" + self.branch))
+        self.assertEqual(self.api.prs, [])
+
+    def test_abandon_publishes_unpublished_commits_behind_a_closed_pr(self):
+        self.start()
+        (self.worktree / "feature.txt").write_text("feature\n")
+        git(self.worktree, "add", "feature.txt")
+        git(self.worktree, "commit", "-m", "local only")
+        state = self.flow.abandon("task", "superseded")
+        self.assertEqual(state["phase"], "abandoned")
+        self.assertEqual(len(self.api.prs), 1)
+        self.assertEqual(self.api.prs[0]["state"], "closed")
+        self.assertEqual(git(self.primary, "ls-remote", "origin", "refs/heads/" + self.branch).split()[0],
+                         git(self.worktree, "rev-parse", "HEAD"))
+        self.assertTrue(self.worktree.exists())
 
     def test_protection_preserves_reviews_and_statuses(self):
         self.api.rule = {"required_status_checks": {"strict": False, "contexts": ["Native toolchain"]},
