@@ -1581,6 +1581,14 @@ if(Python3_Interpreter_FOUND)
   )
   add_test(NAME preview_workflow
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/preview_workflow_test.py")
+  # Only combined preview candidates register this aggregate gate. Ordinary
+  # PR/main suites and their acceptance requirements are unchanged.
+  if(EXISTS "${PROJECT_SOURCE_DIR}/.gti-preview.json")
+    add_test(NAME preview_admission
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/preview_examples.py"
+              "${PROJECT_BINARY_DIR}" --manifest)
+    set_tests_properties(preview_admission PROPERTIES TIMEOUT 10800 RUN_SERIAL TRUE)
+  endif()
   add_test(
     NAME build_window
     COMMAND "${Python3_EXECUTABLE}"
@@ -1773,6 +1781,9 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(string_c_string_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME c_string_import_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/c_string_import_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(c_string_import_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME forward_list_runtime
     COMMAND "${Python3_EXECUTABLE}"

@@ -14,8 +14,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-split-lsp-") as temporary:
         root = pathlib.Path(temporary)
         api, body, entry = (root / name for name in ("api.gti", "body.gti", "main.gti"))
-        interface = "export module api;\nexport interface Factory { static int make(int number = 7); };\n"
-        implementation = "import api;\n/* UTF-16: 🦉 */ int Factory::make(int value) { return value; }\n"
+        interface = ("export module api;\nexport struct Parcel<T> { T value; };\n"
+                     "export interface Factory { static int make(int number = 7); "
+                     "static Parcel<int> parcel(); };\n")
+        implementation = ("import api;\n/* UTF-16: 🦉 */ int Factory::make(int value) { return value; }\n"
+                          "Parcel < int > Factory::parcel() { Parcel<int> result = {.value = 7}; return result; }\n")
         source = "import api;\nint main() { return Factory::make() - 7; }\n"
         write(api, interface)
         write(body, implementation)
@@ -57,7 +60,8 @@ def main():
                 path.resolve().as_uri() for path in (api, body, entry)}, references
 
             body_uri = open_document(session, body, implementation)
-            assert diagnostics_for(session, body_uri, 1) == []
+            body_diagnostics = diagnostics_for(session, body_uri, 1)
+            assert body_diagnostics == [], body_diagnostics
             # Public method rename retains the existing conservative boundary;
             # local parameters belong to the definition, not its prototype.
             renamed = request("textDocument/rename", body_uri, implementation,
@@ -82,6 +86,16 @@ def main():
             assert diagnostics_for(session, body_uri, 5) == []
             where = request("textDocument/definition", body_uri, implementation, implementation.index("Factory") + 1)
             assert where["uri"] == api.resolve().as_uri(), where
+
+            formatted = request("textDocument/formatting", body_uri, implementation, 0,
+                                options={"tabSize": 2, "insertSpaces": True})
+            formatted_text = formatted[0]["newText"]
+            assert "Parcel<int> Factory::parcel() {" in formatted_text, formatted_text
+            change(body_uri, 6, formatted_text)
+            assert diagnostics_for(session, body_uri, 6) == []
+            repeated = request("textDocument/formatting", body_uri, formatted_text, 0,
+                               options={"tabSize": 2, "insertSpaces": True})
+            assert repeated == [] or repeated[0]["newText"] == formatted_text, repeated
         finally:
             session.close()
 

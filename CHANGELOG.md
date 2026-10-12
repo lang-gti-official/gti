@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.416.1 — Linux linking and sleep fixes
+## 0.417.1 — Linux linking and sleep fixes
 
 - On Linux, native files and libraries passed after `--`, and project native
   libraries, can now call GTI runtime functions or replace runtime hooks.
@@ -19,6 +19,23 @@ for what minor and patch releases mean.
 - On Linux, an interrupted `thrd_sleep` no longer reports a host failure when
   the interruption arrives within the timer's slack. It now reports the
   interruption, with a remaining time no greater than the request.
+
+## 0.417.0 — Owned C-string imports
+
+- Unsafe `std::string(c_string)` copies foreign text into owned storage.
+- `std::string::try_from_c_string` returns recoverable null, size-overflow and
+  allocation-exhaustion errors without routing through infallible allocation.
+- Ordinary source constructors can declare an `unsafe` caller contract.
+  Their bodies still require explicit unsafe blocks for unsafe operations.
+- `std::c_string_bytes` exposes a non-owning byte address for other source-defined
+  consumers. Example 151 demonstrates copying and constructor contracts.
+
+## 0.416.1 — Generic return formatting for split methods
+
+- Formatting out-of-class definitions keeps generic return types tight, as in
+  `std::unique_ptr<Window> Window::Create()`, instead of adding comparison-style
+  spaces inside the type arguments. Nested generics and qualified owners share
+  the fix; actual relational expressions retain their operator spacing.
 
 ## 0.416.0 — Optional out-of-class method definitions
 

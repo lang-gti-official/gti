@@ -558,6 +558,7 @@ MirOptimizationCoverage optimizationCoverage(UnsafeOperationKind kind) {
   case UnsafeOperationKind::PointerArithmetic:
   case UnsafeOperationKind::ForeignPointerCall:
   case UnsafeOperationKind::DeclaredUnsafeCall:
+  case UnsafeOperationKind::DeclaredUnsafeConstruction:
   case UnsafeOperationKind::ObjectLifetime:
     return barrier("unsafe/raw-memory alias and escape boundary");
   }

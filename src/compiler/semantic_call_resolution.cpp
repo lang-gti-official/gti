@@ -4452,6 +4452,8 @@ auto SemanticVisitor::Impl::constructorSignatureSpelling(
     return "generated default constructor";
   }
   std::string result = constructor.declaration->name().lexeme + '(';
+  if (constructor.requiresUnsafe)
+    result = "unsafe " + result;
   for (std::size_t index = 0;
        index < constructor.declaration->parameters().size(); ++index) {
     if (index != 0) {

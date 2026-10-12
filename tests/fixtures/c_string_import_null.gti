@@ -1,0 +1,8 @@
+#include <std/string>
+int main() {
+  c_string pointer = nullptr;
+  unsafe {
+    auto text = std::string(pointer);
+  }
+  return 1;
+}

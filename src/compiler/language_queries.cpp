@@ -233,6 +233,8 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
       selected.declaration != nullptr && selected.declaration->isConstexpr()
           ? "constexpr " + constructedType
           : constructedType;
+  if (selected.declaration != nullptr && selected.declaration->unsafeKeyword())
+    result = "unsafe " + result;
   if (!selected.typeArguments.empty() || !selected.valueArguments.empty()) {
     const ConstructorInfo *constructor =
         selected.declaration == nullptr
@@ -284,6 +286,8 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
       info.declaration != nullptr && info.declaration->isConstexpr()
           ? "constexpr " + ownerName
           : ownerName;
+  if (info.requiresUnsafe)
+    result = "unsafe " + result;
   if (!info.genericParameters.empty()) {
     result += '<';
     appendGenericParameters(result, info.genericParameters);

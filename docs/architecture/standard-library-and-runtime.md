@@ -50,6 +50,15 @@ change is verified separately from the remaining allocation families below.
 
 ### Allocation inventory and remaining boundaries
 
+Inbound C-string import is source-defined scanning, byte conversion, terminated
+prefix construction and failure policy in `string.gti`. `c_string_bytes` uses
+one representation-only native bridge, `gti_rt_c_string_bytes_v1`; the opaque
+boundary type otherwise exposes no raw byte address. That bridge performs no
+read, allocation, lifetime extension or error mapping. Ordinary constructor
+caller obligations are semantic facts retained through HIR, MIR and detached
+lowering, independent of the public string spelling. The fallible factory
+allocates through the same source process lease with an `expected` result.
+
 The S-ALLOC-07 migration covers `std::allocator::try_storage`, sparse
 `std::storage`, arenas/pools backed by that storage, and `std::process_resource`
 used by resource-backed storage/containers. Both object and live-state regions

@@ -31,6 +31,7 @@ enum class UnsafeOperationKind {
   ForeignPointerCall,
   DeclaredUnsafeCall,
   ObjectLifetime,
+  DeclaredUnsafeConstruction,
 };
 
 struct SemanticLoanEndpoint {
@@ -1024,6 +1025,7 @@ struct ConstructorInfo {
   // the primary borrowParameter when there is more than one input.
   std::vector<std::size_t> borrowParameters;
   bool constexprConstructor = false;
+  bool requiresUnsafe = false;
   bool compilerPrivate = false;
   bool parameterPack = false;
 };

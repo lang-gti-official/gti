@@ -95,6 +95,13 @@ def main():
         # Copying the examples keeps their source location outside a checkout;
         # all their standard-library units must resolve from this toolchain.
         examples = pathlib.Path(__file__).resolve().parent.parent / "examples"
+        imported_c_string = root / "installed-c-string-import.gti"
+        imported_c_string.write_text((examples / "151-c-string-import.gti").read_text())
+        for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
+            executable = root / ("installed-c-string-" + standard)
+            run([cli, imported_c_string, "--std", standard, optimization,
+                 "-o", executable], environment, cwd=root)
+            run_program(executable, "foreign-style text\n", environment, root)
         waiting = root / "installed-atomic-wait.gti"
         waiting.write_text((examples / "076-scalar-atomics.gti").read_text())
         for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
