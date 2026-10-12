@@ -529,6 +529,7 @@ private:
     FunctionId id = 0;
     SourceUnitId sourceUnit = 0;
     const FunctionDecl *syntax = nullptr;
+    const FunctionDecl *definition = nullptr;
     std::string qualifiedName;
     std::vector<std::string> namespaceScope;
     SemanticType returnType = SemanticType::Unknown;
@@ -602,7 +603,16 @@ private:
       assert(declarationRecord != nullptr);
       return *declarationRecord;
     }
+    [[nodiscard]] const FunctionDecl *bodyDeclaration() const {
+      return declarationRecord != nullptr &&
+                     declarationRecord->definition != nullptr
+                 ? declarationRecord->definition
+                 : declaration;
+    }
   };
+
+  void bindOutOfClassDefinitions(const StmtList &statements,
+                                 std::vector<std::string> scope);
 
   [[nodiscard]] static std::size_t
   requiredParameterCount(std::span<const Parameter> parameters);
@@ -4243,6 +4253,13 @@ private:
                     const std::vector<ScopeStack> &states);
 
   void applyMoveStates(const ScopeStack &source);
+
+  // Replaces the current scope state with `source` without reallocating the
+  // Symbol of any binding present in both. An enclosing expression may hold a
+  // SemanticPlace (whose root points into `scopes`) across the analysis of a
+  // nested expression, so expression-level flow joins restore through this
+  // rather than assigning or moving a whole ScopeStack into `scopes`.
+  void restoreScopeState(const ScopeStack &source);
 
   void beginValueControlFlow(ValueControlFlowKind kind, const Stmt &statement);
 

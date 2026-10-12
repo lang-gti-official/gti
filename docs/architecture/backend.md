@@ -618,6 +618,15 @@ but do not form unused C++ accesses to private carrier fields.
 
 ### Executable Bodies
 
+Owned replacement recognizes an implicit receiver's complete field path:
+`field.child` (Symbol plus projections) is normalized to the same checked
+representation path as `this.field.child`. The root must resolve to a field of
+the concrete enclosing instance, and every suffix field retains its exact
+identity, mutable access and representation row. Static/module symbols and
+non-field projections gain no receiver privileges. Constructor rollback and
+RHS staging/transfer/cleanup schedules are unchanged; normalization introduces
+no runtime operation or additional allocation.
+
 `CppMirBodyEmitter` is the admission and plan-building authority for source
 executable bodies. It receives verified optimized MIR plus copied
 target-representation rows and produces an immutable

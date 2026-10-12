@@ -763,9 +763,10 @@ module.exports = grammar({
     _function_declaration_body: ($) =>
       seq(
         field("return_type", $.type),
-        field("name", $.identifier),
+        field("name", $._qualified_identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
+        optional(choice(field("mutable", "mut"), field("consuming", "&&"))),
         optional(field("constraints", $.requires_clause)),
         optional(field("override", "override")),
         choice(field("body", $.block), $.pure_specifier, ";"),

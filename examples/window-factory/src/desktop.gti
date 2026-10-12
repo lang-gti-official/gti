@@ -1,0 +1,7 @@
+import window;
+
+class DesktopWindow : public Window {
+public:
+  DesktopWindow() {}
+  int Width() override { return 800; }
+};

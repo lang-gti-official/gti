@@ -186,6 +186,27 @@ retained versions without assuming
 an Intel or Apple Silicon installation prefix. Existing build generators are
 preserved while configuration/install rules are refreshed.
 
+`--preview` selects the canonical GitHub `preview` commit directly and builds
+CLI, LSP and parser together in a persistent detached worktree under the
+primary checkout's sibling `gti-preview-installs/<full-commit>`. It never
+switches or resets the calling checkout or incorporates its uncommitted work.
+An existing source worktree must remain clean, detached and at that exact
+commit; modifications or new commits cause refusal. The complete installation
+and Lazy config point at that selected source. The staged archive includes
+`share/gti/PREVIEW_SOURCE`, and output reports commit and version. This selects
+the user's active ordinary tool commands using the existing backup/activation
+rules; it does not create a second set of executable names.
+
+The default still builds this checkout. `--preview --activate-only` is rejected
+because source selection requires a new build. `--preview --dry-run` only
+resolves and reports the remote source (no fetch or local writes); unlike the
+default dry run, it cannot inspect the selected checkout's build/prerequisites
+until that checkout exists. A missing preview branch fails without installing
+anything. The preview branch is populated only by the separate
+[combined preview workflow](agent-workflow.md#early-combined-preview), and can
+contain PRs still awaiting full validation/review. Preview is not a release
+channel and never publishes stable/nightly packages. Installation is opt-in.
+
 There is no maximum-major admission check: system packages must provide the
 required APIs, RTTI, approved support targets, and an exactly matching Clang
 package. LLVM 23.1.2 has been built and tested; admission of a later release is
@@ -1067,6 +1088,33 @@ unqualified local-name/dependency-alias collision is an error. Only direct
 dependency aliases resolve; re-exporting declarations never leaks aliases.
 Direct compilation remains manifest-independent and can write a relative
 quoted import instead.
+
+An optional table registers bodies separately from interfaces:
+
+```toml
+[module-implementations]
+geometry = ["src/geometry_impl.gti"]
+```
+
+Each key must already occur in `[modules]`. Values are arrays of existing,
+package-contained, relative `.gti` file paths. Duplicate physical registration,
+interface/implementation overlap, non-files and symlink escapes are rejected.
+An implementation is ordinary source, not another `export module` interface;
+it explicitly imports its interface and the dependencies its bodies use.
+Importing the registered interface automatically loads these files, including
+when it is reached through a dependency package. Unused module registrations
+do not load bodies. Consumers gain no visibility into implementation helpers.
+
+Registration names, paths and order participate in project-model identity;
+loaded implementation bytes participate in source keys, reports and editor
+snapshot invalidation. Private implementation roots are traversed before the
+entry root in deterministic registration/discovery order, with their own
+ordinary source dependencies first. Existing initialization/lifetime rules
+still apply. No source directories are scanned, no implementation file needs
+to be included by a consumer, and no independently linked GTI object is added.
+Direct mode still does not discover a manifest: use explicit source edges or
+project mode for registered implementations. `examples/window-factory` is a
+runnable project illustrating this arrangement.
 
 `ProjectPackage` and immutable `PackageSourceRoot` values carry these maps;
 `SourceLoader` owns language resolution. Registrations are part of project

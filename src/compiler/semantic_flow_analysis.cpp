@@ -770,7 +770,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
       // explicit receiver/argument storage effects were retained above.
       return;
     } else if (target->declaration == nullptr ||
-               target->declaration->body() == nullptr) {
+               target->bodyDeclaration()->body() == nullptr) {
       addUnknownProgramEffect(
           expression, "a selected GTI operation has no executable body");
     } else {
@@ -816,7 +816,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     const FunctionInfo *target = semanticModel.findFunction(transform->mapper);
     if (target == nullptr || target->linkage != LanguageLinkage::Gti ||
         target->declaration == nullptr ||
-        target->declaration->body() == nullptr ||
+        target->bodyDeclaration()->body() == nullptr ||
         !target->genericParameters.empty()) {
       addUnknownProgramEffect(
           expression, "an expected mapper has no closed static GTI target");
@@ -850,7 +850,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     return;
   }
   if (target->declaration == nullptr ||
-      target->declaration->body() == nullptr) {
+      target->bodyDeclaration()->body() == nullptr) {
     addUnknownProgramEffect(expression,
                             "a selected GTI function has no executable "
                             "body");
@@ -3216,6 +3216,8 @@ auto SemanticVisitor::Impl::recordBindingSymbol(
 auto SemanticVisitor::Impl::recordFunctionSymbol(
     const FunctionDecl &declaration) -> SymbolId {
   const FunctionInfo *info = semanticModel.findFunction(declaration);
+  if (info != nullptr && info->declaration != &declaration)
+    return recordFunctionSymbol(*info->declaration);
   const Token &name = declaration.operatorName()
                           ? declaration.operatorName()->symbol
                           : declaration.name();
@@ -3224,13 +3226,21 @@ auto SemanticVisitor::Impl::recordFunctionSymbol(
       declaration.operatorName()
           ? SymbolKind::Operator
           : (method ? SymbolKind::Method : SymbolKind::Function);
-  return recordToolingSymbol(
+  const SymbolId id = recordToolingSymbol(
       name, kind, info == nullptr ? name.lexeme : info->qualifiedName,
       info == nullptr ? SemanticType::Unknown : info->returnType, false,
       declaration.body() != nullptr, functionAccess(info),
       info != nullptr && info->staticMember,
       info != nullptr && info->internalLinkage,
       info != nullptr && info->compilerPrivate);
+  if (info != nullptr && info->definition != nullptr) {
+    if (const auto *existing = semanticModel.database().findSymbol(id)) {
+      auto symbol = *existing;
+      symbol.definitionSpan = tokenSpan(info->definition->name());
+      semanticModel.recordSymbol(std::move(symbol));
+    }
+  }
+  return id;
 }
 
 auto SemanticVisitor::Impl::toolingSymbolFor(const Symbol &symbol) -> SymbolId {
@@ -6163,7 +6173,7 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     }
     if (resolved != nullptr && target != nullptr &&
         resolved->declaration != nullptr &&
-        resolved->declaration->body() != nullptr &&
+        target->bodyDeclaration()->body() != nullptr &&
         !resolved->declaration->runtimeBinding() &&
         !resolved->declaration->hasCLinkage() &&
         !resolved->declaration->operatorName() &&
@@ -6213,7 +6223,7 @@ auto SemanticVisitor::Impl::freshTemporaryReceiverValue(
                        !target->virtualMethod &&
                        resolved->dispatch == CallDispatch::Static &&
                        resolved->declaration != nullptr &&
-                       resolved->declaration->body() != nullptr &&
+                       target->bodyDeclaration()->body() != nullptr &&
                        !resolved->declaration->runtimeBinding() &&
                        !resolved->declaration->hasCLinkage() &&
                        !resolved->declaration->operatorName() &&
@@ -7216,11 +7226,38 @@ auto SemanticVisitor::Impl::mergedValueStates(
     merged.resize(base.size());
   }
   for (std::size_t index = 1; index < states.size(); ++index) {
-    scopes = base;
+    restoreScopeState(base);
     mergeValueStates(base, merged, states[index]);
     merged = scopes;
   }
   return merged;
+}
+
+auto SemanticVisitor::Impl::restoreScopeState(const ScopeStack &source)
+    -> void {
+  if (scopes.size() > source.size()) {
+    scopes.resize(source.size());
+  }
+  for (std::size_t scopeIndex = 0; scopeIndex < source.size(); ++scopeIndex) {
+    const Scope &from = source[scopeIndex];
+    if (scopeIndex == scopes.size()) {
+      // Moving existing scopes during growth keeps their nodes, and therefore
+      // their Symbol addresses.
+      scopes.push_back(from);
+      continue;
+    }
+    Scope &target = scopes[scopeIndex];
+    std::erase_if(target, [&from](const auto &entry) {
+      return !from.contains(entry.first);
+    });
+    for (const auto &[name, symbol] : from) {
+      if (const auto found = target.find(name); found != target.end()) {
+        found->second = symbol;
+      } else {
+        target.emplace(name, symbol);
+      }
+    }
+  }
 }
 
 auto SemanticVisitor::Impl::applyMoveStates(const ScopeStack &source) -> void {
@@ -8032,7 +8069,7 @@ auto SemanticVisitor::Impl::recordRawResult(const ExprPtr &expression) -> void {
       lambdaDepth != 0)
     return;
   collectRawResultFields(rawPointerFields(expression.get()),
-                         function->declaration->parameters(),
+                         function->bodyDeclaration()->parameters(),
                          function->parameterTypes, false);
 }
 
@@ -8145,7 +8182,7 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
     entry->writesComplete = false;
     return entry;
   }
-  if (!function->declaration->body())
+  if (!function->bodyDeclaration()->body())
     return nullptr;
   if (function->ownerClass == 0)
     owner = SemanticType::Unknown;
@@ -8181,7 +8218,7 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
   auto entry = std::make_shared<RawResultQuery>();
   entry->function = resolved.function;
   entry->linearWrites =
-      rawWritesAreLinear(function->declaration->body()->statements());
+      rawWritesAreLinear(function->bodyDeclaration()->body()->statements());
   entry->ownerTypes = ownerTypes;
   entry->ownerValues = ownerValues;
   entry->types = resolved.typeArguments;
@@ -8742,7 +8779,7 @@ auto SemanticVisitor::Impl::recordRawWrite(
   if (query->function) {
     if (!function || query->function != function->id || constructorDepth)
       return;
-    parameters = &function->declaration->parameters();
+    parameters = &function->bodyDeclaration()->parameters();
     parameterTypes = function->parameterTypes;
   } else if (query->constructor && currentClass) {
     const auto &constructors = classInfo(*currentClass).constructors;
@@ -9251,7 +9288,7 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
         function->returnType.kind != SemanticType::Reference ||
         function->virtualMethod || function->linkage != LanguageLinkage::Gti ||
         resolved->dispatch != CallDispatch::Static || !function->declaration ||
-        !function->declaration->body() ||
+        !function->bodyDeclaration()->body() ||
         function->declaration->runtimeBinding() ||
         function->intrinsic != IntrinsicKind::None)
       return false;
@@ -9260,7 +9297,7 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
           (parameter.kind != SemanticType::Reference &&
            typeTraits(parameter).drop != DropKind::Trivial))
         return false;
-    const BlockStmt *block = function->declaration->body().get();
+    const BlockStmt *block = function->bodyDeclaration()->body().get();
     bool unsafe = function->requiresUnsafe;
     const ReturnStmt *returned = nullptr;
     while (block) {
@@ -9287,7 +9324,7 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
     const auto *variable = exprAs<Variable>(expression);
     if (!variable)
       return false;
-    const auto &parameters = function->declaration->parameters();
+    const auto &parameters = function->bodyDeclaration()->parameters();
     for (std::size_t index = 0;
          index < parameters.size() && index < resolved->parameterTypes.size();
          ++index)
@@ -9849,7 +9886,7 @@ auto SemanticVisitor::Impl::recordRawAccess(
     const auto *function = currentFunctionInfo();
     if (!function || function->id != query->function || constructorDepth)
       return;
-    parameters = &function->declaration->parameters();
+    parameters = &function->bodyDeclaration()->parameters();
     parameterTypes = function->parameterTypes;
   } else if (query->constructor && currentClass) {
     const auto &constructors = classInfo(*currentClass).constructors;

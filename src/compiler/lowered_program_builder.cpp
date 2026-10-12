@@ -574,6 +574,12 @@ private:
   void collectStatement(const Stmt &statement, LoweredDeclarationId parent,
                         ClassId ownerClass,
                         const std::vector<std::string> &namespaceScope) {
+    // The qualified body contributes executable syntax to its canonical
+    // member declaration, not another namespace-level declaration row.
+    if (const auto *definition = stmtAs<FunctionDecl>(&statement);
+        definition != nullptr && definition->definitionOwner()) {
+      return;
+    }
     if (const auto *conditional = stmtAs<ConditionalStmt>(&statement)) {
       if (const StmtList *active = conditional->activeBranch(target_)) {
         collectList(*active, parent, ownerClass, namespaceScope);
@@ -766,7 +772,7 @@ private:
                     : std::nullopt,
             .definitionKind = declaration->runtimeBinding()
                                   ? MirDefinitionKind::RuntimeBinding
-                              : declaration->body() != nullptr
+                              : info->bodyDeclaration()->body() != nullptr
                                   ? MirDefinitionKind::Source
                                   : MirDefinitionKind::Declaration,
             .linkage = info->linkage,
@@ -1060,7 +1066,8 @@ private:
         source.externalSymbol != lowered.externalSymbol ||
         source.body.placeDomain != lowered.body.placeDomain ||
         lowered.definitionKind != expectedDefinition || info == nullptr ||
-        info->id != source.declaration || info->declaration != source.source ||
+        info->id != source.declaration ||
+        info->bodyDeclaration() != source.source ||
         info->sourceUnit != source.sourceUnit) {
       return reject("function instance " + std::to_string(index + 1) +
                     " differs");

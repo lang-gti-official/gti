@@ -130,6 +130,27 @@ kinds.
 HIR/MIR and C++ emission use existing executable contracts; this is not binary
 or separate compilation.
 
+Registered `PackageSourceRoot::moduleImplementations` extend that closure after
+ordinary imports finish. An implementation is an ordinary source file and may
+import its owning interface. The graph retains private implementation roots
+for dependency-first compilation, without adding interface-to-implementation
+visibility edges or an artificial import cycle. Only reached registered
+interfaces activate their bodies; newly imported interfaces extend this
+closure. Implementation bytes, configuration replay and overlays use the same
+source snapshots as other inputs. No backend or LSP filesystem discovery is
+needed.
+
+For `ReturnType Owner::method(...) { ... }`, the AST records the syntactic owner
+path. Semantics matches one existing member and stores an immutable-syntax
+declaration/definition association in its snapshot. `FunctionInfo::declaration`
+remains the API/contract identity; `bodyDeclaration()` selects executable syntax,
+body parameter bindings and definition-site lookup. Instance overlays resolve
+the same association without mutating cached ASTs. HIR instances use that body
+and the canonical FunctionId. LoweredProgram emits only the canonical member
+declaration, seals its body association, and gives MIR the existing call,
+ownership and cleanup contracts. The definition is not a second namespace
+function. No generated C++ signature matching supplies GTI meaning.
+
 Artifact builds set `FrontendOptions::lowerReachableOnly`. The complete program
 is still analyzed, but MIR and everything after it receive only the instances
 reachable from the program roots; see

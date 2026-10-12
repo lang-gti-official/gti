@@ -435,6 +435,97 @@ completion. Release workflows run after integration and need not finish before
 local installation. VERSION follows normal repository policy; workflow-only
 automation does not change the packaged compiler version.
 
+## Early combined preview
+
+`origin/preview` is an opt-in source branch for trying completed features while
+their original PRs continue full validation and review. Preview admission is
+separate from `verify`/`finish`: it never writes task validation records, marks
+original PRs ready, or grants permission to merge them. Every original PR still
+satisfies the existing main gates. Never merge the preview branch wholesale
+into main; `finish` and the CI release-version gate reject its `.gti-preview.json`
+marker and marker history, including candidates that later remove it. Stable/nightly source
+resolution rejects that marker too. Preview publication creates no release,
+tag, package, or local installation.
+
+The candidate combines the currently published preview, exact selected PR
+head, and current main in a new external worktree. Its committed
+`.gti-preview.json` records all included task/PR/head identities, their merge
+commits, exact focused CTest names, main and previous-preview identities. Admission
+requires explicit task selection; it does not sweep open PRs. The caller must
+select completed work and appropriate focused checks. Draft PRs are allowed
+because their full acceptance may still be running.
+
+```sh
+# Select the owning regression tests by their exact CTest names.
+python3 scripts/agent_workflow.py preview prepare my-task \
+  --worktree /absolute/new-preview-candidate --tests cpp_mir_body_emitter_lifecycle
+# Use the candidate ID printed by prepare:
+python3 scripts/agent_workflow.py preview verify CANDIDATE \
+  --cmake-arg=-DLLVM_DIR=/path/to/lib/cmake/llvm
+python3 scripts/agent_workflow.py preview publish CANDIDATE
+```
+
+`verify` configures and builds an optimized compiler from the combined source,
+reruns the focused checks of **every included feature**, and runs the fixed
+`preview_examples.py` gate. This covers the numbered corpus at O0/C++20 and
+O3/C++23, practical HTTP examples and established automated
+project/native harnesses. Missing, disabled or skipped required tests fail
+admission, including focused tests. One-off checks must be registered with
+CTest first; focused names are deduplicated for execution while their owning
+PR identities remain in the manifest. New nested example directories require an explicit coverage update;
+the allocator helper is exercised by its numbered client. Objective-C++ execution is required on macOS and explicitly reported
+as inapplicable elsewhere. Interactive `toy-3d-engine` needs its native
+dependencies and a graphics session; this automated gate does not certify GUI
+execution. Preview is therefore evidence for the automated runnable examples
+on the recorded host, not a claim that every interactive program or every
+platform has run. No main validation requirement is reduced by this scope.
+With no pending feature checks, the build targets are `gti`, `gti_runtime`
+and `gti_lsp`, which cover the fixed example harness dependencies. Candidates
+with focused checks build all targets because arbitrary registered CTest names
+can require additional test executables; neither path reduces gate coverage.
+
+Use `GTI_REMOTE_RUNNER=mini ... preview verify CANDIDATE --remote` (or a named
+Linux host) to run the same generated argv plan through the remote runner.
+Additional CMake settings use repeated `--cmake-arg=...`; `--jobs N` controls
+the build. Local and remote execution both use the shared build windows. Logs
+and exact-head evidence live under the common Git directory's
+`gti-agent-workflow/preview/<candidate>-results-<attempt>` (a fresh destination
+for every attempt, preserving earlier evidence); `preview status CANDIDATE`
+reports the token-free recovery record. Candidate branches are published as
+`codex/preview-<candidate>` and retained for recovery. No candidate PR is opened.
+
+Publication accepts only the unchanged, clean, tested candidate, and refuses
+an advanced main or preview. An ancestry check plus an exact remote
+lease makes preview updates append-only and detects concurrent publishers.
+The lease is also compare-and-create for the first publication; it never
+authorizes replacing published history. Lost push responses can be retried.
+If either input advances, prepare a fresh candidate and repeat its checks.
+
+`preview seed --worktree /absolute/new-candidate` starts preview from main
+without adding a PR, or refreshes an existing preview with main. It requires
+the same `verify` and `publish` steps; an absent preview branch remains absent
+until these pass. `preview revert my-task --worktree /absolute/new-candidate`
+constructs ordinary revert commits, retains the original PR, and requires the
+same combined checks before publication. Re-admitting a removed task restores
+its prior revert before merging the newly selected head. Merge/revert conflicts
+remain in the candidate worktree: resolve and commit them, then run
+`preview resume CANDIDATE` to finish preparation before verification. The
+manifest and evidence always describe the resulting combined source.
+Admission refuses an already-reachable PR head (except explicitly restoring a
+removed task). Removal refuses a feature already integrated into main; changes
+to accepted main behavior require their own normal PR.
+If a previously removed feature later merges into main, the next seed,
+admission or removal restores its recorded contributions before merging main.
+This matters because Git otherwise retains the preview revert even though the
+original feature head is now an ancestor of main. The inclusion record marks
+the restoration as accepted by that exact main commit; it does not reclassify
+accepted work as a pending preview feature. Conflicts still require explicit
+resolution and the combined candidate must pass the normal preview gates.
+
+Preview candidates and source installations are retained intentionally; do not
+delete them while another user may rely on their commits or installed paths.
+No automatic pruning/resetting of modified worktrees is performed.
+
 ## Preservation and cleanup
 
 Fast-forward sync leaves unrelated primary edits in place and refuses overlap.

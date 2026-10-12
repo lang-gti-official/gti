@@ -4351,6 +4351,8 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
       }
     } else if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(function->name());
+      if (function->definitionOwner())
+        continue;
       std::vector<GenericParameterInfo> genericParameters =
           makeGenericParameters(function->genericParameters(), function->name(),
                                 scope);
@@ -4414,6 +4416,147 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
   }
 }
 
+auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
+    const StmtList &statements, std::vector<std::string> scope) -> void {
+  for (const auto &statement : statements) {
+    if (const auto *space = stmtAs<NamespaceDecl>(statement.get())) {
+      auto nested = scope;
+      nested.push_back(space->name().lexeme);
+      bindOutOfClassDefinitions(space->declarations(), std::move(nested));
+      continue;
+    }
+    if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
+      if (const auto *branch = conditional->activeBranch(target))
+        bindOutOfClassDefinitions(*branch, scope);
+      continue;
+    }
+    const auto *definition = stmtAs<FunctionDecl>(statement.get());
+    if (definition == nullptr || !definition->definitionOwner())
+      continue;
+    currentSourceUnit = sourceUnitFor(definition->name());
+    auto fail = [&](std::string message, const Token *related = nullptr) {
+      auto diagnostic =
+          makeDiagnostic(DiagnosticId::OutOfClassDefinition, definition->name(),
+                         {std::move(message)});
+      if (related != nullptr)
+        diagnostic.related.push_back(
+            {tokenSpan(*related), "Declaration is here."});
+      diagnostics.push_back(std::move(diagnostic));
+    };
+    const auto ownerId =
+        resolveClassPath(*definition->definitionOwner(), scope);
+    if (!ownerId) {
+      fail("An out-of-class definition must name a visible class, struct or "
+           "interface owner.");
+      continue;
+    }
+    ClassInfo &owner = classInfo(*ownerId);
+    if (!samePackageOwnershipDomain(currentSourceUnit, owner.sourceUnit)) {
+      fail("A method can only be defined in the package that declares its "
+           "owner.",
+           &owner.name);
+      continue;
+    }
+    if (!owner.genericParameters.empty() ||
+        !definition->genericParameters().empty()) {
+      fail("Out-of-class definitions currently require a non-generic owner and "
+           "method.",
+           &owner.name);
+      continue;
+    }
+    if (scope.size() > owner.namespaceScope.size() ||
+        !std::equal(scope.begin(), scope.end(), owner.namespaceScope.begin())) {
+      fail("An out-of-class definition must be in its owner's enclosing "
+           "namespace.",
+           &owner.name);
+      continue;
+    }
+    if (definition->isStatic() || definition->isVirtual() ||
+        definition->isOverride() || definition->isPure() ||
+        definition->runtimeBinding() || definition->hasCLinkage() ||
+        definition->exportKeyword() ||
+        !definition->functionAttributes().empty() ||
+        definition->requiresClause()) {
+      fail("Keep access, static/virtual specifiers, attributes and constraints "
+           "on the in-class declaration.");
+      continue;
+    }
+    bool defaults = false;
+    for (const auto &parameter : definition->parameters())
+      defaults = defaults || parameter.hasDefault();
+    if (defaults) {
+      fail("Default arguments belong on the in-class declaration, not its "
+           "definition.");
+      continue;
+    }
+    const auto previousOwner = currentClass;
+    currentClass = owner.id;
+    std::vector<SemanticType> parameterTypes;
+    for (const auto &parameter : definition->parameters())
+      parameterTypes.push_back(typeOf(parameter, owner.namespaceScope));
+    const auto result =
+        typeOf(definition->returnType(), definition->returnMutability(),
+               owner.namespaceScope);
+    currentClass = previousOwner;
+    auto member = owner.members.find(definition->name().lexeme);
+    CallableCandidate *selected = nullptr;
+    if (member != owner.members.end()) {
+      for (auto &candidate : member->second.symbol.overloads) {
+        if (candidate.ownerClass == owner.id &&
+            candidate.parameterTypes == parameterTypes &&
+            candidate.receiverMutability == definition->receiverMutability() &&
+            candidate.record().genericParameters.empty()) {
+          if (selected != nullptr) {
+            selected = nullptr;
+            break;
+          }
+          selected = &candidate;
+        }
+      }
+    }
+    if (selected == nullptr) {
+      fail("No declared method matches this definition's parameters and "
+           "receiver qualifier.",
+           &owner.name);
+      continue;
+    }
+    const auto &declaration = *selected->declaration;
+    if (declaration.runtimeBinding() || declaration.hasCLinkage() ||
+        selected->record().intrinsic != IntrinsicKind::None) {
+      fail("A native or compiler-provided method cannot acquire a source "
+           "definition.",
+           &declaration.name());
+      continue;
+    }
+    if (selected->pureVirtual) {
+      fail("A pure interface or virtual contract cannot have an out-of-class "
+           "body.",
+           &declaration.name());
+      continue;
+    }
+    if (selected->returnType != result ||
+        declaration.isConstexpr() != definition->isConstexpr() ||
+        declaration.unsafeKeyword().has_value() !=
+            definition->unsafeKeyword().has_value()) {
+      fail("The definition must match its declaration's return type, constexpr "
+           "and unsafe qualifiers.",
+           &declaration.name());
+      continue;
+    }
+    auto *record = catalog.mutableCallable(declaration);
+    if (declaration.body() || record->definition != nullptr) {
+      fail("This method already has a definition.",
+           record->definition != nullptr ? &record->definition->name()
+                                         : &declaration.name());
+      continue;
+    }
+    record->definition = definition;
+    functionGenericParameters.emplace(definition,
+                                      std::vector<GenericParameterInfo>{});
+    semanticModel.bindFunctionDefinition(declaration, *definition);
+  }
+}
+
 auto SemanticVisitor::Impl::nativeCArrayCountParameter(
     const FunctionDecl &function) -> std::optional<std::size_t> {
   if (!function.nativeCArray()) {
@@ -4444,6 +4587,8 @@ auto SemanticVisitor::Impl::registerNamespaceSymbols(
       registerNamespaceSymbols(externC->declarations(), scope);
     } else if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
       if (typesOnly)
+        continue;
+      if (function->definitionOwner())
         continue;
       currentSourceUnit = sourceUnitFor(function->name());
       Symbol symbol = functionSymbol(*function, scope);
@@ -6688,8 +6833,8 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
       return {};
     }
     for (std::size_t index = 0;
-         index < function.declaration->parameters().size(); ++index) {
-      if (function.declaration->parameters()[index].name.lexeme ==
+         index < function.bodyDeclaration()->parameters().size(); ++index) {
+      if (function.bodyDeclaration()->parameters()[index].name.lexeme ==
           variable->name().lexeme) {
         return {.known = true,
                 .ownerDependent = true,
@@ -6801,7 +6946,7 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
        function.returnType.kind != SemanticType::CString) ||
       function.intrinsic != IntrinsicKind::None ||
       function.declaration == nullptr ||
-      function.declaration->body() == nullptr) {
+      function.bodyDeclaration()->body() == nullptr) {
     return std::nullopt;
   }
   if (!activeTextBorrowSummaries.insert(function.declaration).second)
@@ -6813,7 +6958,8 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
   } active{activeTextBorrowSummaries, function.declaration};
 
   std::vector<const ExprPtr *> returns;
-  collectBorrowReturnExpressions(function.declaration->body().get(), returns);
+  collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
+                                 returns);
   if (returns.empty()) {
     return std::nullopt;
   }
@@ -6822,7 +6968,7 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
   const SourceUnitId enclosingSourceUnit = currentSourceUnit;
   const std::optional<ClassId> enclosingClass = currentClass;
   currentNamespace = function.namespaceScope;
-  currentSourceUnit = function.sourceUnit;
+  currentSourceUnit = sourceUnitFor(function.bodyDeclaration()->name());
   currentClass = function.ownerClass == 0
                      ? std::nullopt
                      : std::optional<ClassId>{function.ownerClass};
@@ -6860,13 +7006,14 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
 auto SemanticVisitor::Impl::globalReturnBorrowPlace(
     const FunctionInfo &function) -> std::optional<BorrowOriginPlace> {
   if (function.declaration == nullptr ||
-      function.declaration->body() == nullptr ||
+      function.bodyDeclaration()->body() == nullptr ||
       (function.ownerClass != 0 && !function.staticMember)) {
     return std::nullopt;
   }
 
   std::vector<const ExprPtr *> returns;
-  collectBorrowReturnExpressions(function.declaration->body().get(), returns);
+  collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
+                                 returns);
   if (returns.empty()) {
     return std::nullopt;
   }
@@ -6875,7 +7022,7 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
   const SourceUnitId enclosingSourceUnit = currentSourceUnit;
   const std::optional<ClassId> enclosingClass = currentClass;
   currentNamespace = function.namespaceScope;
-  currentSourceUnit = function.sourceUnit;
+  currentSourceUnit = sourceUnitFor(function.bodyDeclaration()->name());
   currentClass = function.ownerClass == 0
                      ? std::nullopt
                      : std::optional<ClassId>{function.ownerClass};
@@ -6940,14 +7087,14 @@ auto SemanticVisitor::Impl::ownedPointeeReturnProjection(
       function.virtualMethod || function.pureVirtual ||
       function.overrideMethod || function.intrinsic != IntrinsicKind::None ||
       !function.parameterTypes.empty() || function.parameterPack ||
-      function.declaration == nullptr || !function.declaration->body() ||
-      function.declaration->body()->statements().size() != 1 ||
+      function.declaration == nullptr || !function.bodyDeclaration()->body() ||
+      function.bodyDeclaration()->body()->statements().size() != 1 ||
       function.returnType.kind != SemanticType::Reference ||
       function.returnType.arguments.size() != 1) {
     return std::nullopt;
   }
   const auto *returned = stmtAs<ReturnStmt>(
-      function.declaration->body()->statements().front().get());
+      function.bodyDeclaration()->body()->statements().front().get());
   const auto *call =
       returned == nullptr ? nullptr : exprAs<Call>(returned->value().get());
   if (call == nullptr || call->arguments().size() != 1 ||
@@ -6986,7 +7133,7 @@ auto SemanticVisitor::Impl::ownedPointeeReturnProjection(
   const auto enclosingSourceUnit = currentSourceUnit;
   const auto enclosingClass = currentClass;
   currentNamespace = function.namespaceScope;
-  currentSourceUnit = function.sourceUnit;
+  currentSourceUnit = sourceUnitFor(function.bodyDeclaration()->name());
   currentClass = function.ownerClass;
   const auto intrinsic = intrinsicCandidate(call->callee());
   currentNamespace = enclosingNamespace;
@@ -7008,7 +7155,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
       isBorrowedCarrierReference(function.returnType) ||
       function.intrinsic != IntrinsicKind::None || function.virtualMethod ||
       function.overrideMethod || function.declaration == nullptr ||
-      function.declaration->body() == nullptr)
+      function.bodyDeclaration()->body() == nullptr)
     return std::nullopt;
   // Even a single stored reference needs an exact field origin: a carrier can
   // also own unrelated storage, and returning that storage must protect its
@@ -7021,7 +7168,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
   const auto enclosingSourceUnit = currentSourceUnit;
   const auto enclosingClass = currentClass;
   currentNamespace = function.namespaceScope;
-  currentSourceUnit = function.sourceUnit;
+  currentSourceUnit = sourceUnitFor(function.bodyDeclaration()->name());
   currentClass = function.ownerClass == 0
                      ? std::nullopt
                      : std::optional<ClassId>{function.ownerClass};
@@ -7058,7 +7205,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
     if (const auto *variable = exprAs<Variable>(expression.get())) {
       for (std::size_t index = 0; index < context.parameterTypes.size();
            ++index)
-        if (context.declaration->parameters()[index].name.lexeme ==
+        if (context.bodyDeclaration()->parameters()[index].name.lexeme ==
             variable->name().lexeme)
           return Origin{.source = {.origin = BorrowOriginKind::Argument,
                                    .parameter = index},
@@ -7133,14 +7280,14 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
       if (target == nullptr || target->staticMember || target->virtualMethod ||
           target->overrideMethod || target->intrinsic != IntrinsicKind::None ||
           target->returnType.kind != SemanticType::Reference ||
-          target->declaration->body() == nullptr ||
+          target->bodyDeclaration()->body() == nullptr ||
           target->parameterTypes.size() != call->arguments().size() ||
           std::find(activeOrigins.begin(), activeOrigins.end(), target->id) !=
               activeOrigins.end())
         return std::nullopt;
       activeOrigins.push_back(target->id);
       std::vector<const ExprPtr *> returns;
-      collectBorrowReturnExpressions(target->declaration->body().get(),
+      collectBorrowReturnExpressions(target->bodyDeclaration()->body().get(),
                                      returns);
       std::optional<Origin> result;
       for (const auto *returned : returns) {
@@ -7242,7 +7389,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
             !target->virtualMethod && !target->overrideMethod &&
             target->intrinsic == IntrinsicKind::None &&
             target->declaration != nullptr &&
-            target->declaration->body() != nullptr &&
+            target->bodyDeclaration()->body() != nullptr &&
             target->returnBorrowOrigin == BorrowOriginKind::Receiver &&
             target->returnBorrowParameters.empty() &&
             target->returnBorrowFields.empty() &&
@@ -7364,7 +7511,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
           candidate.declaration == nullptr
               ? nullptr
               : semanticModel.findFunction(*candidate.declaration);
-      if (target != nullptr && target->declaration->body() != nullptr &&
+      if (target != nullptr && target->bodyDeclaration()->body() != nullptr &&
           target->intrinsic == IntrinsicKind::None && !target->virtualMethod &&
           !target->overrideMethod && !candidate.parameterPack &&
           target->parameterTypes.size() == call->arguments().size() &&
@@ -7386,8 +7533,8 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
         if (concrete.returnType == context.returnType) {
           activeOrigins.push_back(target->id);
           std::vector<const ExprPtr *> returns;
-          collectBorrowReturnExpressions(target->declaration->body().get(),
-                                         returns);
+          collectBorrowReturnExpressions(
+              target->bodyDeclaration()->body().get(), returns);
           std::optional<std::vector<BorrowedFieldOrigin>> result;
           for (const auto *returned : returns) {
             auto nested = self(self, *returned, concrete, targetOwner);
@@ -7503,7 +7650,8 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
     return result;
   };
   std::vector<const ExprPtr *> returns;
-  collectBorrowReturnExpressions(function.declaration->body().get(), returns);
+  collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
+                                 returns);
   std::optional<std::vector<BorrowedFieldOrigin>> fields;
   for (const auto *expression : returns) {
     const auto candidate =
@@ -8252,10 +8400,6 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
                "'override'.",
                "GTI-S2042");
       }
-      if (function->isVirtual() && !function->isPure() && !function->body()) {
-        report(function->name(), "A non-pure virtual method requires a body.",
-               "GTI-S2042");
-      }
       if (interfaceContract) {
         if (function->body()) {
           report(function->name(),
@@ -8406,6 +8550,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .id = declaration.id,
       .sourceUnit = declaration.sourceUnit,
       .declaration = declaration.syntax,
+      .definition = declaration.definition,
       .qualifiedName = declaration.qualifiedName,
       .namespaceScope = declaration.namespaceScope,
       .returnType = declaration.returnType,
