@@ -25,12 +25,13 @@ You do not need to read the entire sequence to find an API pattern:
 
 | I want to… | Start here |
 | --- | --- |
-| Select an owned implementation through an interface factory | [148: interface static factories](148-interface-static-factories.gti) |
+| Select an owned implementation through an interface factory | [149: interface static factories](149-interface-static-factories.gti) |
 | Use the standard library through imports instead of includes | [134: standard-library modules](134-standard-library-modules.gti) |
 | Own small polymorphic objects without allocating | [135: inline polymorphic values](135-inline-polymorphic-values.gti) |
 | Annotate fields with attributes and read them in a generic encoder | [137: declared attributes](137-declared-attributes.gti) |
 | Decode a struct field by field without writing a constructor | [138: structural construction](138-structural-construction.gti) |
 | Encode and decode any struct as JSON with no codec | [141: reflected JSON](141-reflected-json.gti) |
+| Organize a reflected JSON configuration with nested types | [147: nested configuration](147-nested-configuration.gti) |
 | Import C enums, including high-bit flags and native-width values | [native enum bindings project](native-enum-bindings/README.md) |
 | Import callback slots, function typedefs, text and fixed-array aliases | [native callback slots project](native-callback-slots/README.md) |
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
@@ -205,7 +206,8 @@ is a teaching helper, not a production server.
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
 | `146-counted-text-view-iteration.gti` | dynamically owned text-view cursors, checked reverse/positional access, generic distance, and retained view-shell lifetime |
 | `147-standard-library-import.gti` | one portable standard-library import, vector, owning strings and formatting, without importing platform-only APIs |
-| `148-interface-static-factories.gti` | concrete static interface factories, recoverable backend selection, explicit owning upcasts and ordinary virtual dispatch |
+| `148-nested-configuration.gti` | named nested structs/classes, public qualified type paths, three-level nesting, and recursive reflected JSON configuration decoding and encoding |
+| `149-interface-static-factories.gti` | concrete static interface factories, recoverable backend selection, explicit owning upcasts and ordinary virtual dispatch |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run

@@ -144,7 +144,8 @@
     "145-live-slot-and-lane-iteration.gti": 291,
     "146-counted-text-view-iteration.gti": 126,
     "147-standard-library-import.gti": 386,
-    "148-interface-static-factories.gti": 68
+    "148-nested-configuration.gti": 427,
+    "149-interface-static-factories.gti": 68
   },
-  "total": 15481
+  "total": 15908
 }

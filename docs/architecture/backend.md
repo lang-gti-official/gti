@@ -1011,6 +1011,18 @@ out-of-line helper frame, not in one caller-frame local per terminal block.
 GNU-compatible compilers use cold/noinline hints; MSVC uses noinline. The helper
 is not noexcept because managed-worker emergency handoff can unwind through it.
 
+Every emitted `Invoke` failure alternate is an `[[unlikely]]` branch, so native
+block placement and call-site frequencies treat the failure path as cold. A
+detector's failure record and its incoming-cleanup check are one out-of-line
+call to `mir_publish_failure_v1`. It writes exactly the record the inline
+sequence wrote, taking the artifact identity from the program's descriptor,
+keeps a propagated inner record, and then performs the same check. A panic
+keeps its inline record because it also captures its message and may forward
+the caller's site. The helper carries the same guarded cold/noinline hint and
+is not noexcept, for the same handoff reason. Success paths no longer carry the
+record's construction, so native inlining sees a failure-capable body at
+roughly its success-path cost (RT-1).
+
 Each admitted fallible Drop assigns its status at the producer before its paired
 Invoke tests it. These native scalar carriers have no redundant entry-block
 false initializer: that dead definition forced native SSA promotion to compute

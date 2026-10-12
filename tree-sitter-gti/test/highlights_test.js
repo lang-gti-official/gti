@@ -676,6 +676,19 @@ requireCaptureCount(specializedTypeRow, "Box", "type", 2);
 requireCapture(specializedTypeRow, "nested", "type");
 requireCapture(specializedTypeRow, "value_type", "type");
 
+const nestedOwnerRow = fixtureLines.findIndex((line) =>
+  line.includes("struct NestedOwnerHighlight"),
+);
+const nestedChildRow = fixtureLines.findIndex((line) =>
+  line.includes("class NestedChildHighlight"),
+);
+const nestedTypeRow = fixtureLines.findIndex((line) =>
+  line.includes("nested_type_highlight"),
+);
+requireCapture(nestedOwnerRow, "NestedOwnerHighlight", "type.definition");
+requireCapture(nestedChildRow, "NestedChildHighlight", "type.definition");
+requireCapture(nestedTypeRow, "NestedChildHighlight", "type");
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

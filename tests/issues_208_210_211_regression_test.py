@@ -170,7 +170,7 @@ def main() -> int:
             r"::gti_internal::backend::mir_failure_constructor_tag_v1<\d+>\{\}, "
             r"&(?P<status>__gti_mir_construct_success_\d+), __gti_mir_failure_record\);\s*"
             r"if \((?P=status)\) \{\s*goto (?P<success>__gti_mir_bb_\d+);\s*"
-            r"\} else \{\s*" + INCOMING_CLEANUP_CHECK +
+            r"\} else \[\[unlikely\]\] \{\s*" + INCOMING_CLEANUP_CHECK +
             r"\s*goto (?P<failure>__gti_mir_bb_\d+);"
         )
         vector_schedule = vector_schedule_pattern.search(vector_body)
@@ -241,7 +241,7 @@ def main() -> int:
             r"(?P<status>__gti_mir_replacement_success_\d+) = [^\n]+"
             r"\}\(\(\*__gti_mir_loan_(?P=loan)\)\);\s*"
             r"if \((?P=status)\) \{\s*goto (?P<success>__gti_mir_bb_\d+);"
-            r"\s*\} else \{\s*" + INCOMING_CLEANUP_CHECK +
+            r"\s*\} else \[\[unlikely\]\] \{\s*" + INCOMING_CLEANUP_CHECK +
             r"\s*goto (?P<failure>__gti_mir_bb_\d+);",
             replacement_cpp,
         )

@@ -50,12 +50,21 @@ all 570 CTest gates and staged consumers now pass; the proxy alone was not
 treated as completion evidence. See
 [performance-tooling.md](performance-tooling.md#rt-1-source-storage-failure-path-cost).
 
+RT-1's second slice (2026-10-12) emits every `Invoke` failure alternate as an
+`[[unlikely]]` branch and publishes each detector's record and incoming-cleanup
+check through one cold helper. Against the same tree it makes `strings` 36%,
+`sort` 15% and `hashmap` about 4% faster, and leaves the other probes within 2%
+once loop placement is controlled. On the default layout, `particles` and
+`vector-push` lose about 10% from where their unchanged hot loops land; the
+owner accepted that. See
+[performance-tooling.md](performance-tooling.md#rt-1-cold-failure-paths-2026-10-12).
+
 The rest is future work, not implicitly implemented by this change. The rows
 below retain their technical prerequisites under the revised admission policy:
 
 | Finding | Disposition, prerequisite and acceptance |
 | --- | --- |
-| RT-1 broader outlining/inline policy | Design from successful-path and failure-path representation costs; validate the resulting policy on representative clients. Keep managed-worker handoff exception-transparent; blanket `noexcept`, forced inlining and higher global thresholds are not justified by this revision. |
+| RT-1 broader outlining/inline policy | Unlikely failure edges and cold record publication are delivered (2026-10-12). The remaining headroom is `hashmap`, at 101 ms against an 80 ms threshold-2000 ceiling, for an inline decision from MIR success-path size. Native loop alignment (1 to 3% on several probes) is a separate, unadopted lever. Keep managed-worker handoff exception-transparent; blanket `noexcept`, forced inlining and higher global thresholds are not justified by this revision. |
 | RT-2 contextual narrowing | Prepare a bounded post-fixpoint refinement, re-establishing conservative coverage of **every** reachable call context. Current closed-call contexts widen but do not narrow; simply replacing widened inputs with attractive return ranges is not a proof. Require independent replay, conflicting callers/recursion/budget negatives, and loop-carried performance validation at acceptance. |
 | RT-3 conversions/division/shifts | A general proof family, beginning with exact integral conversion domains. Each failure outcome needs its own rule and replay: zero and signed-minimum/-1 for division, and all GTI shift preconditions, not merely a bounded shift count. Require boundary negatives and representative byte/text performance validation; a prior measured gain is not required to broaden the family. |
 | RT-4 refreshed infallibility | Structural failure-freedom of canonical MIR and the backend's plain-call vocabulary are implemented; measured neutral at run time. The remaining slice requires effect derivation on optimized MIR plus an independently replayed Invoke-to-Call edit, including CFG/identity repair. Native, recursive, synchronizing and cleanup boundaries remain conservative. No backend inference from apparently empty failure blocks. |
@@ -338,9 +347,14 @@ order, and propagation remain.
 **First slice.**
 
 - Emit failure-edge branches as unlikely and keep failure-record construction,
-  incoming-cleanup checks, and cleanup scopes in outlined cold code.
+  incoming-cleanup checks, and cleanup scopes in outlined cold code. Delivered
+  for failure edges, records and incoming checks (2026-10-12); cleanup scopes
+  stay in line because broad cold scope annotations regressed the storage
+  proxy.
 - Compute an inline hint, or a GTI-side inline decision, from the MIR
-  success-path size, excluding failure edges.
+  success-path size, excluding failure edges. Not yet needed except for
+  `hashmap`; outlining or an `inline` hint without unlikely edges made
+  `strings` 1.38x slower.
 
 Measure with the `attribute` screen and code size. A full MIR inliner is
 RT-10. `noexcept` is a separate, gated sub-item: the managed-thread runtime
