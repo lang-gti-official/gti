@@ -51,9 +51,10 @@ private:
   static int helper(int value) { return value; }
 };
 static_assert(Rules::twice(3) == 6);
+class InheritedRules : public Rules {};
 
 int main(int argc, std::vector<std::string> argv) {
-  if (Rules::identity<int>(Rules::seed()) != 7) { return 2; }
+  if (InheritedRules::identity<int>(InheritedRules::seed()) != 7) { return 2; }
   unsafe { if (Rules::unchecked() != 9) { return 3; } }
   auto result = Service::create(argc - 1);
   if (!result) { return 0; }

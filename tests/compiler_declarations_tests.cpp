@@ -1808,11 +1808,14 @@ int invoke() { return Reading::initial(); }
 int main() {
   Meter meter{};
   unsafe { if (Reading::unchecked() != 9) { return 1; } }
-  if (Reading::identity<int>(meter.read()) != 7) { return 2; }
+  if (Reading::identity<int>(meter.read()) != 7 || Meter::initial() != 7) { return 2; }
   return invoke() - 7;
 }
 interface Marker { static int code() { return 1; } };
 class Marked : public Marker {};
+interface LeftFactory { static int create() { return 1; } };
+interface RightFactory { static int create() { return 2; } };
+class BothFactories : public LeftFactory, public RightFactory {};
 )");
   expect(frontend.canGenerateCode(),
          "interface statics should reuse ordinary access, default, generic, "
@@ -1840,6 +1843,12 @@ class Marked : public Marker {};
              markedType && !markedType->abstract && markedType->polymorphic,
          "an interface without instance requirements still has polymorphic "
          "destruction, without making its implementation abstract");
+  const auto *both = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(9).get());
+  expect(frontend.semantics.findClassType(*both) &&
+             !frontend.semantics.findClassType(*both)->abstract,
+         "unselected ambiguous inherited statics must not become instance "
+         "contracts requiring override unification");
   const lang::FunctionDecl *initial = nullptr;
   const lang::FunctionDecl *read = nullptr;
   for (const auto &member : reading->members()) {
@@ -1935,6 +1944,19 @@ class Marked : public Marker {};
         !result.canGenerateCode(),
         "ordinary static access, receiver and unsafe restrictions must apply");
   }
+}
+
+void testInterfaceStaticAmbiguity() {
+  const auto ambiguous = lang::Frontend().analyze("ambiguous-static.gti", R"(
+interface Left { static int create() { return 1; } };
+interface Right { static int create() { return 2; } };
+class Both : public Left, public Right {};
+int main() { return Both::create(); }
+)");
+  expect(
+      !ambiguous.canGenerateCode() &&
+          hasDiagnostic(ambiguous.diagnostics, "ambiguous"),
+      "selecting ambiguous inherited static functions must fail in semantics");
 }
 
 void testInheritanceAndInterfaces() {
@@ -11951,6 +11973,7 @@ constexpr NamedTest kTests[] = {
      testConstructorsAndReceiverMutability},
     {"testInheritanceAndInterfaces", testInheritanceAndInterfaces},
     {"testInterfaceStaticMethods", testInterfaceStaticMethods},
+    {"testInterfaceStaticAmbiguity", testInterfaceStaticAmbiguity},
     {"testInheritedGenericTargetInstances",
      testInheritedGenericTargetInstances},
     {"testDirectBraceConstruction", testDirectBraceConstruction},

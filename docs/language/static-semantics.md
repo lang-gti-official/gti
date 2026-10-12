@@ -1000,6 +1000,11 @@ instance dispatch through the returned owner.
 An interface remains abstract and has polymorphic destruction even when it has
 no instance signatures. Its implementing class is concrete once all inherited
 instance requirements are implemented; static declarations do not add any.
+Inherited static functions use ordinary member lookup. Identically named static
+functions from separate bases need not be unified with an override: a call
+selecting indistinguishable candidates is ambiguous and can instead qualify
+the intended base. The ordinary prohibition on accidentally hiding a same-signature
+non-virtual base member still applies.
 
 ```gti
 interface Renderable {

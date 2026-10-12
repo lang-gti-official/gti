@@ -4896,6 +4896,11 @@ auto SemanticVisitor::Impl::buildInheritedMembers(
            ++right) {
         const CallableCandidate &first = member.symbol.overloads[left];
         const CallableCandidate &second = member.symbol.overloads[right];
+        // Associated functions do not create an instance contract to unify.
+        // Exact lookup diagnoses ambiguity if an inherited static is selected.
+        if (first.staticMember && second.staticMember) {
+          continue;
+        }
         if (!sameFunctionSignature(first, second)) {
           continue;
         }
