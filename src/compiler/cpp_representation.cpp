@@ -698,9 +698,12 @@ bool cppVirtualFamilyHasConditionalResultChannel(
 std::string cppClassTemplateNameSpelling(const LoweredProgram &program,
                                          ClassId id) {
   const LoweredClassDeclaration *info = program.findClassDeclaration(id);
-  return info == nullptr ? std::string{}
-                         : cppLoweredQualifiedName(info->qualifiedName,
-                                                   info->cOpaqueHandle);
+  const LoweredDeclaration *row = program.findClassDeclarationRow(id);
+  return info == nullptr
+             ? std::string{}
+             : cppLoweredQualifiedName(info->qualifiedName,
+                                       info->cOpaqueHandle && row != nullptr &&
+                                           row->ownerClass == 0);
 }
 
 std::string cppNativeTypeSpelling(const LoweredProgram &program,
@@ -1117,8 +1120,10 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
             cppConcreteClassTypeSpelling(program, type)) {
       return *concrete;
     }
-    std::string result = cppLoweredQualifiedName(classInfo->qualifiedName,
-                                                 classInfo->cOpaqueHandle);
+    const auto *row = program.findClassDeclarationRow(type.classId);
+    std::string result = cppLoweredQualifiedName(
+        classInfo->qualifiedName,
+        classInfo->cOpaqueHandle && row != nullptr && row->ownerClass == 0);
     const std::vector<SemanticType> &typeArguments =
         classInfo->exactSpecializationPrimary == 0
             ? type.arguments
