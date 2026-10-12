@@ -19,8 +19,16 @@ public:
   Guard() {}
   ~Guard() { std::println(9); }
 };
+class Cursor {
+  mut Tracked& target;
+public:
+  Cursor(mut Tracked& target) : target(target) {}
+  mut Tracked& operator*() mut { return this.target; }
+};
+Tracked make_tracked(int32_t divisor) { return Tracked(2, divisor, 1); }
 void replace(mut Tracked& target, int32_t divisor) {
-  target = Tracked(2, divisor, 1);
+  mut Cursor cursor{target};
+  *cursor = make_tracked(divisor);
 }
 int main(int argc, std::vector<std::string> argv) {
   Guard guard{};

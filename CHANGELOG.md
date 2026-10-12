@@ -9,6 +9,42 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.406.0 — Checked container and view iteration
+
+- Standard-library container and view families gain their appropriate shared,
+  exclusive, reverse and positioned cursor operations. Forward-only containers
+  remain forward-only; sparse storage skips vacant slots. Shared cursor copies
+  have independent positions, while exclusive cursors move rather than copy
+  permission to mutate. Mutable map iteration exposes mapped values without
+  permitting keys or complete entries to be replaced.
+- `<std/string_view>` provides checked counted-text cursors. General readable
+  iterators may yield independent copyable values as well as checked references.
+  A read-only reference range-for binding owns such a value for one iteration,
+  including cleanup of local guards before advancement. Iterator-pair callback
+  constraints preserve whether dereference produces a reference or a value.
+- General two-owner reference proxies preserve their physical cursor lifetime
+  and external owners through iteration and constructor rollback. Endpoint
+  failures restore an exclusive cursor before cleanup. Unsupported endpoint
+  shapes diagnose at the range-for source rather than failing in the backend.
+- JSON objects expose allocation-free key/value spans and paired member views.
+  Keys and member extent stay immutable; exclusive value iteration may replace
+  descendants without cloning the document. Example 91 demonstrates the views.
+- Examples 143–146 demonstrate checked container, view, live-slot/lane and
+  counted-text iteration. Movement and cursor duplication have separate
+  concepts; random access does not imply contiguous storage.
+- Fresh `expected<T, E>` results can replace elements through checked mutable
+  cursors, including move-only payloads without default constructors and
+  payloads needing cleanup. Ordinary borrowed-receiver methods can consume
+  owning Expected arguments without consuming the receiver. Pointer-backed
+  recursive containers of Expected values retain finite layout; by-value
+  recursive payloads remain rejected. Forwarding an owning Expected from a
+  failure-free producer preserves its unpublished result through fallible local
+  cleanup before returning it.
+- Inline Expected alternatives, including error alternatives and fixed arrays
+  of the wrapper, now participate in the existing recursive-layout diagnostic.
+  Such invalid fields are reported in source and the editor rather than as a
+  backend internal error.
+
 ## 0.405.3 — Closure, copy and move arms in `expected` conditionals
 
 - A conditional whose arms are `expected<T, E>` values can now use a

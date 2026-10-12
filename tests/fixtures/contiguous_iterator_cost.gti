@@ -1,0 +1,71 @@
+#include <std/string>
+#include <std/vector>
+#include <std/span>
+#include <std/resource_vector>
+#include <std/resource>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+int main() {
+  mut std::vector<int> numbers{};
+  for (mut int index = 0; index < 64; index++) { numbers.push_back(index); }
+  std::string text{"abcdefgh"};
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> backed{resource};
+    for (mut int index = 0; index < 64; index++) { backed.push_back(index); }
+    auto view = numbers.as_span();
+    auto middle = view.subspan(std::size_t(16), std::size_t(32));
+    adoption_count_begin();
+    mut int total = 0;
+    for (mut int repeat = 0; repeat < 128; repeat++) {
+      mut auto cursor = middle.end_iterator();
+      cursor -= std::ptrdiff_t(32);
+      cursor += std::ptrdiff_t(31);
+      --cursor;
+      total += *cursor;
+      mut auto character = text.end_iterator();
+      character -= std::ptrdiff_t(8);
+      character += std::ptrdiff_t(7);
+      if (*character != 'h') { return 1; }
+      mut auto current = backed.end_iterator();
+      current -= std::ptrdiff_t(64);
+      current += std::ptrdiff_t(63);
+      total += *current;
+      mut auto backwards = middle.rbegin();
+      backwards += std::ptrdiff_t(31);
+      if (*backwards != 16) { return 4; }
+      mut auto letters = text.rbegin();
+      letters += std::ptrdiff_t(7);
+      if (*letters != 'a') { return 5; }
+      mut auto resources = backed.rbegin();
+      resources += std::ptrdiff_t(63);
+      if (*resources != 0) { return 6; }
+    }
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0) || total != (46 + 63) * 128) { return 2; }
+    adoption_count_begin();
+    {
+      mut auto output = backed.end_mut();
+      --output;
+      *output = 600;
+      output[std::ptrdiff_t(-1)] = 500;
+      output -= std::ptrdiff_t(63);
+      *output = 100;
+    }
+    {
+      mut auto reverse = backed.rbegin_mut();
+      reverse[std::ptrdiff_t(1)] = 501;
+      reverse += std::ptrdiff_t(63);
+      if (*reverse != 100) { return 7; }
+    }
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0) || backed.front() != 100 || backed.back() != 600) { return 3; }
+  }
+  return 0;
+}

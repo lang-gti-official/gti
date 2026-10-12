@@ -1,0 +1,183 @@
+#include <std/iterator>
+#include <std/vector>
+#include <std/array>
+#include <std/deque>
+#include <std/list>
+#include <std/map>
+#include <std/set>
+#include <std/unordered_map>
+#include <std/unordered_set>
+
+bool random_cursor<I>(I cursor) requires std::random_access_iterator<I> {
+  mut I copy = cursor;
+  copy += std::ptrdiff_t(2);
+  if (*copy != 3 || *cursor != 1) { return false; }
+  copy -= std::ptrdiff_t(1);
+  return *copy == 2;
+}
+
+// Exclusive movement transports one owner loan; it must not require making
+// a second writable cursor. Each consuming utility returns that same loan.
+void exclusive_random<I>(mut I cursor)
+    requires std::random_access_cursor<I> && std::writes_to<I, int> {
+  std::advance(cursor, std::ptrdiff_t(1));
+  mut auto last = std::next(std::move(cursor), std::ptrdiff_t(1));
+  mut auto middle = std::prev(std::move(last));
+  *middle = 92;
+  std::advance(middle, std::ptrdiff_t(-1));
+  *middle = 91;
+}
+
+void exclusive_bidirectional<I>(mut I cursor)
+    requires std::bidirectional_cursor<I> && std::writes_to<I, int> {
+  mut auto last = std::next(std::move(cursor), std::size_t(2));
+  mut auto middle = std::prev(std::move(last));
+  *middle = 82;
+  std::advance(middle, std::ptrdiff_t(-1));
+  *middle = 81;
+}
+
+// An unrelated multi-owner carrier has the same consuming-relay contract.
+// Its fresh result endpoint must not be replaced by the consumed input's end.
+class OwnerPair {
+  int& increment;
+  mut int& first;
+  mut int& second;
+public:
+  OwnerPair(int& increment, mut int& first, mut int& second)
+      : increment(increment), first(first), second(second) {}
+  void advance() mut {
+    this.first += this.increment;
+    this.second += this.increment;
+  }
+};
+T relay_owners<T>(T owners) { return std::move(owners); }
+
+int main() {
+  int increment = 3;
+  mut int first_owner = 0;
+  mut int second_owner = 1;
+  {
+    OwnerPair original{increment, first_owner, second_owner};
+    mut auto active = relay_owners(std::move(original));
+    active.advance();
+    mut auto final = relay_owners(std::move(active));
+    final.advance();
+  }
+  if (first_owner != 6 || second_owner != 7) { return 40; }
+  mut std::vector<int> values = {1, 2, 3};
+  if (!random_cursor(values.cbegin())) { return 1; }
+  { mut auto end = values.end_iterator(); --end; if (*end != 3) { return 2; } }
+  { mut auto write = values.end_mut(); --write; write[std::ptrdiff_t(-1)] = 12; }
+  if (values[std::size_t(1)] != 12) { return 3; }
+  // Every copy carries the same stable bound and owner origin. Element writes
+  // are permitted through the exclusive cursor without changing its extent.
+  {
+    auto end = values.end();
+    mut auto write = values.begin_mut();
+    *write = 11; ++write; *write = 12; ++write; *write = 13; ++write;
+    if (!(write == end)) { return 30; }
+    --write; if (*write != 13) { return 31; }
+  }
+  {
+    auto end = values.rend();
+    mut auto reverse = values.rbegin_mut();
+    *reverse = 3; ++reverse; *reverse = 2; ++reverse; *reverse = 1; ++reverse;
+    if (!(reverse == end)) { return 32; }
+    --reverse; if (*reverse != 1) { return 33; }
+  }
+  mut std::vector<int> empty{};
+  { auto end = empty.end(); auto cursor = empty.begin_mut(); if (cursor != end) { return 34; } }
+  { auto end = empty.rend(); auto cursor = empty.rbegin_mut(); if (cursor != end) { return 35; } }
+  {
+    mut std::vector<int> exclusive_values = {1, 2, 3};
+    exclusive_random(exclusive_values.begin_mut());
+    if (exclusive_values[std::size_t(0)] != 91 ||
+        exclusive_values[std::size_t(1)] != 92 ||
+        exclusive_values[std::size_t(2)] != 3) { return 36; }
+  }
+  {
+    mut std::list<int> exclusive_values = {1, 2, 3};
+    exclusive_bidirectional(exclusive_values.begin_mut());
+    mut auto cursor = exclusive_values.begin();
+    if (*cursor != 81) { return 37; }
+    ++cursor;
+    if (*cursor != 82) { return 38; }
+    ++cursor;
+    if (*cursor != 3) { return 39; }
+  }
+
+  mut std::array<int, 3> fixed = std::array<int, 3>({1, 2, 3});
+  if (!random_cursor(fixed.begin())) { return 4; }
+  { mut auto write = fixed.end_mut(); write -= std::ptrdiff_t(2); *write = 22; }
+  if (fixed[std::size_t(1)] != 22) { return 5; }
+
+  mut std::deque<int> queue = {1, 2, 3};
+  if (!random_cursor(queue.begin())) { return 6; }
+  { mut auto write = queue.end_mut(); --write; write[std::ptrdiff_t(-1)] = 32; }
+  if (queue[std::size_t(1)] != 32) { return 7; }
+
+  mut std::list<int> chain = {1, 2, 3};
+  { mut auto end = chain.end_iterator(); --end; if (*end != 3) { return 8; } }
+  { mut auto write = chain.end_mut(); --write; --write; *write = 42; }
+  { mut auto read = chain.begin(); ++read; if (*read != 42) { return 9; } }
+  { mut auto first = chain.begin(); mut auto copy = first; ++copy;
+    if (*first != 1 || *copy != 42 || first == copy) { return 18; }
+    --copy; if (copy != first) { return 19; }
+  }
+
+  mut std::map<int, int> tree{};
+  [[discard]] tree.insert(3, 30);
+  [[discard]] tree.insert(1, 10);
+  [[discard]] tree.insert(2, 20);
+  { mut auto read = tree.cbegin(); auto end = tree.cend();
+    if (read == end || read->first != 1) { return 41; }
+    ++read; ++read; ++read;
+    if (read != end) { return 42; }
+  }
+  { mut auto end = tree.end_iterator(); --end;
+    if (end->first != 3) { return 10; }
+    --end; if (end->first != 2) { return 11; }
+    ++end; if (end->first != 3) { return 12; }
+  }
+  { mut auto write = tree.end_mut(); --write; write->mapped() = 33; }
+  int three = 3;
+  if (tree.at(three) != 33) { return 13; }
+  { mut auto first = tree.begin(); mut auto copy = first; ++copy;
+    if (first->first != 1 || copy->first != 2 || first == copy) { return 20; }
+    --copy; if (copy != first) { return 21; }
+  }
+
+  std::set<int> keys = {3, 1, 2};
+  { mut auto end = keys.end_iterator(); --end; if (*end != 3) { return 14; }
+    --end; if (*end != 2) { return 15; }
+  }
+  { mut auto first = keys.begin(); mut auto copy = first; ++copy;
+    if (*first != 1 || *copy != 2 || first == copy) { return 22; }
+    --copy; if (copy != first) { return 23; }
+  }
+  mut std::unordered_map<int, int> hash{};
+  [[discard]] hash.insert(1, 2);
+  [[discard]] hash.insert(3, 4);
+  { auto end = hash.end_iterator(); if (end != hash.end() || !(end == hash.end())) { return 16; } }
+  { mut auto first = hash.begin(); mut auto copy = first;
+    int first_key = first->first; ++copy;
+    if (first->first != first_key || copy->first == first_key || first == copy) { return 24; }
+  }
+  { auto end = hash.end(); mut auto write = hash.begin_mut();
+    if (write == end) { return 25; } ++write; ++write;
+    if (!(write == end)) { return 26; }
+  }
+  mut std::unordered_set<int> hash_keys = {1, 2};
+  { auto end = hash_keys.end_iterator(); if (end != hash_keys.end() || !(end == hash_keys.end())) { return 17; } }
+  { mut auto first = hash_keys.begin(); mut auto copy = first;
+    int first_key = *first; ++copy;
+    if (*first != first_key || *copy == first_key || first == copy) { return 27; }
+  }
+  { auto end = hash_keys.end(); mut auto duplicate = hash_keys.insert(1);
+    if (duplicate.second || duplicate.first == end) { return 28; }
+    ++duplicate.first; ++duplicate.first;
+    if (!(duplicate.first == end)) { return 29; }
+  }
+  return 0;
+}

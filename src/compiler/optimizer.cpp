@@ -638,12 +638,21 @@ public:
         // Immutable bindings, parameters, and projected storage are outside
         // this pass's admitted candidate domain. Reporting each one would make
         // ordinary prelude code drown out actionable near misses.
-        if (miss.reason == MirScalarPromotionMissReason::NotMutableBinding) {
+        const MirBody *body = findMirBody(context.program, address);
+        const bool rangePublication =
+            body != nullptr &&
+            mirRangePublishedElementOwner(*body, miss.place) != nullptr;
+        if (miss.reason == MirScalarPromotionMissReason::NotMutableBinding &&
+            !rangePublication) {
           continue;
         }
         ++outcome.report.candidates;
         ++outcome.report.missed;
-        std::string explanation = std::string(lang::name(miss.reason));
+        std::string explanation =
+            rangePublication
+                ? "range publication requires an iteration-local stable "
+                  "element owner and exact producer/initialization identities"
+                : std::string(lang::name(miss.reason));
         if (const auto *aliases =
                 analyses.placeAliasEscape(context.program, address)) {
           if (const auto *escape = aliases->escape(miss.place);

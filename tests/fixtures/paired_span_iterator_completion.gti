@@ -1,0 +1,103 @@
+#include <std/paired_span>
+#include <std/vector>
+#include <std/string>
+#include <std/iterator>
+#include <std/algorithm>
+#include <std/memory>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+void require_random<I>(I cursor) requires std::random_access_iterator<I> {}
+void require_pair_proxy<I>(I cursor)
+    requires std::dereferences_to<I, std::paired_span<int, std::string>::value_type> {}
+
+class PairCounter {
+  mut int total = 0;
+public:
+  void operator()(std::paired_span<int, std::string>::value_type& entry) mut {
+    this.total += entry.first();
+  }
+  int result() { return this.total; }
+};
+
+int main() {
+  std::vector<int> keys = {10, 20, 30};
+  std::vector<std::string> labels = {std::string("one"), std::string("two")};
+  auto pairs = std::paired_span<int, std::string>(keys.as_span(), labels.as_span());
+  // A cursor contains one checked view reference, one selected coordinate,
+  // and one inclusive movement coordinate, never owning copies of either
+  // element family. Both directions expose the very same borrowed proxy.
+  if (std::layout_of<std::paired_span<int, std::string>::value_type>().bytes !=
+      std::layout_of<std::size_t>().bytes * std::size_t(2) ||
+      std::layout_of<std::paired_span<int, std::string>::const_iterator>().bytes !=
+      std::layout_of<std::size_t>().bytes * std::size_t(3)) { return 14; }
+  adoption_count_begin();
+  require_random(pairs.begin());
+  require_pair_proxy(pairs.begin());
+  mut int total = 0;
+  for (auto& entry : pairs) {
+    total += entry.first();
+    if (entry.second().empty()) { return 1; }
+  }
+  if (total != 30) { return 2; }
+  auto counter = std::for_each(pairs.begin(), pairs.end(), PairCounter());
+  if (counter.result() != 30) { return 13; }
+  mut auto first = pairs.begin();
+  auto copy = first;
+  first += std::ptrdiff_t(2);
+  if (first != pairs.end()) { return 3; }
+  --first;
+  if ((*first).first() != 20 || (*first).second() != "two" || (*copy).first() != 10) { return 4; }
+  first -= std::ptrdiff_t(1);
+  if (first - pairs.end() != std::ptrdiff_t(-2)) { return 5; }
+  auto tail = pairs.subspan(std::size_t(1), std::size_t(1));
+  mut auto last = tail.end_iterator();
+  --last;
+  if ((*last).first() != 20) { return 6; }
+  require_random(pairs.rbegin());
+  require_pair_proxy(pairs.rbegin());
+  mut auto reverse = pairs.crbegin();
+  auto reverse_copy = reverse;
+  if ((*reverse).first() != 20 || (*reverse).second() != "two" || reverse - pairs.crend() != std::ptrdiff_t(-2)) { return 10; }
+  if (reverse->first() != 20 || reverse->second() != "two") { return 15; }
+  ++reverse;
+  if ((*reverse).first() != 10 || (*reverse_copy).first() != 20) { return 11; }
+  reverse -= std::ptrdiff_t(1);
+  if ((*reverse).first() != 20) { return 12; }
+  {
+    mut auto reverse_end = pairs.rend_iterator();
+    if (reverse_end != pairs.rend()) { return 17; }
+    --reverse_end;
+    if (reverse_end->first() != 10 || reverse_end->second() != "one") { return 18; }
+    reverse_end -= std::ptrdiff_t(1);
+    if (reverse_end->first() != 20 || reverse_end->second() != "two") { return 19; }
+  }
+  mut int movement_sum = 0;
+  for (mut std::size_t repeat = 0; repeat < std::size_t(128); ++repeat) {
+    mut auto forward_cost = pairs.begin();
+    forward_cost += std::ptrdiff_t(2);
+    --forward_cost;
+    movement_sum += forward_cost->first();
+    forward_cost -= std::ptrdiff_t(1);
+    movement_sum += forward_cost->first();
+    mut auto reverse_cost = pairs.rbegin();
+    reverse_cost += std::ptrdiff_t(2);
+    --reverse_cost;
+    movement_sum += reverse_cost->first();
+    reverse_cost -= std::ptrdiff_t(1);
+    movement_sum += reverse_cost->first();
+  }
+  if (movement_sum != 60 * 128) { return 16; }
+  std::vector<int> empty_keys{};
+  auto empty = std::paired_span<int, std::string>(empty_keys.as_span(), labels.as_span());
+  if (empty.begin() != empty.end()) { return 7; }
+  if (empty.rend_iterator() != empty.rend()) { return 20; }
+  for (auto& entry : empty) { return 8; }
+  adoption_count_end();
+  if (adoption_allocations() != uint64_t(0)) { return 9; }
+  return 0;
+}

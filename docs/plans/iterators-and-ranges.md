@@ -11,6 +11,80 @@ The range foundation and substantial algorithm breadth are implemented.
 Remaining work is not a repeat of range syntax, vector construction or the
 original one-owner borrowing slice.
 
+## Container completion campaign (delivered, 2026-10-12)
+
+The delivered outcome is complete, checked iteration for every current standard
+library sequence/container family, not just the easiest contiguous containers.
+The original single-owner staging described below is historical: the current
+ownership model already represents shared/exclusive stored references, nested
+carriers and multiple external origins. The campaign uses those general facts
+rather than public container-name exceptions.
+
+| Family | Required traversal | Required access |
+| --- | --- | --- |
+| vector, array, deque, string, span, mutable_span, resource_vector, arena, SIMD lanes/masks | checked positional movement and reverse endpoints | shared reading; exclusive writing where elements are mutable |
+| list, map, set | predecessor/successor movement and reverse endpoints | shared reading; exclusive sequence/mapped-value writing; never mutable keys |
+| forward_list, unordered_map, unordered_set | forward traversal and common-position endpoints | shared reading; exclusive element/mapped-value writing; never mutable keys |
+| storage, pool, resource_storage | forward/backward live-slot traversal and reverse endpoints | shared reading; exclusive live-element writing; skip vacant slots |
+| string_view | read-only text traversal and positional/reverse access | preserve literal or dynamic owner witnesses |
+| paired_span | checked reference-proxy traversal and reverse endpoints | retain both owners without copying owning elements |
+| JSON object projections | checked key/value spans and paired member traversal | immutable keys and member extent; exclusive descendant replacement |
+
+Movement and duplication are separate capabilities: an exclusive cursor can
+move backward or jump without becoming copyable. End sentinels need not retain
+another owner loan. Queue adapters and ownership/result/guard objects are not
+automatically ranges. Fallible directory streams retain their explicit
+recoverable `next()` contract; they must not silently become infallible cursors.
+
+This campaign explicitly supersedes the early positive-remaining-distance
+meaning of `iterator - sentinel`. Subtraction uses conventional signed
+left-minus-right coordinates, including reverse traversal. `distance` retains
+its counted forward meaning. Source-defined checked arithmetic subtracts
+unsigned coordinates before conversion, accepts the minimum signed result,
+and rejects an unrepresentable difference before native conversion. Large
+absolute positions do not make a small representable difference invalid.
+
+Delivery requires positive category/algorithm composition checks, independent
+shared-cursor copies, noncopyable exclusive cursors, owner invalidation/escape
+rejections, empty/exhausted and signed-offset failures, deterministic cleanup,
+and resource-provider lifetime coverage. New executable paths must pass
+MIR/LoweredProgram verification and independent forged-loan mutations, native
+C++20/C++23 optimization and sanitizer matrices, and zero-allocation traversal
+controls. Runnable examples, corpus/census registration and the reviewed stdlib
+surface manifest accompany the completed implementation.
+
+The completed source covers the listed nominal container families.
+Shared/exclusive contiguous traversal, sparse/lane traversal, paired proxy
+traversal and unrelated two-owner inline proxies have focused native/sanitizer
+evidence. Associative mutation now uses source-defined mapped-value projections
+instead of replaceable entries, with key/owner/access bypass negatives.
+The cleanup-bearing exclusive proxy endpoint and value-yielding readable
+iterator prerequisites now have general source/MIR implementations and focused
+proof tests. Counted text views read through their existing checked byte
+operation, not reinterpret native `char` storage as GTI-character references.
+The latest mapped owning-value replacement additionally exercises the ordinary
+mutable-reference accessor destination rather than a container-specific path.
+Final local acceptance passes all 672 registered gates, including the whole
+container matrices, independent batch/standalone emitter comparison and native
+cutover oracle over 143 examples. Examples 143–146 demonstrate the four new
+traversal families. The source/module manifests and both non-update censuses
+pass. Fresh optimized vector/particle and counted-text controls show no material
+runtime regression within their measured contracts.
+
+Final Linux reconciliation passes its Release build and 44/45 gates. The
+remaining atomic JSON sanitizer compile-time budget failure is retained, not
+relabeled as a pass; the owner explicitly accepts that validation limitation
+and requests integration in PR #24 / version 0.406.0. Final closure changes only
+documentation and verifies exact equivalence to the fully tested implementation.
+See the [delivery acceptance record](../architecture/verification.md#container-iterator-completion-delivery-acceptance-2026-10-12)
+for source identities, measurements and the scope of that exception. Remaining
+adaptor, subrange-rewrite and dependency-reseating goals below are not required
+to give current container families their appropriate traversal operations.
+
+The prerequisite order for the remaining dynamic-view and foundational
+range-algorithm work is maintained in
+[`implementation-sequence.md`](implementation-sequence.md).
+
 Delivered foundations include:
 
 - range-for syntax, fixed-array indexed traversal, exact nominal member
@@ -74,10 +148,12 @@ Iterator and sentinel types may differ. Comparison may accept a read-only
 sentinel reference or a copyable exact value; a reference-taking sentinel still
 requires a stable named argument.
 
-The shipped readable protocol returns checked references. Broader value/proxy
-yield profiles need an explicit operation and lifetime contract; an illustrative
-yield shape in the early proposal was not evidence of a complete general
-single-pass generator profile.
+The readable protocol supports checked references and independent copyable
+values without borrowed state. A read-only reference loop binding over a value
+owns the result per iteration and borrows that storage; cleanup retires its
+borrowers before the value and before advancement. Reference yields remain
+aliases without element copies. This does not establish move-only generator
+yields, state-mutating read traversal, or a complete lazy-adaptor protocol.
 
 Lookup is member-based. There is no ADL, free `begin`/`end` search,
 `tag_invoke`, C++ customization-point lookup or implicit element conversion.

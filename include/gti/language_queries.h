@@ -21,6 +21,10 @@ public:
   [[nodiscard]] std::string nativeCall(const ResolvedCallInfo &selected,
                                        std::string_view name) const;
   [[nodiscard]] std::string
+  forwardedMemberCall(const FunctionInfo &info,
+                      const ResolvedCallInfo &selected,
+                      std::string_view name) const;
+  [[nodiscard]] std::string
   conceptSignature(const SymbolRecord &symbol,
                    const ConceptDecl *declaration) const;
   [[nodiscard]] std::string

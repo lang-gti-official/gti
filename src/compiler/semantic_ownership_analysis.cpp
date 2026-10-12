@@ -2560,8 +2560,9 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
           selected.borrowArgument = mapping.parameter;
           origin = operatorBorrowSource(expression, selected);
         } else if (mapping.origin == BorrowOriginKind::Argument &&
-                   mapping.parameter < call->arguments().size())
-          origin = &call->arguments()[mapping.parameter];
+                   mapping.parameter <
+                       resolvedCallArgumentCount(*call, resolved))
+          origin = resolvedCallArgument(*call, resolved, mapping.parameter);
         else if (mapping.origin == BorrowOriginKind::Receiver)
           if (const auto *member = exprAs<Get>(call->callee().get()))
             origin = &member->object();
@@ -2643,11 +2644,11 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
         resolved != nullptr && !resolved->borrowArguments.empty()) {
       std::vector<SemanticLoanDependency> dependencies;
       for (const auto parameter : resolved->borrowArguments) {
-        if (parameter >= call->arguments().size()) {
+        if (parameter >= resolvedCallArgumentCount(*call, resolved)) {
           return {};
         }
-        const auto sources =
-            storedBorrowDependencies(call->arguments()[parameter]);
+        const auto sources = storedBorrowDependencies(
+            *resolvedCallArgument(*call, resolved, parameter));
         if (sources.empty()) {
           return {};
         }
@@ -2772,9 +2773,7 @@ auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
     return nullptr;
   }
   if (resolved->borrowOrigin == BorrowOriginKind::Argument) {
-    return resolved->borrowArgument < call->arguments().size()
-               ? &call->arguments()[resolved->borrowArgument]
-               : nullptr;
+    return resolvedCallArgument(*call, resolved, resolved->borrowArgument);
   }
   if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
     if (const auto *member = exprAs<Get>(call->callee().get())) {
@@ -3145,8 +3144,8 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     const auto &mapping = resolved->borrowFields.front();
     const ExprPtr *origin = nullptr;
     if (mapping.origin == BorrowOriginKind::Argument &&
-        mapping.parameter < call->arguments().size())
-      origin = &call->arguments()[mapping.parameter];
+        mapping.parameter < resolvedCallArgumentCount(*call, resolved))
+      origin = resolvedCallArgument(*call, resolved, mapping.parameter);
     else if (mapping.origin == BorrowOriginKind::Receiver)
       if (const auto *member = exprAs<Get>(call->callee().get()))
         origin = &member->object();
@@ -3171,8 +3170,9 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     }
   }
   if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
-      resolved->borrowArgument < call->arguments().size()) {
-    return retainedLoanSource(call->arguments()[resolved->borrowArgument]);
+      resolved->borrowArgument < resolvedCallArgumentCount(*call, resolved)) {
+    return retainedLoanSource(
+        *resolvedCallArgument(*call, resolved, resolved->borrowArgument));
   }
   if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
     const auto *member = exprAs<Get>(call->callee().get());
@@ -3259,8 +3259,10 @@ auto SemanticVisitor::Impl::loanPlace(const ExprPtr &expression)
         if (currentClass)
           return {.receiver = true};
       } else if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
-                 resolved->borrowArgument < call->arguments().size()) {
-        return loanPlace(call->arguments()[resolved->borrowArgument]);
+                 resolved->borrowArgument <
+                     resolvedCallArgumentCount(*call, resolved)) {
+        return loanPlace(
+            *resolvedCallArgument(*call, resolved, resolved->borrowArgument));
       }
     }
     if (resolved != nullptr &&
@@ -3631,16 +3633,18 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
         resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {
       if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
-          resolved->borrowArgument < call->arguments().size()) {
+          resolved->borrowArgument <
+              resolvedCallArgumentCount(*call, resolved)) {
         const bool mutableProducer =
             resolved->borrowArgument < resolved->parameterTypes.size() &&
             resolved->parameterTypes[resolved->borrowArgument].kind ==
                 SemanticType::Reference &&
             resolved->parameterTypes[resolved->borrowArgument]
                     .referenceAccess == AccessMode::Mutable;
-        return fromSource(call->arguments()[resolved->borrowArgument],
-                          resolved->borrowAccess, mutableProducer,
-                          resolved->returnType.kind != SemanticType::Reference);
+        return fromSource(
+            *resolvedCallArgument(*call, resolved, resolved->borrowArgument),
+            resolved->borrowAccess, mutableProducer,
+            resolved->returnType.kind != SemanticType::Reference);
       }
       if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
         const bool mutableProducer =
@@ -3887,12 +3891,14 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
       }
     }
     const std::size_t count =
-        std::min(resolved->parameterTypes.size(), call->arguments().size());
+        std::min(resolved->parameterTypes.size(),
+                 resolvedCallArgumentCount(*call, resolved));
     for (std::size_t index = 0; index < count; ++index) {
       if (resolved->parameterTypes[index].kind == SemanticType::Reference &&
           resolved->parameterTypes[index].referenceAccess ==
               AccessMode::Mutable) {
-        appendUniquePlace(places, transientLoanPlace(call->arguments()[index]));
+        appendUniquePlace(places, transientLoanPlace(*resolvedCallArgument(
+                                      *call, resolved, index)));
       }
     }
   }
@@ -4918,11 +4924,13 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       storedPath->reference.arguments ==
           (*shellParameters)[shellArgument].arguments) {
     const auto *initializer = exprAs<DirectInitializer>(expression.get());
-    const auto *arguments = call != nullptr          ? &call->arguments()
-                            : initializer != nullptr ? &initializer->arguments()
-                                                     : nullptr;
-    if (arguments != nullptr && shellArgument < arguments->size()) {
-      const auto &argument = (*arguments)[shellArgument];
+    const ResolvedCallArguments arguments =
+        call != nullptr ? ResolvedCallArguments(*call, resolved)
+        : initializer != nullptr
+            ? ResolvedCallArguments(initializer->arguments())
+            : ResolvedCallArguments{};
+    if (shellArgument < arguments.size()) {
+      const auto &argument = arguments[shellArgument];
       const auto source = retainedLoanSource(argument);
       const auto *sourceLoan =
           source ? semanticModel.findLoan(source->loan) : nullptr;
@@ -4983,10 +4991,11 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     if (construction != nullptr ||
         (resolved != nullptr && resolved->intrinsic == IntrinsicKind::None)) {
       const auto *initializer = exprAs<DirectInitializer>(expression.get());
-      const auto *arguments = call != nullptr ? &call->arguments()
-                              : initializer != nullptr
-                                  ? &initializer->arguments()
-                                  : nullptr;
+      const ResolvedCallArguments arguments =
+          call != nullptr ? ResolvedCallArguments(*call, resolved)
+          : initializer != nullptr
+              ? ResolvedCallArguments(initializer->arguments())
+              : ResolvedCallArguments{};
       auto parameters = construction != nullptr ? construction->borrowArguments
                                                 : resolved->borrowArguments;
       const auto &fields = construction != nullptr ? construction->borrowFields
@@ -4999,12 +5008,12 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             std::find(parameters.begin(), parameters.end(), field.parameter) ==
                 parameters.end())
           parameters.push_back(field.parameter);
-      if (arguments != nullptr)
+      if (arguments.size() != 0)
         for (const auto parameter : parameters) {
-          if (parameter < arguments->size() &&
+          if (parameter < arguments.size() &&
               parameter < parameterTypes.size() &&
               parameterTypes[parameter].kind == SemanticType::Reference) {
-            const auto source = retainedLoanSource((*arguments)[parameter]);
+            const auto source = retainedLoanSource(arguments[parameter]);
             const auto *loan =
                 source ? semanticModel.findLoan(source->loan) : nullptr;
             // An exact reference formal is the callee's entry permission,
@@ -5017,15 +5026,15 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             if (loan != nullptr && loan->entry &&
                 loan->kind == SemanticLoanKind::Reference &&
                 loan->storedDependency == 0 &&
-                loan->place == retainedLoanPlace((*arguments)[parameter]))
+                loan->place == retainedLoanPlace(arguments[parameter]))
               entryReferenceInputs.push_back(loan->id);
           }
-          if (parameter < arguments->size() &&
+          if (parameter < arguments.size() &&
               parameter < parameterTypes.size() &&
               parameterTypes[parameter].kind == SemanticType::Class &&
-              semanticModel.typeOf(*(*arguments)[parameter]) ==
+              semanticModel.typeOf(*arguments[parameter]) ==
                   parameterTypes[parameter])
-            if (const auto source = retainedLoanSource((*arguments)[parameter]);
+            if (const auto source = retainedLoanSource(arguments[parameter]);
                 source && source->transfer)
               transferredInputs.push_back(source->loan);
         }

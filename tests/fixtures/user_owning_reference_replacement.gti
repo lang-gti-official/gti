@@ -1,0 +1,27 @@
+#include <std/string>
+
+// The rule is checked-reference replacement, not a container-name exception.
+class OwnedText {
+  mut std::string text;
+public:
+  OwnedText(std::string input) : text(std::move(input)) {}
+  bool is(std::string_view wanted) { return this.text == wanted; }
+};
+
+class TextBox {
+  mut OwnedText text;
+public:
+  TextBox(OwnedText input) : text(std::move(input)) {}
+  mut OwnedText& value() mut { return this.text; }
+  bool is(std::string_view wanted) { return this.text.is(wanted); }
+};
+
+OwnedText make_text(std::string input) { return OwnedText(std::move(input)); }
+
+int main() {
+  mut TextBox box{OwnedText(std::string("before"))};
+  box.value() = make_text(std::string("after"));
+  if (!box.is("after")) { return 1; }
+  box.value() = make_text(std::string("again"));
+  return box.is("again") ? 0 : 2;
+}

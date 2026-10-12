@@ -24,7 +24,7 @@ public:
   void operator++() mut { this.current++; }
   bool operator!=(End last) { return this.current != last.position(); }
   std::ptrdiff_t operator-(End last) {
-    return std::ptrdiff_t(last.position()) - std::ptrdiff_t(this.current);
+    return std::ptrdiff_t(this.current) - std::ptrdiff_t(last.position());
   }
 };
 class Range {
@@ -32,7 +32,7 @@ public:
   Cursor begin() { return Cursor(1); }
   End end() { return End(4); }
 };
-std::ptrdiff_t remaining<Iterator, Sentinel>(Iterator& first, Sentinel& last)
+std::ptrdiff_t position_difference<Iterator, Sentinel>(Iterator& first, Sentinel& last)
   requires std::sized_sentinel_for<Sentinel, Iterator> {
   return first - last;
 }
@@ -47,7 +47,7 @@ int main() {
       std::distance(Cursor(1), End(4)) != 3) { return 1; }
   auto first = application.begin();
   auto last = application.end();
-  if (remaining(first, last) != 3 || first - application.end() != 3) { return 2; }
+  if (position_difference(first, last) != -3 || first - application.end() != -3) { return 2; }
 
   mut std::vector<int32_t> vector = std::vector<int32_t>({1, 2});
   for (mut auto it = vector.begin(); it != vector.end(); ++it) { total += *it; }
@@ -55,13 +55,13 @@ int main() {
   for (mut auto it = span.begin(); it != span.end(); ++it) { total += *it; }
   mut std::array<int32_t, 2> array = std::array<int32_t, 2>({1, 2});
   for (mut auto it = array.begin(); it != array.end(); ++it) { total += *it; }
-  if (vector.begin() - vector.end() != 2 ||
-      array.begin() - array.end() != 2) { return 3; }
+  if (vector.begin() - vector.end() != -2 ||
+      array.begin() - array.end() != -2) { return 3; }
   mut std::deque<int32_t> deque{};
   deque.push_back(1);
   deque.push_back(2);
   for (mut auto it = deque.begin(); it != deque.end(); ++it) { total += *it; }
-  if (deque.begin() - deque.end() != 2) { return 4; }
+  if (deque.begin() - deque.end() != -2) { return 4; }
   mut std::list<int32_t> list{};
   list.push_back(1);
   list.push_back(2);

@@ -1,0 +1,33 @@
+// Counted views keep the same checked owner dependency during iteration.
+// Include the view unit directly, or get it through <std/string>.
+#include <std/string>
+#include <std/iterator>
+
+int main() {
+  std::string owner{"systems"};
+  std::string_view text = owner.view();
+
+  mut std::size_t count = 0;
+  for (char& character : text) {
+    if (character != text[count]) { return 1; }
+    count++;
+  }
+  if (count != std::size_t(7)) { return 2; }
+
+  mut auto reverse = text.rbegin();
+  if (*reverse != 's') { return 3; }
+  reverse += std::ptrdiff_t(2);
+  if (*reverse != 'e') { return 4; }
+
+  mut auto cursor = text.iterator_at(std::size_t(3));
+  if (*cursor != 't') { return 5; }
+  --cursor;
+  if (*cursor != 's') { return 6; }
+  if (std::distance(text.cbegin(), text.cend()) != std::ptrdiff_t(7)) { return 7; }
+
+  // Dereference yields a code-unit value. The loop's readonly reference names
+  // one iteration-local copy, not a typed reference into the byte view.
+  // Retained cursors exclude mutation/movement of a dynamic owner, and neither
+  // a local view shell nor its cursor escapes.
+  return 0;
+}

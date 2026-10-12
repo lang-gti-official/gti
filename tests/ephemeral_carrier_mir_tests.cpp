@@ -1023,6 +1023,1171 @@ int main() {
          "before conditional carrier retirement");
 }
 
+void checkTemporaryCursorRetainedOwnerDependencies() {
+  const auto frontend = lang::Frontend().analyze(
+      "temporary-multiowner-cursor-comparison.gti", R"gti(
+struct Finish {};
+class OwnerPair {
+  int& first;
+  int& second;
+public:
+  OwnerPair(int& left, int& right) : first(left), second(right) {}
+  int total() { return this.first + this.second; }
+  ReadCursor begin() { return ReadCursor(this); }
+  Finish end() { return Finish(); }
+};
+class ReadCursor {
+  OwnerPair& owner;
+public:
+  ReadCursor(OwnerPair& source) : owner(source) {}
+  bool operator!=(Finish other) { return this.owner.total() != 0; }
+  bool operator==(Finish other) { return this.owner.total() == 0; }
+};
+int main() {
+  int first = 0;
+  int second = 0;
+  int third = 1;
+  int fourth = 2;
+  auto left = OwnerPair(first, second);
+  auto right = OwnerPair(third, fourth);
+  if (left.begin() != left.end()) { return 1; }
+  if (!(left.begin() == left.end())) { return 2; }
+  if (!(right.begin() != right.end())) { return 3; }
+  return 0;
+}
+)gti");
+  expect(frontend.canGenerateCode(),
+         "temporary cursor comparison retains a two-owner carrier's shell "
+         "and external dependencies");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  bool checked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &shell : body.loans) {
+      if (shell.kind != lang::MirLoanKind::CallArgument ||
+          shell.storedDependency == 0)
+        continue;
+      const auto *place = body.findPlace(shell.source);
+      const auto temporary =
+          place == nullptr
+              ? lang::MirTemporaryCarrierDependency{}
+              : lang::findMirTemporaryCarrierDependency(body, *place);
+      const auto *retained =
+          temporary ? body.findLoan(temporary.loan->storedDependency) : nullptr;
+      if (!temporary || retained == nullptr)
+        continue;
+      expect(temporary.loan->source != temporary.drop->place &&
+                 retained->kind == lang::MirLoanKind::Stored &&
+                 retained->additionalDependencies.size() == 1 &&
+                 shell.storedDependency == temporary.loan->id,
+             "temporary shell, physical receiver and two external owners "
+             "remain distinct exact identities");
+      const auto other = std::find_if(
+          body.loans.begin(), body.loans.end(), [&](const auto &candidate) {
+            return candidate.kind == lang::MirLoanKind::Stored &&
+                   candidate.id != temporary.loan->id &&
+                   candidate.storedDependency != 0 &&
+                   candidate.storedDependency != retained->id &&
+                   candidate.producedBy != 0 &&
+                   candidate.source != temporary.loan->source;
+          });
+      if (other == body.loans.end())
+        continue;
+      for (int mutation = 0; mutation < 6; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &changed = instance->body.loans[temporary.loan->id - 1];
+        switch (mutation) {
+        case 0:
+          changed.storedDependency = 0;
+          break;
+        case 1:
+          changed.storedDependency = other->storedDependency;
+          break;
+        case 2:
+          changed.source = other->source;
+          break;
+        case 3:
+          instance->body.loans[retained->id - 1].additionalDependencies.clear();
+          break;
+        case 4:
+          instance->body.loans[shell.id - 1].storedDependency = other->id;
+          break;
+        case 5:
+          changed.storedDependency = changed.id;
+          break;
+        }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "temporary cursor cannot erase, substitute or forge physical "
+               "shell and external-owner dependency authority");
+      }
+      checked = true;
+    }
+  }
+  expect(checked,
+         "temporary cursor regression exercises independently verified "
+         "multiowner dependency mutations");
+}
+
+void checkTemporaryCursorCleanupProviderLifetime() {
+  const auto frontend =
+      lang::Frontend().analyze("temporary-cursor-cleanup-provider.gti", R"gti(
+struct Provider { int value = 0; };
+struct Finish {};
+class Binding {
+  Provider& provider;
+public:
+  Binding(Provider& source) : provider(source) {}
+  int read() { return this.provider.value; }
+};
+class Owner {
+  Binding binding;
+public:
+  Owner(Binding source) : binding(source) {}
+  ~Owner() { int observed = this.binding.read(); }
+  int read() { return this.binding.read(); }
+  Cursor begin() { return Cursor(this); }
+  Finish end(int divisor) { int checked = 1 / divisor; return Finish(); }
+};
+class Cursor {
+  Owner& owner;
+public:
+  Cursor(Owner& source) : owner(source) {}
+  bool operator!=(Finish other) { return this.owner.read() != 0; }
+};
+int main() {
+  Provider provider{};
+  auto binding = Binding(provider);
+  Owner owner{binding};
+  int divisor = 0;
+  if (owner.begin() != owner.end(divisor)) { return 1; }
+  return 0;
+}
+)gti");
+  expect(frontend.canGenerateCode(),
+         "temporary cursor cleanup keeps an independent cleanup-bound "
+         "owner's provider alive on a later argument failure");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  bool checked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &loan : body.loans) {
+      if (!loan.lifecycleBound || loan.parent == 0)
+        continue;
+      for (const auto &block : body.blocks) {
+        const auto childEnd = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) {
+              return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                     instruction.loan == loan.id;
+            });
+        const auto providerEnd = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) {
+              return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                     instruction.loan == loan.parent;
+            });
+        if (childEnd == block.instructions.end() ||
+            providerEnd == block.instructions.end() || childEnd >= providerEnd)
+          continue;
+        auto malformed = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &instructions = instance->body.blocks[block.id - 1].instructions;
+        const auto saved = *providerEnd;
+        const auto childIndex = childEnd - block.instructions.begin();
+        instructions.erase(instructions.begin() +
+                           (providerEnd - block.instructions.begin()));
+        instructions.insert(instructions.begin() + childIndex, saved);
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "an independent cleanup owner's provider cannot end before "
+               "its child cleanup dependency");
+        checked = true;
+      }
+    }
+  }
+  expect(checked,
+         "cleanup-provider regression exercises early ancestor retirement");
+}
+
+void checkInlineRangeProxyPhysicalLifetime() {
+  const auto frontend = lang::Frontend().analyze(
+      "inline-range-proxy-mir.gti", R"gti(
+class End {
+public:
+  End() {}
+};
+class Projection {
+  Buffer& source;
+public:
+  Projection(Buffer& source) : source(source) {}
+  int& read() { return this.source.read(); }
+};
+class Cursor {
+  mut Projection projection;
+  mut int position = 0;
+public:
+  Cursor(Buffer& source) : projection(Projection(source)) {}
+  Projection& operator*() { return this.projection; }
+  void operator++() mut { this.position++; }
+  bool operator!=(End end) { return this.position < 2; }
+};
+class MutableProjection {
+  mut Buffer& source;
+public:
+  MutableProjection(mut Buffer& source) : source(source) {}
+  int& read() { return this.source.read(); }
+  mut int& write() mut { return this.source.write(); }
+};
+class MutableCursor {
+  mut MutableProjection projection;
+  mut int position = 0;
+public:
+  MutableCursor(mut Buffer& source) : projection(MutableProjection(source)) {}
+  MutableProjection& operator*() { return this.projection; }
+  mut MutableProjection& operator*() mut { return this.projection; }
+  void operator++() mut { this.position++; }
+  bool operator!=(End end) { return this.position < 2; }
+};
+class Buffer {
+  mut int number = 4;
+public:
+  Buffer() {}
+  int& read() { return this.number; }
+  mut int& write() mut { return this.number; }
+  Cursor begin() { return Cursor(this); }
+  MutableCursor begin_mut() mut { return MutableCursor(this); }
+  End end() { int checked = this.number + 0; return End(); }
+};
+int inspect(Buffer& source) {
+  mut int total = 0;
+  for (auto& element : source) {
+    for (auto& inner : source) { total += element.read(); }
+  }
+  return total;
+}
+int main() {
+  mut Buffer buffer{};
+  int original = inspect(buffer);
+  for (mut auto& element : buffer) { element.write() += 1; }
+  return original + buffer.read() - 22;
+}
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "inline readonly/exclusive proxies retain ordinary owning ranges "
+         "and borrowed helper parameters");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  std::size_t checked = 0;
+  std::size_t siblingCursorChecks = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &range : body.rangeIterations) {
+      const auto *element = body.findLoan(range.elementLoan);
+      const auto *cursor = element == nullptr
+                               ? nullptr
+                               : body.findLoan(element->storedDependency);
+      expect(element != nullptr && cursor != nullptr &&
+                 element->kind == lang::MirLoanKind::CallResult &&
+                 element->source == range.iterator && element->parent == 0 &&
+                 cursor->kind == lang::MirLoanKind::Stored &&
+                 cursor->parent == range.rangeLoan,
+             "proxy referent, physical cursor and traversal authority are "
+             "separate checked identities");
+      if (element == nullptr || cursor == nullptr)
+        continue;
+      ++checked;
+      const auto reject = [&](const lang::MirProgram &malformed,
+                              const std::string &reason) {
+        const auto *instance = malformed.findFunctionInstance(function.id);
+        expect(instance != nullptr &&
+                   !lang::verifyMirBody(instance->body, function.id).valid(),
+               reason);
+        expect(!lang::verifyMirProgram(malformed).valid(), reason);
+      };
+      for (int mutation = 0; mutation < 8; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &changed = instance->body;
+        switch (mutation) {
+        case 0:
+          changed.loans[element->id - 1].storedDependency = 0;
+          break;
+        case 1:
+          changed.loans[element->id - 1].source = range.rangeCarrier;
+          break;
+        case 2:
+          changed.loans[cursor->id - 1].parent = 0;
+          break;
+        case 3:
+          changed.loans[element->id - 1].escapes = true;
+          break;
+        case 4:
+          changed.loans[cursor->id - 1].carriers.clear();
+          break;
+        case 5:
+          changed.loans[element->id - 1].access =
+              range.elementAccess == lang::AccessMode::ReadOnly
+                  ? lang::AccessMode::Mutable
+                  : lang::AccessMode::ReadOnly;
+          break;
+        case 6:
+          changed.loans[element->id - 1].storedDependency = range.rangeLoan;
+          break;
+        case 7:
+          changed.loans[cursor->id - 1].carriers.clear();
+          changed.loans[element->id - 1].storedDependency = range.rangeLoan;
+          break;
+        }
+        reject(malformed,
+               "forged proxy range origins, authority and escape fail closed");
+      }
+      for (const auto &other : body.rangeIterations) {
+        if (other.id == range.id || other.elementAccess != range.elementAccess)
+          continue;
+        const auto *otherElement = body.findLoan(other.elementLoan);
+        const auto *otherCursor =
+            otherElement == nullptr
+                ? nullptr
+                : body.findLoan(otherElement->storedDependency);
+        if (otherCursor == nullptr)
+          continue;
+        auto wrongCursor = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            wrongCursor.findFunctionInstance(function.id));
+        instance->body.loans[element->id - 1].storedDependency =
+            otherCursor->id;
+        reject(wrongCursor,
+               "a proxy cannot substitute another live same-type cursor shell");
+        auto wrongProducer = frontend.mir;
+        instance = const_cast<lang::MirFunctionInstance *>(
+            wrongProducer.findFunctionInstance(function.id));
+        instance->body.loans[element->id - 1].producedBy =
+            otherElement->producedBy;
+        reject(wrongProducer,
+               "a proxy cannot substitute another same-type element producer");
+        ++siblingCursorChecks;
+      }
+      bool earlyEndChecked = false;
+      for (const auto &block : body.blocks) {
+        const auto selected = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) {
+              return instruction.kind == lang::MirInstructionKind::Call &&
+                     instruction.loan == element->id;
+            });
+        if (selected == block.instructions.end())
+          continue;
+        auto malformed = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &changed = instance->body;
+        lang::MirInstructionId last = 0;
+        for (const auto &candidate : changed.blocks)
+          for (const auto &instruction : candidate.instructions)
+            last = std::max(last, instruction.id);
+        auto &instructions = changed.blocks[block.id - 1].instructions;
+        instructions.insert(instructions.begin() +
+                                (selected - block.instructions.begin()),
+                            {.id = last + 1,
+                             .kind = lang::MirInstructionKind::EndBorrow,
+                             .loan = cursor->id});
+        reject(malformed,
+               "a physical cursor cannot retire before proxy publication");
+        earlyEndChecked = true;
+      }
+      expect(earlyEndChecked,
+             "proxy regression exercises premature physical cursor retirement");
+      if (range.endpointParking) {
+        const auto &parking = *range.endpointParking;
+        expect(!parking.failureRestores.empty(),
+               "fallible endpoint restores the parked cursor on its primary "
+               "failure edge before shared cleanup");
+        for (int mutation = 0; mutation < 12; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *instance = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          auto &changed = instance->body;
+          auto &inventory =
+              *changed.rangeIterations[range.id - 1].endpointParking;
+          const auto instruction =
+              [&](lang::MirInstructionId id) -> lang::MirInstruction & {
+            for (auto &block : changed.blocks)
+              for (auto &candidate : block.instructions)
+                if (candidate.id == id)
+                  return candidate;
+            std::abort();
+          };
+          switch (mutation) {
+          case 0:
+            instruction(parking.park).kind =
+                lang::MirInstructionKind::RestoreRangeCursor;
+            break;
+          case 1:
+            instruction(parking.restore).kind =
+                lang::MirInstructionKind::ParkRangeCursor;
+            break;
+          case 2:
+            instruction(parking.park).loan = range.rangeLoan;
+            break;
+          case 3:
+            inventory.cursor = range.rangeLoan;
+            instruction(parking.park).loan = range.rangeLoan;
+            instruction(parking.restore).loan = range.rangeLoan;
+            for (auto id : parking.failureRestores)
+              instruction(id).loan = range.rangeLoan;
+            break;
+          case 4:
+            instruction(parking.park).hirValue = parking.endValue + 1;
+            break;
+          case 5:
+            instruction(parking.restore).hirStatement = range.coreLoop;
+            break;
+          case 6:
+            inventory.beginCall = parking.endCall;
+            break;
+          case 7:
+            inventory.endReceiver = parking.beginCall;
+            break;
+          case 8:
+            instruction(parking.endReceiver).callInputKind =
+                lang::HirCallInputKind::MutableBorrow;
+            instruction(parking.endReceiver).operands.front().kind =
+                lang::MirOperandKind::BorrowWrite;
+            break;
+          case 9:
+            instruction(parking.endCall).borrowOrigin =
+                lang::BorrowOriginKind::Receiver;
+            break;
+          case 10:
+            instruction(parking.park).rawMemoryAccess = true;
+            break;
+          case 11:
+            inventory.restore = parking.park;
+            break;
+          }
+          reject(malformed, "forged range parking authority, endpoint identity "
+                            "and restoration fail closed");
+        }
+        for (auto failedRestore : parking.failureRestores) {
+          auto malformed = frontend.mir;
+          auto *instance = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          for (auto &block : instance->body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.id == failedRestore)
+                instruction.kind = lang::MirInstructionKind::EndBorrow;
+          reject(malformed, "failed endpoint restores its cursor before any "
+                            "cleanup or retirement");
+          const lang::MirBlock *failurePrefix = nullptr;
+          for (const auto &block : body.blocks)
+            if (!block.instructions.empty() &&
+                block.instructions.front().id == failedRestore)
+              failurePrefix = &block;
+          expect(failurePrefix != nullptr &&
+                     failurePrefix->failureParameter != 0 &&
+                     body.findFailureRecord(failurePrefix->failureParameter) !=
+                         nullptr &&
+                     body.findFailureRecord(failurePrefix->failureParameter)
+                             ->kind == lang::MirFailureRecordKind::Producer,
+                 "endpoint Restore stays in the exact primary failure "
+                 "prefix, never a shareable continuation parameter");
+          if (failurePrefix != nullptr &&
+              failurePrefix->terminator.kind ==
+                  lang::MirTerminatorKind::ContinueFailure) {
+            const auto *suffix =
+                body.findBlock(failurePrefix->terminator.target);
+            expect(
+                suffix != nullptr &&
+                    std::none_of(
+                        suffix->instructions.begin(),
+                        suffix->instructions.end(),
+                        [](const auto &step) {
+                          return step.kind ==
+                                 lang::MirInstructionKind::RestoreRangeCursor;
+                        }),
+                "shared cleanup suffix never replays a primary endpoint "
+                "permission transition");
+            auto delayed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                delayed.findFunctionInstance(function.id));
+            auto &prefixBlock = changed->body.blocks[failurePrefix->id - 1];
+            const auto restore = prefixBlock.instructions.front();
+            prefixBlock.instructions.erase(prefixBlock.instructions.begin());
+            auto &suffixBlock = changed->body.blocks[suffix->id - 1];
+            suffixBlock.instructions.insert(suffixBlock.instructions.begin(),
+                                            restore);
+            reject(delayed, "endpoint Restore cannot be delayed across a "
+                            "shared failure continuation");
+          }
+        }
+        auto earlyCursorUse = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            earlyCursorUse.findFunctionInstance(function.id));
+        for (auto &block : instance->body.blocks) {
+          const auto receiver =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const auto &instruction) {
+                             return instruction.id == parking.endReceiver;
+                           });
+          if (receiver == block.instructions.end())
+            continue;
+          lang::MirInstructionId last = 0;
+          for (const auto &candidate : instance->body.blocks)
+            for (const auto &instruction : candidate.instructions)
+              last = std::max(last, instruction.id);
+          block.instructions.insert(
+              receiver, {.id = last + 1,
+                         .kind = lang::MirInstructionKind::EndBorrow,
+                         .loan = parking.cursor});
+          break;
+        }
+        reject(earlyCursorUse, "parked cursor cannot be used or destroyed "
+                               "before the endpoint completes");
+      }
+    }
+  }
+  expect(
+      checked == 3,
+      "owning inline-proxy fixture exercises shared and exclusive range loans");
+  expect(siblingCursorChecks == 2,
+         "nested shared traversal exercises exact same-type cursor identities");
+}
+
+void checkInlineProxyCannotBecomeAbstractStoredRange() {
+  const std::string source = R"gti(
+class End { public: End() {} };
+class Projection {
+  Buffer& source;
+public:
+  Projection(Buffer& source) : source(source) {}
+  int& read() { return this.source.read(); }
+};
+class Cursor {
+  mut Projection projection;
+  mut int position = 0;
+public:
+  Cursor(Buffer& source) : projection(Projection(source)) {}
+  Projection& operator*() { return this.projection; }
+  void operator++() mut { this.position++; }
+  bool operator!=(End end) { return this.position < 2; }
+};
+class Buffer {
+  mut int number = 4;
+public:
+  Buffer() {}
+  int& read() { return this.number; }
+  Cursor begin() { return Cursor(this); }
+  End end() { return End(); }
+};
+expected<Buffer&, int> lookup(Buffer& source) { return source; }
+int main() {
+  Buffer buffer{};
+  auto borrowed = lookup(buffer);
+  auto& stable = borrowed.value();
+  mut int total = 0;
+  for (auto& element : stable) { total += element.read(); }
+  return total - 8;
+}
+)gti";
+  const auto frontend = lang::Frontend().analyze(
+      "inline-proxy-stored-parent.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "an inline proxy over a borrowed carrier keeps a separate physical "
+         "cursor despite its Stored parent");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &range : function.body.rangeIterations) {
+      const auto *element = function.body.findLoan(range.elementLoan);
+      const auto *parent = function.body.findLoan(range.rangeLoan);
+      const auto *cursor =
+          element == nullptr
+              ? nullptr
+              : function.body.findLoan(element->storedDependency);
+      const auto *iterator = function.body.findPlace(range.iterator);
+      if (!element || !parent || !cursor || !iterator)
+        continue;
+      expect(
+          parent->kind == lang::MirLoanKind::Stored &&
+              cursor->id != parent->id &&
+              cursor->kind == lang::MirLoanKind::Stored &&
+              cursor->parent == parent->id,
+          "physical inline proxy and abstract parent have distinct identities");
+      for (int mutation = 0; mutation < 6; ++mutation) {
+        auto malformed = frontend.mir;
+        auto &body = const_cast<lang::MirFunctionInstance *>(
+                         malformed.findFunctionInstance(function.id))
+                         ->body;
+        if (mutation <= 3) {
+          body.loans[cursor->id - 1].carriers.clear();
+          body.loans[element->id - 1].storedDependency = parent->id;
+          if (mutation >= 1)
+            body.loans[parent->id - 1].carriers.push_back(iterator->binding);
+        }
+        for (auto &block : body.blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.kind == lang::MirInstructionKind::Call &&
+                instruction.loan == element->id) {
+              expect(instruction.info.traits.containsBorrowedState,
+                     "selected inline proxy has authoritative nominal borrowed "
+                     "traits");
+              if (mutation == 2 || mutation == 3 || mutation == 4)
+                instruction.info.traits.containsBorrowedState = false;
+              if (mutation == 3)
+                body.rangeIterations[range.id - 1].elementAccessSource = 0;
+              if (mutation == 5)
+                instruction.functionTarget = function.id;
+            }
+        const auto result = lang::verifyMirProgram(malformed);
+        expect(!result.valid(),
+               "a physical cursor cannot be forged into abstract stored "
+               "authority: " +
+                   std::to_string(mutation));
+        if (mutation == 2 || mutation == 3 || mutation == 4)
+          expect(
+              std::any_of(
+                  result.errors.begin(), result.errors.end(),
+                  [](const auto &error) {
+                    return error.message ==
+                           "reference iteration element has no exact nominal "
+                           "traits and selected dereference declaration";
+                  }),
+              "the program catalog independently rejects falsified nominal "
+              "proxy traits even when cursor authority is also rewired");
+      }
+      ++checked;
+    }
+  }
+  expect(checked == 1,
+         "Stored-parent proxy forgery fixture exercises one range");
+  auto virtualSource = source;
+  virtualSource.insert(virtualSource.find("Projection& operator*()"),
+                       "virtual ");
+  const auto virtualFrontend = lang::Frontend().analyze(
+      "virtual-inline-proxy-stored-parent.gti", virtualSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(virtualFrontend.canGenerateCode(),
+         "nominal element validation preserves virtual checked dereference");
+  bool virtualProducer = false;
+  for (const auto &function : virtualFrontend.mir.functionInstances())
+    for (const auto &range : function.body.rangeIterations)
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          virtualProducer |=
+              instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.loan == range.elementLoan &&
+              instruction.dispatch == lang::CallDispatch::Virtual;
+  expect(virtualProducer,
+         "virtual reference-yield fixture exercises the selected dynamic call");
+}
+
+void checkRangeEndpointSemanticContracts() {
+  const std::string prefix = R"gti(
+class Endpoint {
+  int count;
+public:
+  Endpoint(int count) : count(count) {}
+  int length() { return this.count; }
+};
+class EntryProjection {
+  mut EndpointRange& owner;
+public:
+  EntryProjection(mut EndpointRange& owner) : owner(owner) {}
+  mut int& value() mut { return this.owner.value(); }
+};
+class EntryCursor {
+  mut EntryProjection projection;
+  mut int position = 0;
+public:
+  EntryCursor(mut EndpointRange& owner) : projection(EntryProjection(owner)) {}
+  mut EntryProjection& operator*() mut { return this.projection; }
+  bool operator!=(Endpoint endpoint) { return this.position < endpoint.length(); }
+  void operator++() mut { this.position++; }
+};
+class EndpointRange {
+  mut int number = 1;
+  Endpoint terminal{1};
+public:
+  EndpointRange() {}
+  mut int& value() mut { return this.number; }
+  EntryCursor begin_mut() mut { return EntryCursor(this); }
+)gti";
+  const std::string suffix = R"gti(
+};
+int main() {
+  mut EndpointRange source{};
+  for (mut auto& entry : source) { entry.value() += 1; }
+  return source.value() - 2;
+}
+)gti";
+  for (const auto *endpoint :
+       {"Endpoint end() { return Endpoint(1); }",
+        "Endpoint end<Args...>(Args... args) { return Endpoint(1); }"}) {
+    const auto frontend = lang::Frontend().analyze("range-endpoint-valid.gti",
+                                                   prefix + endpoint + suffix);
+    expect(frontend.canGenerateCode(),
+           "concrete zero-argument readonly endpoint supports an exclusive "
+           "inline proxy, including an empty variadic instantiation");
+    if (!frontend.canGenerateCode())
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  for (const auto *endpoint :
+       {"Endpoint end(int ignored = 0) { return Endpoint(1); }",
+        "virtual Endpoint end() { return Endpoint(1); }",
+        "Endpoint end() mut { return Endpoint(1); }",
+        "[[noreturn]] Endpoint end() { while (true) {} }",
+        "Endpoint& end() { return this.terminal; }"}) {
+    const std::string source = prefix + endpoint + suffix;
+    const auto colon = source.find(": source)");
+    const auto declaration = source.find("end", prefix.size());
+    const auto frontend =
+        lang::Frontend().analyze("range-endpoint-invalid.gti", source);
+    expect(
+        !frontend.semanticValid &&
+            std::any_of(
+                frontend.diagnostics.begin(), frontend.diagnostics.end(),
+                [&](const auto &diagnostic) {
+                  return diagnostic.code == "GTI-S2083" &&
+                         diagnostic.phase == lang::DiagnosticPhase::Semantics &&
+                         diagnostic.severity ==
+                             lang::DiagnosticSeverity::Error &&
+                         std::filesystem::path(diagnostic.primary.source)
+                                 .filename() == "range-endpoint-invalid.gti" &&
+                         diagnostic.primary.start == colon &&
+                         diagnostic.primary.end == colon + 1 &&
+                         diagnostic.message.find("inline-proxy") !=
+                             std::string::npos &&
+                         diagnostic.related.size() == 1 &&
+                         diagnostic.related.front().span.start == declaration &&
+                         diagnostic.related.front().span.end ==
+                             declaration + 3 &&
+                         !diagnostic.hints.empty() &&
+                         diagnostic.hints.front().find("independent") !=
+                             std::string::npos &&
+                         diagnostic.fixes.empty();
+                }) &&
+            std::none_of(frontend.diagnostics.begin(),
+                         frontend.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-B0001";
+                         }),
+        "unsupported exclusive proxy endpoint receives actionable source "
+        "diagnostic, not invalid HIR/MIR");
+  }
+
+  // These endpoint restrictions belong to the exclusive physical proxy, not
+  // all source ranges or all methods with default arguments/borrowed results.
+  const std::string readPrefix = R"gti(
+class Endpoint { public: Endpoint() {} };
+class ReadCursor {
+  int& number;
+  mut int position = 0;
+public:
+  ReadCursor(int& number) : number(number) {}
+  int& operator*() { return this.number; }
+  bool operator!=(Endpoint endpoint) { return this.position < 1; }
+  void operator++() mut { this.position++; }
+};
+class ReadRange {
+  int number = 1;
+  Endpoint terminal{};
+public:
+  ReadRange() {}
+  ReadCursor begin() { return ReadCursor(this.number); }
+)gti";
+  for (const auto *endpoint :
+       {"Endpoint end(int ignored = 0) { return Endpoint(); }",
+        "virtual Endpoint end() { return Endpoint(); }",
+        "Endpoint& end() { return this.terminal; }"}) {
+    const auto frontend = lang::Frontend().analyze(
+        "range-endpoint-readonly.gti",
+        readPrefix + endpoint +
+            "}; int main() { ReadRange source{}; mut int total = 0; "
+            "for (auto& number : source) { total += number; } "
+            "return total - 1; }");
+    expect(frontend.canGenerateCode(),
+           "ordinary readonly scalar ranges preserve default, virtual and "
+           "borrowed-reference endpoints");
+    if (!frontend.canGenerateCode())
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+}
+
+void checkReadonlyLocalCleanupGuard() {
+  const std::string prefix = R"gti(
+class Guard {
+  char& value;
+public:
+  Guard(char& source) : value(source) {}
+  ~Guard() { int check = 1 / (this.value == 'a' ? 1 : 0); }
+};
+class Finish {};
+class Cursor {
+public:
+  char operator*() { return 'a'; }
+  void operator++() mut {}
+  bool operator!=(Finish finish) { return true; }
+};
+class Sequence {
+public:
+  Cursor begin() { return Cursor(); }
+  Finish end() { return Finish(); }
+};
+int main() {
+  char unrelated = 'b';
+  char& decoy = unrelated;
+)gti";
+  for (const bool panicDestructor : {false, true})
+    for (const auto *body :
+         {"char owner = 'a'; char& value = owner; Guard guard{value}; return "
+          "0;",
+          "Sequence sequence{}; for (char& value : sequence) { "
+          "Guard guard{value}; break; } return 0;"}) {
+      std::string source = prefix + body + "}";
+      if (panicDestructor) {
+        const std::string arithmetic =
+            "~Guard() { int check = 1 / (this.value == 'a' ? 1 : 0); }";
+        source.replace(source.find(arithmetic), arithmetic.size(),
+                       "~Guard() { if (this.value != 'a') "
+                       "std::panic(\"bad referent\"); }");
+        source.insert(0, "#include <std/panic>\n");
+      }
+      const auto frontend = lang::Frontend().analyze(
+          "readonly-local-cleanup-guard.gti", source,
+          panicDestructor
+              ? std::vector<std::filesystem::path>{standardLibraryPrelude()}
+              : std::vector<std::filesystem::path>{},
+          {}, {standardLibraryRoot()});
+      expect(frontend.canGenerateCode(),
+             "cleanup guard retains an ordinary or iteration-local readonly "
+             "reference through its exact checked parent");
+      if (!frontend.canGenerateCode()) {
+        for (const auto &diagnostic : frontend.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+        continue;
+      }
+      bool checked = false;
+      for (const auto &function : frontend.mir.functionInstances()) {
+        if (function.entryKind == lang::ProgramEntryKind::None)
+          continue;
+        for (const auto &guard : function.body.loans) {
+          const auto *parent = function.body.findLoan(guard.parent);
+          if (guard.kind != lang::MirLoanKind::Stored ||
+              !guard.lifecycleBound || !parent ||
+              parent->kind != lang::MirLoanKind::Local)
+            continue;
+          expect(guard.access == lang::AccessMode::ReadOnly &&
+                     parent->access == lang::AccessMode::ReadOnly &&
+                     guard.storedDependency == parent->storedDependency &&
+                     !guard.entry && !guard.escapes,
+                 "cleanup guard preserves exact readonly ancestry and "
+                 "independent external dependency");
+          const auto decoy =
+              std::find_if(function.body.loans.begin(),
+                           function.body.loans.end(), [&](const auto &loan) {
+                             return loan.kind == lang::MirLoanKind::Local &&
+                                    loan.id != parent->id &&
+                                    loan.access == lang::AccessMode::ReadOnly &&
+                                    loan.parent == 0 &&
+                                    loan.source != parent->source;
+                           });
+          expect(decoy != function.body.loans.end(),
+                 "cleanup guard proof has an unrelated same-typed reference");
+          if (decoy == function.body.loans.end())
+            continue;
+          bool foundProducer = false;
+          for (const auto &block : function.body.blocks) {
+            for (const auto &instruction : block.instructions) {
+              if (instruction.kind != lang::MirInstructionKind::Construct ||
+                  instruction.loan != guard.id)
+                continue;
+              foundProducer = true;
+              for (int mutation = 0; mutation < 4; ++mutation) {
+                auto malformed = frontend.mir;
+                auto *changed = const_cast<lang::MirFunctionInstance *>(
+                    malformed.findFunctionInstance(function.id));
+                auto &loan = changed->body.loans[guard.id - 1];
+                if (mutation == 0) {
+                  loan.parent = decoy->id;
+                } else if (mutation == 1) {
+                  loan.source = decoy->source;
+                } else if (mutation == 2) {
+                  loan.access = lang::AccessMode::Mutable;
+                } else {
+                  auto &instructions =
+                      changed->body.blocks[block.id - 1].instructions;
+                  const auto producer =
+                      std::find_if(instructions.begin(), instructions.end(),
+                                   [&](const auto &candidate) {
+                                     return candidate.id == instruction.id;
+                                   });
+                  lang::MirInstructionId freshId = 1;
+                  for (const auto &candidateBlock : changed->body.blocks)
+                    for (const auto &candidate : candidateBlock.instructions)
+                      freshId = std::max(freshId, candidate.id + 1);
+                  instructions.insert(
+                      producer, {.id = freshId,
+                                 .kind = lang::MirInstructionKind::EndBorrow,
+                                 .loan = parent->id});
+                }
+                expect(!lang::verifyMirProgram(malformed).valid(),
+                       "cleanup guard cannot substitute its selected parent or "
+                       "source, escalate access, or retire its parent early");
+              }
+            }
+          }
+          expect(foundProducer,
+                 "cleanup guard's checked constructor owns its lifecycle loan");
+          checked = true;
+        }
+      }
+      expect(checked, "cleanup guard regression exercises exact parent proof");
+    }
+}
+
+void checkMovedExclusiveParameterEntry() {
+  const auto frontend = lang::Frontend().analyze(
+      "exclusive-parameter-entry.gti", R"gti(
+#include <std/iterator>
+class UserPosition {
+  mut int& number;
+public:
+  UserPosition(mut int& number) : number(number) {}
+  UserPosition(UserPosition& other) = delete;
+  UserPosition(UserPosition&& other) = default;
+  int& operator*() { return this.number; }
+  mut int& operator*() mut { return this.number; }
+  void operator++() mut { this.number++; }
+  void operator--() mut { this.number--; }
+  void operator+=(std::ptrdiff_t amount) mut { this.number += int(amount); }
+  void operator-=(std::ptrdiff_t amount) mut { this.number -= int(amount); }
+};
+int transport<Position>(mut Position initial)
+    requires std::random_access_cursor<Position> && std::writes_to<Position, int> {
+  std::advance(initial, std::ptrdiff_t(1));
+  mut auto later = std::next(std::move(initial), std::ptrdiff_t(1));
+  mut auto final = std::prev(std::move(later));
+  *final = 42;
+  return *final;
+}
+int main() {
+  mut int number = 0;
+  int result = transport(UserPosition(number));
+  return number + result - 84;
+}
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "noncopyable exclusive parameters retain their entry origin across "
+         "generic movement and local transport without lexical cleanup");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "unrelated exclusive position transport verifies independently");
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    if (hir == nullptr || hir->source == nullptr ||
+        hir->source->name().lexeme != "transport")
+      continue;
+    for (const auto &loan : function.body.loans) {
+      if (!loan.entry || loan.kind != lang::MirLoanKind::Stored ||
+          loan.lifecycleBound)
+        continue;
+      const auto *origin = function.body.findPlace(loan.source);
+      expect(origin != nullptr &&
+                 origin->root == lang::MirPlaceRootKind::Binding &&
+                 origin->projections.empty() &&
+                 origin->type.kind == lang::SemanticType::Class &&
+                 std::find(function.parameterBindings.begin(),
+                           function.parameterBindings.end(), origin->binding) !=
+                     function.parameterBindings.end() &&
+                 loan.carriers ==
+                     std::vector<lang::HirBindingId>{origin->binding},
+             "the moved formal remains immutable entry provenance, not a "
+             "second live exclusive value");
+      if (origin == nullptr)
+        continue;
+      ++checked;
+      for (int mutation = 0; mutation < 5; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &changed = instance->body;
+        auto &entry = changed.loans[loan.id - 1];
+        if (mutation == 0) {
+          std::erase(entry.carriers, origin->binding);
+        } else if (mutation == 1) {
+          entry.designatedFields.clear();
+        } else if (mutation == 2) {
+          entry.access = lang::AccessMode::ReadOnly;
+        } else if (mutation == 3) {
+          bool found = false;
+          for (auto &result : changed.loans) {
+            if (result.entry || result.kind != lang::MirLoanKind::Stored)
+              continue;
+            result.parent = entry.id;
+            found = true;
+            break;
+          }
+          expect(found, "exclusive relay publishes a concrete Stored result");
+        } else {
+          bool found = false;
+          for (auto &block : changed.blocks) {
+            if (block.activeFailure != 0 || block.failureParameter != 0)
+              continue;
+            const auto retirement = std::find_if(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind ==
+                             lang::MirInstructionKind::EndBorrow &&
+                         instruction.loan == entry.id;
+                });
+            if (retirement == block.instructions.end())
+              continue;
+            block.instructions.erase(retirement);
+            found = true;
+            break;
+          }
+          expect(found,
+                 "consuming relay retires the former exclusive authority");
+        }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "exclusive formal provenance, field path, access, ancestry and "
+               "retirement cannot be forged after a consuming call");
+        bool backendRejected = false;
+        try {
+          (void)gti_test::lowerProgram(frontend, malformed, malformed);
+        } catch (const std::exception &) {
+          backendRejected = true;
+        }
+        expect(backendRejected,
+               "lowered backend input rejects forged exclusive parameter "
+               "entry");
+      }
+    }
+  }
+  expect(checked == 1,
+         "exclusive transport exercises one non-lifecycle Stored entry loan");
+}
+
+void checkMultiDependencyRelayIdentity() {
+  for (const bool sharedFirst : {false, true}) {
+    const std::string prefix = sharedFirst ? "int&" : "mut int&";
+    const auto frontend = lang::Frontend().analyze(
+        "multi-dependency-relay.gti",
+        "#include <std/utility>\nclass Owners {\n" + prefix + R"gti( first;
+  mut int& second;
+public:
+  Owners()gti" +
+            prefix + R"gti( first, mut int& second)
+      : first(first), second(second) {}
+  void advance() mut { this.second += this.first; }
+};
+T relay<T>(T owners) { return std::move(owners); }
+int main() {
+  mut int left = 3;
+  mut int right = 0;
+  {
+    Owners input{left, right};
+    mut auto result = relay(std::move(input));
+    result.advance();
+    mut auto final = relay(std::move(result));
+    final.advance();
+  }
+  return left + right - 9;
+}
+)gti",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(frontend.canGenerateCode(),
+           "generic relay preserves distinct multi-dependency endpoints");
+    if (!frontend.canGenerateCode()) {
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      continue;
+    }
+    const auto lowered =
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+    expect(lang::verifyMirProgram(frontend.mir).valid() &&
+               lang::verifyLoweredProgram(lowered).empty(),
+           "mixed and exclusive owner relay admits verified backend input");
+    std::size_t checked = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      for (const auto &loan : function.body.loans) {
+        if (loan.entry || loan.kind != lang::MirLoanKind::Stored ||
+            loan.additionalDependencies.empty() || loan.producedBy == 0)
+          continue;
+        const auto *hir = frontend.hir.findFunctionInstance(function.id);
+        const auto *producer =
+            hir ? hir->body.findValue(loan.producedBy) : nullptr;
+        if (!producer || !producer->functionTarget)
+          continue;
+        ++checked;
+        for (int mutation = 0; mutation < 2; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *instance = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          if (mutation == 0) {
+            instance->body.loans[loan.id - 1].additionalDependencies.clear();
+          } else {
+            bool changed = false;
+            for (auto &block : instance->body.blocks) {
+              if (changed || block.activeFailure || block.failureParameter)
+                continue;
+              for (auto &instruction : block.instructions) {
+                if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                    instruction.loan && *instruction.loan < loan.id) {
+                  instruction.loan = loan.id;
+                  changed = true;
+                  break;
+                }
+              }
+            }
+            expect(changed, "a consuming relay retires its input first");
+          }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "relay cannot omit an owner or use the input's endpoint for "
+                 "the result");
+          bool rejected = false;
+          try {
+            (void)gti_test::lowerProgram(frontend, malformed, malformed);
+          } catch (const std::exception &) {
+            rejected = true;
+          }
+          expect(rejected, "backend admission rejects forged relay endpoints");
+        }
+      }
+    }
+    expect(checked == 2,
+           "both multi-dependency relay publications are checked");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -1033,5 +2198,13 @@ int main() {
   checkReservedSiblingRetirement();
   checkTemporaryOperatorPhysicalStorage();
   checkConditionalParentReborrowMutation();
+  checkTemporaryCursorRetainedOwnerDependencies();
+  checkTemporaryCursorCleanupProviderLifetime();
+  checkInlineRangeProxyPhysicalLifetime();
+  checkInlineProxyCannotBecomeAbstractStoredRange();
+  checkRangeEndpointSemanticContracts();
+  checkReadonlyLocalCleanupGuard();
+  checkMovedExclusiveParameterEntry();
+  checkMultiDependencyRelayIdentity();
   return failures == 0 ? 0 : 1;
 }

@@ -1,0 +1,80 @@
+#include <std/panic>
+#include <std/vector>
+#include <std/string>
+
+extern "C" { void user_dual_range_event(int identity); }
+
+class MutableEnd {
+  std::size_t limit;
+public:
+  MutableEnd(std::size_t limit) : limit(limit) {}
+  std::size_t position() { return this.limit; }
+};
+
+class MutableElementProxy {
+  mut MutableOwnerRange& owner;
+  mut std::size_t coordinate;
+public:
+  MutableElementProxy(mut MutableOwnerRange& owner, std::size_t coordinate)
+      : owner(owner), coordinate(coordinate) {}
+  int& value() { return this.owner.at(this.coordinate); }
+  mut int& mapped() mut { return this.owner.at(this.coordinate); }
+  bool finished(MutableEnd end) { return this.coordinate == end.position(); }
+  void next() mut { this.coordinate++; }
+  int failure_mode() { return this.owner.failure_mode(); }
+  void finish() mut { this.owner.at(std::size_t(0)) += 100; }
+};
+
+class MutableOwnerCursor {
+  mut MutableElementProxy projection;
+public:
+  MutableOwnerCursor(mut MutableOwnerRange& owner, std::size_t coordinate)
+      : projection(MutableElementProxy(owner,coordinate)) {
+    if (this.projection.failure_mode() == 4) { std::panic("mutable cursor construction failure"); }
+  }
+  ~MutableOwnerCursor() {
+    this.projection.finish();
+    user_dual_range_event(100);
+    if (this.projection.failure_mode() == 5 || this.projection.failure_mode() == 6) {
+      std::panic("mutable cursor cleanup failure");
+    }
+  }
+  MutableElementProxy& operator*() { return this.projection; }
+  mut MutableElementProxy& operator*() mut { return this.projection; }
+  bool operator!=(MutableEnd end) { return !this.projection.finished(end); }
+  void operator++() mut { this.projection.next(); }
+};
+
+// The range owns its elements. No external stored loan can mask a physical
+// lifetime error, and the cursor destructor mutates the owner on every exit.
+class MutableOwnerRange {
+  mut int values[3] = {1,2,3};
+  int mode;
+public:
+  MutableOwnerRange(int mode) : mode(mode) {}
+  ~MutableOwnerRange() { user_dual_range_event(200 + this.values[0]); }
+  int failure_mode() { return this.mode; }
+  int& at(std::size_t index) { return this.values[index]; }
+  mut int& at(std::size_t index) mut { return this.values[index]; }
+  MutableOwnerCursor begin_mut() mut {
+    user_dual_range_event(10);
+    return MutableOwnerCursor(this,std::size_t(0));
+  }
+  MutableEnd end() {
+    user_dual_range_event(20);
+    if (this.mode == 1 || this.mode == 6) { std::panic("readonly mutable-range endpoint failure"); }
+    return MutableEnd(this.mode == 3 ? std::size_t(0) : std::size_t(3));
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  int mode = argc - 1;
+  mut MutableOwnerRange range{mode};
+  for (mut auto& entry : range) {
+    entry.mapped() += 10;
+    user_dual_range_event(30);
+    if (mode == 2 || mode == 5) { std::panic("mutable proxy loop body failure"); }
+  }
+  int desired_first = mode == 3 ? 101 : 111;
+  return range.at(std::size_t(0)) == desired_first ? 0 : 1;
+}

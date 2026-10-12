@@ -1,0 +1,56 @@
+#include "user_dual_range_support.gti"
+#include <std/vector>
+#include <std/string>
+#include <std/panic>
+
+int nested(UserDualRange& range) {
+  UserDualGuard outer{10};
+  mut int total = 0;
+  for (auto& first : range) {
+    UserDualGuard iteration{11};
+    for (auto& second : range) {
+      UserDualGuard child{12};
+      total += first.left().value() + second.right().value();
+      if (first.left().text().empty() || second.right().text().empty()) { return -1; }
+    }
+  }
+  return total;
+}
+
+int early_return(UserDualRange& range) {
+  UserDualGuard outer{20};
+  for (auto& entry : range) {
+    UserDualGuard iteration{21};
+    if (entry.left().value() == 1) { continue; }
+    for (auto& inner : range) {
+      UserDualGuard child{22};
+      if (inner.right().value() == 2) { break; }
+    }
+    return entry.right().value();
+  }
+  return -1;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::vector<UserDualElement> first = {
+    UserDualElement(1, std::string("left-one")),
+    UserDualElement(3, std::string("left-three"))
+  };
+  std::vector<UserDualElement> second = {
+    UserDualElement(2, std::string("right-two")),
+    UserDualElement(4, std::string("right-four"))
+  };
+  int failure = argc > 1 ? argc - 1 : 0;
+  auto range = UserDualRange(first.as_span(), second.as_span(), failure);
+  if (failure != 0) {
+    UserDualGuard surrounding{5};
+    for (auto& entry : range) {
+      UserDualGuard body{6};
+      if (failure == 3) { std::panic("user dual loop body failure"); }
+      return entry.left().value();
+    }
+    return 1;
+  }
+  if (nested(range) != 20 || early_return(range) != 4) { return 2; }
+  return 0;
+}

@@ -12,7 +12,7 @@ public:
   K& operator->() { return this.cursor->first; }
   void operator++() mut { ++this.cursor; }
   bool operator!=(unordered_map_sentinel end) { return this.cursor != end; }
-  bool operator==(unordered_map_sentinel& end) { return this.cursor == end; }
+  bool operator==(unordered_map_sentinel end) { return this.cursor == end; }
   bool operator!=(unordered_set_key_iterator<K>& other) { return this.cursor != other.cursor; }
   bool operator==(unordered_set_key_iterator<K>& other) { return this.cursor == other.cursor; }
 };
@@ -20,11 +20,11 @@ class unordered_set_insert_iterator<K> {
   mut unordered_map_mut_iterator<K, bool> cursor;
 public:
   unordered_set_insert_iterator(unordered_map_mut_iterator<K, bool> cursor) : cursor(std::move(cursor)) {}
-  K& operator*() { return this.cursor->first; }
-  K& operator->() { return this.cursor->first; }
+  K& operator*() { return this.cursor.key(); }
+  K& operator->() { return this.cursor.key(); }
   void operator++() mut { ++this.cursor; }
   bool operator!=(unordered_map_sentinel end) { return this.cursor != end; }
-  bool operator==(unordered_map_sentinel& end) { return this.cursor == end; }
+  bool operator==(unordered_map_sentinel end) { return this.cursor == end; }
 };
 }
 /// Unique immutable keys backed by the cached-hash chained dictionary.
@@ -83,6 +83,9 @@ public:
   void reserve(size_t count) mut { this.entries.reserve(count); }
   void rehash(size_t count) mut { this.entries.rehash(count); }
   const_iterator begin() { return const_iterator(this.entries.begin()); }
+  const_iterator end_iterator() { return const_iterator(this.entries.end_iterator()); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel cend() { return this.end(); }
   detail::unordered_map_sentinel end() { return this.entries.end(); }
   const_iterator find(K& key) { return const_iterator(this.entries.find(key)); }
   pair<iterator, bool> insert(K key) mut {

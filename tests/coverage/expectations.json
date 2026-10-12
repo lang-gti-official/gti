@@ -13,7 +13,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:799: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
+          "stderr": "<std/memory>:801: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
           "stdout": "target 1\nsource 1\nsource 0\nouter guard\n"
         },
         {
@@ -21,7 +21,7 @@
             "a"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:798: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
+          "stderr": "<std/memory>:800: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
           "stdout": "source 1\nsource 0\nouter guard\n"
         },
         {
@@ -30,7 +30,7 @@
             "b"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:796: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
+          "stderr": "<std/memory>:798: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
           "stdout": "source 2\nsource 1\nsource 0\nouter guard\n"
         }
       ]
@@ -39,7 +39,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:764: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:766: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -47,7 +47,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:765: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
+          "stderr": "<std/memory>:767: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -56,7 +56,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:1227: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:1533: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\nconstruct 10\ndrop 10\ndrop 0\n"
         },
         {
@@ -66,7 +66,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:784: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
+          "stderr": "<std/memory>:786: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
           "stdout": "construct 0\nconstruct 10\nconstruct 20\ndrop 20\ndrop 10\ndrop 0\n"
         }
       ]
@@ -85,7 +85,7 @@
       "cases": [
         {
           "exit": "abort",
-          "stderr": "<std/memory>:343: runtime error\\[GTI-R0011\\]: allocation_failure in private_storage\\n",
+          "stderr": "<std/memory>:345: runtime error\\[GTI-R0011\\]: allocation_failure in private_storage\\n",
           "stdout": "full\n"
         }
       ]
@@ -285,7 +285,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:235: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
+          "stderr": "<std/memory>:237: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
           "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
         },
         {
@@ -293,7 +293,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:243: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
+          "stderr": "<std/memory>:245: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
           "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
         }
       ]

@@ -8,11 +8,13 @@ int main() {
     // first is an exclusive iterator; second says whether insertion happened.
     mut auto result = commands.insert(std::string("tea"), 1);
     if (!result.second) { return 1; }
-    result.first->second = 2;
+    // Mutable iteration exposes a projection, not a replaceable owning entry.
+    // key()/first() are read-only; mapped()/second() allow value mutation.
+    result.first->mapped() = 2;
 
     // Moving the pair transfers its one dependency on commands.
     mut auto moved = std::move(result);
-    moved.first->second += 1;
+    moved.first->mapped() += 1;
     // commands.clear() here would conflict with the retained iterator.
   }
 

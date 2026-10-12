@@ -805,7 +805,8 @@ when a method exposes a reference or a subview. Such a projection does not yet
 release an unrelated owner independently. `std::paired_span<L, R>` is an ordinary
 source-defined client: it holds two spans, uses the shorter input length, and
 offers indexed `first`, `second`, and `subspan` operations. It has no special
-compiler recognition or independent iterator/proxy protocol.
+compiler recognition: its checked iterators and reference proxies use the same
+general stored-dependency and range protocols as application-defined carriers.
 Whole-carrier by-value forwarding is supported. The separately escaping
 reference-return rule for a by-value carrier parameter still requires its one
 exact reference path; selecting an individual path from a multi-path by-value

@@ -24,17 +24,16 @@ movement and destruction cannot invalidate a live view.
 
 `begin_mut()` supports mutable range-for; `begin()`/`end()` support read-only
 iteration. A retained iterator protects both the physical carrier and its
-stored owner dependency. No public type name grants borrowing permission;
-ordinary user-defined single-owner carriers follow the same rules.
+stored owner dependencies. No public type name grants borrowing permission;
+ordinary user-defined carriers follow the same rules.
 
 See [composable I/O](io.md#composable-buffered-io) for `std::byte_buffer` and
 byte-slice transports.
 
 ## Range protocol
 
-Status: current through the bounded L-RANGE-03 single-owner view release,
-M-OWN-04 named Expected-payload range loans, and the L-RANGE-04
-iterator/sentinel plus complete-range algorithm cluster
+The iterator/sentinel and complete-range contracts below describe GTI's own
+checked traversal model, not native C++ iterator requirements.
 
 GTI range iteration is structural. The compiler does not recognize
 `std::range`, `std::array`, `std::vector`, or any other public library name.
@@ -42,11 +41,12 @@ The implemented range-loan layer supports two compiler-verified strategies:
 direct indexed traversal of a fixed array and the exact member protocol below
 for a nominal class. Both strategies support read-only iteration and bounded
 mutable element iteration.
-Iterators and sentinels may be self-contained values or ordinary source-defined
-owner-dependent carriers. A read-only iterator retains shared checked access;
-an exclusive iterator transports its owner dependency under the same nominal
-stored-reference rules available to application classes. Range lowering adds
-its dedicated traversal/element loans; a library name grants no permission.
+Iterators and sentinels may be self-contained values or source-defined checked
+carriers. A cursor can retain shared or exclusive references and nested owner
+dependencies through the ordinary stored-reference rules. The physical cursor
+and range shells remain distinct from the external storage they protect.
+Range lowering adds its dedicated traversal/element loans; a library name
+grants no permission.
 
 ```gti
 for (T value : range) {
@@ -129,7 +129,8 @@ The iterator must provide:
 
 - `operator!=(Sentinel&)` or `operator!=(Sentinel)`, with one exact read-only
   reference parameter or copyable by-value parameter accepting the sentinel;
-- `operator*()`, returning a checked reference;
+- read-only `operator*()`, returning a checked reference or an independent
+  copyable value without borrowed state;
 - `void operator++() mut`, the prefix increment operation.
 
 These are ordinary GTI methods. Access control, generic substitution, receiver
@@ -145,11 +146,19 @@ stable named argument; this is not an exception to temporary-reference
 binding. The structural requirement promises the named-argument operation,
 not that every conforming sentinel accepts temporary arguments.
 
-A by-value loop declaration such as `for (T value : range)` copies the
-selected element and therefore rejects a move-only lvalue. `for (T& value :
-range)` and `for (auto& value : range)` bind a loop-bounded, non-escaping,
-read-only non-null reference. Assigning through that reference or storing,
-capturing, or returning it beyond the iteration is ill-formed.
+A by-value loop declaration such as `for (T value : range)` copies a referenced
+element, or owns the independent value produced by dereference. It therefore
+rejects copying a move-only lvalue. `for (T& value : range)` and
+`for (auto& value : range)` bind a loop-bounded, non-escaping, read-only non-null
+reference. When dereference returns an independent value, the compiler owns
+that result in hidden per-iteration storage and borrows it for the body.
+Existing reference yields remain aliases and do not copy the element.
+Every derived borrow, including a body-local cleanup guard's borrow, must end
+before advancement or any loop exit. Ordinary cleanup destroys the independent
+value after its borrowers. Assigning through the read-only reference or
+storing, capturing, or returning it beyond the iteration is ill-formed.
+This range-local materialization does not permit ordinary reference binding to
+temporaries elsewhere, or mutable element access to a value-yielding range.
 
 Read-only loans are shared: nested or otherwise simultaneous read-only
 traversals may retain the same local, field, or owned range. Each traversal
@@ -236,8 +245,8 @@ wants the complete owner rather than an iterator/sentinel pair:
 
 - `std::input_range<Range>` proves the exact public read-only `begin()` and
   `end()` protocol plus input iteration and sentinel comparison;
-- `std::range_of<Range, T>` additionally proves that read-only dereference
-  returns exactly `T&`;
+- `std::range_of<Range, T>` additionally proves the exact readable element
+  `T`, either through `T&` or an independent eligible `T` value;
 - `std::mutable_range_of<Range, T>` proves the exact mutable `begin_mut()`
   endpoint and `mut T&` dereference; and
 - `std::sized_range<Range>` proves one exact public read-only `size()` returning
@@ -277,10 +286,14 @@ direct symbolic `begin()`/`begin_mut()`/`end()` extraction, range adaptor,
 borrowed-range trait, implicit conversion, or invalidation customization.
 Generic code should use range-based `for`, or accept already-formed endpoints
 under the iterator concepts. Iterator-pair APIs remain available when a client
-already owns non-overlapping endpoints; forming `begin_mut()` and `end()`
-independently from one owner is still rejected because their loans overlap.
+already owns non-overlapping endpoints. Calling an owner's `end()` while its
+exclusive mutable cursor remains live is an overlapping owner read. For an
+independent sentinel, capture `end()` first, then acquire `begin_mut()`, or use
+a complete-range algorithm. This is distinct from the compiler-verified
+endpoint parking of a mutable range-for plan; ordinary source calls do not
+implicitly suspend an exclusive borrow.
 
-## Single-owner spans and text views
+## Spans and text views
 
 `std::span<T>` is an ordinary source-defined, read-only range over one checked
 source prefix owner. `std::vector<T>::as_span()` and
@@ -307,8 +320,8 @@ The original L-RANGE-03 checkpoint was a single-owner read-only slice, not a
 permanent limit on nominal carriers. Mutable spans are implemented above;
 ordinary carriers may also compose multiple shared/exclusive dependencies and
 nominal fields under the current [ownership contract](ownership-and-lifetimes.md).
-`<std/paired_span>` supplies a source-defined two-span indexed/subspan client,
-not a new proxy iterator protocol. Primitive dynamic text views retain their
+`<std/paired_span>` supplies a source-defined two-span indexed/subspan and
+checked reference-proxy iteration client. Primitive dynamic text views retain their
 narrower one-owner contract and cannot be reseated or stored in fields,
 globals/statics, arrays or containers. A view of a temporary owner may be used
 immediately within its full expression, but cannot be retained or escape it.
@@ -319,14 +332,66 @@ object. These restrictions keep source validity in semantics and preserve the
 same owner and transfer facts in HIR and verified MIR. The C++ backend only
 represents the already-verified counted view and does not infer its lifetime.
 
+`<std/string_view>` and its `std.string_view` module (also included by
+`<std/string>`) supply source-defined
+counted-text cursors. Member `begin/end`, `cbegin/cend`, `rbegin/rend`,
+`crbegin/crend`, common-position endpoints, and positioned cursor factories
+retain a checked reference to the view shell and its dynamic owner, if any.
+Dereference and indexed access produce independent read-only character values
+through the existing counted byte read. They do not reinterpret native byte
+storage as GTI-character references. Embedded zero bytes are ordinary elements;
+neither forward nor reverse traversal scans for a terminator. Read-only
+reference range bindings borrow their per-iteration character value. A retained
+cursor cannot outlive a local view shell, even when the view is literal-backed.
+
+These builtin-view member operations are normalized by semantic analysis to
+trusted declaration-identity-bound source factory calls. The receiver is the
+first ordinary checked argument, evaluated once before written arguments.
+HIR/MIR use the resolved call and lifetime facts, while editor queries present
+the public member signature. No backend spelling recognition grants access.
+
+## Container traversal capabilities
+
+Traversal direction and cursor duplication are independent. Shared cursors
+can be copied when their source-defined borrowing contract permits it;
+exclusive cursors move rather than duplicate their owner permission.
+
+| Family | Movement | Access |
+| --- | --- | --- |
+| vector, array, deque, string, spans, resource_vector, arena, SIMD lanes/masks | forward/backward, checked signed positions, reverse endpoints | shared reading; exclusive writing where elements are mutable |
+| list, map, set | forward/backward and reverse endpoints | shared reading; exclusive list elements and mapped values, never writable keys |
+| forward_list, unordered_map, unordered_set | forward and common-position endpoints | shared reading; exclusive elements/mapped values, never writable keys |
+| storage, pool, resource_storage | forward/backward live-slot and reverse traversal | skip vacant slots; retain provider/owner lifetime |
+| string_view | forward/backward, checked signed positions and reverse endpoints | independent readonly character values |
+| paired_span | checked positioned and reverse proxy traversal | shared references retaining both external owners and physical cursor storage |
+| JSON object projections | spans of keys/values and paired member traversal | immutable keys/extent; exclusive value replacement through `values_mut()` |
+
+Random-access movement does not imply contiguous storage: deque positions are
+not a contiguous-memory guarantee. Forward-only containers do not acquire fake
+reverse operations. Empty end positions are valid but not dereferenceable;
+invalid access/movement raises GTI defined failure before changing the cursor.
+Queue adapters, owner/result/guard objects and uninitialized carriers are not
+automatically ranges. Directory streams retain their recoverable `next()` API.
+
+Vector and resource-vector cursors capture their immutable live-prefix bound
+before retaining the checked owner reference. Their whole-owner loan excludes
+resizing, owner transfer and destruction, so element writes through an exclusive
+cursor cannot invalidate that bound. One-step movement uses the snapshot without
+reloading the owner length; dereference and arbitrary signed jumps remain checked
+against the actual owner. The snapshot is movement state, not permission to read
+vacant or out-of-range storage. A child element borrow still prevents cursor
+movement until that borrow ends. On the measured 64-bit target this adds one
+inline eight-byte field to each vector/resource-vector cursor, with no allocation.
+
 ## Generic iterator contracts
 
 `<std/iterator>` exposes the implemented operator subset to generic functions
 without making an iterator inherit a category base or teaching the compiler a
 public library name:
 
-- `std::input_iterator<I>` proves read-only checked dereference and mutable
-  prefix increment; ordinary parameter ownership separately checks whether a
+- `std::input_iterator<I>` proves read-only checked-reference or independent
+  copyable-value dereference and mutable prefix increment; ordinary parameter
+  ownership separately checks whether a
   particular iterator expression can be transferred into an algorithm;
 - `std::sentinel_for<S, I>` proves exact public read-only
   `bool I::operator!=(S&)` or `bool I::operator!=(S)` with copyable `S`;
@@ -337,20 +402,36 @@ public library name:
   `void operator--() mut`, and `std::random_access_iterator<I>` further adds
   `void operator+=(std::ptrdiff_t) mut` and
   `void operator-=(std::ptrdiff_t) mut`;
+- `std::bidirectional_cursor<I>` and `std::random_access_cursor<I>` prove the
+  same movement operations without requiring cursor copies. An exclusive
+  output cursor may move backward or jump while remaining noncopyable;
 - `std::subscripts_to_mut<I, T>` proves
   `mut T& I::operator[](std::ptrdiff_t) mut` for exactly `T`, the positioned
   write contract that keeps one exclusive cursor over a whole range;
 - `std::sized_sentinel_for<S, I>` composes `sentinel_for` with read-only
   `std::ptrdiff_t I::operator-(S&)` or `std::ptrdiff_t I::operator-(S)` with
-  copyable `S`, the signed distance from the iterator to the sentinel.
+  copyable `S`. Subtraction follows conventional left-minus-right traversal
+  coordinates: a forward iterator before its end has a negative difference;
+  reverse coordinates count in the reverse direction. `std::distance(first,
+  last)` separately counts forward increments and remains positive for a
+  reachable later sentinel. A difference outside `ptrdiff_t` raises defined
+  invalid-container-argument failure rather than narrowing or overflowing.
 
-`<std/numeric>` additionally defines `std::accumulates_into<I, T>`, whose first
-version proves that read-only dereferencing `I` returns a checked reference to
-exact `T`.
+`<std/numeric>` additionally defines `std::accumulates_into<I, T>`, proving
+that read-only dereferencing `I` has exactly the readable element `T`.
 These source concepts are implemented over private declaration-identity-bound
 structural capabilities and are consumed through trailing `requires` clauses.
 They are rechecked for every concrete generic instance; C++ iterator traits,
 concepts, and overload resolution are not consulted.
+
+These checks establish the available operation and ownership shapes, not a
+proof of arbitrary user-written method bodies. A multipass range must preserve
+independent positions when a shared cursor is copied; a random-access
+implementation must provide constant-time positional movement. Standard-library
+cursors are tested for those behaviours and their traversal costs. Merely
+declaring the operators does not make a user-defined cursor satisfy the
+behavioural or complexity promises. Reverse traversal is a direction, not an
+additional movement category, and random access does not imply contiguity.
 
 The first ordinary library clients are the default and operation-based
 `std::accumulate` overloads, homogeneous `std::inner_product`, and unary
@@ -398,9 +479,9 @@ code over it.
 `std::transform`, `std::reverse`, and `std::sort` still take the owning
 `std::vector<T>` directly. These whole-owner forms exist because the
 iterator-pair spelling would either need a read borrow of the owner while its
-exclusive mutable cursor is live (`values.begin_mut()` and `values.end()` in
-one call), plus the exact output/position and return contracts of a generalized
-algorithm. Retained mutable cursors are already supported. Each form keeps one
+exclusive mutable cursor is live (`values.begin_mut()` followed by
+`values.end()` in one call), plus the exact output/position and return contracts
+of a generalized algorithm. Retained mutable cursors are already supported. Each form keeps one
 exclusive borrow for the whole rewrite and names the element type for locals.
 `reverse` and both sort forms use checked indexed swaps and require
 `std::relocatable`, not copyability or move assignment. They borrow elements
@@ -421,13 +502,22 @@ sort contracts. Source comparisons, checked element accesses and cleanup keep
 their ordinary deterministic evaluation/failure behavior; a failed comparison
 does not roll back preceding permutations.
 
-`for_each` invokes its by-value callable zero or more times with the exact
-checked-reference type produced by dereference, then returns that same callable
-through one final `std::move`. Its invocation contract remains confined and
-repeatable; exact-return transport is a separate ownership fact. A mutable
-generic callable parameter can select either read-only or mutable
-`operator()` for the exact `void(T&)` signature, but not a once-callable or a
-value-returning/mismatched overload. A named callable must be passed with
+The iterator-pair `for_each` invokes its by-value callable zero or more times
+with the exact dereference result, then returns that same callable through one
+final `std::move`. A checked-reference yield may bind the read-only element
+reference or copy an eligible element into a value parameter. An independent
+value yield requires an exact value parameter; it does not permit an ordinary
+reference parameter to bind the temporary. The indirect predicate/operation
+constraints retain this distinction and diagnose a mismatch at the requesting
+call. Whole-range algorithms instead use their checked range-for binding:
+an independent value is materialized for that iteration and can supply a
+read-only element reference to the confined callback.
+
+The invocation contract remains confined and repeatable; exact-return
+transport is a separate ownership fact. A mutable generic callable parameter
+can select either read-only or mutable `operator()` with the matching element
+signature, but not a once-callable or a value-returning/mismatched overload.
+A named callable must be passed with
 `std::move`, must be movable, and cannot store references, tracked borrowed
 state, or raw pointers. The returned value preserves the exact concrete
 callable type without erasure.
@@ -439,11 +529,11 @@ MIR control flow, and replaceable-backend call targets. It is enough for
 self-contained iterators and sentinels, including generic virtual operator
 contracts.
 
-Source-defined container iterators may retain one read-only or mutable owner
-reference through GTI's confined stored-reference class contract. Constructor
+Source-defined container iterators retain read-only or mutable owner
+references through GTI's stored-reference class contract. Constructor
 and method results carry the owner dependency through semantics, HIR, and MIR.
 A free function or static factory may now return a cursor or view derived from
-one eligible read-only parameter. The single dependency survives ordinary calls,
+one eligible read-only parameter. The dependencies survive ordinary calls,
 concrete generic carrier relays, explicit moves, returns, and drops. An
 iterator explicitly created before an ordinary source `while`, body-first
 `do`/`while`, or classic `for` stays active across backedges and ends at the
@@ -510,7 +600,8 @@ the input to already be sorted according to `operator<`. Whole-range `all_of`,
 `any_of`, `none_of`, `count_if`, `for_each`, and `fill` use the structural
 complete-range concepts above. `transform`, `reverse`, and comparator `sort`
 remain bounded to `std::vector` while their additional output, movement, and
-random-access complete-range relationships are not yet public. Public
+random-access complete-range algorithm contracts are not yet supplied. The
+movement and output cursor concepts themselves are public. Public
 invalidation capabilities also remain absent; ownership conservatively
 protects the whole owner during iteration.
 

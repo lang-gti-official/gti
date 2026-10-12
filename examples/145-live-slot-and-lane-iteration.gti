@@ -1,0 +1,64 @@
+// Sparse owners visit only live slots; arenas visit their occupied prefix.
+// Fixed SIMD values and masks expose checked, allocation-free lane cursors.
+#include <std/memory>
+#include <std/resource>
+#include <std/simd>
+#include <std/string>
+#include <std/format>
+
+int main() {
+  mut int total = 0;
+  std::allocator allocator{};
+  mut auto allocated = allocator.try_storage<int>(std::size_t(5));
+  if (!allocated) { return 1; }
+  mut auto sparse = std::move(allocated).value();
+  sparse.construct(std::size_t(1), 10);
+  sparse.construct(std::size_t(3), 30);
+  // Slots 0, 2 and 4 are uninitialized capacity, never iteration elements.
+  for (auto& value : sparse) { total += value; }
+  mut int reverse_order = 0;
+  for (mut auto cursor = sparse.rbegin(); cursor != sparse.rend(); ++cursor) {
+    reverse_order = reverse_order * 10 + *cursor / 10;
+  }
+
+  mut auto arena_result = std::try_make_arena<int>(std::size_t(8));
+  if (!arena_result) { return 2; }
+  mut auto arena = std::move(arena_result).value();
+  [[discard]] arena.try_insert(1);
+  [[discard]] arena.try_insert(2);
+  // Only the first two values are live, although capacity is eight.
+  for (auto& value : arena) { total += value; }
+
+  mut auto pool_result = std::try_make_pool<int>(std::size_t(4));
+  if (!pool_result) { return 3; }
+  mut auto pool = std::move(pool_result).value();
+  [[discard]] pool.try_insert(7);
+  [[discard]] pool.try_insert(9);
+  pool.erase(std::size_t(0));
+  for (auto& value : pool) { total += value; }
+
+  std::process_resource process{};
+  unsafe {
+    // One-time binding acknowledges the provider's unsafe allocation contract:
+    // valid aligned regions, matching deallocation and provider lifetime. The
+    // installed process provider obeys it. Storage and cursor operations remain
+    // checked; this block does not disable ownership or lifetime analysis.
+    auto resource = std::bind_resource(process);
+    mut std::resource_storage<int, std::process_resource> sparse_resource{resource};
+    if (!sparse_resource.try_allocate(std::size_t(3))) { return 4; }
+    sparse_resource.emplace(std::size_t(2), 11);
+    for (auto& value : sparse_resource) { total += value; }
+  }
+
+  mut std::simd<float, 4> lanes{2.0};
+  for (mut float& lane : lanes) { lane += 1.0; }
+  total += int(lanes.reduce());
+  mut std::simd_mask<4> mask{};
+  for (mut bool& lane : mask) { lane = true; }
+  total += int(mask.count());
+
+  // Shared cursors are independently copyable. Mutable cursors exclusively
+  // borrow their owner, so structural mutation waits until they are finished.
+  std::println("sparse reverse: {}; total: {}", reverse_order, total);
+  return 0;
+}

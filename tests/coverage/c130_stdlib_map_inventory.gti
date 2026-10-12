@@ -66,14 +66,14 @@ int main() {
     auto last = inventory.end();
     mut auto found = inventory.find_mut(key);
     if (!(found != last)) { return 5; }
-    found->second.adjust(3);
-    found->second.adjust(-1);
+    found->second().adjust(3);
+    found->second().adjust(-1);
   }
   if (inventory.at(apple_key).changes() != 0) { return 6; }
 
   // Mutable range-for over every entry.
   for (mut auto& entry : inventory) {
-    entry.second.adjust(1);
+    entry.second().adjust(1);
   }
   if (total_quantity(inventory) != 10 + 1 + 6 + 1 + 25 + 1 + 0 + 1) { return 7; }
 

@@ -30,12 +30,14 @@ struct list_slot<T> {
   }
 };
 class list_sentinel<T> {};
-class list_mut_iterator<T> {
+class list_mut_iterator<T, uint64_t Reverse = 0> {
   mut vector<list_slot<T>>& slots;
+  size_t head;
+  size_t tail;
   mut size_t position;
 public:
-  list_mut_iterator(mut vector<list_slot<T>>& slots, size_t position)
-      : slots(slots), position(position) {}
+  list_mut_iterator(mut vector<list_slot<T>>& slots, size_t tail, size_t position, size_t head = 0)
+      : slots(slots), head(head), tail(tail), position(position) {}
   T& operator*() {
     gti_internal::require_container_argument(this.position != 0);
     return this.slots[this.position - 1].read();
@@ -46,17 +48,33 @@ public:
   }
   void operator++() mut {
     gti_internal::require_container_argument(this.position != 0);
-    this.position = this.slots[this.position - 1].next();
+    if constexpr (Reverse != 0) { this.position = this.slots[this.position - 1].previous(); }
+    else { this.position = this.slots[this.position - 1].next(); }
   }
+  void operator--() mut {
+    mut size_t previous = this.tail;
+    if constexpr (Reverse != 0) {
+      previous = this.head;
+      if (this.position != 0) { previous = this.slots[this.position - 1].next(); }
+    } else {
+      if (this.position != 0) { previous = this.slots[this.position - 1].previous(); }
+    }
+    gti_internal::require_container_argument(previous != 0);
+    this.position = previous;
+  }
+  T& operator->() { return *this; }
+  mut T& operator->() mut { return *this; }
   bool operator!=(list_sentinel<T> end) { return this.position != 0; }
+  bool operator==(list_sentinel<T> end) { return this.position == 0; }
 };
-class list_iterator<T> {
+class list_iterator<T, uint64_t Reverse = 0> {
   vector<list_slot<T>>& slots;
+  size_t head;
   size_t tail;
   mut size_t position;
 public:
-  list_iterator(vector<list_slot<T>>& slots, size_t tail, size_t position)
-      : slots(slots), tail(tail), position(position) {}
+  list_iterator(vector<list_slot<T>>& slots, size_t tail, size_t position, size_t head = 0)
+      : slots(slots), head(head), tail(tail), position(position) {}
   T& operator*() {
     gti_internal::require_container_argument(this.position != 0);
     return this.slots[this.position - 1].get();
@@ -64,17 +82,24 @@ public:
   T& operator->() { return *this; }
   void operator++() mut {
     gti_internal::require_container_argument(this.position != 0);
-    this.position = this.slots[this.position - 1].next();
+    if constexpr (Reverse != 0) { this.position = this.slots[this.position - 1].previous(); }
+    else { this.position = this.slots[this.position - 1].next(); }
   }
   void operator--() mut {
-    if (this.position == 0) { this.position = this.tail; }
-    else { this.position = this.slots[this.position - 1].previous(); }
-    gti_internal::require_container_argument(this.position != 0);
+    mut size_t previous = this.tail;
+    if constexpr (Reverse != 0) {
+      previous = this.head;
+      if (this.position != 0) { previous = this.slots[this.position - 1].next(); }
+    } else {
+      if (this.position != 0) { previous = this.slots[this.position - 1].previous(); }
+    }
+    gti_internal::require_container_argument(previous != 0);
+    this.position = previous;
   }
   bool operator!=(list_sentinel<T> end) { return this.position != 0; }
-  bool operator==(list_sentinel<T>& end) { return this.position == 0; }
-  bool operator!=(list_iterator<T>& other) { return this.position != other.position; }
-  bool operator==(list_iterator<T>& other) { return this.position == other.position; }
+  bool operator==(list_sentinel<T> end) { return this.position == 0; }
+  bool operator!=(list_iterator<T, Reverse>& other) { return this.position != other.position; }
+  bool operator==(list_iterator<T, Reverse>& other) { return this.position == other.position; }
 };
 }
 
@@ -141,6 +166,8 @@ public:
   using iterator = detail::list_mut_iterator<T>;
   using const_iterator = detail::list_iterator<T>;
   using sentinel = detail::list_sentinel<T>;
+  using reverse_iterator = detail::list_mut_iterator<T, 1>;
+  using const_reverse_iterator = detail::list_iterator<T, 1>;
 
   list() {}
   static list<T> collection_init(uint64_t count) { return list<T>(); }
@@ -318,7 +345,17 @@ public:
   }
   detail::list_sentinel<T> end() { return detail::list_sentinel<T>(); }
   detail::list_mut_iterator<T> begin_mut() mut {
-    return detail::list_mut_iterator<T>(this.slots, this.head);
+    return detail::list_mut_iterator<T>(this.slots, this.tail, this.head);
   }
+  const_iterator end_iterator() { return const_iterator(this.slots, this.tail, size_t(0)); }
+  iterator end_mut() mut { return iterator(this.slots, this.tail, size_t(0)); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel cend() { return this.end(); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this.slots, this.tail, this.tail, this.head); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return sentinel(); }
+  sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut { return reverse_iterator(this.slots, this.tail, this.tail, this.head); }
+  reverse_iterator rend_mut() mut { return reverse_iterator(this.slots, this.tail, size_t(0), this.head); }
 };
 }

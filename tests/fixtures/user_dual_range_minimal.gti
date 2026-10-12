@@ -1,0 +1,13 @@
+#include "user_dual_range_support.gti"
+#include <std/vector>
+#include <std/string>
+
+int main() {
+  std::vector<UserDualElement> first = {UserDualElement(1, std::string("left"))};
+  std::vector<UserDualElement> second = {UserDualElement(2, std::string("right"))};
+  auto range = UserDualRange(first.as_span(), second.as_span());
+  for (auto& entry : range) {
+    return entry.left().value() + entry.right().value() - 3;
+  }
+  return 1;
+}

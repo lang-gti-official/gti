@@ -101,12 +101,33 @@ class resource_storage<std::storage_element T, memory_resource R> {
   mut std::detail::resource_lease<R> metadata;
   mut gti_internal::sparse_slots<T> data;
 public:
+  using const_iterator = detail::sparse_iterator<T>;
+  using iterator = detail::sparse_mut_iterator<T>;
+  using const_reverse_iterator = detail::sparse_iterator<T, 1>;
+  using reverse_iterator = detail::sparse_mut_iterator<T, 1>;
+  using sentinel = detail::memory_slot_sentinel;
+
   resource_storage(resource_ref<R> resource)
       : lease(std::detail::resource_lease<R>(resource)),
         metadata(std::detail::resource_lease<R>(resource)),
         data(gti_internal::sparse_slots<T>()) {}
   resource_storage(resource_storage<T,R>& other) = delete;
   resource_storage(resource_storage<T,R>&& other) = default;
+
+  /// Visits only live slots while retaining the region and provider binding.
+  const_iterator begin() { return const_iterator(this.data, size_t(0)); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel end() { return sentinel(this.capacity()); }
+  sentinel cend() { return this.end(); }
+  const_iterator end_iterator() { return const_iterator(this.data, this.capacity()); }
+  iterator begin_mut() mut { return iterator(this.data, size_t(0)); }
+  iterator end_mut() mut { return iterator(this.data, this.capacity()); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this.data, this.capacity()); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return sentinel(size_t(0)); }
+  sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut { return reverse_iterator(this.data, this.capacity()); }
+  reverse_iterator rend_mut() mut { return reverse_iterator(this.data, size_t(0)); }
 
   size_t capacity() { return this.data.capacity(); }
   bool initialized(size_t index) {

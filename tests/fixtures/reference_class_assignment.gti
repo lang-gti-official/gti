@@ -41,6 +41,22 @@ public:
   int32_t get() { return *this.value; }
 };
 void replace_owner(mut Owner& target) { target = Owner(11); }
+Owner make_owner(int32_t value) { return Owner(value); }
+
+// A user-defined writable cursor is not a container/compiler special case.
+// Its selected reference return owns permission even when the enclosing
+// assignment's contextual value information is read-only.
+class OwnerCursor {
+  mut Owner& target;
+public:
+  OwnerCursor(mut Owner& target) : target(target) {}
+  mut Owner& operator*() mut { return this.target; }
+};
+void replace_through_cursor(mut Owner& target) {
+  mut OwnerCursor cursor{target};
+  *cursor = make_owner(17);
+  *cursor = make_owner(19);
+}
 
 int main() {
   mut Point point{1};
@@ -86,6 +102,8 @@ int main() {
   mut Owner owned{10};
   replace_owner(owned);
   if (owned.get() != 11) return 15;
+  replace_through_cursor(owned);
+  if (owned.get() != 19) return 17;
   mut std::vector<int32_t> values{};
   values.push_back(42);
   reset_vector(values);
