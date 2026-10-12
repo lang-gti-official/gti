@@ -658,6 +658,47 @@ class Workflow:
         self.save(state, "completed")
         return state
 
+    def retire_empty(self, state, reason):
+        """Retire a task without a PR whose branch holds nothing beyond main.
+
+        Abandonment keeps unmerged work behind a closed PR, but GitHub refuses
+        a PR without commits and an empty branch has nothing to keep. Every
+        check runs before the first removal, and each removal tolerates a piece
+        an interrupted attempt already removed.
+        """
+        main = self.fetch()
+        ref = "refs/heads/" + state["branch"]
+        local = git(self.primary, "rev-parse", "--verify", ref, check=False)
+        remote = git(self.primary, "ls-remote", "origin", ref)
+        root = Path(state["worktree"])
+        tips = {remote.split()[0]} if remote else set()
+        if local.returncode == 0:
+            tips.add(local.stdout.strip())
+        if root.exists():
+            self.tree(state)
+            tips.add(git(root, "rev-parse", "HEAD"))
+        if any(not self.ancestor(tip, main) for tip in tips):
+            return False
+        if root.exists():
+            clean(root)
+            if git(root, "ls-files", "--others", "--ignored", "--exclude-standard"):
+                raise WorkflowError("Worktree contains ignored files; inspect/preserve them before abandoning")
+        if local.returncode == 0 and (
+                git(self.primary, "branch", "--show-current") != "main"
+                or not self.ancestor(local.stdout.strip(), git(self.primary, "rev-parse", "HEAD"))):
+            raise WorkflowError("Primary main does not contain this task's branch; sync before abandoning")
+        if root.exists():
+            git(self.primary, "worktree", "remove", str(root))
+        if remote:
+            # Conditional delete: a commit pushed meanwhile keeps the branch.
+            git(self.primary, "push", "--force-with-lease=" + ref + ":" + remote.split()[0],
+                "origin", ":" + ref)
+        if local.returncode == 0:
+            git(self.primary, "branch", "-d", state["branch"])
+        state["reason"] = reason
+        self.save(state, "abandoned")
+        return True
+
     def abandon(self, task, reason):
         if not reason.strip():
             raise WorkflowError("Record why work is abandoned or superseded")
@@ -676,6 +717,8 @@ class Workflow:
                 state["reason"] = reason
                 self.save(state, "abandoned")
                 return state
+        elif self.retire_empty(state, reason):
+            return state
         state = self.checkpoint(task)
         self.ensure_pr(state)
         pr = self.pull(state)
