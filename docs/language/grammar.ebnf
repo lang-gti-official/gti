@@ -455,9 +455,10 @@ class-member           = conditional-class-members
 (* Named class/struct definitions nest in a non-generic class/struct.
    Anonymous records, nested interface/union declarations, and capturing an
    enclosing generic's arguments are not admitted by this slice. *)
-nested-class-declaration = [ declaration-attributes ]
+nested-class-declaration = [ declaration-attributes ] [ class-attributes ]
                           ( "class" | "struct" ) IDENTIFIER
-                          [ generic-parameter-clause ] [ base-clause ]
+                          [ generic-parameter-clause
+                          | generic-signature-pattern-clause ] [ base-clause ]
                           ( "{" { class-member } "}" ";" | ";" ) ;
 
 conditional-class-members

@@ -13,6 +13,12 @@ public:
 };
 struct Standalone { struct Child { int value = 13; }; };
 using Alias = Standalone;
+struct Ordering {
+  struct First {
+    Later value{};
+  };
+  struct Later { int value = 17; };
+};
 struct Config {
   struct Network {
     int port = 8080;
@@ -50,6 +56,8 @@ public:
 };
 }
 
+application::Ordering::Later global{};
+
 int main() {
   application::Config config{};
   application::Config::Network network{};
@@ -60,11 +68,13 @@ int main() {
   application::Shadowing shadow{};
   application::Aliases::Public exposed{};
   application::Alias::Child standalone{};
+  application::Ordering::First ordered{};
   if (config.network.port != 8080 || network.retry.count != 3 ||
       retry.count != 3 || alias.port != 8080 ||
       config.logging.verbosity() != 2 || box.value != 5 ||
       service.secret_value() != 7 || shadow.item.value != 9 ||
-      exposed.value != 11 || standalone.value != 13) {
+      exposed.value != 11 || standalone.value != 13 ||
+      ordered.value.value != 17 || global.value != 17) {
     return 1;
   }
   std::println("nested types");

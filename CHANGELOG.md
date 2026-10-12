@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.411.0 — Named nested structs and classes
+
+- Non-generic classes and structs can define named child classes and structs,
+  including children with their own generic parameters. Qualified names such
+  as `Config::Network` retain ordinary access, ownership, cleanup and reflection
+  rules without capturing an outer object. Example 147 demonstrates a nested
+  configuration decoded and encoded with `<std/json>`.
+- Definitions inside generic enclosing types remain diagnosed until child
+  identity can retain the enclosing specialization. Anonymous records and
+  nested interfaces/unions are not part of this release.
+
 ## 0.409.0 — `<std/json>` is the reflection-driven library
 
 - `std::experimental::json` is now `<std/json>` (`std::json::encode`,

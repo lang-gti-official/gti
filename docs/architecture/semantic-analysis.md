@@ -467,6 +467,10 @@ arguments in nested identities and is rejected before HIR. HIR/MIR retain
 ordinary nominal types and existing lifecycle operations. Lowered declaration
 parent/owner identities preserve nesting separately from namespace scope, so
 the C++ planner never opens an enclosing class as a namespace.
+Representation scheduling completes nested layout dependencies before value
+members, forward-declares pointer-only siblings, and delays global/native/function
+declarations whose signatures need a complete lexical owner. These choices do
+not alter resolved access or introduce an outer object.
 
 `SemanticVisitor::check(const Program&)` is staged because later facts depend
 on declaration-wide registration. It currently:

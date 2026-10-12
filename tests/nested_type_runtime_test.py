@@ -101,7 +101,97 @@ def main():
             assert result.returncode != 0, name
             assert code in result.stderr and fragment in result.stderr, result.stderr
             assert "GTI-B0001" not in result.stderr, result.stderr
-    print("nested types: 14 native builds, six failure cleanups and eleven semantic rejections passed")
+
+        native_source = scratch / "nested_native.c"
+        native_source.write_text('''#include <stdint.h>
+struct Native { int32_t value; };
+struct Native make_native(void) { return (struct Native){7}; }
+int32_t consume(struct Native value) { return value.value; }
+typedef int32_t (*Callback)(struct Native);
+Callback native_callback(void) { return consume; }
+''', encoding="utf-8")
+        native_object = scratch / "nested_native.o"
+        run([os.environ.get("CC", "cc"), "-std=c11", "-O2", "-c",
+             str(native_source), "-o", str(native_object)])
+        native_consumer = scratch / "nested_native.gti"
+        native_consumer.write_text('''struct Container {
+  [[c_abi]] struct Native { int32_t value; };
+};
+using NativeCallback = (Container::Native) -> int32_t;
+extern "C" {
+  Container::Native make_native();
+  int32_t consume(Container::Native value);
+  NativeCallback native_callback();
+}
+int main() {
+  Container::Native value = make_native();
+  unsafe {
+    NativeCallback callback = native_callback();
+    return consume(value) + callback(value) - 14;
+  }
+}
+''', encoding="utf-8")
+        for standard, optimization in (("c++20", "O0"), ("c++23", "O3")):
+            executable = scratch / f"native-{standard}-{optimization}"
+            run([str(compiler), str(native_consumer), "--std", standard, f"-{optimization}",
+                 "--progress", "never", "-o", str(executable), "--", str(native_object)])
+            executed = run([str(executable)])
+            assert executed.stdout == "" and executed.stderr == "", executed
+
+        interface = scratch / "nested_api.gti"
+        interface.write_text('''export module nested_api;
+namespace api {
+  export struct Config {
+    struct Network { int port = 80; };
+  private:
+    struct Secret { static int code() { return 1; } };
+  };
+  export class Aliases {
+    struct Secret { int value = 11; };
+  public:
+    using Public = Secret;
+  };
+  export class Gate { using Hidden = Config; };
+  struct Hidden { struct Child { int value = 1; }; };
+}
+''', encoding="utf-8")
+        consumer = scratch / "imported.gti"
+        consumer.write_text('''import "nested_api.gti";
+int main() {
+  api::Config::Network network{};
+  api::Aliases::Public value{};
+  return network.port == 80 && value.value == 11 ? 0 : 1;
+}
+''', encoding="utf-8")
+        for standard, optimization in (("c++20", "O0"), ("c++23", "O3")):
+            executable = scratch / f"imported-{standard}-{optimization}"
+            run([str(compiler), str(consumer), "--std", standard, f"-{optimization}",
+                 "--progress", "never", "-o", str(executable)])
+            executed = run([str(executable)])
+            assert executed.stdout == "" and executed.stderr == "", executed
+
+        module_negatives = {
+            "module_private_type": (
+                "api::Config::Secret item{};", "GTI-S2007", "Nested type 'Secret'"),
+            "module_private_static": (
+                "return api::Config::Secret::code();", "GTI-S2007", "Nested type 'Secret'"),
+            "module_private_alias": (
+                "api::Gate::Hidden::Network item{};", "GTI-S2007", "Type alias 'Hidden'"),
+            "module_unexported_type": (
+                "api::Hidden::Child item{};", "GTI-S2024", "private to module 'nested_api'"),
+        }
+        for name, (body, code, fragment) in module_negatives.items():
+            source = scratch / f"{name}.gti"
+            source.write_text('import "nested_api.gti";\nint main() { ' + body + " }\n",
+                              encoding="utf-8")
+            result = subprocess.run([str(compiler), str(source), "--emit-cpp",
+                                     "--progress", "never", "-o", str(scratch / f"{name}.cpp")],
+                                    capture_output=True, text=True, timeout=60)
+            assert result.returncode != 0, name
+            assert code in result.stderr and fragment in result.stderr, result.stderr
+            assert str(interface) in result.stderr and "GTI-B0001" not in result.stderr, result.stderr
+    print(f"nested types: 18 native builds, six failure cleanups and "
+          f"{len(negatives) + len(module_negatives)} semantic rejections passed")
 
 
 if __name__ == "__main__":
