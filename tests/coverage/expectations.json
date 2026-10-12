@@ -1650,10 +1650,6 @@
       "code": "GTI-S2029",
       "outcome": "rejected"
     },
-    "std-i07-json-value-copy": {
-      "code": "GTI-S2003",
-      "outcome": "rejected"
-    },
     "std-i08-insert-during-mutable-iteration": {
       "code": "GTI-S2017",
       "outcome": "rejected"
@@ -2125,10 +2121,6 @@
       "outcome": "pass"
     },
     "f7-declaration-only-weak-ptr": {
-      "code": "GTI-S2106",
-      "outcome": "rejected"
-    },
-    "f7-json-decode-without-codec": {
       "code": "GTI-S2106",
       "outcome": "rejected"
     },

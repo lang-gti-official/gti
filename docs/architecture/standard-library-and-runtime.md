@@ -1026,14 +1026,15 @@ views. No libcurl type, option, callback, or pointer crosses into public GTI.
 The response handle owns bytes that have already been received; it is not a
 public streaming or socket abstraction.
 
-`<std/json>` needs no runtime or compiler-private capability. Its strict parser,
-owned value tree, exact number lexemes, deterministic serializer, limits,
-structured errors, and explicit `codec<T>` customization are all GTI source.
-This is an intentional proof that a format library can remain portable policy
-once the ordinary string and vector ownership primitives are sufficient.
-String-owning errors execute through verified MIR in both native Expected
-representations. The parser and builders use ordinary exact-error propagation;
-conversion branches that add JSON Pointer context remain explicit source code.
+`<std/json>` needs no runtime or compiler-private capability. Its strict
+scanner, reflection-driven encoding and decoding, exact number handling,
+deterministic serializer, limits, structured errors and explicit `codec<T>`
+customization are all GTI source over `<std/meta>`. This is an intentional
+proof that a format library can remain portable policy once compile-time
+reflection, `std::meta::construct` and the ordinary string and vector
+ownership primitives are sufficient. String-owning errors execute through
+verified MIR in both native Expected representations; the branches that add
+JSON Pointer context remain explicit source code.
 Arena/pool factories use the same propagation rule, while elapsed clock
 subtraction deliberately maps arithmetic errors through a typed
 `transform_error` function. None changes recoverable errors into panic.
