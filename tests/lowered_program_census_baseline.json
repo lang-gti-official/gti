@@ -2159,11 +2159,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 99
       }
+    },
+    "148-interface-static-factories.gti": {
+      "declarations": 579,
+      "bodies": 68,
+      "generated_items": 24,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 12,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 1,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 10
+      }
     }
   },
   "totals": {
-    "declarations": 100178,
-    "bodies": 15426,
-    "generated_items": 9606
+    "declarations": 100757,
+    "bodies": 15494,
+    "generated_items": 9630
   }
 }
