@@ -618,7 +618,7 @@ feedback and must not be presented as clean-head integration evidence.
   once. Two raising runs fail inside a cleanup-free closure arm and inside an
   owning closure arm. In the owning run, the old value and an untouched named
   binding are each retired once.
-- **Historical boundary, revised in 0.407.0.** Inside a generic body, an unconstrained callable
+- **Historical boundary, revised in 0.407.1.** Inside a generic body, an unconstrained callable
   parameter's invocation has no result type before instantiation. A
   conditional pairing it with a non-dependent arm, as in
   `ok ? produce(1) : make(2)`, is rejected by semantic analysis

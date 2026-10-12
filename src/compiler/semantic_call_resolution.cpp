@@ -3281,9 +3281,9 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
           escapingReturn
               ? "Return a callable only through an exact owned generic "
                 "transport using std::move."
-              : "Pass a lambda only to a direct by-value generic parameter "
-                "whose visible body proves confined use or exact owned "
-                "transport.");
+              : "Pass a lambda to a direct generic value or checked-reference "
+                "parameter with a visible, proven confined contract; exact "
+                "owned transport requires a value parameter.");
       argumentDiagnostics.emplace_back(std::move(diagnostic));
     }
   }
@@ -3702,7 +3702,8 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
                 ? "Invoke the callable directly and return it only through "
                   "the declaration's exact std::move transport."
                 : "Invoke the callable directly or forward it to a direct "
-                  "by-value generic parameter with a proven confined "
+                  "generic value or checked-reference parameter with a proven "
+                  "confined "
                   "contract; assignment, storage, and other value "
                   "transport require an owned callable boundary.");
         useDiagnostics.emplace_back(std::move(diagnostic));
@@ -3732,7 +3733,8 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
                   ? "Invoke the callable directly and return it only "
                     "through the declaration's exact std::move transport."
                   : "Invoke the callable directly or forward it to a direct "
-                    "by-value generic parameter with a proven confined "
+                    "generic value or checked-reference parameter with a "
+                    "proven confined "
                     "contract; assignment, storage, capture, and other "
                     "value transport require an owned callable boundary.");
           useDiagnostics.emplace_back(std::move(diagnostic));

@@ -725,7 +725,8 @@ not add or promise:
 - implicit/default/reference capture;
 - general inferred lambda or generic callable result types;
 - lambda reference/borrowed-state results without an explicit origin summary;
-- callable references or scoped borrowed closures;
+- signature-erased callable references or scoped borrowed closure types
+  (ordinary confined `F&`/`mut F&` parameters are now implemented);
 - function pointers or closure-to-pointer casts (L-CALL-02 now supersedes the
   original confined-only function-item storage exclusion);
 - global/static closure storage;
