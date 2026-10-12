@@ -21806,6 +21806,89 @@ int main() {
          "by-value copy");
 }
 
+// An assignment resolves its target place before analysing the assigned
+// value. The joins of `&&`, `||` and `?:` inside that value restore the scope
+// state of their operands; they must do so without reallocating the bindings
+// the place is rooted in (a receiver, a local or an indexed local), because
+// the loan-conflict check and reinitialisation read the root after the value.
+// An AddressSanitizer build exposed the stale root; this keeps every shape.
+void testExpressionJoinsKeepAssignmentPlaces() {
+  const std::string accepted = R"(
+class Gate {
+  mut bool open = false;
+public:
+  Gate() = default;
+  void update(bool armed, bool ready) mut {
+    this.open = armed && ready;
+    this.open = armed || (ready && !armed);
+    this.open = armed ? ready && armed : false;
+  }
+  bool isOpen() { return this.open; }
+};
+struct Counter {
+  mut int value = 0;
+  mut bool seen = false;
+};
+int main() {
+  mut Gate gate{};
+  gate.update(true, true);
+  mut Counter counter{};
+  mut bool[2] flags = {false, false};
+  bool armed = gate.isOpen();
+  bool ready = true;
+  counter.seen = armed && ready;
+  counter.seen = false && ready;
+  counter.seen = true || ready;
+  counter.value += (armed && ready) ? 1 : 0;
+  flags[0] = armed && ready;
+  flags[1] = armed ? ready : false;
+  return counter.value == 1 && counter.seen && flags[0] && flags[1] ? 0 : 1;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("expression-join-assignment-places.gti",
+                               accepted, {standardLibraryPrelude()});
+  for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+    std::cerr << "Unexpected expression-join diagnostic: " << diagnostic.message
+              << '\n';
+  }
+  expect(frontend.diagnostics.empty() && frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "field, receiver and indexed assignments of logical and conditional "
+         "values should analyse and lower to verified MIR");
+
+  const std::string conflicting = R"(
+struct Counter {
+  mut int value = 0;
+  mut bool seen = false;
+};
+int main() {
+  mut Counter counter{};
+  bool armed = true;
+  bool ready = true;
+  Counter& view = counter;
+  counter.seen = armed && ready;
+  return view.value;
+}
+)";
+  const lang::FrontendResult rejected =
+      lang::Frontend().analyze("expression-join-assignment-conflict.gti",
+                               conflicting, {standardLibraryPrelude()});
+  const std::size_t assignment = conflicting.find("seen = armed && ready");
+  const auto conflict =
+      std::find_if(rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                   [&](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-S2017" &&
+                            diagnostic.primary.start == assignment;
+                   });
+  expect(!rejected.canGenerateCode() && rejected.diagnostics.size() == 1 &&
+             conflict != rejected.diagnostics.end() &&
+             conflict->message.find("overlapping borrow may still be live") !=
+                 std::string::npos,
+         "a field assignment whose value is a logical expression should still "
+         "report the live borrow of its root after the join");
+}
+
 constexpr NamedTest kTests[] = {
     {"testOwnershipSemanticFoundation", testOwnershipSemanticFoundation},
     {"testExplicitValueMoves", testExplicitValueMoves},
@@ -21894,6 +21977,8 @@ constexpr NamedTest kTests[] = {
     {"testNestedBorrowChainLoanOrdering", testNestedBorrowChainLoanOrdering},
     {"testCleanupOwningTemporaryArguments",
      testCleanupOwningTemporaryArguments},
+    {"testExpressionJoinsKeepAssignmentPlaces",
+     testExpressionJoinsKeepAssignmentPlaces},
 };
 
 } // namespace

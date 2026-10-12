@@ -7109,7 +7109,8 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
                                               SemanticType::Unknown);
   const ScopeStack thenScopes = scopes;
 
-  scopes = beforeBranches;
+  // An enclosing assignment may hold a place rooted in the current scopes.
+  restoreScopeState(beforeBranches);
   const SemanticType elseExpectation =
       contextualType == SemanticType::Unknown ? thenType : contextualType;
   const SemanticType elseType =
@@ -7121,14 +7122,14 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
   --loanFlow.rawConditionalExpressionDepth;
   const ScopeStack elseScopes = scopes;
 
-  scopes = beforeBranches;
+  restoreScopeState(beforeBranches);
   mergeValueStates(beforeBranches, thenScopes, elseScopes);
   const ScopeStack loanScopes = scopes;
   ScopeStack moveScopes = loanScopes;
   if (const std::optional<bool> condition = constantBoolean(expr.condition())) {
     moveScopes = *condition ? thenScopes : elseScopes;
   }
-  scopes = loanScopes;
+  restoreScopeState(loanScopes);
   applyMoveStates(moveScopes);
 
   if (thenType == SemanticType::Unknown || elseType == SemanticType::Unknown) {
@@ -8842,11 +8843,9 @@ auto SemanticVisitor::Impl::visitLogicalExpr(const Logical &expr) -> void {
   if (!skipsRight) {
     validateSequencedTransientLoans(expr.left(), expr.right(), expr.oper());
   }
-  ScopeStack loanScopes = afterRight;
   ScopeStack moveScopes = afterRight;
   if (skipsRight) {
     semanticModel.markOwnershipEventsUnreachableFrom(rightOwnershipStart);
-    loanScopes = afterLeft;
     moveScopes = afterLeft;
     loanFlow = loanFlowAfterLeft;
   } else if (requiresRight) {
@@ -8854,7 +8853,8 @@ auto SemanticVisitor::Impl::visitLogicalExpr(const Logical &expr) -> void {
   } else {
     moveScopes = mergedValueStates(afterLeft, {afterLeft, afterRight});
   }
-  scopes = std::move(loanScopes);
+  // An enclosing assignment may hold a place rooted in the current scopes.
+  restoreScopeState(skipsRight ? afterLeft : afterRight);
   applyMoveStates(moveScopes);
   currentType = SemanticType::Bool;
 }
