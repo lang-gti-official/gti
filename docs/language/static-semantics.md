@@ -335,7 +335,10 @@ names a distinct nominal type, not a namespace and not an implicit field.
 Nested types and their enclosing type may use these names unqualified within
 their lexical class scopes. A private nested type is accessible inside its
 declaring owner and lexically nested types, but a public child cannot bypass a
-private intermediate owner. A nested type has no enclosing object, hidden
+private intermediate owner. Lexically nested types may access their enclosing
+types' private aliases and members; this privilege does not extend in the
+opposite direction or to unrelated types. Instance-member access still needs
+an explicit enclosing object. A nested type has no enclosing object, hidden
 parent pointer, or implicit access to an outer instance's fields. Its values
 use ordinary construction, access, ownership, cleanup, reflection and
 transfer/share rules. Nesting adds no runtime state.

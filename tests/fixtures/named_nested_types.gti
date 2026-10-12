@@ -27,6 +27,14 @@ struct Graph {
   struct A { B* next = nullptr; };
   struct B { A* next = nullptr; };
 };
+struct CrossA {
+  struct Child { CrossB::Child* peer = nullptr; };
+  Child child{};
+};
+struct CrossB {
+  struct Child { CrossA::Child* peer = nullptr; };
+  Child child{};
+};
 [[no_transfer, no_share]] struct Policies {
   struct Value { int value = 29; };
 };
@@ -40,6 +48,27 @@ struct Borrowing {
     Value(std::string input) : text(std::move(input)) {}
     [[borrowed_from(this)]] int& code() { return number; }
     uint64_t length() { return text.size(); }
+  };
+};
+class LexicalAccess {
+  using count = int;
+  static int code = 37;
+  int number;
+  LexicalAccess(int value) : number(value) {}
+  LexicalAccess() : number(37) {}
+  int get() { return number; }
+public:
+  struct Child {
+    count read() {
+      LexicalAccess value{code};
+      return value.number + value.get() - code;
+    }
+    int default_value() { LexicalAccess value{}; return value.get(); }
+    struct Grandchild { int read() { return LexicalAccess::code; } };
+  };
+  struct GenericChild<T> {
+    using value_type = T;
+    int read() { return code; }
   };
 };
 struct Config {
@@ -94,6 +123,8 @@ int main() {
   application::Ordering::First ordered{};
   application::Inheritance::Derived derived{};
   application::Graph::A graph{};
+  application::CrossA cross_a{};
+  application::CrossB cross_b{};
   application::Policies::Value policy = application::transfer_value(application::Policies::Value());
   application::share_value(policy);
   application::Borrowing::Value source = application::Borrowing::Value(std::string("nested"));
@@ -102,6 +133,10 @@ int main() {
     if (borrowed != 31) { return 2; }
   }
   application::Borrowing::Value moved = std::move(source);
+  application::LexicalAccess::Child lexical{};
+  application::LexicalAccess::Child::Grandchild grandchild{};
+  application::LexicalAccess::GenericChild<int> generic_child{};
+  application::LexicalAccess::GenericChild<int>::value_type alias_value = 3;
   if (config.network.port != 8080 || network.retry.count != 3 ||
       retry.count != 3 || alias.port != 8080 ||
       config.logging.verbosity() != 2 || box.value != 5 ||
@@ -109,7 +144,10 @@ int main() {
       exposed.value != 11 || standalone.value != 13 ||
       ordered.value.value != 17 || global.value != 17 ||
       derived.value != 23 || graph.next != nullptr || policy.value != 29 ||
-      moved.length() != 6) {
+      moved.length() != 6 || cross_a.child.peer != nullptr ||
+      cross_b.child.peer != nullptr || lexical.read() != 37 ||
+      lexical.default_value() != 37 || grandchild.read() != 37 ||
+      generic_child.read() != 37 || alias_value != 3) {
     return 1;
   }
   std::println("nested types");

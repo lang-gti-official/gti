@@ -3099,6 +3099,20 @@ auto SemanticVisitor::Impl::enterDeclarationContext(
     for (const auto &[name, member] : info.members) {
       scopes.back().emplace(name, member.symbol);
     }
+    addEnclosingClassStaticMembers(*owner);
+  }
+}
+
+auto SemanticVisitor::Impl::addEnclosingClassStaticMembers(ClassId owner)
+    -> void {
+  // Detached and concrete body analysis must see the same lexical static
+  // members as the declaration walk, without capturing an outer receiver.
+  for (ClassId parent = classInfo(owner).enclosingClass; parent != 0;
+       parent = classInfo(parent).enclosingClass) {
+    for (const auto &[name, member] : classInfo(parent).members) {
+      if (member.symbol.staticMember)
+        scopes.back().emplace(name, member.symbol);
+    }
   }
 }
 
@@ -4993,7 +5007,7 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
   }
   if (qualified && symbol.ownerClass != 0 &&
       symbol.access == AccessModifier::Private &&
-      currentClass != symbol.ownerClass) {
+      !isWithinClass(symbol.ownerClass)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, expr.name(),
         "Static member '" + expr.name().lexeme + "' of '" +
@@ -8925,7 +8939,7 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
   }
   if (symbol->ownerClass != 0 && symbol->type != SemanticType::Function &&
       symbol->access == AccessModifier::Private &&
-      currentClass != symbol->ownerClass) {
+      !isWithinClass(symbol->ownerClass)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, expr.name().last(),
         "Static member '" + expr.name().last().lexeme + "' of '" +
@@ -9646,7 +9660,7 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
                               "from field initializers yet.");
   }
   if (symbol->ownerClass != 0 && symbol->access == AccessModifier::Private &&
-      currentClass != symbol->ownerClass) {
+      !isWithinClass(symbol->ownerClass)) {
     const ClassInfo &declaringOwner = classInfo(symbol->ownerClass);
     Diagnostic diagnostic =
         makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, expr.name(),

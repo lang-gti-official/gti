@@ -1967,7 +1967,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
 
   if (selected.constructor != nullptr &&
       selected.constructor->access == AccessModifier::Private &&
-      currentClass != classId) {
+      !isWithinClass(classId)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, paren,
         "Constructor of '" + owner.name.lexeme + "' is private.");
@@ -2759,7 +2759,7 @@ auto SemanticVisitor::Impl::resolveDefaultConstruction(const SemanticType &type,
   }
   if (!constructor->genericParameters.empty() ||
       (constructor->access == AccessModifier::Private &&
-       currentClass != owner->id)) {
+       !isWithinClass(owner->id))) {
     return std::nullopt;
   }
 
@@ -3179,7 +3179,7 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
     return false;
   }
   if (alias.ownerClass != 0 && alias.access == AccessModifier::Private &&
-      currentClass != alias.ownerClass) {
+      !isWithinClass(alias.ownerClass)) {
     const ClassInfo &owner = classInfo(alias.ownerClass);
     Diagnostic diagnostic =
         makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, use,
@@ -6699,6 +6699,7 @@ auto SemanticVisitor::Impl::prepareClassInstanceContext(
   for (const auto &[name, member] : owner.members) {
     scopes.back().emplace(name, substituteSymbol(member.symbol, concreteClass));
   }
+  addEnclosingClassStaticMembers(classId);
   instanceClassContextActive = true;
   return true;
 }
