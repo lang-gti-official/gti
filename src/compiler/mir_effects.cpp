@@ -248,6 +248,10 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.initializesValue = true},
     // AtomicCompareExchange: synchronization metadata supplies both barriers.
     MirEffectTraits{.initializesValue = true},
+    // AtomicWait/Notify: synchronization metadata preserves blocking/wakeup.
+    MirEffectTraits{},
+    MirEffectTraits{},
+    MirEffectTraits{},
     // MutexLock: synchronization metadata supplies the acquire barrier.
     MirEffectTraits{.initializesValue = true},
     // MutexUnlock: synchronization metadata supplies the release barrier.
@@ -440,6 +444,14 @@ constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
                     .targetDependent = true,
                     .maySynchronize = true}, // AtomicCompareExchange
     MirEffectTraits{.readsUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .targetDependent = true,
+                    .maySynchronize = true}, // AtomicWait
+    MirEffectTraits{.writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .targetDependent = true,
+                    .maySynchronize = true}, // AtomicNotify
+    MirEffectTraits{.readsUnknownMemory = true,
                     .writesUnknownMemory = true,
                     .invokesRuntime = true,
                     .mayTrap = true,
@@ -599,6 +611,9 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "atomic-store",
     "atomic-exchange",
     "atomic-compare-exchange",
+    "atomic-wait",
+    "atomic-notify-one",
+    "atomic-notify-all",
     "mutex-lock",
     "mutex-unlock",
     "mutex-guard-active",
@@ -694,6 +709,8 @@ constexpr auto synchronizationNames = std::to_array<std::string_view>({
     "atomic-store",
     "atomic-read-modify-write",
     "atomic-compare-exchange",
+    "atomic-wait",
+    "atomic-notify",
     "mutex-lock",
     "mutex-unlock",
     "condition-wait",

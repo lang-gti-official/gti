@@ -882,6 +882,20 @@ matrix, and the sealed C++ plan maps private storage and the verified order to
 their native representations. The backend never infers an atomic from a class
 name or reconstructs an order from source syntax.
 
+Safe scalar waiting uses the same private storage and ordinary public source
+wrappers. Exact private wait declarations attach `AtomicWait` plus a load-legal
+order; notification declarations attach `AtomicNotify` without an order and
+retain distinct one/all intrinsic identities. MIR validates stable shared
+storage, exact scalar operands, void results, absent ownership transfer and
+failure edges, and the synchronization identity. Both operations are retained
+as non-removable, non-speculatable, non-reorderable effects even for relaxed
+waiting. Only verified MIR emits native wait/notify calls. The C++20/C++23
+representation delegates parking to `std::atomic<T>` without extra GTI state,
+polling policy, or per-call allocation. This is a target implementation of
+GTI's documented wait contract, not semantic authority from the C++ spelling.
+No mutex-loan suspension, public-name exception, new syntax or LSP inference
+path is introduced. Ordinary application wrappers compose the same calls.
+
 Fixed-width integer `fetch_add`, `fetch_sub`, `fetch_and`, `fetch_or`, and
 `fetch_xor` remain source-library policy: private generic update helpers form
 strong compare/exchange loops from those same exact declarations. Consequently
@@ -1420,7 +1434,7 @@ publication, and cleanup on both ordinary and failure exits.
 `array::swap` uses whole-array structural transfer. Array/vector
 `swap_elements` perform public bounds checks. Arrays use the retained fixed-array
 indexed transfer; vectors use three general relocations through source-selected
-uninitialized storage. Reverse and heapsort
+uninitialized storage. Reverse and introsort
 are ordinary GTI over these APIs, with read-only comparison scopes ending
 before each mutation. No public container or algorithm name grants compiler
 authority, and neither the library nor backend adds a copy/clone pivot.

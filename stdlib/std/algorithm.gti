@@ -218,51 +218,61 @@ void reverse<std::relocatable T>(mut std::vector<T>& values)
 }
 
 namespace detail {
-// Borrow the owner read-only for the entire comparison. This selects readable
-// element access even though the sorting caller owns an exclusive reborrow.
-bool sort_less_at<std::relocatable T>(std::vector<T>& values,
-                                    size_t left, size_t right)
-  requires std::vector_element<T> && std::totally_ordered<T> {
-  return values[left] < values[right];
-}
+// The partition levels a range may use before it falls back to heapsort:
+// 2*floor(log2(count)), which keeps the worst case O(n log n).
+size_t sort_depth_limit(size_t count) {
+  mut size_t depth = size_t(0);
+  mut size_t remaining = count;
+  while (remaining > size_t(1)) {
+    remaining /= size_t(2);
+    depth += size_t(2);
+  }
+  return depth;
 }
 
-void sort<std::relocatable T>(mut std::vector<T>& values)
-  requires std::vector_element<T> && std::totally_ordered<T> {
-  mut size_t end = values.size();
-  mut size_t start = end / size_t(2);
-  while (end > size_t(1)) {
-    mut size_t root = size_t(0);
-    if (start > size_t(0)) {
-      start--;
-      root = start;
-    } else {
-      end--;
-      values.swap_elements(size_t(0), end);
-    }
-    while (root < end / size_t(2)) {
-      mut size_t child = root * size_t(2) + size_t(1);
-      if (child + size_t(1) < end &&
-          detail::sort_less_at(values, child, child + size_t(1))) {
-        child++;
+// The default relation: operator< on two readable elements.
+class sort_less<std::totally_ordered T> {
+public:
+  sort_less() {}
+  bool operator()(T& left, T& right) { return left < right; }
+};
+
+// Each phase below borrows the caller's one comparator and compares through a
+// read-only reborrow of the owner that ends before any swap. Keeping each
+// phase a separate small function keeps its element accesses inlinable. The
+// public overloads state the comparator contract; these internal phases
+// check their invocations at concrete instantiation.
+
+// Insertion sort of [low, high).
+void sort_insertion<std::relocatable T, Compare>(mut std::vector<T>& values,
+                                                 mut Compare& compare,
+                                                 size_t low, size_t high)
+  requires std::vector_element<T> {
+  for (mut size_t next = low + size_t(1); next < high; next++) {
+    mut size_t position = next;
+    while (position > low) {
+      mut bool before = false;
+      {
+        std::vector<T>& readable = values;
+        before = compare(readable[position], readable[position - size_t(1)]);
       }
-      if (!detail::sort_less_at(values, root, child)) { break; }
-      values.swap_elements(root, child);
-      root = child;
+      if (!before) {
+        break;
+      }
+      values.swap_elements(position, position - size_t(1));
+      position--;
     }
   }
 }
 
-// A complete-range comparator overload keeps one exact callable in the same
-// exclusive scope as the vector. The bounded relation guarantees an owned
-// bool result for two readable T values and rejects a consuming target because
-// sorting may compare zero or more times. Iterative heapsort keeps one owned
-// comparator, O(n log n) comparisons, and constant auxiliary storage. Neither
-// sort overload promises stability. Compare must define a strict weak order.
-void sort<std::relocatable T, Compare>(mut std::vector<T>& values,
-                                    mut Compare compare)
-  requires std::vector_element<T> && std::comparator<Compare, T> {
-  mut size_t end = values.size();
+// Heapsort of [low, high). root < end/2 proves 2*root+1 is an in-range child
+// without overflow; an odd-sized heap's last parent also has children at
+// root == end/2-1.
+void sort_heap<std::relocatable T, Compare>(mut std::vector<T>& values,
+                                            mut Compare& compare, size_t low,
+                                            size_t high)
+  requires std::vector_element<T> {
+  mut size_t end = high - low;
   mut size_t start = end / size_t(2);
   while (end > size_t(1)) {
     mut size_t root = size_t(0);
@@ -271,30 +281,205 @@ void sort<std::relocatable T, Compare>(mut std::vector<T>& values,
       root = start;
     } else {
       end--;
-      values.swap_elements(size_t(0), end);
+      values.swap_elements(low, low + end);
     }
-    // root < end/2 proves 2*root+1 is an in-bounds child without overflow.
-    // An odd-sized heap's last parent also has children at root == end/2-1.
     while (root < end / size_t(2)) {
       mut size_t child = root * size_t(2) + size_t(1);
       if (child + size_t(1) < end) {
-        mut bool before = false;
+        mut bool larger = false;
         {
           std::vector<T>& readable = values;
-          before = compare(readable[child], readable[child + size_t(1)]);
+          larger = compare(readable[low + child],
+                           readable[low + child + size_t(1)]);
         }
-        if (before) { child++; }
+        if (larger) {
+          child++;
+        }
       }
       mut bool before = false;
       {
         std::vector<T>& readable = values;
-        before = compare(readable[root], readable[child]);
+        before = compare(readable[low + root], readable[low + child]);
       }
-      if (!before) { break; }
-      values.swap_elements(root, child);
+      if (!before) {
+        break;
+      }
+      values.swap_elements(low + root, low + child);
       root = child;
     }
   }
+}
+
+// Partitions [low, high), which holds more than 16 elements, and returns the
+// pivot's final index: earlier elements are not after it and later elements
+// are not before it. The pivot is the median of the first, middle and last
+// elements or, for a range longer than 40, the median of the medians of three
+// evenly spaced triples (Bentley and McIlroy, "Engineering a Sort Function",
+// 1993). Both scans stop at elements equal to the pivot, so runs of equal
+// elements split evenly, and both stay inside (low, high) whatever the
+// comparison answers.
+size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& values,
+                                                   mut Compare& compare,
+                                                   size_t low, size_t high)
+  requires std::vector_element<T> {
+  size_t count = high - low;
+  size_t middle = low + count / size_t(2);
+  size_t last = high - size_t(1);
+  mut bool before = false;
+  mut size_t samples[9] = {};
+  mut size_t sampled = size_t(3);
+  samples[0] = low;
+  samples[1] = middle;
+  samples[2] = last;
+  if (count > size_t(40)) {
+    size_t step = count / size_t(8);
+    samples[1] = low + step;
+    samples[2] = low + step * size_t(2);
+    samples[3] = middle - step;
+    samples[4] = middle;
+    samples[5] = middle + step;
+    samples[6] = last - step * size_t(2);
+    samples[7] = last - step;
+    samples[8] = last;
+    sampled = size_t(9);
+  }
+  // Order each triple of sample indices by value; its middle entry is the
+  // triple's median. Nine samples then reduce to their three medians.
+  while (true) {
+    for (mut size_t group = size_t(0); group < sampled; group += size_t(3)) {
+      for (mut size_t next = group + size_t(1); next < group + size_t(3);
+           next++) {
+        mut size_t position = next;
+        while (position > group) {
+          {
+            std::vector<T>& readable = values;
+            before = compare(readable[samples[position]],
+                             readable[samples[position - size_t(1)]]);
+          }
+          if (!before) {
+            break;
+          }
+          size_t held = samples[position];
+          samples[position] = samples[position - size_t(1)];
+          samples[position - size_t(1)] = held;
+          position--;
+        }
+      }
+    }
+    if (sampled == size_t(3)) {
+      break;
+    }
+    samples[0] = samples[1];
+    samples[1] = samples[4];
+    samples[2] = samples[7];
+    sampled = size_t(3);
+  }
+  values.swap_elements(low, samples[1]);
+  mut size_t left = low + size_t(1);
+  mut size_t right = last;
+  while (true) {
+    while (left <= right) {
+      {
+        std::vector<T>& readable = values;
+        before = compare(readable[left], readable[low]);
+      }
+      if (!before) {
+        break;
+      }
+      left++;
+    }
+    while (left <= right) {
+      {
+        std::vector<T>& readable = values;
+        before = compare(readable[low], readable[right]);
+      }
+      if (!before) {
+        break;
+      }
+      right--;
+    }
+    if (left >= right) {
+      break;
+    }
+    values.swap_elements(left, right);
+    left++;
+    right--;
+  }
+  values.swap_elements(low, right);
+  return right;
+}
+
+// Introsort. A range longer than 16 elements is partitioned; shorter ranges
+// finish with insertion sort, and a range that exhausts sort_depth_limit
+// partition levels finishes with heapsort, so comparisons stay O(n log n) for
+// every input. Each split leaves the larger side on a fixed stack and
+// continues with the smaller side, so at most log2(n) < 64 ranges wait at
+// once and sorting never allocates. Only checked restoring swaps move
+// elements, so an interrupted sort leaves a permutation of the original
+// elements.
+void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
+                                            mut Compare& compare)
+  requires std::vector_element<T> {
+  mut size_t lows[64] = {};
+  mut size_t highs[64] = {};
+  mut size_t depths[64] = {};
+  mut size_t waiting = size_t(0);
+  mut size_t low = size_t(0);
+  mut size_t high = values.size();
+  mut size_t depth = sort_depth_limit(high);
+  while (true) {
+    if (high - low <= size_t(16)) {
+      sort_insertion(values, compare, low, high);
+    } else if (depth == size_t(0)) {
+      sort_heap(values, compare, low, high);
+    } else {
+      depth--;
+      size_t pivot = sort_partition(values, compare, low, high);
+      if (pivot - low < high - pivot - size_t(1)) {
+        lows[waiting] = pivot + size_t(1);
+        highs[waiting] = high;
+        depths[waiting] = depth;
+        waiting++;
+        high = pivot;
+      } else {
+        lows[waiting] = low;
+        highs[waiting] = pivot;
+        depths[waiting] = depth;
+        waiting++;
+        low = pivot + size_t(1);
+      }
+      continue;
+    }
+    if (waiting == size_t(0)) {
+      break;
+    }
+    waiting--;
+    low = lows[waiting];
+    high = highs[waiting];
+    depth = depths[waiting];
+  }
+}
+}
+
+// Both overloads sort in place with detail::introsort: O(n log n)
+// comparisons in the worst case, fixed auxiliary storage and no allocation.
+// Neither promises stability; the order of equal elements is unspecified.
+void sort<std::relocatable T>(mut std::vector<T>& values)
+  requires std::vector_element<T> && std::totally_ordered<T> {
+  mut detail::sort_less<T> less{};
+  detail::introsort(values, less);
+}
+
+// A complete-range comparator overload keeps one exact callable in the same
+// exclusive scope as the vector and lends it to every phase. The bounded
+// relation guarantees an owned bool result for two readable T values and
+// rejects a consuming target because sorting may compare zero or more times.
+// Compare must define a strict weak order; any other relation still leaves a
+// permutation.
+void sort<std::relocatable T, Compare>(mut std::vector<T>& values,
+                                    mut Compare compare)
+  requires std::vector_element<T> && std::comparator<Compare, T> {
+  detail::introsort(values, compare);
 }
 
 // Complete-range predicate and operation clients derive the element type from

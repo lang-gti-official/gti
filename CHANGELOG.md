@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.410.0 — Declared field defaults through reflection; JSON files
+## 0.411.0 — Declared field defaults through reflection; JSON files
 
 - `std::meta::field<T, I>::has_default()` tells whether a field declares an
   initializer, and `default_value()` evaluates a fresh copy of it where the
@@ -20,6 +20,16 @@ for what minor and patch releases mean.
   from declared defaults instead of failing with `missing_field`; ignored
   fields take their declared defaults; `read_file<T>`, `write_file` and
   `write_file_pretty` move documents to and from disk (`errc::io_failure`).
+
+## 0.410.1 — Faster `std::sort`
+
+- `std::sort` now uses introsort instead of heapsort. It partitions around a
+  sampled median, uses insertion sort for short ranges, and falls back to
+  heapsort so that the worst case stays at O(n log n) comparisons. Sorting a
+  million integers is about 1.8 times as fast, and sorting strings about 2.1
+  times as fast. Results, the comparator contract, failure behaviour and the
+  absence of allocation are unchanged. The order of equal elements was never
+  specified and may differ.
 
 ## 0.409.0 — `<std/json>` is the reflection-driven library
 

@@ -1,4 +1,5 @@
-// Same iterative heapsort as stdlib/std/algorithm.gti, with C++ vector access.
+// The iterative heapsort stdlib/std/algorithm.gti used before introsort, with
+// C++ vector access.
 #include <cstdint>
 #include <cstdio>
 #include <utility>

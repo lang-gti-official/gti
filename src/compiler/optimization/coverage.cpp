@@ -277,6 +277,9 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::ThreadJoin:
   case IntrinsicKind::ThreadAutoJoin:
   case IntrinsicKind::AtomicLoad:
+  case IntrinsicKind::AtomicWait:
+  case IntrinsicKind::AtomicNotifyOne:
+  case IntrinsicKind::AtomicNotifyAll:
   case IntrinsicKind::AtomicStore:
   case IntrinsicKind::AtomicExchange:
   case IntrinsicKind::AtomicCompareExchange:
@@ -513,6 +516,8 @@ optimizationCoverage(SynchronizationOperationKind kind) {
   case SynchronizationOperationKind::ThreadScope:
   case SynchronizationOperationKind::ThreadJoin:
   case SynchronizationOperationKind::AtomicLoad:
+  case SynchronizationOperationKind::AtomicWait:
+  case SynchronizationOperationKind::AtomicNotify:
   case SynchronizationOperationKind::AtomicStore:
   case SynchronizationOperationKind::AtomicReadModifyWrite:
   case SynchronizationOperationKind::AtomicCompareExchange:

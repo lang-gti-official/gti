@@ -5,6 +5,7 @@ std::atomic<int32_t> shared_count{0};
 
 void add_one() {
   [[discard]] shared_count.fetch_add(1, std::memory_order_acq_rel());
+  shared_count.notify_one();
 }
 
 int main() {
@@ -16,6 +17,13 @@ int main() {
 
   mut std::thread first = std::move(first_started).value();
   mut std::thread second = std::move(second_started).value();
+  // Sleep until both workers publish completion. Load before waiting: if a
+  // worker already changed the value, wait returns without losing its wakeup.
+  mut int32_t observed = shared_count.load(std::memory_order_acquire());
+  while (observed != 2) {
+    shared_count.wait(observed, std::memory_order_acquire());
+    observed = shared_count.load(std::memory_order_acquire());
+  }
   auto first_joined = first.join();
   auto second_joined = second.join();
   if (!first_joined.has_value() || !second_joined.has_value()) {

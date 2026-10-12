@@ -1,0 +1,125 @@
+#include <std/algorithm>
+#include <std/vector>
+
+// McIlroy's killer adversary ("A Killer Adversary for Quicksort", 1999)
+// decides element values lazily. When two undecided elements meet, it fixes
+// the current pivot candidate to the next solid value, so each partition is as
+// unbalanced as the comparisons allow. Introsort must then fall back to
+// heapsort and stay O(n log n), and the result must still be sorted by the
+// values the adversary fixed.
+mut int values[1024] = {};
+mut int gas = 0;
+mut int solid = 0;
+mut int candidate = 0;
+mut uint64_t comparisons = 0;
+
+bool adversary_less(int left, int right) {
+  comparisons++;
+  std::size_t x = std::size_t(left);
+  std::size_t y = std::size_t(right);
+  if (values[x] == gas && values[y] == gas) {
+    if (left == candidate) {
+      values[x] = solid;
+    } else {
+      values[y] = solid;
+    }
+    solid++;
+  }
+  if (values[x] == gas) {
+    candidate = left;
+  } else if (values[y] == gas) {
+    candidate = right;
+  }
+  return values[x] < values[y];
+}
+
+class Adversary {
+public:
+  Adversary() {}
+  bool operator()(int& left, int& right) mut {
+    return adversary_less(left, right);
+  }
+};
+
+// The default overload reaches the same adversary through operator<. Sorting
+// uses only <; the other relations complete std::totally_ordered.
+class Item {
+  int id;
+public:
+  Item(int id) : id(id) {}
+  int identity() { return this.id; }
+  bool operator==(Item& other) { return this.id == other.id; }
+  bool operator!=(Item& other) { return this.id != other.id; }
+  bool operator<(Item& other) { return adversary_less(this.id, other.id); }
+  bool operator>(Item& other) { return adversary_less(other.id, this.id); }
+  bool operator<=(Item& other) { return !adversary_less(other.id, this.id); }
+  bool operator>=(Item& other) { return !adversary_less(this.id, other.id); }
+};
+
+void reset(int count) {
+  gas = count;
+  solid = 0;
+  candidate = 0;
+  comparisons = uint64_t(0);
+  for (mut int i = 0; i < count; i++) {
+    values[std::size_t(i)] = count;
+  }
+}
+
+// Introsort's worst case is 2*floor(log2(n)) partition levels, each about n
+// comparisons, then heapsort and short insertion sorts; 5*n*(ceil(log2(n))+1)
+// covers that sum. A quicksort without the fallback needs about n*n/4.
+bool within_bound(int count) {
+  mut uint64_t levels = uint64_t(0);
+  mut int width = 1;
+  while (width < count) {
+    width *= 2;
+    levels++;
+  }
+  return comparisons <= uint64_t(5) * uint64_t(count) * (levels + uint64_t(1));
+}
+
+// Every identity appears once, in nondecreasing order of its final value.
+int check(std::vector<int>& ids, int count) {
+  mut std::vector<int> seen{};
+  seen.resize(std::size_t(count));
+  for (mut std::size_t i = std::size_t(0); i < ids.size(); i++) {
+    int id = ids[i];
+    if (id < 0 || id >= count) { return 1; }
+    seen[std::size_t(id)]++;
+    if (i > std::size_t(0) &&
+        values[std::size_t(ids[i - std::size_t(1)])] > values[std::size_t(id)]) {
+      return 2;
+    }
+  }
+  for (auto& times : seen) {
+    if (times != 1) { return 3; }
+  }
+  return 0;
+}
+
+int main() {
+  int sizes[6] = {17, 64, 100, 257, 1000, 1024};
+  for (auto& count : sizes) {
+    mut std::vector<int> ids{};
+    for (mut int i = 0; i < count; i++) { ids.push_back(i); }
+    reset(count);
+    std::sort(ids, Adversary());
+    if (!within_bound(count)) { return 10; }
+    int ordered = check(ids, count);
+    if (ordered != 0) { return 10 + ordered; }
+    if (count == 1024) { std::println(comparisons); }
+
+    mut std::vector<Item> items{};
+    for (mut int i = 0; i < count; i++) { items.push_back(Item(i)); }
+    reset(count);
+    std::sort(items);
+    if (!within_bound(count)) { return 20; }
+    mut std::vector<int> sorted{};
+    for (auto& item : items) { sorted.push_back(item.identity()); }
+    int item_order = check(sorted, count);
+    if (item_order != 0) { return 20 + item_order; }
+    if (count == 1024) { std::println(comparisons); }
+  }
+  return 0;
+}

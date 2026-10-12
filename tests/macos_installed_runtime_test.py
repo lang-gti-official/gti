@@ -90,6 +90,13 @@ def main():
         # Copying the examples keeps their source location outside a checkout;
         # all their standard-library units must resolve from this toolchain.
         examples = pathlib.Path(__file__).resolve().parent.parent / "examples"
+        waiting = root / "installed-atomic-wait.gti"
+        waiting.write_text((examples / "076-scalar-atomics.gti").read_text())
+        for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
+            executable = root / ("installed-wait-" + standard)
+            run([cli, waiting, "--execution-profile", "concurrent", "--std",
+                 standard, optimization, "-o", executable], environment, cwd=root)
+            run_program(executable, "2\n", environment, root)
         iterator_examples = (
             ("143-checked-container-iteration.gti",
              "Checked forward, reverse and mutable iteration\n"),
