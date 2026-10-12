@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.411.0 — Declared field defaults through reflection; JSON files
+## 0.412.0 — Declared field defaults through reflection; JSON files
 
 - `std::meta::field<T, I>::has_default()` tells whether a field declares an
   initializer, and `default_value()` evaluates a fresh copy of it where the
@@ -20,6 +20,20 @@ for what minor and patch releases mean.
   from declared defaults instead of failing with `missing_field`; ignored
   fields take their declared defaults; `read_file<T>`, `write_file` and
   `write_file_pretty` move documents to and from disk (`errc::io_failure`).
+
+## 0.411.0 — Portable aggregate standard-library imports
+
+- `import std;` makes the portable public standard-library modules available
+  through one source-defined interface. Individual imports and includes remain
+  supported. POSIX-only `std.environment`, `std.process`, and `std.tcp`, plus
+  experimental facilities, still require explicit imports.
+- Artifact builds and editor queries check trusted library bodies on demand,
+  including concrete generic dependencies. Application and package code remains
+  fully checked. `gti check` and optional raw-pointer audit diagnostics retain
+  complete analysis; auditing cannot change the emitted artifact.
+- The aggregate is installed with the toolchain, and example 147 demonstrates
+  its use. This is not precompiled-module support; loading and registering the
+  full portable library still costs more than selecting individual modules.
 
 ## 0.410.1 — Faster `std::sort`
 

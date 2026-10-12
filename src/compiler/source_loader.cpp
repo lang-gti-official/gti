@@ -332,6 +332,9 @@ std::optional<std::string> SourceLoader::standardLibraryNameForExistingPath(
 std::optional<std::string> SourceLoader::standardModuleNameForExistingPath(
     const std::filesystem::path &path) const {
   for (const std::filesystem::path &root : standardLibraryRoots) {
+    if (path == canonicalPath(root / "std.gti")) {
+      return "std";
+    }
     const std::filesystem::path directory = canonicalPath(root / "modules");
     if (path.parent_path() != directory || path.extension() != ".gti" ||
         !isImportPathSegment(path.stem().string())) {
@@ -1017,16 +1020,11 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
     // The configured standard library owns the reserved `std` module
     // namespace in direct and project compilation alike. Its interfaces have
     // one fixed location beneath each root, so a name never triggers search.
-    if (names.size() == 1) {
-      // Every interface adds its whole unit to lowering and emission, so an
-      // aggregate would make each importer pay for the entire library.
-      return reject("The standard library has no aggregate module; import "
-                    "each unit you use, such as 'import std.vector;'.");
-    }
-    const std::string &name = names[1];
+    const bool aggregate = names.size() == 1;
+    const std::string &name = aggregate ? names.front() : names[1];
     for (const std::filesystem::path &root : standardLibraryRoots) {
-      const std::filesystem::path candidate =
-          canonicalPath(root / "modules" / (name + ".gti"));
+      const std::filesystem::path candidate = canonicalPath(
+          aggregate ? root / "std.gti" : root / "modules" / (name + ".gti"));
       std::error_code error;
       if (std::filesystem::is_regular_file(candidate, error) ||
           sourceOverrides->contains(candidate.string())) {
@@ -1039,6 +1037,10 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
           standardLibraryRoots.empty()
               ? "Cannot resolve standard-library module because no standard "
                 "library root is configured."
+          : aggregate
+              ? "Standard-library aggregate module 'std' was not found; "
+                "install a standard library providing std.gti or import "
+                "individual units."
               : "Standard-library module 'std." + name +
                     "' was not found; each public <std/name> unit is "
                     "imported as 'std.name'.");

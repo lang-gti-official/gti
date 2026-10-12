@@ -450,97 +450,131 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     return result;
   }
 
-  SemanticVisitor semantic(
-      options.target, &result.sourceGraph, options.toolingOccurrences,
-      options.workMetrics, &result.sources, options.rawPointerAudit,
-      options.requireFunctionDefinitions || options.requireEntryPoint ||
-          options.program.kind == ProgramKind::Library,
-      options.trustedBodies);
-  if (options.workMetrics != nullptr) {
-    for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
-      if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId)) {
-        options.workMetrics->semanticallyAnalyzedUnits.push_back(
-            unit->path.string());
-      }
-    }
-  }
-  const auto semanticStart = std::chrono::steady_clock::now();
-  {
-    const PhaseTimeScope timeScope("gti-semantics");
-    const ProgressScope progress(options.progress, ProgressPhase::Checking);
-    result.semanticValid = semantic.check(result.program);
-    if (result.semanticValid) {
-      result.semanticValid =
-          semantic.applyProgramRequest(result.program, options.program);
-    }
-  }
-  if (options.workMetrics != nullptr) {
-    options.workMetrics->semanticMicroseconds = static_cast<std::size_t>(
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - semanticStart)
-            .count());
-  }
-  append(result.diagnostics, semantic.errors());
-  // Complete the requested inference phases before applying CI policy, so
-  // Strict and Warn discover the same concrete bodies and audit findings.
+  // Concrete generic discovery can select bodies which were not visible to
+  // declaration-time analysis. Keep each semantic model immutable while HIR
+  // reads it; incomplete discovery requests a fresh, more complete analysis.
+  const std::size_t preSemanticDiagnostics = result.diagnostics.size();
+  std::unordered_set<const FunctionDecl *> requiredBodies;
+  std::unique_ptr<SemanticVisitor> semanticOwner;
+  HirLoweringResult hir;
+  TrustedBodyAnalysis trustedBodies = options.trustedBodies;
   const auto applyAuditPolicy = [&] {
     if (!options.reportLibraryAuditFindings)
       dropTrustedAuditFindings(result.diagnostics, result.sourceGraph);
     if (promoteRawAuditDiagnostics(result.diagnostics, options.rawPointerAudit))
       result.semanticValid = false;
   };
-  if (options.requireEntryPoint && result.sourceValid && result.syntaxValid &&
-      result.semanticValid && !options.completionOffset) {
-    const SourceUnit *entry =
-        result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
-    if (auto diagnostic = semantic.model().executableEntryDiagnostic(
-            result.sourceGraph.entryUnit(),
-            entry == nullptr ? entryPath.string() : entry->path.string())) {
-      result.diagnostics.push_back(std::move(*diagnostic));
-      result.semanticValid = false;
-    }
-  }
-  if (!result.semanticValid || options.completionOffset ||
-      options.stopAfter == FrontendPhase::Semantics) {
-    result.semantics = semantic.takeModel();
-    applyAuditPolicy();
-    return result;
-  }
-
-  const auto hirStart = std::chrono::steady_clock::now();
-  HirLoweringResult hir = [&] {
-    const PhaseTimeScope timeScope("gti-hir-lowering");
-    const ProgressScope progress(options.progress, ProgressPhase::HirLowering);
-    HirLoweringScope scope{.reachablePrefix = options.lowerReachableOnly};
-    if (options.lowerReachableOnly && options.lowerLibraryReachableOnly &&
-        !options.lowerEntryUnitOnly) {
-      std::vector<std::pair<std::size_t, std::size_t>> complete;
-      for (const SourceUnit &unit : result.sourceGraph.sourceUnits()) {
-        if ((unit.entry || !result.sourceGraph.isCompilerTrusted(unit.id)) &&
-            unit.declarationCount != 0) {
-          complete.emplace_back(unit.declarationStart, unit.declarationCount);
+  for (std::size_t attempt = 0;; ++attempt) {
+    result.diagnostics.resize(preSemanticDiagnostics);
+    semanticOwner = std::make_unique<SemanticVisitor>(
+        options.target, &result.sourceGraph, options.toolingOccurrences,
+        options.workMetrics, &result.sources, options.rawPointerAudit,
+        options.requireFunctionDefinitions || options.requireEntryPoint ||
+            options.program.kind == ProgramKind::Library,
+        trustedBodies);
+    SemanticVisitor &semantic = *semanticOwner;
+    semantic.requireFunctionBodies(requiredBodies);
+    if (options.workMetrics != nullptr && attempt == 0) {
+      for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
+        if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId)) {
+          options.workMetrics->semanticallyAnalyzedUnits.push_back(
+              unit->path.string());
         }
       }
-      scope.completeDeclarations = std::move(complete);
     }
-    if (options.lowerEntryUnitOnly) {
-      if (const SourceUnit *entry =
-              result.sourceGraph.findUnit(result.sourceGraph.entryUnit())) {
-        scope.entryDeclarations = {entry->declarationStart,
-                                   entry->declarationCount};
+    const auto semanticStart = std::chrono::steady_clock::now();
+    {
+      const PhaseTimeScope timeScope("gti-semantics");
+      const ProgressScope progress(options.progress, ProgressPhase::Checking);
+      result.semanticValid = semantic.check(result.program);
+      if (result.semanticValid) {
+        result.semanticValid =
+            semantic.applyProgramRequest(result.program, options.program);
       }
     }
-    return HirLowerer(options.target, scope)
-        .lower(result.program, semantic.model(), semantic);
-  }();
-  if (options.workMetrics != nullptr) {
-    options.workMetrics->hirMicroseconds = static_cast<std::size_t>(
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - hirStart)
-            .count());
-    options.workMetrics->hirFunctionInstances =
-        hir.program.functionInstances().size();
+    if (options.workMetrics != nullptr) {
+      options.workMetrics->semanticMicroseconds += static_cast<std::size_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - semanticStart)
+              .count());
+    }
+    append(result.diagnostics, semantic.errors());
+    // Complete the requested inference phases before applying CI policy, so
+    // Strict and Warn discover the same concrete bodies and audit findings.
+    if (options.requireEntryPoint && result.sourceValid && result.syntaxValid &&
+        result.semanticValid && !options.completionOffset) {
+      const SourceUnit *entry =
+          result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+      if (auto diagnostic = semantic.model().executableEntryDiagnostic(
+              result.sourceGraph.entryUnit(),
+              entry == nullptr ? entryPath.string() : entry->path.string())) {
+        result.diagnostics.push_back(std::move(*diagnostic));
+        result.semanticValid = false;
+      }
+    }
+    if (!result.semanticValid || options.completionOffset ||
+        options.stopAfter == FrontendPhase::Semantics) {
+      result.semantics = semantic.takeModel();
+      applyAuditPolicy();
+      return result;
+    }
+
+    const auto hirStart = std::chrono::steady_clock::now();
+    hir = [&] {
+      const PhaseTimeScope timeScope("gti-hir-lowering");
+      const ProgressScope progress(options.progress,
+                                   ProgressPhase::HirLowering);
+      HirLoweringScope scope{.reachablePrefix = options.lowerReachableOnly};
+      if (options.lowerReachableOnly && options.lowerLibraryReachableOnly &&
+          !options.lowerEntryUnitOnly) {
+        std::vector<std::pair<std::size_t, std::size_t>> complete;
+        for (const SourceUnit &unit : result.sourceGraph.sourceUnits()) {
+          if ((unit.entry || !result.sourceGraph.isCompilerTrusted(unit.id)) &&
+              unit.declarationCount != 0) {
+            complete.emplace_back(unit.declarationStart, unit.declarationCount);
+          }
+        }
+        scope.completeDeclarations = std::move(complete);
+      }
+      if (options.lowerEntryUnitOnly) {
+        if (const SourceUnit *entry =
+                result.sourceGraph.findUnit(result.sourceGraph.entryUnit())) {
+          scope.entryDeclarations = {entry->declarationStart,
+                                     entry->declarationCount};
+        }
+      }
+      return HirLowerer(options.target, scope)
+          .lower(result.program, semantic.model(), semantic);
+    }();
+    if (options.workMetrics != nullptr) {
+      options.workMetrics->hirMicroseconds += static_cast<std::size_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - hirStart)
+              .count());
+      options.workMetrics->hirFunctionInstances =
+          hir.program.functionInstances().size();
+    }
+    if (hir.requiredSemanticBodies.empty())
+      break;
+    // Bound repeated registration/instantiation work. Complete checking is a
+    // conservative fallback, not permission to emit an unchecked body.
+    if (trustedBodies == TrustedBodyAnalysis::Complete)
+      break; // An unexpected missing fact remains an ordinary invalid-HIR
+             // error.
+    const std::size_t previousCount = requiredBodies.size();
+    requiredBodies.insert(hir.requiredSemanticBodies.begin(),
+                          hir.requiredSemanticBodies.end());
+    if (options.workMetrics != nullptr)
+      ++options.workMetrics->semanticDemandRounds;
+    if (attempt >= 2 || previousCount == requiredBodies.size()) {
+      trustedBodies = TrustedBodyAnalysis::Complete;
+      if (options.workMetrics != nullptr)
+        ++options.workMetrics->semanticDemandFallbacks;
+    }
+    // Destroy partial instance models before replacing their base snapshot.
+    hir = {};
   }
+  SemanticVisitor &semantic = *semanticOwner;
   result.hirValid = hir.valid();
   result.hir = std::move(hir.program);
   append(result.diagnostics, hir.diagnostics);
