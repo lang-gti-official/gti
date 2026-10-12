@@ -44,7 +44,6 @@ rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
 // stages and resulting loan source are shared by verification and emission.
 [[nodiscard]] const MirLoan *
 textAddressResultLoan(const MirBody &body, const MirInstruction &instruction);
-
 // A distinct loan-rooted address retains either descendant provenance or a
 // parallel read-only loan over the identical source/dependencies. Check typed
 // call publication too; this proves identity and access, never liveness or

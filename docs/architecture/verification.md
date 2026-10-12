@@ -1,5 +1,572 @@
 # Compiler Verification
 
+## Container iterator completion: delivery acceptance (2026-10-12)
+
+The owner accepts integration of the completed container campaign after the
+unfiltered local 672/672 pass, independent corpus/census and runtime-cost review,
+and final Linux reconciliation. The implementation remains byte-for-byte
+unchanged from clean `a051a13b`; `c4796024` adds only documentation and the
+measured native-test policy/tooling checks. Final closure is documentation-only.
+The four new examples and every current container/view family remain in the
+reviewed inventories and full local acceptance.
+
+The final clean Linux run `run-7dc91326373d4f77abf8061c8488ecc5` passes its
+Release GCC 14/LLVM 21 build and 44/45 platform gates. All eleven actual-GCC
+native-tooling controls pass without skips. Only the atomic JSON borrowed-range
+sanitizer compile exceeds its unchanged 120-second limit, despite both measured
+GCC-only inlining flags. This remains a failed platform case, not a runtime or
+sanitizer pass. No assertion, mode, compiler selection or time budget is weakened.
+
+The retained failing native invocation uses GCC 15, C++23/O1, strict FP and both
+sanitizers. Its 229 samples record 116.83 seconds accumulated `cc1plus` CPU over
+116.85 seconds native elapsed before the outer GTI timeout, with an unfinished
+sampled RSS maximum of 1.055 GiB. Host idle averages 47.94%, steal 0.127%, and
+available memory stays above 6.833 GiB; no memory-pressure or cgroup-throttling
+evidence is present. At most four native compiler processes overlap. These
+observations do not establish worker starvation, so scheduler accounting is
+unchanged. They are not a completed compilation's time or peak-memory measure.
+The exact 2,399,661-byte C++ input, invocation, source/tool identities, full
+45-entry log and untruncated resource records are retained under
+`/private/tmp/agent109-linux-c479-results/`; managed remote cleanup is confirmed.
+
+The owner explicitly requests merging with this remaining native compile-budget
+limitation rather than extending the campaign. That accepts this validation
+exception; it does not claim an all-green Linux result or resolve the native-cost
+problem. The full local success and representative runtime parity remain valid
+through exact implementation equivalence. Final documentation/test-policy checks
+run on the Mac mini before PR integration; no new laptop build is needed.
+
+## Container iterator completion: full-run reconciliation (2026-10-12)
+
+The clean final implementation candidate `a051a13b`, reconciled with canonical
+`aa85ce0d`, passes the unfiltered local suite: 672/672 gates in 1,980.25 seconds.
+The independent batch/standalone emitter comparison passes across 143 examples
+and 37,080 ready bodies; the native cutover oracle passes across all 143 examples
+and both endpoint configurations. All four new iterator examples participate.
+The 13-gate integration selection and the all-target Release build also pass.
+Complete local evidence is retained under
+`/private/tmp/gti-iterator-a051-final-validation.LRKKhd/`; an independent log
+census confirms 672 unique test entries, 672 passing records and no failed record.
+
+Fresh performance at the same clean candidate is independently reviewed against
+frozen `5385c0b0`: two five-warmup/21-interleaved-round campaigns, six complete-state
+cases and negative controls, with all 305 artifacts and 434 unique material
+references checked. Paired vector ratios are 0.991625 and 0.991034; particle
+ratios are 1.000856 and 0.999246. Runtime peak RSS is unchanged; generated C++
+grows roughly 10%, native text roughly 2.2% and executable size under 0.5%.
+Single native build/memory observations are retained, not statistical compile-time
+claims. The explicit counted-text cost branch passes its twelve negatives,
+complete checksums and zero-allocation control; doubled extent gives ratio 2.240.
+These are macOS-host results, not universal C++ parity. Raw evidence remains under
+`/private/tmp/gti-iterator-a051-final-performance.RzqPtU/`.
+
+The unchanged final Linux run `run-9c774d4f374146c5a43a41d4da538432` is terminal:
+Release GCC 14/LLVM 21 build passes, and the 45-gate selection passes 44/45.
+Only `json_borrowed_range/sanitized` exceeds its original 120-second compile
+budget under concurrent load despite the actual-GCC 15 no-called-once flag.
+Movement, storage/lane allocation controls and all eleven actual-GCC native
+tooling tests pass. Complete untruncated logs and source/tool identities are
+retained under `/private/tmp/gti-iterator-linux-a051a13b-results.Idmc94/run-results/`;
+the managed remote source/build tree is removed. This is not a successful
+platform result. The remaining native-cost/resource gap requires measured
+repair and fresh acceptance before integration; neither a budget increase nor
+omitting the atomic JSON program is an accepted repair.
+
+An idle native-only proxy freezes the exact current Linux-target program and
+runtime. The existing no-called-once flag takes 86.13 seconds wall / 86.04
+seconds CPU, with 1.576 GiB peak RSS; additionally disabling inlining takes
+80.20 seconds wall / CPU and 1.541 GiB. Both retain O1, strict FP, ASan/UBSan,
+the 120-second limit, all original JSON assertions and empty output. Actual
+instrumentation/linkage and independent ASan heap-overflow / UBSan overflow
+controls pass under both policies. Samples show roughly 87.4% host idle,
+negligible steal/throttling and at least 9.66 GiB available memory. The two large
+ELF exports are tail-truncated, but the complete binaries are hashed and
+executed remotely before cleanup; full source, measurements, instrumentation
+and control records remain under `/private/tmp/agent109-json-a051-proxy-results/`.
+The measured extra flag is confined to the atomic fixture's actual-GCC
+sanitizer mode. Its approximately 7% idle compile saving is a candidate repair,
+not concurrent platform acceptance; scheduler accounting is not changed without
+evidence of an undercount.
+
+The clean reconciled `65a32870` unfiltered local run completes all 672 gates in
+1,810.63 seconds: 669 pass and three fail. The complete independent
+batch/standalone emitter comparison and native cutover oracle pass; this is
+still a failed whole-suite result, not acceptance. Raw output, `LastTest` and
+the failed-test list are retained under
+`/private/tmp/gti-iterator-65a32870-validation.anFhTN/`.
+
+`resource_protocol_contract` exposes an overly narrow representation proof:
+an unrelated provider returns a cleanup-free Expected through an exact source
+member, while staging admits only namespace functions or callable values. The
+repair reuses the same independent, uninitialized result slot for the member;
+ordered receiver loans, exact target types and single-consumer/alias checks
+remain mandatory. A new unrelated member fixture covers absent/default-deleted
+payloads, unused observable defaults, forwarding across fallible cleanup,
+observers, by-value arguments and replacement, with the existing eight native
+modes and complete success/producer-failure/cleanup-failure observations.
+
+The two other failures are stale forgery expectations, not accepted malformed
+MIR. `owning_function_types` now checks the exact member-target rejection rather
+than the earlier unexpected-receiver wording. `mir_backend_scalar_cfg` now
+requires the compiler-owned concrete-formal-trait rejection and still requires
+production backend rejection, rather than insisting the forgery remain valid
+MIR. The three original owning gates pass after the repair, as does the expanded
+32-build member-argument matrix with all eight modes and complete observations.
+The new named lifecycle test separately passes its five independent forgeries
+in C++20 and C++23: malformed call identities fail structural MIR readiness;
+an otherwise valid result alias fails the single-slot text-vocabulary proof.
+The unrelated failure-free resource provider also builds and runs at C++20/O3.
+The checked-member variant additionally returns its result across local
+fallible cleanup: both backend standards explicitly construct the independent
+slot only on Invoke success, and all eight native modes preserve complete
+success and producer-failure cleanup observations.
+This repair checkpoint required fresh final-source whole-suite/platform and
+integration evidence. The final records and explicit accepted platform exception
+are described above; the failed historical runs remain failures.
+
+## Container iterator completion: candidate validation (2026-10-12)
+
+The clean `a814a538` unfiltered 671-gate attempt is stopped after 52 completed
+gates expose one genuine regression: all eight native modes reject the complete
+Expected result forwarded by `source_prefix_forwarded_result_cleanup`. Partial
+CTest logs and its checkpoint are retained under
+`/private/tmp/gti-iterator-a814a538-interrupted.9V0Dn8/`; exit 130 is not a
+whole-suite pass. The admission repair reuses the existing exact
+`returnedCallResultSlot` proof, preserving activation, pending-result reparent,
+fallible local cleanup, rollback and final publication. Its focused runtime
+fixture passes all eight modes and all three success/primary/secondary-failure
+observations per binary (6.91 seconds), plus ten unsafe/loan negative controls.
+The owning lifecycle test independently passes C++20/23 admission/publication-
+order checks and eleven mutations: ten ownership corruptions fail MIR
+verification; an additional result-place alias preserves otherwise valid MIR
+but fails the backend's single-slot proof. The complete `source_prefix_owner_runtime`
+gate also passes all 104 build cases across its thirteen fixtures and eight
+native modes (72.97 seconds). Fresh clean final-head acceptance remains required.
+
+Fresh performance at `a814a538`, against frozen `5385c0b0`, is independently
+accepted: two five-warmup/21-interleaved-round campaigns, six complete-state
+cases, negative controls and all 305 artifact hashes. Paired vector ratios are
+0.989254 and 0.992608; particle ratios are 1.000237 and 1.000063. This remains
+evidence for that clean checkpoint, not automatic certification of the subsequent
+admission repair. The exact assessment and raw costs are retained under
+`/private/tmp/gti-iterator-final-performance-current.oUE5Ix/`.
+
+The counted-text allocation/asymptotic control is explicitly run with
+`text_view_iterator_runtime_test.py <Release-gti> --semantic-only --cost` at
+`a814a538`; default CTest does not enable its optional cost branch. Twelve source
+negatives, complete checksums and zero traversal allocations pass. Doubling
+extent from 128 to 256 gives a median time ratio of 1.948; this is a scheduling-
+tolerant smoke control, not a statistical speedup claim. Raw output is retained
+at `/private/tmp/gti-iterator-a814a538-text-cost.log`.
+
+The clean `981b1929` unfiltered 669-gate run is deliberately interrupted after
+it exposes two failing regressions: an obsolete consuming-carrier ancestry
+assertion and the JSON iterator matrix's missing worker registration. Raw partial
+CTest evidence remains under
+`/private/tmp/gti-iterator-final-validation.apFz7m/`; this is not a passing
+whole-suite certificate. The repaired exact ownership test, including forged
+consumed-parent and omitted-retirement negatives, passes with a Release compiler,
+as do `ephemeral_carrier_mir` and the complete worker-registration census.
+Reconciliation `5bfbc8a4` preserves main's Expected-conditional fix. Additional
+Expected/member-argument, checked-referent replacement and incomplete-payload
+representation fixes require fresh focused, whole-suite, platform and performance
+acceptance at the resulting clean head; the earlier performance record below
+does not certify those subsequent compiler edits.
+
+The subsequent Release rebuild passes exact formal copy/move forgeries,
+member-receiver/argument transfers, independent consuming-relay dependencies,
+the recursive-layout source checks and the corresponding LSP edit/clear test.
+The twelve direct allocation cases also pass at C++20/O3, C++23/O3 and
+ASan/UBSan, preserving complete state with zero traversal allocations. A new
+independent nominal Expected capture reproduces a concurrency-trait disagreement
+in MIR. Its repair passes scoped semantic controls and aggregate/owning-handle
+pack forgeries without expanding runtime layout-query eligibility. Fresh
+final-head whole-suite, platform and performance acceptance remain required.
+
+The combined development rebuild passes the complete compiler pipeline and both
+non-update 143-example inventories. The new Expected runtime matrices pass all
+native modes, including sanitizers; forged formal traits expose a remaining
+verification gap and are not waived. Optimizer abstract-entry access negatives
+retain their exact current `stored entry dependency` rejection wording instead
+of a stale message fragment. Additional direct allocation windows cover vector,
+array, deque, list, set, unordered_set, pool, resource_storage and SIMD masks;
+their full native/sanitizer acceptance is separate from source-mechanism sharing.
+The older queued Linux run is deliberately cancelled after its successful
+optimized build, and fetched raw results remain under
+`.git/gti-remote-runner/results/run-98998d29aaf747ecbb8c16104a5692fb/`.
+The wrapper removes only that obsolete run's remote checkout/build after fetch.
+It has no platform-suite pass; the combined final source needs a fresh run.
+
+The final exact-head performance check at clean `41dea5d7`, against frozen clean
+`5385c0b0`, passes on an Apple M2 Max with Apple Clang 21, O3/C++23 and strict
+floating-point ordering. Two campaigns each use five warmups and 21 seeded,
+interleaved rounds while holding the suite and all build slots. Paired median
+candidate/baseline vector ratios are 0.990064 and 0.987969 (95% bootstrap
+intervals 0.985614–0.993630 and 0.987142–0.992685); particle ratios are
+1.000481 and 1.000992 (0.999242–1.001718 and 0.998631–1.002500). There is no
+material runtime regression in these workloads. All six separate complete-state
+cases and the negative oracle pass; all 305 retained artifacts are hash-verified.
+The raw assessment, samples, source/tool identities and artifact index are under
+`/private/tmp/gti-iterator-final-performance.6yRKqh/`.
+
+Baseline/candidate vector and particle generated C++ sizes are
+842,023/924,913 and 874,944/960,265 bytes; native text sizes are
+48,332/49,392 and 47,524/48,540 bytes. Instrumented single builds take
+1.285/1.839 and 1.330/1.394 seconds, with peak build RSS
+235,995,136/250,560,512 and 235,290,624/259,194,880 bytes. Median runtime RSS
+is 3,801,088/3,784,704 and 5,668,864/5,668,864 bytes. Single build observations
+are not statistical compile-time claims; these timing probes do not count
+allocations, so the dedicated allocation-counted traversal gates remain
+required. Idiomatic C++ is a successful-observation control, not an identical
+defined-failure contract. Whole-suite/platform acceptance and integration are
+still separate requirements. The independent final coverage review identifies
+manifest omissions for map endpoints and counted-text free wrappers; their
+records and direct wrapper cases are added without changing production code.
+
+The records below are chronological checkpoint evidence, not a blanket final
+certification. After checkpoint `c689a9a8` repairs all seven failures described
+below, focused fresh gates pass for borrowed-class range verification,
+shared-accessor runtime, generic algorithms, composed coverage and container
+failure/cleanup contracts. The sanitized contiguous partition passes locally
+with all 21 source negatives; its Linux run remains a separate platform gate.
+
+Reconciliation with scoped concurrency and expected replacement exposes a
+multi-dependency relay regression in example 109. The repaired lowering
+transports only a semantic identity that the result actually preserves; a
+distinct retained result keeps its own endpoint rather than inheriting its
+consumed input's last use. Mixed shared/exclusive and multiple-exclusive
+unrelated carriers pass independent MIR/backend admission and runtime tests;
+omitted dependencies and premature result retirement are rejected. Every
+Release target rebuilds successfully. Both full non-update example censuses
+then pass across 143 examples: 94,250 declarations, 14,656 lowered bodies,
+9,175 generated items and 14,645 emitted MIR bodies. Independent stable-name
+and multiplicity audits explain all 59 changed inventories through imported
+transfer-callable declarations/adapters, the expanded scoped-concurrency
+example, JSON projections/traversal and the paired reverse common endpoint;
+no named row disappears. The mixed-parent provisional inventory for example
+66 is corrected without changing its existing two-body lowered/emitted
+distinction. Final whole-suite, platform and performance acceptance remain
+separate gates, not consequences of these passing census checks.
+
+The subsequent clean `e67961cf` Mini run builds every Release target and
+finishes the unfiltered 653-test suite with 650 passes and three failures.
+The complete native cutover oracle passes all 142 sources at O0/C++20 and
+O3/C++23. The actual emitter comparison does not run: ambient retained-evidence
+configuration leaks into the protocol stub gate, which creates the real
+corpus destination prematurely. Its repaired coordinator tests isolate that
+configuration while preserving all 29 protocol cases, and independently prove
+that an existing ambient directory remains untouched. The LLDB gate is denied
+debug-launch permission in the SSH environment; the exact local gate passes
+outside the tool sandbox without changing operating-system security policy.
+These repairs do not turn the failed full run into a passing certificate.
+The fetched raw results are under
+`.git/gti-remote-runner/results/run-da114287fd40420280dced8a1b9202f9/`.
+
+The Linux all-target run of that same clean source stops during linking with
+`No space left on device`, before its selected tests can execute. Its fetched
+logs are under
+`.git/gti-remote-runner/results/run-3ba5ad5d80334c17b06b93f49af1752a/`.
+Both remote run directories have been removed by the wrapper after retrieval;
+neither failed run establishes final platform acceptance. Independently,
+the three exact contiguous sanitizer partitions pass on Linux with all
+42 retained scenarios/provider observations and no truncated logs, using an
+optimized GTI compiler and the unchanged native compile budget. That scoped
+result is retained under
+`.git/gti-remote-runner/results/run-42be600c03554d91a6fd10fb0193df66/`.
+
+Current reconciliation preserves the constexpr builder as example 142 and
+renumbers the four iterator demonstrations to 143–146. The same fresh optimized
+inventory executable compares current main's constexpr source and the combined
+source: exactly 153 declaration rows, ten structural-operator adapters and
+two memory-slot sentinel initializer bodies are added, with no removed name or
+multiplicity. This is an independently reviewed delta, not automatic baseline
+regeneration or whole-corpus certification. The paired reverse common endpoint
+now has a native positive and the exclusive generic movement prerequisite has
+an unrelated user-defined cursor plus five independently rejected MIR/LoweredProgram
+forgeries. JSON object key/value/member projections are included in the active
+container goal. The focused JSON matrix now passes all eight modes (O0/O1/O3,
+C++20/C++23, no-elide and ASan/UBSan), retaining all seven defined-failure
+cleanup observations per binary, zero-allocation success and 13 independent
+lifetime/access rejections. Exclusive generic movement passes 24 positive
+builds and 192 boundary/failure cases; paired traversal passes 24 builds and
+nine lifetime/access rejections. Final inventories, current-head
+full/platform/performance checks and integration remain required.
+
+Reconciliation `9c51bdcf` preserves main's reflected-JSON implementation and
+reserves examples 142–145 for the four unpublished iterator demonstrations;
+the combined minor version is 0.404.0. A fresh optimized inventory tool exactly
+matches examples 137/138. Using that same executable against main's source
+and the combined source independently explains every reflected-JSON addition:
+261 declaration rows, 16 source structural-operator adapters, one concrete
+`checked_iterator_step` adapter, and five bodies (the memory/text sentinel
+field/static-field initializers and that helper). No declaration, body or
+generated-item name/multiplicity disappears. Direct production C++ emission
+confirms 389 distinct MIR body identities for that example. The reviewed fixed
+inventories now total 89,991 declarations / 14,470 lowered bodies / 8,876 generated
+items, and 14,461 emitted MIR bodies across 142 examples. Complete non-update
+census/oracle checks remain required; a reviewed delta is not a whole-corpus pass.
+
+An operation-scoped structural batch and immutable production text plan remove
+repeated whole-program verification from the emitter corpus without changing
+the two sweeps or their assertions. The new structural operation deliberately
+does not substitute text-vocabulary admission for structural readiness.
+Preflight tests retain exact standalone results/body order, global forgery
+rejection before body results, and body-local missing-row issues. All 29
+coordinator protocol cases pass with and without optional retained evidence
+(58 invocations). The fresh all-target Release build, compiler pipeline,
+preflight/protocol tests and 554-file formatting check pass. Exact old/new
+comparison also passes for the newly reconciled reflected-JSON fixture (767
+structurally ready bodies and 517 identical production/general text bodies).
+Comparison over the entire reconciled corpus and fresh unfiltered/platform
+acceptance still remain open; a single-fixture proxy is not final certification.
+
+The frozen complete comparison subsequently identifies a test-only
+overconstraint: the detached agreement map does not overlay every callable
+template representation, and the original gate compares only production-selected
+scalar-CFG bodies. The added whole-plan readiness assertion is therefore removed,
+not an original admission check. Global validation, every selected body identity,
+per-body emitted status, exact standalone issues/text and production text matching
+remain mandatory. A fresh owning-callback fixture passes all 318 structural
+results and 98 selected text comparisons under that corrected contract.
+Reconciliation `0c9750ff` additionally preserves main's owning-conditional
+lifecycle fix unchanged; its full Release rebuild and focused runtime gate pass.
+
+At reconciled clean `25d7e49d`, all Release targets build and
+the unfiltered 651-test run finishes with 644 passes and seven failures.
+The complete C++ emitter corpus passes (141 sources, 35,978 ready bodies,
+22,910 production/general matches), as does the complete native cutover oracle
+at O0/C++20 and O3/C++23. The relocated installed-consumer gate passes, including
+all ten iterator consumers. The full raw CTest log is preserved at
+`/private/tmp/gti-iterator-full-25d7e49d.log` before any follow-up source edit.
+
+Two failing gates expose one real range-verifier regression: the hidden
+reference binding's borrowed-state trait is not the nominal dereference
+result's trait. An ordinary class reference through a borrowed carrier must not
+be classified as an inline physical proxy. The repair must retain exact
+selected-producer/dependency validation and reject forged physical cursor
+transfers, including a forged producer trait. The other five gates identify
+stale expectations: mutable map projections use `second()`, signed subtraction
+is left-minus-right, forward vector instances now include the explicit zero
+direction argument, library failure locations shifted, and the cached bounds
+add field declarations. Every affected runtime category, exit status and
+cleanup observation remains required; these failures are not waived.
+
+The fixed LoweredProgram census changes only 37 declaration counts: 36 grow
+by two vector cursor fields and the vector/resource-vector example grows by
+four, totaling 76. Emitted bodies, generated families and all other census
+fields are unchanged. This audited source-field delta is 88,556 declarations,
+14,081 bodies and 8,630 generated items; a fresh non-update census remains
+required. Independently, the native-C example's `int64_t` argument genuinely
+aliases C `long` on Linux but C `long long` on macOS/Windows. Six target-profile
+probes confirm that contrasting C `long` and `long long` instead preserves two
+distinct concrete classes and 13 bodies on every profile; the compiler's alias
+rules and body baselines must not be changed to conceal this target fact.
+
+The final bound-snapshot performance comparison, clean `5385c0b0` versus clean
+`25d7e49d`, passes on the Apple M4 Pro Mini with optimized GTI compilers,
+Apple Clang 21, O3/C++23 and strict floating-point ordering. Each of two
+campaigns uses five warmups and 21 seeded/interleaved rounds under the suite
+and both build slots. Candidate/baseline paired median particle ratios are
+1.00104 and 1.00269 (95% bootstrap intervals 0.99660–1.00689 and
+0.99780–1.00801); vector ratios are 0.99685 and 0.99654 (0.98376–1.00065 and
+0.99014–0.99936). Neither workload shows a material runtime regression.
+Vector samples are bimodal/order-sensitive: quotient-of-medians differences
+are not evidence of a 6–7% speedup. All six separate baseline/candidate/C++
+complete-state cases pass, with 60 million ordered vector observations and
+bitwise equality of 400,000 final particle fields, plus omitted/mismatched/
+incomplete-observation negative controls. The unchanged timing probes remain
+checksum tests; the full-state oracle is deliberately untimed.
+
+The representation tradeoff is one inline bound scalar: shared/exclusive
+vector and resource-vector cursors grow from 16 to 24 bytes without an
+allocation. The owning allocation-counted traversal gate passes separately.
+Vector/particle generated C++ grows from 842,023/874,944 to 903,317/938,669
+bytes; native text grows from 48,332/47,524 to 48,384/47,532 bytes. Single
+instrumented program builds take 1.4325/1.0102 versus 1.5071/1.0754 seconds,
+with peak build RSS 239,026,176/249,544,704 versus
+240,713,728/259,768,320 bytes. Runtime median peak RSS is
+3,801,088/5,685,248 versus 3,817,472/5,685,248 bytes. Build observations are
+not statistically established compile-time changes, and idiomatic C++ controls
+do not promise GTI's defined-failure contract. Exact source closures, compiler
+identities and 171 hash-verified retained artifacts are recorded at
+`/private/tmp/gti-iterator-performance.hheNJa/mini-bound-snapshot/assessment.json`.
+The wrapper has fetched results and removed its remote run.
+
+The clean Linux inventory/oracle run `186d5936` reaches all examples but fails
+the native-C alias census noted above; its emitter corpus reaches the unchanged
+1,500-second test limit. The isolated current-head sanitizer run `603768cf`
+also reproduces the combined contiguous fixture's unchanged 180-second native
+compile limit with one worker. Neither timeout proves a runtime sanitizer
+failure or platform acceptance. An equivalent smaller sanitizer partition
+must preserve every assertion, all three zero-allocation observation windows,
+provider and sanitizer flags; the combined fixture remains in the other seven
+modes. Corpus progress evidence must locate the Linux tail without excluding
+sources or weakening readiness/agreement assertions. Fresh repaired-head
+owning gates, Linux validation, unfiltered checks and PR integration remain
+required.
+
+The clean `0249b92f` Release compiler passes all 17 owning iterator gates in
+the combined 18-gate matrix: contiguous and paired spans, linked and sparse
+storage, lanes, text views, cursor publication/movement, mapped-value
+projection, unrelated two-owner ranges and owning returned-reference
+replacement, plus their MIR/optimizer mutation controls. The remaining gate,
+`stdlib_surface`, fails only its `meta` fixture with an empty lifetime-slot
+drop. That defect also reproduces in the upstream reflection campaign; these
+focused results are not whole-suite acceptance.
+
+After reconciliation through main `82b1fa06`, `macos_installed_runtime` passes
+the relocated CLI/LSP/runtime closure and all ten iterator consumers: examples
+141–144 and a standalone `std.string_view` module consumer, each at O0/C++20
+and O3/C++23. Their sources and working directory are outside the repository,
+with repository/library environment overrides removed. This temporary install
+does not change the user's installed toolchain.
+
+Performance acceptance is deliberately still open. Two frozen Release
+compilers, baseline main `5385c0b0` and candidate `0249b92f`, build the unchanged
+vector-growth/shared-traversal and particles/mutable-traversal workloads.
+Two independent local macOS arm64 campaigns each use five warmups and 21
+seeded, interleaved rounds, holding the shared suite and all build slots.
+The repeat campaign measures 73.60/104.45 ms for baseline/candidate vector
+traversal (1.42×), and 161.47/561.30 ms for particle updates (3.48×). Paired
+bootstrap intervals for the ratios are 1.412–1.436 and 3.469–3.485.
+Every execution has matching checksum output, exit zero and empty stderr;
+these legacy probes do not print complete element state. Exact compiler,
+library/runtime/source identities, generated C++, MIR/optimization reports,
+native assembly, raw samples and build/memory observations are retained in
+`/private/tmp/gti-iterator-performance.hheNJa/report.json` and its assessment.
+
+The new general signed-position helper remains a call in the particle hot
+loop, with result spills and owner-state reloads, and adds movement branches
+to shared traversal. One-step advancement needs a smaller source-defined
+checked contract; arbitrary signed jumps retain the general helper. No
+unchecked API or public-name compiler rule is justified. The repair must pass
+the existing boundary/failure/lifetime matrices and repeat these comparisons
+before the campaign can satisfy runtime acceptance. Full corpus/census,
+unfiltered production, platform and final integration-bound checks remain
+required independently of this candidate evidence.
+
+The Ubuntu-8 pre-repair snapshot of `e8208096` builds all Release targets with
+GCC 14/LLVM 21 and passes 14 of its 18 selected iterator gates. Its recorded
+dirty status is confined to an in-progress installed-consumer test, not the
+compiler/library/runtime source closure. Contiguous and paired-span positive
+and cost builds, plus the sparse/lane and mapped-value cost builds, encounter
+GNU multiple-definition errors: the direct native command places the runtime
+archive before the allocation-counting fixture, so it extracts `memory.cpp`
+before seeing the fixture's seven replacement memory exports. One contiguous
+sanitizer build also reaches its existing timeout under concurrent load.
+The test linker must put the complete oracle before the runtime archive,
+without changing the driver's escape-hatch ordering or weakening allocation
+observations; those four gates and the timed-out case still require fresh
+Linux validation. Raw run results are retained under
+`.git/gti-remote-runner/results/run-cdee818d5b664c72ab51ca5b57ead28f/`, with the
+otherwise temporary native diagnostics captured separately at
+`/private/tmp/gti-linux-iterator-native-evidence.txt`. This failed pre-repair
+run is not final platform acceptance.
+
+The clean `120d6240` Mini snapshot independently inventories all 141 shipped
+top-level examples: 14,072 emitted MIR body identities, and 88,480 lowered
+declarations / 14,081 bodies / 8,630 generated items. Compared with the current
+main inventories, 78 existing examples gain 273 bodies as their source cursor,
+sentinel and checked-movement closures grow; the four new iterator examples
+add another 1,289 bodies. The existing generated-item changes consist only of
+1,039 structural-operator adapters and 27 concrete-instance adapters; callable,
+cleanup, native and thread adapter counts are unchanged for existing examples.
+These are candidate inventories, with every example's count known and nonzero,
+not automatically promoted baselines. Their complete records are retained at
+`.git/gti-remote-runner/results/run-ae0b7a45a0164bd0ad8eb3f3b274c6bd/`.
+The checked-in inventories remain unchanged pending native corpus and owning
+matrix acceptance.
+
+The clean `c52cae70` Mini snapshot subsequently passes the complete native
+cutover oracle: all 141 examples build and run at O0/C++20 and O3/C++23,
+retaining the same 14,072 reviewed emitted body identities and identical exit
+status, stdout and stderr. This head has the same compiler/runtime/stdlib
+closure as `120d6240`; its additional changes are the movement-fixture filename
+repair and validation documentation. Exact source identity and native results
+are retained at
+`.git/gti-remote-runner/results/run-a84a02445b944922a6edd479c42b40c9/`.
+The fresh owning matrix, repaired Linux gates, performance comparison,
+unfiltered suite and integration-bound validation still remain separate gates.
+
+The clean `d60a6965` Mini snapshot then builds every Release target and passes
+all 22 selected iterator/compiler gates, including the complete native
+ownership, failure, rollback and sanitizer matrices, optimizer/verifier
+mutations, module/manifest checks and throughput registration. Its configure,
+all-target build and CTest steps exit zero; the CTest step completes in
+247.74 seconds. Raw commands, clean source snapshot and test results are
+retained at
+`.git/gti-remote-runner/results/run-47f568d7961c43548b8c2c60d8aaa572/`.
+The helper has retrieved the evidence and removed this task's disposable remote
+run. This is owning-matrix acceptance at that checkpoint, not unfiltered or
+performance acceptance. Reconciliation `ac249d35` subsequently incorporates
+main's cleanup-free Expected-copy fix (`2f543052`); its resulting source still
+requires fresh integration-bound checks.
+
+An independent review now reconciles every candidate census row and generated
+family with that evidence: there are no missing, removed, null, zero or
+decreasing example counts, and the existing nine-body difference between the
+emitted-MIR and LoweredProgram totals is unchanged. After the native corpus
+and owning matrix pass, the exact reviewed datasets are promoted to the two
+checked-in baselines; fresh non-update checks must still compare the reconciled
+compiler with those fixed expectations. They must not regenerate baselines to
+absorb unrelated drift. The local reconciled Release all-target build passes,
+as do `expected_cleanup_free_copy_runtime` (7.84 seconds),
+`cpp_mir_body_emitter_text` (3.56 seconds), relocated
+`macos_installed_runtime` (26.90 seconds), the 554-file formatting check and
+release-version policy. Performance and unfiltered acceptance remain open.
+
+The repaired Ubuntu-6 run at clean `aa821063` subsequently passes five of six
+selected gates: paired spans, sparse/lane storage, mapped-value projections,
+the surface manifest and native-provider helper. All 31 other positive
+contiguous fixture/mode cases pass, including its sanitized bounds, cost and
+arrow cases; the combined positive alone reaches its unchanged 180-second
+native sanitizer compilation limit. Its GTI emission succeeds, and no native
+link or sanitizer-execution defect is reported. Because the harness stops
+before its negative-source phase after that timeout, the complete contiguous
+gate still needs validation. This run is not Linux acceptance. Exact output
+and the clean source/command record are retained at
+`.git/gti-remote-runner/results/run-4426855953d6469eb3b71e656793e819/`.
+An isolated single-worker reproduction, fixed-baseline census and both corpus
+oracles are scheduled on the reconciled head; sanitizer flags, allocation
+observations and all test assertions remain unchanged.
+
+The first checked one-step repair at frozen `120d6240` restores vector traversal
+to baseline performance (candidate/baseline 0.9980, paired 95% bootstrap interval
+0.9861–1.0003), but particles still take 177.73 ms versus 162.03 ms (1.0969,
+interval 1.0953–1.1007). The roughly 9.7% particle regression fails acceptance.
+Its native loop reloads the owner length and retains an extra increment guard.
+The measured records are retained under
+`/private/tmp/gti-iterator-performance.hheNJa/step-repair/`; neither this result
+nor the earlier checksum equality proves complete-state parity.
+
+The subsequent source repair captures the live-prefix bound before retaining
+the checked vector/resource-vector owner loan, for shared/exclusive and
+forward/reverse cursors. This changes no borrowing permission or element-access
+rule. Positive tests traverse and write through both directions, including empty
+endpoints; failure tests retain invalid-step identity and reverse cleanup; source
+negatives retain owner invalidation, exclusive-copy and child-borrow exclusions.
+The local O3/C++23 combined positive and all 21 source negatives pass, including
+clear/transfer followed only by cursor increment for both vector families: a
+snapshot-only operation still retains the actual owner loan without relying on
+a later dereference to keep it live.
+An optimized native layout probe measures each of the four cursor families as
+16 to 24 bytes: one inline `uint64_t`, no allocation. Its evidence is retained in
+`/private/tmp/gti-iterator-performance.hheNJa/bound-snapshot-proxy/layout-report.json`.
+The source repair still requires a frozen-head runtime/build/memory comparison
+and the corrected untimed complete-state observer; the proxy's matching loop
+shape is not performance acceptance. The disposable observer is compiled to an
+object before linking to avoid a multi-source native depfile overwrite.
+
+The repaired Linux sanitizer timeout uses GCC 14 for the GTI host compiler but
+Ubuntu `c++` 15.2.0 for generated native code. It remains a compile-time limit,
+not an observed sanitizer runtime failure. The unchanged-budget isolated
+reproduction must identify whether the combined fixture needs equivalent
+smaller sanitizer scenarios; raising its limit or dropping assertions is not
+acceptance. Reconciliation through `b5a8f371` incorporates main `c3dcf2a6`'s
+Expected-callable publication repair. Its local Release all-target build passes;
+focused Expected checks run during the iterator source edits are development
+feedback and must not be presented as clean-head integration evidence.
+
 ## Expected conditional arms beyond source calls (0.405.3)
 
 - **Defects.** An `expected<Class, E>`-valued conditional reported
@@ -6387,6 +6954,31 @@ tests retain their unchanged command path. The helper preserves the selected
 C++ driver spelling, optimization/standard, strict floating-point flags,
 sanitizer options and both phases' failure diagnostics. Its unit gate checks
 those boundaries; runtime allocation/failure/cleanup assertions are unchanged.
+
+Iterator sanitizer positives with independent scenarios use exact source
+partitions when combined GCC instrumentation exceeds the existing per-case
+compile budget. Movement has four contiguous main-body groups; sparse
+pool/resource-storage/mask allocation checks have three. Common declarations
+are retained, the concatenated regions reconstruct the complete fixture
+byte-for-byte, and missing/duplicated/reordered cuts fail closed. All original
+assertions, allocation windows and complete-state checks remain; every
+non-sanitized mode still compiles the combined program. This is not a source
+or optimization-policy change to the compiler.
+
+The atomic borrowed-JSON accessor fixture cannot be independently partitioned.
+Its sanitizer-only extra `-fno-inline-functions-called-once` and `-fno-inline`
+arguments are selected
+by probing the invoked native C++ driver's predefined macros and excluding
+Clang/other known GCC-compatible drivers, not by the operating system or GTI's
+host compiler. Its O1, ASan/UBSan, strict-FP flags, 120-second compile budget and
+original execution oracle remain unchanged. The `native_fixture_build` unit
+gate checks reconstruction, complete mode/budget/native-input preservation and
+driver classification. On an actual selected GCC driver it also compiles tiny
+separate-TU controls, verifies sanitizer symbols, and independently requires
+ASan heap-buffer-overflow and UBSan signed-overflow reports with the extra flags.
+That native control is explicitly inapplicable when no GCC flag is selected;
+it does not replace any fixture's sanitizer execution. Neither partitioning nor
+the narrow policy establishes concurrent platform acceptance without a fresh run.
 
 Native compiler invocation spelling is likewise distinct from canonical binary
 identity: resolving `clang++` to `clang` changes link-driver selection. Runtime

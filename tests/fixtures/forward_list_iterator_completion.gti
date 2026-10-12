@@ -1,0 +1,116 @@
+#include <std/forward_list>
+#include <std/memory>
+#include <std/iterator>
+#include <std/algorithm>
+#include <std/array>
+#include <std/string>
+
+void prove_forward<I, S>(I first, S last)
+    requires std::forward_iterator<I> && std::sentinel_for<S, I> {}
+
+void prove_output<I>(I output) requires std::output_iterator<I> {}
+
+class FixedItem {
+public:
+  mut int32_t number;
+  FixedItem(int32_t number) : number(number) {}
+  FixedItem(FixedItem& other) = delete;
+  FixedItem(FixedItem&& other) = delete;
+};
+
+// The same raw-address plus checked-owner relationship is ordinary source
+// semantics, not permission granted to a standard-library iterator spelling.
+class UserObservation {
+  int32_t& owner;
+  const int32_t* address = nullptr;
+public:
+  UserObservation(int32_t& owner) : owner(owner), address(&owner) {}
+  int32_t& get() { unsafe { return std::assume_ref(this.address, this.owner); } }
+};
+
+int main() {
+  mut std::forward_list<int32_t> values{};
+  values.push_front(3);
+  values.push_front(2);
+  values.push_front(1);
+  {
+    mut auto cursor = values.begin();
+    mut auto independent = cursor;
+    if (*cursor != 1 || *independent != 1) { return 1; }
+    ++cursor;
+    if (*cursor != 2 || *independent != 1 || cursor == independent) { return 2; }
+    auto end = values.end();
+    prove_forward(independent, end);
+    ++cursor;
+    ++cursor;
+    if (cursor != end) { return 3; }
+    int32_t needle = 2;
+    auto found = std::find(independent, end, needle);
+    if (*found != 2) { return 4; }
+  }
+  for (mut auto& value : values) { value += 10; }
+  mut int32_t total = 0;
+  for (auto& value : values) { total += value; }
+  if (total != 36) { return 5; }
+  int32_t replacement = 4;
+  std::fill(values, replacement);
+  if (values.front() != 4) { return 6; }
+  {
+    auto end = values.end();
+    mut auto cursor = values.begin_mut();
+    while (cursor != end) {
+      *cursor = 5;
+      ++cursor;
+    }
+  }
+  {
+    mut auto cursor = values.begin_mut();
+    prove_output(std::move(cursor));
+  }
+  std::array<int32_t, 3> input = std::array<int32_t, 3>({7, 8, 9});
+  std::copy(input.begin(), input.end(), values.begin_mut());
+  int32_t key = 8;
+  if (!std::contains(values, key)) { return 10; }
+  mut std::forward_list<std::string> names{};
+  names.push_front(std::string("second"));
+  names.push_front(std::string("first"));
+  for (mut auto& name : names) { name.push_back('!'); }
+  mut std::size_t length = 0;
+  for (auto& name : names) { length += name.size(); }
+  if (length != 13) { return 7; }
+  std::forward_list<int32_t> empty{};
+  auto empty_begin = empty.begin();
+  auto empty_end = empty.end();
+  if (empty_begin != empty_end) { return 8; }
+  for (auto& value : empty) { return 9; }
+  {
+    auto first = values.cbegin();
+    auto last = values.cend();
+    if (first == last) { return 11; }
+    auto last_cursor = values.end_iterator();
+    if (last_cursor != last || first == last_cursor) { return 16; }
+  }
+  {
+    auto last = values.end();
+    auto last_cursor = values.end_mut();
+    if (last_cursor != last) { return 17; }
+  }
+  mut std::forward_list<FixedItem> fixed{};
+  [[discard]] fixed.emplace_front(10);
+  [[discard]] fixed.emplace_front(20);
+  for (mut auto& item : fixed) { item.number += 1; }
+  mut int32_t sum = 0;
+  for (auto& item : fixed) { sum += item.number; }
+  if (sum != 32) { return 12; }
+  auto item = fixed.begin();
+  if (item->number != 21) { return 13; }
+  mut int32_t number = 41;
+  {
+    UserObservation observation{number};
+    auto independent = observation;
+    if (independent.get() != 41) { return 14; }
+  }
+  number = 42;
+  if (number != 42) { return 15; }
+  return 0;
+}

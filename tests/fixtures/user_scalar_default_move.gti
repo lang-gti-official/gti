@@ -1,0 +1,45 @@
+#include <std/string>
+#include <std/span>
+#include <std/vector>
+
+// A generic owner must preserve both passive and owning specializations when
+// its neighboring scalar fields have ordinary source-defined defaults.
+struct UserScalarDefaultMove<T> {
+  mut T payload;
+  mut uint64_t previous = 0;
+  mut uint64_t next = 0;
+  UserScalarDefaultMove(T payload) : payload(std::move(payload)) {}
+};
+
+class UserLiteralBetweenViews {
+  std::span<int> first;
+  uint64_t gap = 0;
+  std::span<int> second;
+public:
+  UserLiteralBetweenViews(std::span<int> first, std::span<int> second)
+      : first(std::move(first)), second(std::move(second)) {}
+  int total() {
+    return this.first[std::size_t(0)] + this.second[std::size_t(0)] + int(this.gap);
+  }
+};
+
+class UserLiteralBeforeView {
+  uint64_t gap = 0;
+  std::span<int> data;
+public:
+  UserLiteralBeforeView(std::span<int> data) : data(std::move(data)) {}
+  int total() { return this.data[std::size_t(0)] + int(this.gap); }
+};
+
+int main() {
+  UserScalarDefaultMove<int> integer{7};
+  UserScalarDefaultMove<std::string> owner{std::string("node")};
+  if (integer.payload != 7 || integer.previous != uint64_t(0) ||
+      integer.next != uint64_t(0) || owner.payload != "node" ||
+      owner.previous != uint64_t(0) || owner.next != uint64_t(0)) { return 1; }
+  std::vector<int> first = {3};
+  std::vector<int> second = {4};
+  UserLiteralBetweenViews middle{first.as_span(), second.as_span()};
+  UserLiteralBeforeView leading{first.as_span()};
+  return middle.total() + leading.total() == 10 ? 0 : 2;
+}

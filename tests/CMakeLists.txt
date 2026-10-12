@@ -914,6 +914,11 @@ add_test(NAME expected_call_reassignment_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_call_reassignment_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_call_reassignment_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_member_argument_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_member_argument_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_member_argument_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_constructor_return_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_constructor_return_runtime_test.py"
@@ -1209,6 +1214,12 @@ add_test(NAME abstract_generic_failure_contract COMMAND gti_abstract_generic_fai
 add_executable(gti_retained_generic_lifecycle_tests retained_generic_lifecycle_tests.cpp)
 target_link_libraries(gti_retained_generic_lifecycle_tests PRIVATE gti_cpp_backend)
 add_test(NAME retained_generic_lifecycle COMMAND gti_retained_generic_lifecycle_tests)
+add_executable(gti_user_dual_range_backend_tests user_dual_range_backend_tests.cpp)
+target_link_libraries(gti_user_dual_range_backend_tests PRIVATE gti_cpp_backend)
+add_test(NAME user_dual_range_backend COMMAND gti_user_dual_range_backend_tests)
+add_executable(gti_text_view_iterator_compiler_tests text_view_iterator_compiler_tests.cpp)
+target_link_libraries(gti_text_view_iterator_compiler_tests PRIVATE gti_cpp_backend)
+add_test(NAME text_view_iterator_compiler COMMAND gti_text_view_iterator_compiler_tests)
 add_executable(gti_generic_discovery_tests generic_discovery_tests.cpp)
 target_link_libraries(gti_generic_discovery_tests PRIVATE gti_compiler)
 add_test(NAME generic_discovery COMMAND gti_generic_discovery_tests)
@@ -1708,6 +1719,26 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(forward_list_runtime PROPERTIES TIMEOUT 600)
+  foreach(iterator_gate IN ITEMS
+      forward_list_iterator_runtime
+      contiguous_iterator_completion
+      paired_span_iterator_completion
+      storage_lane_iterator_runtime
+      cursor_carrier_publication
+      map_mutable_entry_projection
+      user_dual_range_lifetime
+      user_owning_reference_replacement
+      range_endpoint_parking_runtime
+      text_view_iterator_runtime
+      json_object_iterator_runtime
+      container_iterator_movement)
+    add_test(
+      NAME ${iterator_gate}
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/${iterator_gate}_test.py"
+              "$<TARGET_FILE:gti>")
+    set_tests_properties(${iterator_gate} PROPERTIES TIMEOUT 600)
+  endforeach()
   add_test(
     NAME pack_parameter_runtime
     COMMAND "${Python3_EXECUTABLE}"

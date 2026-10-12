@@ -1,0 +1,103 @@
+#include <std/string>
+
+enum class expected_errc { missing };
+struct Position {
+  int32_t id;
+  Position(int32_t id) : id(id) {}
+  Position(Position& other) = delete;
+  Position(Position&& other) = default;
+};
+struct DefaultPosition {
+  int32_t id;
+  DefaultPosition() : id(0) { std::println(90); }
+  DefaultPosition(int32_t id) : id(id) {}
+};
+class OwnedPosition {
+public:
+  int32_t id;
+  OwnedPosition(int32_t id) : id(id) {}
+  ~OwnedPosition() { std::println(this.id); }
+};
+expected<Position, expected_errc> position(int32_t id) {
+  if (id < 0) return unexpected(expected_errc::missing);
+  return Position(id);
+}
+expected<DefaultPosition, expected_errc> default_position(int32_t id) {
+  return DefaultPosition(id);
+}
+expected<OwnedPosition, expected_errc> owned_position(int32_t id) {
+  if (id < 0) return unexpected(expected_errc::missing);
+  return OwnedPosition(id);
+}
+// Both owner and writable cursor are unrelated user-defined records. Returning
+// a mutable reference establishes access independently of assignment context.
+class PositionOwner<T> {
+public:
+  mut expected<T, expected_errc> value;
+  PositionOwner(expected<T, expected_errc> value) : value(std::move(value)) {}
+};
+class PositionCursor<T> {
+  mut PositionOwner<T>& owner;
+public:
+  PositionCursor(mut PositionOwner<T>& owner) : owner(owner) {}
+  mut expected<T, expected_errc>& operator*() mut { return this.owner.value; }
+};
+void passive_reference(mut expected<Position, expected_errc>& target) {
+  target = position(8);
+}
+void owning_reference(mut expected<OwnedPosition, expected_errc>& target) {
+  target = owned_position(6);
+}
+int32_t inspect_position(expected<Position, expected_errc> value) {
+  return value ? value.value().id : int32_t(0);
+}
+int32_t inspect_direct(Position value) { return value.id; }
+T forward_value<T>(T value) { return value; }
+int32_t inspect_reference(Position& value) { return value.id; }
+class PositionConsumer {
+public:
+  int32_t inspect(expected<Position, expected_errc> value) {
+    return value ? value.value().id : int32_t(0);
+  }
+};
+int main() {
+  DefaultPosition marker{};
+  mut PositionOwner<DefaultPosition> defaulted{default_position(1)};
+  {
+    mut PositionCursor<DefaultPosition> cursor{defaulted};
+    *cursor = default_position(2);
+    *cursor = default_position(3);
+  }
+  if (marker.id != 0 || defaulted.value.value().id != 3) return 4;
+  PositionConsumer consumer{};
+  if (inspect_position(position(20)) != 20 ||
+      consumer.inspect(position(21)) != 21) return 3;
+  Position borrowed{24};
+  if (inspect_direct(Position(22)) != 22 ||
+      inspect_direct(forward_value(Position(23))) != 23 ||
+      inspect_reference(borrowed) != 24) return 5;
+  mut PositionOwner<Position> plain{position(1)};
+  {
+    mut PositionCursor<Position> cursor{plain};
+    *cursor = position(2);
+    *cursor = position(-1);
+    *cursor = position(3);
+    *cursor = true ? position(4) : position(-1);
+  }
+  passive_reference(plain.value);
+  if (!plain.value || plain.value.value().id != 8) return 1;
+  mut PositionOwner<OwnedPosition> owned{owned_position(1)};
+  {
+    mut PositionCursor<OwnedPosition> cursor{owned};
+    *cursor = owned_position(2);
+    *cursor = owned_position(-1);
+    *cursor = owned_position(3);
+    *cursor = true ? owned_position(4) : owned_position(-1);
+    for (mut int32_t index = 0; index < 2; index++) {
+      *cursor = owned_position(index + 10);
+    }
+  }
+  owning_reference(owned.value);
+  if (!owned.value || owned.value.value().id != 6) return 2;
+  return 0;
+}

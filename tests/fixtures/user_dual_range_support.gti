@@ -1,0 +1,90 @@
+#include <std/span>
+#include <std/vector>
+#include <std/string>
+#include <std/panic>
+
+extern "C" { void user_dual_range_event(int identity); }
+
+class UserDualGuard {
+  int identity;
+public:
+  UserDualGuard(int identity) : identity(identity) {}
+  ~UserDualGuard() { user_dual_range_event(this.identity); }
+};
+
+// Owning elements cannot be copied: traversal must use checked references.
+class UserDualElement {
+  int identity;
+  std::string label;
+public:
+  UserDualElement(int identity, std::string label)
+      : identity(identity), label(std::move(label)) {}
+  UserDualElement(UserDualElement& other) = delete;
+  UserDualElement(UserDualElement&& other) = default;
+  ~UserDualElement() { user_dual_range_event(100 + this.identity); }
+  int value() { return this.identity; }
+  std::string& text() { return this.label; }
+};
+
+class UserDualEnd {
+  std::size_t limit;
+public:
+  UserDualEnd(std::size_t limit) : limit(limit) {}
+  std::size_t position() { return this.limit; }
+};
+
+class UserDualProxy {
+  UserDualRange& range;
+  mut std::size_t coordinate;
+public:
+  UserDualProxy(UserDualRange& range, std::size_t coordinate)
+      : range(range), coordinate(coordinate) {
+    if (range.failure_mode() == 1) {
+      UserDualGuard construction{30};
+      std::panic("user dual proxy constructor failure");
+    }
+    if (coordinate > range.size()) { std::panic("invalid user dual cursor position"); }
+  }
+  void validate_element() {
+    if (this.coordinate >= this.range.size()) { std::panic("invalid user dual element position"); }
+  }
+  UserDualElement& left() { this.validate_element(); return this.range.left(this.coordinate); }
+  UserDualElement& right() { this.validate_element(); return this.range.right(this.coordinate); }
+  void next() mut { this.validate_element(); this.coordinate++; }
+  bool finished(UserDualEnd end) { return this.coordinate == end.position(); }
+};
+
+class UserDualCursor {
+  mut UserDualProxy proxy;
+public:
+  UserDualCursor(UserDualRange& range, std::size_t coordinate)
+      : proxy(UserDualProxy(range, coordinate)) {
+    if (range.failure_mode() == 2) {
+      UserDualGuard construction{40};
+      std::panic("user dual cursor constructor body failure");
+    }
+  }
+  UserDualProxy& operator*() { this.proxy.validate_element(); return this.proxy; }
+  void operator++() mut { this.proxy.next(); }
+  bool operator!=(UserDualEnd end) { return !this.proxy.finished(end); }
+};
+
+// Two independently owned element buffers. The cursor contains its proxy
+// inline and borrows this physical carrier, not a copied owner or element.
+class UserDualRange {
+  std::span<UserDualElement> first;
+  std::span<UserDualElement> second;
+  int selected_failure;
+public:
+  UserDualRange(std::span<UserDualElement> first, std::span<UserDualElement> second,
+                int failure = 0)
+      : first(std::move(first)), second(std::move(second)), selected_failure(failure) {}
+  int failure_mode() { return this.selected_failure; }
+  std::size_t size() {
+    return this.first.size() < this.second.size() ? this.first.size() : this.second.size();
+  }
+  UserDualElement& left(std::size_t index) { return this.first[index]; }
+  UserDualElement& right(std::size_t index) { return this.second[index]; }
+  UserDualCursor begin() { return UserDualCursor(this, std::size_t(0)); }
+  UserDualEnd end() { return UserDualEnd(this.size()); }
+};

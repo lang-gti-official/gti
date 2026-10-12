@@ -7,12 +7,12 @@ int main() {
   mut std::unordered_map<int, int> values{};
   {
     mut std::pair<Dictionary::iterator, bool> result = values.insert(7, 42);
-    if (!result.second || result.first->first != 7 || result.first->second != 42) {
+    if (!result.second || result.first->first() != 7 || result.first->second() != 42) {
       return 1;
     }
-    result.first->second = 43;
+    result.first->mapped() = 43;
     mut auto moved = std::move(result);
-    moved.first->second = 44;
+    moved.first->mapped() = 44;
   }
   Dictionary::key_type key = 7;
   Dictionary::mapped_type expected_value = 44;
@@ -33,7 +33,7 @@ int main() {
   }
   {
     mut auto found = values.find_mut(key);
-    found->second = 77;
+    found->mapped() = 77;
   }
   if (values.at(key) != 77 || values.size() != 2) { return 6; }
   {

@@ -345,7 +345,7 @@ private:
         node.mutability(), node.type(), tok(node.name()),
         expr(node.initializer()), node.staticKeyword(), node.isRangeBinding(),
         tok(node.constexprKeyword()), node.isRangeOwner(),
-        node.isRangeIterator(), node.mutKeyword());
+        node.isRangeIterator(), node.mutKeyword(), node.isRangeElementOwner());
     if (node.extent()) {
       copy->setExtent(*node.extent());
     }
@@ -488,7 +488,7 @@ private:
           std::move(lowered), mapped(node.ownerBinding()),
           mapped(node.rangeBinding()), mapped(node.iteratorBinding()),
           mapped(node.sentinelBinding()), mapped(node.elementBinding()),
-          mapped(node.coreLoop()));
+          mapped(node.coreLoop()), mapped(node.elementOwnerBinding()));
     }
     case StmtKind::ReturnStmt: {
       const auto &node = static_cast<const ReturnStmt &>(statement);
@@ -527,12 +527,12 @@ private:
       std::vector<VariableDecl> bindings;
       bindings.reserve(node.bindings().size());
       for (const VariableDecl &binding : node.bindings()) {
-        bindings.emplace_back(binding.mutability(), binding.type(),
-                              binding.name(), expr(binding.initializer()),
-                              binding.staticKeyword(), binding.isRangeBinding(),
-                              binding.constexprKeyword(),
-                              binding.isRangeOwner(), binding.isRangeIterator(),
-                              binding.mutKeyword());
+        bindings.emplace_back(
+            binding.mutability(), binding.type(), binding.name(),
+            expr(binding.initializer()), binding.staticKeyword(),
+            binding.isRangeBinding(), binding.constexprKeyword(),
+            binding.isRangeOwner(), binding.isRangeIterator(),
+            binding.mutKeyword(), binding.isRangeElementOwner());
       }
       auto copy = std::make_shared<StructuredBindingDecl>(
           tok(node.autoKeyword()), tok(node.leftBracket()), std::move(bindings),

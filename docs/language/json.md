@@ -110,10 +110,23 @@ validated a shape, `at(key)` and `at(index)` return borrowed values directly
 without cloning. Their missing-key, wrong-kind, and out-of-range cases use
 GTI's defined checked runtime failure; they never insert.
 
-Arrays expose `elements()` for ordinary range iteration. Objects expose
-`object_size()`, `key_at(index)`, and `value_at(index)`, which retain insertion
-order without exposing separate mutable key and value sequences that could
-break the object invariant.
+Arrays expose `elements()` for ordinary read-only or mutable range iteration.
+Objects expose insertion-ordered `keys()` and `values()` checked spans, and
+`members()` supplies a read-only paired span whose reference proxies expose
+`first()` (the key) and `second()` (the value), without cloning either.
+`values_mut() mut` returns an exclusive mutable span of the existing values;
+it permits replacing descendants, not resizing the object or rewriting keys.
+These views allocate nothing and retain the whole document, including its
+physical storage, through every derived cursor and element borrow. Conflicting
+`set`, replacement, movement or destruction is rejected while they are live.
+An element borrow must end before its cursor advances. Wrong-kind access and
+empty/end element access use the existing defined bounds failure.
+
+`object_size()`, `key_at(index)` and `value_at(index)` remain available.
+The tagged document itself is not a homogeneous range: scalar/null alternatives
+do not invent an empty collection. Explicit array/object projections select
+the intended collection contract. Example 91 demonstrates both member reading
+and exclusive value iteration.
 
 ## Numbers
 

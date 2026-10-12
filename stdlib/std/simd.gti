@@ -1,4 +1,5 @@
 #include <std/array>
+#include <std/detail/iterator>
 
 namespace gti_internal {
 // These exact installed declarations bind immediate, nonescaping array
@@ -12,10 +13,211 @@ void simd_less<A, B, C>(A& left, B& right, mut C& output);
 }
 
 namespace std {
+namespace detail {
+class lane_sentinel {
+  size_t limit;
+public:
+  lane_sentinel(size_t limit) : limit(limit) {}
+  size_t position() { return this.limit; }
+};
+
+class simd_iterator<std::floating_point T, uint64_t N, uint64_t Reverse = 0> {
+  simd<T, N>& owner;
+  mut size_t position;
+public:
+  simd_iterator(simd<T, N>& owner, size_t position) : owner(owner), position(position) {
+    gti_internal::require_container_argument(position <= N);
+  }
+  T& operator*() {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1));
+      return this.owner.at(selected);
+    }
+    return this.owner.at(this.position);
+  }
+  T& operator->() { return *this; }
+  T& operator[](ptrdiff_t offset) {
+    mut size_t selected = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
+    if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), N, ptrdiff_t(-1)); }
+    return this.owner.at(selected);
+  }
+  void operator++() mut {
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N);
+  }
+  void operator--() mut {
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N);
+  }
+  void operator+=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0);
+  }
+  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position()); }
+  ptrdiff_t operator-(simd_iterator<T, N, Reverse>& other) { if constexpr (Reverse != 0) { return checked_iterator_difference(other.position, this.position); }
+    return checked_iterator_difference(this.position, other.position); }
+  bool operator!=(lane_sentinel end) { return this.position != end.position(); }
+  bool operator==(lane_sentinel end) { return this.position == end.position(); }
+  bool operator!=(simd_iterator<T, N, Reverse>& other) { return this.position != other.position; }
+  bool operator==(simd_iterator<T, N, Reverse>& other) { return this.position == other.position; }
+};
+
+class simd_mut_iterator<std::floating_point T, uint64_t N, uint64_t Reverse = 0> {
+  mut simd<T, N>& owner;
+  mut size_t position;
+public:
+  simd_mut_iterator(mut simd<T, N>& owner, size_t position) : owner(owner), position(position) {
+    gti_internal::require_container_argument(position <= N);
+  }
+  T& operator*() {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1));
+      return this.owner.at(selected);
+    }
+    return this.owner.at(this.position);
+  }
+  mut T& operator*() mut {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1));
+      return this.owner.at(selected);
+    }
+    return this.owner.at(this.position);
+  }
+  T& operator->() { return *this; }
+  mut T& operator->() mut { return *this; }
+  T& operator[](ptrdiff_t offset) {
+    mut size_t selected = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
+    if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), N, ptrdiff_t(-1)); }
+    return this.owner.at(selected);
+  }
+  mut T& operator[](ptrdiff_t offset) mut {
+    mut size_t selected = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
+    if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), N, ptrdiff_t(-1)); }
+    return this.owner.at(selected);
+  }
+  void operator++() mut {
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N);
+  }
+  void operator--() mut {
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N);
+  }
+  void operator+=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0);
+  }
+  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position()); }
+  bool operator!=(lane_sentinel end) { return this.position != end.position(); }
+  bool operator==(lane_sentinel end) { return this.position == end.position(); }
+};
+
+class simd_mask_iterator<uint64_t N, uint64_t Reverse = 0> {
+  simd_mask<N>& owner;
+  mut size_t position;
+public:
+  simd_mask_iterator(simd_mask<N>& owner, size_t position) : owner(owner), position(position) {
+    gti_internal::require_container_argument(position <= N);
+  }
+  bool& operator*() {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1));
+      return this.owner.at(selected);
+    }
+    return this.owner.at(this.position);
+  }
+  bool& operator->() { return *this; }
+  bool& operator[](ptrdiff_t offset) {
+    mut size_t selected = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
+    if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), N, ptrdiff_t(-1)); }
+    return this.owner.at(selected);
+  }
+  void operator++() mut {
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N);
+  }
+  void operator--() mut {
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N);
+  }
+  void operator+=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0);
+  }
+  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position()); }
+  ptrdiff_t operator-(simd_mask_iterator<N, Reverse>& other) { if constexpr (Reverse != 0) { return checked_iterator_difference(other.position, this.position); }
+    return checked_iterator_difference(this.position, other.position); }
+  bool operator!=(lane_sentinel end) { return this.position != end.position(); }
+  bool operator==(lane_sentinel end) { return this.position == end.position(); }
+  bool operator!=(simd_mask_iterator<N, Reverse>& other) { return this.position != other.position; }
+  bool operator==(simd_mask_iterator<N, Reverse>& other) { return this.position == other.position; }
+};
+
+class simd_mask_mut_iterator<uint64_t N, uint64_t Reverse = 0> {
+  mut simd_mask<N>& owner;
+  mut size_t position;
+public:
+  simd_mask_mut_iterator(mut simd_mask<N>& owner, size_t position) : owner(owner), position(position) {
+    gti_internal::require_container_argument(position <= N);
+  }
+  bool& operator*() {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1));
+      return this.owner.at(selected);
+    }
+    return this.owner.at(this.position);
+  }
+  mut bool& operator*() mut {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1));
+      return this.owner.at(selected);
+    }
+    return this.owner.at(this.position);
+  }
+  bool& operator->() { return *this; }
+  mut bool& operator->() mut { return *this; }
+  bool& operator[](ptrdiff_t offset) {
+    mut size_t selected = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
+    if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), N, ptrdiff_t(-1)); }
+    return this.owner.at(selected);
+  }
+  mut bool& operator[](ptrdiff_t offset) mut {
+    mut size_t selected = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
+    if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), N, ptrdiff_t(-1)); }
+    return this.owner.at(selected);
+  }
+  void operator++() mut {
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N);
+  }
+  void operator--() mut {
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N);
+  }
+  void operator+=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0);
+  }
+  ptrdiff_t operator-(lane_sentinel end) { if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position()); }
+  bool operator!=(lane_sentinel end) { return this.position != end.position(); }
+  bool operator==(lane_sentinel end) { return this.position == end.position(); }
+};
+}
+
 /// Fixed-size logical lane mask. No implicit scalar truth conversion.
 class simd_mask<uint64_t N> {
   mut bool values[N];
 public:
+  using const_iterator = detail::simd_mask_iterator<N>;
+  using iterator = detail::simd_mask_mut_iterator<N>;
+  using const_reverse_iterator = detail::simd_mask_iterator<N, 1>;
+  using reverse_iterator = detail::simd_mask_mut_iterator<N, 1>;
+  using sentinel = detail::lane_sentinel;
+
   simd_mask() : values({}) {
     static_assert(N >= 1 && N <= 64, "SIMD lane count must be in [1, 64].");
   }
@@ -26,6 +228,21 @@ public:
   simd_mask(simd_mask<N>&& other) = default;
 
   size_t size() { return N; }
+  bool& at(size_t lane) { return this.values[lane]; }
+  mut bool& at(size_t lane) mut { return this.values[lane]; }
+  const_iterator begin() { return const_iterator(this, size_t(0)); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel end() { return sentinel(N); }
+  sentinel cend() { return this.end(); }
+  const_iterator end_iterator() { return const_iterator(this, N); }
+  iterator begin_mut() mut { return iterator(this, size_t(0)); }
+  iterator end_mut() mut { return iterator(this, N); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this, N); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return sentinel(size_t(0)); }
+  sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut { return reverse_iterator(this, N); }
+  reverse_iterator rend_mut() mut { return reverse_iterator(this, size_t(0)); }
   bool operator[](size_t lane) { return this.values[lane]; }
   void set(size_t lane, bool value) mut { this.values[lane] = value; }
   bool all_of() {
@@ -82,6 +299,12 @@ public:
 class simd<std::floating_point T, uint64_t N> {
   mut T values[N];
 public:
+  using const_iterator = detail::simd_iterator<T, N>;
+  using iterator = detail::simd_mut_iterator<T, N>;
+  using const_reverse_iterator = detail::simd_iterator<T, N, 1>;
+  using reverse_iterator = detail::simd_mut_iterator<T, N, 1>;
+  using sentinel = detail::lane_sentinel;
+
   simd() : values({}) {
     static_assert(N >= 1 && N <= 64, "SIMD lane count must be in [1, 64].");
   }
@@ -96,6 +319,21 @@ public:
   simd(simd<T, N>&& other) = default;
 
   size_t size() { return N; }
+  T& at(size_t lane) { return this.values[lane]; }
+  mut T& at(size_t lane) mut { return this.values[lane]; }
+  const_iterator begin() { return const_iterator(this, size_t(0)); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel end() { return sentinel(N); }
+  sentinel cend() { return this.end(); }
+  const_iterator end_iterator() { return const_iterator(this, N); }
+  iterator begin_mut() mut { return iterator(this, size_t(0)); }
+  iterator end_mut() mut { return iterator(this, N); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this, N); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return sentinel(size_t(0)); }
+  sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut { return reverse_iterator(this, N); }
+  reverse_iterator rend_mut() mut { return reverse_iterator(this, size_t(0)); }
   T operator[](size_t lane) { return this.values[lane]; }
   void set(size_t lane, T value) mut { this.values[lane] = value; }
 

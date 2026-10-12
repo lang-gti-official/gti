@@ -1245,6 +1245,8 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         case MirInstructionKind::Construct:
         case MirInstructionKind::Drop:
         case MirInstructionKind::EndBorrow:
+        case MirInstructionKind::ParkRangeCursor:
+        case MirInstructionKind::RestoreRangeCursor:
         case MirInstructionKind::Modify:
         case MirInstructionKind::CallBody:
         case MirInstructionKind::AllocateObject:
@@ -1850,6 +1852,8 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
       case MirInstructionKind::Borrow:
       case MirInstructionKind::ActivateBorrow:
       case MirInstructionKind::EndBorrow:
+      case MirInstructionKind::ParkRangeCursor:
+      case MirInstructionKind::RestoreRangeCursor:
       case MirInstructionKind::CallBody:
       case MirInstructionKind::AllocateObject:
       case MirInstructionKind::InitializeBase:

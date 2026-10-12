@@ -2349,6 +2349,13 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
       stmt.elementBinding() == nullptr
           ? nullptr
           : semanticModel.findBinding(*stmt.elementBinding());
+  const BindingInfo *elementOwner =
+      stmt.elementOwnerBinding() == nullptr
+          ? nullptr
+          : semanticModel.findBinding(*stmt.elementOwnerBinding());
+  const VariableDecl *accessBinding = stmt.elementOwnerBinding() == nullptr
+                                          ? stmt.elementBinding()
+                                          : stmt.elementOwnerBinding();
 
   SemanticType rangeType =
       range == nullptr ? SemanticType::Unknown : range->type;
@@ -2363,6 +2370,9 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
       symbolicRangeMemberReturnType(rangeType, "begin_mut").has_value();
   if (rangeType != SemanticType::Unknown &&
       rangeType.kind != SemanticType::Array &&
+      !(rangeType.kind == SemanticType::StringView &&
+        textViewMemberFactory("begin").has_value() &&
+        textViewMemberFactory("end").has_value()) &&
       rangeType.kind != SemanticType::Class && !symbolicReadRange) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2083", DiagnosticPhase::Semantics, stmt.colon(),
@@ -2411,14 +2421,64 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
       stmt.sentinelBinding() == nullptr
           ? 0
           : selectedCall(stmt.sentinelBinding()->initializer());
+  const auto *endpointCall =
+      stmt.sentinelBinding() == nullptr
+          ? nullptr
+          : exprAs<Call>(stmt.sentinelBinding()->initializer().get());
+  const ResolvedCallInfo *resolvedEndpoint =
+      endpointCall == nullptr ? nullptr : semanticModel.findCall(*endpointCall);
+  // The hidden sentinel binding can copy a reference result. Its resulting
+  // value type alone does not prove that evaluating the endpoint creates no
+  // borrow: preserve the selected call's authoritative return/origin facts.
+  const bool nonBorrowingEndpoint =
+      endFunction != 0 && resolvedEndpoint != nullptr && sentinel != nullptr &&
+      resolvedEndpoint->returnType.kind != SemanticType::Reference &&
+      !typeTraits(resolvedEndpoint->returnType).containsBorrowedState &&
+      resolvedEndpoint->borrowOrigin == BorrowOriginKind::None &&
+      resolvedEndpoint->borrowFields.empty() &&
+      resolvedEndpoint->borrowArguments.empty() &&
+      !resolvedEndpoint->borrowPlace;
   const FunctionId compareFunction =
       core == nullptr ? 0 : selectedOperator(core->condition());
   const FunctionId dereferenceFunction =
-      stmt.elementBinding() == nullptr
-          ? 0
-          : selectedOperator(stmt.elementBinding()->initializer());
+      accessBinding == nullptr ? 0
+                               : selectedOperator(accessBinding->initializer());
   const FunctionId incrementFunction =
       core == nullptr ? 0 : selectedOperator(core->increment());
+  const ResolvedOperatorInfo *dereference =
+      accessBinding == nullptr || !accessBinding->initializer()
+          ? nullptr
+          : semanticModel.findOperator(*accessBinding->initializer());
+  const bool exclusiveInlineProxy =
+      mutableElementRequested && iterator != nullptr &&
+      iterator->type.kind == SemanticType::Class &&
+      typeTraits(iterator->type).containsBorrowedState &&
+      elementType.kind == SemanticType::Class &&
+      typeTraits(elementType).containsBorrowedState && dereference != nullptr &&
+      dereference->borrowOrigin == BorrowOriginKind::Receiver &&
+      dereference->borrowFields.empty();
+  if (exclusiveInlineProxy && resolvedEndpoint != nullptr &&
+      (!nonBorrowingEndpoint || !resolvedEndpoint->parameterTypes.empty() ||
+       !resolvedEndpoint->defaultArguments.empty() ||
+       resolvedEndpoint->neverReturns ||
+       resolvedEndpoint->dispatch != CallDispatch::Static ||
+       resolvedEndpoint->receiverMode != CallReceiverMode::ReadOnlyPlace)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2083", DiagnosticPhase::Semantics, stmt.colon(),
+        "Mutable inline-proxy range iteration requires a statically selected "
+        "read-only endpoint call that can return an independent sentinel "
+        "without arguments or a borrowed result.");
+    if (resolvedEndpoint->declaration != nullptr)
+      diagnostic.related.push_back(
+          {tokenSpan(resolvedEndpoint->declaration->name()),
+           "This endpoint cannot be evaluated while the exclusive cursor is "
+           "temporarily inaccessible."});
+    diagnostic.hints.emplace_back(
+        "Provide a read-only end() that returns an independent sentinel "
+        "value without default arguments or virtual dispatch; an empty "
+        "variadic endpoint is valid when its resolved call has no arguments.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
   const bool mutableProtocolAvailable =
       rangeType.kind == SemanticType::Array || symbolicMutableRange ||
       (beginFunction != 0 && endFunction != 0 && compareFunction != 0 &&
@@ -2461,8 +2521,11 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
              .iterator = iterator == nullptr ? 0 : iterator->symbol,
              .sentinel = sentinel == nullptr ? 0 : sentinel->symbol,
              .element = element == nullptr ? 0 : element->symbol,
+             .elementOwner = elementOwner == nullptr ? 0 : elementOwner->symbol,
              .rangeLoan = range == nullptr ? 0 : range->retainedLoan,
              .elementLoan = element == nullptr ? 0 : element->retainedLoan,
+             .elementOwnerLoan =
+                 elementOwner == nullptr ? 0 : elementOwner->retainedLoan,
              .beginFunction = beginFunction,
              .endFunction = endFunction,
              .compareFunction = compareFunction,
@@ -2474,7 +2537,11 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
                                 : 0,
              .ownsRangeTemporary = owner != nullptr &&
                                    owner->type.kind != SemanticType::Reference,
-             .expectedPayloadProjection = expectedPayloadProjection});
+             .expectedPayloadProjection = expectedPayloadProjection,
+             .nonBorrowingEndpoint = nonBorrowingEndpoint,
+             .materializesElementValue =
+                 elementOwner != nullptr &&
+                 elementOwner->type.kind != SemanticType::Reference});
 }
 
 auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
@@ -7330,7 +7397,8 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
     return;
   }
   if (objectType.kind == SemanticType::StringView) {
-    if (expr.name().lexeme == "size" || expr.name().lexeme == "empty") {
+    if (expr.name().lexeme == "size" || expr.name().lexeme == "empty" ||
+        textViewMemberFactory(expr.name().lexeme).has_value()) {
       if (!analyzingCallCallee) {
         report(expr.name(),
                "Function names must be called; function values are not "
@@ -12367,9 +12435,21 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
           ? semanticModel.findExpression(*declaration.initializer())
           : nullptr;
   const bool rangeOwnerReference =
-      declaration.isRangeOwner() && initializerInfo != nullptr &&
+      (declaration.isRangeOwner() || declaration.isRangeElementOwner()) &&
+      initializerInfo != nullptr &&
       initializerInfo->category == ValueCategory::Place &&
       initializerType != SemanticType::Unknown;
+  if (declaration.isRangeElementOwner() && initializerInfo != nullptr &&
+      initializerInfo->category == ValueCategory::Value &&
+      initializerType != SemanticType::Unknown &&
+      initializerType.kind != SemanticType::TypeParameter &&
+      (!readableIteratorValue(initializerType) ||
+       initializerInfo->traits.containsBorrowedState)) {
+    report(expressionToken(declaration.initializer()),
+           "A value-yielding range requires an independent copyable element "
+           "with no borrowed state.",
+           "GTI-S2083");
+  }
   const bool ownerDependentText =
       (initializerType.kind == SemanticType::StringView ||
        initializerType.kind == SemanticType::CString) &&
@@ -12390,6 +12470,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
     inferredType = SemanticType::Unknown;
   }
   if (!type.reference && !declaration.isRangeOwner() &&
+      !declaration.isRangeElementOwner() &&
       inferredType.kind == SemanticType::Reference) {
     report(declaration.name(),
            "'auto' does not infer references; declare the reference type "

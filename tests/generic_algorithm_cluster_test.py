@@ -152,7 +152,7 @@ def main() -> int:
         # remain mandatory in either class representation.
         vector_iterator = (
             r"(?:__gti_type_[0-9a-f]{64}_vector_iterator|"
-            r"::__gti_program::__gti_std::detail::vector_iterator<std::int32_t>)"
+            r"::__gti_program::__gti_std::detail::vector_iterator<std::int32_t, 0>)"
         )
         find_backend_patterns = (
             r"__gti_inst_[0-9a-f]{64}_find__gti_mir_failure\("

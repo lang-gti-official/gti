@@ -351,8 +351,8 @@ Consequently it satisfies `std::copy_constructible` but not `std::copyable`.
 A helper receiving this carrier by value may relay only the iterator value or
 its exact stored storage referent; cursor fields and other shell projections do
 not inherit the external owner dependency.
-`begin_mut()` returns a separate compiler-confined, non-copyable iterator carrying
-the exclusive range loan; mutable dereference returns the current element's
+`begin_mut()` returns a separate non-copyable checked iterator carrying
+the exclusive owner dependency; mutable dereference returns the current element's
 loop-bounded child loan through checked storage access. Reserve, push, clear,
 movement, and other overlapping owner operations are rejected while that range
 is active. Owned vector temporaries are supported and destroyed once after
@@ -374,8 +374,11 @@ adjacent uniqueness, and stable O(n log n) sort transfer node owners without
 copying or moving stored elements. Only growing resize allocates new nodes.
 Merge consumes its other list. Swap exchanges the node chains in constant time
 without allocation or element movement and obeys the same exclusive-owner
-borrow rules as vector swap. Iterators and emplacement remain bodyless pending
-their lifetime and construction capabilities.
+borrow rules as vector swap. Shared forward cursors can be copied independently;
+exclusive cursors mutate checked elements without duplicating owner permission.
+End markers and common-position endpoints do not fabricate reverse traversal.
+`emplace_front` constructs in the node's final address and supports immovable
+payloads, with the ordinary constructor rollback and ownership cleanup rules.
 
 Safe ownership and container APIs should likewise be ordinary nominal GTI
 classes under `std`, implemented over compiler-defined `gti_internal`
@@ -558,7 +561,7 @@ is recognized by the backend.
 | Include | Scaffolded surface |
 | --- | --- |
 | `<std/algorithm>` | Search, bounds, extrema, sortedness, sequence/prefix comparison, contains/count and predicate algorithms; whole-range fill/replace; confined output copy/filter/replace/remove-copy families; vector transform/reverse/sort. See [range contracts](../docs/language/ranges.md#searching-and-rewriting-containers) for exact forms and remaining boundaries. |
-| `<std/forward_list>` | Implemented front operations, iterative cleanup, resize, reverse, stable merge/sort, remove, unique, and swap; iteration and emplacement remain declarations |
+| `<std/forward_list>` | Front operations, final-address emplacement, iterative cleanup, resize, reverse, stable merge/sort, remove, unique, swap, and checked shared/exclusive forward iteration |
 | `<std/functional>` | Public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, comparison function objects, and source-defined read-only, mutable, and consuming `function` / `move_only_function`; declaration-only `hash` |
 | `<std/iterator>` | Structural input/output, forward, bidirectional, signed-jump and sized-sentinel capabilities, exact element relations, complete-range concepts, `advance`, `distance`, `next`, and `prev` |
 | `<std/list>` | Executable doubly-linked slot-owned nodes, checked indexed mutation, ends, emplacement, read traversal, reverse, remove, unique, merge, sort, and iterative cleanup |

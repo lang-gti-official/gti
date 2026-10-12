@@ -7907,26 +7907,44 @@ consumer, and release refreshes remain outstanding for the full campaign.
 - **Implemented ordered-query composition:** the source-defined slice adds
   `partition_point` and comparator `lower_bound`/`upper_bound`/`binary_search`
   over exact homogeneous keys, preserving checked cursor loans and one owned
-  repeatable callback in ordinary GTI. Example 141 demonstrates custom-record
+  repeatable callback in ordinary GTI. Example 139 demonstrates custom-record
   ordering. Callback failure, exact returned-owner rejection, and allocation/
   traversal-cost fixtures cover the same rules with unrelated cursors.
 - **Remaining scope:** structural complete-range
   relations for `transform`, `reverse`, and `sort`; and further
   iterator/sentinel overloads behind a demonstrated subrange client.
-  Forward-list traversal, heterogeneous search keys/projections and indirect
-  binary callable relations remain separate prerequisites, not compiler
-  exceptions for these APIs. Iterator-pair in-place spellings remain
-  excluded because `begin_mut()` and `end()` from one container overlap by
-  design; semantics now diagnoses that conflict before MIR, while read-only
-  methods on a parameter-held mutable cursor are supported. Iterator
-  assignment, implicit conversions, overload ranking, and a parallel C++
-  iterator-category hierarchy remain unauthorized.
+  Heterogeneous search keys/projections and indirect binary callable relations
+  need their own exact callable and borrowing contracts, not compiler
+  exceptions for these APIs. Iterator-pair in-place overloads still need
+  coherent writable endpoint, subrange and return-origin contracts. An
+  independent end sentinel can be acquired before a mutable cursor; reading
+  the owner through `end()` after acquiring that cursor remains an overlapping
+  access. Read-only methods on a parameter-held mutable cursor are supported.
+  Iterator assignment, implicit conversions and overload ranking remain
+  outside this profile; movement categories compose ordinary source concepts
+  rather than introducing a parallel compiler-owned C++ trait hierarchy.
   Restoring indexed exchange and move-only vector reverse/sort are delivered
   by `L-UP-07/08`; they do not require general un-restored element move-out.
   Start a new algorithm from those operations before proposing partial-move
   semantics solely to work around a historical implementation limitation.
 - **Exit gate:** no public algorithm name is recognized by the compiler and
   value/borrow/move behavior is covered for every supported range category.
+- **Container-completion campaign (2026-10-12, delivered):** the completed
+  task covers forward-list iteration and the remaining container/view cursor
+  families, including sparse live slots, lane storage and two-owner reference
+  proxies. Movement is separate from cursor duplication. General independent
+  copyable value yields and exact indirect-callback categories enable counted
+  text views without fabricated native character references. Body-local
+  value-borrow cleanup and forged-IR tests pass, along with the unfiltered local
+  672-gate suite, both 143-example censuses, independent emitter/cutover oracles
+  and measured runtime controls. Final Linux reconciliation passes its Release
+  build and 44/45 gates; the owner accepts the retained atomic JSON sanitizer
+  compile-budget failure and requests PR #24 integration at version 0.406.0.
+  This is not an all-green Linux certification, and no assertion or time limit
+  is weakened. Documentation-only closure preserves the tested implementation.
+  See the existing
+  [iterator completion plan](iterators-and-ranges.md#container-completion-campaign-delivered-2026-10-12)
+  and its linked acceptance record for the family matrix and exact evidence.
 
 ### L-NUM-01: Defined Integer Arithmetic Modes
 

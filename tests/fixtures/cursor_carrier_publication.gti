@@ -1,0 +1,88 @@
+#include <std/resource_vector>
+#include <std/resource>
+#include <std/paired_span>
+#include <std/vector>
+#include <std/string>
+#include <std/panic>
+
+// A user-defined aggregate retains two independent owners. A cursor borrows
+// its physical shell and its nested observation forwards that checked borrow.
+// Neither the type nor any method spelling is a compiler capability.
+class UserOwners {
+  int& left;
+  int& right;
+public:
+  UserOwners(int& left, int& right) : left(left), right(right) {}
+  int& first() { return this.left; }
+  int& second() { return this.right; }
+};
+
+class UserObservation {
+  UserOwners& owners;
+  std::size_t selected;
+public:
+  UserObservation(UserOwners& owners, std::size_t selected)
+      : owners(owners), selected(selected) {
+    if (selected > 1) { std::panic("invalid user cursor selection"); }
+  }
+  int& read() {
+    if (this.selected == 0) { return this.owners.first(); }
+    return this.owners.second();
+  }
+};
+
+class UserCursor {
+  UserObservation observation;
+public:
+  UserCursor(UserOwners& owners, std::size_t selected)
+      : observation(UserObservation(owners, selected)) {}
+  int& read() { return this.observation.read(); }
+};
+
+UserCursor make_cursor(UserOwners& owners) {
+  return UserCursor(owners, std::size_t(0));
+}
+
+UserCursor forward_cursor(UserOwners& owners) { return make_cursor(owners); }
+
+class PublicationGuard {
+  int identity;
+public:
+  PublicationGuard(int identity) : identity(identity) {}
+  ~PublicationGuard() { std::println(this.identity); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> values{resource};
+    values.push_back(7);
+    auto cursor = values.cbegin();
+    if (*cursor != 7) { return 1; }
+  }
+  std::vector<int> first = {3};
+  std::vector<int> second = {5};
+  auto pairs = std::paired_span<int, int>(first.as_span(), second.as_span());
+  auto first_pair = pairs.begin();
+  if ((*first_pair).first() != 3 || (*first_pair).second() != 5) { return 2; }
+  auto forwarded_pair = pairs.cbegin();
+  if ((*forwarded_pair).second() != 5) { return 3; }
+  int left = 11;
+  int right = 13;
+  UserOwners owners{left, right};
+  auto direct = make_cursor(owners);
+  auto forwarded = forward_cursor(owners);
+  auto copy = forwarded;
+  if (direct.read() != 11 || forwarded.read() != 11 || copy.read() != 11) { return 4; }
+  if (argc > 1) {
+    PublicationGuard outer{1};
+    PublicationGuard inner{2};
+    // The checked child constructor fails before its field is published.
+    // MIR still retires the physical formal and the external dependency,
+    // then performs the surrounding guards' exact reverse-order cleanup.
+    auto failed = UserCursor(owners, std::size_t(2));
+    return failed.read();
+  }
+  return 0;
+}

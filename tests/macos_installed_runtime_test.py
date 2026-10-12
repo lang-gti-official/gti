@@ -9,12 +9,19 @@ import sys
 import tempfile
 
 
-def run(arguments, environment):
+def run(arguments, environment, cwd=None):
     result = subprocess.run([str(argument) for argument in arguments], env=environment,
-                            capture_output=True, text=True, timeout=180)
+                            cwd=cwd, capture_output=True, text=True, timeout=180)
     if result.returncode:
         raise AssertionError(f"{arguments}:\n{result.stdout}\n{result.stderr}")
     return result.stdout
+
+
+def run_program(executable, expected_output, environment, cwd):
+    result = subprocess.run([str(executable)], env=environment, cwd=cwd,
+                            capture_output=True, text=True, timeout=30)
+    assert (result.returncode, result.stdout, result.stderr) == (0, expected_output, ""), (
+        executable, result.returncode, result.stdout, result.stderr)
 
 
 def main():
@@ -78,12 +85,65 @@ def main():
                           'std::println("owned installed environment"); return 0; }\n')
         run([cli, source, "-O3", "-o", executable], environment)
         assert run([executable], dict(environment, GTI_INSTALLED_ENVIRONMENT="relocated")) == "owned installed environment\n"
+        # Exercise installed iterator policy outside the repository, with no
+        # explicit include paths, runtime paths, or GTI environment overrides.
+        # Copying the examples keeps their source location outside a checkout;
+        # all their standard-library units must resolve from this toolchain.
+        examples = pathlib.Path(__file__).resolve().parent.parent / "examples"
+        iterator_examples = (
+            ("143-checked-container-iteration.gti",
+             "Checked forward, reverse and mutable iteration\n"),
+            ("144-checked-view-iteration.gti", "Checked view iteration passed\n"),
+            ("145-live-slot-and-lane-iteration.gti", "sparse reverse: 31; total: 79\n"),
+            ("146-counted-text-view-iteration.gti", ""),
+        )
+        for filename, _ in iterator_examples:
+            (root / filename).write_text((examples / filename).read_text())
+        assert (relocated / "share/gti/stdlib/modules/string_view.gti").is_file()
+        assert (relocated / "share/gti/stdlib/std/string_view.gti").is_file()
+        view_module = root / "installed-string-view-module.gti"
+        view_module.write_text('''import std.string_view;
+int main() {
+  std::string_view text = "abc";
+  mut std::size_t count = 0;
+  for (char& character : text) {
+    if (character != text[count]) { return 1; }
+    count++;
+  }
+  if (count != std::size_t(3)) { return 2; }
+  mut auto first = text.cbegin();
+  auto saved = first;
+  ++first;
+  if (*first != 'b' || *saved != 'a') { return 3; }
+  mut auto reverse = text.crbegin();
+  if (*reverse != 'c') { return 4; }
+  ++reverse;
+  auto middle = text.iterator_at(std::size_t(1));
+  if (*reverse != 'b' || *middle != 'b') { return 5; }
+  mut auto last = text.end_iterator();
+  --last;
+  if (*last != 'c') { return 6; }
+  return 0;
+}
+''')
+        for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
+            for filename, expected_output in iterator_examples:
+                copied = root / filename
+                executable = root / f"{copied.stem}-{standard}"
+                run([cli, copied, optimization, "--std", standard,
+                     "--progress=never", "-o", executable], environment, cwd=root)
+                run_program(executable, expected_output, environment, root)
+            executable = root / f"installed-string-view-module-{standard}"
+            run([cli, view_module, optimization, "--std", standard,
+                 "--progress=never", "-o", executable], environment, cwd=root)
+            run_program(executable, "", environment, root)
         header = root / "consumer.h"
         header.write_text("#include <stdint.h>\nint32_t native_add(int32_t a, int32_t b);\n")
         bindings = root / "bindings.gti"
         run([cli, "bindgen", header, "--namespace", "native", "-o", bindings], environment)
         assert "native_add" in bindings.read_text()
-    print("Relocated installed macOS CLI/LSP, runtime closure, native compilation and bindgen passed")
+    print("Relocated installed macOS CLI/LSP, runtime closure, native compilation, "
+          "iterator examples/modules and bindgen passed")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,62 @@
+// Source-defined cursor arithmetic. An endpoint is a valid position, but not
+// an element. Validate before changing state, including the minimum signed
+// offset, without converting the owner's full size to a signed integer.
+namespace std::detail {
+// One-step movement has no dynamic signed offset to decode. A forward step
+// requires begin <= position < end; a backward step requires
+// begin < position <= end. These checks also prove that the following ordinary
+// checked addition/subtraction cannot overflow/underflow before publication.
+// Reverse and Decrement are compile-time cursor policies, not runtime flags.
+size_t checked_iterator_step<uint64_t Reverse = 0, uint64_t Decrement = 0>(
+    size_t position, size_t begin, size_t end) {
+  if constexpr ((Reverse != 0) != (Decrement != 0)) {
+    gti_internal::require_container_argument(begin < position && position <= end);
+    return position - size_t(1);
+  }
+  gti_internal::require_container_argument(begin <= position && position < end);
+  return position + size_t(1);
+}
+
+size_t checked_iterator_position(size_t position, size_t begin, size_t end,
+                                 ptrdiff_t offset, bool subtract = false) {
+  gti_internal::require_container_argument(begin <= position && position <= end);
+  bool negative = offset < 0;
+  size_t magnitude = negative ? size_t(-(offset + ptrdiff_t(1))) + size_t(1)
+                             : size_t(offset);
+  if (negative != subtract) {
+    gti_internal::require_container_argument(magnitude <= position - begin);
+    return position - magnitude;
+  }
+  gti_internal::require_container_argument(magnitude <= end - position);
+  return position + magnitude;
+}
+
+// Reverse cursors retain the forward one-past base position. Element access
+// selects base - 1 only after the directional jump has itself been checked.
+size_t checked_iterator_element(size_t position, size_t begin, size_t end,
+                                ptrdiff_t offset, bool reverse = false) {
+  mut size_t selected = checked_iterator_position(position, begin, end, offset, reverse);
+  if (reverse) {
+    selected = checked_iterator_position(selected, begin, end, ptrdiff_t(-1));
+  }
+  gti_internal::index_bounds_check(selected - begin, end - begin);
+  return selected;
+}
+
+// Subtract unsigned coordinates before converting. Large absolute positions
+// can still have a small representable distance, and INT64_MIN is valid.
+ptrdiff_t checked_iterator_difference(size_t left, size_t right) {
+  size_t maximum = size_t(9223372036854775807);
+  if (left >= right) {
+    size_t magnitude = left - right;
+    gti_internal::require_container_argument(magnitude <= maximum);
+    return ptrdiff_t(magnitude);
+  }
+  size_t magnitude = right - left;
+  gti_internal::require_container_argument(magnitude <= maximum + size_t(1));
+  if (magnitude == maximum + size_t(1)) {
+    return ptrdiff_t(-9223372036854775807) - ptrdiff_t(1);
+  }
+  return -ptrdiff_t(magnitude);
+}
+}

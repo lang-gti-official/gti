@@ -261,7 +261,7 @@ void testSemanticAndLoweringRoots() {
                    std::string::npos &&
                lang::MirPrinter()
                    .print(optimized.mir)
-                   .starts_with("mir-v100 valid=1\n"),
+                   .starts_with("mir-v101 valid=1\n"),
            "library-only serialization should retain canonical export facts");
   }
 

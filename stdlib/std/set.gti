@@ -5,27 +5,29 @@
 namespace std {
 namespace detail {
 /// Projects immutable keys while preserving the underlying iterator's loan.
-class set_key_iterator<K> {
-  mut map_iterator<K, bool> cursor;
+class set_key_iterator<K, uint64_t Reverse = 0> {
+  mut map_iterator<K, bool, Reverse> cursor;
 public:
-  set_key_iterator(map_iterator<K, bool> cursor) : cursor(std::move(cursor)) {}
+  set_key_iterator(map_iterator<K, bool, Reverse> cursor) : cursor(std::move(cursor)) {}
   K& operator*() { return this.cursor->first; }
   K& operator->() { return this.cursor->first; }
   void operator++() mut { ++this.cursor; }
+  void operator--() mut { --this.cursor; }
   bool operator!=(map_sentinel end) { return this.cursor != end; }
-  bool operator==(map_sentinel& end) { return this.cursor == end; }
-  bool operator!=(set_key_iterator<K>& other) { return this.cursor != other.cursor; }
-  bool operator==(set_key_iterator<K>& other) { return this.cursor == other.cursor; }
+  bool operator==(map_sentinel end) { return this.cursor == end; }
+  bool operator!=(set_key_iterator<K, Reverse>& other) { return this.cursor != other.cursor; }
+  bool operator==(set_key_iterator<K, Reverse>& other) { return this.cursor == other.cursor; }
 };
 class set_insert_iterator<K> {
   mut map_mut_iterator<K, bool> cursor;
 public:
   set_insert_iterator(map_mut_iterator<K, bool> cursor) : cursor(std::move(cursor)) {}
-  K& operator*() { return this.cursor->first; }
-  K& operator->() { return this.cursor->first; }
+  K& operator*() { return this.cursor.key(); }
+  K& operator->() { return this.cursor.key(); }
   void operator++() mut { ++this.cursor; }
+  void operator--() mut { --this.cursor; }
   bool operator!=(map_sentinel end) { return this.cursor != end; }
-  bool operator==(map_sentinel& end) { return this.cursor == end; }
+  bool operator==(map_sentinel end) { return this.cursor == end; }
 };
 }
 
@@ -44,6 +46,7 @@ public:
   using iterator = detail::set_insert_iterator<K>;
   using const_iterator = detail::set_key_iterator<K>;
   using sentinel = detail::map_sentinel;
+  using const_reverse_iterator = detail::set_key_iterator<K, 1>;
   static set<K, Compare> collection_init(uint64_t count)
       requires std::default_initializable<Compare> && std::read_binary_callable<Compare, K, K, bool> {
     return set<K, Compare>();
@@ -70,6 +73,13 @@ public:
     this.entries = other.replace(std::move(previous));
   }
   const_iterator begin() { return const_iterator(this.entries.begin()); }
+  const_iterator end_iterator() { return const_iterator(this.entries.end_iterator()); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel cend() { return this.end(); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this.entries.rbegin()); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return this.entries.rend(); }
+  sentinel crend() { return this.rend(); }
   detail::map_sentinel end() { return this.entries.end(); }
   const_iterator find(K& key) { return const_iterator(this.entries.find(key)); }
   const_iterator lower_bound(K& key) { return const_iterator(this.entries.lower_bound(key)); }

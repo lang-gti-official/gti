@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 
 READINESS_PREFIX = "GTI_CPP_MIR_CORPUS_READINESS_V1"
@@ -57,6 +58,7 @@ class WorkerResult:
     readiness: dict[str, int] | None
     agreement: dict[str, int] | None
     error: str = ""
+    seconds: float = 0.0
 
 
 def parse_record(output: str, prefix: str,
@@ -90,15 +92,40 @@ def parse_record(output: str, prefix: str,
     return fields
 
 
-def run_source(binary: Path, root: Path, source: Path) -> WorkerResult:
+def run_source(binary: Path, root: Path, source: Path,
+               evidence_directory: Path | None = None) -> WorkerResult:
+    started = time.monotonic()
     try:
-        completed = subprocess.run(
-            [str(binary), "--corpus-source", str(source)],
-            cwd=root,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        command = [str(binary), "--corpus-source", str(source)]
+        if evidence_directory is None:
+            completed = subprocess.run(
+                command, cwd=root, text=True, capture_output=True, check=False,
+            )
+        else:
+            print(f"corpus worker started: {source.name}", flush=True)
+            stdout_path = evidence_directory / f"{source.name}.stdout"
+            stderr_path = evidence_directory / f"{source.name}.stderr"
+            with stdout_path.open("w", encoding="utf-8") as stdout, \
+                    stderr_path.open("w", encoding="utf-8") as stderr:
+                with subprocess.Popen(command, cwd=root, text=True,
+                                      stdout=stdout, stderr=stderr) as process:
+                    metadata = {
+                        "source": source.name, "command": command,
+                        "pid": process.pid, "started_unix": time.time(),
+                    }
+                    metadata_path = evidence_directory / f"{source.name}.json"
+                    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n",
+                                             encoding="utf-8")
+                    returncode = process.wait()
+            completed = subprocess.CompletedProcess(
+                command, returncode,
+                stdout_path.read_text(encoding="utf-8"),
+                stderr_path.read_text(encoding="utf-8"),
+            )
+            metadata.update(returncode=returncode,
+                            seconds=time.monotonic() - started)
+            metadata_path.write_text(json.dumps(metadata, indent=2) + "\n",
+                                     encoding="utf-8")
     except OSError as error:
         return WorkerResult(source.name, -1, "", "", None, None,
                             f"worker launch failed: {error}")
@@ -119,6 +146,7 @@ def run_source(binary: Path, root: Path, source: Path) -> WorkerResult:
             None,
             None,
             str(error),
+            time.monotonic() - started,
         )
     return WorkerResult(
         source.name,
@@ -127,6 +155,7 @@ def run_source(binary: Path, root: Path, source: Path) -> WorkerResult:
         completed.stderr,
         readiness,
         agreement,
+        seconds=time.monotonic() - started,
     )
 
 
@@ -136,6 +165,9 @@ def main() -> int:
     parser.add_argument("root")
     parser.add_argument("baseline")
     parser.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1))
+    parser.add_argument("--evidence-dir", type=Path,
+                        default=os.environ.get("GTI_CPP_MIR_CORPUS_EVIDENCE_DIR"),
+                        help="retain each worker's output, identity and timing")
     arguments = parser.parse_args()
 
     binary = Path(arguments.binary).resolve()
@@ -162,10 +194,16 @@ def main() -> int:
         )
         return 1
 
+    evidence_directory = arguments.evidence_dir
+    if evidence_directory is not None:
+        evidence_directory = evidence_directory.resolve()
+        evidence_directory.mkdir(parents=True, exist_ok=False)
+
     results: dict[str, WorkerResult] = {}
     with ThreadPoolExecutor(max_workers=arguments.jobs) as executor:
         futures = {
-            executor.submit(run_source, binary, root, source): source.name
+            executor.submit(run_source, binary, root, source,
+                            evidence_directory): source.name
             for source in sources
         }
         for future in as_completed(futures):
@@ -176,6 +214,14 @@ def main() -> int:
                 results[source] = WorkerResult(
                     source, -1, "", "", None, None,
                     f"worker raised: {error}"
+                )
+            if evidence_directory is not None:
+                result = results[source]
+                print(
+                    f"corpus worker completed: {source} "
+                    f"seconds={result.seconds:.3f} exit={result.returncode} "
+                    f"completed={len(results)}/{len(sources)}",
+                    flush=True,
                 )
 
     failures: list[str] = []

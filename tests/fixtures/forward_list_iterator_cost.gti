@@ -1,0 +1,62 @@
+#include <std/forward_list>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+  uint64_t forward_traversal_now_ns();
+  void forward_traversal_observe(uint64_t checksum);
+  void forward_traversal_report(uint64_t length, uint64_t elapsed,
+                               uint64_t allocations, uint64_t checksum);
+}
+
+uint64_t traverse(std::forward_list<int32_t>& values, std::size_t rounds) {
+  mut uint64_t checksum = 0;
+  auto end = values.end();
+  for (mut std::size_t round = 0; round < rounds; round++) {
+    mut auto cursor = values.begin();
+    while (cursor != end) {
+      checksum += uint64_t(*cursor);
+      ++cursor;
+    }
+  }
+  return checksum;
+}
+
+int measured(std::forward_list<int32_t>& values, std::size_t length) {
+  std::size_t rounds = 20000;
+  adoption_count_begin();
+  uint64_t start = forward_traversal_now_ns();
+  uint64_t checksum = traverse(values, rounds);
+  uint64_t elapsed = forward_traversal_now_ns() - start;
+  adoption_count_end();
+  uint64_t allocations = adoption_allocations();
+  if (allocations != uint64_t(0)) { return 1; }
+  if (checksum != uint64_t(length) * uint64_t(length - 1) / uint64_t(2) * uint64_t(rounds)) {
+    return 2;
+  }
+  forward_traversal_observe(checksum);
+  forward_traversal_report(length, elapsed, allocations, checksum);
+  return 0;
+}
+
+int main() {
+  mut std::forward_list<int32_t> small{};
+  mut std::forward_list<int32_t> large{};
+  for (mut int32_t index = 0; index < 256; index++) {
+    large.push_front(index);
+    if (index < 128) { small.push_front(index); }
+  }
+  [[discard]] traverse(small, std::size_t(100));
+  [[discard]] traverse(large, std::size_t(100));
+  for (mut int32_t round = 0; round < 5; round++) {
+    if (round % 2 == 0) {
+      if (measured(small, std::size_t(128)) != 0) { return 3; }
+      if (measured(large, std::size_t(256)) != 0) { return 4; }
+    } else {
+      if (measured(large, std::size_t(256)) != 0) { return 5; }
+      if (measured(small, std::size_t(128)) != 0) { return 6; }
+    }
+  }
+  return 0;
+}
