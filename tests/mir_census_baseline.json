@@ -26,7 +26,7 @@
     "025-polymorphic-ranges.gti": 23,
     "026-stored-references.gti": 18,
     "027-copy-move-policies.gti": 22,
-    "028-callable-parameters.gti": 12,
+    "028-callable-parameters.gti": 20,
     "029-callable-predicates.gti": 12,
     "030-callable-forwarding.gti": 12,
     "031-exact-constraints.gti": 17,
@@ -144,5 +144,5 @@
     "145-live-slot-and-lane-iteration.gti": 291,
     "146-counted-text-view-iteration.gti": 126
   },
-  "total": 14751
+  "total": 14759
 }

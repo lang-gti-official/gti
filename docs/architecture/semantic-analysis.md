@@ -1321,7 +1321,7 @@ stored-borrowed-state, global/field, and general init captures remain rejected.
 
 ## Confined Callable Contracts
 
-A direct by-value generic parameter may acquire a `Confined` callable
+A direct by-value or checked-reference generic parameter may acquire a `Confined` callable
 contract when its visible body invokes it or forwards it to another proven
 confined parameter. Each call site records an exact parameter list, result
 type, required receiver access, and selected concrete lambda or `operator()`
@@ -1348,9 +1348,23 @@ Raw pointers remain non-owning values under their ordinary language rules.
 `std::string_view` may denote static literal storage or retain an owner
 dependency; accepting the type does not erase an expression's tracked borrow
 or permit its escape. The callable boundary does not reclassify either as
-ownership. `auto` cannot infer a result through an
-otherwise unknown generic callable, and reference, tracked borrowed-state, and
-lambda-identity results remain rejected.
+ownership. In an `auto` conditional initializer, direct callable arms may
+also retain `inferResultFromInstantiation`. An unknown arm is never represented
+as `void`. The symbolic binding stays instance-dependent until concrete
+reanalysis validates both arm types and publishes one exact binding/result
+type. Plain open-callable `auto` initializers, reference results, tracked
+borrowed-state results and lambda-identity results remain rejected.
+
+Reference callable parameters reuse ordinary reference binding and loan
+analysis. The contract's symbolic callable type names the referent, while the
+concrete formal in HIR/MIR retains its reference type and access mode. A
+checked dereference preserves the parameter's invocation identity; field,
+index and raw-pointer projections do not qualify as the whole callable.
+MIR validates confinement, reference access and repeatable capability as well
+as the actual receiver/argument loans. Borrowed invocation and forwarding do
+not introduce a new environment, allocation, ownership transfer or drop.
+The caller's object remains live across the call, including defined-failure
+cleanup, and existing escape/transport checks still apply.
 
 Confinement applies equally to lexical lambdas and nominal callable objects.
 Once a generic parameter is invoked, it cannot appear within that function's

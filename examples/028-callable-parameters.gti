@@ -11,6 +11,33 @@ public:
   void operator()(mut T& value) { value = this.replacement; }
 };
 
+// Borrow a stateful callable without copying it or transferring ownership.
+class Counter {
+public:
+  mut int value = 0;
+  Counter() {}
+  Counter(Counter& other) = delete;
+  Counter(Counter&& other) = default;
+  int operator()(int amount) mut {
+    this.value += amount;
+    return this.value;
+  }
+};
+
+int pick<Producer>(bool use_producer, mut Producer& produce) {
+  // The exact arm type is checked when Producer is instantiated.
+  auto result = use_producer ? produce(2) : 7;
+  return result;
+}
+
+int relay<Producer>(mut Producer& produce) {
+  return pick(true, produce);
+}
+
+int read<Producer>(Producer& produce) {
+  return produce(3);
+}
+
 int main() {
   mut int lambda_value = 1;
   auto increment = [](mut int& value) -> void { value++; };
@@ -20,5 +47,11 @@ int main() {
   Replace<int> object = Replace<int>(4);
   apply_twice(object_value, object);
 
+  mut Counter counter{};
+  if (relay(counter) != 2 || counter.value != 2) return 1;
+  if (pick(false, counter) != 7 || counter.value != 2) return 2;
+
+  auto twice = [](int value) -> int { return value * 2; };
+  if (read(twice) != 6) return 3;
   return lambda_value + object_value - 7;
 }

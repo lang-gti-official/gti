@@ -25,7 +25,7 @@ if(Python3_Interpreter_FOUND)
     associative_ownership_runtime borrow_origin_runtime borrowing_composition charconv_runtime
     cleanup_bound_borrow_runtime complete_containers composable_io_runtime
     conditional_capability_runtime conditional_converted_receiver_runtime
-    conditional_owning_argument_runtime
+    conditional_owning_argument_runtime borrowed_callable_conditionals_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_null_native_runtime constructor_passive_field_rollback_runtime
     contiguous_iterator_completion container_iterator_movement

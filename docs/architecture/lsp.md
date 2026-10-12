@@ -229,6 +229,12 @@ protocol adapter only serializes these notes. Hovering the parameter binding
 itself remains ordinary binding hover until semantic occurrences retain its
 owning function and parameter contract directly.
 
+Checked-reference callable parameters use that same contract rendering: a
+selected call retains its concrete `F&`/`mut F&` argument type. Deferred
+conditional arm results are resolved by concrete frontend analysis, not the
+LSP. An incompatible concrete join publishes `GTI-S2050`, and correcting the
+document clears it without retaining a spurious `void` result or backend error.
+
 A namespace name selected contextually as a GTI function item records the
 exact function declaration symbol as an ordinary `Function` semantic
 occurrence. Hover therefore shows the canonical selected function signature,

@@ -327,10 +327,10 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
   }
   if (!storedReceiver &&
       (variable == nullptr || parameter == nullptr || function == nullptr ||
-       function->declaration == nullptr || parameter->type.reference ||
-       parameter->pack || calleeType.kind != SemanticType::TypeParameter)) {
+       function->declaration == nullptr || parameter->pack ||
+       calleeType.kind != SemanticType::TypeParameter)) {
     report(call.paren(),
-           "Only a direct by-value generic function parameter can be used "
+           "Only a direct generic function parameter can be used "
            "as a confined callable.",
            "GTI-S2046");
     valid = false;
@@ -436,7 +436,7 @@ auto SemanticVisitor::Impl::validateCallableReturn(
       return true;
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2046", DiagnosticPhase::Semantics, expressionToken(call.callee()),
-        "A nested generic callable argument must produce a non-void value "
+        "An inferred generic callable result must be a non-void value "
         "without references, tracked borrowed state, or lambda identity; "
         "the selected callable returns '" +
             typeSpelling(returnType) + "'.");
@@ -3281,9 +3281,9 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
           escapingReturn
               ? "Return a callable only through an exact owned generic "
                 "transport using std::move."
-              : "Pass a lambda only to a direct by-value generic parameter "
-                "whose visible body proves confined use or exact owned "
-                "transport.");
+              : "Pass a lambda to a direct generic value or checked-reference "
+                "parameter with a visible, proven confined contract; exact "
+                "owned transport requires a value parameter.");
       argumentDiagnostics.emplace_back(std::move(diagnostic));
     }
   }
@@ -3702,7 +3702,8 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
                 ? "Invoke the callable directly and return it only through "
                   "the declaration's exact std::move transport."
                 : "Invoke the callable directly or forward it to a direct "
-                  "by-value generic parameter with a proven confined "
+                  "generic value or checked-reference parameter with a proven "
+                  "confined "
                   "contract; assignment, storage, and other value "
                   "transport require an owned callable boundary.");
         useDiagnostics.emplace_back(std::move(diagnostic));
@@ -3732,7 +3733,8 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
                   ? "Invoke the callable directly and return it only "
                     "through the declaration's exact std::move transport."
                   : "Invoke the callable directly or forward it to a direct "
-                    "by-value generic parameter with a proven confined "
+                    "generic value or checked-reference parameter with a "
+                    "proven confined "
                     "contract; assignment, storage, capture, and other "
                     "value transport require an owned callable boundary.");
           useDiagnostics.emplace_back(std::move(diagnostic));
@@ -3793,6 +3795,16 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
                 formalIndex < candidate.declaration->parameters().size()
             ? &candidate.declaration->parameters()[formalIndex]
             : nullptr;
+    const SemanticType *parameterType =
+        formalIndex < candidate.parameterTypes.size()
+            ? &candidate.parameterTypes[formalIndex]
+            : nullptr;
+    const bool borrowedCallableBoundary =
+        parameterType != nullptr &&
+        parameterType->kind == SemanticType::Reference &&
+        parameterType->arguments.size() == 1 &&
+        parameterType->arguments.front().kind == SemanticType::TypeParameter &&
+        parameter != nullptr && !parameter->pack;
     const bool byValueCallableBoundary =
         formalIndex < candidate.parameterTypes.size() && parameter != nullptr &&
         (candidate.parameterTypes[formalIndex].kind ==
@@ -3806,8 +3818,9 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
                 CallableOwnedTransportKind::Value)))) &&
         !parameter->type.reference;
     if (instanceAnalysisActive) {
-      if (!byValueCallableBoundary || candidate.declaration == nullptr ||
-          !candidate.declaration->body() || targetContract == nullptr) {
+      if ((!byValueCallableBoundary && !borrowedCallableBoundary) ||
+          candidate.declaration == nullptr || !candidate.declaration->body() ||
+          targetContract == nullptr) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2046", DiagnosticPhase::Semantics,
             expressionToken(arguments[index]),
@@ -3815,24 +3828,26 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
                 " cannot be forwarded because the selected parameter is "
                 "not proven confined or owned.");
         diagnostic.hints.emplace_back(
-            "Use a by-value generic parameter or generic owning carrier "
+            "Use a generic value/reference parameter or generic owning carrier "
             "whose visible body proves confined use or exact owned transport.");
         diagnostics.emplace_back(std::move(diagnostic));
         valid = false;
       }
     } else if (lexicalClosure &&
-               (!byValueCallableBoundary || candidate.declaration == nullptr ||
+               ((!byValueCallableBoundary && !borrowedCallableBoundary) ||
+                candidate.declaration == nullptr ||
                 !candidate.declaration->body())) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2046", DiagnosticPhase::Semantics,
-          expressionToken(arguments[index]),
-          "Callable argument " + std::to_string(index + 1) +
-              " must bind to a by-value generic parameter or generic owning "
-              "carrier with a visible function body.");
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2046", DiagnosticPhase::Semantics,
+                         expressionToken(arguments[index]),
+                         "Callable argument " + std::to_string(index + 1) +
+                             " must bind to a generic value/reference "
+                             "parameter or generic owning "
+                             "carrier with a visible function body.");
       diagnostic.hints.emplace_back(
-          "Use a value parameter such as 'Operation operation' or "
-          "'Owner<Operation> owner'; callable-reference parameters are not "
-          "supported at this boundary.");
+          "Use a parameter such as 'Operation operation', 'Operation& "
+          "operation', "
+          "'mut Operation& operation', or 'Owner<Operation> owner'.");
       diagnostics.emplace_back(std::move(diagnostic));
       valid = false;
     }
@@ -6450,14 +6465,21 @@ auto SemanticVisitor::Impl::recordCallableForwardings(
 
   const std::size_t count =
       std::min(call.arguments().size(), targetInfo->parameterTypes.size());
+  const auto callableType =
+      [](const SemanticType &type) -> const SemanticType & {
+    return type.kind == SemanticType::Reference && type.arguments.size() == 1
+               ? type.arguments.front()
+               : type;
+  };
   for (std::size_t index = 0; index < count; ++index) {
     if (index >= targetInfo->declaration->parameters().size() ||
-        targetInfo->parameterTypes[index].kind != SemanticType::TypeParameter) {
+        callableType(targetInfo->parameterTypes[index]).kind !=
+            SemanticType::TypeParameter) {
       continue;
     }
     const Parameter &targetParameter =
         targetInfo->declaration->parameters()[index];
-    if (targetParameter.type.reference || targetParameter.pack) {
+    if (targetParameter.pack) {
       continue;
     }
 
@@ -6480,16 +6502,17 @@ auto SemanticVisitor::Impl::recordCallableForwardings(
     const std::size_t sourceIndex = static_cast<std::size_t>(std::distance(
         sourceInfo->declaration->parameters().begin(), sourceParameter));
     if (sourceIndex >= sourceInfo->parameterTypes.size() ||
-        sourceInfo->parameterTypes[sourceIndex].kind !=
+        callableType(sourceInfo->parameterTypes[sourceIndex]).kind !=
             SemanticType::TypeParameter ||
-        sourceParameter->type.reference || sourceParameter->pack) {
+        sourceParameter->pack) {
       continue;
     }
 
     semanticModel.recordCallableForwarding(
         *sourceInfo->declaration, sourceIndex,
-        sourceInfo->parameterTypes[sourceIndex].genericParameterId,
-        sourceInfo->parameterTypes[sourceIndex],
+        callableType(sourceInfo->parameterTypes[sourceIndex])
+            .genericParameterId,
+        callableType(sourceInfo->parameterTypes[sourceIndex]),
         sourceParameter->mutability == Mutability::Mutable
             ? AccessMode::Mutable
             : AccessMode::ReadOnly,

@@ -206,8 +206,9 @@ struct CallableSignatureRequirement {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
-  // Only a direct argument of another open callable may defer its result.
-  // Concrete semantic reanalysis must resolve a non-borrowing value before HIR.
+  // Direct arguments of open callables and arms of inferred conditional
+  // values may defer their result. Concrete semantics resolves an exact
+  // non-void, non-borrowing value before HIR.
   bool inferResultFromInstantiation = false;
 };
 

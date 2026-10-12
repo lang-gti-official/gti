@@ -1290,7 +1290,14 @@ callableSourceBindingForPlace(const MirBody &body, MirPlaceId placeId,
   if (place == nullptr) {
     return std::nullopt;
   }
-  if (place->root == MirPlaceRootKind::Binding && place->projections.empty()) {
+  // A checked-reference formal denotes the callable through one dereference.
+  // Keep that binding identity, but never attribute a field/index/raw-pointer
+  // projection to the whole callable parameter. Ordinary place verification
+  // proves the reference type and the associated entry/reborrow loan.
+  if (place->root == MirPlaceRootKind::Binding &&
+      (place->projections.empty() ||
+       (place->projections.size() == 1 &&
+        place->projections.front().kind == MirProjectionKind::Dereference))) {
     return place->binding == 0 ? std::nullopt
                                : std::optional<HirBindingId>{place->binding};
   }
@@ -12513,6 +12520,12 @@ verifyMirProgramContracts(const MirProgram &program) {
     std::size_t previousCallableParameter = 0;
     bool firstCallableParameter = true;
     for (const MirCallableParameter &parameter : instance.callableParameters) {
+      const bool borrowed =
+          parameter.callableType.kind == SemanticType::Reference &&
+          parameter.callableType.arguments.size() == 1;
+      const SemanticType &callableType =
+          borrowed ? parameter.callableType.arguments.front()
+                   : parameter.callableType;
       const CallableInvocationCapability parameterCapability =
           callableInvocationCapability(parameter.access);
       if (parameter.parameterIndex >= instance.parameterTypes.size() ||
@@ -12529,6 +12542,13 @@ verifyMirProgramContracts(const MirProgram &program) {
                          return signature.requiredCapability ==
                                 CallableInvocationCapability::Once;
                        });
+      if (borrowed &&
+          (parameter.access != parameter.callableType.referenceAccess ||
+           parameter.boundary != CallableBoundary::Confined ||
+           parameter.ownedTransport || !repeatableSignatures)) {
+        rejectCallableContract(
+            "borrowed callable access or confinement is invalid");
+      }
       if (parameter.boundary == CallableBoundary::Confined) {
         if (parameter.ownedTransport &&
             (!exactReturn ||
@@ -12604,12 +12624,11 @@ verifyMirProgramContracts(const MirProgram &program) {
           }
           const MirFunctionInstance &target =
               program.functionInstances().at(*signature.functionTarget - 1);
-          const bool functionItem =
-              parameter.callableType.hasFunctionItemShape();
+          const bool functionItem = callableType.hasFunctionItemShape();
           if ((functionItem
                    ? target.owner.has_value() ||
                          target.overloadedOperator.has_value() ||
-                         parameter.callableType.functionId != target.declaration
+                         callableType.functionId != target.declaration
                    : target.overloadedOperator != OverloadedOperator::Call ||
                          !target.owner || target.staticMember) ||
               signature.returnType != target.returnType ||
@@ -12626,15 +12645,14 @@ verifyMirProgramContracts(const MirProgram &program) {
               program.findLambda(*signature.lambdaTarget);
           if (target == nullptr || target->returnType != signature.returnType ||
               target->parameterTypes != signature.parameterTypes ||
-              target->type != parameter.callableType) {
+              target->type != callableType) {
             rejectCallableContract(prefix +
                                    "does not match an exact lambda target");
           }
         } else if (signature.nativeCalleeType) {
           const auto &type = *signature.nativeCalleeType;
           const auto parameters = type.nativeFunctionParameterTypes();
-          if (type != parameter.callableType ||
-              !type.hasNativeFunctionShape() ||
+          if (type != callableType || !type.hasNativeFunctionShape() ||
               signature.returnType != *type.nativeFunctionReturnType() ||
               signature.parameterTypes.size() != parameters.size() ||
               !std::equal(parameters.begin(), parameters.end(),
@@ -12679,11 +12697,23 @@ verifyMirProgramContracts(const MirProgram &program) {
             [&](const MirCallableParameter &candidate) {
               return candidate.parameterIndex == forwarding.parameterIndex;
             });
+        const SemanticType *forwardedType =
+            forwarding.parameterIndex < target.parameterTypes.size()
+                ? &target.parameterTypes[forwarding.parameterIndex]
+                : nullptr;
+        if (forwardedType != nullptr &&
+            forwardedType->kind == SemanticType::Reference &&
+            forwardedType->arguments.size() == 1) {
+          if (forwardedType->referenceAccess == AccessMode::Mutable &&
+              parameter.access != AccessMode::Mutable)
+            rejectCallableContract(prefix +
+                                   "upgrades borrowed callable access");
+          forwardedType = &forwardedType->arguments.front();
+        }
         if (forwarding.parameterIndex >= target.parameterTypes.size() ||
             targetContract == target.callableParameters.end() ||
             targetContract->boundary != CallableBoundary::Confined ||
-            target.parameterTypes[forwarding.parameterIndex] !=
-                parameter.callableType) {
+            forwardedType == nullptr || *forwardedType != callableType) {
           rejectCallableContract(prefix +
                                  "does not match a confined target parameter");
         }
