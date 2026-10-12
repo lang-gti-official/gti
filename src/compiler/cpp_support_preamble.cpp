@@ -2194,6 +2194,13 @@ public:
     value_.store(value, order);
   }
 
+  void wait(T old, std::memory_order order) const noexcept {
+    value_.wait(old, order);
+  }
+
+  void notify_one() const noexcept { value_.notify_one(); }
+  void notify_all() const noexcept { value_.notify_all(); }
+
   [[nodiscard]] T exchange(T value, std::memory_order order) const noexcept {
     return value_.exchange(value, order);
   }

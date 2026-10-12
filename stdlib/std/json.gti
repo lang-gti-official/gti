@@ -1,223 +1,232 @@
+// <std/json> -- JSON text for application types, through reflection.
+//
+// Every encoding and decoding rule is ordinary GTI written over <std/meta>;
+// no JSON type or operation has compiler recognition. `encode` walks a
+// value's fields and writes text; `decode` scans text into per-member byte
+// ranges and builds the value with `std::meta::construct`, so no object exists
+// before every field has a value and constructors are never bypassed.
+//
+// Field keys are the declared names unless `[[std::json::name("key")]]`
+// renames one; `[[std::json::ignore]]` leaves a field out of the
+// text and default-constructs it on decoding. Members of the text that name
+// no field are checked but not decoded; a repeated key is an error
+// (`duplicate_key`).
+//
+// Supported types, at the top level and as fields: bool, the fixed-width
+// integers (range-checked), float and double (shortest round-trip text, exact
+// decimal lexemes accepted), std::string (owned text), std::string_view
+// (encoding only), integral enums (by enumerator name), std::optional<T>
+// (`null` or an absent member), std::vector<E>, std::map and
+// std::unordered_map with std::string keys (objects with dynamic keys),
+// nested reflectable structs, and any type with a
+// `std::json::codec<T>` specialization. Anything else is
+// rejected where it is used.
+//
+// The text grammar is strict JSON: valid UTF-8, no control characters in
+// strings, `\u` escapes with surrogate pairs, no leading zeros, no comments,
+// no trailing commas, nothing after the root value. Decoding failures carry
+// an `errc`, the byte offset, the one-based line and column, and a JSON
+// Pointer path to the failing value.
+#include <std/charconv>
+#include <std/format>
+#include <std/map>
+#include <std/meta>
+#include <std/optional>
 #include <std/string>
+#include <std/unordered_map>
 #include <std/vector>
-#include <std/span>
-#include <std/paired_span>
 
-// A strict, owned JSON document model.  The implementation is ordinary GTI:
-// no public JSON name has compiler recognition and parsed values never borrow
-// the source buffer.
 namespace std {
 namespace json {
 
-enum class kind {
-  null_value,
-  boolean,
-  number,
-  string,
-  array,
-  object,
-};
-
 enum class errc {
   unexpected_end,
-  unexpected_token,
-  trailing_characters,
+  unexpected_character,
   invalid_number,
   invalid_escape,
   invalid_unicode,
   duplicate_key,
-  nesting_limit,
-  document_too_large,
-  string_too_large,
-  node_limit,
-  missing_key,
+  missing_field,
+  invalid_enumerator,
   type_mismatch,
   number_out_of_range,
+  nesting_limit,
+  document_too_large,
+  trailing_characters,
 };
 
-class error {
-  errc error_code;
-  bool located;
-  size_t source_offset;
-  size_t source_line;
-  size_t source_column;
-  mut std::string value_path;
+std::string_view describe(errc code) {
+  switch (code) {
+    case errc::unexpected_end: return "unexpected end of JSON text";
+    case errc::unexpected_character: return "unexpected character";
+    case errc::invalid_number: return "invalid JSON number";
+    case errc::invalid_escape: return "invalid JSON string escape";
+    case errc::invalid_unicode: return "invalid UTF-8 or Unicode escape";
+    case errc::duplicate_key: return "object repeats a key";
+    case errc::missing_field: return "object is missing a required field";
+    case errc::invalid_enumerator: return "string does not name an enumerator";
+    case errc::type_mismatch: return "JSON value has the wrong type for the field";
+    case errc::number_out_of_range: return "number does not fit the field type";
+    case errc::nesting_limit: return "nesting exceeds the configured depth";
+    case errc::document_too_large: return "document exceeds the configured size";
+    case errc::trailing_characters: return "characters follow the JSON value";
+  }
+  return "unknown JSON error";
+}
 
-public:
-  error(errc code)
-      : error_code(code), located(false), source_offset(0), source_line(0),
-        source_column(0), value_path(std::string("")) {}
+/// Why and where decoding (or encoding) stopped. `offset` is a byte offset
+/// into the input; `line` and `column` are one-based and zero when the error
+/// has no source location (an encoding failure). `path` is a JSON Pointer to
+/// the value being decoded when the failure happened.
+struct error {
+  errc code = errc::unexpected_end;
+  std::size_t offset = 0;
+  std::size_t line = 0;
+  std::size_t column = 0;
+  mut { std::string path; }
 
-  error(errc code, size_t offset, size_t line, size_t column,
-        std::string path)
-      : error_code(code), located(true), source_offset(offset),
-        source_line(line), source_column(column),
-        value_path(std::move(path)) {}
-
-  error(errc code, bool has_location, size_t offset, size_t line,
-        size_t column, std::string path)
-      : error_code(code), located(has_location), source_offset(offset),
-        source_line(line), source_column(column),
-        value_path(std::move(path)) {}
-
+  error(errc code, std::size_t offset, std::size_t line, std::size_t column)
+      : code(code), offset(offset), line(line), column(column), path(std::string("")) {}
   error(error& other) = delete;
   error(error&& other) = default;
 
-  errc code() {
-    return this.error_code;
-  }
+  std::string_view description() { return describe(this.code); }
+  bool has_source_location() { return this.line > std::size_t(0); }
 
-  bool has_source_location() {
-    return this.located;
-  }
-
-  size_t byte_offset() {
-    return this.source_offset;
-  }
-
-  size_t line() {
-    return this.source_line;
-  }
-
-  size_t column() {
-    return this.source_column;
-  }
-
-  std::string& path() {
-    return this.value_path;
-  }
-
-  void prepend_path(string_view prefix) mut {
-    mut std::string result = std::string(prefix);
-    result.append(this.value_path.view());
-    this.value_path.swap(result);
-  }
-
-  string_view description() {
-    switch (this.error_code) {
-    case errc::unexpected_end:
-      return "unexpected end of JSON input";
-    case errc::unexpected_token:
-      return "unexpected JSON token";
-    case errc::trailing_characters:
-      return "characters follow the JSON value";
-    case errc::invalid_number:
-      return "invalid JSON number";
-    case errc::invalid_escape:
-      return "invalid JSON string escape";
-    case errc::invalid_unicode:
-      return "invalid Unicode in JSON string";
-    case errc::duplicate_key:
-      return "duplicate JSON object key";
-    case errc::nesting_limit:
-      return "JSON nesting limit exceeded";
-    case errc::document_too_large:
-      return "JSON document is too large";
-    case errc::string_too_large:
-      return "JSON string is too large";
-    case errc::node_limit:
-      return "JSON node limit exceeded";
-    case errc::missing_key:
-      return "JSON object key is missing";
-    case errc::type_mismatch:
-      return "JSON value has the wrong kind";
-    case errc::number_out_of_range:
-      return "JSON number is outside the requested range";
+  /// Prefixes the JSON Pointer with one reference token, escaping `~` and
+  /// `/` as the pointer grammar requires.
+  void prepend_key(std::string_view key) mut {
+    mut std::string prefix = std::string("/");
+    for (mut std::size_t index = 0; index < key.size(); index++) {
+      char value = key[index];
+      if (value == '~') {
+        prefix.append("~0");
+      } else if (value == '/') {
+        prefix.append("~1");
+      } else {
+        prefix.push_back(value);
+      }
     }
-    return "JSON error";
+    prefix.append(this.path.view());
+    this.path = std::move(prefix);
   }
 
+  /// Prefixes the JSON Pointer with an array index.
+  void prepend_index(std::size_t index) mut {
+    mut std::string prefix = std::string("/");
+    detail::append_unsigned(prefix, uint64_t(index));
+    prefix.append(this.path.view());
+    this.path = std::move(prefix);
+  }
 };
 
-class parse_options {
-  mut size_t maximum_depth = 128;
-  mut size_t maximum_nodes = 1000000;
-  mut size_t maximum_string_bytes = 16777216;
-  mut size_t maximum_document_bytes = 67108864;
+/// Resource limits for decoding; the defaults match `std::json`.
+struct decode_options {
+  mut {
+    std::size_t max_depth;
+    std::size_t max_document_bytes;
+  }
+  decode_options() : max_depth(std::size_t(128)), max_document_bytes(std::size_t(67108864)) {}
+  decode_options(std::size_t max_depth, std::size_t max_document_bytes)
+      : max_depth(max_depth), max_document_bytes(max_document_bytes) {}
+  void set_max_depth(std::size_t maximum) mut { this.max_depth = maximum; }
+  void set_max_document_bytes(std::size_t maximum) mut { this.max_document_bytes = maximum; }
+};
 
+/// `[[std::json::name("key")]]`: the object key of a field.
+[[attribute]] struct name {
+  std::string_view key = "";
+};
+
+/// `[[std::json::ignore]]`: the field is not part of the text.
+[[attribute]] struct ignore {};
+
+/// Applications specialize this class for a type they own that the field
+/// rules do not cover (`class std::json::codec<Model> { ... }`):
+///
+///   expected<void, error> encode(Model& value, mut std::string& out);
+///   expected<Model, error> decode(std::string_view text);
+///
+/// `encode` appends the value's JSON text; `decode` receives exactly the
+/// value's text and reports offsets relative to it (the library rebases them).
+/// The empty primary is detected through reflection: a specialization has
+/// methods, the primary has none.
+class codec<T> {
 public:
-  parse_options() {}
-
-  void set_max_depth(size_t maximum) mut {
-    this.maximum_depth = maximum;
-  }
-
-  void set_max_nodes(size_t maximum) mut {
-    this.maximum_nodes = maximum;
-  }
-
-  void set_max_string_bytes(size_t maximum) mut {
-    this.maximum_string_bytes = maximum;
-  }
-
-  void set_max_document_bytes(size_t maximum) mut {
-    this.maximum_document_bytes = maximum;
-  }
-
-  size_t max_depth() {
-    return this.maximum_depth;
-  }
-
-  size_t max_nodes() {
-    return this.maximum_nodes;
-  }
-
-  size_t max_string_bytes() {
-    return this.maximum_string_bytes;
-  }
-
-  size_t max_document_bytes() {
-    return this.maximum_document_bytes;
-  }
 };
 
 namespace detail {
+
 bool is_digit(char value) {
-  uint8_t code = uint8_t(value);
-  return code >= uint8_t(48) && code <= uint8_t(57);
+  return uint8_t(value) >= uint8_t('0') && uint8_t(value) <= uint8_t('9');
 }
 
-int32_t hex_digit(char value) {
+bool is_space(char value) {
+  return value == ' ' || value == '\n' || value == '\t' || value == '\r';
+}
+
+char hex_character(uint8_t value) {
+  std::string_view hex = "0123456789abcdef";
+  return hex[std::size_t(value)];
+}
+
+/// The value of one hexadecimal digit, or -1.
+int32_t hex_value(char value) {
   uint8_t code = uint8_t(value);
-  if (code >= uint8_t(48) && code <= uint8_t(57)) {
-    return int32_t(code - uint8_t(48));
+  if (code >= uint8_t('0') && code <= uint8_t('9')) {
+    return int32_t(code - uint8_t('0'));
   }
-  if (code >= uint8_t(97) && code <= uint8_t(102)) {
-    return int32_t(code - uint8_t(97)) + 10;
+  if (code >= uint8_t('a') && code <= uint8_t('f')) {
+    return int32_t(code - uint8_t('a')) + 10;
   }
-  if (code >= uint8_t(65) && code <= uint8_t(70)) {
-    return int32_t(code - uint8_t(65)) + 10;
+  if (code >= uint8_t('A') && code <= uint8_t('F')) {
+    return int32_t(code - uint8_t('A')) + 10;
   }
   return -1;
+}
+
+void append_unsigned(mut std::string& out, uint64_t value) {
+  if (value >= uint64_t(10)) {
+    append_unsigned(out, value / uint64_t(10));
+  }
+  out.push_back(hex_character(uint8_t(value % uint64_t(10))));
+}
+
+void append_signed(mut std::string& out, int64_t value) {
+  if (value < int64_t(0)) {
+    out.push_back('-');
+    // Negate without overflowing: -(value + 1) fits int64_t for every
+    // negative value, and adding one back happens in the unsigned domain.
+    append_unsigned(out, uint64_t(int64_t(-1) - value) + uint64_t(1));
+    return;
+  }
+  append_unsigned(out, uint64_t(value));
 }
 
 bool continuation(uint8_t value) {
   return value >= uint8_t(128) && value <= uint8_t(191);
 }
 
-// Returns the byte width of the next valid UTF-8 scalar, or zero when the
-// sequence is malformed, overlong, surrogate-encoded, or out of range.
-size_t utf8_width(string_view input, size_t offset) {
+/// The byte width of the UTF-8 scalar starting at `offset`, or zero when the
+/// bytes there are not a valid scalar (overlong forms, surrogates and values
+/// above U+10FFFF included).
+std::size_t utf8_width(std::string_view input, std::size_t offset, std::size_t end) {
   uint8_t first = uint8_t(input[offset]);
   if (first <= uint8_t(127)) {
     return 1;
   }
   if (first >= uint8_t(194) && first <= uint8_t(223)) {
-    if (offset + 1 >= input.size()) {
-      return 0;
-    }
-    if (!continuation(uint8_t(input[offset + 1]))) {
+    if (offset + std::size_t(1) >= end || !continuation(uint8_t(input[offset + std::size_t(1)]))) {
       return 0;
     }
     return 2;
   }
   if (first >= uint8_t(224) && first <= uint8_t(239)) {
-    if (offset + 2 >= input.size()) {
+    if (offset + std::size_t(2) >= end) {
       return 0;
     }
-    uint8_t second = uint8_t(input[offset + 1]);
-    uint8_t third = uint8_t(input[offset + 2]);
-    if (!continuation(second) || !continuation(third)) {
+    uint8_t second = uint8_t(input[offset + std::size_t(1)]);
+    if (!continuation(second) || !continuation(uint8_t(input[offset + std::size_t(2)]))) {
       return 0;
     }
     if (first == uint8_t(224) && second < uint8_t(160)) {
@@ -229,14 +238,12 @@ size_t utf8_width(string_view input, size_t offset) {
     return 3;
   }
   if (first >= uint8_t(240) && first <= uint8_t(244)) {
-    if (offset + 3 >= input.size()) {
+    if (offset + std::size_t(3) >= end) {
       return 0;
     }
-    uint8_t second = uint8_t(input[offset + 1]);
-    uint8_t third = uint8_t(input[offset + 2]);
-    uint8_t fourth = uint8_t(input[offset + 3]);
-    if (!continuation(second) || !continuation(third) ||
-        !continuation(fourth)) {
+    uint8_t second = uint8_t(input[offset + std::size_t(1)]);
+    if (!continuation(second) || !continuation(uint8_t(input[offset + std::size_t(2)])) ||
+        !continuation(uint8_t(input[offset + std::size_t(3)]))) {
       return 0;
     }
     if (first == uint8_t(240) && second < uint8_t(144)) {
@@ -250,11 +257,11 @@ size_t utf8_width(string_view input, size_t offset) {
   return 0;
 }
 
-bool valid_utf8(string_view input) {
-  mut size_t offset = 0;
+bool valid_utf8(std::string_view input) {
+  mut std::size_t offset = 0;
   while (offset < input.size()) {
-    size_t width = utf8_width(input, offset);
-    if (width == 0) {
+    std::size_t width = utf8_width(input, offset, input.size());
+    if (width == std::size_t(0)) {
       return false;
     }
     offset = offset + width;
@@ -262,1440 +269,1066 @@ bool valid_utf8(string_view input) {
   return true;
 }
 
-bool valid_number_text(string_view input) {
-  if (input.empty()) {
-    return false;
+void append_code_point(mut std::string& out, int32_t point) {
+  if (point <= 127) {
+    out.push_back(char(uint8_t(point)));
+    return;
   }
-  mut size_t offset = 0;
-  if (input[offset] == '-') {
-    offset++;
-    if (offset == input.size()) {
-      return false;
+  if (point <= 2047) {
+    out.push_back(char(uint8_t(192 + point / 64)));
+    out.push_back(char(uint8_t(128 + point % 64)));
+    return;
+  }
+  if (point <= 65535) {
+    out.push_back(char(uint8_t(224 + point / 4096)));
+    out.push_back(char(uint8_t(128 + (point / 64) % 64)));
+    out.push_back(char(uint8_t(128 + point % 64)));
+    return;
+  }
+  out.push_back(char(uint8_t(240 + point / 262144)));
+  out.push_back(char(uint8_t(128 + (point / 4096) % 64)));
+  out.push_back(char(uint8_t(128 + (point / 64) % 64)));
+  out.push_back(char(uint8_t(128 + point % 64)));
+}
+
+/// Writes `text` as a JSON string literal with the shortest normal escapes;
+/// non-ASCII UTF-8 is emitted directly. Fails on invalid UTF-8.
+expected<void, error> append_escaped(mut std::string& out, std::string_view text) {
+  if (!valid_utf8(text)) {
+    return unexpected(error(errc::invalid_unicode, std::size_t(0), std::size_t(0), std::size_t(0)));
+  }
+  out.push_back('"');
+  for (mut std::size_t index = 0; index < text.size(); index++) {
+    char value = text[index];
+    if (value == '"') {
+      out.append("\\\"");
+    } else if (value == '\\') {
+      out.append("\\\\");
+    } else if (value == '\n') {
+      out.append("\\n");
+    } else if (value == '\r') {
+      out.append("\\r");
+    } else if (value == '\t') {
+      out.append("\\t");
+    } else if (uint8_t(value) == uint8_t(8)) {
+      out.append("\\b");
+    } else if (uint8_t(value) == uint8_t(12)) {
+      out.append("\\f");
+    } else if (uint8_t(value) < uint8_t(32)) {
+      out.append("\\u00");
+      out.push_back(hex_character(uint8_t(uint8_t(value) / uint8_t(16))));
+      out.push_back(hex_character(uint8_t(uint8_t(value) % uint8_t(16))));
+    } else {
+      out.push_back(value);
     }
   }
-  if (input[offset] == '0') {
-    offset++;
-    if (offset < input.size() && is_digit(input[offset])) {
-      return false;
+  out.push_back('"');
+  return;
+}
+
+/// The one-based line and byte column of `offset` in `text`.
+void locate(std::string_view text, std::size_t offset, mut std::size_t& line, mut std::size_t& column) {
+  mut std::size_t current_line = 1;
+  mut std::size_t line_start = 0;
+  mut std::size_t limit = offset;
+  if (limit > text.size()) {
+    limit = text.size();
+  }
+  for (mut std::size_t index = 0; index < limit; index++) {
+    if (text[index] == '\n') {
+      current_line = current_line + std::size_t(1);
+      line_start = index + std::size_t(1);
     }
+  }
+  line = current_line;
+  column = offset - line_start + std::size_t(1);
+}
+
+error located(errc code, std::string_view text, std::size_t offset) {
+  mut std::size_t line = 0;
+  mut std::size_t column = 0;
+  locate(text, offset, line, column);
+  return error(code, offset, line, column);
+}
+
+/// The field's object key: the `name` attribute when applied, else the
+/// declared name.
+std::string_view key_of<T, uint64_t I>(std::meta::field<T, I> field) {
+  if constexpr (std::meta::field<T, I>().has_attribute<name>()) {
+    return std::meta::field<T, I>().attribute<name>().key;
   } else {
-    uint8_t first_digit = uint8_t(input[offset]);
-    if (first_digit < uint8_t(49) || first_digit > uint8_t(57)) {
-      return false;
-    }
-    while (offset < input.size() && is_digit(input[offset])) {
-      offset++;
-    }
+    return std::meta::field<T, I>().name();
   }
-  if (offset < input.size() && input[offset] == '.') {
-    offset++;
-    if (offset == input.size() || !is_digit(input[offset])) {
-      return false;
-    }
-    while (offset < input.size() && is_digit(input[offset])) {
-      offset++;
-    }
-  }
-  if (offset < input.size() &&
-      (input[offset] == 'e' || input[offset] == 'E')) {
-    offset++;
-    if (offset < input.size() &&
-        (input[offset] == '+' || input[offset] == '-')) {
-      offset++;
-    }
-    if (offset == input.size() || !is_digit(input[offset])) {
-      return false;
-    }
-    while (offset < input.size() && is_digit(input[offset])) {
-      offset++;
-    }
-  }
-  return offset == input.size();
 }
 
-std::string pointer_for_key(string_view key) {
-  mut std::string result = std::string("/");
-  for (mut size_t index = 0; index < key.size(); index++) {
-    if (key[index] == '~') {
-      result.append("~0");
-    } else if (key[index] == '/') {
-      result.append("~1");
-    } else {
-      result.push_back(key[index]);
-    }
-  }
-  return std::move(result);
+/// Whether `T` has a `codec` specialization: the empty primary has no
+/// methods, a specialization declares `encode` and `decode`.
+constexpr bool has_codec<T>() {
+  return std::meta::type_of<codec<T>>().method_count() > uint64_t(0);
 }
 
-std::string pointer_for_index(size_t index) {
-  mut std::string result = std::string("/");
-  mut std::string index_text = std::to_string(index);
-  result.append(index_text.view());
-  return std::move(result);
-}
+constexpr bool is_optional<T>() {
+  return std::meta::primary_name_of<T>() == "std::optional";
 }
 
-namespace detail {
-struct object_data {
-  mut std::vector<std::string> names{};
-  mut std::vector<value> values{};
+constexpr bool is_vector<T>() {
+  return std::meta::primary_name_of<T>() == "std::vector";
+}
+
+constexpr bool is_string_map<T>() {
+  return std::meta::primary_name_of<T>() == "std::map" ||
+         std::meta::primary_name_of<T>() == "std::unordered_map";
+}
+
+constexpr bool is_owned_string<T>() {
+  return std::meta::name_of<T>() == "std::string";
+}
+
+// ---- encoding -------------------------------------------------------------
+
+/// Whitespace policy shared by compact and pretty output.
+struct layout {
+  bool pretty = false;
+  uint8_t indentation = 2;
 };
 
-enum class value_data {
-  null_value,
-  boolean(bool input),
-  number(std::string text),
-  string(std::string text),
-  array(std::vector<value> items),
-  object(object_data members),
-};
+void append_indentation(mut std::string& out, layout& style, std::size_t depth) {
+  out.push_back('\n');
+  for (mut std::size_t level = 0; level < depth; level++) {
+    for (mut uint8_t column = 0; column < style.indentation; column++) {
+      out.push_back(' ');
+    }
+  }
 }
 
-class value {
-  mut detail::value_data data;
-
-  value(detail::value_data input) : data(std::move(input)) {}
-
-  detail::value_data replace_data(detail::value_data replacement) mut {
-    detail::value_data previous = std::move(this.data);
-    this.data = std::move(replacement);
-    return std::move(previous);
-  }
-
-  std::string& scalar_text() {
-    while (true) {
-      switch (this.data) {
-        case detail::value_data::number(auto& text): return text;
-        case detail::value_data::string(auto& text): return text;
-        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
-      }
+expected<void, error> encode_enum<E>(mut std::string& out, E value) {
+  constexpr for (auto enumerator : std::meta::enumerators_of<E>()) {
+    if (value == enumerator.value()) {
+      return append_escaped(out, enumerator.name());
     }
   }
+  return unexpected(error(errc::invalid_enumerator, std::size_t(0), std::size_t(0), std::size_t(0)));
+}
 
-  std::vector<value>& array_values() {
-    while (true) {
-      switch (this.data) {
-        case detail::value_data::array(auto& items): return items;
-        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
-      }
-    }
+/// Shortest round-trip decimal text for a finite floating value; non-finite
+/// values are not JSON numbers.
+expected<void, error> append_floating(mut std::string& out, double value) {
+  if (value != value) {
+    return unexpected(error(errc::number_out_of_range, std::size_t(0), std::size_t(0), std::size_t(0)));
   }
-
-  mut std::vector<value>& array_values() mut {
-    while (true) {
-      switch (this.data) {
-        case detail::value_data::array(mut auto& items): return items;
-        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
-      }
-    }
+  std::string text = std::format("{}", value);
+  std::string_view view = text.view();
+  if (view.size() == std::size_t(0) || view[std::size_t(0)] == 'i' || view[std::size_t(0)] == 'n' ||
+      (view.size() > std::size_t(1) && view[std::size_t(0)] == '-' && view[std::size_t(1)] == 'i')) {
+    return unexpected(error(errc::number_out_of_range, std::size_t(0), std::size_t(0), std::size_t(0)));
   }
+  out.append(view);
+  return;
+}
 
-  detail::object_data& object_data() {
-    while (true) {
-      switch (this.data) {
-        case detail::value_data::object(auto& members): return members;
-        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
-      }
-    }
-  }
-
-  mut detail::object_data& object_data() mut {
-    while (true) {
-      switch (this.data) {
-        case detail::value_data::object(mut auto& members): return members;
-        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
-      }
-    }
-  }
-
-  size_t find_key(string_view key) {
-    for (mut size_t index = 0; index < this.object_data().names.size(); index++) {
-      if (this.object_data().names[index] == key) {
-        return index;
-      }
-    }
-    return this.object_data().names.size();
-  }
-
-public:
-  value(value& other) = delete;
-  value(value&& other) = default;
-
-  static value null() {
-    return value(detail::value_data::null_value);
-  }
-
-  static value boolean(bool input) {
-    return value(detail::value_data::boolean(input));
-  }
-
-  static expected<value, error> string(string_view input) {
-    if (!detail::valid_utf8(input)) {
-      return unexpected(error(errc::invalid_unicode));
-    }
-    return value(detail::value_data::string(std::string(input)));
-  }
-
-  static expected<value, error> number_text(string_view input) {
-    if (!detail::valid_number_text(input)) {
-      return unexpected(error(errc::invalid_number));
-    }
-    return value(detail::value_data::number(std::string(input)));
-  }
-
-  static value integer(int64_t input) {
-    return value(detail::value_data::number(std::to_string(input)));
-  }
-
-  static value unsigned_integer(uint64_t input) {
-    return value(detail::value_data::number(std::to_string(input)));
-  }
-
-  static value array() {
-    return value(detail::value_data::array(std::vector<value>()));
-  }
-
-  static value object() {
-    return value(detail::value_data::object(detail::object_data()));
-  }
-
-  kind type() {
-    switch (this.data) {
-      case detail::value_data::null_value: return kind::null_value;
-      case detail::value_data::boolean: return kind::boolean;
-      case detail::value_data::number: return kind::number;
-      case detail::value_data::string: return kind::string;
-      case detail::value_data::array: return kind::array;
-      case detail::value_data::object: return kind::object;
-    }
-  }
-
-  bool is_null() {
-    return this.type() == kind::null_value;
-  }
-
-  bool is_boolean() {
-    return this.type() == kind::boolean;
-  }
-
-  bool is_number() {
-    return this.type() == kind::number;
-  }
-
-  bool is_string() {
-    return this.type() == kind::string;
-  }
-
-  bool is_array() {
-    return this.type() == kind::array;
-  }
-
-  bool is_object() {
-    return this.type() == kind::object;
-  }
-
-  expected<bool, error> as_boolean() {
-    if (!this.is_boolean()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    switch (this.data) {
-      case detail::value_data::boolean(input): return input;
-      default: return unexpected(error(errc::type_mismatch));
-    }
-  }
-
-  expected<std::string, error> as_string() {
-    if (!this.is_string()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    return this.scalar_text().clone();
-  }
-
-  expected<std::string, error> as_number_text() {
-    if (!this.is_number()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    return this.scalar_text().clone();
-  }
-
-  expected<uint64_t, error> as_uint64() {
-    if (!this.is_number()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    if (this.scalar_text().empty() || this.scalar_text()[0] == '-') {
-      return unexpected(error(errc::number_out_of_range));
-    }
-
-    mut uint64_t result = uint64_t(0);
-    for (mut size_t index = 0; index < this.scalar_text().size(); index++) {
-      uint8_t code = uint8_t(this.scalar_text()[index]);
-      if (code < uint8_t(48) || code > uint8_t(57)) {
-        return unexpected(error(errc::number_out_of_range));
-      }
-      uint64_t digit = uint64_t(code - uint8_t(48));
-      if (result >
-          (uint64_t(18446744073709551615) - digit) / uint64_t(10)) {
-        return unexpected(error(errc::number_out_of_range));
-      }
-      result = result * uint64_t(10) + digit;
-    }
-    return result;
-  }
-
-  expected<int64_t, error> as_int64() {
-    if (!this.is_number()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    if (this.scalar_text().empty()) {
-      return unexpected(error(errc::number_out_of_range));
-    }
-
-    mut bool negative = false;
-    mut size_t offset = 0;
-    if (this.scalar_text()[0] == '-') {
-      negative = true;
-      offset = 1;
-    }
-    if (offset == this.scalar_text().size()) {
-      return unexpected(error(errc::number_out_of_range));
-    }
-
-    mut uint64_t magnitude = uint64_t(0);
-    mut uint64_t limit = uint64_t(9223372036854775807);
-    if (negative) {
-      limit = uint64_t(9223372036854775808);
-    }
-    while (offset < this.scalar_text().size()) {
-      uint8_t code = uint8_t(this.scalar_text()[offset]);
-      if (code < uint8_t(48) || code > uint8_t(57)) {
-        return unexpected(error(errc::number_out_of_range));
-      }
-      uint64_t digit = uint64_t(code - uint8_t(48));
-      if (magnitude > (limit - digit) / uint64_t(10)) {
-        return unexpected(error(errc::number_out_of_range));
-      }
-      magnitude = magnitude * uint64_t(10) + digit;
-      offset++;
-    }
-
-    if (!negative) {
-      return int64_t(magnitude);
-    }
-    if (magnitude == uint64_t(9223372036854775808)) {
-      return int64_t(-9223372036854775807 - 1);
-    }
-    return -int64_t(magnitude);
-  }
-
-  expected<double, error> as_double() {
-    if (!this.is_number()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-
-    mut size_t offset = 0;
-    mut bool negative = false;
-    if (this.scalar_text()[offset] == '-') {
-      negative = true;
-      offset++;
-    }
-
-    mut double result = 0.0d;
-    mut int32_t decimal_exponent = 0;
-    mut int32_t significant_digits = 0;
-    mut bool significant = false;
-    while (offset < this.scalar_text().size() &&
-           detail::is_digit(this.scalar_text()[offset])) {
-      uint8_t digit = uint8_t(uint8_t(this.scalar_text()[offset]) - uint8_t(48));
-      if (digit != uint8_t(0)) {
-        significant = true;
-      }
-      if (significant) {
-        if (significant_digits < 18) {
-          result = result * 10.0d + double(digit);
-          significant_digits++;
-        } else if (decimal_exponent < 1000) {
-          decimal_exponent++;
-        }
-      }
-      offset++;
-    }
-
-    if (offset < this.scalar_text().size() && this.scalar_text()[offset] == '.') {
-      offset++;
-      while (offset < this.scalar_text().size() &&
-             detail::is_digit(this.scalar_text()[offset])) {
-        uint8_t digit =
-            uint8_t(uint8_t(this.scalar_text()[offset]) - uint8_t(48));
-        if (!significant && digit == uint8_t(0)) {
-          if (decimal_exponent > -1000) {
-            decimal_exponent--;
-          }
-        } else {
-          significant = true;
-          if (significant_digits < 18) {
-            result = result * 10.0d + double(digit);
-            significant_digits++;
-            if (decimal_exponent > -1000) {
-              decimal_exponent--;
-            }
-          }
-        }
-        offset++;
-      }
-    }
-
-    mut bool exponent_negative = false;
-    mut int32_t exponent = 0;
-    if (offset < this.scalar_text().size() &&
-        (this.scalar_text()[offset] == 'e' ||
-         this.scalar_text()[offset] == 'E')) {
-      offset++;
-      if (this.scalar_text()[offset] == '+' || this.scalar_text()[offset] == '-') {
-        exponent_negative = this.scalar_text()[offset] == '-';
-        offset++;
-      }
-      while (offset < this.scalar_text().size()) {
-        uint8_t digit =
-            uint8_t(uint8_t(this.scalar_text()[offset]) - uint8_t(48));
-        if (exponent < 1000) {
-          exponent = exponent * 10 + int32_t(digit);
-          if (exponent > 1000) {
-            exponent = 1000;
-          }
-        }
-        offset++;
-      }
-    }
-
-    mut int64_t effective_exponent = int64_t(decimal_exponent);
-    if (exponent_negative) {
-      effective_exponent = effective_exponent - int64_t(exponent);
+expected<void, error> encode_value<F>(mut std::string& out, F& item, layout& style, std::size_t depth) {
+  if constexpr (has_codec<F>()) {
+    codec<F> mapping{};
+    return mapping.encode(item, out);
+  } else if constexpr (std::meta::is_bool<F>()) {
+    if (item) {
+      out.append("true");
     } else {
-      effective_exponent = effective_exponent + int64_t(exponent);
+      out.append("false");
     }
-    if (result == 0.0d) {
-      if (negative) {
-        result = -result;
+    return;
+  } else if constexpr (std::meta::is_signed_integral<F>()) {
+    append_signed(out, int64_t(item));
+    return;
+  } else if constexpr (std::meta::is_integral<F>()) {
+    append_unsigned(out, uint64_t(item));
+    return;
+  } else if constexpr (std::meta::is_floating_point<F>()) {
+    return append_floating(out, double(item));
+  } else if constexpr (std::meta::is_text<F>()) {
+    return append_escaped(out, item);
+  } else if constexpr (is_owned_string<F>()) {
+    return append_escaped(out, item.view());
+  } else if constexpr (std::meta::is_enum<F>()) {
+    return encode_enum(out, item);
+  } else if constexpr (is_optional<F>()) {
+    if (item.has_value()) {
+      return encode_value(out, item.value(), style, depth);
+    }
+    out.append("null");
+    return;
+  } else if constexpr (is_vector<F>()) {
+    out.push_back('[');
+    mut bool first = true;
+    for (auto& element : item) {
+      if (!first) {
+        out.push_back(',');
       }
-      return result;
-    }
-    if (effective_exponent > int64_t(400)) {
-      return unexpected(error(errc::number_out_of_range));
-    }
-    if (effective_exponent < int64_t(-400)) {
-      result = 0.0d;
-    } else {
-      mut int64_t step = int64_t(0);
-      mut int64_t steps = effective_exponent;
-      if (steps < int64_t(0)) {
-        steps = -steps;
+      first = false;
+      if (style.pretty) {
+        append_indentation(out, style, depth + std::size_t(1));
       }
-      while (step < steps) {
-        if (effective_exponent < int64_t(0)) {
-          result = result / 10.0d;
-        } else {
-          result = result * 10.0d;
-        }
-        step++;
+      ?encode_value(out, element, style, depth + std::size_t(1));
+    }
+    if (!first && style.pretty) {
+      append_indentation(out, style, depth);
+    }
+    out.push_back(']');
+    return;
+  } else if constexpr (is_string_map<F>()) {
+    out.push_back('{');
+    mut bool first = true;
+    for (auto& entry : item) {
+      if (!first) {
+        out.push_back(',');
       }
+      first = false;
+      if (style.pretty) {
+        append_indentation(out, style, depth + std::size_t(1));
+      }
+      ?append_escaped(out, entry.first.view());
+      out.push_back(':');
+      if (style.pretty) {
+        out.push_back(' ');
+      }
+      ?encode_value(out, entry.second, style, depth + std::size_t(1));
     }
-    if (result != result || result - result != 0.0d) {
-      return unexpected(error(errc::number_out_of_range));
+    if (!first && style.pretty) {
+      append_indentation(out, style, depth);
     }
-    if (negative) {
-      result = -result;
+    out.push_back('}');
+    return;
+  } else if constexpr (std::meta::is_reflectable<F>()) {
+    return encode_object(out, item, style, depth);
+  } else {
+    static_assert(false, "std::json cannot encode this type");
+  }
+}
+
+expected<void, error> encode_object<T>(mut std::string& out, T& value, layout& style, std::size_t depth) {
+  out.push_back('{');
+  mut bool first = true;
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (!field.has_attribute<ignore>()) {
+      if (!first) {
+        out.push_back(',');
+      }
+      first = false;
+      if (style.pretty) {
+        append_indentation(out, style, depth + std::size_t(1));
+      }
+      ?append_escaped(out, key_of(field));
+      out.push_back(':');
+      if (style.pretty) {
+        out.push_back(' ');
+      }
+      ?encode_value(out, field.get(value), style, depth + std::size_t(1));
     }
-    return result;
+  }
+  if (!first && style.pretty) {
+    append_indentation(out, style, depth);
+  }
+  out.push_back('}');
+  return;
+}
+
+// ---- decoding -------------------------------------------------------------
+//
+// Decoding never slices the text: every value is a byte range [begin, end)
+// of the original `string_view`, so spans stay plain offsets and error
+// offsets are always absolute.
+
+/// One `"key": value` member of an object (or one array element, with an
+/// empty key): the unescaped key and the byte range of the raw value text.
+struct member {
+  std::string key;
+  std::size_t begin = 0;
+  std::size_t end = 0;
+  member(std::string key, std::size_t begin, std::size_t end)
+      : key(std::move(key)), begin(begin), end(end) {}
+  member(member& other) = delete;
+  member(member&& other) = default;
+};
+
+/// A cursor over the range [offset, limit) of a JSON text. Methods report
+/// failures with the offset where they stopped.
+struct scanner {
+  std::string_view text;
+  std::size_t limit;
+  std::size_t max_depth;
+  mut { std::size_t offset; }
+  scanner(std::string_view text, std::size_t begin, std::size_t end, std::size_t max_depth)
+      : text(text), limit(end), max_depth(max_depth), offset(begin) {}
+
+  bool at_end() { return this.offset >= this.limit; }
+
+  error fail(errc code, std::size_t offset) { return located(code, this.text, offset); }
+
+  void skip_space() mut {
+    while (!this.at_end() && is_space(this.text[this.offset])) {
+      this.offset = this.offset + std::size_t(1);
+    }
   }
 
-  bool contains(string_view key) {
-    if (!this.is_object()) {
-      return false;
+  expected<char, error> peek() {
+    if (this.at_end()) {
+      return unexpected(this.fail(errc::unexpected_end, this.offset));
     }
-    return this.find_key(key) != this.object_data().names.size();
+    return this.text[this.offset];
   }
 
-  size_t size() {
-    if (this.is_array()) {
-      return this.array_values().size();
+  expected<void, error> expect(char wanted) mut {
+    char actual = ?this.peek();
+    if (actual != wanted) {
+      return unexpected(this.fail(errc::unexpected_character, this.offset));
     }
-    if (this.is_object()) {
-      return this.object_data().values.size();
-    }
-    return 0;
-  }
-
-  expected<value&, error> get(string_view key) {
-    if (!this.is_object()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    size_t index = this.find_key(key);
-    if (index == this.object_data().names.size()) {
-      mut std::string path = detail::pointer_for_key(key);
-      mut error failure = error(errc::missing_key, false, size_t(0),
-                                size_t(0), size_t(0), std::move(path));
-      return unexpected(std::move(failure));
-    }
-    return this.object_data().values[index];
-  }
-
-  expected<std::string, error> get_string(string_view key) {
-    if (!this.is_object()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    size_t index = this.find_key(key);
-    if (index == this.object_data().names.size()) {
-      mut std::string path = detail::pointer_for_key(key);
-      mut error failure = error(errc::missing_key, false, size_t(0),
-                                size_t(0), size_t(0), std::move(path));
-      return unexpected(std::move(failure));
-    }
-    mut expected<std::string, error> converted =
-        this.object_data().values[index].as_string();
-    if (!converted) {
-      errc code = converted.error().code();
-      mut std::string path = detail::pointer_for_key(key);
-      mut error failure = error(code, false, size_t(0), size_t(0),
-                                size_t(0), std::move(path));
-      return unexpected(std::move(failure));
-    }
-    return std::move(converted).value();
-  }
-
-  expected<bool, error> get_boolean(string_view key) {
-    if (!this.is_object()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    size_t index = this.find_key(key);
-    if (index == this.object_data().names.size()) {
-      mut std::string path = detail::pointer_for_key(key);
-      mut error failure = error(errc::missing_key, false, size_t(0),
-                                size_t(0), size_t(0), std::move(path));
-      return unexpected(std::move(failure));
-    }
-    mut expected<bool, error> converted =
-        this.object_data().values[index].as_boolean();
-    if (!converted) {
-      errc code = converted.error().code();
-      mut std::string path = detail::pointer_for_key(key);
-      mut error failure = error(code, false, size_t(0), size_t(0),
-                                size_t(0), std::move(path));
-      return unexpected(std::move(failure));
-    }
-    return converted.value();
-  }
-
-  expected<int64_t, error> get_int64(string_view key) {
-    if (!this.is_object()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    size_t index = this.find_key(key);
-    if (index == this.object_data().names.size()) {
-      mut std::string path = detail::pointer_for_key(key);
-      mut error failure = error(errc::missing_key, false, size_t(0),
-                                size_t(0), size_t(0), std::move(path));
-      return unexpected(std::move(failure));
-    }
-    mut expected<int64_t, error> converted =
-        this.object_data().values[index].as_int64();
-    if (!converted) {
-      errc code = converted.error().code();
-      mut std::string path = detail::pointer_for_key(key);
-      mut error failure = error(code, false, size_t(0), size_t(0),
-                                size_t(0), std::move(path));
-      return unexpected(std::move(failure));
-    }
-    return converted.value();
-  }
-
-  expected<uint64_t, error> get_uint64(string_view key) {
-    if (!this.is_object()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    size_t index = this.find_key(key);
-    if (index == this.object_data().names.size()) {
-      mut std::string path = detail::pointer_for_key(key);
-      mut error failure = error(errc::missing_key, false, size_t(0),
-                                size_t(0), size_t(0), std::move(path));
-      return unexpected(std::move(failure));
-    }
-    mut expected<uint64_t, error> converted =
-        this.object_data().values[index].as_uint64();
-    if (!converted) {
-      errc code = converted.error().code();
-      mut std::string path = detail::pointer_for_key(key);
-      mut error failure = error(code, false, size_t(0), size_t(0),
-                                size_t(0), std::move(path));
-      return unexpected(std::move(failure));
-    }
-    return converted.value();
-  }
-
-  expected<double, error> get_double(string_view key) {
-    if (!this.is_object()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    size_t index = this.find_key(key);
-    if (index == this.object_data().names.size()) {
-      mut std::string path = detail::pointer_for_key(key);
-      mut error failure = error(errc::missing_key, false, size_t(0),
-                                size_t(0), size_t(0), std::move(path));
-      return unexpected(std::move(failure));
-    }
-    mut expected<double, error> converted =
-        this.object_data().values[index].as_double();
-    if (!converted) {
-      errc code = converted.error().code();
-      mut std::string path = detail::pointer_for_key(key);
-      mut error failure = error(code, false, size_t(0), size_t(0),
-                                size_t(0), std::move(path));
-      return unexpected(std::move(failure));
-    }
-    return converted.value();
-  }
-
-  value& at(string_view key) {
-    if (!this.is_object()) {
-      gti_internal::index_bounds_check(size_t(0), size_t(0));
-    }
-    size_t index = this.find_key(key);
-    gti_internal::index_bounds_check(index, this.object_data().values.size());
-    return this.object_data().values[index];
-  }
-
-  mut value& at(string_view key) mut {
-    if (!this.is_object()) {
-      gti_internal::index_bounds_check(size_t(0), size_t(0));
-    }
-    size_t index = this.find_key(key);
-    gti_internal::index_bounds_check(index, this.object_data().values.size());
-    return this.object_data().values[index];
-  }
-
-  value& at(size_t index) {
-    if (!this.is_array()) {
-      gti_internal::index_bounds_check(size_t(0), size_t(0));
-    }
-    return this.array_values()[index];
-  }
-
-  mut value& at(size_t index) mut {
-    if (!this.is_array()) {
-      gti_internal::index_bounds_check(size_t(0), size_t(0));
-    }
-    return this.array_values()[index];
-  }
-
-  std::vector<value>& elements() {
-    if (!this.is_array()) {
-      gti_internal::index_bounds_check(size_t(0), size_t(0));
-    }
-    return this.array_values();
-  }
-
-  mut std::vector<value>& elements() mut {
-    if (!this.is_array()) {
-      gti_internal::index_bounds_check(size_t(0), size_t(0));
-    }
-    return this.array_values();
-  }
-
-  size_t object_size() {
-    if (!this.is_object()) {
-      return 0;
-    }
-    return this.object_data().names.size();
-  }
-
-  // Views retain the document, never copy keys or descendants, and expose
-  // only its initialized members. Keys cannot be rewritten or resized;
-  // exclusive value access cannot change the two sequences' common extent.
-  std::span<std::string> keys() {
-    return this.object_data().names.as_span();
-  }
-
-  std::span<value> values() {
-    return this.object_data().values.as_span();
-  }
-
-  std::mutable_span<value> values_mut() mut {
-    return this.object_data().values.as_mutable_span();
-  }
-
-  std::paired_span<std::string, value> members() {
-    return std::paired_span<std::string, value>(this.keys(), this.values());
-  }
-
-  std::string& key_at(size_t index) {
-    if (!this.is_object()) {
-      gti_internal::index_bounds_check(size_t(0), size_t(0));
-    }
-    return this.object_data().names[index];
-  }
-
-  value& value_at(size_t index) {
-    if (!this.is_object()) {
-      gti_internal::index_bounds_check(size_t(0), size_t(0));
-    }
-    return this.object_data().values[index];
-  }
-
-  mut value& value_at(size_t index) mut {
-    if (!this.is_object()) {
-      gti_internal::index_bounds_check(size_t(0), size_t(0));
-    }
-    return this.object_data().values[index];
-  }
-
-  expected<void, error> set(string_view key, mut value input) mut {
-    if (!this.is_object()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    if (!detail::valid_utf8(key)) {
-      return unexpected(error(errc::invalid_unicode));
-    }
-    size_t index = this.find_key(key);
-    if (index < this.object_data().names.size()) {
-      this.object_data().values[index].swap(input);
-      return;
-    }
-    this.object_data().names.push_back(std::string(key));
-    this.object_data().values.push_back(std::move(input));
+    this.offset = this.offset + std::size_t(1);
     return;
   }
 
-  expected<void, error> set(string_view key, string_view input) mut {
-    value created = ?value::string(input);
-    return this.set(key, std::move(created));
-  }
-
-  expected<void, error> set(string_view key, bool input) mut {
-    return this.set(key, value::boolean(input));
-  }
-
-  expected<void, error> set(string_view key, int64_t input) mut {
-    return this.set(key, value::integer(input));
-  }
-
-  expected<void, error> set(string_view key, uint64_t input) mut {
-    return this.set(key, value::unsigned_integer(input));
-  }
-
-  expected<void, error> push(value input) mut {
-    if (!this.is_array()) {
-      return unexpected(error(errc::type_mismatch));
-    }
-    this.array_values().push_back(std::move(input));
-    return;
-  }
-
-  expected<void, error> push(string_view input) mut {
-    value created = ?value::string(input);
-    return this.push(std::move(created));
-  }
-
-  expected<void, error> push(bool input) mut {
-    return this.push(value::boolean(input));
-  }
-
-  expected<void, error> push(int64_t input) mut {
-    return this.push(value::integer(input));
-  }
-
-  expected<void, error> push(uint64_t input) mut {
-    return this.push(value::unsigned_integer(input));
-  }
-
-  void swap(mut value& other) mut {
-    detail::value_data previous = std::move(this.data);
-    this.data = other.replace_data(std::move(previous));
-  }
-
-  value clone() {
-    switch (this.data) {
-      case detail::value_data::null_value: return value::null();
-      case detail::value_data::boolean(input): return value::boolean(input);
-      case detail::value_data::number(auto& text):
-        return value(detail::value_data::number(text.clone()));
-      case detail::value_data::string(auto& text):
-        return value(detail::value_data::string(text.clone()));
-      case detail::value_data::array(auto& items):
-        mut std::vector<value> copied = std::vector<value>();
-        for (mut size_t index = 0; index < items.size(); index++) {
-          copied.push_back(items[index].clone());
-        }
-        return value(detail::value_data::array(std::move(copied)));
-      case detail::value_data::object(auto& members):
-        mut detail::object_data copied{};
-        for (mut size_t index = 0; index < members.names.size(); index++) {
-          copied.names.push_back(members.names[index].clone());
-          copied.values.push_back(members.values[index].clone());
-        }
-        return value(detail::value_data::object(std::move(copied)));
-    }
-  }
-};
-
-namespace detail {
-class parser {
-  string_view source;
-  size_t maximum_depth;
-  size_t maximum_nodes;
-  size_t maximum_string_bytes;
-  size_t maximum_document_bytes;
-  mut size_t offset = 0;
-  mut size_t current_line = 1;
-  mut size_t current_column = 1;
-  mut size_t nodes = 0;
-
-  bool at_end() {
-    return this.offset >= this.source.size();
-  }
-
-  char peek() {
-    return this.source[this.offset];
-  }
-
-  char advance() mut {
-    char current = this.source[this.offset];
-    this.offset++;
-    if (current == '\n') {
-      this.current_line++;
-      this.current_column = 1;
-    } else {
-      this.current_column++;
-    }
-    return current;
-  }
-
-  void skip_whitespace() mut {
-    while (!this.at_end()) {
-      char current = this.peek();
-      if (current != ' ' && current != '\t' && current != '\n' &&
-          current != '\r') {
-        return;
-      }
-      [[discard]] this.advance();
-    }
-  }
-
-  error make_error(errc code, string_view path) {
-    mut std::string owned_path = std::string(path);
-    mut error result = error(code, this.offset, this.current_line,
-                             this.current_column, std::move(owned_path));
-    return std::move(result);
-  }
-
-  bool consume_literal(string_view literal) mut {
-    if (literal.size() > this.source.size() - this.offset) {
-      return false;
-    }
-    for (mut size_t index = 0; index < literal.size(); index++) {
-      if (this.source[this.offset + index] != literal[index]) {
-        return false;
-      }
-    }
-    for (mut size_t index = 0; index < literal.size(); index++) {
-      [[discard]] this.advance();
-    }
-    return true;
-  }
-
+  /// Four hexadecimal digits at the cursor as a code unit; -1 when a digit is
+  /// invalid, -2 when the text ends first.
   int32_t read_hex_quad() mut {
-    mut int32_t result = 0;
-    for (mut size_t index = 0; index < 4; index++) {
-      if (this.at_end()) {
-        return -2;
-      }
-      int32_t digit = detail::hex_digit(this.peek());
+    if (this.limit - this.offset < std::size_t(4)) {
+      return -2;
+    }
+    mut int32_t value = 0;
+    for (mut std::size_t index = 0; index < std::size_t(4); index++) {
+      int32_t digit = hex_value(this.text[this.offset + index]);
       if (digit < 0) {
         return -1;
       }
-      result = result * 16 + digit;
-      [[discard]] this.advance();
+      value = value * 16 + digit;
     }
-    return result;
+    this.offset = this.offset + std::size_t(4);
+    return value;
   }
 
-  void append_code_point(mut std::string& output, int32_t point) {
-    if (point <= 127) {
-      output.push_back(char(uint8_t(point)));
-      return;
-    }
-    if (point <= 2047) {
-      output.push_back(char(uint8_t(192 + point / 64)));
-      output.push_back(char(uint8_t(128 + point % 64)));
-      return;
-    }
-    if (point <= 65535) {
-      output.push_back(char(uint8_t(224 + point / 4096)));
-      output.push_back(char(uint8_t(128 + (point / 64) % 64)));
-      output.push_back(char(uint8_t(128 + point % 64)));
-      return;
-    }
-    output.push_back(char(uint8_t(240 + point / 262144)));
-    output.push_back(char(uint8_t(128 + (point / 4096) % 64)));
-    output.push_back(char(uint8_t(128 + (point / 64) % 64)));
-    output.push_back(char(uint8_t(128 + point % 64)));
-  }
-
-  expected<std::string, error> parse_string(string_view path) mut {
-    [[discard]] this.advance();
-    mut std::string output = std::string("");
-
-    while (!this.at_end()) {
-      char current = this.peek();
-      if (current == '"') {
-        [[discard]] this.advance();
-        return std::move(output);
+  /// Scans a string literal at the cursor into `out`, validating UTF-8,
+  /// rejecting raw control characters and decoding escapes.
+  expected<void, error> read_string(mut std::string& out) mut {
+    ?this.expect('"');
+    while (true) {
+      std::size_t start = this.offset;
+      char value = ?this.peek();
+      if (value == '"') {
+        this.offset = this.offset + std::size_t(1);
+        return;
       }
-      if (uint8_t(current) < uint8_t(32)) {
-        return unexpected(this.make_error(errc::invalid_unicode, path));
+      if (uint8_t(value) < uint8_t(32)) {
+        return unexpected(this.fail(errc::unexpected_character, start));
       }
-
-      if (current != '\\') {
-        size_t width = detail::utf8_width(this.source, this.offset);
-        if (width == 0) {
-          return unexpected(this.make_error(errc::invalid_unicode, path));
+      if (value != '\\') {
+        std::size_t width = utf8_width(this.text, this.offset, this.limit);
+        if (width == std::size_t(0)) {
+          return unexpected(this.fail(errc::invalid_unicode, start));
         }
-        if (output.size() + width > this.maximum_string_bytes) {
-          return unexpected(this.make_error(errc::string_too_large, path));
+        for (mut std::size_t index = 0; index < width; index++) {
+          out.push_back(this.text[this.offset + index]);
         }
-        for (mut size_t index = 0; index < width; index++) {
-          output.push_back(this.advance());
-        }
+        this.offset = this.offset + width;
         continue;
       }
-
-      [[discard]] this.advance();
-      if (this.at_end()) {
-        return unexpected(this.make_error(errc::unexpected_end, path));
-      }
-      char escaped = this.advance();
-      switch (escaped) {
-      case '"':
-        output.push_back('"');
-        break;
-      case '\\':
-        output.push_back('\\');
-        break;
-      case '/':
-        output.push_back('/');
-        break;
-      case 'b':
-        output.push_back(char(uint8_t(8)));
-        break;
-      case 'f':
-        output.push_back(char(uint8_t(12)));
-        break;
-      case 'n':
-        output.push_back('\n');
-        break;
-      case 'r':
-        output.push_back('\r');
-        break;
-      case 't':
-        output.push_back('\t');
-        break;
-      case 'u': {
+      this.offset = this.offset + std::size_t(1);
+      char escape = ?this.peek();
+      this.offset = this.offset + std::size_t(1);
+      if (escape == '"') {
+        out.push_back('"');
+      } else if (escape == '\\') {
+        out.push_back('\\');
+      } else if (escape == '/') {
+        out.push_back('/');
+      } else if (escape == 'n') {
+        out.push_back('\n');
+      } else if (escape == 't') {
+        out.push_back('\t');
+      } else if (escape == 'r') {
+        out.push_back('\r');
+      } else if (escape == 'b') {
+        out.push_back(char(uint8_t(8)));
+      } else if (escape == 'f') {
+        out.push_back(char(uint8_t(12)));
+      } else if (escape == 'u') {
         int32_t first = this.read_hex_quad();
         if (first == -2) {
-          return unexpected(this.make_error(errc::unexpected_end, path));
+          return unexpected(this.fail(errc::unexpected_end, this.offset));
         }
         if (first < 0) {
-          return unexpected(this.make_error(errc::invalid_escape, path));
+          return unexpected(this.fail(errc::invalid_escape, start));
         }
         mut int32_t point = first;
         if (first >= 55296 && first <= 56319) {
-          if (this.at_end()) {
-            return unexpected(this.make_error(errc::unexpected_end, path));
+          // A high surrogate must be followed by an escaped low surrogate.
+          if (this.limit - this.offset < std::size_t(2) || this.text[this.offset] != '\\' ||
+              this.text[this.offset + std::size_t(1)] != 'u') {
+            return unexpected(this.fail(errc::invalid_unicode, start));
           }
-          if (this.peek() != '\\') {
-            return unexpected(this.make_error(errc::invalid_unicode, path));
-          }
-          if (this.source.size() - this.offset < 2) {
-            return unexpected(this.make_error(errc::unexpected_end, path));
-          }
-          if (this.source[this.offset + 1] != 'u') {
-            return unexpected(this.make_error(errc::invalid_unicode, path));
-          }
-          [[discard]] this.advance();
-          [[discard]] this.advance();
+          this.offset = this.offset + std::size_t(2);
           int32_t second = this.read_hex_quad();
           if (second == -2) {
-            return unexpected(this.make_error(errc::unexpected_end, path));
+            return unexpected(this.fail(errc::unexpected_end, this.offset));
           }
           if (second < 56320 || second > 57343) {
-            return unexpected(this.make_error(errc::invalid_unicode, path));
+            return unexpected(this.fail(errc::invalid_unicode, start));
           }
           point = 65536 + (first - 55296) * 1024 + (second - 56320);
         } else if (first >= 56320 && first <= 57343) {
-          return unexpected(this.make_error(errc::invalid_unicode, path));
+          return unexpected(this.fail(errc::invalid_unicode, start));
         }
-        this.append_code_point(output, point);
+        append_code_point(out, point);
+      } else {
+        return unexpected(this.fail(errc::invalid_escape, start));
+      }
+    }
+  }
+
+  /// Skips a string literal without validating it: the characters it holds
+  /// are checked when the value is decoded, so the failure carries the
+  /// value's path.
+  expected<void, error> skip_string(bool strict) mut {
+    if (strict) {
+      mut std::string discarded = std::string("");
+      return this.read_string(discarded);
+    }
+    ?this.expect('"');
+    while (true) {
+      char value = ?this.peek();
+      this.offset = this.offset + std::size_t(1);
+      if (value == '"') {
+        return;
+      }
+      if (value == '\\') {
+        // Whatever follows a backslash belongs to the escape.
+        if (this.at_end()) {
+          return unexpected(this.fail(errc::unexpected_end, this.offset));
+        }
+        this.offset = this.offset + std::size_t(1);
+      }
+    }
+  }
+
+  /// Skips one complete value at the cursor following the JSON grammar
+  /// (objects are `key: value` pairs, arrays are values, both comma
+  /// separated), checking nesting as it goes and strings too when `strict`.
+  /// Returns the byte range the value occupied, labelled with `key`.
+  expected<member, error> skip_value(std::string key, std::size_t depth, bool strict) mut {
+    this.skip_space();
+    std::size_t begin = this.offset;
+    ?this.skip_any(depth, strict);
+    return member(std::move(key), begin, this.offset);
+  }
+
+  expected<void, error> skip_any(std::size_t depth, bool strict) mut {
+    char head = ?this.peek();
+    if (head == '"') {
+      return this.skip_string(strict);
+    }
+    if (head == '{') {
+      return this.skip_object(depth + std::size_t(1), strict);
+    }
+    if (head == '[') {
+      return this.skip_array(depth + std::size_t(1), strict);
+    }
+    std::size_t begin = this.offset;
+    while (!this.at_end()) {
+      char value = this.text[this.offset];
+      if (value == ',' || value == '}' || value == ']' || is_space(value)) {
         break;
       }
-      default:
-        return unexpected(this.make_error(errc::invalid_escape, path));
-      }
-
-      if (output.size() > this.maximum_string_bytes) {
-        return unexpected(this.make_error(errc::string_too_large, path));
+      this.offset = this.offset + std::size_t(1);
+    }
+    if (this.offset == begin) {
+      return unexpected(this.fail(errc::unexpected_character, begin));
+    }
+    if (strict && !range_is(this.text, begin, this.offset, "true") &&
+        !range_is(this.text, begin, this.offset, "false") &&
+        !range_is(this.text, begin, this.offset, "null")) {
+      mut bool integral = true;
+      if (!valid_number(this.text, begin, this.offset, integral)) {
+        return unexpected(this.fail(errc::invalid_number, begin));
       }
     }
-    return unexpected(this.make_error(errc::unexpected_end, path));
+    return;
   }
 
-  expected<value, error> parse_number(string_view path) mut {
-    size_t begin = this.offset;
-    if (this.peek() == '-') {
-      [[discard]] this.advance();
-      if (this.at_end()) {
-        return unexpected(this.make_error(errc::invalid_number, path));
+  expected<void, error> skip_object(std::size_t depth, bool strict) mut {
+    if (depth > this.max_depth) {
+      return unexpected(this.fail(errc::nesting_limit, this.offset));
+    }
+    ?this.expect('{');
+    this.skip_space();
+    if (?this.peek() == '}') {
+      this.offset = this.offset + std::size_t(1);
+      return;
+    }
+    while (true) {
+      this.skip_space();
+      ?this.skip_string(strict);
+      this.skip_space();
+      ?this.expect(':');
+      this.skip_space();
+      ?this.skip_any(depth, strict);
+      this.skip_space();
+      char next = ?this.peek();
+      this.offset = this.offset + std::size_t(1);
+      if (next == '}') {
+        return;
+      }
+      if (next != ',') {
+        return unexpected(this.fail(errc::unexpected_character, this.offset - std::size_t(1)));
       }
     }
-
-    if (this.peek() == '0') {
-      [[discard]] this.advance();
-      if (!this.at_end() && detail::is_digit(this.peek())) {
-        return unexpected(this.make_error(errc::invalid_number, path));
-      }
-    } else {
-      uint8_t first = uint8_t(this.peek());
-      if (first < uint8_t(49) || first > uint8_t(57)) {
-        return unexpected(this.make_error(errc::invalid_number, path));
-      }
-      while (!this.at_end() && detail::is_digit(this.peek())) {
-        [[discard]] this.advance();
-      }
-    }
-
-    if (!this.at_end() && this.peek() == '.') {
-      [[discard]] this.advance();
-      if (this.at_end() || !detail::is_digit(this.peek())) {
-        return unexpected(this.make_error(errc::invalid_number, path));
-      }
-      while (!this.at_end() && detail::is_digit(this.peek())) {
-        [[discard]] this.advance();
-      }
-    }
-
-    if (!this.at_end() && (this.peek() == 'e' || this.peek() == 'E')) {
-      [[discard]] this.advance();
-      if (!this.at_end() && (this.peek() == '+' || this.peek() == '-')) {
-        [[discard]] this.advance();
-      }
-      if (this.at_end() || !detail::is_digit(this.peek())) {
-        return unexpected(this.make_error(errc::invalid_number, path));
-      }
-      while (!this.at_end() && detail::is_digit(this.peek())) {
-        [[discard]] this.advance();
-      }
-    }
-
-    mut std::string text = std::string("");
-    text.reserve(this.offset - begin);
-    for (mut size_t index = begin; index < this.offset; index++) {
-      text.push_back(this.source[index]);
-    }
-    return value::number_text(text.view());
   }
 
-  std::string child_key_path(string_view parent, string_view key) {
-    mut std::string result = std::string(parent);
-    mut std::string suffix = detail::pointer_for_key(key);
-    result.append(suffix.view());
-    return std::move(result);
+  expected<void, error> skip_array(std::size_t depth, bool strict) mut {
+    if (depth > this.max_depth) {
+      return unexpected(this.fail(errc::nesting_limit, this.offset));
+    }
+    ?this.expect('[');
+    this.skip_space();
+    if (?this.peek() == ']') {
+      this.offset = this.offset + std::size_t(1);
+      return;
+    }
+    while (true) {
+      this.skip_space();
+      ?this.skip_any(depth, strict);
+      this.skip_space();
+      char next = ?this.peek();
+      this.offset = this.offset + std::size_t(1);
+      if (next == ']') {
+        return;
+      }
+      if (next != ',') {
+        return unexpected(this.fail(errc::unexpected_character, this.offset - std::size_t(1)));
+      }
+    }
   }
 
-  std::string child_index_path(string_view parent, size_t index) {
-    mut std::string result = std::string(parent);
-    mut std::string suffix = detail::pointer_for_index(index);
-    result.append(suffix.view());
-    return std::move(result);
-  }
-
-  expected<value, error> parse_value(size_t depth, string_view path) mut {
-    if (depth > this.maximum_depth) {
-      return unexpected(this.make_error(errc::nesting_limit, path));
-    }
-    if (this.nodes >= this.maximum_nodes) {
-      return unexpected(this.make_error(errc::node_limit, path));
-    }
-    this.nodes++;
-
-    if (this.at_end()) {
-      return unexpected(this.make_error(errc::unexpected_end, path));
-    }
-    char current = this.peek();
-    if (current == '"') {
-      std::string text = ?this.parse_string(path);
-      return value::string(text.view());
-    }
-    if (current == '-' || detail::is_digit(current)) {
-      return this.parse_number(path);
-    }
-    if (current == 'n') {
-      if (this.source.size() - this.offset < size_t(4)) {
-        return unexpected(this.make_error(errc::unexpected_end, path));
-      }
-      if (!this.consume_literal("null")) {
-        return unexpected(this.make_error(errc::unexpected_token, path));
-      }
-      return value::null();
-    }
-    if (current == 't') {
-      if (this.source.size() - this.offset < size_t(4)) {
-        return unexpected(this.make_error(errc::unexpected_end, path));
-      }
-      if (!this.consume_literal("true")) {
-        return unexpected(this.make_error(errc::unexpected_token, path));
-      }
-      return value::boolean(true);
-    }
-    if (current == 'f') {
-      if (this.source.size() - this.offset < size_t(5)) {
-        return unexpected(this.make_error(errc::unexpected_end, path));
-      }
-      if (!this.consume_literal("false")) {
-        return unexpected(this.make_error(errc::unexpected_token, path));
-      }
-      return value::boolean(false);
-    }
-    if (current == '[') {
-      [[discard]] this.advance();
-      mut value result = value::array();
-      this.skip_whitespace();
-      if (!this.at_end() && this.peek() == ']') {
-        [[discard]] this.advance();
-        return std::move(result);
-      }
-
-      mut size_t index = 0;
-      while (true) {
-        mut std::string child_path = this.child_index_path(path, index);
-        value child = ?this.parse_value(depth + 1, child_path.view());
-        ?result.push(std::move(child));
-        index++;
-        this.skip_whitespace();
-        if (this.at_end()) {
-          return unexpected(this.make_error(errc::unexpected_end, path));
-        }
-        if (this.peek() == ']') {
-          [[discard]] this.advance();
-          return std::move(result);
-        }
-        if (this.peek() != ',') {
-          return unexpected(this.make_error(errc::unexpected_token, path));
-        }
-        [[discard]] this.advance();
-        this.skip_whitespace();
-        if (!this.at_end() && this.peek() == ']') {
-          return unexpected(this.make_error(errc::unexpected_token, path));
-        }
-      }
-    }
-    if (current == '{') {
-      [[discard]] this.advance();
-      mut value result = value::object();
-      this.skip_whitespace();
-      if (!this.at_end() && this.peek() == '}') {
-        [[discard]] this.advance();
-        return std::move(result);
-      }
-
-      while (true) {
-        if (this.at_end()) {
-          return unexpected(this.make_error(errc::unexpected_end, path));
-        }
-        if (this.peek() != '"') {
-          return unexpected(this.make_error(errc::unexpected_token, path));
-        }
-        std::string key = ?this.parse_string(path);
-        mut std::string child_path = this.child_key_path(path, key.view());
-        if (result.contains(key.view())) {
-          return unexpected(
-              this.make_error(errc::duplicate_key, child_path.view()));
-        }
-        this.skip_whitespace();
-        if (this.at_end()) {
-          return unexpected(this.make_error(errc::unexpected_end,
-                                            child_path.view()));
-        }
-        if (this.peek() != ':') {
-          return unexpected(this.make_error(errc::unexpected_token,
-                                            child_path.view()));
-        }
-        [[discard]] this.advance();
-        this.skip_whitespace();
-        value child = ?this.parse_value(depth + 1, child_path.view());
-        ?result.set(key.view(), std::move(child));
-        this.skip_whitespace();
-        if (this.at_end()) {
-          return unexpected(this.make_error(errc::unexpected_end, path));
-        }
-        if (this.peek() == '}') {
-          [[discard]] this.advance();
-          return std::move(result);
-        }
-        if (this.peek() != ',') {
-          return unexpected(this.make_error(errc::unexpected_token, path));
-        }
-        [[discard]] this.advance();
-        this.skip_whitespace();
-        if (!this.at_end() && this.peek() == '}') {
-          return unexpected(this.make_error(errc::unexpected_token, path));
-        }
-      }
-    }
-    return unexpected(this.make_error(errc::unexpected_token, path));
-  }
-
-public:
-  parser(string_view input, parse_options& options)
-      : source(input), maximum_depth(options.max_depth()),
-        maximum_nodes(options.max_nodes()),
-        maximum_string_bytes(options.max_string_bytes()),
-        maximum_document_bytes(options.max_document_bytes()) {}
-
-  expected<value, error> parse_document() mut {
-    mut std::string root_path = std::string("");
-    if (this.source.size() > this.maximum_document_bytes) {
-      return unexpected(
-          this.make_error(errc::document_too_large, root_path.view()));
-    }
-    this.skip_whitespace();
-    value root = ?this.parse_value(size_t(1), root_path.view());
-    this.skip_whitespace();
+  /// Requires the rest of the range to be blank.
+  expected<void, error> finish() mut {
+    this.skip_space();
     if (!this.at_end()) {
-      return unexpected(
-          this.make_error(errc::trailing_characters, root_path.view()));
+      return unexpected(this.fail(errc::trailing_characters, this.offset));
     }
-    return std::move(root);
+    return;
   }
 };
 
-char hex_character(uint8_t value) {
-  switch (value) {
-  case uint8_t(0):
-    return '0';
-  case uint8_t(1):
-    return '1';
-  case uint8_t(2):
-    return '2';
-  case uint8_t(3):
-    return '3';
-  case uint8_t(4):
-    return '4';
-  case uint8_t(5):
-    return '5';
-  case uint8_t(6):
-    return '6';
-  case uint8_t(7):
-    return '7';
-  case uint8_t(8):
-    return '8';
-  case uint8_t(9):
-    return '9';
-  case uint8_t(10):
-    return 'a';
-  case uint8_t(11):
-    return 'b';
-  case uint8_t(12):
-    return 'c';
-  case uint8_t(13):
-    return 'd';
-  case uint8_t(14):
-    return 'e';
-  case uint8_t(15):
-    return 'f';
+/// Splits an object's text into its members without interpreting values;
+/// rejects repeated keys.
+expected<std::vector<member>, error> parse_members(std::string_view text, std::size_t begin, std::size_t end, decode_options& options) {
+  mut std::vector<member> members = std::vector<member>();
+  mut scanner cursor{text, begin, end, options.max_depth};
+  cursor.skip_space();
+  ?cursor.expect('{');
+  cursor.skip_space();
+  if (?cursor.peek() == '}') {
+    cursor.offset = cursor.offset + std::size_t(1);
+    ?cursor.finish();
+    return std::move(members);
   }
-  return '0';
-}
-
-void append_indentation(mut std::string& output, uint8_t width,
-                        size_t depth) {
-  size_t count = size_t(width) * depth;
-  for (mut size_t index = 0; index < count; index++) {
-    output.push_back(' ');
-  }
-}
-
-void append_escaped_string(mut std::string& output, string_view input) {
-  output.push_back('"');
-  for (mut size_t index = 0; index < input.size(); index++) {
-    char current = input[index];
-    if (current == '"') {
-      output.append("\\\"");
-    } else if (current == '\\') {
-      output.append("\\\\");
-    } else if (current == '\n') {
-      output.append("\\n");
-    } else if (current == '\r') {
-      output.append("\\r");
-    } else if (current == '\t') {
-      output.append("\\t");
-    } else if (uint8_t(current) == uint8_t(8)) {
-      output.append("\\b");
-    } else if (uint8_t(current) == uint8_t(12)) {
-      output.append("\\f");
-    } else if (uint8_t(current) < uint8_t(32)) {
-      uint8_t code = uint8_t(current);
-      output.append("\\u00");
-      output.push_back(hex_character(uint8_t(code / uint8_t(16))));
-      output.push_back(hex_character(uint8_t(code % uint8_t(16))));
-    } else {
-      output.push_back(current);
-    }
-  }
-  output.push_back('"');
-}
-
-void append_value(mut std::string& output, value& input, bool pretty,
-                  uint8_t indentation, size_t depth) {
-  if (input.is_null()) {
-    output.append("null");
-    return;
-  }
-  if (input.is_boolean()) {
-    mut expected<bool, error> converted = input.as_boolean();
-    if (converted.value()) {
-      output.append("true");
-    } else {
-      output.append("false");
-    }
-    return;
-  }
-  if (input.is_number()) {
-    mut expected<std::string, error> converted = input.as_number_text();
-    mut std::string text = std::move(converted).value();
-    output.append(text.view());
-    return;
-  }
-  if (input.is_string()) {
-    mut expected<std::string, error> converted = input.as_string();
-    mut std::string text = std::move(converted).value();
-    append_escaped_string(output, text.view());
-    return;
-  }
-  if (input.is_array()) {
-    output.push_back('[');
-    size_t count = input.size();
-    if (count > 0 && pretty) {
-      output.push_back('\n');
-    }
-    for (mut size_t index = 0; index < count; index++) {
-      if (pretty) {
-        append_indentation(output, indentation, depth + 1);
-      }
-      append_value(output, input.at(index), pretty, indentation, depth + 1);
-      if (index + 1 < count) {
-        output.push_back(',');
-      }
-      if (pretty) {
-        output.push_back('\n');
+  while (true) {
+    cursor.skip_space();
+    std::size_t key_offset = cursor.offset;
+    mut std::string key = std::string("");
+    ?cursor.read_string(key);
+    for (auto& earlier : members) {
+      if (earlier.key.view() == key.view()) {
+        return unexpected(cursor.fail(errc::duplicate_key, key_offset));
       }
     }
-    if (count > 0 && pretty) {
-      append_indentation(output, indentation, depth);
+    cursor.skip_space();
+    ?cursor.expect(':');
+    member found = ?cursor.skip_value(std::move(key), std::size_t(1), false);
+    members.push_back(std::move(found));
+    cursor.skip_space();
+    char next = ?cursor.peek();
+    cursor.offset = cursor.offset + std::size_t(1);
+    if (next == '}') {
+      break;
     }
-    output.push_back(']');
-    return;
-  }
-
-  output.push_back('{');
-  size_t count = input.object_size();
-  if (count > 0 && pretty) {
-    output.push_back('\n');
-  }
-  for (mut size_t index = 0; index < count; index++) {
-    if (pretty) {
-      append_indentation(output, indentation, depth + 1);
-    }
-    append_escaped_string(output, input.key_at(index).view());
-    output.push_back(':');
-    if (pretty) {
-      output.push_back(' ');
-    }
-    append_value(output, input.value_at(index), pretty, indentation,
-                 depth + 1);
-    if (index + 1 < count) {
-      output.push_back(',');
-    }
-    if (pretty) {
-      output.push_back('\n');
+    if (next != ',') {
+      return unexpected(cursor.fail(errc::unexpected_character, cursor.offset - std::size_t(1)));
     }
   }
-  if (count > 0 && pretty) {
-    append_indentation(output, indentation, depth);
+  ?cursor.finish();
+  return std::move(members);
+}
+
+/// Splits an array's text into the byte ranges of its elements.
+expected<std::vector<member>, error> parse_elements(std::string_view text, std::size_t begin, std::size_t end, decode_options& options) {
+  mut std::vector<member> elements = std::vector<member>();
+  mut scanner cursor{text, begin, end, options.max_depth};
+  cursor.skip_space();
+  ?cursor.expect('[');
+  cursor.skip_space();
+  if (?cursor.peek() == ']') {
+    cursor.offset = cursor.offset + std::size_t(1);
+    ?cursor.finish();
+    return std::move(elements);
   }
-  output.push_back('}');
-}
-}
-
-expected<value, error> parse(string_view source, parse_options& options) {
-  mut detail::parser reader = detail::parser(source, options);
-  return reader.parse_document();
-}
-
-expected<value, error> parse(string_view source) {
-  mut parse_options options = parse_options();
-  return parse(source, options);
-}
-
-std::string stringify(value& input) {
-  mut std::string result = std::string("");
-  detail::append_value(result, input, false, uint8_t(0), size_t(0));
-  return std::move(result);
-}
-
-std::string stringify_pretty(value& input, uint8_t indentation = 2) {
-  mut std::string result = std::string("");
-  detail::append_value(result, input, true, indentation, size_t(0));
-  return std::move(result);
-}
-
-// Applications specialize this class for their own nominal model types.  The
-// empty primary is deliberately explicit: there is no reflection, implicit
-// field mapping, key renaming, or exception-based conversion fallback.
-class codec<T> {
-public:
-  expected<T, error> decode(value& input);
-  expected<value, error> encode(T& input);
-};
-
-expected<T, error> decode<T>(string_view source) {
-  value document = ?parse(source);
-  codec<T> mapping{};
-  return mapping.decode(document);
-}
-
-expected<value, error> encode<T>(T& input) {
-  codec<T> mapping{};
-  return mapping.encode(input);
-}
-
-expected<std::vector<T>, error> decode_array<std::movable T>(
-    string_view source) requires std::vector_element<T> {
-  value document = ?parse(source);
-  if (!document.is_array()) {
-    return unexpected(error(errc::type_mismatch));
+  while (true) {
+    member found = ?cursor.skip_value(std::string(""), std::size_t(1), false);
+    elements.push_back(std::move(found));
+    cursor.skip_space();
+    char next = ?cursor.peek();
+    cursor.offset = cursor.offset + std::size_t(1);
+    if (next == ']') {
+      break;
+    }
+    if (next != ',') {
+      return unexpected(cursor.fail(errc::unexpected_character, cursor.offset - std::size_t(1)));
+    }
   }
+  ?cursor.finish();
+  return std::move(elements);
+}
 
-  mut std::vector<T> result = std::vector<T>();
-  result.reserve(document.size());
-  codec<T> mapping{};
-  for (mut size_t index = 0; index < document.size(); index++) {
-    mut expected<T, error> decoded = mapping.decode(document.at(index));
+/// True when the range holds exactly `literal`.
+bool range_is(std::string_view text, std::size_t begin, std::size_t end, std::string_view literal) {
+  if (end - begin != literal.size()) {
+    return false;
+  }
+  for (mut std::size_t index = 0; index < literal.size(); index++) {
+    if (text[begin + index] != literal[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Trims surrounding blanks from a value range in place.
+void trim(std::string_view text, mut std::size_t& begin, mut std::size_t& end) {
+  while (begin < end && is_space(text[begin])) {
+    begin = begin + std::size_t(1);
+  }
+  while (end > begin && is_space(text[end - std::size_t(1)])) {
+    end = end - std::size_t(1);
+  }
+}
+
+/// Whether the range is a JSON number lexeme; `integral` tells whether it
+/// has neither fraction nor exponent.
+bool valid_number(std::string_view text, std::size_t begin, std::size_t end, mut bool& integral) {
+  integral = true;
+  mut std::size_t offset = begin;
+  if (offset >= end) {
+    return false;
+  }
+  if (text[offset] == '-') {
+    offset = offset + std::size_t(1);
+    if (offset >= end) {
+      return false;
+    }
+  }
+  if (text[offset] == '0') {
+    offset = offset + std::size_t(1);
+    if (offset < end && is_digit(text[offset])) {
+      return false;
+    }
+  } else {
+    if (uint8_t(text[offset]) < uint8_t('1') || uint8_t(text[offset]) > uint8_t('9')) {
+      return false;
+    }
+    while (offset < end && is_digit(text[offset])) {
+      offset = offset + std::size_t(1);
+    }
+  }
+  if (offset < end && text[offset] == '.') {
+    integral = false;
+    offset = offset + std::size_t(1);
+    if (offset >= end || !is_digit(text[offset])) {
+      return false;
+    }
+    while (offset < end && is_digit(text[offset])) {
+      offset = offset + std::size_t(1);
+    }
+  }
+  if (offset < end && (text[offset] == 'e' || text[offset] == 'E')) {
+    integral = false;
+    offset = offset + std::size_t(1);
+    if (offset < end && (text[offset] == '+' || text[offset] == '-')) {
+      offset = offset + std::size_t(1);
+    }
+    if (offset >= end || !is_digit(text[offset])) {
+      return false;
+    }
+    while (offset < end && is_digit(text[offset])) {
+      offset = offset + std::size_t(1);
+    }
+  }
+  return offset == end;
+}
+
+/// The digits of an integer lexeme as a magnitude; `negative` reports a
+/// leading minus. Fails with number_out_of_range past 64 bits.
+expected<uint64_t, error> parse_magnitude(std::string_view text, std::size_t begin, std::size_t end, mut bool& negative) {
+  mut std::size_t offset = begin;
+  negative = false;
+  if (offset < end && text[offset] == '-') {
+    negative = true;
+    offset = offset + std::size_t(1);
+  }
+  mut uint64_t value = 0;
+  while (offset < end) {
+    uint64_t digit = uint64_t(uint8_t(text[offset]) - uint8_t('0'));
+    if (value > (uint64_t(18446744073709551615) - digit) / uint64_t(10)) {
+      return unexpected(located(errc::number_out_of_range, text, begin));
+    }
+    value = value * uint64_t(10) + digit;
+    offset = offset + std::size_t(1);
+  }
+  return value;
+}
+
+/// The widest signed and unsigned values a fixed-width integer type holds.
+constexpr uint64_t unsigned_limit<F>() {
+  if constexpr (std::meta::name_of<F>() == "uint8_t") {
+    return uint64_t(255);
+  } else if constexpr (std::meta::name_of<F>() == "uint16_t") {
+    return uint64_t(65535);
+  } else if constexpr (std::meta::name_of<F>() == "uint32_t") {
+    return uint64_t(4294967295);
+  } else {
+    return uint64_t(18446744073709551615);
+  }
+}
+
+constexpr int64_t signed_limit<F>() {
+  if constexpr (std::meta::name_of<F>() == "int8_t") {
+    return int64_t(127);
+  } else if constexpr (std::meta::name_of<F>() == "int16_t") {
+    return int64_t(32767);
+  } else if constexpr (std::meta::name_of<F>() == "int32_t" || std::meta::name_of<F>() == "int") {
+    return int64_t(2147483647);
+  } else {
+    return int64_t(9223372036854775807);
+  }
+}
+
+expected<F, error> decode_unsigned<F>(std::string_view text, std::size_t begin, std::size_t end) {
+  if constexpr (std::meta::is_integral<F>()) {
+    mut bool integral = true;
+    if (!valid_number(text, begin, end, integral)) {
+      return unexpected(located(errc::invalid_number, text, begin));
+    }
+    if (!integral) {
+      return unexpected(located(errc::type_mismatch, text, begin));
+    }
+    mut bool negative = false;
+    uint64_t magnitude = ?parse_magnitude(text, begin, end, negative);
+    if (negative && magnitude > uint64_t(0)) {
+      return unexpected(located(errc::number_out_of_range, text, begin));
+    }
+    if (magnitude > unsigned_limit<F>()) {
+      return unexpected(located(errc::number_out_of_range, text, begin));
+    }
+    return F(magnitude);
+  } else {
+    static_assert(false, "std::json: not an integral type");
+  }
+}
+
+expected<F, error> decode_signed<F>(std::string_view text, std::size_t begin, std::size_t end) {
+  if constexpr (std::meta::is_signed_integral<F>()) {
+    mut bool integral = true;
+    if (!valid_number(text, begin, end, integral)) {
+      return unexpected(located(errc::invalid_number, text, begin));
+    }
+    if (!integral) {
+      return unexpected(located(errc::type_mismatch, text, begin));
+    }
+    mut bool negative = false;
+    uint64_t magnitude = ?parse_magnitude(text, begin, end, negative);
+    uint64_t limit = uint64_t(signed_limit<F>());
+    if (negative) {
+      if (magnitude > limit + uint64_t(1)) {
+        return unexpected(located(errc::number_out_of_range, text, begin));
+      }
+      if (magnitude == limit + uint64_t(1)) {
+        // The most negative value: build it without a positive overflow.
+        return F(int64_t(0) - int64_t(limit) - int64_t(1));
+      }
+      return F(int64_t(0) - int64_t(magnitude));
+    }
+    if (magnitude > limit) {
+      return unexpected(located(errc::number_out_of_range, text, begin));
+    }
+    return F(int64_t(magnitude));
+  } else {
+    static_assert(false, "std::json: not a signed integral type");
+  }
+}
+
+expected<F, error> decode_floating<F>(std::string_view text, std::size_t begin, std::size_t end) {
+  if constexpr (std::meta::is_floating_point<F>()) {
+    mut bool integral = true;
+    if (!valid_number(text, begin, end, integral)) {
+      return unexpected(located(errc::invalid_number, text, begin));
+    }
+    mut std::string lexeme = std::string("");
+    for (mut std::size_t index = begin; index < end; index++) {
+      lexeme.push_back(text[index]);
+    }
+    mut F value = F(0);
+    std::from_chars_result parsed = std::from_chars(lexeme.view(), value);
+    if (parsed.ec == std::parse_errc::result_out_of_range) {
+      return unexpected(located(errc::number_out_of_range, text, begin));
+    }
+    if (parsed.ec != std::parse_errc::none || parsed.position != lexeme.size()) {
+      return unexpected(located(errc::invalid_number, text, begin));
+    }
+    return value;
+  } else {
+    static_assert(false, "std::json: not a floating-point type");
+  }
+}
+
+expected<E, error> decode_enum<E>(std::string_view text, std::size_t begin, std::size_t end, decode_options& options) {
+  mut scanner cursor{text, begin, end, options.max_depth};
+  mut std::string spelling = std::string("");
+  ?cursor.read_string(spelling);
+  ?cursor.finish();
+  constexpr for (auto enumerator : std::meta::enumerators_of<E>()) {
+    if (spelling.view() == enumerator.name()) {
+      return enumerator.value();
+    }
+  }
+  return unexpected(located(errc::invalid_enumerator, text, begin));
+}
+
+/// Decodes a value of the type a `type` metaobject names; used for the
+/// argument of a generic container.
+expected<E, error> decode_as<E>(std::meta::type<E> element, std::string_view text, std::size_t begin, std::size_t end, decode_options& options) {
+  return decode_value<E>(text, begin, end, options);
+}
+
+/// Decodes array element `index`, prefixing a failure's path with the index.
+expected<E, error> decode_element<E>(std::meta::type<E> element, std::string_view text, std::size_t begin, std::size_t end, decode_options& options, std::size_t index) {
+  mut auto value = decode_value<E>(text, begin, end, options);
+  if (!value) {
+    mut error failure = std::move(value).error();
+    failure.prepend_index(index);
+    return unexpected(std::move(failure));
+  }
+  return std::move(value);
+}
+
+/// Decodes object member `key`, prefixing a failure's path with the key.
+expected<E, error> decode_member<E>(std::meta::type<E> element, std::string_view text, std::size_t begin, std::size_t end, decode_options& options, std::string_view key) {
+  mut auto value = decode_value<E>(text, begin, end, options);
+  if (!value) {
+    mut error failure = std::move(value).error();
+    failure.prepend_key(key);
+    return unexpected(std::move(failure));
+  }
+  return std::move(value);
+}
+
+/// Decodes through a `codec` specialization: the value's own text is copied
+/// so the codec sees exactly it, and its offsets are rebased to the input.
+expected<F, error> decode_with_codec<F>(std::string_view text, std::size_t begin, std::size_t end) {
+  if constexpr (has_codec<F>()) {
+    mut std::string span = std::string("");
+    for (mut std::size_t index = begin; index < end; index++) {
+      span.push_back(text[index]);
+    }
+    codec<F> mapping{};
+    mut auto decoded = mapping.decode(span.view());
     if (!decoded) {
       mut error failure = std::move(decoded).error();
-      mut std::string prefix = detail::pointer_for_index(index);
-      failure.prepend_path(prefix.view());
-      return unexpected(std::move(failure));
+      mut std::size_t line = 0;
+      mut std::size_t column = 0;
+      locate(text, begin + failure.offset, line, column);
+      mut error rebased = error(failure.code, begin + failure.offset, line, column);
+      rebased.path = std::move(failure.path);
+      return unexpected(std::move(rebased));
     }
-    result.push_back(std::move(decoded).value());
+    return std::move(decoded);
+  } else {
+    static_assert(false, "std::json: no codec specialization for this type");
   }
-  return std::move(result);
+}
+
+/// The value of `F` that the text range denotes.
+expected<F, error> decode_value<F>(std::string_view text, std::size_t begin, std::size_t end, decode_options& options) {
+  mut std::size_t start = begin;
+  mut std::size_t stop = end;
+  trim(text, start, stop);
+  if constexpr (has_codec<F>()) {
+    return decode_with_codec<F>(text, start, stop);
+  } else if constexpr (std::meta::is_bool<F>()) {
+    if (range_is(text, start, stop, "true")) {
+      return true;
+    }
+    if (range_is(text, start, stop, "false")) {
+      return false;
+    }
+    return unexpected(located(errc::type_mismatch, text, start));
+  } else if constexpr (std::meta::is_signed_integral<F>()) {
+    return decode_signed<F>(text, start, stop);
+  } else if constexpr (std::meta::is_integral<F>()) {
+    return decode_unsigned<F>(text, start, stop);
+  } else if constexpr (std::meta::is_floating_point<F>()) {
+    return decode_floating<F>(text, start, stop);
+  } else if constexpr (is_owned_string<F>()) {
+    mut scanner cursor{text, start, stop, options.max_depth};
+    mut std::string out = std::string("");
+    ?cursor.read_string(out);
+    ?cursor.finish();
+    return std::move(out);
+  } else if constexpr (std::meta::is_enum<F>()) {
+    return decode_enum<F>(text, start, stop, options);
+  } else if constexpr (is_optional<F>()) {
+    if (range_is(text, start, stop, "null")) {
+      return F();
+    }
+    auto inner = ?decode_as(std::meta::list_first<std::meta::argument_list<F>>(), text, start, stop, options);
+    // An open type parameter cannot be constructed from an argument, so fill
+    // the empty optional in place instead.
+    mut F out = F();
+    [[discard]] out.emplace(std::move(inner));
+    return std::move(out);
+  } else if constexpr (is_vector<F>()) {
+    mut F out = F();
+    std::vector<member> elements = ?parse_elements(text, start, stop, options);
+    mut std::size_t index = 0;
+    for (auto& element : elements) {
+      auto value = ?decode_element(std::meta::list_first<std::meta::argument_list<F>>(), text, element.begin, element.end, options, index);
+      out.push_back(std::move(value));
+      index = index + std::size_t(1);
+    }
+    return std::move(out);
+  } else if constexpr (is_string_map<F>()) {
+    mut F out = F();
+    std::vector<member> members = ?parse_members(text, start, stop, options);
+    for (auto& entry : members) {
+      auto value = ?decode_member(std::meta::list_first<std::meta::list_rest<std::meta::argument_list<F>>>(), text, entry.begin, entry.end, options, entry.key.view());
+      [[discard]] out.insert(std::string(entry.key.view()), std::move(value));
+    }
+    return std::move(out);
+  } else if constexpr (std::meta::is_reflectable<F>()) {
+    return decode_object<F>(text, start, stop, options);
+  } else {
+    static_assert(false, "std::json cannot decode this type");
+  }
+}
+
+/// The value an `[[ignore]]`d or absent optional field takes on decoding:
+/// its type's default construction, which the type must therefore support.
+expected<F, error> default_value<F>() requires std::default_initializable<F> {
+  return F();
+}
+
+/// Produces each field of `T` from the members of one object.
+struct object_producer<T> {
+  std::string_view text;
+  std::size_t begin;
+  std::vector<member> members;
+  // Limits are copied: a struct holding a reference is outside what the
+  // backend emits today, and the two sizes are cheap.
+  decode_options options;
+  object_producer(std::string_view text, std::size_t begin, std::vector<member> members, decode_options& limits)
+      : text(text), begin(begin), members(std::move(members)),
+        options(decode_options(limits.max_depth, limits.max_document_bytes)) {}
+  object_producer(object_producer<T>& other) = delete;
+
+  expected<std::meta::field_type<T, I>, error> produce<uint64_t I>(std::meta::field<T, I> field) mut {
+    if constexpr (std::meta::field<T, I>().has_attribute<ignore>()) {
+      return default_value<std::meta::field_type<T, I>>();
+    }
+    std::string_view key = key_of(field);
+    for (auto& candidate : this.members) {
+      if (candidate.key.view() == key) {
+        mut auto value = decode_value<std::meta::field_type<T, I>>(this.text, candidate.begin, candidate.end, this.options);
+        if (!value) {
+          mut error failure = std::move(value).error();
+          failure.prepend_key(key);
+          return unexpected(std::move(failure));
+        }
+        return std::move(value);
+      }
+    }
+    if constexpr (is_optional<std::meta::field_type<T, I>>()) {
+      return default_value<std::meta::field_type<T, I>>();
+    }
+    mut error missing = located(errc::missing_field, this.text, this.begin);
+    missing.prepend_key(key);
+    return unexpected(std::move(missing));
+  }
+};
+
+/// Checks the text of a member that names no field: it is never decoded, so
+/// its strings are validated here, with the key as the failure's path.
+expected<void, error> validate_member(std::string_view text, member& entry, decode_options& options) {
+  mut scanner cursor{text, entry.begin, entry.end, options.max_depth};
+  mut auto checked = cursor.skip_value(std::string(""), std::size_t(1), true);
+  if (!checked) {
+    mut error failure = std::move(checked).error();
+    failure.prepend_key(entry.key.view());
+    return unexpected(std::move(failure));
+  }
+  return;
+}
+
+expected<T, error> decode_object<T>(std::string_view text, std::size_t begin, std::size_t end, decode_options& options) {
+  std::vector<member> members = ?parse_members(text, begin, end, options);
+  for (auto& entry : members) {
+    mut bool known = false;
+    constexpr for (auto field : std::meta::fields_of<T>()) {
+      if constexpr (!field.has_attribute<ignore>()) {
+        if (entry.key.view() == key_of(field)) {
+          known = true;
+        }
+      }
+    }
+    if (!known) {
+      ?validate_member(text, entry, options);
+    }
+  }
+  mut object_producer<T> producer{text, begin, std::move(members), options};
+  mut auto built = std::meta::construct<T, error, object_producer<T>>(producer);
+  return std::move(built);
+}
+
+}
+
+/// The compact JSON text of `value`. Structs become objects with one member
+/// per field that is not `[[ignore]]`d, keyed by `[[name]]` or the declared
+/// name; see the file comment for every supported type. Fails only for
+/// invalid UTF-8 text and non-finite floating values.
+expected<std::string, error> encode<T>(T& value) {
+  mut std::string out = std::string("");
+  mut detail::layout style{};
+  ?detail::encode_value(out, value, style, std::size_t(0));
+  return std::move(out);
+}
+
+/// Like `encode`, with newlines and `indentation` spaces per nesting level.
+expected<std::string, error> encode_pretty<T>(T& value, uint8_t indentation = 2) {
+  mut std::string out = std::string("");
+  mut detail::layout style = {.pretty = true, .indentation = indentation};
+  ?detail::encode_value(out, value, style, std::size_t(0));
+  return std::move(out);
+}
+
+/// The `T` that the JSON text denotes. Structs are built field by field
+/// through `std::meta::construct`; every non-ignored, non-optional field must
+/// be present.
+expected<T, error> decode<T>(std::string_view text, decode_options& options) {
+  if (text.size() > options.max_document_bytes) {
+    return unexpected(detail::located(errc::document_too_large, text, std::size_t(0)));
+  }
+  mut detail::scanner cursor{text, std::size_t(0), text.size(), options.max_depth};
+  detail::member root = ?cursor.skip_value(std::string(""), std::size_t(0), false);
+  ?cursor.finish();
+  return detail::decode_value<T>(text, root.begin, root.end, options);
+}
+
+expected<T, error> decode<T>(std::string_view text) {
+  mut decode_options options{};
+  return decode<T>(text, options);
 }
 
 }

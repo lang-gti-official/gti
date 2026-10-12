@@ -56,6 +56,8 @@ enum class SynchronizationOperationKind : std::uint8_t {
   AtomicStore,
   AtomicReadModifyWrite,
   AtomicCompareExchange,
+  AtomicWait,
+  AtomicNotify,
   MutexLock,
   MutexUnlock,
   // Wait atomically enrolls/releases and reacquires before returning. Notify
@@ -148,8 +150,10 @@ validSynchronizationOperation(const SynchronizationOperation &operation) {
   case SynchronizationOperationKind::ConditionWait:
   case SynchronizationOperationKind::ConditionNotify:
   case SynchronizationOperationKind::ThreadScope:
+  case SynchronizationOperationKind::AtomicNotify:
     return !operation.order && !operation.failureOrder;
   case SynchronizationOperationKind::AtomicLoad:
+  case SynchronizationOperationKind::AtomicWait:
     return operation.order && validAtomicLoadOrder(*operation.order) &&
            !operation.failureOrder;
   case SynchronizationOperationKind::AtomicStore:
