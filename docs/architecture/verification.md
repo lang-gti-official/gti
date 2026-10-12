@@ -5140,6 +5140,25 @@ relaxing ordinary negation overflow. The O0/O1/O3, C++20/C++23 differential
 fixture includes nested constant pairs alongside runtime string pairs, catching
 accidental class-wide rather than exact-instance factory emission.
 
+`testConstexprEnumBuilders`, `constexpr_enum_builders_runtime` and example 142
+cover enum-valued mutable helpers, reference forwarding, constructor-body
+writes, independent record/array copies, generic identity, enum switches and
+signed-minimum/unsigned-maximum discriminants. Required constants are also
+checked in semantic-only snapshots, proving execution precedes whole-program
+HIR. Direct executor tests reject forged enum owners/domains/discriminants,
+malformed MIR and exhausted shared step/depth budgets. Source negatives retain
+type, loan and lifetime rules and reject runtime-only operations. The existing
+LSP aggregate test includes enum-valued helper evaluation.
+
+Runtime parity must cover all represented states at O0/O1/O3 in C++20/C++23.
+This caught an independent return-publication bug: a sole terminator use was
+mistaken for a Return even when it was an enum Switch. `mir_backend` now checks
+that the switch subject's load executes, while genuine copy returns retain
+their publication path. No optimization or backend interpretation is used as
+the authority for a constant result. Existing read-only calls on named
+enumerators remain covered; general global-object borrowing is not added to
+the executor's checked local-origin profile.
+
 `testConstexprMutation`, `constexpr_mutation_runtime` and
 `constexpr_builders_example` cover mutable reference forwarding, `void` calls,
 constructor-body edits, mutable methods/subscript/call operators, isolated

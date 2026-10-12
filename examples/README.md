@@ -44,7 +44,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](095-explicit-cloning.gti) |
 | Translate library errors into application errors | [96: error mapping](096-error-mapping.gti) |
 | Build and validate data at compile time | [97: constexpr tables](097-constexpr-tables.gti) |
-| Build constants with mutable helpers and reflection | [142: constexpr builders](142-constexpr-builders.gti) |
+| Build constants with mutable helpers, enum states and reflection | [142: constexpr builders](142-constexpr-builders.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
@@ -200,7 +200,7 @@ is a teaching helper, not a production server.
 | `139-ordered-search.gti` | partition-point discovery and comparator bounds/binary search over application records without `operator<`, using the same descending order as sorting |
 | `140-environment-configuration.gti` | read-only owned environment configuration, missing versus explicitly empty values, and invalid-name rejection; try `GTI_DEMO_PROFILE=development` when running it |
 | `141-reflected-json.gti` | `<std/experimental/json>` encoding and decoding a reflectable struct with nested structs, vectors, an enum, an optional, a renamed and an ignored field, pretty output, and a decoding failure with its kind, path and offset |
-| `142-constexpr-builders.gti` | checked mutable constexpr references, `void` helpers, constructor-body edits, mutable array access and reflection-driven field mutation, with runtime parity |
+| `142-constexpr-builders.gti` | checked mutable constexpr references, `void` helpers, constructor-body edits, enum state sequences, mutable array access and reflection-driven field mutation, with runtime parity |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

@@ -116,6 +116,11 @@ private:
   bool storageType(const SemanticType &type, std::size_t depth = 0) const {
     if (scalarType(type))
       return true;
+    if (type.kind == SemanticType::Enum) {
+      const auto *enumeration = program.findIntegralEnum(type);
+      return enumeration &&
+             constantIntegerDomain(enumeration->underlyingType).has_value();
+    }
     if (depth >= limits.callDepth)
       return false;
     if (type.kind == SemanticType::Array)
@@ -407,6 +412,16 @@ private:
     const auto converted = convertConstantToType(value, type);
     if (!converted || *converted.value != value)
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    if (const auto *enumerator = std::get_if<ConstantEnum>(&value)) {
+      const auto *enumeration = program.findIntegralEnum(type);
+      if (!enumeration ||
+          constantIntegerDomain(enumeration->underlyingType) !=
+              enumerator->value.domain ||
+          !checkedIntegerFits(checkedIntegerValue(enumerator->value),
+                              enumerator->value.domain) ||
+          (enumerator->value.negative && enumerator->value.magnitude == 0))
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    }
     const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
     if (!aggregate)
       return converted;
@@ -584,6 +599,8 @@ private:
       return {.failure = ConstantEvaluationFailure::ResourceLimit};
     if (type.kind == SemanticType::Array)
       return arrayValue(type, {});
+    if (type.kind == SemanticType::Enum)
+      return enumValue(type, {});
     if (const auto domain = constantIntegerDomain(type))
       return {.value = makeConstantInteger({}, *domain)};
     if (const auto format = semanticFloatFormat(type))
@@ -598,6 +615,23 @@ private:
     if (type == SemanticType::NullPtr)
       return {.value = NullConstant{}};
     return {.failure = ConstantEvaluationFailure::UnsupportedType};
+  }
+
+  ConstantEvaluation enumValue(const SemanticType &type,
+                               EnumConstant value) const {
+    const auto *enumeration = program.findIntegralEnum(type);
+    const auto domain = enumeration
+                            ? constantIntegerDomain(enumeration->underlyingType)
+                            : std::nullopt;
+    if (!domain)
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    if (!checkedIntegerFits({value.negative, value.magnitude}, *domain))
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    return {.value = ConstantEnum{
+                .enumId = type.enumId,
+                .value = makeConstantInteger(
+                    {.negative = value.negative, .magnitude = value.magnitude},
+                    *domain)}};
   }
 
   ConstantEvaluation arrayValue(const SemanticType &type,
@@ -654,6 +688,11 @@ private:
   ConstantEvaluation compute(const MirInstruction &instruction,
                              const std::vector<ConstantValue> &values) {
     const auto &type = instruction.info.type;
+    if (instruction.operation == MirOperation::EnumConstant &&
+        instruction.enumOwner && instruction.enumValue &&
+        type.kind == SemanticType::Enum &&
+        *instruction.enumOwner == type.enumId && values.empty())
+      return enumValue(type, *instruction.enumValue);
     if (instruction.operation == MirOperation::Aggregate &&
         type.kind == SemanticType::Array)
       return arrayValue(type, values);
@@ -1324,6 +1363,13 @@ private:
             value = makeConstantInteger({.negative = label.value.negative,
                                          .magnitude = label.value.magnitude},
                                         *domain);
+          } else if (label.kind == SwitchCaseKind::Enumerator &&
+                     label.type.kind == SemanticType::Enum &&
+                     label.type.enumId == label.enumOwner) {
+            const auto enumerator = enumValue(label.type, label.value);
+            if (!enumerator)
+              return fail(frame, enumerator.failure);
+            value = *enumerator.value;
           } else {
             return fail(frame, ConstantEvaluationFailure::UnsupportedType);
           }
