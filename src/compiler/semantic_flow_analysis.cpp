@@ -1191,6 +1191,8 @@ auto SemanticVisitor::Impl::validateProgramInitializationEffects(
           if (visited.contains(owner) || !visiting.insert(owner).second) {
             return false;
           }
+          // Late demand must not analyse a body this validation relied on.
+          initializerEffectOwners.insert(owner);
           const auto found = programEffects.find(owner);
           if (found != programEffects.end()) {
             const ProgramEffectSummary &summary = found->second;
@@ -1240,7 +1242,14 @@ auto SemanticVisitor::Impl::finalizeDeferredProgramConstantSubstitutions(
       constants.insert_or_assign(step.symbol, &*binding->constant);
     }
   }
-  for (auto &[_, summary] : programEffects) {
+  for (auto &[owner, summary] : programEffects) {
+    // A late batch substitutes only in the bodies it analysed.
+    if (lateFinalization != nullptr &&
+        !(owner.kind == ProgramEffectOwnerKind::Function &&
+          lateFinalization->functionIds.contains(owner.id)) &&
+        !(owner.kind == ProgramEffectOwnerKind::Lambda &&
+          owner.id >= lateFinalization->firstLambda))
+      continue;
     std::erase_if(summary.uses, [&](const ProgramStorageEffectUse &use) {
       const auto constant = constants.find(use.symbol);
       if (!use.deferredConstantCandidate || use.expression == nullptr ||
@@ -2766,7 +2775,12 @@ auto SemanticVisitor::Impl::finalizeAdvisoryDiagnostics() -> void {
     return;
   }
   std::unordered_set<const BlockStmt *> reportedUnsafeBlocks;
-  for (const auto &candidate : requestSession.unsafeBlockCandidates) {
+  const auto &unsafeCandidates = requestSession.unsafeBlockCandidates;
+  for (std::size_t index = lateFinalization == nullptr
+                               ? 0
+                               : lateFinalization->unsafeBlockCandidates;
+       index < unsafeCandidates.size(); ++index) {
+    const auto &candidate = unsafeCandidates[index];
     if (requestSession.usedUnsafeBlocks.contains(candidate.block) ||
         requestSession.deferredFlowOwners.contains(candidate.owner) ||
         !reportedUnsafeBlocks.insert(candidate.block).second) {
@@ -2780,8 +2794,13 @@ auto SemanticVisitor::Impl::finalizeAdvisoryDiagnostics() -> void {
                                 .message = "Remove unnecessary 'unsafe'"});
     diagnostics.emplace_back(std::move(diagnostic));
   }
-  for (const RequestSessionState::MutableLocalCandidate &candidate :
-       requestSession.mutableLocalCandidates) {
+  const auto &mutableCandidates = requestSession.mutableLocalCandidates;
+  for (std::size_t index = lateFinalization == nullptr
+                               ? 0
+                               : lateFinalization->mutableLocalCandidates;
+       index < mutableCandidates.size(); ++index) {
+    const RequestSessionState::MutableLocalCandidate &candidate =
+        mutableCandidates[index];
     if (requestSession.mutableBindingUses.contains(candidate.symbol) ||
         requestSession.deferredFlowOwners.contains(candidate.owner)) {
       continue;
