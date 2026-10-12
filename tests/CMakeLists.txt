@@ -573,7 +573,10 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(programmable_allocators_runtime PROPERTIES TIMEOUT 900)
   add_test(NAME allocator_raw_audit_independence
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/allocator_raw_audit_independence_test.py" $<TARGET_FILE:gti>)
-  set_tests_properties(allocator_raw_audit_independence PROPERTIES TIMEOUT 600)
+  # 36 compilations, two thirds of them auditing every trusted body: about
+  # 280 s on an Apple M-series host and 674 s on an idle 8-vCPU Linux
+  # runner. See COMPILE_TIMEOUT in the test.
+  set_tests_properties(allocator_raw_audit_independence PROPERTIES TIMEOUT 2400)
 endif()
 add_executable(gti_shared_ownership_tests shared_ownership_tests.cpp)
 target_link_libraries(gti_shared_ownership_tests PRIVATE gti_compiler)
