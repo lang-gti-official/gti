@@ -26,6 +26,27 @@ worktree with `start --adopt`. Read
 [the command contract](../../../docs/architecture/agent-workflow.md) when
 recovering interruptions or interpreting a refused operation.
 
+## Execution discipline
+
+Apply the [bounded-output, analysis and waiting contract](../../../docs/architecture/agent-workflow.md#bounded-output-analysis-and-waiting).
+It protects thorough design review and all necessary validation; it does not
+impose reasoning-depth or reconsideration limits.
+
+- Before long checks, keep a compact task ledger: acceptance obligations,
+  decisions/open questions, exact head/base/compiler/platform identities,
+  commands/results/log paths, and live session/run IDs. Keep it in existing
+  task notes/PR evidence or temporary state, not a new canonical design document.
+- Save raw execution evidence under the normal retention contract and return
+  bounded summaries/excerpts. Use `scripts/bounded_log.py` for saved tails;
+  budget the whole tool response, not just each nested call. Required skill
+  instructions must still be read fully; select relevant canonical sections.
+- Resume the same live operation with interruptible waits. Back off remote
+  status polling when unchanged; do not repeatedly read logs, Git state or
+  manuals merely to occupy a queue. Useful independent review remains welcome.
+- On resumption/compaction, recover the ledger and pending handles before
+  launching work. Preserve completed evidence rather than restarting audits.
+  Explain material cost/schedule growth without dropping required work.
+
 ## Start and publish
 
 1. Inspect status; preserve other tasks' work. Fetch current `origin/main`.
@@ -75,7 +96,11 @@ updates for language changes. Use `finish-release` for VERSION decisions.
    binds passing evidence to the clean, published head and current remote
    base. It does not select adequate tests or prove their quality; that
    remains the agent's responsibility. Changes or upstream advancement require
-   revalidation.
+   revalidation. If main advances during a run, retain that run's exact-source
+   results, inspect the delta once the run finishes, and select fresh checks
+   for the reconciled head/base with `verify-change`. Do not automatically
+   restart a full suite on every status poll, or relabel earlier results as
+   current. Required/affected broad and platform gates remain mandatory.
 3. Write the final PR description to a temporary file, including behaviour,
    validation and limitations. Run `finish <task> --body-file <file>`.
    It marks the PR ready, checks validation and branch protection, merges through

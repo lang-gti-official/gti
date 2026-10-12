@@ -43,7 +43,11 @@ policy below without bypassing that lifecycle.
 3. Run the proportionate local build, tests, packaging checks, formatting, and
    release-version checks (`python3 scripts/check_release_version.py
    origin/main HEAD`). GitHub CI is confirmation, not a substitute for local
-   gates.
+   gates. Apply `verify-change`'s evidence ledger and delta-based revalidation:
+   retain exact-head results if main advances, reconcile, then obtain fresh
+   acceptance without dropping required gates or relabeling previous passes.
+   Use the [execution contract](../../../docs/architecture/agent-workflow.md#bounded-output-analysis-and-waiting)
+   for bounded output and waiting on existing validation/CI handles.
 4. Stage only the intended files, review `git diff --cached`, and create a
    focused commit.
 
