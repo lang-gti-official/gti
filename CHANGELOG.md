@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.412.2 — Faster editor analysis with standard-library includes
+## 0.412.3 — Faster editor analysis with standard-library includes
 
 - The language server analyses each edit once again. When a generic call
   reached a standard-library body nothing else had needed, the server
@@ -18,6 +18,16 @@ for what minor and patch releases mean.
   analysis, so such an edit takes about 440 ms instead of about 1,180 ms
   (and less than the 605 ms before 0.411.0). Diagnostics are unchanged, and
   `gti build` benefits in the same way.
+
+## 0.412.2 — Callable signature and exported return-type formatting
+
+- Source and LSP formatting keep callable types such as
+  `std::function<void(Event&)>` compact, including unnamed borrowed parameters
+  whose types are imported from another file. Custom reference alignment is
+  preserved, without changing comparison or bitwise-expression spacing.
+- Generic return types keep compact angles after `export`, `constexpr`, and
+  other declaration modifiers, including
+  `export std::unique_ptr<Window> CreateWindow()`.
 
 ## 0.412.1 — Comparators built from generic classes
 
