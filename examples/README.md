@@ -137,7 +137,7 @@ is a teaching helper, not a production server.
 | `073-constructor-local-generics.gti` | inferred constructor-local types and iterator/sentinel string construction |
 | `074-read-only-range-loans.gti` | loop-bounded element loans over fixed arrays and owned temporary ranges |
 | `075-bounded-arena-pool.gti` | fixed-capacity typed arenas and reusable pools with checked owner-tied access |
-| `076-scalar-atomics.gti` | share-safe integer fetch operations with explicit relaxed, acquire, and acquire-release orders across managed threads |
+| `076-scalar-atomics.gti` | share-safe integer fetch operations and sleeping completion with acquire wait/notification across managed threads |
 | `077-callable-concepts.gti` | exact reusable predicate, operation, and consuming-action contracts |
 | `078-owning-payload-enums.gti` | closed payload enums that directly own active-cleanup alternatives |
 | `079-class-scoped-type-aliases.gti` | access-controlled aliases declared as class members |

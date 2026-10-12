@@ -4424,6 +4424,9 @@ def test_atomic_tooling(executable, root):
         "  int32_t prior = counter.exchange(2);\n"
         "  int32_t fetched = counter.fetch_add(1);\n"
         "  auto changed = counter.compare_exchange_strong(3, 4);\n"
+        "  counter.wait(0, std::memory_order_acquire());\n"
+        "  counter.notify_one();\n"
+        "  counter.notify_all();\n"
         "  return counter.load(std::memory_order_acquire()) == 4 && "
         "changed.exchanged() && prior == 1 && fetched == 2 ? 0 : 1;\n"
         "}\n"
@@ -4531,6 +4534,13 @@ def test_atomic_tooling(executable, root):
         assert order_definition is not None
         assert order_definition["uri"].endswith("/stdlib/std/atomic.gti")
 
+        for request_id, name in ((20, "wait"), (21, "notify_one"), (22, "notify_all")):
+            offset = source.index("counter." + name + "(") + len("counter.")
+            hover = position_request(request_id, "textDocument/hover", offset + 1)
+            assert name in hover["contents"]["value"], hover
+            definition = position_request(request_id + 10, "textDocument/definition", offset + 1)
+            assert definition["uri"].endswith("/stdlib/std/atomic.gti"), definition
+
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -4550,6 +4560,9 @@ def test_atomic_tooling(executable, root):
             (source.index("exchange("), 6),
             (fetch_use, 6),
             (source.index("compare_exchange_strong("), 6),
+            (source.index("wait("), 6),
+            (source.index("notify_one("), 6),
+            (source.index("notify_all("), 6),
             (load_use, 6),
             (order_use, 6),
         ):
