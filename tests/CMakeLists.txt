@@ -1238,6 +1238,11 @@ add_test(NAME declaration_field_failure
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/declaration_field_failure_test.py" $<TARGET_FILE:gti>)
 add_test(NAME cpp_mir_body_emitter_lifecycle
          COMMAND gti_cpp_mir_body_emitter_lifecycle_tests)
+add_test(NAME implicit_receiver_owned_assignment_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/implicit_receiver_owned_assignment_runtime_test.py"
+          $<TARGET_FILE:gti>)
+set_tests_properties(implicit_receiver_owned_assignment_runtime PROPERTIES TIMEOUT 600)
 add_test(NAME constructor_passive_field_rollback_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/constructor_passive_field_rollback_runtime_test.py"
