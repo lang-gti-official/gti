@@ -9,12 +9,12 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.411.0 — Named nested structs and classes
+## 0.412.0 — Named nested structs and classes
 
 - Non-generic classes and structs can define named child classes and structs,
   including children with their own generic parameters. Qualified names such
   as `Config::Network` retain ordinary access, ownership, cleanup and reflection
-  rules without capturing an outer object. Example 147 demonstrates a nested
+  rules without capturing an outer object. Example 148 demonstrates a nested
   configuration decoded and encoded with `<std/json>`.
 - Nested scopes have lexical access to enclosing private members, with an
   explicit object required for instance members. Private constructors remain
@@ -23,6 +23,20 @@ for what minor and patch releases mean.
 - Definitions inside generic enclosing types remain diagnosed until child
   identity can retain the enclosing specialization. Anonymous records and
   nested interfaces/unions are not part of this release.
+
+## 0.411.0 — Portable aggregate standard-library imports
+
+- `import std;` makes the portable public standard-library modules available
+  through one source-defined interface. Individual imports and includes remain
+  supported. POSIX-only `std.environment`, `std.process`, and `std.tcp`, plus
+  experimental facilities, still require explicit imports.
+- Artifact builds and editor queries check trusted library bodies on demand,
+  including concrete generic dependencies. Application and package code remains
+  fully checked. `gti check` and optional raw-pointer audit diagnostics retain
+  complete analysis; auditing cannot change the emitted artifact.
+- The aggregate is installed with the toolchain, and example 147 demonstrates
+  its use. This is not precompiled-module support; loading and registering the
+  full portable library still costs more than selecting individual modules.
 
 ## 0.410.1 — Faster `std::sort`
 

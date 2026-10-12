@@ -550,7 +550,7 @@ constant execution, use their separately described isolated query services:
   analyses the callee in its own position, and the caller resumes. That state
   includes the caller's `constexpr for` expansion frames and budget, so a
   demand from inside an expansion neither consumes nor resets it;
-- a compiler-trusted body the pass deferred (test mode, below) is analysed in
+- a compiler-trusted body the pass deferred is analysed in
   its own declaration context;
 - a body already in progress (recursion), concrete-instance reanalysis, a
   demand from outside a function body, and a declaration the walk cannot reach
@@ -572,7 +572,28 @@ lexical order. The `body_analysis_order` test proves that it produces the same
 diagnostics as the complete pass over the examples and the standard-library
 tests, and checks fixtures for both orders of the moved-return generic, global
 and `constexpr` visibility across a demand, and mutually recursive demands.
-Compilation always analyses every body.
+`TrustedBodyAnalysis::Reachable` extends that infrastructure for artifact
+builds and editor snapshots/completion. Function lookups during body analysis
+record demand in a scoped sink. Deferred trusted functions are analyzed to a
+fixed point, in their original declaration contexts. Declaration registration,
+all application/package bodies, entry-file bodies, constant definitions and
+virtual/interface methods remain checked. Constructors and destructors are not
+deferred. There is no cross-snapshot semantic cache.
+
+Concrete generic instantiation may select another primary function body.
+HIR returns those AST identities as explicit semantic requests and remains
+invalid until they are satisfied. The frontend repeats semantic analysis with
+a monotonically growing required-body set, discarding partial HIR before
+replacing its immutable base snapshot. At most three discovery retries precede
+conservative complete checking. Metrics report retries/fallbacks and cumulative
+semantic/HIR time. `gti check` retains complete analysis. Artifact raw-pointer
+audits run a separate complete diagnostic analysis before the same reachable,
+audit-off artifact analysis used without auditing. Strict findings still stop
+compilation; successful audit diagnostics are retained, but the audit model
+cannot change emitted identities or macro isolation. This deliberately costs
+an additional analysis only when an optional audit is requested.
+This bounded staging avoids unchecked code generation without
+claiming that all generic dependencies are known from declaration-time calls.
 
 Text-return relay predeclaration consults the owning class's registered instance
 fields for implicit receiver spellings as well as explicit `this` paths.

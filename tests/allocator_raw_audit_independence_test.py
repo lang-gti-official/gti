@@ -3,7 +3,8 @@
 
 The allocator example and resource fixtures rely on documented unsafe provider
 contracts. Their checked ownership and borrowing must not depend on the
-optional audit: Off and Warn accept the same programs and emit identical C++.
+optional audit: Off and Warn accept the same programs and emit identical C++,
+including when trusted-library findings are requested.
 Warn findings are advisory and may report analysis limitations.
 """
 
@@ -14,6 +15,7 @@ import tempfile
 
 
 SOURCES = (
+    "examples/147-standard-library-import.gti",
     "examples/121-programmable-allocators.gti",
     "examples/125-manual-object-lifetimes.gti",
     "examples/126-conditional-thread-capabilities.gti",
@@ -39,16 +41,18 @@ def main() -> None:
         for relative in SOURCES:
             source = root / relative
             emitted = {}
-            for mode in ("off", "warn"):
+            for mode in ("off", "warn", "warn-library"):
                 output = temporary / f"{source.stem}-{mode}.cpp"
                 result = subprocess.run(
                     [str(compiler), str(source), "--emit-cpp", "-o", str(output),
-                     f"--raw-pointer-audit={mode}"],
+                     f"--raw-pointer-audit={'warn' if mode == 'warn-library' else mode}",
+                     *(["--raw-pointer-audit-library-findings"]
+                       if mode == "warn-library" else [])],
                     capture_output=True, text=True, timeout=300)
                 assert result.returncode == 0, (relative, mode, result.stderr)
                 assert "error[" not in result.stderr, (relative, mode, result.stderr)
                 emitted[mode] = output.read_bytes()
-            assert emitted["off"] == emitted["warn"], (
+            assert emitted["off"] == emitted["warn"] == emitted["warn-library"], (
                 relative, "raw-pointer auditing changed generated code")
     print("allocator raw-pointer audit independence passed")
 
