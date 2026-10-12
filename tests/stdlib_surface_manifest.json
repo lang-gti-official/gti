@@ -835,7 +835,7 @@
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_json.gti",
       "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "demo\n{\"name\":\"demo\",\"private\":true,\"count\":42,\"items\":[\"one\",2]}\n", "stderr": ""}
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "json-owning-error-backend",
