@@ -22,6 +22,16 @@ for what minor and patch releases mean.
   Editor lookup, completion, navigation and formatting follow the same rule.
 - Example 148 demonstrates factory selection and instance dispatch.
 
+## 0.412.2 — Callable signature and exported return-type formatting
+
+- Source and LSP formatting keep callable types such as
+  `std::function<void(Event&)>` compact, including unnamed borrowed parameters
+  whose types are imported from another file. Custom reference alignment is
+  preserved, without changing comparison or bitwise-expression spacing.
+- Generic return types keep compact angles after `export`, `constexpr`, and
+  other declaration modifiers, including
+  `export std::unique_ptr<Window> CreateWindow()`.
+
 ## 0.412.1 — Comparators built from generic classes
 
 - Inside a generic function, a callable built from the function's own type
