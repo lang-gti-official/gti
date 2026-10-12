@@ -249,8 +249,11 @@ overload ranking.
 
 Arbitrary owned value results are part of the accepted model. The implemented
 confined slice is narrower: it requires an exact contextual non-reference type
-with no tracked borrowed state or lambda identity. Unconstrained `auto` result
-inference through an unknown generic callable remains rejected.
+with no tracked borrowed state or lambda identity. Unconstrained direct `auto`
+result inference through an unknown generic callable remains rejected.
+Conditional value initializers now defer direct callable-arm results to
+concrete semantics, which requires exact agreement between arm types before
+HIR; this does not add common-type inference.
 Reference or borrowed-state results require an ordinary owner-dependency
 summary naming a receiver or argument origin; a closure capture is not an
 implicit lifetime origin. The initial bounded callable slice therefore keeps lambda
@@ -408,9 +411,15 @@ problem does not justify type erasure.
 | field of a concrete generic owner | implemented exact field transport | exact substituted type, constructor move, and complete owner/capture drop proof |
 | capture of another owned closure | accepted bounded move-capture slice | explicit move and acyclic construction |
 | namespace global or static field | later breadth | requires separate global init/shutdown policy |
-| reference/callable-reference parameter | later breadth | requires explicit callable borrow lifetime |
+| direct checked-reference callable parameter | implemented confined borrowing | ordinary entry/reborrow loans, exact referent and access, repeatable invocation, caller-owned cleanup, and proven confined forwarding |
 | erased owning callable wrapper | implemented L-CALL-02 | source interfaces/owners, exact invocation and capture cleanup; bounded inline/boxed repeatable and unique-owned consuming storage |
 | borrowed/reference/raw capture | outside bounded owned escape | needs lifetime/provenance and client-specific proof |
+
+The earlier reference-parameter deferral is revised: ordinary checked
+references already express the call-scoped lifetime required for direct
+confined invocation and forwarding. This needs no new lifetime syntax or
+owned escape permission. Borrowed capture and borrowed results remain separate
+origin-summary work.
 
 Passing or returning a callable is a normal value-state transition. A moved or
 consumed callable cannot be invoked. An immutable binding can be consumed but
