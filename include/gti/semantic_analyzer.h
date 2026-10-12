@@ -54,6 +54,15 @@ public:
   [[nodiscard]] virtual SemanticInstanceAnalysis analyzeClassFieldInitializers(
       ClassId classId, const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments) = 0;
+
+  // Concrete discovery selected a primary body that bounded (Reachable)
+  // analysis deferred. A provider that can complete that body's primary
+  // analysis in the base model now (late demand) does so and returns true;
+  // otherwise the caller reports the body as a semantic request so a fresh
+  // analysis includes it.
+  [[nodiscard]] virtual bool analyzeDemandedPrimaryBody(const FunctionDecl &) {
+    return false;
+  }
 };
 
 class SemanticVisitor final : public SemanticInstanceProvider {
@@ -119,6 +128,14 @@ public:
   [[nodiscard]] SemanticInstanceAnalysis analyzeClassFieldInitializers(
       ClassId classId, const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments) override;
+  [[nodiscard]] bool
+  analyzeDemandedPrimaryBody(const FunctionDecl &body) override;
+
+  // Late demand (see analyzeDemandedPrimaryBody) that could not keep the
+  // analysis equivalent to analysing these bodies in the pass. The caller
+  // must discard this analysis and require the returned bodies instead.
+  [[nodiscard]] bool lateDemandFailed() const;
+  [[nodiscard]] std::vector<const FunctionDecl *> lateDemandedBodies() const;
 
 private:
   class Impl;

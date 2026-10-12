@@ -34,6 +34,14 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   nextSemanticLoanId = 1;
   nextPlaceSelectionId = 1;
   instanceSymbolCeiling = 0;
+  instanceLambdaCeiling = 0;
+  lateDemandReady = false;
+  lateDemandFailed = false;
+  lateDemandedBodies.clear();
+  deferredBodyIndex.clear();
+  initializerEffectOwners.clear();
+  lateAnalyzedBodies = nullptr;
+  lateFinalization = nullptr;
   requestSession.invalidOrdinaryLayouts.clear();
   currentNamespace.clear();
   currentSourceUnit = 0;
@@ -216,6 +224,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
             std::chrono::steady_clock::now() - finalizationStart)
             .count());
   }
+  lateDemandReady = trustedBodies == TrustedBodyAnalysis::Reachable;
   return !hadError();
 }
 
@@ -3009,6 +3018,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     return;
   }
   if (deferTrustedBody(stmt)) {
+    deferredBodyIndex.emplace(&stmt, deferredBodies.size());
     deferredBodies.push_back(
         {.declaration = &stmt,
          .function = functionInfo == nullptr ? 0 : functionInfo->id,
@@ -3044,6 +3054,8 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     analyzedBodies.insert(&stmt);
     semanticModel.recordAnalyzedFunctionBody(stmt);
     bodiesInProgress.insert(&stmt);
+    if (lateAnalyzedBodies != nullptr)
+      lateAnalyzedBodies->push_back(&stmt);
   }
   struct InProgressGuard {
     Impl &impl;
@@ -3688,53 +3700,11 @@ auto SemanticVisitor::Impl::analyzeDeferredBodies() -> void {
     return;
   }
   const auto start = std::chrono::steady_clock::now();
-  const auto analyzeOne = [&](const RequestSessionState::DeferredBody body) {
-    if (analyzedBodies.contains(body.declaration)) {
-      return; // Analysed on demand by a caller meanwhile.
-    }
-    const std::vector<std::string> enclosingNamespace = currentNamespace;
-    const SourceUnitId enclosingUnit = currentSourceUnit;
-    const std::optional<ClassId> enclosingClass = currentClass;
-    enterDeclarationContext(body.namespaceScope, body.sourceUnit, body.owner);
-    const FunctionInfo *functionInfo =
-        semanticModel.findFunction(*body.declaration);
-    beginTypeParameterScope(genericParametersFor(*body.declaration));
-    const bool requirementsValid = beginRequirementScope(functionInfo);
-    if (requirementsValid) {
-      const std::size_t enclosingOrder = currentDeclarationOrder;
-      currentDeclarationOrder = body.declarationOrder;
-      analyzeFunctionBody(*body.declaration, functionInfo,
-                          body.declarationErrors,
-                          body.constexprDeclarationValid);
-      currentDeclarationOrder = enclosingOrder;
-    }
-    endRequirementScope();
-    endTypeParameterScope();
-    exitDeclarationContext(body.owner);
-    currentNamespace = enclosingNamespace;
-    currentSourceUnit = enclosingUnit;
-    currentClass = enclosingClass;
-  };
   if (trustedBodies == TrustedBodyAnalysis::Deferred) {
     for (std::size_t index = deferredBodies.size(); index > 0; --index)
-      analyzeOne(deferredBodies[index - 1]);
+      analyzeDeferredBody(deferredBodies[index - 1]);
   } else {
-    // Conservative fixed point: selected callees, callable values and other
-    // consulted records can demand further bodies. Every body runs at most
-    // once and retains its original lexical visibility and safety checks.
-    std::unordered_set<const FunctionDecl *> processed;
-    bool progress = true;
-    while (progress) {
-      progress = false;
-      for (std::size_t index = 0; index < deferredBodies.size(); ++index) {
-        const auto body = deferredBodies[index];
-        if (!demandedFunctions.contains(body.function) ||
-            !processed.insert(body.declaration).second)
-          continue;
-        progress = true;
-        analyzeOne(body);
-      }
-    }
+    drainDemandedDeferredBodies();
   }
   if (workMetrics != nullptr) {
     workMetrics->semanticTrustedBodyMicroseconds += static_cast<std::size_t>(
@@ -3747,6 +3717,214 @@ auto SemanticVisitor::Impl::analyzeDeferredBodies() -> void {
           return analyzedBodies.contains(body.declaration);
         });
   }
+}
+
+auto SemanticVisitor::Impl::analyzeDeferredBody(
+    const RequestSessionState::DeferredBody body) -> void {
+  if (analyzedBodies.contains(body.declaration)) {
+    return; // Analysed on demand by a caller meanwhile.
+  }
+  const std::vector<std::string> enclosingNamespace = currentNamespace;
+  const SourceUnitId enclosingUnit = currentSourceUnit;
+  const std::optional<ClassId> enclosingClass = currentClass;
+  enterDeclarationContext(body.namespaceScope, body.sourceUnit, body.owner);
+  const FunctionInfo *functionInfo =
+      semanticModel.findFunction(*body.declaration);
+  beginTypeParameterScope(genericParametersFor(*body.declaration));
+  const bool requirementsValid = beginRequirementScope(functionInfo);
+  if (requirementsValid) {
+    const std::size_t enclosingOrder = currentDeclarationOrder;
+    currentDeclarationOrder = body.declarationOrder;
+    analyzeFunctionBody(*body.declaration, functionInfo, body.declarationErrors,
+                        body.constexprDeclarationValid);
+    currentDeclarationOrder = enclosingOrder;
+  }
+  endRequirementScope();
+  endTypeParameterScope();
+  exitDeclarationContext(body.owner);
+  currentNamespace = enclosingNamespace;
+  currentSourceUnit = enclosingUnit;
+  currentClass = enclosingClass;
+}
+
+// Conservative fixed point: selected callees, callable values and other
+// consulted records can demand further bodies. Every body runs at most once
+// and retains its original lexical visibility and safety checks.
+auto SemanticVisitor::Impl::drainDemandedDeferredBodies() -> void {
+  std::unordered_set<const FunctionDecl *> processed;
+  bool progress = true;
+  while (progress) {
+    progress = false;
+    for (std::size_t index = 0; index < deferredBodies.size(); ++index) {
+      const auto body = deferredBodies[index];
+      if (!demandedFunctions.contains(body.function) ||
+          !processed.insert(body.declaration).second)
+        continue;
+      progress = true;
+      analyzeDeferredBody(body);
+    }
+  }
+}
+
+auto SemanticVisitor::Impl::pendingDeferredBody(
+    const FunctionDecl *declaration) const -> bool {
+  return declaration != nullptr && deferredBodyIndex.contains(declaration) &&
+         !analyzedBodies.contains(declaration);
+}
+
+auto SemanticVisitor::Impl::finalizesFunction(
+    const FunctionInfo &function) const -> bool {
+  if (lateFinalization != nullptr)
+    return function.declaration != nullptr &&
+           lateFinalization->functions->contains(function.declaration);
+  // A pending body has no analysed facts yet. Inferring its callable
+  // contracts from the bare declaration would pre-empt the ones its body
+  // establishes if a late demand analyses it; no analysed body calls it.
+  return !pendingDeferredBody(function.declaration);
+}
+
+auto SemanticVisitor::Impl::finalizesCall(const Call *call) const -> bool {
+  return lateFinalization == nullptr || lateFinalization->calls->contains(call);
+}
+
+// Late demand. The request is complete: the lexical pass, the reachable
+// drain and request finalization have run, and concrete discovery is reading
+// the model. A late batch is equivalent to the drain having analysed the
+// bodies when:
+// - each body is pending (deferred, never analysed) and its facts were
+//   consumed by nothing already kept: no analysed body calls it (it would
+//   have been demanded), callers' concrete instances re-run after the batch
+//   (withLateDemand), and finalization skipped pending bodies;
+// - the batch adds no error (invalid primary analysis never reaches HIR);
+// - no initializer's program-effect closure visited one of the bodies, so the
+//   program initialization plan already validated is unaffected;
+// - identities stay disjoint from existing instance deltas.
+// Raw-pointer audits keep complete analysis. A condition that fails before
+// analysing refuses (the caller records an ordinary semantic request); one
+// that fails afterwards marks the request failed, and the frontend repeats
+// the analysis with every late body required.
+auto SemanticVisitor::Impl::analyzeLateDemand(
+    std::span<const FunctionDecl *const> roots) -> bool {
+  if (!lateDemandReady || lateDemandFailed || bodyPhaseActive ||
+      instanceAnalysisActive || rawAuditEnabled() || hadError())
+    return false;
+  std::vector<const FunctionDecl *> pending;
+  for (const FunctionDecl *root : roots)
+    if (pendingDeferredBody(root))
+      pending.push_back(root);
+  if (pending.empty())
+    return std::all_of(
+        roots.begin(), roots.end(), [&](const FunctionDecl *root) {
+          return root != nullptr && analyzedBodies.contains(root);
+        });
+  if (instanceSymbolCeiling > semanticModel.database().symbolIdentityCeiling())
+    semanticModel.reserveSymbolIdentities(instanceSymbolCeiling);
+  nextLambdaId = std::max(nextLambdaId, instanceLambdaCeiling);
+  const LambdaId firstLambda = nextLambdaId;
+
+  const auto start = std::chrono::steady_clock::now();
+  const std::size_t diagnosticStart = diagnostics.size();
+  std::unordered_set<const Call *> calls;
+  std::vector<const FunctionDecl *> analyzed;
+  LateFinalizationScope scope{
+      .calls = &calls,
+      .forwardings = semanticModel.pendingCallableForwardings.size(),
+      .cThreadCallUses = requestSession.cThreadCallUses.size(),
+      .unsafeBlockCandidates = requestSession.unsafeBlockCandidates.size(),
+      .mutableLocalCandidates = requestSession.mutableLocalCandidates.size(),
+      .genericDefaultConstantUses = genericDefaultConstantUses.size(),
+      .occurrenceCounts = semanticModel.occurrenceCounts()};
+  auto *const enclosingJournal = semanticModel.setCallJournal(&calls);
+  lateAnalyzedBodies = &analyzed;
+  bodyPhaseActive = true;
+  rebuildLexicalEnvironment();
+  {
+    const FunctionDemandScope demandScope(semanticModel, &demandedFunctions);
+    for (const FunctionDecl *declaration : pending)
+      if (const FunctionInfo *function =
+              semanticModel.findFunction(*declaration))
+        demandedFunctions.insert(function->id);
+    drainDemandedDeferredBodies();
+  }
+  endScope();
+  bodyPhaseActive = false;
+  lateAnalyzedBodies = nullptr;
+  semanticModel.setCallJournal(enclosingJournal);
+
+  const std::unordered_set<const FunctionDecl *> functions(analyzed.begin(),
+                                                           analyzed.end());
+  scope.functions = &functions;
+  scope.firstLambda = firstLambda;
+  for (const auto &[unit, count] : semanticModel.occurrenceCounts()) {
+    const auto before = scope.occurrenceCounts.find(unit);
+    if (before == scope.occurrenceCounts.end() || before->second != count)
+      scope.units.insert(unit);
+  }
+  bool equivalent = std::all_of(
+      pending.begin(), pending.end(),
+      [&](const FunctionDecl *root) { return functions.contains(root); });
+  for (const FunctionDecl *declaration : analyzed) {
+    const FunctionInfo *function = semanticModel.findFunction(*declaration);
+    if (function != nullptr)
+      scope.functionIds.insert(function->id);
+    if (function != nullptr &&
+        initializerEffectOwners.contains(
+            {.kind = ProgramEffectOwnerKind::Function, .id = function->id}))
+      equivalent = false;
+  }
+  finalizeLateDemand(scope);
+  if (hasErrorDiagnostics(std::span(diagnostics).subspan(diagnosticStart)))
+    equivalent = false;
+  lateDemandedBodies.insert(lateDemandedBodies.end(), analyzed.begin(),
+                            analyzed.end());
+  if (!equivalent) {
+    // Concrete discovery must not lower these bodies from this model; the
+    // repeated analysis analyses them in the pass instead.
+    lateDemandFailed = true;
+    for (const FunctionDecl *declaration : analyzed)
+      semanticModel.forgetAnalyzedFunctionBody(*declaration);
+  }
+  if (workMetrics != nullptr) {
+    const auto elapsed = static_cast<std::size_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start)
+            .count());
+    workMetrics->semanticLateDemandMicroseconds += elapsed;
+    workMetrics->semanticTrustedBodyMicroseconds += elapsed;
+    workMetrics->semanticLateDemandBodies += analyzed.size();
+    workMetrics->semanticAnalyzedDeferredBodies += std::count_if(
+        analyzed.begin(), analyzed.end(), [&](const FunctionDecl *body) {
+          return deferredBodyIndex.contains(body);
+        });
+  }
+  return equivalent;
+}
+
+// Request finalization restricted to one late batch: the declaration-fact
+// passes and diagnostics cover only the bodies the batch analysed and the
+// calls, forwardings and candidates it recorded; idempotent whole-model
+// passes simply run again. Pass order is the order of check().
+auto SemanticVisitor::Impl::finalizeLateDemand(
+    const LateFinalizationScope &scope) -> void {
+  lateFinalization = &scope;
+  recordGenericDefaultConstantUses();
+  validateDefaultArgumentCycles();
+  discoverOwnedCallableContracts();
+  semanticModel.finalizeCallableForwardings();
+  discoverOwnedCallableValueParameters();
+  validateOnceCallableForwardings();
+  validateOwnedCallableArguments();
+  validateProvisionalCallableArguments();
+  validateConfinedCallableContracts();
+  validateConfinedCallableUses();
+  semanticModel.finalizeCallableArguments(*scope.calls, scope.units);
+  finalizeCThreadRequirements();
+  finalizeDeferredProgramConstantSubstitutions(
+      semanticModel.programInitializationPlan());
+  semanticModel.finalizeOccurrences(scope.units);
+  finalizeAdvisoryDiagnostics();
+  catalog.assertUnchangedSinceSeal();
+  lateFinalization = nullptr;
 }
 
 auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {

@@ -115,6 +115,97 @@ void checkFixtures(const std::filesystem::path &root) {
   expect(generic.canGenerateCode(), "generic library demands reach valid MIR");
   expect(metrics.semanticDemandFallbacks == 0,
          "bounded generic demand does not require complete fallback");
+  expect(metrics.semanticDemandRounds == 0 &&
+             metrics.semanticLateDemandBodies != 0,
+         "concrete discovery analyses the demanded body in the same "
+         "analysis (late demand) instead of repeating it");
+
+  // The editor configuration: entry-unit HIR over a reachable model. Late
+  // demand must leave exactly the diagnostics a complete check reports, and
+  // must fall back to a repeated analysis whenever completing the body late
+  // could differ from analysing it in the pass.
+  const auto editorCase = [&](const std::string &label,
+                              const std::string &libraryText,
+                              const std::string &source,
+                              std::size_t expectedRounds) {
+    const auto run = [&](bool complete, lang::FrontendWorkMetrics &work) {
+      lang::FrontendOptions editor;
+      editor.stopAfter = lang::FrontendPhase::Hir;
+      editor.analyzeRecoveredProgram = true;
+      editor.lowerEntryUnitOnly = !complete;
+      editor.trustedBodies = complete ? lang::TrustedBodyAnalysis::Complete
+                                      : lang::TrustedBodyAnalysis::Reachable;
+      editor.workMetrics = &work;
+      return lang::Frontend(editor).analyze(
+          entry, source, {root / "stdlib/prelude.gti"},
+          {{library.string(), libraryText}}, {root / "stdlib"});
+    };
+    lang::FrontendWorkMetrics completeWork;
+    lang::FrontendWorkMetrics reachableWork;
+    const auto complete = run(true, completeWork);
+    const auto reachable = run(false, reachableWork);
+    std::vector<std::string> completeKeys;
+    std::vector<std::string> reachableKeys;
+    for (const auto &diagnostic : complete.diagnostics)
+      completeKeys.push_back(diagnostic.code + ' ' + diagnostic.primary.source +
+                             ':' + std::to_string(diagnostic.primary.start) +
+                             ' ' + diagnostic.message);
+    for (const auto &diagnostic : reachable.diagnostics)
+      reachableKeys.push_back(
+          diagnostic.code + ' ' + diagnostic.primary.source + ':' +
+          std::to_string(diagnostic.primary.start) + ' ' + diagnostic.message);
+    std::sort(completeKeys.begin(), completeKeys.end());
+    std::sort(reachableKeys.begin(), reachableKeys.end());
+    if (completeKeys != reachableKeys) {
+      std::cerr << "complete:\n";
+      for (const auto &item : completeKeys)
+        std::cerr << "  " << item << '\n';
+      std::cerr << "reachable:\n";
+      for (const auto &item : reachableKeys)
+        std::cerr << "  " << item << '\n';
+    }
+    expect(completeKeys == reachableKeys,
+           label + ": editor diagnostics equal the complete check");
+    expect(complete.semanticValid == reachable.semanticValid &&
+               complete.hirValid == reachable.hirValid,
+           label + ": editor validity equals the complete check");
+    expect(reachableWork.semanticDemandRounds == expectedRounds,
+           label + ": " + std::to_string(expectedRounds) +
+               " repeated analysis round(s), got " +
+               std::to_string(reachableWork.semanticDemandRounds));
+    expect(reachableWork.semanticDemandFallbacks == 0,
+           label + ": no complete fallback");
+    // Every case reaches the body through concrete discovery first.
+    expect(reachableWork.semanticLateDemandBodies != 0,
+           label + ": concrete discovery attempts late demand");
+  };
+  const std::string lateLibrary =
+      "int leaf() { return 42; }\n"
+      "class Producer { public: int operator()(int n) { return leaf() + n; } "
+      "};\n"
+      "int value_of<T>(T& value) { return value(0); }\n";
+  editorCase("late demand", lateLibrary,
+             "#include <std/cmath>\n"
+             "int main() { Producer value{}; return value_of(value) - 42; }\n",
+             0);
+  // The late body is invalid: invalid primary analysis never reaches HIR, so
+  // the request falls back to analysing the body in a repeated pass.
+  editorCase("late demand reporting an error",
+             "int leaf() { return missing_late; }\n"
+             "class Producer { public: int operator()(int n) { return leaf() + "
+             "n; } };\n"
+             "int value_of<T>(T& value) { return value(0); }\n",
+             "#include <std/cmath>\n"
+             "int main() { Producer value{}; return value_of(value) - 42; }\n",
+             1);
+  // A global initializer's effect closure already consulted the body; the
+  // validated initialization plan must not change underneath it.
+  editorCase("late demand behind a global initializer", lateLibrary,
+             "#include <std/cmath>\n"
+             "Producer producer{};\n"
+             "int first = value_of(producer);\n"
+             "int main() { return first - 42; }\n",
+             1);
 }
 
 std::string key(const lang::Diagnostic &diagnostic) {

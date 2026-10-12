@@ -1593,6 +1593,8 @@ private:
 
   void rebase(const SemanticDatabase *baseDatabase);
 
+  void reserveIdentities(SymbolId ceiling);
+
   SymbolId recordSymbol(SymbolRecord symbol);
 
   void setSymbolDocumentation(SymbolId symbol,
@@ -1608,6 +1610,8 @@ private:
   void setToolingOccurrencesEnabled(bool enabled);
 
   void finalize();
+  void finalize(const std::unordered_set<SourceUnitId> &units);
+  static void finalizeUnit(std::vector<SemanticOccurrence> &unitOccurrences);
 
   std::vector<SymbolRecord> symbolRecords;
   std::unordered_map<DeclarationKey, SymbolId, DeclarationKeyHash>
@@ -1951,6 +1955,26 @@ public:
     return analyzedFunctionBodies.contains(&body) ||
            (base != nullptr && base->hasAnalyzedFunctionBody(body));
   }
+  // A late demand that could not stay equivalent to in-pass analysis
+  // withdraws its bodies, so concrete discovery requests them instead.
+  void forgetAnalyzedFunctionBody(const FunctionDecl &body) {
+    analyzedFunctionBodies.erase(&body);
+  }
+
+  // While a journal is set, every recorded call resolution records its call.
+  // Late demand scopes it to finalize exactly the calls one batch recorded.
+  std::unordered_set<const Call *> *
+  setCallJournal(std::unordered_set<const Call *> *journal) {
+    auto *previous = callJournal;
+    callJournal = journal;
+    return previous;
+  }
+
+  // Continues symbol identities above an instance-delta ceiling (late
+  // demand), so new base symbols never collide with concrete-only symbols of
+  // an existing delta. The skipped identities hold inert placeholder records
+  // (source unit 0) that no declaration resolves to.
+  void reserveSymbolIdentities(SymbolId ceiling);
 
   // While a sink is set, every successful function lookup records its identity.
   // Body analysis scopes this side channel; completed snapshots retain no sink.
@@ -2372,10 +2396,18 @@ private:
   void recordCompletion(SemanticCompletionContext context);
 
   void finalizeOccurrences();
+  // One late-demand batch: only the units whose occurrences it extended.
+  void finalizeOccurrences(const std::unordered_set<SourceUnitId> &units);
+  [[nodiscard]] std::unordered_map<SourceUnitId, std::size_t>
+  occurrenceCounts() const;
 
   void finalizeCallableArguments(ResolvedCallInfo &call) const;
 
   void finalizeCallableArguments();
+  // One late-demand batch: the calls it recorded and the occurrences of the
+  // units it extended.
+  void finalizeCallableArguments(const std::unordered_set<const Call *> &calls,
+                                 const std::unordered_set<SourceUnitId> &units);
 
   void finalizeCallableForwardings();
 
@@ -2494,6 +2526,7 @@ private:
   const SemanticModel *base = nullptr;
   std::unordered_set<const FunctionDecl *> analyzedFunctionBodies;
   mutable std::unordered_set<FunctionId> *functionDemandSink = nullptr;
+  std::unordered_set<const Call *> *callJournal = nullptr;
 };
 
 class SemanticTypePrinter {
