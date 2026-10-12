@@ -3289,6 +3289,11 @@ def test_constexpr_aggregate_tooling(executable, root):
         "constexpr Point origin = Point(7);\n"
         "static_assert(origin.value() == 7);\n"
         "static_assert(build() == 10);\n"
+        "enum class Phase : uint8_t { idle, active };\n"
+        "constexpr void activate(mut Phase& phase) { phase = Phase::active; }\n"
+        "constexpr Phase prepare_phase() { mut Phase phase = Phase::idle; "
+        "activate(phase); return phase; }\n"
+        "static_assert(prepare_phase() == Phase::active);\n"
         "int main() { return origin.value() - 7; }\n"
     )
     path = root / "constexpr-aggregate-tooling.gti"

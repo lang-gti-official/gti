@@ -2183,9 +2183,10 @@ arguments into the same constant-call boundary as named methods. This shares
 generic substitution, argument observation, and completed-definition checks;
 operator bodies require staged MIR and never fall back to AST execution.
 Within MIR, an exact static read-only nominal call operator uses the ordinary
-function target and receiver. Its recorded read capability is admitted while
-mutable/consuming invocation, lambda execution, and raw operations remain
-excluded. This does not add a second overload resolver or special stdlib path.
+function target and receiver. Recorded read and non-consuming mutable
+capabilities are admitted; consuming invocation, lambda execution and raw
+operations remain excluded. This does not add a second overload resolver or
+special stdlib path.
 Completed constexpr free-function closures, including concrete type/value
 generic calls, now execute through
 staged ordinary HIR, exact failure metadata, and verified unoptimized MIR before
@@ -2276,6 +2277,16 @@ Existing reflection expansion
 and metadata resolution precede this service and are not reimplemented here.
 Constructor reference parameters, declaration-default/in-place constructor
 schedules and stored-reference carriers retain their earlier boundaries.
+
+Ordinary scoped enums use the canonical MIR integral-enum catalog and
+`EnumConstant` operation. The executor reconstructs a nominal `ConstantEnum`
+with the semantic underlying domain, validates external constant arguments
+against that domain, and compares enum switch labels through the shared
+constant comparison kernel. No native enum representation or public library
+name supplies authority. These passive values use the same checked locations,
+aggregate copies, constructor/method calls and shared budgets as scalar
+builders. Payload-enum and checked-integer Expected execution are separate
+remaining profiles; they are not admitted by the integral-enum catalog.
 
 ## Boundaries
 

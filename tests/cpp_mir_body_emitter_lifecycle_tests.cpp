@@ -2322,7 +2322,11 @@ int main() {
                  std::string::npos &&
              artifact.contents.find("passive generated default publishes") !=
                  std::string::npos &&
-             artifact.contents.find("Mode::Ready") != std::string::npos &&
+             // Resolved enumerator reads are exact MIR constants, not loads
+             // of a native enumerator symbol. Keep the selected enum type and
+             // discriminant in this default-publication assertion.
+             artifact.contents.find("static_cast<::__gti_program::Mode>(0)") !=
+                 std::string::npos &&
              artifact.contents.find("::__gti_program::baseline") !=
                  std::string::npos &&
              artifact.contents.find("std::array<std::int32_t, 2>") !=

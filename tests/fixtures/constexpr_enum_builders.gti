@@ -1,0 +1,91 @@
+#include <std/array>
+
+enum class Mode : int8_t { stopped = -128, ready = 0, running = 127 };
+enum class Wide : uint64_t { low = 0, high = 18446744073709551615 };
+enum class Other : int8_t { ready = 0 };
+
+constexpr Mode advance(Mode mode) {
+  switch (mode) {
+  case Mode::stopped: return Mode::ready;
+  case Mode::ready: return Mode::running;
+  case Mode::running: return Mode::stopped;
+  default: return Mode::ready;
+  }
+}
+
+constexpr void step(mut Mode& mode) { mode = advance(mode); }
+constexpr mut Mode& relay(mut Mode& mode) { return mode; }
+constexpr T identity<T>(T value) { return value; }
+constexpr bool ready_ref(Mode& value) { return value == Mode::ready; }
+constexpr bool read_literal() { return ready_ref(Mode::ready); }
+
+struct Machine {
+  mut Mode mode;
+  mut Mode history[3];
+  constexpr Machine(Mode first)
+    : mode(first), history({first, first, first}) {
+    for (mut int index = 0; index < 3; index++) {
+      step(this.mode);
+      this.history[index] = this.mode;
+    }
+  }
+  constexpr void next() mut { step(relay(this.mode)); }
+  constexpr Mode current() { return this.mode; }
+};
+
+constexpr Machine build(Mode mode) {
+  mut Machine result = Machine(mode);
+  result.next();
+  return result;
+}
+
+constexpr bool check(Mode seed) {
+  mut Machine machine = build(seed);
+  Machine saved = machine;
+  machine.next();
+  if (machine.mode == saved.mode) { return false; }
+  if (saved.history[2] != seed) { return false; }
+  mut std::array<Mode, 2> table = std::array<Mode, 2>({seed, seed});
+  table.fill(Mode::ready);
+  step(table.at(0));
+  return table[0] == Mode::running && table[1] == Mode::ready;
+}
+
+constexpr bool wide(Wide value) {
+  switch (value) {
+  case Wide::low: return false;
+  case Wide::high: return true;
+  default: return false;
+  }
+}
+
+constexpr Mode endless(Mode value) {
+  mut Mode current = value;
+  while (current == current) { step(current); }
+  return current;
+}
+
+constexpr Machine prepared = build(Mode::stopped);
+static_assert(prepared.mode == Mode::ready);
+static_assert(prepared.history[0] == Mode::ready);
+static_assert(prepared.history[1] == Mode::running);
+static_assert(prepared.history[2] == Mode::stopped);
+static_assert(check(Mode::stopped));
+static_assert(check(Mode::ready));
+static_assert(check(Mode::running));
+static_assert(wide(identity<Wide>(Wide::high)));
+static_assert(!wide(Wide::low));
+static_assert(identity<Other>(Other::ready) == Other::ready);
+static_assert(read_literal());
+
+int main() {
+  Machine runtime = build(Mode::stopped);
+  if (runtime.mode != prepared.mode) { return 1; }
+  for (mut int index = 0; index < 3; index++) {
+    if (runtime.history[index] != prepared.history[index]) { return 2; }
+  }
+  if (!check(Mode::stopped) || !check(Mode::ready) || !check(Mode::running)) { return 3; }
+  if (!wide(Wide::high) || wide(Wide::low)) { return 4; }
+  if (!read_literal()) { return 5; }
+  return 0;
+}

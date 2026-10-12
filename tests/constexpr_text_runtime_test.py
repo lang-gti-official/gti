@@ -24,7 +24,7 @@ def main() -> int:
                     if result.returncode != 0 or (
                         len(command) == 1 and (result.stdout or result.stderr)
                     ):
-                        print(f"failed: {command}\n{result.stdout}{result.stderr}",
+                        print(f"failed ({result.returncode}): {command}\n{result.stdout}{result.stderr}",
                               file=sys.stderr)
                         return 1
     return 0

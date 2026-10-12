@@ -650,6 +650,10 @@
       "suite": "constexpr"
     },
     {
+      "name": "testConstexprEnumBuilders",
+      "suite": "constexpr"
+    },
+    {
       "name": "testStaticAssertions",
       "suite": "constexpr"
     },
