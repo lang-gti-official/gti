@@ -11,6 +11,14 @@
 #include <std/charconv>
 
 namespace std {
+  /// Recoverable failures while copying a foreign NUL-terminated byte string.
+  /// Invalid non-null addresses are unsafe precondition violations, not errors.
+  enum class c_string_errc {
+    null_pointer,
+    size_overflow,
+    resource_exhausted,
+  };
+
   namespace detail {
     struct float_prefix {
       size_t offset;
@@ -163,6 +171,39 @@ namespace std {
       }
       terminated_prefix_owner(terminated_prefix_owner& other) = delete;
       terminated_prefix_owner(terminated_prefix_owner&& other) = default;
+
+      unsafe static expected<terminated_prefix_owner, c_string_errc>
+      try_from_c_string(c_string text) {
+        if (text == nullptr) { return unexpected(c_string_errc::null_pointer); }
+        unsafe {
+          const uint8_t* bytes = std::c_string_bytes(text);
+          size_t maximum = gti_internal::runtime::gti_rt_native_size_max_v1();
+          mut size_t count = 0;
+          while (bytes[count] != uint8_t(0)) {
+            if (count == maximum - size_t(1)) {
+              return unexpected(c_string_errc::size_overflow);
+            }
+            count++;
+          }
+          mut terminated_prefix_owner result{};
+          if (count == size_t(0)) { return std::move(result); }
+          auto allocated = result.data.try_allocate(count + size_t(1));
+          if (!allocated) {
+            if (allocated.error() == alloc_errc::size_overflow) {
+              return unexpected(c_string_errc::size_overflow);
+            }
+            if (allocated.error() == alloc_errc::resource_exhausted) {
+              return unexpected(c_string_errc::resource_exhausted);
+            }
+            gti_internal::fail_allocation(allocated.error());
+          }
+          for (mut size_t index = 0; index < count; index++) {
+            result.data.append_unchecked(char(bytes[index]));
+          }
+          result.data.append_unchecked('\0');
+          return std::move(result);
+        }
+      }
 
       size_t length() {
         if (this.data.length() == size_t(0)) { return size_t(0); }
@@ -435,6 +476,7 @@ namespace std {
 
   /// An owning, move-only, mutable sequence of characters.
   class string {
+    string(detail::terminated_prefix_owner storage) : data(std::move(storage)) {}
     mut detail::terminated_prefix_owner data;
 
     bool equals(string_view other) {
@@ -509,6 +551,37 @@ namespace std {
     string(string_view value) : data(detail::terminated_prefix_owner(value.size())) {
       for (mut size_t index = 0; index < value.size(); index++) {
         unsafe { this.data.append(value[index]); }
+      }
+    }
+
+    /// Copies through the first NUL. The caller guarantees stable readable
+    /// storage through that terminator for the duration of construction.
+    /// Null panics; allocation exhaustion follows ordinary string policy.
+    unsafe string(c_string value) {
+      unsafe {
+        mut auto copied = detail::terminated_prefix_owner::try_from_c_string(value);
+        if (!copied) {
+          if (copied.error() == c_string_errc::null_pointer) {
+            gti_internal::panic("Cannot construct a string from a null C string");
+          }
+          if (copied.error() == c_string_errc::size_overflow) {
+            gti_internal::fail_allocation(alloc_errc::size_overflow);
+          }
+          gti_internal::fail_allocation(alloc_errc::resource_exhausted);
+        }
+        mut auto storage = std::move(copied).value();
+        this.data = std::move(storage);
+      }
+    }
+
+    /// Copies a foreign C string with recoverable null, size and allocation
+    /// errors. Success owns its bytes and retains no dependency on the input.
+    /// Invalid non-null pointers and missing terminators remain caller obligations.
+    unsafe static expected<string, c_string_errc> try_from_c_string(c_string value) {
+      unsafe {
+        mut auto copied = detail::terminated_prefix_owner::try_from_c_string(value);
+        if (!copied) { return unexpected(copied.error()); }
+        return string(std::move(copied).value());
       }
     }
 

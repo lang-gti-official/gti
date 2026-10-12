@@ -1965,6 +1965,35 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     return;
   }
 
+  if (selected.constructor != nullptr && selected.constructor->requiresUnsafe) {
+    if (semanticModel.unsafeOperation(construction) ==
+        UnsafeOperationKind::ObjectLifetime) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2055", DiagnosticPhase::Semantics, paren,
+          "Raw in-place construction cannot invoke an unsafe constructor; "
+          "its lifetime contract does not establish constructor-specific "
+          "caller obligations.");
+      diagnostic.hints.emplace_back(
+          "Construct the value explicitly inside an unsafe block, then move "
+          "the completed value into storage.");
+      diagnostic.related.push_back(
+          {tokenSpan(*selected.constructor->declaration->unsafeKeyword()),
+           "Unsafe constructor declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      currentType = constructedType;
+      return;
+    }
+    const bool missing = unsafeDepth == 0;
+    requireUnsafe(construction, UnsafeOperationKind::DeclaredUnsafeConstruction,
+                  paren, "Calling an unsafe constructor");
+    if (missing && selected.constructor->declaration != nullptr) {
+      diagnostics.back().related.push_back(
+          {tokenSpan(*selected.constructor->declaration->unsafeKeyword()),
+           "This constructor requires the caller to uphold its unsafe "
+           "contract."});
+    }
+  }
+
   if (selected.constructor != nullptr &&
       selected.constructor->access == AccessModifier::Private &&
       !isWithinClass(classId)) {
@@ -2718,7 +2747,8 @@ auto SemanticVisitor::Impl::isDefaultInitializable(const SemanticType &type,
     if (const ConstructorInfo *constructor = defaultConstructor(*owner)) {
       const bool accessible = constructor->access == AccessModifier::Public ||
                               (!requirePublic && currentClass == owner->id);
-      return accessible && resolveDefaultConstruction(type) &&
+      return accessible && !constructor->requiresUnsafe &&
+             resolveDefaultConstruction(type) &&
              (!requestsStructuralDefaultConstruction(*constructor) ||
               classCanUseStructuralDefaultConstruction(type));
     }
@@ -2757,7 +2787,7 @@ auto SemanticVisitor::Impl::resolveDefaultConstruction(const SemanticType &type,
     return ResolvedConstructionInfo{.constructedType = type,
                                     .generatedDefault = true};
   }
-  if (!constructor->genericParameters.empty() ||
+  if (constructor->requiresUnsafe || !constructor->genericParameters.empty() ||
       (constructor->access == AccessModifier::Private &&
        !isWithinClass(owner->id))) {
     return std::nullopt;

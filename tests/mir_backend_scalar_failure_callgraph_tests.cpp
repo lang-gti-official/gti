@@ -623,7 +623,7 @@ void testFailureGraph(const std::filesystem::path &fixture) {
                               lang::DefinedFailureDetail::Subtraction, 26, 561,
                               562) == 1,
          "the hosted component should own two exact immutable failure sites");
-  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v101 "),
+  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v102 "),
          "the failure-capable family should consume the verified v24 schema");
 
   const lang::OptimizationPipeline pipeline;
@@ -1090,6 +1090,8 @@ void testMutations(const std::filesystem::path &fixture) {
   }
   expect(!lang::verifyMirProgram(headerDrift).valid(),
          "a free function cannot become a static member without an owner");
+  expect(emissionRejected(frontend, headerDrift, compatibility),
+         "the hosted selector must reject exact source/MIR header drift");
 
   headerDrift = frontend.mir;
   if (lang::MirFunctionInstance *leaf =

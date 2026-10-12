@@ -3086,6 +3086,22 @@
           "type": "CHOICE",
           "members": [
             {
+              "type": "FIELD",
+              "name": "unsafe",
+              "content": {
+                "type": "STRING",
+                "value": "unsafe"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
               "type": "STRING",
               "value": "constexpr"
             },

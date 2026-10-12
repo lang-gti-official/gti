@@ -1514,7 +1514,8 @@ private:
   }
 
   StmtPtr constructorDeclaration(Token name,
-                                 std::optional<Token> constexprKeyword = {}) {
+                                 std::optional<Token> constexprKeyword = {},
+                                 std::optional<Token> unsafeKeyword = {}) {
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
@@ -1571,6 +1572,10 @@ private:
       }
       consume(TokenKind::SEMICOLON,
               "Expect ';' after special constructor declaration.");
+      if (unsafeKeyword) {
+        throw error(*unsafeKeyword,
+                    "Only constructors with a source body may be unsafe.");
+      }
       return std::make_shared<ConstructorDecl>(
           std::move(constexprKeyword), std::move(name),
           std::move(genericParameters), std::move(parameters),
@@ -1587,7 +1592,7 @@ private:
         std::move(constexprKeyword), std::move(name),
         std::move(genericParameters), std::move(parameters),
         std::move(requiresClause), std::move(initializers), std::nullopt,
-        std::move(body));
+        std::move(body), std::move(unsafeKeyword));
   }
 
   StmtPtr destructorDeclaration(Token tilde) {
@@ -2183,6 +2188,16 @@ private:
         Token operatorKeyword = advance();
         return conversionOperatorDeclaration(std::move(operatorKeyword),
                                              std::move(virtualKeyword));
+      }
+      if (check(TokenKind::UNSAFE) &&
+          (isConstructorStart(1) ||
+           (peekAt(1).kind == TokenKind::CONSTEXPR && isConstructorStart(2)))) {
+        Token unsafeKeyword = advance();
+        std::optional<Token> constexprKeyword;
+        if (match({TokenKind::CONSTEXPR}))
+          constexprKeyword = previous();
+        return constructorDeclaration(advance(), std::move(constexprKeyword),
+                                      std::move(unsafeKeyword));
       }
       if (check(TokenKind::CONSTEXPR) && isConstructorStart(1)) {
         Token constexprKeyword = advance();
