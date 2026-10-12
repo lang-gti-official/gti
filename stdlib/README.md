@@ -101,14 +101,14 @@ error policy are GTI source over a private versioned runtime ABI that
 dynamically loads libcurl without exposing its types. See
 [`docs/language/http.md`](../docs/language/http.md) for the exact contract.
 
-`<std/json>` is entirely source-defined. It provides a strict owned move-only
-DOM, UTF-8-aware parsing with configurable limits, exact decimal number
-lexemes and checked conversions, deterministic compact and pretty output,
-structured path/location errors, explicit deep cloning, and exact
-`std::json::codec<T>` specializations for application models. It rejects
-comments, trailing commas, duplicate keys, invalid Unicode, and implicit
-object insertion. The source-defined operations execute through verified MIR
-and the native C++ backend, including errors that own their JSON Pointer. See
+`<std/json>` is entirely source-defined over `<std/meta>`. It encodes and
+decodes application types through reflection (structs, optionals, vectors,
+string-keyed maps, enums, exact numbers, strict UTF-8 text) and `codec<T>`
+specializations for other types, with deterministic compact and pretty output,
+configurable decode limits, and errors that carry a JSON Pointer path and a
+source location. It rejects comments, trailing commas, duplicate keys and
+invalid Unicode. The source-defined operations execute through verified MIR
+and the native C++ backend. See
 [`docs/language/json.md`](../docs/language/json.md) for the exact contract.
 
 `<std/random>` provides a deterministic source-defined `std::random_engine`

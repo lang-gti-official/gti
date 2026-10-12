@@ -197,7 +197,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A59 | [#100](https://git.internal.howetotech.dev/gti-lang/gti/issues/100) Read-only nested references publish the exact checked child address while retaining the owner's lifetime dependency | resolved: pass | `reproducers/a59-map-at-then-element-ref`<br>`reproducers/a59-readonly-ref-into-mut-nested-container`, `borrow_origin`, `borrow_origin_runtime` |
 | A60 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Fixed: overload arity mismatch discovers a verified include instead of advising a cast | rejected | `reproducers/a60-println-format-missing-include` |
 | A61 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Fixed: an untyped designated list identifies the missing destination type, without blaming an otherwise eligible struct | rejected | `reproducers/a61-designated-argument-diagnostic`, `designated_construction`, `diagnostic_recovery_lsp` |
-| F7 | [#51](https://git.internal.howetotech.dev/gti-lang/gti/issues/51) Calls to declared-but-undefined GTI functions fail at the native link instead of with a diagnostic | ice, link | `reproducers/f7-declaration-only-weak-ptr`<br>`reproducers/f7-json-decode-without-codec`<br>`reproducers/f7-undefined-user-function` |
+| F7 | [#51](https://git.internal.howetotech.dev/gti-lang/gti/issues/51) Calls to declared-but-undefined GTI functions fail at the native link instead of with a diagnostic | ice, link | `reproducers/f7-declaration-only-weak-ptr`<br>`reproducers/f7-undefined-user-function` |
 
 Optimization-level and C++-standard consistency held throughout. Eight diverse
 examples gave identical output and exit status at O0–O3 under C++20 and C++23,

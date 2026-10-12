@@ -487,23 +487,14 @@ The current implemented foundation includes:
   as ordinary responses. A private versioned runtime boundary dynamically
   loads libcurl without exposing its handles or option surface; see
   [Buffered HTTP and HTTPS](http.md); and
-- `<std/json>` a strict move-only owned DOM, UTF-8 and duplicate-key validation,
-  exact number-lexeme preservation with checked numeric conversions,
-  deterministic compact/pretty serialization, parser resource limits,
-  structured path/location errors, explicit deep cloning, and exact
-  `std::json::codec<T>` specializations without reflection or implicit field
-  mapping. Its source-defined surface executes through verified MIR and native
-  C++ emission, including move-only owning error alternatives;
-  see [JSON](json.md);
-- `<std/experimental/json>` (preview) `encode<T>(T&)`, `encode_pretty` and
-  `decode<T>(string_view[, decode_options&])` for reflectable structs and
-  the types their fields use, driven by reflection alone: declared names or
-  `[[name("key")]]` as keys, `[[ignore]]`d fields, nested structs, vectors,
-  optionals, string-keyed maps, enums by enumerator name, exact number
-  lexemes with range checks, strict UTF-8 and escapes, `codec<T>`
-  specializations for other types, and `error` failures with `errc`, offset,
-  line/column and a JSON Pointer path; see
-  [experimental reflected JSON](json.md#experimental-reflected-json); and
+- `<std/json>` `encode<T>(T&)`, `encode_pretty` and
+  `decode<T>(string_view[, decode_options&])` for application types through
+  reflection: structs as objects with declared names or `[[name("key")]]` as
+  keys, `[[ignore]]`d fields, nested structs, vectors, optionals, string-keyed
+  maps, enums by enumerator name, exact number lexemes with range checks,
+  strict UTF-8 and escapes, `codec<T>` specializations for other types, and
+  `error` failures with `errc`, offset, line/column and a JSON Pointer path;
+  see [JSON](json.md); and
 - `<std/source_location>` immutable, owned call-site snapshots containing the
   source file, qualified function name, one-based line, and a column value.
   `std::source_location::current()` and defaults that call it are expanded at

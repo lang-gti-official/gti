@@ -277,9 +277,10 @@ separately; the library binds results before returning them). The second slice
 `null`, string-keyed maps, exact number lexemes with range checks, strict
 UTF-8 and escapes, `codec<T>` specializations detected through reflection,
 pretty printing, decode limits, and errors with JSON Pointer paths and
-line/column. What `std::json` still offers beyond it is the dynamic `value`
-document model and lexeme-preserving numbers; deprecating `std::json`'s
-explicit codecs is now the owner's call, the DOM stays.
+line/column. The owner then promoted it: since 0.409.0 `<std/json>` is the
+reflection-driven library and the owned `value` document model and its
+explicit codecs are gone (text of unknown shape decodes into maps or structs
+of optionals).
 
 Goal: decoding without weakening initialization or ownership, the remaining
 declaration kinds, and the move of reflection from "later breadth" to a

@@ -45,7 +45,7 @@ Modules are GTI language boundaries, not C++ modules or binary distributions.
   compilation. `import std.name;` selects the compiler-shipped interface
   `modules/name.gti` beneath a standard-library root. Each such interface
   republishes `<std/name>`. The aggregate `std` module re-exports the portable
-  public units (see the 0.409.1 amendment below), and packages
+  public units (see the 0.410.0 amendment below), and packages
   cannot register `std` as a module name or dependency alias.
 - Compiler-supplied configuration flags apply to modules. Source-local flag
   mutations in an importer do not configure the imported module, and module
@@ -130,7 +130,7 @@ the standard library observes no application flags. Replay under each domain's
 flags with canonical-syntax comparison is the actual invariant, and it already
 caught the cases flag equality missed.
 
-Before 0.409.1, aggregate `import std;` remained separate work. Artifact requests retain
+Before 0.410.0, aggregate `import std;` remained separate work. Artifact requests retain
 the reached program prefix for MIR and emission. The subsequent
 `lowerLibraryReachableOnly` artifact profile also skips unreached
 compiler-trusted HIR declarations while retaining complete lowering of entry,
@@ -149,7 +149,7 @@ acceptance threshold. Aggregate import needs current latency evidence and an
 explicit platform-gated unit selection rule. Lazy trusted-body analysis and
 narrower physical-carrier emission are reusable ways to reduce those costs.
 
-### Aggregate standard import and trusted body demand (0.409.1)
+### Aggregate standard import and trusted body demand (0.410.0)
 
 `stdlib/std.gti` now re-exports all portable public named standard modules.
 The POSIX-only environment/process/TCP units and experimental facilities remain

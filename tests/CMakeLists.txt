@@ -1675,14 +1675,6 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti_runtime>"
   )
   set_tests_properties(environment_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME json_stdlib
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/json_stdlib_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures"
-  )
-  set_tests_properties(json_stdlib PROPERTIES TIMEOUT 2400)
   add_test(NAME stdlib_adoption_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/stdlib_adoption_runtime_test.py"
@@ -1762,7 +1754,6 @@ if(Python3_Interpreter_FOUND)
       user_owning_reference_replacement
       range_endpoint_parking_runtime
       text_view_iterator_runtime
-      json_object_iterator_runtime
       container_iterator_movement)
     add_test(
       NAME ${iterator_gate}
@@ -2248,14 +2239,14 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
   add_test(
-    NAME experimental_json_runtime
+    NAME json_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/reflection_runtime_test.py"
             "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/experimental_json.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/experimental_json_parity.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/stdlib_surface_json.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/json_parity.gti"
   )
-  set_tests_properties(experimental_json_runtime PROPERTIES TIMEOUT 1200)
+  set_tests_properties(json_runtime PROPERTIES TIMEOUT 1200)
   add_test(
     NAME constexpr_text_runtime
     COMMAND "${Python3_EXECUTABLE}"
