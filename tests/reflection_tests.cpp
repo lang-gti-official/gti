@@ -560,6 +560,24 @@ int main() {
 
 } // namespace
 
+void checkDefaults(const std::filesystem::path &root,
+                   const std::filesystem::path &directory) {
+  // `default_value()` needs a declared initializer; `has_default()` tells.
+  const auto defaults =
+      analyzeSource(root, directory, "defaults.gti", R"(#include <std/meta>
+struct Pair { int32_t first = int32_t(1); int32_t second; };
+int main() {
+  static_assert(std::meta::field<Pair, 0>().has_default());
+  static_assert(!std::meta::field<Pair, 1>().has_default());
+  int32_t fine = std::meta::field<Pair, 0>().default_value();
+  int32_t missing = std::meta::field<Pair, 1>().default_value();
+  return fine + missing;
+}
+)");
+  expect(countCode(defaults, "GTI-S2119") == 1,
+         "default_value on a field without an initializer is rejected once");
+}
+
 int main() {
   const std::filesystem::path root =
       std::filesystem::path(__FILE__).parent_path().parent_path();
@@ -573,6 +591,7 @@ int main() {
   checkAttributes(root, directory);
   checkAttributeFormatter();
   checkPhase3(root, directory);
+  checkDefaults(root, directory);
   std::filesystem::remove_all(directory);
   if (failures != 0) {
     std::cerr << failures << " failure(s)\n";

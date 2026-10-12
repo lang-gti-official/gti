@@ -1,0 +1,13 @@
+// Import the portable standard library as one source interface. Platform-only
+// facilities still use explicit imports, for example import std.process;.
+import std;
+
+int main() {
+  mut std::vector<int32_t> values{};
+  values.push_back(20);
+  values.push_back(22);
+  int32_t total = values[std::size_t(0)] + values[std::size_t(1)];
+  std::string message = std::format("aggregate import: {}", total);
+  std::println(message.view());
+  return total == 42 ? 0 : 1;
+}

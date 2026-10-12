@@ -1,5 +1,42 @@
 # Compiler Verification
 
+## Aggregate standard import and trusted body demand (0.411.0)
+
+The source-defined `stdlib/std.gti` inventory re-exports 44 portable public
+modules, leaving environment/process/TCP and experimental units explicit.
+`stdlib_modules` checks mixed imports/includes; frontend tests check Darwin,
+Linux and Windows target analysis. `trusted_body_analysis` compares complete and reachable
+application diagnostics over the examples and library tests, exercises unused
+trusted errors, reached callees/function items, eager constant/virtual bodies,
+visitor reuse, and generic calls through an unrelated `Producer`.
+The body-order gate remains independent. Incomplete HIR cannot become an
+artifact: newly selected primary bodies trigger semantic closure first.
+The allocator audit-independence gate also compares the aggregate example and
+all existing allocator fixtures with auditing off, warning, and library findings.
+Audits retain a complete diagnostic pass without influencing emitted artifacts.
+
+`aggregate_std_runtime` validates example 147 in all eight standard/optimization,
+no-elision and sanitizer modes. After reconciliation with the promoted JSON
+library, safe atomic waiting and introsort, its reviewed inventory is 386 MIR
+bodies, 3,174 LoweredProgram declarations and 218 generated items. The aggregate LSP
+gate covers UTF-16 hover/definition, a missing-return diagnostic, completion in
+incomplete source and recovery. The macOS installed-runtime gate checks the
+aggregate after relocation without source-tree configuration.
+
+Initial optimized M2 Max measurements before the JSON-library reconciliation
+(AppleClang 21, LLVM 23.1.2) compared
+the same artifact HIR scope: example 147's complete semantic/HIR times were
+956/54 ms, versus 758/98 ms with reachable bodies; example 20 was 140/12 ms
+versus 138/22 ms. Both needed one demand retry and no complete fallback.
+These shared-host observations are not a universal speedup claim. Equivalent
+O3 aggregate and individual-import programs produced identical output and
+the same 98,304-byte text / 16,384-byte data segment sizes. This change adds
+no runtime representation or allocation policy; no runtime speedup is claimed.
+The aggregate editor probe took 0.61–1.25 seconds and skipped most deferred
+bodies, but does **not** meet the plan's eventual 100 ms latency target.
+Registration, source loading/cache pressure and repeated demand staging remain
+measured optimization work, not hidden completed milestones.
+
 ## Safe atomic waiting (2026-10-12)
 
 `C-WAIT-01` adds `atomic<T>::wait`, `notify_one` and `notify_all` for the

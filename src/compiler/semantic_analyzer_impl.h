@@ -134,6 +134,8 @@ public:
 
   bool check(const Program &program);
 
+  std::unordered_set<const FunctionDecl *> requiredFunctionBodies;
+
   bool check(const Expr &expr);
 
   bool applyProgramRequest(const Program &program,
@@ -3666,6 +3668,8 @@ private:
   declarationAttributesOf(const SemanticType &subject,
                           std::optional<std::uint64_t> index) const;
   const std::vector<ResolvedDeclarationAttribute> noDeclarationAttributes;
+  void analyzeMetaFieldDefault(const Call &expr, const Get &member,
+                               const SemanticType &fieldObject);
   void analyzeMetaAttributeAccess(const Call &expr, const Get &member,
                                   const SemanticType &metaObject,
                                   bool typeSubject);
@@ -4680,6 +4684,7 @@ private:
       std::size_t declarationOrder = 0;
     };
     std::vector<DeferredBody> deferredBodies;
+    std::unordered_set<FunctionId> demandedFunctions;
     // Declarations visitFunctionDecl has processed, bodies analyzeFunctionBody
     // has run, and bodies currently being analysed; see ensureBodyAnalyzed.
     std::unordered_set<const FunctionDecl *> visitedFunctionDeclarations;
@@ -4884,6 +4889,18 @@ private:
   bool &measureTopLevelStatements = requestSession.measureTopLevelStatements;
   std::vector<RequestSessionState::DeferredBody> &deferredBodies =
       requestSession.deferredBodies;
+  std::unordered_set<FunctionId> &demandedFunctions =
+      requestSession.demandedFunctions;
+  // Lookup is unchanged; a scoped sink records a conservative demand set.
+  // Declaration bookkeeping must not itself demand the function's body.
+  struct FunctionDemandScope {
+    const SemanticModel &model;
+    std::unordered_set<FunctionId> *previous;
+    FunctionDemandScope(const SemanticModel &model,
+                        std::unordered_set<FunctionId> *sink)
+        : model(model), previous(model.setFunctionDemandSink(sink)) {}
+    ~FunctionDemandScope() { model.setFunctionDemandSink(previous); }
+  };
   std::unordered_set<const FunctionDecl *> &visitedFunctionDeclarations =
       requestSession.visitedFunctionDeclarations;
   std::unordered_set<const FunctionDecl *> &analyzedBodies =

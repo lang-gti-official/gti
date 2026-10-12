@@ -385,6 +385,7 @@ enum class IntrinsicKind {
   MetaFieldCount,
   MetaFieldName,
   MetaFieldIsPublic,
+  MetaFieldHasDefault,
   MetaTypeName,
   MetaTypeKind,
   MetaFieldAttributeCount,
@@ -423,6 +424,9 @@ enum class IntrinsicKind {
   // call and aliases it to a construction of the attribute struct.
   MetaFieldAttribute,
   MetaTypeAttribute,
+  // Declared default value: semantics aliases the call to a clone of the
+  // field's default initializer.
+  MetaFieldDefault,
   // Reflected field access: semantics analyses the field projection it
   // denotes and aliases the call to it.
   MetaFieldGet,
@@ -1938,6 +1942,25 @@ public:
 
   [[nodiscard]] const FunctionInfo *findFunction(FunctionId id) const;
 
+  // Primary body facts are required before concrete HIR discovery may use a
+  // function definition. Invalid primary analysis never reaches HIR.
+  void recordAnalyzedFunctionBody(const FunctionDecl &body) {
+    analyzedFunctionBodies.insert(&body);
+  }
+  [[nodiscard]] bool hasAnalyzedFunctionBody(const FunctionDecl &body) const {
+    return analyzedFunctionBodies.contains(&body) ||
+           (base != nullptr && base->hasAnalyzedFunctionBody(body));
+  }
+
+  // While a sink is set, every successful function lookup records its identity.
+  // Body analysis scopes this side channel; completed snapshots retain no sink.
+  std::unordered_set<FunctionId> *
+  setFunctionDemandSink(std::unordered_set<FunctionId> *sink) const {
+    auto *previous = functionDemandSink;
+    functionDemandSink = sink;
+    return previous;
+  }
+
   [[nodiscard]] const LambdaInfo *findLambda(const Lambda &declaration) const;
 
   [[nodiscard]] const LambdaInfo *findLambda(LambdaId id) const;
@@ -2469,6 +2492,8 @@ private:
   std::size_t placeSnapshot_ = 0;
   // Instance-delta base; see beginInstanceDelta.
   const SemanticModel *base = nullptr;
+  std::unordered_set<const FunctionDecl *> analyzedFunctionBodies;
+  mutable std::unordered_set<FunctionId> *functionDemandSink = nullptr;
 };
 
 class SemanticTypePrinter {

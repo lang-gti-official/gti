@@ -35,8 +35,11 @@ enum class RawPointerAuditMode { Off, Warn, Strict };
 // lexical order. `Deferred` analyses every trusted body after the application
 // bodies, in reverse lexical order; it is a test mode that proves analysis
 // results do not depend on body order. Registration, declaration facts and
-// finalization are the same in both modes.
-enum class TrustedBodyAnalysis { Complete, Deferred };
+// finalization are the same in every mode. `Reachable` visits deferred trusted
+// bodies only when analysed code consults their records, transitively. Entry,
+// application and package bodies, constexpr definitions and virtual methods
+// remain complete. It is a per-snapshot demand policy, not cached semantics.
+enum class TrustedBodyAnalysis { Complete, Deferred, Reachable };
 
 [[nodiscard]] constexpr std::optional<RawPointerAuditMode>
 parseRawPointerAuditMode(std::string_view name) {

@@ -886,8 +886,13 @@ struct HirLoweringResult {
   std::optional<HirProgram> reachable;
   std::vector<Diagnostic> diagnostics;
 
+  // Discovery stopped at these unchecked primary bodies. This is not usable
+  // HIR: the frontend must obtain their semantic facts and lower again.
+  std::vector<const FunctionDecl *> requiredSemanticBodies;
+
   [[nodiscard]] bool valid() const {
-    return !hasErrorDiagnostics(diagnostics) && program.valid();
+    return requiredSemanticBodies.empty() &&
+           !hasErrorDiagnostics(diagnostics) && program.valid();
   }
 };
 

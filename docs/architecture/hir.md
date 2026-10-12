@@ -90,9 +90,12 @@ that second seeding to the given top-level declaration ranges. Artifact builds
 (`FrontendOptions::lowerLibraryReachableOnly`) pass the entry unit and every
 application or package unit, so a compiler-trusted prelude or standard-library
 declaration is lowered only when the roots reach it. That pass never changes
-the prefix. Semantic analysis has already checked every trusted body, including
-the generic callee bodies it analyzes on demand. So only lowering work the
-program never uses is skipped.
+the prefix. With reachable trusted-body analysis, selecting a function whose
+primary body facts are absent records a `requiredSemanticBodies` request.
+That partial result is invalid HIR and cannot reach MIR. The frontend checks
+those primary bodies in a fresh semantic snapshot and repeats discovery.
+Instance reanalysis still owns concrete generic facts; it does not substitute
+for checking the primary definition or mutate its base snapshot.
 
 Instances are appended to their tables when first enqueued, and are finished
 once processed. Ordinary on-demand enqueueing discovers everything else the
