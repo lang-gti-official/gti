@@ -41626,8 +41626,9 @@ private:
          instruction.intrinsic == IntrinsicKind::AtomicExchange ||
          instruction.intrinsic == IntrinsicKind::AtomicCompareExchange)) {
       const bool noResult = instruction.info.type == SemanticType::Void;
-      const bool notify = instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ||
-                          instruction.intrinsic == IntrinsicKind::AtomicNotifyAll;
+      const bool notify =
+          instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ||
+          instruction.intrinsic == IntrinsicKind::AtomicNotifyAll;
       const bool compareExchange =
           instruction.intrinsic == IntrinsicKind::AtomicCompareExchange;
       if (!noResult) {
@@ -41650,7 +41651,8 @@ private:
       } else {
         emitCallArgument(instruction.operands[0], false, false);
         output << (instruction.intrinsic == IntrinsicKind::AtomicLoad ? ".load("
-                   : instruction.intrinsic == IntrinsicKind::AtomicWait ? ".wait("
+                   : instruction.intrinsic == IntrinsicKind::AtomicWait
+                       ? ".wait("
                    : instruction.intrinsic == IntrinsicKind::AtomicNotifyOne
                        ? ".notify_one("
                    : instruction.intrinsic == IntrinsicKind::AtomicNotifyAll
@@ -57477,8 +57479,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                     : atomicStorageElement(instruction.operands.front());
             const std::size_t operandCount =
                 instruction.intrinsic == IntrinsicKind::AtomicLoad ||
-                        instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ||
-                        instruction.intrinsic == IntrinsicKind::AtomicNotifyAll ? 1
+                        instruction.intrinsic ==
+                            IntrinsicKind::AtomicNotifyOne ||
+                        instruction.intrinsic == IntrinsicKind::AtomicNotifyAll
+                    ? 1
                 : instruction.intrinsic == IntrinsicKind::AtomicStore ||
                         instruction.intrinsic == IntrinsicKind::AtomicWait ||
                         instruction.intrinsic == IntrinsicKind::AtomicExchange
@@ -57490,7 +57494,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 : instruction.intrinsic == IntrinsicKind::AtomicWait
                     ? SynchronizationOperationKind::AtomicWait
                 : instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ||
-                          instruction.intrinsic == IntrinsicKind::AtomicNotifyAll
+                        instruction.intrinsic == IntrinsicKind::AtomicNotifyAll
                     ? SynchronizationOperationKind::AtomicNotify
                 : instruction.intrinsic == IntrinsicKind::AtomicStore
                     ? SynchronizationOperationKind::AtomicStore

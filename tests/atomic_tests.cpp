@@ -715,40 +715,57 @@ public:
 int main() { Completion completion{}; completion.wait(); completion.wake(); return 0; }
 )";
   const auto frontend = analyze("atomic-waiting.gti", source);
-  if (!frontend.canGenerateCode()) printDiagnostics(frontend);
-  expect(frontend.canGenerateCode(), "unrelated source wrapper can wait and notify");
-  if (!frontend.canGenerateCode()) return;
-  for (const auto kind : {lang::IntrinsicKind::AtomicWait,
-                          lang::IntrinsicKind::AtomicNotifyOne,
-                          lang::IntrinsicKind::AtomicNotifyAll}) {
-    expect(atomicCount(frontend.mir, kind) > 0, "waiting retains exact MIR intrinsic");
+  if (!frontend.canGenerateCode())
+    printDiagnostics(frontend);
+  expect(frontend.canGenerateCode(),
+         "unrelated source wrapper can wait and notify");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto kind :
+       {lang::IntrinsicKind::AtomicWait, lang::IntrinsicKind::AtomicNotifyOne,
+        lang::IntrinsicKind::AtomicNotifyAll}) {
+    expect(atomicCount(frontend.mir, kind) > 0,
+           "waiting retains exact MIR intrinsic");
     auto forged = frontend.mir;
     auto *call = findAtomic(forged, kind);
     call->synchronization.kind = lang::SynchronizationOperationKind::AtomicLoad;
-    expect(!lang::verifyMirProgram(forged).valid(), "waiting cannot be forged as a load");
+    expect(!lang::verifyMirProgram(forged).valid(),
+           "waiting cannot be forged as a load");
     auto stripped = frontend.mir;
     findAtomic(stripped, kind)->intrinsic = lang::IntrinsicKind::None;
-    expect(!lang::verifyMirProgram(stripped).valid(), "waiting requires trusted identity");
+    expect(!lang::verifyMirProgram(stripped).valid(),
+           "waiting requires trusted identity");
     auto wrongStorage = frontend.mir;
-    findAtomic(wrongStorage, kind)->operands[0].kind = lang::MirOperandKind::Move;
-    expect(!lang::verifyMirProgram(wrongStorage).valid(), "waiting borrows stable storage");
+    findAtomic(wrongStorage, kind)->operands[0].kind =
+        lang::MirOperandKind::Move;
+    expect(!lang::verifyMirProgram(wrongStorage).valid(),
+           "waiting borrows stable storage");
   }
   for (const auto order : {lang::AtomicMemoryOrder::Release,
                            lang::AtomicMemoryOrder::AcquireRelease}) {
     auto invalid = frontend.mir;
-    findAtomic(invalid, lang::IntrinsicKind::AtomicWait)->synchronization.order = order;
-    expect(!lang::verifyMirProgram(invalid).valid(), "wait rejects release orders in MIR");
+    findAtomic(invalid, lang::IntrinsicKind::AtomicWait)
+        ->synchronization.order = order;
+    expect(!lang::verifyMirProgram(invalid).valid(),
+           "wait rejects release orders in MIR");
   }
   auto notifyOrder = frontend.mir;
-  findAtomic(notifyOrder, lang::IntrinsicKind::AtomicNotifyAll)->synchronization.order =
-      lang::AtomicMemoryOrder::Acquire;
-  expect(!lang::verifyMirProgram(notifyOrder).valid(), "notify has no ordering dimension");
+  findAtomic(notifyOrder, lang::IntrinsicKind::AtomicNotifyAll)
+      ->synchronization.order = lang::AtomicMemoryOrder::Acquire;
+  expect(!lang::verifyMirProgram(notifyOrder).valid(),
+         "notify has no ordering dimension");
   auto wrongOld = frontend.mir;
-  findAtomic(wrongOld, lang::IntrinsicKind::AtomicWait)->operands[1].type = lang::SemanticType::Bool;
-  expect(!lang::verifyMirProgram(wrongOld).valid(), "wait old must match scalar type");
+  findAtomic(wrongOld, lang::IntrinsicKind::AtomicWait)->operands[1].type =
+      lang::SemanticType::Bool;
+  expect(!lang::verifyMirProgram(wrongOld).valid(),
+         "wait old must match scalar type");
 
   for (const std::string order : {"release", "acq_rel"}) {
-    auto invalid = analyze("invalid-wait.gti", "#include <std/atomic>\nint main() { std::atomic<int32_t> a{0}; a.wait(0, std::memory_order_" + order + "()); return 0; }");
+    auto invalid =
+        analyze("invalid-wait.gti",
+                "#include <std/atomic>\nint main() { std::atomic<int32_t> "
+                "a{0}; a.wait(0, std::memory_order_" +
+                    order + "()); return 0; }");
     expect(!invalid.canGenerateCode() && !hasCode(invalid, "GTI-B0001"),
            "invalid wait order rejected before backend");
   }
@@ -756,17 +773,22 @@ int main() { Completion completion{}; completion.wait(); completion.wake(); retu
   single.executionProfile = lang::ExecutionProfile::SingleThreaded;
   expect(!analyze("wait-single.gti", source, single).canGenerateCode(),
          "waiting requires concurrent execution profile");
-  expect(!analyze("wait-no-threads.gti", source, concurrentTarget(false)).canGenerateCode(),
+  expect(!analyze("wait-no-threads.gti", source, concurrentTarget(false))
+              .canGenerateCode(),
          "waiting requires target threads");
-  for (const auto level : {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
-    const auto optimized = lang::OptimizationPipeline().run(
-        {.hir = frontend.hir, .mir = frontend.mir, .level = level,
-         .target = concurrentTarget()});
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+    const auto optimized =
+        lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                          .mir = frontend.mir,
+                                          .level = level,
+                                          .target = concurrentTarget()});
     expect(optimized.valid(), "optimized waiting program remains valid");
-    for (const auto kind : {lang::IntrinsicKind::AtomicWait,
-                            lang::IntrinsicKind::AtomicNotifyOne,
-                            lang::IntrinsicKind::AtomicNotifyAll})
-      expect(atomicCount(optimized.mir, kind) == atomicCount(frontend.mir, kind),
+    for (const auto kind :
+         {lang::IntrinsicKind::AtomicWait, lang::IntrinsicKind::AtomicNotifyOne,
+          lang::IntrinsicKind::AtomicNotifyAll})
+      expect(atomicCount(optimized.mir, kind) ==
+                 atomicCount(frontend.mir, kind),
              "optimization preserves blocking and wakeups");
   }
 }

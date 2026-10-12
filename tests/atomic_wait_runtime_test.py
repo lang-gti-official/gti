@@ -20,6 +20,14 @@ def main() -> None:
                         result = execute([str(binary)], timeout=30)
                         expected = "2\n" if source == example else ""
                         assert result.stdout == expected and not result.stderr, result
+        # Counts GTI's no-throw allocation seam, not all host/libc allocations.
+        # The shared observer has a separate managed-task positive control.
+        binary = Path(directory) / "allocations"
+        execute([str(compiler), "--execution-profile", "concurrent", "-O3",
+                 str(fixture.with_name("atomic_wait_allocations.gti")),
+                 "-o", str(binary), "--",
+                 str(fixture.with_name("scoped_parallel_allocations.cpp"))])
+        execute([str(binary)], timeout=30)
     print("atomic waiting matrix passed")
 
 

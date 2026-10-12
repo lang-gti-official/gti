@@ -9615,9 +9615,9 @@ exactAtomicWaitingContract(const MirProgram &program, const MirBody &body,
                                   instruction.synchronization))
     return false;
   const MirOperand &storage = instruction.operands.front();
-  const SemanticType *element = exactCapabilityReferenceValue(
-      program, storage.type, AccessMode::ReadOnly,
-      CompilerCapabilityTypeKind::AtomicStorage);
+  const SemanticType *element =
+      exactCapabilityReferenceValue(program, storage.type, AccessMode::ReadOnly,
+                                    CompilerCapabilityTypeKind::AtomicStorage);
   const MirPlace *place = body.findPlace(storage.place);
   if (element == nullptr || storage.kind != MirOperandKind::BorrowRead ||
       storage.place == 0 || storage.value != 0 || storage.loan != 0 ||
@@ -9625,13 +9625,14 @@ exactAtomicWaitingContract(const MirProgram &program, const MirBody &body,
       storage.type.arguments.front() != place->type ||
       instruction.parameterTypes.front() != storage.type)
     return false;
-  if (!wait) return true;
+  if (!wait)
+    return true;
   const MirOperand &old = instruction.operands[1];
   const MirValue *value = body.findValue(old.value);
   return old.kind == MirOperandKind::Value && old.value != 0 &&
-         old.place == 0 && old.loan == 0 && !old.literal &&
-         value != nullptr && value->info.type == *element &&
-         old.type == *element && instruction.parameterTypes[1] == *element;
+         old.place == 0 && old.loan == 0 && !old.literal && value != nullptr &&
+         value->info.type == *element && old.type == *element &&
+         instruction.parameterTypes[1] == *element;
 }
 
 [[nodiscard]] bool

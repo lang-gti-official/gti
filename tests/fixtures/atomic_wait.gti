@@ -8,6 +8,16 @@ std::atomic<int32_t> ready{0};
 std::atomic<int32_t> finished{0};
 std::atomic<bool> gate{false};
 
+void ready_scalar<std::atomic_scalar T>(T current, T old) {
+  std::atomic<T> value{current};
+  value.wait(old);
+  value.wait(old, std::memory_order_relaxed());
+  value.wait(old, std::memory_order_acquire());
+  value.wait(old, std::memory_order_seq_cst());
+  value.notify_one();
+  value.notify_all();
+}
+
 void producer() {
   for (mut int32_t i = 1; i <= 1000; i++) {
     turn.wait(1, std::memory_order_acquire());
@@ -49,6 +59,15 @@ void release_waiters() {
 }
 
 int main() {
+  ready_scalar(true, false);
+  ready_scalar(int8_t(1), int8_t(0));
+  ready_scalar(int16_t(1), int16_t(0));
+  ready_scalar(int32_t(1), int32_t(0));
+  ready_scalar(int64_t(1), int64_t(0));
+  ready_scalar(uint8_t(1), uint8_t(0));
+  ready_scalar(uint16_t(1), uint16_t(0));
+  ready_scalar(uint32_t(1), uint32_t(0));
+  ready_scalar(uint64_t(1), uint64_t(0));
   // Changed-before-wait, repeated notifications without waiters, each order,
   // and subword/wide storage use the same scalar contract.
   std::atomic<uint8_t> byte{uint8_t(2)};
