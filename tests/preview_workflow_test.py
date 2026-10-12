@@ -15,6 +15,7 @@ import agent_workflow_test as lifecycle
 from agent_workflow import git, WorkflowError
 from preview_workflow import Preview, tests as focused_tests
 import preview_workflow
+import preview_examples
 from preview_examples import NESTED, required_tests, validate_inventory, validate_results, validate_sources
 import install_neovim_local as installer
 
@@ -75,6 +76,74 @@ class PreviewTests(unittest.TestCase):
         with self.assertRaises(WorkflowError):
             Preview(self.flow).publish(candidate["id"])
         self.assertIsNone(Preview(self.flow).remote())
+
+    def test_remote_results_are_new_per_attempt_and_retained(self):
+        candidate = Preview(self.flow).prepare(None, self.root / "seed", [])
+        destinations = []
+
+        def remote_run(argv):
+            destination = Path(argv[argv.index("--results") + 1])
+            self.assertFalse(destination.exists())
+            destination.mkdir()
+            destinations.append(destination)
+            (destination / "report.json").write_text(json.dumps({
+                "state": "passed", "exit_code": 0,
+                "source": {"head": candidate["head"], "status": ""},
+                "final_source": {"head": candidate["head"], "status": ""}}))
+            return 0
+
+        with patch("preview_workflow.load_remote_runner") as runner:
+            runner.return_value.main.side_effect = remote_run
+            for _ in range(2):
+                result = Preview(self.flow).verify(candidate["id"], [], remote=True)
+                self.assertEqual(result["verified"]["logs"], str(destinations[-1]))
+        self.assertNotEqual(*destinations)
+        self.assertTrue(all((path / "report.json").is_file() for path in destinations))
+
+    def test_seed_builds_only_example_dependencies_but_features_build_all(self):
+        seed = Preview(self.flow).prepare(None, self.root / "seed", [])
+        _, executed = self.verify(seed)
+        self.assertEqual(executed[1], ["cmake", "--build", "out/preview-build", "--parallel", "4",
+                                      "--target", "gti", "gti_runtime", "gti_lsp"])
+        self.feature()
+        feature = self.prepare()
+        _, executed = self.verify(feature)
+        self.assertNotIn("--target", executed[1])
+
+    def test_example_gate_accepts_real_cmake_cache_and_rejects_debug_or_wrong_source(self):
+        source = self.root / "cache-source"
+        source.mkdir()
+        (source / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\nproject(cache NONE)\n")
+        build = self.root / "cache-build"
+        subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-DCMAKE_BUILD_TYPE=Release"],
+                       check=True, capture_output=True)
+        cache = build / "CMakeCache.txt"
+        original_cache = cache.read_text()
+
+        def run(argv, **kwargs):
+            if argv[0] == "git":
+                return subprocess.CompletedProcess(argv, 0, stdout="\0".join(
+                    f"examples/{directory}/main.gti" for directory in NESTED))
+            required = required_tests(sys.platform)
+            if "--show-only=json-v1" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({
+                    "tests": [{"name": name} for name in required]}))
+            result = Path(argv[argv.index("--output-junit") + 1])
+            result.write_text("<testsuite>" + "".join(f'<testcase name="{name}"/>' for name in required)
+                              + "</testsuite>")
+            return subprocess.CompletedProcess(argv, 0)
+
+        with patch.object(preview_examples, "__file__", str(source / "scripts/preview_examples.py")), \
+                patch.object(sys, "argv", ["preview_examples.py", str(build)]), \
+                patch("preview_examples.subprocess.run", side_effect=run):
+            preview_examples.main()
+            cache.write_text(original_cache.replace("CMAKE_BUILD_TYPE:UNINITIALIZED=Release",
+                                                    "CMAKE_BUILD_TYPE:UNINITIALIZED=Debug"))
+            with self.assertRaisesRegex(ValueError, "optimized compiler"):
+                preview_examples.main()
+            cache.write_text(original_cache.replace(str(source), str(self.root / "other")))
+            with self.assertRaisesRegex(ValueError, "optimized compiler"):
+                preview_examples.main()
 
     def test_preview_cannot_finish_main_or_resolve_a_release(self):
         tree = self.feature()
@@ -205,6 +274,40 @@ class PreviewTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowError, "already integrated"):
             Preview(self.flow).prepare("task", self.root / "remove-main", remove=True)
         self.assertFalse((self.root / "remove-main").exists())
+
+    def refresh_removed_feature_after_main_acceptance(self, add_feature):
+        tree = self.feature()
+        first = self.prepare()
+        self.verify(first)
+        preview = Preview(self.flow)
+        preview.publish(first["id"])
+        removed = preview.prepare("task", self.root / "removed", remove=True)
+        self.verify(removed)
+        preview.publish(removed["id"])
+        # The original PR is accepted independently of its preview admission.
+        accepted = git(tree, "rev-parse", "HEAD")
+        git(self.remote, "update-ref", "refs/heads/main", accepted)
+        if add_feature:
+            self.feature("second")
+            refreshed = self.prepare("second", "refreshed")
+        else:
+            refreshed = preview.prepare(None, self.root / "refreshed")
+        root = Path(refreshed["worktree"])
+        self.assertEqual((root / "task.txt").read_text(), "task")
+        record = refreshed["manifest"]["removed"][0]
+        self.assertTrue(record["restored"])
+        self.assertEqual(record["accepted_in_main"], accepted)
+        self.assertEqual([row["task"] for row in refreshed["manifest"]["features"]],
+                         ["second"] if add_feature else [])
+        self.verify(refreshed)
+        preview.publish(refreshed["id"])
+        self.assertTrue(self.flow.ancestor(removed["head"], refreshed["head"]))
+
+    def test_seed_restores_removed_feature_accepted_into_main(self):
+        self.refresh_removed_feature_after_main_acceptance(False)
+
+    def test_admission_restores_removed_dependency_accepted_into_main(self):
+        self.refresh_removed_feature_after_main_acceptance(True)
 
     def test_seed_and_conflict_resume(self):
         seeded = Preview(self.flow).prepare(None, self.root / "seed")
