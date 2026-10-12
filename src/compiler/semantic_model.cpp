@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <iterator>
 #include <utility>
 
@@ -997,16 +998,27 @@ SemanticModel::findRangeIteration(const RangeForStmt &statement) const {
   return base == nullptr ? nullptr : base->findRangeIteration(statement);
 }
 
+const FunctionDecl &SemanticModel::canonicalFunctionDeclaration(
+    const FunctionDecl &declaration) const {
+  if (const auto alias = functionDeclarations.find(&declaration);
+      alias != functionDeclarations.end()) {
+    return *alias->second;
+  }
+  return base == nullptr ? declaration
+                         : base->canonicalFunctionDeclaration(declaration);
+}
+
 [[nodiscard]] const FunctionInfo *
 SemanticModel::findFunction(const FunctionDecl &declaration) const {
-  const auto found = functions.find(&declaration);
+  const auto &canonical = canonicalFunctionDeclaration(declaration);
+  const auto found = functions.find(&canonical);
   if (found != functions.end()) {
     if (functionDemandSink != nullptr) {
       functionDemandSink->insert(found->second.id);
     }
     return &found->second;
   }
-  return base == nullptr ? nullptr : base->findFunction(declaration);
+  return base == nullptr ? nullptr : base->findFunction(canonical);
 }
 
 [[nodiscard]] const FunctionInfo *
@@ -1679,6 +1691,7 @@ void SemanticModel::clear() {
   rangeIterations.clear();
   functions.clear();
   functionsById.clear();
+  functionDeclarations.clear();
   lambdas.clear();
   lambdasById.clear();
   classTypes.clear();
@@ -1788,16 +1801,17 @@ void SemanticModel::rebase(const SemanticModel *baseModel) {
 // declaration is unknown to both the delta and the base.
 [[nodiscard]] std::unordered_map<const FunctionDecl *, FunctionInfo>::iterator
 SemanticModel::materializeFunction(const FunctionDecl &declaration) {
-  auto local = functions.find(&declaration);
+  const auto &canonical = canonicalFunctionDeclaration(declaration);
+  auto local = functions.find(&canonical);
   if (local != functions.end() || base == nullptr) {
     return local;
   }
-  const FunctionInfo *inherited = base->findFunction(declaration);
+  const FunctionInfo *inherited = base->findFunction(canonical);
   if (inherited == nullptr) {
     return functions.end();
   }
-  local = functions.insert_or_assign(&declaration, *inherited).first;
-  functionsById.insert_or_assign(local->second.id, &declaration);
+  local = functions.insert_or_assign(inherited->declaration, *inherited).first;
+  functionsById.insert_or_assign(local->second.id, inherited->declaration);
   return local;
 }
 
@@ -2134,9 +2148,21 @@ void SemanticModel::recordExplicitMove(const Parameter &parameter) {
 }
 
 void SemanticModel::record(const FunctionDecl &declaration, FunctionInfo info) {
+  // Definition syntax is an alias, never a second function identity. This
+  // also covers instance overlays whose alias map lives in the base model.
+  const FunctionDecl *canonical =
+      info.declaration != nullptr ? info.declaration : &declaration;
   const auto [found, _] =
-      functions.insert_or_assign(&declaration, std::move(info));
-  functionsById.insert_or_assign(found->second.id, &declaration);
+      functions.insert_or_assign(canonical, std::move(info));
+  functionsById.insert_or_assign(found->second.id, canonical);
+}
+
+void SemanticModel::bindFunctionDefinition(const FunctionDecl &declaration,
+                                           const FunctionDecl &definition) {
+  auto found = functions.find(&declaration);
+  assert(found != functions.end());
+  found->second.definition = &definition;
+  functionDeclarations.emplace(&definition, &declaration);
 }
 
 void SemanticModel::record(const Lambda &declaration, LambdaInfo info) {

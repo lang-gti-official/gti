@@ -95,6 +95,9 @@
 
 (function_declaration
   name: (identifier) @function)
+(function_declaration
+  name: (scoped_identifier
+    name: (identifier) @function.method))
 (extern_c_function_prototype
   name: (identifier) @function)
 (method_declaration
