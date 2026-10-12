@@ -8,10 +8,12 @@ import subprocess
 import sys
 import tempfile
 
+from sanitizer_support import SANITIZED_BUILD_TIMEOUT
 
-def run(command, environment):
+
+def run(command, environment, timeout=120):
     return subprocess.run(command, text=True, capture_output=True,
-                          env=environment, timeout=120)
+                          env=environment, timeout=timeout)
 
 
 def main():
@@ -81,7 +83,9 @@ def main():
             executable = root / f"expected-cpp{standard}-O{level}"
             command = [str(compiler), str(fixture), "--std", f"c++{standard}",
                        f"-O{level}", "-o", str(executable), "--", *native]
-            built = run(command, environment)
+            sanitized = any(flag.startswith("-fsanitize=") for flag in native)
+            built = run(command, environment,
+                        SANITIZED_BUILD_TIMEOUT if sanitized else 120)
             if built.returncode:
                 sys.stderr.write(f"Build failed: {command!r}\n{built.stdout}{built.stderr}")
                 return 1

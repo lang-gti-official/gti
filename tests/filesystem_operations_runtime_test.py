@@ -7,6 +7,8 @@ import pathlib
 import subprocess
 import tempfile
 
+from sanitizer_support import SANITIZED_BUILD_TIMEOUT
+
 
 def main():
     configurations = {
@@ -39,8 +41,8 @@ def main():
             native_inputs = ([str(args.native_source.resolve())] if args.native_source else [])
             if native_flags or native_inputs:
                 command += ["--", *native_flags, *native_inputs]
-            build = subprocess.run(command, env=environment, capture_output=True,
-                                   text=True, timeout=300)
+            build = subprocess.run(command, env=environment, capture_output=True, text=True,
+                                   timeout=SANITIZED_BUILD_TIMEOUT if mode == "sanitized" else 300)
             assert build.returncode == 0, (mode, build.stdout, build.stderr)
             run = subprocess.run([str(executable)], cwd=work, env=environment,
                                  capture_output=True, text=True, timeout=60)
