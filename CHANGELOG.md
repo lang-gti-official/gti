@@ -9,6 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.406.0 — Reflected JSON covers the codec use cases
+
+- `<std/experimental/json>` now handles what applications wrote
+  `std::json::codec` specializations for: `std::optional<T>` (`null` or an
+  absent member), `std::map`/`std::unordered_map` with `std::string` keys,
+  `double`/`float` with shortest round-trip text and exact lexeme parsing,
+  range-checked integers, strict UTF-8 and escape handling with surrogate
+  pairs, duplicate-key rejection, `encode_pretty`, `decode_options` limits,
+  and `std::experimental::json::codec<T>` specializations for other types,
+  detected through reflection. `encode` now returns
+  `expected<std::string, error>` (invalid UTF-8 and non-finite floats fail),
+  and `error` carries `description()`, `line`, `column` and a JSON Pointer
+  `path` alongside the byte offset. Top-level `decode<T>` and `encode` accept
+  every supported type, not only structs. Example 141 shows an optional field
+  and pretty output.
+
 ## 0.405.3 — Closure, copy and move arms in `expected` conditionals
 
 - A conditional whose arms are `expected<T, E>` values can now use a

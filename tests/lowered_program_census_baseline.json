@@ -2056,18 +2056,18 @@
       }
     },
     "141-reflected-json.gti": {
-      "declarations": 1217,
-      "bodies": 384,
-      "generated_items": 232,
+      "declarations": 1533,
+      "bodies": 491,
+      "generated_items": 277,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
-        "structural_operator_adapter": 15,
+        "structural_operator_adapter": 26,
         "callable_adapter": 13,
-        "lifecycle_cleanup": 7,
+        "lifecycle_cleanup": 9,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 195
+        "concrete_instance_adapter": 227
       }
     },
     "142-constexpr-builders.gti": {
@@ -2087,8 +2087,8 @@
     }
   },
   "totals": {
-    "declarations": 71903,
-    "bodies": 13018,
-    "generated_items": 7090
+    "declarations": 72219,
+    "bodies": 13125,
+    "generated_items": 7135
   }
 }
