@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.408.0 — `<std/json>` is the reflection-driven library
+## 0.409.0 — `<std/json>` is the reflection-driven library
 
 - `std::experimental::json` is now `<std/json>` (`std::json::encode`,
   `encode_pretty`, `decode<T>`, `decode_options`, `codec<T>`, `name` and

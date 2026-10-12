@@ -6430,7 +6430,7 @@ exchange. Both include C++20/C++23, optimized/unoptimized, disabled-elision,
 and ASan/UBSan execution. The semantic/MIR suite rejects direct layout cycles,
 forged active-variant cleanup selectors, unguarded extractions, and upgraded
 loans. `borrowed_payload_pattern_lsp` checks navigation, tokens, exact
-diagnostic locations, and versioned recovery. `<std/json>` (0.407 and earlier) was the end-to-end
+diagnostic locations, and versioned recovery. `<std/json>` (0.408 and earlier) was the end-to-end
 library client of recursive enum storage, without a privileged lowering path;
 the payload-enum suites keep that coverage.
 
