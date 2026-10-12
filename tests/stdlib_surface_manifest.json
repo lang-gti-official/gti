@@ -15,7 +15,7 @@
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
-    "stdlib/std/experimental/json.gti": "a1faa23f53df367bef773470765778333e74bd6927a6568248ac873779ba0db3",
+    "stdlib/std/experimental/json.gti": "03476e462b52d16de353fa6b8598006aa89572d5abf31e99bca558c533997dc2",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "270c138f347f77a7c991395e21316d5cc2846f8fe66d3c8a1d7b0c395b1266fa",
@@ -569,6 +569,13 @@
       "id": "experimental-json",
       "mode": "run",
       "source": "tests/fixtures/experimental_json.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "experimental-json-parity",
+      "mode": "run",
+      "source": "tests/fixtures/experimental_json_parity.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -1788,25 +1795,35 @@
       "source": "stdlib/std/experimental/json.gti",
       "status": "executable",
       "operations": [
+        "std::experimental::json::codec",
         "std::experimental::json::decode",
+        "std::experimental::json::decode_options",
         "std::experimental::json::describe",
         "std::experimental::json::encode",
+        "std::experimental::json::encode_pretty",
         "std::experimental::json::errc",
         "std::experimental::json::error",
+        "std::experimental::json::error::description",
+        "std::experimental::json::error::has_source_location",
+        "std::experimental::json::error::prepend_index",
+        "std::experimental::json::error::prepend_key",
         "std::experimental::json::ignore",
         "std::experimental::json::name"
       ],
-      "case_ids": ["experimental-json"],
+      "case_ids": ["experimental-json", "experimental-json-parity"],
       "required_instantiations": [
-        "bool, signed and unsigned integers, float, std::string, enum, nested struct, std::vector of scalars and of structs",
+        "bool, fixed-width integers with range checks, float and double with exact lexemes, std::string, std::string_view (encode), enum, nested struct, std::vector of scalars and of structs, std::optional, std::map and std::unordered_map with std::string keys, a codec specialization",
         "name and ignore attributes",
-        "every errc through decode failures with offsets"
+        "every errc through decode failures with offsets, JSON Pointer paths and line/column",
+        "strict strings: UTF-8 validation, escapes, surrogate pairs, control characters",
+        "pretty printing and decode limits"
       ],
       "evidence": [
         "docs/language/json.md#experimental-reflected-json",
         "examples/141-reflected-json.gti",
         "stdlib/std/experimental/json.gti",
         "tests/fixtures/experimental_json.gti",
+        "tests/fixtures/experimental_json_parity.gti",
         "tests/reflection_runtime_test.py"
       ]
     },

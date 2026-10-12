@@ -486,11 +486,14 @@ The current implemented foundation includes:
   mapping. Its source-defined surface executes through verified MIR and native
   C++ emission, including move-only owning error alternatives;
   see [JSON](json.md);
-- `<std/experimental/json>` (preview) `encode<T>(T&)` and
-  `decode<T>(string_view)` for any `std::meta::reflectable` struct, driven by
-  reflection alone: declared names or `[[name("key")]]` as keys,
-  `[[ignore]]`d fields, nested structs, vectors, enums by enumerator name,
-  and `error{errc, offset}` decoding failures; see
+- `<std/experimental/json>` (preview) `encode<T>(T&)`, `encode_pretty` and
+  `decode<T>(string_view[, decode_options&])` for reflectable structs and
+  the types their fields use, driven by reflection alone: declared names or
+  `[[name("key")]]` as keys, `[[ignore]]`d fields, nested structs, vectors,
+  optionals, string-keyed maps, enums by enumerator name, exact number
+  lexemes with range checks, strict UTF-8 and escapes, `codec<T>`
+  specializations for other types, and `error` failures with `errc`, offset,
+  line/column and a JSON Pointer path; see
   [experimental reflected JSON](json.md#experimental-reflected-json); and
 - `<std/source_location>` immutable, owned call-site snapshots containing the
   source file, qualified function name, one-based line, and a column value.

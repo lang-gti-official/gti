@@ -4,6 +4,7 @@
 // values from the field types, and decoding builds the struct through
 // `std::meta::construct`, so a half-decoded object never exists.
 #include <std/experimental/json>
+#include <std/optional>
 #include <std/string>
 #include <std/vector>
 
@@ -20,6 +21,7 @@ struct report {
   severity level = severity::info;
   location where{};
   std::vector<uint32_t> related = std::vector<uint32_t>();
+  std::optional<std::string> fix = std::optional<std::string>();
   [[std::experimental::json::ignore]]
   uint64_t cache_key = 0;
 };
@@ -32,7 +34,11 @@ int main() {
                   .related = std::move(related),
                   .cache_key = uint64_t(99)};
 
-  std::string text = std::experimental::json::encode(first);
+  mut auto encoded = std::experimental::json::encode(first);
+  if (!encoded) {
+    return 1;
+  }
+  std::string text = std::move(encoded).value();
   std::print(text.view());
   std::print("\n");
 
@@ -50,13 +56,22 @@ int main() {
   std::print(back.message.view());
   std::print("\n");
 
-  // Failures carry the kind and the byte offset where decoding stopped.
+  // Pretty output changes whitespace only; an empty optional prints as null.
+  mut auto pretty = std::experimental::json::encode_pretty(back);
+  if (pretty) {
+    std::print(pretty.value().view());
+    std::print("\n");
+  }
+
+  // Failures carry the kind, the byte offset and a JSON Pointer to the value.
   mut auto broken = std::experimental::json::decode<report>("{\"msg\":\"m\",\"level\":\"loud\"}");
   if (!broken) {
-    std::print(std::experimental::json::describe(broken.error().code));
+    std::print(broken.error().description());
     std::print(" at ");
+    std::print(broken.error().path.view());
+    std::print(" (offset ");
     std::print(std::to_string(float(broken.error().offset)).view());
-    std::print("\n");
+    std::print(")\n");
   }
   return 0;
 }

@@ -2190,8 +2190,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/reflection_runtime_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/experimental_json.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/experimental_json_parity.gti"
   )
-  set_tests_properties(experimental_json_runtime PROPERTIES TIMEOUT 900)
+  set_tests_properties(experimental_json_runtime PROPERTIES TIMEOUT 1200)
   add_test(
     NAME constexpr_text_runtime
     COMMAND "${Python3_EXECUTABLE}"
