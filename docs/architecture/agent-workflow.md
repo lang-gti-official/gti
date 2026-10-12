@@ -442,23 +442,23 @@ their original PRs continue full validation and review. Preview admission is
 separate from `verify`/`finish`: it never writes task validation records, marks
 original PRs ready, or grants permission to merge them. Every original PR still
 satisfies the existing main gates. Never merge the preview branch wholesale
-into main; `finish` rejects its `.gti-preview.json` marker. Stable/nightly source
+into main; `finish` and the CI release-version gate reject its `.gti-preview.json`
+marker and marker history, including candidates that later remove it. Stable/nightly source
 resolution rejects that marker too. Preview publication creates no release,
 tag, package, or local installation.
 
 The candidate combines the currently published preview, exact selected PR
 head, and current main in a new external worktree. Its committed
 `.gti-preview.json` records all included task/PR/head identities, their merge
-commits, focused argv checks, main and previous-preview identities. Admission
+commits, exact focused CTest names, main and previous-preview identities. Admission
 requires explicit task selection; it does not sweep open PRs. The caller must
 select completed work and appropriate focused checks. Draft PRs are allowed
 because their full acceptance may still be running.
 
 ```sh
-# focused.json contains nonempty argv arrays; commands run at candidate root.
-# Refer to compiler/test binaries under out/preview-build, not a task's build.
+# Select the owning regression tests by their exact CTest names.
 python3 scripts/agent_workflow.py preview prepare my-task \
-  --worktree /absolute/new-preview-candidate --checks-file /tmp/focused.json
+  --worktree /absolute/new-preview-candidate --tests cpp_mir_body_emitter_lifecycle
 # Use the candidate ID printed by prepare:
 python3 scripts/agent_workflow.py preview verify CANDIDATE \
   --cmake-arg=-DLLVM_DIR=/path/to/lib/cmake/llvm
@@ -468,9 +468,12 @@ python3 scripts/agent_workflow.py preview publish CANDIDATE
 `verify` configures and builds an optimized compiler from the combined source,
 reruns the focused checks of **every included feature**, and runs the fixed
 `preview_examples.py` gate. This covers the numbered corpus at O0/C++20 and
-O3/C++23, the module example, practical HTTP examples and established automated
+O3/C++23, practical HTTP examples and established automated
 project/native harnesses. Missing, disabled or skipped required tests fail
-admission. Objective-C++ execution is required on macOS and explicitly reported
+admission, including focused tests. One-off checks must be registered with
+CTest first; focused names are deduplicated for execution while their owning
+PR identities remain in the manifest. New nested example directories require an explicit coverage update;
+the allocator helper is exercised by its numbered client. Objective-C++ execution is required on macOS and explicitly reported
 as inapplicable elsewhere. Interactive `toy-3d-engine` needs its native
 dependencies and a graphics session; this automated gate does not certify GUI
 execution. Preview is therefore evidence for the automated runnable examples
@@ -503,6 +506,9 @@ its prior revert before merging the newly selected head. Merge/revert conflicts
 remain in the candidate worktree: resolve and commit them, then run
 `preview resume CANDIDATE` to finish preparation before verification. The
 manifest and evidence always describe the resulting combined source.
+Admission refuses an already-reachable PR head (except explicitly restoring a
+removed task). Removal refuses a feature already integrated into main; changes
+to accepted main behavior require their own normal PR.
 
 Preview candidates and source installations are retained intentionally; do not
 delete them while another user may rely on their commits or installed paths.

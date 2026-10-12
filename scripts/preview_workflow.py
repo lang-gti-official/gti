@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -18,11 +19,10 @@ BRANCH = "preview"
 MANIFEST = ".gti-preview.json"
 
 
-def commands(value):
+def tests(value):
     if not isinstance(value, list) or not value or any(
-            not isinstance(row, list) or not row or any(
-                not isinstance(item, str) or not item for item in row) for row in value):
-        raise WorkflowError("Focused checks must be a nonempty JSON array of argv arrays")
+            not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name) for name in value):
+        raise WorkflowError("Select at least one exact registered CTest name")
     return value
 
 
@@ -64,18 +64,26 @@ class Preview:
                 rows = [row for row in manifest["features"] if row["task"] == task]
                 if not rows:
                     raise WorkflowError("Task is not included in preview")
+                if any(self.flow.ancestor(row["head"], main) for row in rows):
+                    raise WorkflowError("Task is already integrated into main; preview cannot revert accepted main behavior")
                 for row in reversed(rows):
                     operations.append({"kind": "revert", "sha": row["merge"], "feature": row})
                 manifest["features"] = [row for row in manifest["features"] if row["task"] != task]
             elif task is not None:
-                checks = commands(checks)
+                checks = tests(checks)
                 task_state = self.flow.load(task)
                 pr = self.flow.pull(task_state)
                 if pr["state"] != "open":
                     raise WorkflowError("Only an open task PR can enter preview")
                 head = pr["head"]["sha"]
+                if self.flow.ancestor(head, main):
+                    raise WorkflowError("PR head is already integrated into main")
                 if any(row["task"] == task for row in manifest["features"]):
                     raise WorkflowError("Task already included; revert it before admitting a replacement")
+                restoring = any(row["task"] == task and not row.get("restored")
+                                for row in manifest.get("removed", []))
+                if previous and self.flow.ancestor(head, previous) and not restoring:
+                    raise WorkflowError("PR head is already reachable from preview; there is no new feature merge to record")
                 git(self.flow.repo, "fetch", "origin", task_state["branch"])
                 if git(self.flow.repo, "rev-parse", "FETCH_HEAD") != head:
                     raise WorkflowError("PR moved while preparing; prepare a new candidate")
@@ -83,7 +91,7 @@ class Preview:
                     if removed["task"] == task and not removed.get("restored"):
                         operations.append({"kind": "restore", "sha": removed["revert"]})
                         removed["restored"] = True
-                feature = {"task": task, "pr": pr["number"], "head": head, "checks": checks}
+                feature = {"task": task, "pr": pr["number"], "head": head, "tests": checks}
                 manifest["features"].append(feature)
                 operations.append({"kind": "merge", "sha": head, "feature": feature})
             operations.append({"kind": "merge", "sha": main})
@@ -169,9 +177,9 @@ class Preview:
                 "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=ON", "-DGTI_BUILD_LSP=ON"]},
             {"kind": "build", "argv": ["cmake", "--build", build, "--parallel", str(jobs)]},
         ]
-        for feature in state["manifest"]["features"]:
-            steps.extend({"kind": "suite", "argv": row} for row in commands(feature["checks"]))
-        steps.append({"kind": "suite", "argv": ["python3", "scripts/preview_examples.py", build]})
+        focused = sorted({name for feature in state["manifest"]["features"] for name in tests(feature["tests"])})
+        steps.append({"kind": "suite", "argv": ["python3", "scripts/preview_examples.py", build,
+                                                 *["--focused=" + name for name in focused]]})
         for index, step in enumerate(steps):
             step.update(name=f"preview-{index:02d}", cwd="source")
         logs = self.directory / (identity + "-results")
@@ -208,13 +216,13 @@ class Preview:
     def publish(self, identity):
         with self.flow.lock():
             state = self.load(identity)
+            if state.get("verified", {}).get("head") != state["head"]:
+                raise WorkflowError("Validate the combined candidate before publishing preview")
             # An uncertain push is recoverable without changing or retesting source.
             if self.remote() == state["head"]:
                 state["phase"] = "published"
                 return self.save(state)
             root = self.current(state)
-            if state.get("verified", {}).get("head") != state["head"]:
-                raise WorkflowError("Validate the combined candidate before publishing preview")
             if state["previous"] and not self.flow.ancestor(state["previous"], state["head"]):
                 raise WorkflowError("Preview publication must preserve existing history")
             # The ancestry check prohibits rewrites; the exact lease only closes
@@ -234,7 +242,7 @@ def main(workflow, arguments):
         prepare.add_argument("task")
         prepare.add_argument("--worktree", required=True)
         if name == "prepare":
-            prepare.add_argument("--checks-file", required=True)
+            prepare.add_argument("--tests", nargs="+", required=True, help="exact registered focused CTest names")
     verify = sub.add_parser("verify")
     verify.add_argument("candidate")
     verify.add_argument("--cmake-arg", action="append", default=[])
@@ -248,7 +256,7 @@ def main(workflow, arguments):
     if args.command == "seed":
         return preview.prepare(None, args.worktree)
     if args.command in {"prepare", "revert"}:
-        checks = json.loads(Path(args.checks_file).read_text()) if args.command == "prepare" else None
+        checks = args.tests if args.command == "prepare" else None
         return preview.prepare(args.task, args.worktree, checks, args.command == "revert")
     if args.command == "verify":
         if args.jobs < 1:

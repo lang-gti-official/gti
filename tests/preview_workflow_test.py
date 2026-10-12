@@ -2,7 +2,6 @@
 """Preview admission with real disposable Git repositories and fake builds/GitHub."""
 
 from contextlib import nullcontext
-import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -14,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import agent_workflow_test as lifecycle
 from agent_workflow import git, WorkflowError
-from preview_workflow import Preview
-from preview_examples import required_tests, validate_inventory, validate_results
+from preview_workflow import Preview, tests as focused_tests
+from preview_examples import NESTED, required_tests, validate_inventory, validate_results, validate_sources
 import install_neovim_local as installer
 
 
@@ -31,7 +30,7 @@ class PreviewTests(unittest.TestCase):
         return tree
 
     def prepare(self, name="task", suffix="candidate"):
-        return Preview(self.flow).prepare(name, self.root / suffix, [["python3", "focused.py", name]])
+        return Preview(self.flow).prepare(name, self.root / suffix, [name + "_focused"])
 
     def verify(self, candidate, failure=False):
         original = subprocess.run
@@ -59,9 +58,8 @@ class PreviewTests(unittest.TestCase):
         self.feature("second")
         second = self.prepare("second", "candidate2")
         _, executed = self.verify(second)
-        self.assertIn(["python3", "focused.py", "task"], executed)
-        self.assertIn(["python3", "focused.py", "second"], executed)
-        self.assertEqual(executed[-1], ["python3", "scripts/preview_examples.py", "out/preview-build"])
+        self.assertEqual(executed[-1], ["python3", "scripts/preview_examples.py", "out/preview-build",
+                                      "--focused=second_focused", "--focused=task_focused"])
         Preview(self.flow).publish(second["id"])
         self.assertEqual(git(self.remote, "rev-parse", "main"), original_main)
         self.assertEqual(git(self.remote, "rev-parse", "preview"), second["head"])
@@ -90,6 +88,15 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("preview candidates cannot publish", result.stderr)
         self.assertFalse((self.root / "release").exists())
+        admission = subprocess.run([sys.executable, str(ROOT / "scripts/check_release_version.py"),
+            "origin/main", head], cwd=tree, capture_output=True, text=True)
+        self.assertNotEqual(admission.returncode, 0)
+        self.assertIn("preview candidates cannot enter main", admission.stderr)
+        git(tree, "rm", ".gti-preview.json")
+        git(tree, "commit", "-m", "Removing marker does not erase preview history")
+        self.flow.checkpoint("task")
+        with self.assertRaisesRegex(Exception, "Preview history cannot"):
+            self.flow.finish("task", "Never merge preview")
 
     def test_dirty_candidate_and_racing_publishers_refused(self):
         self.feature()
@@ -124,6 +131,22 @@ class PreviewTests(unittest.TestCase):
         self.verify(restored)
         Preview(self.flow).publish(restored["id"])
 
+    def test_already_reachable_head_and_reverting_main_are_refused(self):
+        tree = self.feature()
+        first = self.prepare()
+        self.verify(first)
+        Preview(self.flow).publish(first["id"])
+        duplicate = self.root / "duplicate"
+        self.flow.start("duplicate", "Duplicate", duplicate, "codex/duplicate")
+        git(duplicate, "merge", "--ff-only", "codex/task")
+        self.flow.checkpoint("duplicate")
+        with self.assertRaisesRegex(WorkflowError, "already reachable"):
+            self.prepare("duplicate", "duplicate-candidate")
+        git(self.remote, "update-ref", "refs/heads/main", git(tree, "rev-parse", "HEAD"))
+        with self.assertRaisesRegex(WorkflowError, "already integrated"):
+            Preview(self.flow).prepare("task", self.root / "remove-main", remove=True)
+        self.assertFalse((self.root / "remove-main").exists())
+
     def test_seed_and_conflict_resume(self):
         seeded = Preview(self.flow).prepare(None, self.root / "seed")
         self.assertEqual(seeded["manifest"]["features"], [])
@@ -138,7 +161,7 @@ class PreviewTests(unittest.TestCase):
         self.flow.checkpoint("second", "conflict", ["task.txt"])
         preview = Preview(self.flow)
         with self.assertRaises(WorkflowError):
-            preview.prepare("second", self.root / "conflict", [["true"]])
+            preview.prepare("second", self.root / "conflict", ["second_focused"])
         states = [json.loads(path.read_text()) for path in preview.directory.glob("*.json")]
         pending = next(state for state in states if state["phase"] == "preparing")
         root = Path(pending["worktree"])
@@ -152,6 +175,13 @@ class PreviewTests(unittest.TestCase):
         preview.publish(result["id"])
 
     def test_example_inventory_never_passes_empty_disabled_or_skipped(self):
+        for invalid in ([], [""], [".*"], [["ctest"]]):
+            with self.assertRaises(WorkflowError):
+                focused_tests(invalid)
+        paths = [f"examples/{directory}/main.gti" for directory in NESTED]
+        validate_sources(paths)
+        with self.assertRaises(ValueError):
+            validate_sources(paths + ["examples/new-project/main.gti"])
         with self.assertRaises(ValueError):
             validate_inventory({"tests": []}, {"example"})
         with self.assertRaises(ValueError):
