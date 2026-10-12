@@ -27,7 +27,8 @@ def main():
         root = Path(directory)
         for standard, level, extra in modes:
             mode = f"{standard}-{level}" + ("-sanitized" if extra else "")
-            for name in ("c_string_import", "c_string_import_null", "c_string_import_exhausted"):
+            for name in ("c_string_import", "c_string_import_null", "c_string_import_exhausted",
+                         "unsafe_constructor_cleanup"):
                 binary = root / f"{name}-{mode}"
                 build_start = time.perf_counter()
                 built = build_fixture(
@@ -45,6 +46,13 @@ def main():
                                      timeout=30, env=environment)
                 if name == "c_string_import":
                     assert (ran.returncode, ran.stdout, ran.stderr) == (0, "live=0\n", ""), (mode, ran)
+                elif name == "unsafe_constructor_cleanup":
+                    assert (ran.returncode, ran.stdout, ran.stderr) == (0, "1\n2\n", ""), (mode, ran)
+                    failed = subprocess.run([binary, "fail"], capture_output=True, text=True,
+                                            timeout=30, env=environment)
+                    assert failed.returncode == 70 and failed.stdout == "1\n2\n", (mode, failed)
+                    assert "GTI-R0002" in failed.stderr, (mode, failed)
+                    assert "AddressSanitizer" not in failed.stderr and "UndefinedBehaviorSanitizer" not in failed.stderr, failed
                 elif name.endswith("_null"):
                     assert ran.returncode == 70 and "GTI-R0017" in ran.stderr, (mode, ran)
                     assert "null C string" in ran.stderr, (mode, ran)

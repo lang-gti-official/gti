@@ -1,0 +1,26 @@
+#include <std/string>
+#include <std/vector>
+
+class Trace {
+  int id;
+public:
+  Trace(int value) : id(value) {}
+  ~Trace() { std::println(this.id); }
+};
+
+class CheckedConstruction {
+  Trace initialized;
+  int quotient;
+public:
+  unsafe CheckedConstruction(int divisor)
+      : initialized(Trace(1)), quotient(42 / divisor) {}
+  int value() { return this.quotient; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Trace outer{2};
+  unsafe {
+    CheckedConstruction value{argc > 1 ? 0 : 2};
+    return value.value() == 21 ? 0 : 1;
+  }
+}

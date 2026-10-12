@@ -714,6 +714,28 @@ int main() {
       declaration + "int main() { unsafe { auto f = []() -> int { auto x = "
                     "Generic<int>(1); return x.value; }; return f(); } }",
       "GTI-S2055", "nested lambdas cannot inherit constructor permission");
+  expectRejected(
+      "#include <std/vector>\n" + declaration +
+          "int main() { mut std::vector<Generic<int>> values{}; "
+          "[[discard]] values.emplace_back(1); return 0; }",
+      "GTI-S2055",
+      "safe generic emplacement cannot conceal an unsafe constructor");
+  expectRejected(
+      "#include <std/memory>\n" + declaration +
+          "int main() { mut std::uninitialized<Generic<int>> storage{}; "
+          "unsafe { std::construct_at(storage.data(), 1); } return 0; }",
+      "GTI-S2055",
+      "raw lifetime permission does not imply a constructor contract");
+  const auto completedValue =
+      analyze("#include <std/memory>\n" + declaration +
+              "int main() { mut std::uninitialized<Generic<int>> storage{}; "
+              "unsafe { std::construct_at(storage.data(), Generic<int>(1)); "
+              "std::destroy_at(storage.data()); } return 0; }");
+  expect(completedValue.canGenerateCode(),
+         "an explicitly constructed value can be moved into raw storage");
+  if (completedValue.canGenerateCode())
+    expect(!gti_test::emitCppText(completedValue).empty(),
+           "completed unsafe-constructor values keep ordinary move semantics");
 }
 } // namespace
 

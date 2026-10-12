@@ -1965,8 +1965,24 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     return;
   }
 
-  semanticModel.recordUnsafeOperation(construction, UnsafeOperationKind::None);
   if (selected.constructor != nullptr && selected.constructor->requiresUnsafe) {
+    if (semanticModel.unsafeOperation(construction) ==
+        UnsafeOperationKind::ObjectLifetime) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2055", DiagnosticPhase::Semantics, paren,
+          "Raw in-place construction cannot invoke an unsafe constructor; "
+          "its lifetime contract does not establish constructor-specific "
+          "caller obligations.");
+      diagnostic.hints.emplace_back(
+          "Construct the value explicitly inside an unsafe block, then move "
+          "the completed value into storage.");
+      diagnostic.related.push_back(
+          {tokenSpan(*selected.constructor->declaration->unsafeKeyword()),
+           "Unsafe constructor declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      currentType = constructedType;
+      return;
+    }
     const bool missing = unsafeDepth == 0;
     requireUnsafe(construction, UnsafeOperationKind::DeclaredUnsafeConstruction,
                   paren, "Calling an unsafe constructor");
