@@ -149,6 +149,10 @@ def main() -> int:
     parser.add_argument("head", nargs="?", default="HEAD", help="head Git revision")
     arguments = parser.parse_args()
 
+    if (git("ls-tree", "--name-only", arguments.head, ".gti-preview.json").strip() or
+            git("log", "--format=%H", arguments.base + ".." + arguments.head, "--", ".gti-preview.json").strip()):
+        raise ValueError("preview candidates cannot enter main; validate and merge each original PR")
+
     if git("merge-base", arguments.base, arguments.head).strip() != git(
         "rev-parse", f"{arguments.base}^{{commit}}"
     ).strip():

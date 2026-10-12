@@ -540,6 +540,8 @@ class Workflow:
                 raise WorkflowError("Preview candidates cannot merge wholesale into main; finish each original task PR")
             verified = state.get("verified", {})
             head, base = git(root, "rev-parse", "HEAD"), self.fetch()
+            if git(root, "log", "--format=%H", base + ".." + head, "--", ".gti-preview.json"):
+                raise WorkflowError("Preview history cannot merge wholesale into main; finish each original task PR")
             if verified.get("head") != head or verified.get("base") != base or pr["head"]["sha"] != head:
                 raise WorkflowError("Current head/base/PR differ from validation; checkpoint, reconcile and verify again")
             if not body.strip():

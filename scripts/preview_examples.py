@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the authoritative automated example gates, rejecting missing/skipped tests."""
 
+import argparse
 import json
 from pathlib import Path
 import re
@@ -11,9 +12,19 @@ import xml.etree.ElementTree as ET
 
 # The corpus owns all numbered top-level programs; the remaining established
 # harnesses own nested projects and local HTTP/native prerequisites.
-TESTS = {"mir_cutover_corpus_oracle", "practical_examples", "typed_differential_smoke",
+TESTS = {"mir_cutover_corpus_oracle", "practical_examples",
          "project_cli_workflow", "scoped_configuration_defines", "native_enum_bindgen",
          "native_typedef_bindgen", "process_resource_policy"}
+NESTED = {"allocator-support", "libc-region-provider", "native-callback-slots",
+          "native-enum-bindings", "objective-cpp-bridge", "scoped-configuration",
+          "toy-3d-engine", "transit-planner"}
+
+
+def validate_sources(paths):
+    directories = {Path(path).parts[1] for path in paths if len(Path(path).parts) > 2 and path.endswith(".gti")}
+    if directories != NESTED:
+        raise ValueError(f"Review nested example coverage: added={sorted(directories - NESTED)}, "
+                         f"removed={sorted(NESTED - directories)}")
 
 
 def required_tests(platform):
@@ -39,13 +50,20 @@ def validate_results(path, required):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("build")
+    parser.add_argument("--focused", action="append", default=[])
+    args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    build = Path(sys.argv[1]).resolve()
+    build = Path(args.build).resolve()
     cache = dict(re.findall(r"^([^/#][^:]*):[^=]+=(.*)$", (build / "CMakeCache.txt").read_text(), re.M))
     if Path(cache.get("CMAKE_HOME_DIRECTORY", "")).resolve() != root or cache.get("CMAKE_BUILD_TYPE") not in {
             "Release", "RelWithDebInfo", "MinSizeRel"}:
         raise ValueError("Example gate requires this candidate's optimized compiler build")
-    required = required_tests(sys.platform)
+    required = required_tests(sys.platform) | set(args.focused)
+    sources = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "examples"],
+                             capture_output=True, text=True, check=True)
+    validate_sources(sources.stdout.split("\0"))
     inventory = subprocess.run(["ctest", "--test-dir", str(build), "--show-only=json-v1"],
                                capture_output=True, text=True, check=True)
     validate_inventory(json.loads(inventory.stdout), required)
@@ -57,7 +75,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-preview-examples-") as temporary:
         results = Path(temporary) / "results.xml"
         subprocess.run(["ctest", "--test-dir", str(build), "--output-on-failure", "--no-tests=error",
-                        "--output-junit", str(results), "-R", "^(" + "|".join(sorted(required)) + ")$"], check=True)
+                        "--output-junit", str(results), "-R", "^(" + "|".join(re.escape(name) for name in sorted(required)) + ")$"], check=True)
         validate_results(results, required)
 
 
