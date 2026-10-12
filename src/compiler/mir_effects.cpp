@@ -303,6 +303,7 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // MetaFieldCount: folded in semantics, never executes.
     harmless(), // MetaFieldName
     harmless(), // MetaFieldIsPublic
+    harmless(), // MetaFieldHasDefault
     harmless(), // MetaTypeName
     harmless(), // MetaTypeKind
     harmless(), // MetaFieldAttributeCount
@@ -330,6 +331,7 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // MetaTypePrimaryName
     harmless(), // MetaFieldAttribute: aliased to a struct construction.
     harmless(), // MetaTypeAttribute
+    harmless(), // MetaFieldDefault: aliased to the declared initializer.
     harmless(), // MetaFieldGet: aliased to the field projection it denotes.
     harmless(), // MetaFieldGetMut
     harmless(), // MetaConstruct: recorded as the designated construction.
@@ -622,6 +624,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "meta-field-count",
     "meta-field-name",
     "meta-field-is-public",
+    "meta-field-has-default",
     "meta-type-name",
     "meta-type-kind",
     "meta-field-attribute-count",
@@ -649,6 +652,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "meta-type-primary-name",
     "meta-field-attribute",
     "meta-type-attribute",
+    "meta-field-default",
     "meta-field-get",
     "meta-field-get-mut",
     "meta-construct",

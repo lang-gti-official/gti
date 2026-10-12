@@ -23,11 +23,11 @@
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
     "stdlib/std/iterator.gti": "89bca11053f5e8fa115c3625047bb3b6708c34b6c18f350e74cf4a8c9b96f286",
-    "stdlib/std/json.gti": "eeae4bb76fe539d54f40f1c7b7fafd6d70fca59345c7c4803bf280bb2eddf7f1",
+    "stdlib/std/json.gti": "0baff47898a7646937e3fff4e8425d1a3b51b80b92fd1160653e765bc001b82d",
     "stdlib/std/list.gti": "b670d0cf766d8bfae1cc32c51517510bcd434dc834ed31d8f8a46ff59da800e0",
     "stdlib/std/map.gti": "24bf0e1e969a92e4d6df567d6b13e1e5e2519e3bf2f80c225ca5937dcfeba3cf",
     "stdlib/std/memory.gti": "479b7a52d38437db574b236e7addc02ca866745c704ca5299748ffaa4f1aef75",
-    "stdlib/std/meta.gti": "13d0f4dbb6aaa319a4052043a7c6084a8853924956af343d9319528d4dd4fef7",
+    "stdlib/std/meta.gti": "a153608856dee42b8a5e72d66b6af77167b0e226c6893147158a130400a26a3e",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
@@ -834,6 +834,13 @@
       "id": "json",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_json.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "json-config",
+      "mode": "run",
+      "source": "tests/fixtures/json_config.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -2402,6 +2409,8 @@
         "std::json::codec",
         "std::json::decode",
         "std::json::decode_options",
+        "std::json::decode_options::set_missing_members_defaulted",
+        "std::json::defaulted",
         "std::json::describe",
         "std::json::encode",
         "std::json::encode_pretty",
@@ -2412,9 +2421,12 @@
         "std::json::error::prepend_index",
         "std::json::error::prepend_key",
         "std::json::ignore",
-        "std::json::name"
+        "std::json::name",
+        "std::json::read_file",
+        "std::json::write_file",
+        "std::json::write_file_pretty"
       ],
-      "case_ids": ["json", "json-owning-error-backend", "json-parity", "owned-error-pipelines"],
+      "case_ids": ["json", "json-config", "json-owning-error-backend", "json-parity", "owned-error-pipelines"],
       "required_instantiations": [
         "bool, fixed-width integers with range checks, float and double with exact lexemes, std::string, std::string_view (encode), enum, nested struct, std::vector of scalars and of structs, std::optional, std::map and std::unordered_map with std::string keys, a codec specialization",
         "name and ignore attributes",
@@ -2426,6 +2438,7 @@
         "docs/language/json.md",
         "examples/141-reflected-json.gti",
         "stdlib/std/json.gti",
+        "tests/fixtures/json_config.gti",
         "tests/fixtures/json_parity.gti",
         "tests/fixtures/stdlib_owned_error_pipelines.gti",
         "tests/fixtures/stdlib_surface_json.gti",
@@ -2834,9 +2847,11 @@
         "std::meta::field::attribute",
         "std::meta::field::attribute_count",
         "std::meta::field::attributes",
+        "std::meta::field::default_value",
         "std::meta::field::get",
         "std::meta::field::get_mut",
         "std::meta::field::has_attribute",
+        "std::meta::field::has_default",
         "std::meta::field::index",
         "std::meta::field::is_public",
         "std::meta::field::line",
@@ -2915,7 +2930,7 @@
       ],
       "case_ids": ["meta"],
       "required_instantiations": ["field enumeration in declaration order", "constexpr field binding in if constexpr", "reflected field read", "type predicates", "declared attribute read", "enumerator enumeration", "base and generic-argument lists", "structural construction", "callable metadata"],
-      "evidence": ["tests/fixtures/stdlib_surface_meta.gti", "tests/reflection_runtime_test.py", "tests/reflection_tests.cpp", "stdlib/std/meta.gti", "tests/fixtures/reflection_attributes.gti", "tests/fixtures/reflection_construct.gti", "tests/fixtures/reflection_callables.gti", "tests/fixtures/reflection_deferred_range.gti"]
+      "evidence": ["tests/fixtures/stdlib_surface_meta.gti", "tests/reflection_runtime_test.py", "tests/reflection_tests.cpp", "stdlib/std/meta.gti", "tests/fixtures/reflection_attributes.gti", "tests/fixtures/reflection_construct.gti", "tests/fixtures/reflection_callables.gti", "tests/fixtures/reflection_deferred_range.gti", "tests/fixtures/reflection_defaults.gti"]
     },
     {
       "id": "mutable-span.checked-iteration",
