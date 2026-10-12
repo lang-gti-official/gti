@@ -494,6 +494,23 @@ python3 scripts/install_neovim_local.py --dry-run --replace-config --replace-bin
 python3 scripts/install_neovim_local.py --replace-config --replace-bin
 ```
 
+To select the early combined preview instead, once `preview` has been published:
+
+```sh
+python3 scripts/install_neovim_local.py --preview --dry-run
+python3 scripts/install_neovim_local.py --preview --replace-config --replace-bin
+```
+
+Preview may contain PRs still awaiting full validation and review. The script
+pins the canonical preview commit in an isolated, persistent source checkout
+and installs its compiler, LSP and parser together. It reports the source
+commit and preserves your current checkout, including uncommitted edits.
+Preview dry run only resolves/reports the source; it performs no fetch, build
+or destination inspection. Without `--preview`, installation still uses this
+checkout. Run the normal command again to return to its toolchain. The
+[preview workflow](docs/architecture/agent-workflow.md#early-combined-preview)
+describes admission checks and the automated examples/platform coverage.
+
 Requires Python 3.10+, Neovim 0.11+, CMake, Ninja, a supported installed LLVM
 (including libclang), and the Xcode command-line tools. It discovers Homebrew
 LLVM 18 or newer (also checking retained Homebrew versions) or accepts

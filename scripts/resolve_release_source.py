@@ -32,6 +32,8 @@ def checked_sha(value: str) -> str:
 
 def source(sha: str, event: str, before: str) -> dict[str, str]:
     sha = checked_sha(sha)
+    if git("ls-tree", "--name-only", sha, ".gti-preview.json"):
+        raise ValueError("preview candidates cannot publish stable or nightly toolchains")
     version = git("show", f"{sha}:VERSION")
     if VERSION.fullmatch(version) is None:
         raise ValueError("VERSION must contain a semantic version")
