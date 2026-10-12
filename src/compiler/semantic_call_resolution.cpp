@@ -4756,12 +4756,13 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
     }
     return false;
   };
-  // A nominal generic class already supplies a declaration-owned member set.
-  // Unresolved payload parameters do not hide an otherwise concrete signature.
-  // A bare parameter (or an open required signature) still needs an explicit
-  // enclosing requirement; do not infer members on arbitrary unknown types.
-  if ((containsOpenTypeParameter(receiver) &&
-       receiver.kind != SemanticType::Class) ||
+  // A nominal generic class supplies a declaration-owned member set. Ordinary
+  // substitution exposes it with exact types even when its payload or the
+  // required signature names enclosing parameters, so an unproved open
+  // relation on a class receiver is inspected below like a concrete one. A
+  // bare parameter still needs an explicit enclosing requirement; do not
+  // infer members on arbitrary unknown types.
+  if (containsOpenTypeParameter(receiver) ||
       containsOpenTypeParameter(result) ||
       std::any_of(parameters.begin(), parameters.end(),
                   containsOpenTypeParameter)) {
@@ -4777,7 +4778,8 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
                      requirement.arguments.begin() + 2))
         return true;
     }
-    return reject(MemberRequirementFailureKind::Unproven);
+    if (receiver.kind != SemanticType::Class)
+      return reject(MemberRequirementFailureKind::Unproven);
   }
   // Bound recursively growing receiver types as well as exact cycles.
   constexpr std::size_t memberRequirementDepthLimit = 64;
@@ -4916,12 +4918,29 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
                   })) {
     return true;
   }
-  if (std::any_of(arguments.begin(), arguments.end(),
-                  [](const SemanticType &type) {
-                    return type.kind == SemanticType::TypeParameter ||
-                           type.kind == SemanticType::TypePack;
-                  })) {
-    return structuralRequirementAvailable(kind, arguments);
+  // An open relation is first proved by an active requirement with the same
+  // identity. Failing that, a bare subject has no declaration to inspect, and
+  // an unexpanded pack has no exact arity. A dependent compound subject, such
+  // as a class instance or lambda whose signature names enclosing parameters,
+  // keeps its declaration: the checks below inspect it through ordinary
+  // substitution and exact type equality, as for a concrete instance. A bare
+  // argument that itself needs member lookup has no declaration and fails
+  // closed, and concrete reanalysis of every instance remains the final check.
+  const auto bareParameter = [](const SemanticType &type) {
+    return type.kind == SemanticType::TypeParameter ||
+           type.kind == SemanticType::TypePack;
+  };
+  if (std::any_of(arguments.begin(), arguments.end(), bareParameter)) {
+    if (structuralRequirementAvailable(kind, arguments)) {
+      return true;
+    }
+    if (bareParameter(arguments.front()) ||
+        std::any_of(arguments.begin(), arguments.end(),
+                    [](const SemanticType &type) {
+                      return type.kind == SemanticType::TypePack;
+                    })) {
+      return false;
+    }
   }
 
   const auto selectedDereference = [&](const SemanticType &iterator) {

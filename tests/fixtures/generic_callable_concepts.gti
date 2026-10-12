@@ -88,6 +88,30 @@ int32_t apply_once<Callable>(int32_t value, Callable callable)
   return std::move(callable)(value);
 }
 
+// A generic body proves a callable relation for a dependent class instance
+// or lambda from its substituted operator() signature.
+class less_of<std::totally_ordered T> {
+public:
+  less_of() {}
+  bool operator()(T& left, T& right) { return left < right; }
+};
+
+bool ordered_by<T, Compare>(T& left, T& right, mut Compare compare)
+  requires std::comparator<Compare, T> {
+  return compare(left, right);
+}
+
+bool ordered_generic<std::totally_ordered T>(T& left, T& right) {
+  return ordered_by(left, right, less_of<T>()) &&
+         ordered_by(left, right,
+                    [](T& first, T& second) -> bool { return first < second; });
+}
+
+void sort_generic<std::relocatable T>(mut std::vector<T>& values)
+  requires std::vector_element<T> && std::totally_ordered<T> {
+  std::sort(values, less_of<T>());
+}
+
 int main() {
   if (!inspect(3, is_positive()) ||
       !inspect(3, [](int32_t& value) -> bool { return value == 3; }) ||
@@ -136,6 +160,19 @@ int main() {
   std::invoke_once(mark_once_action());
   if (action_calls != 3) {
     return 7;
+  }
+
+  int32_t low = 1;
+  int32_t high = 2;
+  if (!ordered_generic(low, high) || ordered_generic(high, low)) {
+    return 8;
+  }
+  mut std::vector<int32_t> generic_values = std::vector<int32_t>({3, 1, 2});
+  sort_generic(generic_values);
+  if (generic_values[std::size_t(0)] != 1 ||
+      generic_values[std::size_t(1)] != 2 ||
+      generic_values[std::size_t(2)] != 3) {
+    return 9;
   }
   return 0;
 }

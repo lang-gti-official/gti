@@ -380,7 +380,13 @@ checking argument and receiver access plus the retained unsafe-call obligation.
 Safe structural facts imply the weaker unsafe capability; the reverse does not
 hold. The existing conjunction/alternative fact calculation preserves that
 direction, including forwarded requirements. Concrete instance analysis selects
-the ordinary method and publishes the normal HIR/MIR call. Comma-pack fold targets
+the ordinary method and publishes the normal HIR/MIR call. A requirement whose
+subject is a dependent compound type, such as a class instance or lambda whose
+signature names enclosing parameters, first consults active facts and then
+inspects the subject's own declaration after ordinary substitution, using the
+same exact signature matching as a concrete type. Only a bare parameter relies
+on facts alone; a bare argument that itself needs member lookup fails closed.
+Comma-pack fold targets
 may carry requirements: each concrete element passes ordinary instantiation and
 constraint checking before a resolved fold can enter HIR. Signature requirements
 do not create a second executable call path or bypass actual borrow checking.
