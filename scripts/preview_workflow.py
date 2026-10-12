@@ -211,12 +211,15 @@ class Preview:
             {"kind": "build", "argv": ["cmake", "--build", build, "--parallel", str(jobs)]},
         ]
         focused = sorted({name for feature in state["manifest"]["features"] for name in tests(feature["tests"])})
+        if not focused:
+            # The fixed example harnesses need the CLI/runtime, not C++ unit
+            # binaries. Arbitrary focused CTest names still require all targets.
+            steps[1]["argv"].extend(["--target", "gti", "gti_runtime", "gti_lsp"])
         steps.append({"kind": "suite", "argv": ["python3", "scripts/preview_examples.py", build,
                                                  *["--focused=" + name for name in focused]]})
         for index, step in enumerate(steps):
             step.update(name=f"preview-{index:02d}", cwd="source")
-        logs = self.directory / (identity + "-results")
-        logs.mkdir(exist_ok=True)
+        logs = self.directory / (identity + "-results-" + uuid.uuid4().hex)
         execution = {"kind": "local", "platform": platform.system(), "machine": platform.machine()}
         if remote:
             runner = load_remote_runner()
@@ -233,6 +236,7 @@ class Preview:
                 raise WorkflowError("Remote preview evidence does not match the candidate")
             execution = {"kind": "remote", "runner": report.get("runner"), "run": report.get("id")}
         else:
+            logs.mkdir()
             for index, step in enumerate(steps):
                 log = logs / f"{index:02d}.log"
                 with self.flow.window.acquire(step["kind"], step["argv"], worktree=str(root)):
