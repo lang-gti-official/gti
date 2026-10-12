@@ -509,6 +509,13 @@ manifest and evidence always describe the resulting combined source.
 Admission refuses an already-reachable PR head (except explicitly restoring a
 removed task). Removal refuses a feature already integrated into main; changes
 to accepted main behavior require their own normal PR.
+If a previously removed feature later merges into main, the next seed,
+admission or removal restores its recorded contributions before merging main.
+This matters because Git otherwise retains the preview revert even though the
+original feature head is now an ancestor of main. The inclusion record marks
+the restoration as accepted by that exact main commit; it does not reclassify
+accepted work as a pending preview feature. Conflicts still require explicit
+resolution and the combined candidate must pass the normal preview gates.
 
 Preview candidates and source installations are retained intentionally; do not
 delete them while another user may rely on their commits or installed paths.
