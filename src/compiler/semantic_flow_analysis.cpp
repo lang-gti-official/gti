@@ -5061,11 +5061,14 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
     return resolveMemberTypeAlias(owner, name);
   };
   if (path.segments.size() == 1) {
-    if (currentClass) {
+    for (ClassId owner = currentClass.value_or(0); owner != 0;
+         owner = classInfo(owner).enclosingClass) {
       if (const std::optional<ResolvedTypeAlias> alias =
-              member(*currentClass, path.last().lexeme)) {
+              member(owner, path.last().lexeme)) {
         return alias;
       }
+      if (classInfo(owner).nestedTypes.contains(path.last().lexeme))
+        return std::nullopt;
     }
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
       const auto found = visibleAliases.find(
@@ -5238,6 +5241,8 @@ auto SemanticVisitor::Impl::resolveClassPath(
   if (currentClass) {
     for (ClassId owner = *currentClass; owner != 0;
          owner = classInfo(owner).enclosingClass) {
+      if (classInfo(owner).nestedTypes.empty())
+        continue;
       auto scope = classInfo(owner).namespaceScope;
       scope.push_back(classInfo(owner).name.lexeme);
       const auto found =
@@ -5253,13 +5258,6 @@ auto SemanticVisitor::Impl::resolveClassPath(
       return found->second;
   }
   if (path.segments.size() == 1) {
-    for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-      const auto found = visibleClasses.find(
-          qualifiedName(fromScope, depth - 1, path.last().lexeme));
-      if (found != visibleClasses.end()) {
-        return found->second;
-      }
-    }
     return std::nullopt;
   }
 
@@ -5298,13 +5296,6 @@ auto SemanticVisitor::Impl::resolveClassPathGlobally(
       return found->second;
   }
   if (path.segments.size() == 1) {
-    for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-      const auto found = classIds.find(
-          qualifiedName(fromScope, depth - 1, path.last().lexeme));
-      if (found != classIds.end()) {
-        return found->second;
-      }
-    }
     return std::nullopt;
   }
   const NamePath namespacePath(
@@ -5323,6 +5314,13 @@ auto SemanticVisitor::Impl::resolveClassPathGlobally(
 auto SemanticVisitor::Impl::resolveEnumPath(
     const NamePath &path, const std::vector<std::string> &fromScope) const
     -> std::optional<EnumId> {
+  if (path.segments.size() == 1) {
+    for (ClassId owner = currentClass.value_or(0); owner != 0;
+         owner = classInfo(owner).enclosingClass) {
+      if (classInfo(owner).nestedTypes.contains(path.last().lexeme))
+        return std::nullopt;
+    }
+  }
   const auto &visibleEnums = currentEnumIds();
   const auto &visibleAliases = currentTypeAliasIds();
   const auto enumFromAlias =

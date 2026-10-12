@@ -3154,6 +3154,19 @@ auto SemanticVisitor::Impl::validateNestedClassAccess(ClassId id,
   return true;
 }
 
+auto SemanticVisitor::Impl::validateClassPathAliases(const NamePath &path,
+                                                     const Token &use) -> bool {
+  for (std::size_t count = 1; count < path.segments.size(); ++count) {
+    NamePath prefix(std::vector<Token>(path.segments.begin(),
+                                       path.segments.begin() + count));
+    if (const auto alias = resolveTypeAliasPath(prefix, currentNamespace);
+        alias && !validateTypeAliasAccess(*alias, use)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 auto SemanticVisitor::Impl::validateTypeAliasAccess(
     const ResolvedTypeAlias &alias, const Token &use) -> bool {
   for (const ResolvedTypeAlias &qualifier : alias.qualifiers) {
@@ -3822,6 +3835,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   if (type.arguments.size() < classInfo(*classId).genericParameters.size())
     resolveClassGenericDefaults(*classId);
   const ClassInfo &declaration = classInfo(*classId);
+  if (!validateClassPathAliases(type.name, type.name.last()))
+    return;
   if (!validateNestedClassAccess(*classId, type.name.last()))
     return;
   if (!declaration.declaration->genericArgumentPatterns().empty() ||

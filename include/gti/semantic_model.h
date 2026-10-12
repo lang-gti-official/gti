@@ -856,6 +856,8 @@ struct ClassTypeInfo {
   const ClassDecl *declaration = nullptr;
   std::string qualifiedName;
   std::vector<std::string> namespaceScope;
+  // Lexical ownership, not an enclosing object or lifetime dependency.
+  ClassId enclosingClass = 0;
   // An exact specialization is a distinct semantic class identity whose
   // qualified source name and canonical argument key still name this primary.
   // Zero denotes an ordinary (possibly generic) class declaration.

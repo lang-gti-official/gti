@@ -12,9 +12,12 @@ struct Config {
     };
     Retry retry{};
   };
-  class Logging {
-  public:
+  struct Logging {
     bool enabled = true;
+  };
+  class Validator {
+  public:
+    bool valid_port(uint16_t port) { return port != 0; }
   };
   Network network{};
   Logging logging{};
@@ -23,13 +26,16 @@ struct Config {
 int main() {
   Config::Network::Retry retry{.attempts = uint32_t(5)};
   mut auto decoded = std::experimental::json::decode<Config>(
-      "{\"network\":{\"host\":\"example.org\",\"port\":443,"
-      "\"retry\":{\"attempts\":5}},\"logging\":{\"enabled\":true}}");
+      "{\"network\":{\"host\":\"example.org\",\"port\":443,\"retry\":{\"attempts\":5}},\"logging\":{\"enabled\":true}}");
   if (!decoded) {
     std::println(decoded.error().description());
     return 1;
   }
   Config config = std::move(decoded).value();
+  Config::Validator validator{};
+  if (!validator.valid_port(config.network.port)) {
+    return 4;
+  }
   if (config.network.retry.attempts != retry.attempts) {
     return 2;
   }

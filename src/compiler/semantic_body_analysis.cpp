@@ -3390,6 +3390,11 @@ auto SemanticVisitor::Impl::rebuildLexicalEnvironment() -> void {
   currentSourceUnit = 0;
   loanFlow = lexicalLoanFlow;
   beginScope();
+  ClassId innermostClass = 0;
+  for (const auto &frame : lexicalFrames) {
+    if (frame.owner != nullptr)
+      innermostClass = frame.ownerId;
+  }
   for (const RequestSessionState::LexicalFrame &frame : lexicalFrames) {
     currentSourceUnit = frame.sourceUnit;
     if (frame.space != nullptr) {
@@ -3402,6 +3407,8 @@ auto SemanticVisitor::Impl::rebuildLexicalEnvironment() -> void {
       beginTypeParameterScope(info.genericParameters);
       beginScope();
       for (const auto &[name, member] : info.members) {
+        if (frame.ownerId != innermostClass && !member.symbol.staticMember)
+          continue;
         scopes.back().emplace(name, member.symbol);
       }
     }
@@ -8839,6 +8846,19 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
     return;
   }
   recordQualifiedPathUses(expr.name());
+  if (!validateClassPathAliases(expr.name(), expr.name().last())) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (expr.name().segments.size() > 1) {
+    NamePath ownerPath(std::vector<Token>(expr.name().segments.begin(),
+                                          expr.name().segments.end() - 1));
+    if (const auto owner = resolveClassPath(ownerPath, currentNamespace);
+        owner && !validateNestedClassAccess(*owner, expr.name().last())) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+  }
   if (expr.ownerType()) {
     validateType(*expr.ownerType());
     recordTypeUse(*expr.ownerType());
