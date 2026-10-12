@@ -297,9 +297,12 @@ layer.
    mechanical gate exists as the `body_analysis_order` test: the complete pass
    and the `Deferred` test mode (trusted bodies after application bodies, in
    reverse order) must produce identical diagnostics over the examples and
-   standard-library tests. Deferral is not yet an editor option; build it on
-   that mode, keep it editor-only, and keep compilation analysing every
-   body.
+   standard-library tests. Implemented in 0.409.0 using the deferred
+   `codex/lsp-lazy-bodies` checkpoint as the starting point. Snapshots and
+   completion now use reachable trusted bodies; generic HIR discovery requests
+   missing primary facts before accepting usable HIR. Artifact builds use the
+   same bounded policy, revising the earlier editor-only restriction; full
+   checks and artifact raw-pointer audits remain complete. See ADR 024.
 3. **Unit-local semantic reuse** (the true preamble analogue) only if 1 and 2
    leave the eight-include file above about 100 ms per edit. Trusted units'
    registration and body facts would be cached per unit, keyed by the unit's
@@ -307,15 +310,16 @@ layer.
    across snapshots. This is the largest change because `SemanticModel`
    identities are snapshot-local today, and it should not be started until
    the cheaper steps have been measured.
-4. **Completion scope.** Completion runs its own full frontend analysis per
-   request. Give it the same scope reductions, then consider answering from
+4. **Completion scope.** Completion still runs its own frontend analysis per
+   request, now with the same trusted-body scope reduction. Consider answering from
    the root's current snapshot when the completion marker does not change
    the visible declarations.
 
 Exit measure: the eight-include file under 100 ms per edit with the probe,
 semantic diagnostics for the open file identical to `gti check` on its
-project, and the frontend trace showing no library bodies analysed that the
-open file does not reach. Record the campaign in `implementation-sequence.md`
+project, and the frontend trace measuring omitted library bodies (constant
+definitions, virtual methods and lifecycle bodies remain conservative/eager).
+Record the campaign in `implementation-sequence.md`
 before starting; it touches semantic analysis and HIR ownership, so the
 compiler-architecture review applies.
 
