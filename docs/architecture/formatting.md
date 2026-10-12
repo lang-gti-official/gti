@@ -108,6 +108,13 @@ from names declared in the formatted file. This keeps an included nominal
 return type such as `LayerStack& GetLayerStack()` aligned consistently while
 leaving expression-level bitwise `&` spacing unchanged.
 
+Generic return types also recognize namespace-qualified out-of-class method
+names: `Parcel<Item> app::Factory::create()` keeps type-argument brackets tight,
+including nested types and intervening comments. This recognition is restricted
+to declaration scope; relational expressions ending in a qualified call retain
+their ordinary operator spacing. Formatting remains token-preserving and
+idempotent, including incomplete method definitions.
+
 The GTI base style attaches pointer and reference markers to the type:
 `T* pointer` and `T& reference`. Declaration recognition covers standalone
 `unsafe` function modifiers, preserving contract attributes followed by the

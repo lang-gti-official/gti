@@ -1741,6 +1741,48 @@ class RawBox<T> {
          "generic return formatting should preserve comparisons and remain "
          "idempotent");
 
+  const auto qualifiedReturnLayout = [](const std::string &input,
+                                        const std::string &signature) {
+    const std::string output = lang::Formatter().format(input);
+    if (output.find(signature) == std::string::npos)
+      std::cerr << "Qualified return formatting was:\n" << output;
+    expect(output.find(signature) != std::string::npos,
+           "qualified method return types should retain generic spacing");
+    expect(lang::Formatter().format(output) == output,
+           "qualified return formatting should be idempotent");
+    lang::Lexer beforeLexer;
+    lang::Lexer afterLexer;
+    const auto before = beforeLexer.scan(input);
+    const auto after = afterLexer.scan(output);
+    expect(!beforeLexer.hadError() && !afterLexer.hadError() &&
+               !before.empty() && before.size() == after.size() &&
+               std::equal(before.begin(), std::prev(before.end()),
+                          after.begin(),
+                          [](const auto &a, const auto &b) {
+                            return a.kind == b.kind && a.lexeme == b.lexeme;
+                          }),
+           "qualified return formatting must preserve tokens");
+  };
+  qualifiedReturnLayout(
+      "namespace psych{std::unique_ptr < Window > Window::Create(){}}",
+      "std::unique_ptr<Window> Window::Create() {");
+  qualifiedReturnLayout("Parcel < Item > app::Factory::create(){}",
+                        "Parcel<Item> app::Factory::create() {");
+  qualifiedReturnLayout(
+      "Result < Parcel<Item>, Error > app::Factory::create(){}",
+      "Result<Parcel<Item>, Error> app::Factory::create() {");
+  qualifiedReturnLayout("Parcel<Parcel<Item>> app::Factory::create(){}",
+                        "Parcel<Parcel<Item>> app::Factory::create() {");
+  qualifiedReturnLayout("Parcel < Item > app:: /* owner */ Factory::create(){}",
+                        "Parcel<Item> app:: /* owner */ Factory::create() {");
+  qualifiedReturnLayout("constexpr Parcel < int > Factory::create(){}",
+                        "constexpr Parcel<int> Factory::create() {");
+  qualifiedReturnLayout("void compare(){left<middle>limits::value();}",
+                        "left < middle > limits::value();");
+  qualifiedReturnLayout("bool compare(){return left<middle>limits::value();}",
+                        "return left < middle > limits::value();");
+  qualifiedReturnLayout("Parcel<Item> Factory::", "Factory::");
+
   const lang::FormatConfigResult parsedStyle =
       lang::parseFormatConfig("IndentWidth: 4\n"
                               "BasedOnStyle: LLVM\n"

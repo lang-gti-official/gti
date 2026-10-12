@@ -2302,6 +2302,24 @@ private:
     const std::size_t nextIndex =
         static_cast<std::size_t>(next - lexemes.data());
     const Lexeme *afterName = nextSyntaxLexeme(lexemes, nextIndex);
+    if (afterName != nullptr && afterName->kind == Kind::Scope) {
+      // Out-of-class return types precede Owner::method rather than a single
+      // name. Only admit that shape in declaration scope: a body expression
+      // such as left < middle > limits::value() still uses comparisons.
+      if (!isDeclarationScope(lexemes, typeStart)) {
+        return false;
+      }
+      do {
+        const Lexeme *component = nextSyntaxLexeme(
+            lexemes, static_cast<std::size_t>(afterName - lexemes.data()));
+        if (component == nullptr || component->kind != Kind::Word) {
+          return false;
+        }
+        afterName = nextSyntaxLexeme(
+            lexemes, static_cast<std::size_t>(component - lexemes.data()));
+      } while (afterName != nullptr && afterName->kind == Kind::Scope);
+      return afterName != nullptr && afterName->kind == Kind::LeftParen;
+    }
     return afterName != nullptr &&
            (afterName->kind == Kind::LeftParen ||
             afterName->kind == Kind::LeftBrace ||
