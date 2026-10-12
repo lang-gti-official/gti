@@ -1,0 +1,42 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Scope {
+public:
+  class Token {
+    int identity;
+  public:
+    Token(int value) : identity(value) {}
+    ~Token() { std::println(std::to_string(identity).view()); }
+  };
+  ~Scope() { std::println("unexpected outer object"); }
+};
+
+class FlatToken {
+  int identity;
+public:
+  FlatToken(int value) : identity(value) {}
+  ~FlatToken() { std::println(std::to_string(identity).view()); }
+};
+
+int fail(Scope::Token token) {
+  mut uint8_t limit = uint8_t(255);
+  limit += uint8_t(1);
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  // Lexical nesting adds no runtime layout or parent-object storage.
+  if (std::layout_of<Scope::Token>().bytes != std::layout_of<FlatToken>().bytes ||
+      std::layout_of<Scope::Token>().alignment != std::layout_of<FlatToken>().alignment) {
+    return 1;
+  }
+  Scope::Token guard{1};
+  Scope::Token source{2};
+  Scope::Token destination = std::move(source);
+  if (argc > 1) {
+    return fail(std::move(destination));
+  }
+  return 0;
+}

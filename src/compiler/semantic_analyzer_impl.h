@@ -1068,6 +1068,9 @@ private:
     Token name;
     ClassKind kind = ClassKind::Class;
     std::vector<std::string> namespaceScope;
+    ClassId enclosingClass = 0;
+    AccessModifier enclosingAccess = AccessModifier::Public;
+    std::unordered_map<std::string, ClassId> nestedTypes;
     ClassId exactSpecializationPrimary = 0;
     // Disjoint signature receiver definitions share a lookup name, not a
     // concrete class identity. The first registered definition owns the list.
@@ -3082,7 +3085,13 @@ private:
       const std::vector<GenericParameterInfo> &parameters = {});
 
   void registerClasses(const StmtList &statements,
-                       std::vector<std::string> scope);
+                       std::vector<std::string> scope,
+                       ClassId enclosingClass = 0,
+                       AccessModifier *enclosingAccess = nullptr);
+  [[nodiscard]] bool isWithinClass(ClassId owner) const;
+  [[nodiscard]] bool validateNestedClassAccess(ClassId id, const Token &use);
+  [[nodiscard]] bool validateClassPathAliases(const NamePath &path,
+                                              const Token &use);
   void resolveClassGenericDefaults(ClassId id);
 
   [[nodiscard]] std::vector<GenericParameterInfo>
@@ -3134,7 +3143,8 @@ private:
   nativeCArrayCountParameter(const FunctionDecl &function);
 
   void registerNamespaceSymbols(const StmtList &statements,
-                                std::vector<std::string> scope);
+                                std::vector<std::string> scope,
+                                bool typesOnly = false);
 
   void collectClassMembers(const StmtList &statements,
                            std::vector<std::string> scope);
@@ -5043,6 +5053,7 @@ private:
   void enterDeclarationContext(const std::vector<std::string> &namespaceScope,
                                SourceUnitId sourceUnit,
                                std::optional<ClassId> owner);
+  void addEnclosingClassStaticMembers(ClassId owner);
   void exitDeclarationContext(std::optional<ClassId> owner);
   SemanticType &currentType = requestSession.currentType;
   SemanticType &currentReturnType = requestSession.currentReturnType;
