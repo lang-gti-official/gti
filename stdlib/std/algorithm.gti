@@ -239,15 +239,14 @@ public:
 
 // Each phase below borrows the caller's one comparator and compares through a
 // read-only reborrow of the owner that ends before any swap. Keeping each
-// phase a separate small function keeps its element accesses inlinable. The
-// public overloads state the comparator contract; these internal phases
-// check their invocations at concrete instantiation.
+// phase a separate small function keeps its element accesses inlinable. Every
+// phase states the same comparator contract as the public overloads.
 
 // Insertion sort of [low, high).
 void sort_insertion<std::relocatable T, Compare>(mut std::vector<T>& values,
                                                  mut Compare& compare,
                                                  size_t low, size_t high)
-  requires std::vector_element<T> {
+  requires std::vector_element<T> && std::comparator<Compare, T> {
   for (mut size_t next = low + size_t(1); next < high; next++) {
     mut size_t position = next;
     while (position > low) {
@@ -271,7 +270,7 @@ void sort_insertion<std::relocatable T, Compare>(mut std::vector<T>& values,
 void sort_heap<std::relocatable T, Compare>(mut std::vector<T>& values,
                                             mut Compare& compare, size_t low,
                                             size_t high)
-  requires std::vector_element<T> {
+  requires std::vector_element<T> && std::comparator<Compare, T> {
   mut size_t end = high - low;
   mut size_t start = end / size_t(2);
   while (end > size_t(1)) {
@@ -321,7 +320,7 @@ void sort_heap<std::relocatable T, Compare>(mut std::vector<T>& values,
 size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& values,
                                                    mut Compare& compare,
                                                    size_t low, size_t high)
-  requires std::vector_element<T> {
+  requires std::vector_element<T> && std::comparator<Compare, T> {
   size_t count = high - low;
   size_t middle = low + count / size_t(2);
   size_t last = high - size_t(1);
@@ -419,7 +418,7 @@ size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& values,
 // elements.
 void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
                                             mut Compare& compare)
-  requires std::vector_element<T> {
+  requires std::vector_element<T> && std::comparator<Compare, T> {
   mut size_t lows[64] = {};
   mut size_t highs[64] = {};
   mut size_t depths[64] = {};
