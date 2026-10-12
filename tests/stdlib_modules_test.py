@@ -51,12 +51,10 @@ def main():
         source.write_text("import std;\nimport std.vector;\n#include <std/string>\n"
                           "int main() { mut std::vector<int> values{}; values.push_back(42); "
                           "return values[std::size_t(0)] - 42; }\n")
-        for target in (None, "x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-unknown-linux-gnu"):
-            result = subprocess.run(
-                [str(compiler), str(source), "--emit-mir", "-o", os.devnull,
-                 *(["--target", target] if target else [])],
-                capture_output=True, text=True, env=environment, timeout=300)
-            assert result.returncode == 0, result.stdout + result.stderr
+        result = subprocess.run(
+            [str(compiler), str(source), "--emit-mir", "-o", os.devnull],
+            capture_output=True, text=True, env=environment, timeout=300)
+        assert result.returncode == 0, result.stdout + result.stderr
     print(f"standard-library modules: {len(modules)} interfaces import and lower")
 
 

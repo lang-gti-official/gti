@@ -4,8 +4,8 @@
 
 The source-defined `stdlib/std.gti` inventory re-exports 44 portable public
 modules, leaving environment/process/TCP and experimental units explicit.
-`stdlib_modules` checks mixed imports/includes and Darwin, Linux and Windows
-target analysis. `trusted_body_analysis` compares complete and reachable
+`stdlib_modules` checks mixed imports/includes; frontend tests check Darwin,
+Linux and Windows target analysis. `trusted_body_analysis` compares complete and reachable
 application diagnostics over the examples and library tests, exercises unused
 trusted errors, reached callees/function items, eager constant/virtual bodies,
 visitor reuse, and generic calls through an unrelated `Producer`.

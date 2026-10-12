@@ -2868,6 +2868,23 @@ int main() {
     report(aggregate);
   expect(aggregate.canGenerateCode(),
          "the portable standard-library aggregate imports and lowers");
+  for (const char *triple : {"x86_64-pc-windows-msvc", "aarch64-apple-darwin",
+                             "x86_64-unknown-linux-gnu"}) {
+    lang::FrontendOptions options;
+    options.target = *lang::parseTargetTriple(triple);
+    options.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
+    options.lowerReachableOnly = true;
+    options.lowerLibraryReachableOnly = true;
+    const auto portable = lang::Frontend(options).analyze(
+        entry,
+        "import std;\nint main() { mut std::vector<int> values{}; "
+        "values.push_back(42); return values[std::size_t(0)] - 42; }\n",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    if (!portable.canGenerateCode())
+      report(portable);
+    expect(portable.canGenerateCode(),
+           std::string("portable aggregate on ") + triple);
+  }
   const auto missing =
       analyze("import std.missing;\nint main() { return 0; }\n");
   expect(!missing.sourceValid &&
