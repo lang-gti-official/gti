@@ -450,9 +450,6 @@ def test_interface_static_methods_tooling(executable, root):
              "int main() { return 0; }\n", "GTI-S2042", "cannot be virtual"),
             ("interface Broken { static int Helper() override { return 1; } };\n"
              "int main() { return 0; }\n", "GTI-S2042", "cannot be virtual"),
-            ("interface Broken { static int Missing(); };\n"
-             "int main() { return Broken::Missing(); }\n",
-             "GTI-S2106", "Missing"),
         )
         for version, (text, code, wording) in enumerate(cases, start=4):
             publication = change(text, version)
@@ -461,8 +458,16 @@ def test_interface_static_methods_tooling(executable, root):
                 for item in publication["diagnostics"]
             ), publication
 
+        # Editor declaration snapshots permit ordinary bodyless source calls;
+        # closed artifact requests diagnose missing definitions with GTI-S2106.
+        selected_declaration = (
+            "interface Declared { static int Missing(); };\n"
+            "int main() { return Declared::Missing(); }\n"
+        )
+        assert not has_error_diagnostics(change(selected_declaration, 4 + len(cases)))
+
         # Recovery must restore the concrete method and clear old diagnostics.
-        restored = change(source, 4 + len(cases))
+        restored = change(source, 5 + len(cases))
         assert not has_error_diagnostics(restored), restored
         assert request(8, "textDocument/definition", call + 1) == definition
     finally:

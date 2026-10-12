@@ -1790,7 +1790,7 @@ void testInterfaceStaticMethods() {
       lang::Frontend().analyze("interface-static-methods.gti", R"(
 interface Reading {
   static int initial(int value = 7) { return private_helper(value); }
-  static T identity<T>(T value) requires std::copy_constructible<T> { return value; }
+  static T identity<T>(T value) requires Number<T> { return value; }
   static constexpr int twice(int value) { return value * 2; }
   unsafe static int unchecked() { return 9; }
   static int unselected();
@@ -1816,6 +1816,7 @@ class Marked : public Marker {};
 interface LeftFactory { static int create() { return 1; } };
 interface RightFactory { static int create() { return 2; } };
 class BothFactories : public LeftFactory, public RightFactory {};
+concept Number<T> = std::numeric<T>;
 )");
   expect(frontend.canGenerateCode(),
          "interface statics should reuse ordinary access, default, generic, "

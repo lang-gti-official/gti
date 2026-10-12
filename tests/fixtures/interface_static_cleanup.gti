@@ -1,4 +1,6 @@
 #include <std/memory>
+#include <std/string>
+#include <std/vector>
 
 enum class creation_errc { rejected };
 
@@ -41,9 +43,10 @@ interface Marker {
 };
 class Marked : public Marker { public: Marked() {} };
 
+concept Number<T> = std::numeric<T>;
 interface Rules {
   static int seed(int value = 7) { return helper(value); }
-  static T identity<T>(T value) requires std::copy_constructible<T> { return value; }
+  static T identity<T>(T value) requires Number<T> { return value; }
   static constexpr int twice(int value) { return value * 2; }
   unsafe static int unchecked() { return 9; }
   static int unselected();
