@@ -12523,8 +12523,9 @@ verifyMirProgramContracts(const MirProgram &program) {
       const bool borrowed =
           parameter.callableType.kind == SemanticType::Reference &&
           parameter.callableType.arguments.size() == 1;
-      const SemanticType &callableType = borrowed
-          ? parameter.callableType.arguments.front() : parameter.callableType;
+      const SemanticType &callableType =
+          borrowed ? parameter.callableType.arguments.front()
+                   : parameter.callableType;
       const CallableInvocationCapability parameterCapability =
           callableInvocationCapability(parameter.access);
       if (parameter.parameterIndex >= instance.parameterTypes.size() ||
@@ -12545,7 +12546,8 @@ verifyMirProgramContracts(const MirProgram &program) {
           (parameter.access != parameter.callableType.referenceAccess ||
            parameter.boundary != CallableBoundary::Confined ||
            parameter.ownedTransport || !repeatableSignatures)) {
-        rejectCallableContract("borrowed callable access or confinement is invalid");
+        rejectCallableContract(
+            "borrowed callable access or confinement is invalid");
       }
       if (parameter.boundary == CallableBoundary::Confined) {
         if (parameter.ownedTransport &&
@@ -12622,8 +12624,7 @@ verifyMirProgramContracts(const MirProgram &program) {
           }
           const MirFunctionInstance &target =
               program.functionInstances().at(*signature.functionTarget - 1);
-          const bool functionItem =
-              callableType.hasFunctionItemShape();
+          const bool functionItem = callableType.hasFunctionItemShape();
           if ((functionItem
                    ? target.owner.has_value() ||
                          target.overloadedOperator.has_value() ||
@@ -12651,8 +12652,7 @@ verifyMirProgramContracts(const MirProgram &program) {
         } else if (signature.nativeCalleeType) {
           const auto &type = *signature.nativeCalleeType;
           const auto parameters = type.nativeFunctionParameterTypes();
-          if (type != callableType ||
-              !type.hasNativeFunctionShape() ||
+          if (type != callableType || !type.hasNativeFunctionShape() ||
               signature.returnType != *type.nativeFunctionReturnType() ||
               signature.parameterTypes.size() != parameters.size() ||
               !std::equal(parameters.begin(), parameters.end(),
@@ -12699,13 +12699,15 @@ verifyMirProgramContracts(const MirProgram &program) {
             });
         const SemanticType *forwardedType =
             forwarding.parameterIndex < target.parameterTypes.size()
-                ? &target.parameterTypes[forwarding.parameterIndex] : nullptr;
+                ? &target.parameterTypes[forwarding.parameterIndex]
+                : nullptr;
         if (forwardedType != nullptr &&
             forwardedType->kind == SemanticType::Reference &&
             forwardedType->arguments.size() == 1) {
           if (forwardedType->referenceAccess == AccessMode::Mutable &&
               parameter.access != AccessMode::Mutable)
-            rejectCallableContract(prefix + "upgrades borrowed callable access");
+            rejectCallableContract(prefix +
+                                   "upgrades borrowed callable access");
           forwardedType = &forwardedType->arguments.front();
         }
         if (forwarding.parameterIndex >= target.parameterTypes.size() ||

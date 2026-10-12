@@ -7270,6 +7270,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
   and read/mut/once erasure now ship under `L-CALL-02`. Borrowed capture/result
   escape and wider inline consuming/cleanup profiles still need their own
   origin and lifecycle proofs; they are not unfinished basic owning wrappers.
+  Confined generic `F&`/`mut F&` calls and forwarding now retain caller ownership
+  and checked access. Inferred conditional bindings may defer dependent callable
+  arm results until concrete instantiation, where both arms must have the same
+  exact non-void, non-borrowed value type. This does not admit borrowed capture,
+  callable escape, consuming a borrowed callable, or general `auto x = f()`
+  result deduction in an open generic body.
 - **Scope:** Implement the accepted callable contract for exact return types,
   read/mut/once invocation capability, owned storage, and explicit move capture
   one independently tested sub-slice at a time. Keep callable identity,

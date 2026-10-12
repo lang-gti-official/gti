@@ -391,18 +391,18 @@
       }
     },
     "028-callable-parameters.gti": {
-      "declarations": 97,
-      "bodies": 12,
-      "generated_items": 6,
+      "declarations": 105,
+      "bodies": 20,
+      "generated_items": 10,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
         "structural_operator_adapter": 0,
-        "callable_adapter": 1,
+        "callable_adapter": 2,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 4
+        "concrete_instance_adapter": 7
       }
     },
     "029-callable-predicates.gti": {
@@ -2147,8 +2147,8 @@
     }
   },
   "totals": {
-    "declarations": 94250,
-    "bodies": 14656,
-    "generated_items": 9175
+    "declarations": 94258,
+    "bodies": 14664,
+    "generated_items": 9179
   }
 }

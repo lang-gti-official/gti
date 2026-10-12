@@ -327,8 +327,8 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
   }
   if (!storedReceiver &&
       (variable == nullptr || parameter == nullptr || function == nullptr ||
-       function->declaration == nullptr ||
-       parameter->pack || calleeType.kind != SemanticType::TypeParameter)) {
+       function->declaration == nullptr || parameter->pack ||
+       calleeType.kind != SemanticType::TypeParameter)) {
     report(call.paren(),
            "Only a direct generic function parameter can be used "
            "as a confined callable.",
@@ -3817,8 +3817,8 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
         !parameter->type.reference;
     if (instanceAnalysisActive) {
       if ((!byValueCallableBoundary && !borrowedCallableBoundary) ||
-          candidate.declaration == nullptr ||
-          !candidate.declaration->body() || targetContract == nullptr) {
+          candidate.declaration == nullptr || !candidate.declaration->body() ||
+          targetContract == nullptr) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2046", DiagnosticPhase::Semantics,
             expressionToken(arguments[index]),
@@ -3835,14 +3835,16 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
                ((!byValueCallableBoundary && !borrowedCallableBoundary) ||
                 candidate.declaration == nullptr ||
                 !candidate.declaration->body())) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2046", DiagnosticPhase::Semantics,
-          expressionToken(arguments[index]),
-          "Callable argument " + std::to_string(index + 1) +
-              " must bind to a generic value/reference parameter or generic owning "
-              "carrier with a visible function body.");
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2046", DiagnosticPhase::Semantics,
+                         expressionToken(arguments[index]),
+                         "Callable argument " + std::to_string(index + 1) +
+                             " must bind to a generic value/reference "
+                             "parameter or generic owning "
+                             "carrier with a visible function body.");
       diagnostic.hints.emplace_back(
-          "Use a parameter such as 'Operation operation', 'Operation& operation', "
+          "Use a parameter such as 'Operation operation', 'Operation& "
+          "operation', "
           "'mut Operation& operation', or 'Owner<Operation> owner'.");
       diagnostics.emplace_back(std::move(diagnostic));
       valid = false;
@@ -6461,7 +6463,8 @@ auto SemanticVisitor::Impl::recordCallableForwardings(
 
   const std::size_t count =
       std::min(call.arguments().size(), targetInfo->parameterTypes.size());
-  const auto callableType = [](const SemanticType &type) -> const SemanticType & {
+  const auto callableType =
+      [](const SemanticType &type) -> const SemanticType & {
     return type.kind == SemanticType::Reference && type.arguments.size() == 1
                ? type.arguments.front()
                : type;
@@ -6505,7 +6508,8 @@ auto SemanticVisitor::Impl::recordCallableForwardings(
 
     semanticModel.recordCallableForwarding(
         *sourceInfo->declaration, sourceIndex,
-        callableType(sourceInfo->parameterTypes[sourceIndex]).genericParameterId,
+        callableType(sourceInfo->parameterTypes[sourceIndex])
+            .genericParameterId,
         callableType(sourceInfo->parameterTypes[sourceIndex]),
         sourceParameter->mutability == Mutability::Mutable
             ? AccessMode::Mutable

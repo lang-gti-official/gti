@@ -18193,8 +18193,8 @@ int main() { return 0; }
 }
 
 void testBorrowedCallableConditionals() {
-  const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "borrowed-callable-conditionals.gti", R"(
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("borrowed-callable-conditionals.gti", R"(
 class Counter {
 public:
   mut int value = 0;
@@ -18218,12 +18218,19 @@ int choose_both<F>(F& f, bool ok) {
   return result;
 }
 void choose_void<F>(F& f, bool ok) { ok ? f(1) : f(2); }
+T choose_nested<F, T>(F& f, T fallback, bool ok) {
+  auto result = (ok ? (ok ? f(4) : fallback) : f(7));
+  return result;
+}
 int main() {
   mut Counter counter{};
   int value = relay(counter);
   auto f = [](int n) -> int { return n + 1; };
   auto noop = [](int n) -> void {};
   choose_void(noop, true);
+  auto floating = [](int n) -> double { return 4.0d; };
+  if (choose_nested(f, 0, true) != 5 ||
+      choose_nested(floating, 0.0d, false) != 4.0d) { return 1; }
   return value + counter.value + choose(f, true) +
          choose_reverse(f, false) + choose_both(f, false) - 22;
 }
@@ -18233,7 +18240,8 @@ int main() {
       std::cerr << diagnostic.message << '\n';
   expect(frontend.canGenerateCode(),
          "borrowed callables and deferred exact conditional joins must lower");
-  if (!frontend.canGenerateCode()) return;
+  if (!frontend.canGenerateCode())
+    return;
 
   bool foundMutable = false;
   bool foundLambda = false;
@@ -18253,7 +18261,8 @@ int main() {
         expect(signature.returnType != lang::SemanticType::Unknown &&
                    (signature.lambdaTarget || signature.functionTarget),
                "every inferred signature must be concrete before MIR");
-      if (parameter.signatures.empty()) continue;
+      if (parameter.signatures.empty())
+        continue;
       for (int mutation = 0; mutation != 3; ++mutation) {
         auto malformed = frontend.mir;
         auto *changed = const_cast<lang::MirFunctionInstance *>(
@@ -18269,21 +18278,26 @@ int main() {
           contract.signatures.front().requiredCapability =
               lang::CallableInvocationCapability::Once;
         const bool rejected = !lang::verifyMirProgram(malformed).valid();
-        if (mutation == 0) rejectedAccess |= rejected;
-        if (mutation == 1) rejectedOwner |= rejected;
-        if (mutation == 2) rejectedConsumption |= rejected;
+        if (mutation == 0)
+          rejectedAccess |= rejected;
+        if (mutation == 1)
+          rejectedOwner |= rejected;
+        if (mutation == 2)
+          rejectedConsumption |= rejected;
         expect(rejected, "forged borrowed callable contract must fail MIR");
       }
     }
   }
   expect(foundMutable && foundLambda && rejectedAccess && rejectedOwner &&
              rejectedConsumption,
-         "test both concrete callable families and independent contract mutations");
+         "test both concrete callable families and independent contract "
+         "mutations");
 
   const auto reject = [](std::string_view name, std::string source,
                          std::string_view fragment) {
     const auto invalid = analyzeWithMemory(name, std::move(source));
-    const bool rejected = !invalid.canGenerateCode() &&
+    const bool rejected =
+        !invalid.canGenerateCode() &&
         !hasDiagnosticCode(invalid.diagnostics, "GTI-B0001") &&
         hasDiagnostic(invalid.diagnostics, std::string(fragment));
     if (!rejected) {
@@ -18299,32 +18313,52 @@ int choose<F>(F& f) { auto result = true ? f(1) : 2; return result; }
 int main() {
   auto f = [](int n) -> bool { return true; };
   return choose(f);
-})", "same exact type");
+})",
+         "same exact type");
   reject("borrowed-mutable-call.gti", R"(
 class Counter { public: int operator()(int n) mut { return n; } };
 int apply<F>(F& f) { return f(1); }
 int main() { Counter counter{}; return apply(counter); }
-)", "read-callable");
+)",
+         "read-callable");
   reject("borrowed-once-call.gti", R"(
 int apply<F>(mut F& f) { return std::move(f)(1); }
 int main() { return 0; }
-)", "reference");
+)",
+         "reference");
   reject("borrowed-callable-escape.gti", R"(
 F& escape<F>(F& f) { int n = f(1); return f; }
 int main() { return 0; }
-)", "cannot escape");
+)",
+         "cannot escape");
   reject("borrowed-callable-capture.gti", R"(
 void capture<F>(F& f) {
   int n = f(1);
   auto retained = [f]() -> int { return 1; };
 }
 int main() { return 0; }
-)", "cannot be captured");
+)",
+         "cannot be captured");
   reject("borrowed-result-conditional.gti", R"(
 class Source { int value = 1; public: int& operator()(int n) { return this.value; } };
 int apply<F>(F& f) { auto result = true ? f(1) : 2; return result; }
 int main() { Source source{}; return apply(source); }
-)", "without references");
+)",
+         "without references");
+  reject("borrowed-callable-upgrade.gti", R"(
+int apply<F>(mut F& f) { return f(1); }
+int relay<F>(F& f) { return apply(f); }
+int main() { auto f = [](int n) -> int { return n; }; return relay(f); }
+)",
+         "mutable");
+  reject("borrowed-callable-overlap.gti", R"(
+class Counter { public: int operator()(int n) mut { return n; } };
+int apply<F>(mut F& first, mut F& second) {
+  int a = first(1); int b = second(2); return a + b;
+}
+int main() { mut Counter f{}; return apply(f, f); }
+)",
+         "overlapping reference accesses");
 }
 
 void testOwnedCallableTransport() {

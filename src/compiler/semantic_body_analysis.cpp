@@ -6765,7 +6765,8 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
       contextualType == SemanticType::Unknown && !inferredValue
           ? analyze(expr.thenExpression())
           : analyzeExpectedCallableResult(expr.thenExpression(), contextualType,
-                                          contextualType == SemanticType::Unknown);
+                                          contextualType ==
+                                              SemanticType::Unknown);
   const ScopeStack thenScopes = scopes;
 
   scopes = beforeBranches;
@@ -6774,8 +6775,9 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
   const SemanticType elseType =
       elseExpectation == SemanticType::Unknown && !inferredValue
           ? analyze(expr.elseExpression())
-          : analyzeExpectedCallableResult(expr.elseExpression(), elseExpectation,
-                                          elseExpectation == SemanticType::Unknown);
+          : analyzeExpectedCallableResult(
+                expr.elseExpression(), elseExpectation,
+                elseExpectation == SemanticType::Unknown);
   --loanFlow.rawConditionalExpressionDepth;
   const ScopeStack elseScopes = scopes;
 
