@@ -158,7 +158,7 @@ def main() -> int:
                 labels = re.findall(r"(__gti_mir_bb_\d+): \{", "\n".join(lines[:index]))
                 guarded_pattern = re.compile(
                     r"if \((__gti_mir_replacement_success_\d+)\) \{\s*"
-                    r"goto (" + re.escape(labels[-1]) + r");\s*\} else \{\s*"
+                    r"goto (" + re.escape(labels[-1]) + r");\s*\} else \[\[unlikely\]\] \{\s*"
                     + INCOMING_CLEANUP_CHECK + r"\s*goto (__gti_mir_bb_\d+);"
                 ) if labels else None
                 guarded = guarded_pattern.search(body) if guarded_pattern else None

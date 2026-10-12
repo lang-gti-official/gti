@@ -389,6 +389,27 @@ struct mir_failure_status_v1 {
 inline constexpr mir_failure_status_v1 mir_failure_success_v1{
     GTI_FAILURE_CODE_NONE_V1, GTI_FAILURE_DETAIL_NONE_V1};
 
+// A failed detector publishes its exact record, unless its operation already
+// published the inner one, then checks whether it interrupted an incoming
+// cleanup. It runs only after a failure, so the record and check stay out of
+// the successful caller's native inlining cost. It may return for a first
+// failure or unwind through the managed-worker handoff, so it is neither
+// noexcept nor a terminal function.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((__cold__, __noinline__))
+#endif
+inline void mir_publish_failure_v1(
+    ::gti_failure_record_v2 *record, mir_failure_status_v1 status,
+    std::uint32_t site, const ::gti_failure_artifact_descriptor_v1 *artifact) {
+  if (!status.propagated) {
+    *record = ::gti_failure_record_v2{GTI_FAILURE_ABI_VERSION_V2, status.code,
+                                      status.detail, site, UINT32_C(0), {}};
+    std::memcpy(record->artifact_identity, artifact->artifact_identity,
+                sizeof record->artifact_identity);
+  }
+  mir_check_incoming_cleanup_failure_v1(record, artifact);
+}
+
 inline mir_failure_status_v1
 mir_checked_contract_v1(bool condition, ::gti_failure_code_v1 code,
                         ::gti_failure_detail_v1 detail) noexcept {
