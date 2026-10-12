@@ -100,8 +100,8 @@ this decision.
   compiler-private optional or variant abstraction.
 - Exhaustiveness is a semantic control-flow fact retained through HIR and MIR,
   so a backend cannot silently add an unmatched continuation.
-- Owning recursive sums let the former `std::json::value` document model (0.407
-  and earlier; `<std/json>` is reflection-driven since 0.408.0) store exactly
+- Owning recursive sums let the former `std::json::value` document model (0.408
+  and earlier; `<std/json>` is reflection-driven since 0.409.0) store exactly
   one active alternative instead of a tag plus storage for every alternative;
   JSON has no compiler-recognized name or privileged lowering path.
 - Stable payload layout and C ABI unions require separate decisions and

@@ -277,7 +277,7 @@ separately; the library binds results before returning them). The second slice
 `null`, string-keyed maps, exact number lexemes with range checks, strict
 UTF-8 and escapes, `codec<T>` specializations detected through reflection,
 pretty printing, decode limits, and errors with JSON Pointer paths and
-line/column. The owner then promoted it: since 0.408.0 `<std/json>` is the
+line/column. The owner then promoted it: since 0.409.0 `<std/json>` is the
 reflection-driven library and the owned `value` document model and its
 explicit codecs are gone (text of unknown shape decodes into maps or structs
 of optionals).
