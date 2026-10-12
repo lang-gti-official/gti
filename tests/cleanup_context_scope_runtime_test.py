@@ -22,8 +22,37 @@ int main() {
   static_assert(!noexcept(mir_check_incoming_cleanup_failure_v1(nullptr, nullptr)));
   static_assert(!noexcept(mir_terminate_cleanup_failure_v2(
       nullptr, nullptr, nullptr, nullptr)));
+  static_assert(!noexcept(mir_publish_failure_v1(
+      nullptr, mir_failure_status_v1{}, UINT32_C(0), nullptr)));
   if (mir_incoming_failure_cleanup_v1() != nullptr) return 1;
   mir_check_incoming_cleanup_failure_v1(nullptr, nullptr);
+  {
+    // A first failure publishes the exact record, replacing stale contents,
+    // and returns; a propagated status keeps the inner record.
+    ::gti_failure_record_v2 published{};
+    published.message_size = 7;
+    mir_publish_failure_v1(
+        &published,
+        mir_failure_status_v1{GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+                              GTI_FAILURE_DETAIL_STRING_VIEW_V1},
+        UINT32_C(3), artifact);
+    if (published.abi_version != GTI_FAILURE_ABI_VERSION_V2 ||
+        published.code != GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1 ||
+        published.detail != GTI_FAILURE_DETAIL_STRING_VIEW_V1 ||
+        published.site_index != 3 || published.reserved != 0 ||
+        published.message_size != 0 ||
+        std::memcmp(published.artifact_identity, artifact->artifact_identity,
+                    sizeof published.artifact_identity) != 0) return 12;
+    ::gti_failure_record_v2 inner{};
+    inner.site_index = 9;
+    mir_publish_failure_v1(
+        &inner,
+        mir_failure_status_v1{GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+                              GTI_FAILURE_DETAIL_STRING_VIEW_V1, true},
+        UINT32_C(3), artifact);
+    if (inner.site_index != 9 || inner.code != GTI_FAILURE_CODE_NONE_V1)
+      return 13;
+  }
   {
     mir_failure_cleanup_scope_v1 outer(&primary, artifact);
     {
@@ -88,6 +117,11 @@ def main():
                            "#endif\n"
                            "inline void mir_check_incoming_cleanup_failure_v1(")
             assert text.count(cold_helper) == 1, "failure-only check must have its bounded cold hint"
+            publish_helper = ("#if defined(__GNUC__) || defined(__clang__)\n"
+                              "__attribute__((__cold__, __noinline__))\n"
+                              "#endif\n"
+                              "inline void mir_publish_failure_v1(")
+            assert text.count(publish_helper) == 1, "failure publication must have its bounded cold hint"
             terminal_helper = ("[[noreturn]]\n"
                                "#if defined(__GNUC__) || defined(__clang__)\n"
                                "__attribute__((__cold__, __noinline__))\n"
