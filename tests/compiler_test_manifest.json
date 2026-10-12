@@ -502,6 +502,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testBorrowedCallableConditionals",
+      "suite": "ownership"
+    },
+    {
       "name": "testOwnedCallableTransport",
       "suite": "ownership"
     },

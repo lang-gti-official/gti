@@ -88,7 +88,7 @@ is a teaching helper, not a production server.
 | `025-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
 | `026-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
 | `027-copy-move-policies.gti` | explicit structural default construction/destruction, copy/move policy, and reinitialization after a consuming loop break |
-| `028-callable-parameters.gti` | confined generic operations with lambdas and function objects |
+| `028-callable-parameters.gti` | confined generic operations, borrowed stateful/lambda callables, reference forwarding and inferred conditional results |
 | `029-callable-predicates.gti` | exact bool predicate results from confined generic callables |
 | `030-callable-forwarding.gti` | proven confined callable forwarding through generic helper layers |
 | `031-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |

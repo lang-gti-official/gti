@@ -1,0 +1,75 @@
+#include <std/functional>
+#include <std/string>
+#include <std/vector>
+
+mut int dropped = 0;
+class Resource {
+  int value;
+public:
+  Resource(int value) : value(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { dropped += 1; }
+  int read() { return this.value; }
+};
+enum class errc { failed = 1 };
+expected<Resource, errc> make(int value) { return Resource(value); }
+class Producer {
+public:
+  mut int calls = 0;
+  Producer() {}
+  Producer(Producer& other) = delete;
+  Producer(Producer&& other) = default;
+  expected<Resource, errc> operator()(int value) mut {
+    this.calls += 1;
+    if (value == 0) return unexpected(errc::failed);
+    return Resource(value);
+  }
+};
+expected<Resource, errc> pick<F>(bool ok, mut F& f) {
+  return ok ? f(1) : make(2);
+}
+expected<Resource, errc> inferred<F>(bool ok, mut F& f) {
+  auto result = ok ? f(3) : make(4);
+  return result;
+}
+expected<Resource, errc> both<F>(bool ok, mut F& f) {
+  auto result = ok ? f(5) : f(0);
+  return result;
+}
+expected<Resource, errc> constrained<F>(mut F& f)
+    requires std::mut_callable<F, int, expected<Resource, errc>> {
+  return f(6);
+}
+int read<F>(F& f, int n) { return f(n); }
+int forward<F>(F& f, int n) { return read(f, n); }
+class Cleanup {
+public:
+  ~Cleanup() { std::println(90); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  {
+    mut Producer producer{};
+    auto a = pick(true, producer);
+    auto b = pick(false, producer);
+    auto c = inferred(true, producer);
+    auto d = inferred(false, producer);
+    auto e = both(true, producer);
+    auto error = both(false, producer);
+    auto f = constrained(producer);
+    if (!a || !b || !c || !d || !e || error || !f) return 1;
+    if (a.value().read() + b.value().read() + c.value().read() +
+        d.value().read() + e.value().read() + f.value().read() != 21) return 2;
+    if (producer.calls != 5 || dropped != 0) return 3;
+  }
+  if (dropped != 6) return 4;
+  Cleanup cleanup{};
+  Resource owned{12};
+  auto callback = [owned = std::move(owned)](int divisor) -> int {
+    return owned.read() / divisor;
+  };
+  auto& alias = callback;
+  if (forward(alias, argc == 1 ? 3 : 0) != 4) return 5;
+  if (forward(callback, 2) != 6) return 6;
+  return 0;
+}

@@ -17150,25 +17150,21 @@ int main() {
 
   const lang::FrontendResult invalidBoundary =
       lang::Frontend().analyze("invalid-callable-boundary.gti", R"(
-void invoke_ref<Operation>(Operation& operation) { operation(1); }
 Operation escape<Operation>(Operation operation) { return operation; }
 
 int main() {
   auto operation = [](int value) -> void {};
   auto escaped = escape(operation);
-  invoke_ref(operation);
   return 0;
 }
 )");
   expect(
       !invalidBoundary.canGenerateCode() &&
           hasDiagnostic(invalidBoundary.diagnostics,
-                        "Only a direct by-value generic function parameter") &&
-          hasDiagnostic(invalidBoundary.diagnostics,
                         "requires an explicit std::move ownership transfer") &&
           hasDiagnosticHint(invalidBoundary.diagnostics,
                             "Move an exact movable callable"),
-      "callable references and implicit owned transfers remain rejected");
+      "implicit owned callable transfers remain rejected");
 
   const lang::FrontendResult escapingObject =
       lang::Frontend().analyze("escaping-callable-object.gti", R"(
@@ -18042,7 +18038,7 @@ int main() {
       !nestedVoid.canGenerateCode() &&
           hasDiagnosticCode(nestedVoid.diagnostics, "GTI-S2046") &&
           hasDiagnostic(nestedVoid.diagnostics,
-                        "nested generic callable argument must produce a "
+                        "inferred generic callable result must be a "
                         "non-void value") &&
           hasDiagnosticHint(nestedVoid.diagnostics,
                             "explicit result binding") &&
@@ -18194,6 +18190,141 @@ int main() { return 0; }
           !hasDiagnosticCode(borrowedResult.diagnostics, "GTI-B0001"),
       "a rejected borrowed callable result should produce one focused "
       "callable diagnostic without an owner-origin cascade");
+}
+
+void testBorrowedCallableConditionals() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "borrowed-callable-conditionals.gti", R"(
+class Counter {
+public:
+  mut int value = 0;
+  Counter() {}
+  Counter(Counter& other) = delete;
+  Counter(Counter&& other) = default;
+  int operator()(int n) mut { this.value += n; return this.value; }
+};
+int call_mut<F>(mut F& f) { return f(2); }
+int relay<F>(mut F& f) { return call_mut(f); }
+int choose<F>(F& f, bool ok) {
+  auto result = ok ? f(4) : 7;
+  return result;
+}
+int choose_reverse<F>(F& f, bool ok) {
+  auto result = ok ? 7 : f(4);
+  return result;
+}
+int choose_both<F>(F& f, bool ok) {
+  auto result = ok ? f(4) : f(7);
+  return result;
+}
+void choose_void<F>(F& f, bool ok) { ok ? f(1) : f(2); }
+int main() {
+  mut Counter counter{};
+  int value = relay(counter);
+  auto f = [](int n) -> int { return n + 1; };
+  auto noop = [](int n) -> void {};
+  choose_void(noop, true);
+  return value + counter.value + choose(f, true) +
+         choose_reverse(f, false) + choose_both(f, false) - 22;
+}
+)");
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "borrowed callables and deferred exact conditional joins must lower");
+  if (!frontend.canGenerateCode()) return;
+
+  bool foundMutable = false;
+  bool foundLambda = false;
+  bool rejectedAccess = false;
+  bool rejectedOwner = false;
+  bool rejectedConsumption = false;
+  for (const auto &instance : frontend.mir.functionInstances()) {
+    for (const auto &parameter : instance.callableParameters) {
+      expect(parameter.callableType.kind == lang::SemanticType::Reference &&
+                 parameter.boundary == lang::CallableBoundary::Confined &&
+                 !parameter.ownedTransport,
+             "borrowed callable metadata must retain the reference boundary");
+      foundMutable |= parameter.access == lang::AccessMode::Mutable;
+      foundLambda |= parameter.callableType.arguments.front().kind ==
+                     lang::SemanticType::Lambda;
+      for (const auto &signature : parameter.signatures)
+        expect(signature.returnType != lang::SemanticType::Unknown &&
+                   (signature.lambdaTarget || signature.functionTarget),
+               "every inferred signature must be concrete before MIR");
+      if (parameter.signatures.empty()) continue;
+      for (int mutation = 0; mutation != 3; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(instance.id));
+        auto &contract = changed->callableParameters.front();
+        if (mutation == 0)
+          contract.access = parameter.access == lang::AccessMode::Mutable
+                                ? lang::AccessMode::ReadOnly
+                                : lang::AccessMode::Mutable;
+        else if (mutation == 1)
+          changed->parameterBindings[parameter.parameterIndex] = 999999;
+        else
+          contract.signatures.front().requiredCapability =
+              lang::CallableInvocationCapability::Once;
+        const bool rejected = !lang::verifyMirProgram(malformed).valid();
+        if (mutation == 0) rejectedAccess |= rejected;
+        if (mutation == 1) rejectedOwner |= rejected;
+        if (mutation == 2) rejectedConsumption |= rejected;
+        expect(rejected, "forged borrowed callable contract must fail MIR");
+      }
+    }
+  }
+  expect(foundMutable && foundLambda && rejectedAccess && rejectedOwner &&
+             rejectedConsumption,
+         "test both concrete callable families and independent contract mutations");
+
+  const auto reject = [](std::string_view name, std::string source,
+                         std::string_view fragment) {
+    const auto invalid = analyzeWithMemory(name, std::move(source));
+    const bool rejected = !invalid.canGenerateCode() &&
+        !hasDiagnosticCode(invalid.diagnostics, "GTI-B0001") &&
+        hasDiagnostic(invalid.diagnostics, std::string(fragment));
+    if (!rejected) {
+      std::cerr << name << " expected " << fragment << '\n';
+      for (const auto &diagnostic : invalid.diagnostics)
+        std::cerr << diagnostic.message << '\n';
+    }
+    expect(rejected,
+           "invalid borrowed invocation or join must fail in semantics");
+  };
+  reject("mismatched-conditional.gti", R"(
+int choose<F>(F& f) { auto result = true ? f(1) : 2; return result; }
+int main() {
+  auto f = [](int n) -> bool { return true; };
+  return choose(f);
+})", "same exact type");
+  reject("borrowed-mutable-call.gti", R"(
+class Counter { public: int operator()(int n) mut { return n; } };
+int apply<F>(F& f) { return f(1); }
+int main() { Counter counter{}; return apply(counter); }
+)", "read-callable");
+  reject("borrowed-once-call.gti", R"(
+int apply<F>(mut F& f) { return std::move(f)(1); }
+int main() { return 0; }
+)", "reference");
+  reject("borrowed-callable-escape.gti", R"(
+F& escape<F>(F& f) { int n = f(1); return f; }
+int main() { return 0; }
+)", "cannot escape");
+  reject("borrowed-callable-capture.gti", R"(
+void capture<F>(F& f) {
+  int n = f(1);
+  auto retained = [f]() -> int { return 1; };
+}
+int main() { return 0; }
+)", "cannot be captured");
+  reject("borrowed-result-conditional.gti", R"(
+class Source { int value = 1; public: int& operator()(int n) { return this.value; } };
+int apply<F>(F& f) { auto result = true ? f(1) : 2; return result; }
+int main() { Source source{}; return apply(source); }
+)", "without references");
 }
 
 void testOwnedCallableTransport() {
@@ -21708,6 +21839,7 @@ constexpr NamedTest kTests[] = {
     {"testLambdas", testLambdas},
     {"testConfinedCallableParameters", testConfinedCallableParameters},
     {"testConfinedCallableResults", testConfinedCallableResults},
+    {"testBorrowedCallableConditionals", testBorrowedCallableConditionals},
     {"testOwnedCallableTransport", testOwnedCallableTransport},
     {"testExpectedValues", testExpectedValues},
     {"testFallibleBorrows", testFallibleBorrows},
