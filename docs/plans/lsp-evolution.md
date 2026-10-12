@@ -217,11 +217,13 @@ lexical fallbacks are acceptable only when clearly less authoritative.
 
 ## Per-Keystroke Analysis Cost
 
-Status: measured 2026-10-10; editor-scoped HIR and background raw-pointer audit
-are implemented. Lazy trusted-body analysis and broader semantic reuse remain
-proposed. This is the compiler-side half of editor responsiveness. The
-protocol-side half (edit-time publication, adaptive debounce, refresh policy)
-is implemented and described in the architecture document.
+Status: measured 2026-10-12; editor-scoped HIR, the background raw-pointer
+audit and demand-driven trusted-body analysis (single analysis per edit) are
+implemented. Broader semantic reuse remains proposed; the eight-include file
+still exceeds the exit measure (see "Measured After Late Demand"). This is the
+compiler-side half of editor responsiveness. The protocol-side half (edit-time
+publication, adaptive debounce, refresh policy) is implemented and described
+in the architecture document.
 
 ### Measured Baseline Before Scope Reduction
 
@@ -299,10 +301,24 @@ layer.
    reverse order) must produce identical diagnostics over the examples and
    standard-library tests. Implemented in 0.411.0 using the deferred
    `codex/lsp-lazy-bodies` checkpoint as the starting point. Snapshots and
-   completion now use reachable trusted bodies; generic HIR discovery requests
-   missing primary facts before accepting usable HIR. Artifact builds use the
+   completion now use reachable trusted bodies. Artifact builds use the
    same bounded policy, revising the earlier editor-only restriction; full
    checks and artifact raw-pointer audits remain complete. See ADR 024.
+
+   As first delivered, a primary body that only concrete generic discovery
+   selected made HIR request it, and the frontend discarded the semantic
+   visitor and HIR and repeated the whole analysis with the body required.
+   The eight-include file needed that on every edit (two repetitions, three
+   registrations, three body passes and three HIR lowerings), so per-edit
+   time doubled to about 1,180 ms although 78 percent of library bodies were
+   skipped. Since 0.412.2 the semantic visitor completes such a body during
+   HIR lowering (late demand): it analyses it in the base model through the
+   deferred-body drain, finalizes exactly that batch, and re-runs any concrete
+   instance that consulted it. The repeated analysis remains as a bounded
+   fallback for the cases late demand refuses (an error in the late body, a
+   body an initializer's effect closure consulted, raw-pointer audits). Every
+   edit of both measured workloads now runs one analysis; see "Body Order And
+   Demand" in [semantic-analysis.md](../architecture/semantic-analysis.md).
 3. **Unit-local semantic reuse** (the true preamble analogue) only if 1 and 2
    leave the eight-include file above about 100 ms per edit. Trusted units'
    registration and body facts would be cached per unit, keyed by the unit's
@@ -314,6 +330,29 @@ layer.
    request, now with the same trusted-body scope reduction. Consider answering from
    the root's current snapshot when the completion marker does not change
    the visible declarations.
+
+### Measured After Late Demand
+
+Same message-flow probe, Release `gti_lsp`, arm64 macOS, 2026-10-12; steady
+edits (parse fully cached), milliseconds per edit:
+
+| Build | 089 total | semantic | registration | trusted bodies | HIR | repeated analyses |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| before demand-driven bodies (`2f4f50ae`) | 605 | 355 | 42 | 270 | 205 | n/a |
+| demand with repeated analysis (0.412.0) | 1,180 | 540 | 117 | 140 | 570 | 2 |
+| late demand (0.412.2) | 440 | 195 | 41 | 57 | 200 | 0 |
+
+With late demand the 089 edit analyses 284 of 1,250 deferred library bodies,
+12 of them late (about 10 ms including their finalization). The
+`transit-planner` `network.gti` edit never needed a repeated analysis and is
+unchanged at 105-115 ms (about 200 ms before demand-driven bodies). What
+remains on the eight-include file is one analysis: registration of every
+loaded unit (about 40 ms), the lexical body pass with eagerly analysed library
+constructors, destructors, virtual and constant definitions plus application
+bodies (about 75 ms), demanded library bodies (about 57 ms), finalization
+(8 ms) and entry-unit HIR, whose concrete instance analyses cost about 200 ms
+for 478 function instances. Reaching the exit measure needs step 3 or a
+cheaper concrete-instance analysis; neither is a demand problem.
 
 Exit measure: the eight-include file under 100 ms per edit with the probe,
 semantic diagnostics for the open file identical to `gti check` on its

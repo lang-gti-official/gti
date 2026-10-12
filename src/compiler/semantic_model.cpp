@@ -267,7 +267,11 @@ SemanticDatabase::findSymbol(SymbolId id) const {
     return base->findSymbol(id);
   }
   const SymbolId local = id - baseSymbolCount;
-  return local > symbolRecords.size() ? nullptr : &symbolRecords[local - 1];
+  if (local > symbolRecords.size())
+    return nullptr;
+  // An identity reserved by reserveIdentities belongs to an instance delta.
+  const SymbolRecord &record = symbolRecords[local - 1];
+  return record.sourceUnit == 0 ? nullptr : &record;
 }
 
 [[nodiscard]] std::vector<const SemanticOccurrence *>
@@ -379,6 +383,16 @@ void SemanticDatabase::rebase(const SemanticDatabase *baseDatabase) {
   base = baseDatabase;
 }
 
+void SemanticDatabase::reserveIdentities(SymbolId ceiling) {
+  while (symbolIdentityCeiling() < ceiling) {
+    SymbolRecord placeholder;
+    placeholder.id = symbolIdentityCeiling() + 1;
+    placeholder.generated = true;
+    placeholder.compilerPrivate = true;
+    symbolRecords.push_back(std::move(placeholder));
+  }
+}
+
 SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
   if (symbol.sourceUnit == 0 || symbol.nameSpan.end <= symbol.nameSpan.start) {
     return 0;
@@ -476,37 +490,50 @@ void SemanticDatabase::setToolingOccurrencesEnabled(bool enabled) {
 
 void SemanticDatabase::finalize() {
   for (auto &[_, unitOccurrences] : occurrencesByUnit) {
-    std::stable_sort(
-        unitOccurrences.begin(), unitOccurrences.end(),
-        [](const SemanticOccurrence &left, const SemanticOccurrence &right) {
-          if (left.span.start != right.span.start) {
-            return left.span.start < right.span.start;
-          }
-          if (left.span.end != right.span.end) {
-            return left.span.end < right.span.end;
-          }
-          return priority(left.kind) < priority(right.kind);
-        });
-    std::size_t write = 0;
-    for (std::size_t read = 0; read < unitOccurrences.size(); ++read) {
-      SemanticOccurrence &occurrence = unitOccurrences[read];
-      if (write != 0 && occurrence.symbol != 0 &&
-          unitOccurrences[write - 1].span.start == occurrence.span.start &&
-          unitOccurrences[write - 1].span.end == occurrence.span.end &&
-          unitOccurrences[write - 1].kind == occurrence.kind &&
-          unitOccurrences[write - 1].symbol == occurrence.symbol) {
-        unitOccurrences[write - 1].roles |= occurrence.roles;
-        continue;
-      }
-      if (write != read) {
-        unitOccurrences[write] = std::move(occurrence);
-      }
-      ++write;
-    }
-    unitOccurrences.erase(unitOccurrences.begin() +
-                              static_cast<std::ptrdiff_t>(write),
-                          unitOccurrences.end());
+    finalizeUnit(unitOccurrences);
   }
+}
+
+void SemanticDatabase::finalize(const std::unordered_set<SourceUnitId> &units) {
+  for (const SourceUnitId unit : units) {
+    if (const auto found = occurrencesByUnit.find(unit);
+        found != occurrencesByUnit.end())
+      finalizeUnit(found->second);
+  }
+}
+
+void SemanticDatabase::finalizeUnit(
+    std::vector<SemanticOccurrence> &unitOccurrences) {
+  std::stable_sort(
+      unitOccurrences.begin(), unitOccurrences.end(),
+      [](const SemanticOccurrence &left, const SemanticOccurrence &right) {
+        if (left.span.start != right.span.start) {
+          return left.span.start < right.span.start;
+        }
+        if (left.span.end != right.span.end) {
+          return left.span.end < right.span.end;
+        }
+        return priority(left.kind) < priority(right.kind);
+      });
+  std::size_t write = 0;
+  for (std::size_t read = 0; read < unitOccurrences.size(); ++read) {
+    SemanticOccurrence &occurrence = unitOccurrences[read];
+    if (write != 0 && occurrence.symbol != 0 &&
+        unitOccurrences[write - 1].span.start == occurrence.span.start &&
+        unitOccurrences[write - 1].span.end == occurrence.span.end &&
+        unitOccurrences[write - 1].kind == occurrence.kind &&
+        unitOccurrences[write - 1].symbol == occurrence.symbol) {
+      unitOccurrences[write - 1].roles |= occurrence.roles;
+      continue;
+    }
+    if (write != read) {
+      unitOccurrences[write] = std::move(occurrence);
+    }
+    ++write;
+  }
+  unitOccurrences.erase(unitOccurrences.begin() +
+                            static_cast<std::ptrdiff_t>(write),
+                        unitOccurrences.end());
 }
 
 [[nodiscard]] ExecutionProfile SemanticModel::executionProfile() const {
@@ -1738,6 +1765,7 @@ void SemanticModel::clearProgramConstantSubstitution(const Expr &expression) {
 void SemanticModel::beginInstanceDelta(const SemanticModel &baseModel,
                                        SymbolId reservedIdentityCeiling) {
   clear();
+  callJournal = nullptr;
   executionProfile_ = baseModel.executionProfile();
   placeSnapshot_ = baseModel.placeSnapshot();
   programKind_ = baseModel.programKind();
@@ -2194,6 +2222,12 @@ void SemanticModel::record(const Call &call, ResolvedCallInfo info) {
   }
   suppressedInheritedCalls.erase(&call);
   calls.insert_or_assign(&call, std::move(info));
+  if (callJournal != nullptr)
+    callJournal->insert(&call);
+}
+
+void SemanticModel::reserveSymbolIdentities(SymbolId ceiling) {
+  semanticDatabase.reserveIdentities(ceiling);
 }
 
 void SemanticModel::recordExpectedCombinator(const Call &call,
@@ -2426,6 +2460,19 @@ void SemanticModel::recordCompletion(SemanticCompletionContext context) {
 
 void SemanticModel::finalizeOccurrences() { semanticDatabase.finalize(); }
 
+void SemanticModel::finalizeOccurrences(
+    const std::unordered_set<SourceUnitId> &units) {
+  semanticDatabase.finalize(units);
+}
+
+std::unordered_map<SourceUnitId, std::size_t>
+SemanticModel::occurrenceCounts() const {
+  std::unordered_map<SourceUnitId, std::size_t> counts;
+  for (const auto &[unit, occurrences] : semanticDatabase.occurrencesByUnit)
+    counts.emplace(unit, occurrences.size());
+  return counts;
+}
+
 std::vector<CallableParameterContract>
 FunctionInfo::instantiatedCallableParameters(
     const std::vector<SemanticType> &concreteParameters) const {
@@ -2502,6 +2549,25 @@ void SemanticModel::finalizeCallableArguments(ResolvedCallInfo &call) const {
                     return left.parameterIndex == right.parameterIndex;
                   }),
       call.callableArguments.end());
+}
+
+void SemanticModel::finalizeCallableArguments(
+    const std::unordered_set<const Call *> &batchCalls,
+    const std::unordered_set<SourceUnitId> &units) {
+  for (const Call *call : batchCalls) {
+    if (const auto found = calls.find(call); found != calls.end())
+      finalizeCallableArguments(found->second);
+  }
+  for (const SourceUnitId unit : units) {
+    const auto found = semanticDatabase.occurrencesByUnit.find(unit);
+    if (found == semanticDatabase.occurrencesByUnit.end())
+      continue;
+    for (SemanticOccurrence &occurrence : found->second) {
+      if (occurrence.selectedCall) {
+        finalizeCallableArguments(*occurrence.selectedCall);
+      }
+    }
+  }
 }
 
 void SemanticModel::finalizeCallableArguments() {

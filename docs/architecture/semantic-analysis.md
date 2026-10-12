@@ -557,13 +557,41 @@ all application/package bodies, entry-file bodies, constant definitions and
 virtual/interface methods remain checked. Constructors and destructors are not
 deferred. There is no cross-snapshot semantic cache.
 
-Concrete generic instantiation may select another primary function body.
-HIR returns those AST identities as explicit semantic requests and remains
-invalid until they are satisfied. The frontend repeats semantic analysis with
-a monotonically growing required-body set, discarding partial HIR before
-replacing its immutable base snapshot. At most three discovery retries precede
-conservative complete checking. Metrics report retries/fallbacks and cumulative
-semantic/HIR time. `gti check` retains complete analysis. Artifact raw-pointer
+Concrete generic instantiation may select another primary function body that
+nothing analysed demanded, typically a library body reached only through a
+dependent call. The semantic visitor completes such a body while HIR runs
+(late demand) instead of discarding the analysis:
+
+- HIR asks its `SemanticInstanceProvider` for the body before recording a
+  request, and the visitor analyses it in its declaration context through the
+  same deferred-body drain, together with every body that analysis demands;
+- a concrete instance analysis that consulted a still-pending function is
+  analysed again after that function's late demand, so no instance keeps a
+  fact the body would have changed. Request finalization never infers
+  callable contracts for a pending body, so its own analysis establishes them
+  first, as in the pass;
+- the batch is then finalized on its own: declaration-fact discovery and
+  diagnostics cover exactly the bodies it analysed and the calls, callable
+  forwardings, C-thread uses and advisory candidates it recorded, and only the
+  source units it extended re-sort their occurrences;
+- a late batch only appends records keyed by its own syntax and fills its
+  functions' own declaration facts. New symbol identities continue above every
+  instance delta's identities (the skipped identities are inert and resolve to
+  nothing) and lambda identities above every delta's lambdas, so existing
+  deltas, which read through to the base model, stay valid.
+
+Late demand is equivalent to having analysed the bodies in the pass, by the
+same order independence the `Deferred` mode proves. Where that argument does
+not hold it is not used: a batch that reports an error (invalid primary
+analysis never reaches HIR) or analyses a body an initializer's program-effect
+closure already consulted marks the request failed, and raw-pointer audits keep
+complete analysis. HIR then returns the bodies as explicit semantic requests
+and remains invalid; the frontend repeats semantic analysis with a
+monotonically growing required-body set, discarding partial HIR before
+replacing its immutable base snapshot. At most three such retries precede
+conservative complete checking. Metrics report late-demand bodies and time
+(semantic time, not HIR time), retries/fallbacks and cumulative semantic/HIR
+time. `gti check` retains complete analysis. Artifact raw-pointer
 audits run a separate complete diagnostic analysis before the same reachable,
 audit-off artifact analysis used without auditing. Strict findings still stop
 compilation; successful audit diagnostics are retained, but the audit model

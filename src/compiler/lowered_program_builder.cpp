@@ -1297,7 +1297,10 @@ LoweredProgramBuild LoweredProgramBuilder::build(
          .instanceDependentType = symbol.instanceDependentType});
   };
   for (const SymbolRecord &symbol : semantics.database().symbols()) {
-    retainSymbol(symbol);
+    // Source unit 0 marks an identity reserved by late demand; it names no
+    // declaration.
+    if (symbol.sourceUnit != 0)
+      retainSymbol(symbol);
   }
   for (const SymbolRecord &symbol : hir.instanceSymbols()) {
     retainSymbol(symbol);

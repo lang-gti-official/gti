@@ -451,8 +451,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   }
 
   // Concrete generic discovery can select bodies which were not visible to
-  // declaration-time analysis. Keep each semantic model immutable while HIR
-  // reads it; incomplete discovery requests a fresh, more complete analysis.
+  // declaration-time analysis. With bounded trusted-body analysis the
+  // semantic visitor completes such a body while HIR runs (late demand): it
+  // only appends records for that body and fills its own declaration facts,
+  // and HIR re-runs any concrete instance that consulted it. When late demand
+  // cannot stay equivalent to analysing the body in the pass, discovery
+  // requests a fresh, more complete analysis instead.
   const std::size_t preSemanticDiagnostics = result.diagnostics.size();
   std::unordered_set<const FunctionDecl *> requiredBodies;
   std::unique_ptr<SemanticVisitor> semanticOwner;
@@ -499,6 +503,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
               .count());
     }
     append(result.diagnostics, semantic.errors());
+    const std::size_t semanticDiagnosticCount = semantic.errors().size();
     // Complete the requested inference phases before applying CI policy, so
     // Strict and Warn discover the same concrete bodies and audit findings.
     if (options.requireEntryPoint && result.sourceValid && result.syntaxValid &&
@@ -520,6 +525,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     }
 
     const auto hirStart = std::chrono::steady_clock::now();
+    const std::size_t lateDemandStart =
+        options.workMetrics == nullptr
+            ? 0
+            : options.workMetrics->semanticLateDemandMicroseconds;
     hir = [&] {
       const PhaseTimeScope timeScope("gti-hir-lowering");
       const ProgressScope progress(options.progress,
@@ -547,12 +556,27 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
           .lower(result.program, semantic.model(), semantic);
     }();
     if (options.workMetrics != nullptr) {
-      options.workMetrics->hirMicroseconds += static_cast<std::size_t>(
+      // Late demand runs inside HIR discovery but is semantic work.
+      const std::size_t lateDemand =
+          options.workMetrics->semanticLateDemandMicroseconds - lateDemandStart;
+      const auto elapsed = static_cast<std::size_t>(
           std::chrono::duration_cast<std::chrono::microseconds>(
               std::chrono::steady_clock::now() - hirStart)
               .count());
+      options.workMetrics->semanticMicroseconds += lateDemand;
+      options.workMetrics->hirMicroseconds +=
+          elapsed > lateDemand ? elapsed - lateDemand : 0;
       options.workMetrics->hirFunctionInstances =
           hir.program.functionInstances().size();
+    }
+    // Late demand may report diagnostics in the bodies it analysed.
+    const auto &semanticErrors = semantic.errors();
+    for (std::size_t index = semanticDiagnosticCount;
+         index < semanticErrors.size(); ++index)
+      result.diagnostics.push_back(semanticErrors[index]);
+    if (semantic.lateDemandFailed()) {
+      for (const FunctionDecl *body : semantic.lateDemandedBodies())
+        hir.requiredSemanticBodies.push_back(body);
     }
     if (hir.requiredSemanticBodies.empty())
       break;
