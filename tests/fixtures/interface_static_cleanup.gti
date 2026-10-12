@@ -43,7 +43,7 @@ class Marked : public Marker { public: Marked() {} };
 
 interface Rules {
   static int seed(int value = 7) { return helper(value); }
-  static T identity<T>(T value) requires std::copyable<T> { return value; }
+  static T identity<T>(T value) requires std::copy_constructible<T> { return value; }
   static constexpr int twice(int value) { return value * 2; }
   unsafe static int unchecked() { return 9; }
   static int unselected();

@@ -325,7 +325,7 @@ def test_interface_static_methods_tooling(executable, root):
         "  int width() override { return Window::Create(0); }\n"
         "};\n"
         "int observe(Window& window) { return window.width(); }\n"
-        "int main() { DesktopWindow window;\n"
+        "int main() { DesktopWindow window{};\n"
         "  return observe(window) == Window::Create(0) ? 0 : 1; }\n"
     )
     path = root / "interface-static-methods.gti"
@@ -438,7 +438,7 @@ def test_interface_static_methods_tooling(executable, root):
             "interface Declared { static int Missing(); int read(); };\n"
             "class Reader : public Declared { public: "
             "int read() override { return 1; } };\n"
-            "int main() { Reader reader; return reader.read() - 1; }\n"
+            "int main() { Reader reader{}; return reader.read() - 1; }\n"
         )
         assert not has_error_diagnostics(change(unused_declaration, 3))
         cases = (
@@ -446,7 +446,7 @@ def test_interface_static_methods_tooling(executable, root):
              "int main() { return 0; }\n", "GTI-S2041", "cannot have a body"),
             ("interface Broken { static int Helper() = 0; };\n"
              "int main() { return 0; }\n", "GTI-S2042", "cannot be virtual"),
-            ("interface Broken { static virtual int Helper() { return 1; } };\n"
+            ("interface Broken { virtual static int Helper() { return 1; } };\n"
              "int main() { return 0; }\n", "GTI-S2042", "cannot be virtual"),
             ("interface Broken { static int Helper() override { return 1; } };\n"
              "int main() { return 0; }\n", "GTI-S2042", "cannot be virtual"),
