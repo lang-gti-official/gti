@@ -32,6 +32,22 @@ optimized compiler, after reconciliation with the lifetime fix in `c425f91b`.
 The task's final verification record binds broad acceptance to its exact
 published head and base; these focused results do not substitute for it.
 
+The unfiltered 687-test Apple Silicon sweep on `337920ae` completed in
+1,683.04 seconds: 684 passed. Its three failures were a missing LSP test-client
+capability for related diagnostic information, a stale mutation-test assumption
+that an ownerless static function was valid MIR, and the SSH host's explicit
+denial of debugger permission. The corrected tests request the capability,
+require rejection of the malformed static header while retaining a separate
+generic-MIR-valid header-drift check, and recognize that exact host prohibition
+under the existing debugger-skip policy. No compiler/runtime code changed in
+those corrections. Final validation re-runs the affected tests and relevant
+compiler/backend/corpus gates on the clean published head. The actual LLDB
+breakpoint/continue check also passed on the local Mac with the same Mini-built
+optimized candidate (`gti` SHA-256
+`597462f4cbd7cfc7d417272e5b65f7e2b42e28160b2e72d2447c9460ceb6c5ef`).
+This is combined host and delta-validation evidence, not a claim that the
+initial remote sweep was entirely green.
+
 `out_of_class_performance` compares an inline static body, its split definition
 and a C++ success-domain control. On snapshot `1108fc2878bb91f6bfb50174a59e763838d15d2c22b654bfcc83cfb76fdd7a7b`
 (GTI 0.415.0, Apple clang 21.0.0), three warmups and seven interleaved samples

@@ -6,8 +6,8 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_project_facts_test import diagnostics_for, initialize, open_document, write
-from lsp_smoke_test import LspSession, lsp_position
+from lsp_project_facts_test import diagnostics_for, open_document, write
+from lsp_smoke_test import LspSession, initialize_session, lsp_position
 
 
 def main():
@@ -42,7 +42,8 @@ def main():
                 "textDocument": {"uri": uri, "version": version}, "contentChanges": [{"text": text}]}})
 
         try:
-            initialize(session, watched_files=True)
+            initialize_session(session, capabilities={
+                "textDocument": {"publishDiagnostics": {"relatedInformation": True}}})
             uri = open_document(session, entry, source)
             assert diagnostics_for(session, uri, 1) == []
             where = request("textDocument/definition", uri, source, source.index("make") + 1)
