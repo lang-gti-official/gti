@@ -18,6 +18,7 @@ namespace gti_internal {
 uint64_t meta_field_count<T>();
 std::string_view meta_field_name<T, uint64_t I>();
 bool meta_field_is_public<T, uint64_t I>();
+bool meta_field_has_default<T, uint64_t I>();
 std::string_view meta_type_name<T>();
 uint64_t meta_type_kind<T>();
 uint64_t meta_field_attribute_count<T, uint64_t I>();
@@ -319,6 +320,12 @@ public:
   /// The field's position in declaration order.
   constexpr uint64_t index() { return I; }
   constexpr bool is_public() { return gti_internal::meta_field_is_public<T, I>(); }
+  /// Whether the field's declaration has a default initializer.
+  constexpr bool has_default() { return gti_internal::meta_field_has_default<T, I>(); }
+  /// A fresh value of the field's declared default initializer, evaluated
+  /// where `default_value` is called; an error when the declaration has none
+  /// (test with `has_default()` first).
+  field_type<T, I> default_value();
   /// The exact field type as a type metaobject; pass it to a generic
   /// function to deduce the type (`decode(field.type(), input)`).
   constexpr type<field_type<T, I>> type() {

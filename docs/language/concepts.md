@@ -266,6 +266,11 @@ concrete instance is reanalyzed before HIR/MIR. A mutable contract never grants
 permission to call through a read-only receiver. Combine separate queries using
 `&&` and `||`; only facts common to all alternatives enter a generic body.
 Receiver, parameter and result types may contain dependent compound types.
+Inside a generic body, a dependent class receiver such as `Box<T>` proves a
+requirement from its declared members after ordinary substitution, with the
+same exact matching, even when the required result or parameters name the
+enclosing parameters. A bare type parameter proves one only through an
+enclosing requirement.
 Function inline generic-parameter constraints still exclude structural
 concepts; use a trailing clause. Class parameters accept unary structural
 annotations as described above. Borrowed-result contracts remain unsupported.
@@ -450,7 +455,10 @@ form. Read-only targets satisfy repeatable and once-use sites, mutable targets
 satisfy repeatable and once-use sites, and `operator() &&` satisfies only a
 once-use site. This implication is capability inclusion, not overload ranking:
 each relation still requires one exact candidate after receiver capability is
-selected.
+selected. Inside a generic body, a dependent target such as `less<T>`, or a
+lambda whose signature names `T`, satisfies a relation through its substituted
+`operator()` signature. A bare type parameter satisfies one only through an
+enclosing requirement.
 
 An exact callable argument describes a readable source value. A concrete
 target may copy it by value or observe it through an exact read-only reference.

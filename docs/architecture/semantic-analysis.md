@@ -380,7 +380,13 @@ checking argument and receiver access plus the retained unsafe-call obligation.
 Safe structural facts imply the weaker unsafe capability; the reverse does not
 hold. The existing conjunction/alternative fact calculation preserves that
 direction, including forwarded requirements. Concrete instance analysis selects
-the ordinary method and publishes the normal HIR/MIR call. Comma-pack fold targets
+the ordinary method and publishes the normal HIR/MIR call. A requirement whose
+subject is a dependent compound type, such as a class instance or lambda whose
+signature names enclosing parameters, first consults active facts and then
+inspects the subject's own declaration after ordinary substitution, using the
+same exact signature matching as a concrete type. Only a bare parameter relies
+on facts alone; a bare argument that itself needs member lookup fails closed.
+Comma-pack fold targets
 may carry requirements: each concrete element passes ordinary instantiation and
 constraint checking before a resolved fold can enter HIR. Signature requirements
 do not create a second executable call path or bypass actual borrow checking.
@@ -527,7 +533,7 @@ constant execution, use their separately described isolated query services:
   analyses the callee in its own position, and the caller resumes. That state
   includes the caller's `constexpr for` expansion frames and budget, so a
   demand from inside an expansion neither consumes nor resets it;
-- a compiler-trusted body the pass deferred (test mode, below) is analysed in
+- a compiler-trusted body the pass deferred is analysed in
   its own declaration context;
 - a body already in progress (recursion), concrete-instance reanalysis, a
   demand from outside a function body, and a declaration the walk cannot reach
@@ -549,7 +555,28 @@ lexical order. The `body_analysis_order` test proves that it produces the same
 diagnostics as the complete pass over the examples and the standard-library
 tests, and checks fixtures for both orders of the moved-return generic, global
 and `constexpr` visibility across a demand, and mutually recursive demands.
-Compilation always analyses every body.
+`TrustedBodyAnalysis::Reachable` extends that infrastructure for artifact
+builds and editor snapshots/completion. Function lookups during body analysis
+record demand in a scoped sink. Deferred trusted functions are analyzed to a
+fixed point, in their original declaration contexts. Declaration registration,
+all application/package bodies, entry-file bodies, constant definitions and
+virtual/interface methods remain checked. Constructors and destructors are not
+deferred. There is no cross-snapshot semantic cache.
+
+Concrete generic instantiation may select another primary function body.
+HIR returns those AST identities as explicit semantic requests and remains
+invalid until they are satisfied. The frontend repeats semantic analysis with
+a monotonically growing required-body set, discarding partial HIR before
+replacing its immutable base snapshot. At most three discovery retries precede
+conservative complete checking. Metrics report retries/fallbacks and cumulative
+semantic/HIR time. `gti check` retains complete analysis. Artifact raw-pointer
+audits run a separate complete diagnostic analysis before the same reachable,
+audit-off artifact analysis used without auditing. Strict findings still stop
+compilation; successful audit diagnostics are retained, but the audit model
+cannot change emitted identities or macro isolation. This deliberately costs
+an additional analysis only when an optional audit is requested.
+This bounded staging avoids unchecked code generation without
+claiming that all generic dependencies are known from declaration-time calls.
 
 Text-return relay predeclaration consults the owning class's registered instance
 fields for implicit receiver spellings as well as explicit `this` paths.
@@ -748,6 +775,11 @@ the source graph. The computed types `method_list`, `operator_list`,
 `constructor_parameter_list`, `constructor_parameter_type`, `list_first` and
 `list_rest` are rewritten like the field computed types.
 `MetaTypePrimaryName` folds the primary's qualified name without arguments.
+`MetaFieldHasDefault` folds whether the field's `VariableDecl` carries an
+initializer, and `field<T, I>().default_value()` (`analyzeMetaFieldDefault`,
+intrinsic `MetaFieldDefault`) aliases the call to a clone of that initializer
+analysed under the field's type, exactly like `attribute<A>()` aliases to a
+synthesized construction; the open form is deferred to concrete reanalysis.
 
 A reflection client dispatches on an open parameter with `if constexpr`, so
 the symbolic primary defers the branch (`recordConstexprBranch` with no

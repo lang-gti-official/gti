@@ -39,6 +39,21 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   currentSourceUnit = 0;
   structuredBindingElements.clear();
   requestSession.recoveredExhaustiveSwitches.clear();
+  deferredBodies.clear();
+  demandedFunctions.clear();
+  visitedFunctionDeclarations.clear();
+  analyzedBodies.clear();
+  bodiesInProgress.clear();
+  bodyPhaseActive = false;
+  onDemandBodyAnalysis = false;
+  declarationOrders.clear();
+  declarationOrderCounter = 0;
+  currentDeclarationOrder = 0;
+  lexicalFrames.clear();
+  lexicalFrameVersion = 0;
+  lexicalLoanFlow = {};
+  heldDiagnostics.clear();
+  lexicallyReachableFunctions.clear();
   semanticModel.clear();
   semanticModel.setExecutionProfile(target.executionProfile);
   semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
@@ -149,7 +164,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   catalog.seal();
   valueFlow.beginBody(catalog);
   if (workMetrics != nullptr) {
-    workMetrics->semanticRegistrationMicroseconds = static_cast<std::size_t>(
+    workMetrics->semanticRegistrationMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - registrationStart)
             .count());
@@ -160,15 +175,21 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   bodyPhaseActive = true;
   analyzeDeclarationAttributes();
   indexLexicallyReachableFunctions(program.declarations());
-  runLexicalPass(program.declarations());
-  measureTopLevelStatements = false;
-  analyzeDeferredBodies();
+  {
+    FunctionDemandScope demandScope(
+        semanticModel, trustedBodies == TrustedBodyAnalysis::Reachable
+                           ? &demandedFunctions
+                           : nullptr);
+    runLexicalPass(program.declarations());
+    measureTopLevelStatements = false;
+    analyzeDeferredBodies();
+  }
   bodyPhaseActive = false;
   recordGenericDefaultConstantUses();
   validateDefaultArgumentCycles();
   endScope();
   if (workMetrics != nullptr) {
-    workMetrics->semanticBodyMicroseconds = static_cast<std::size_t>(
+    workMetrics->semanticBodyMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - bodyStart)
             .count());
@@ -190,7 +211,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   finalizeAdvisoryDiagnostics();
   catalog.assertUnchangedSinceSeal();
   if (workMetrics != nullptr) {
-    workMetrics->semanticFinalizationMicroseconds = static_cast<std::size_t>(
+    workMetrics->semanticFinalizationMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - finalizationStart)
             .count());
@@ -1198,6 +1219,95 @@ auto SemanticVisitor::Impl::analyzeMetaAttributeAccess(
   contextualInitializerType = enclosingType;
   contextualInitializerExpression = enclosingExpression;
   currentType = constructed == SemanticType::Unknown ? constructed : attribute;
+}
+
+// `field<T, I>().default_value()`: the value of the field's declared default
+// initializer, evaluated where the call is. Semantics aliases the call to a
+// clone of that initializer, analysed under the field's type like the
+// declaration itself; a field without an initializer is rejected.
+auto SemanticVisitor::Impl::analyzeMetaFieldDefault(
+    const Call &expr, const Get &member, const SemanticType &fieldObject)
+    -> void {
+  if (!expr.arguments().empty() || !expr.typeArguments().empty() ||
+      fieldObject.arguments.size() != 1 ||
+      fieldObject.valueArguments.size() != 1) {
+    report(expr.paren(), "'default_value' takes no arguments.", "GTI-S2019");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const SemanticType &owner = fieldObject.arguments.front();
+  const CompileTimeValue &index = fieldObject.valueArguments.front();
+  if (containsOpenTypeParameter(owner) ||
+      index.kind != CompileTimeValue::UInt64) {
+    // Symbolic: the field type is the computed compiler type, rewritten by
+    // concrete reanalysis together with the alias below.
+    const ClassId computed = compilerTypeClass(CompilerTypeKind::MetaFieldType);
+    currentType = computed == 0
+                      ? SemanticType::Unknown
+                      : SemanticType::classType(computed, {owner}, {index});
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .typeArguments = {owner},
+                               .valueArguments = {index},
+                               .intrinsic = IntrinsicKind::MetaFieldDefault});
+    return;
+  }
+  const std::optional<MetaFieldFacts> facts =
+      metaFieldFacts(owner, index.value);
+  if (!facts) {
+    report(expr.paren(),
+           "Field index " + std::to_string(index.value) +
+               " is out of range for '" + typeSpelling(owner) +
+               "', which has " + std::to_string(metaFieldCount(owner)) +
+               " instance field(s).",
+           "GTI-S2111");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (facts->declaration == nullptr || !facts->declaration->initializer()) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2119", DiagnosticPhase::Semantics, member.name(),
+        "Field '" + facts->name + "' of '" + typeSpelling(owner) +
+            "' declares no default initializer.");
+    diagnostic.hints.emplace_back(
+        "Test for a default with has_default() before reading it.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  semanticModel.record(
+      expr, ResolvedCallInfo{.returnType = facts->type,
+                             .typeArguments = {owner},
+                             .valueArguments = {index},
+                             .intrinsic = IntrinsicKind::MetaFieldDefault});
+  std::shared_ptr<const Expr> clone =
+      cloneExpr(*facts->declaration->initializer(), 0);
+  synthesizedExpressions.push_back(clone);
+  const Expr &alias = semanticModel.recordExpressionAlias(expr, clone);
+  // The initializer's names resolve where the field was declared, not where
+  // `default_value` is called: analyse the clone in the owner's namespace,
+  // source unit and class, as the declaration itself is analysed.
+  const ClassInfo &ownerInfo = classInfo(owner.classId);
+  const auto enclosingNamespace = currentNamespace;
+  const SourceUnitId enclosingUnit = currentSourceUnit;
+  const std::optional<ClassId> enclosingClass = currentClass;
+  const bool enclosingFieldInitializer = analyzingFieldInitializer;
+  const std::optional<SemanticType> enclosingType = contextualInitializerType;
+  const Expr *enclosingExpression = contextualInitializerExpression;
+  currentNamespace = ownerInfo.namespaceScope;
+  currentSourceUnit = ownerInfo.sourceUnit;
+  currentClass = owner.classId;
+  analyzingFieldInitializer = true;
+  contextualInitializerType = facts->type;
+  contextualInitializerExpression = &alias;
+  const SemanticType produced = analyze(alias);
+  contextualInitializerType = enclosingType;
+  contextualInitializerExpression = enclosingExpression;
+  analyzingFieldInitializer = enclosingFieldInitializer;
+  currentClass = enclosingClass;
+  currentSourceUnit = enclosingUnit;
+  currentNamespace = enclosingNamespace;
+  currentType = produced == SemanticType::Unknown ? produced : facts->type;
 }
 
 auto SemanticVisitor::Impl::isEffectFreeMetaReceiver(
@@ -2546,6 +2656,7 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
 
 auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     -> void {
+  FunctionDemandScope pauseDemand(semanticModel, nullptr);
   const DeclarationOrderScope declarationOrder{*this, stmt};
   // A declaration analysed on demand (see ensureBodyAnalyzed) is complete;
   // the lexical pass must not process it a second time. Concrete-instance
@@ -2925,8 +3036,13 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
 auto SemanticVisitor::Impl::analyzeFunctionBody(
     const FunctionDecl &stmt, const FunctionInfo *functionInfo,
     bool declarationErrors, bool constexprDeclarationValid) -> void {
+  FunctionDemandScope demandScope(
+      semanticModel, trustedBodies == TrustedBodyAnalysis::Reachable
+                         ? &demandedFunctions
+                         : nullptr);
   if (!instanceAnalysisActive) {
     analyzedBodies.insert(&stmt);
+    semanticModel.recordAnalyzedFunctionBody(stmt);
     bodiesInProgress.insert(&stmt);
   }
   struct InProgressGuard {
@@ -3066,8 +3182,9 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
 auto SemanticVisitor::Impl::deferTrustedBody(const FunctionDecl &stmt) const
     -> bool {
   if (trustedBodies == TrustedBodyAnalysis::Complete ||
-      instanceAnalysisActive || onDemandBodyAnalysis || functionDepth != 0 ||
-      lambdaDepth != 0 || sourceGraph == nullptr || currentSourceUnit == 0 ||
+      requiredFunctionBodies.contains(&stmt) || instanceAnalysisActive ||
+      onDemandBodyAnalysis || functionDepth != 0 || lambdaDepth != 0 ||
+      sourceGraph == nullptr || currentSourceUnit == 0 ||
       currentSourceUnit == sourceGraph->entryUnit() ||
       !sourceGraph->isCompilerTrusted(currentSourceUnit)) {
     return false;
@@ -3561,8 +3678,8 @@ auto SemanticVisitor::Impl::advanceLexicalPass(const FunctionDecl *until)
   }
 }
 
-// Analyses the bodies the lexical pass deferred, in reverse lexical order;
-// this is the test mode that proves results do not depend on body order. Each
+// Complete deferral drains in reverse order; reachable deferral drains only
+// the transitive demand set. Each
 // body is analysed exactly as in place: its namespace, source unit, owning
 // class scope with members, generic parameters and requirement scope are
 // re-established around the shared body half.
@@ -3571,12 +3688,10 @@ auto SemanticVisitor::Impl::analyzeDeferredBodies() -> void {
     return;
   }
   const auto start = std::chrono::steady_clock::now();
-  std::size_t analyzedCount = 0;
   const auto analyzeOne = [&](const RequestSessionState::DeferredBody body) {
     if (analyzedBodies.contains(body.declaration)) {
       return; // Analysed on demand by a caller meanwhile.
     }
-    ++analyzedCount;
     const std::vector<std::string> enclosingNamespace = currentNamespace;
     const SourceUnitId enclosingUnit = currentSourceUnit;
     const std::optional<ClassId> enclosingClass = currentClass;
@@ -3600,8 +3715,26 @@ auto SemanticVisitor::Impl::analyzeDeferredBodies() -> void {
     currentSourceUnit = enclosingUnit;
     currentClass = enclosingClass;
   };
-  for (std::size_t index = deferredBodies.size(); index > 0; --index) {
-    analyzeOne(deferredBodies[index - 1]);
+  if (trustedBodies == TrustedBodyAnalysis::Deferred) {
+    for (std::size_t index = deferredBodies.size(); index > 0; --index)
+      analyzeOne(deferredBodies[index - 1]);
+  } else {
+    // Conservative fixed point: selected callees, callable values and other
+    // consulted records can demand further bodies. Every body runs at most
+    // once and retains its original lexical visibility and safety checks.
+    std::unordered_set<const FunctionDecl *> processed;
+    bool progress = true;
+    while (progress) {
+      progress = false;
+      for (std::size_t index = 0; index < deferredBodies.size(); ++index) {
+        const auto body = deferredBodies[index];
+        if (!demandedFunctions.contains(body.function) ||
+            !processed.insert(body.declaration).second)
+          continue;
+        progress = true;
+        analyzeOne(body);
+      }
+    }
   }
   if (workMetrics != nullptr) {
     workMetrics->semanticTrustedBodyMicroseconds += static_cast<std::size_t>(
@@ -3609,7 +3742,10 @@ auto SemanticVisitor::Impl::analyzeDeferredBodies() -> void {
             std::chrono::steady_clock::now() - start)
             .count());
     workMetrics->semanticDeferredBodies += deferredBodies.size();
-    workMetrics->semanticAnalyzedDeferredBodies += analyzedCount;
+    workMetrics->semanticAnalyzedDeferredBodies += std::count_if(
+        deferredBodies.begin(), deferredBodies.end(), [&](const auto &body) {
+          return analyzedBodies.contains(body.declaration);
+        });
   }
 }
 
@@ -5716,6 +5852,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           member->name().lexeme == "attribute") {
         analyzeMetaAttributeAccess(expr, *member, *objectType,
                                    metaObject == CompilerTypeKind::MetaType);
+        return;
+      }
+      if (metaObject == CompilerTypeKind::MetaField &&
+          member->name().lexeme == "default_value") {
+        analyzeMetaFieldDefault(expr, *member, *objectType);
         return;
       }
     }

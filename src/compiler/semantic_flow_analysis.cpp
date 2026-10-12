@@ -2214,6 +2214,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::MetaFieldCount:
         case IntrinsicKind::MetaFieldName:
         case IntrinsicKind::MetaFieldIsPublic:
+        case IntrinsicKind::MetaFieldHasDefault:
         case IntrinsicKind::MetaTypeName:
         case IntrinsicKind::MetaTypeKind:
         case IntrinsicKind::MetaFieldAttributeCount:
@@ -2241,6 +2242,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::MetaTypePrimaryName:
         case IntrinsicKind::MetaFieldAttribute:
         case IntrinsicKind::MetaTypeAttribute:
+        case IntrinsicKind::MetaFieldDefault:
         case IntrinsicKind::MetaFieldGet:
         case IntrinsicKind::MetaFieldGetMut:
         case IntrinsicKind::MetaConstruct:
