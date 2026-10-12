@@ -2,6 +2,84 @@
 
 namespace {
 
+void callableSignatureFormatting() {
+  const std::vector<std::pair<std::string, std::string>> cases = {
+      {"using Callback=std::function < void(Event &) >;",
+       "using Callback = std::function<void(Event&)>;\n"},
+      {"using Callback=std::function < void(mut Event &) >;",
+       "using Callback = std::function<void(mut Event&)>;\n"},
+      {"using Callback=Handler < Result(Event &, Other *) mut >;",
+       "using Callback = Handler<Result(Event&, Other*) mut>;\n"},
+      {"using Callback=Box < Handler < void(Event &) >>;",
+       "using Callback = Box<Handler<void(Event&)>>;\n"},
+      {"using Callback=Handler < void(Event &, Box<Other> &) && >;",
+       "using Callback = Handler<void(Event&, Box<Other>&) &&>;\n"},
+      {"using Signature=Result(Event &, mut Other &);",
+       "using Signature = Result(Event&, mut Other&);\n"},
+      {"using Callback=Handler < void(Event & /* borrow */) >;",
+       "using Callback = Handler<void(Event& /* borrow */)>;\n"},
+      {"interface Window{using Callback=Handler < void(Event &) >;};",
+       "interface Window {\n  using Callback = Handler<void(Event&)>;\n};\n"},
+      {"namespace psych { export std::unique_ptr < Window > CreateWindow(); }",
+       "namespace psych {\n  export std::unique_ptr<Window> "
+       "CreateWindow();\n}\n"},
+      {"export Owner < Window > create();", "export Owner<Window> create();\n"},
+      {"export /* factory */ Owner < Window > create();",
+       "export /* factory */ Owner<Window> create();\n"},
+      {"export unsafe static constexpr Owner < Window > create();",
+       "export unsafe static constexpr Owner<Window> create();\n"},
+      {"constexpr Owner < Window > create();",
+       "constexpr Owner<Window> create();\n"},
+      {"bool test(){return left<read(value&mask)>right;}",
+       "bool test() {\n  return left < read(value & mask) > right;\n}\n"},
+      {"bool test(){return left<read(value&mask)&&right>count;}",
+       "bool test() {\n  return left < read(value & mask) && right > "
+       "count;\n}\n"}};
+  for (const auto &[source, expected] : cases) {
+    const std::string formatted = lang::Formatter().format(source);
+    expect(formatted == expected,
+           "callable signature spacing: " + source + "\nactual: " + formatted);
+    expect(lang::Formatter().format(formatted) == formatted,
+           "callable signature formatting must be idempotent: " + source);
+  }
+  for (const auto alignment :
+       {lang::ReferenceAlignment::Left, lang::ReferenceAlignment::Right,
+        lang::ReferenceAlignment::Middle}) {
+    lang::FormatOptions options;
+    options.referenceAlignment = alignment;
+    const std::string formatted = lang::Formatter(options).format(
+        "using Callback=Handler<void(Event &, mut Other &)>;");
+    const std::string marker =
+        alignment == lang::ReferenceAlignment::Left ? "&" : " &";
+    expect(formatted == "using Callback = Handler<void(Event" + marker +
+                            ", mut Other" + marker + ")>;\n" &&
+               lang::Formatter(options).format(formatted) == formatted,
+           "unnamed signature parameters must respect ReferenceAlignment");
+  }
+  for (const std::string source :
+       {"using Callback=Handler<void(Event &, Other *)>;",
+        "using Callback=Handler<void(Event & /* borrow */)>;",
+        "using Callback=Handler<void(Event &", "if(left<read(value&",
+        "export Owner < Window > create();"}) {
+    const std::string formatted = lang::Formatter().format(source);
+    lang::Lexer beforeLexer;
+    lang::Lexer afterLexer;
+    const auto before = beforeLexer.scan(source);
+    const auto after = afterLexer.scan(formatted);
+    bool same = !beforeLexer.hadError() && !afterLexer.hadError() &&
+                before.size() == after.size();
+    // The EOF sentinel's spelling can include trailing whitespace; only
+    // significant token spellings belong to the preservation contract.
+    for (std::size_t i = 0; same && i < before.size(); ++i)
+      same = before[i].kind == after[i].kind &&
+             (before[i].kind == lang::TokenKind::END_OF_FILE ||
+              before[i].lexeme == after[i].lexeme);
+    expect(same, "signature tokens must be preserved: " + source);
+    expect(lang::Formatter().format(formatted) == formatted,
+           "signature formatting must be idempotent: " + source);
+  }
+}
+
 void classSignaturePatternSyntax() {
   const std::vector<std::string> patterns = {
       "R(Args...)",      "R()",          "void(Args...)",
@@ -1365,6 +1443,7 @@ void mutableSignatureArguments() {
 } // namespace
 
 int main() {
+  callableSignatureFormatting();
   classSignaturePatternSyntax();
   signatureReceiverFamily();
   mutableSignatureArguments();
