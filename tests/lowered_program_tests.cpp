@@ -921,7 +921,7 @@ public:
   int value() override { return 3; }
 };
 int main() {
-  Signal signal;
+  Signal signal{};
   return Factory::Build(1) + FactoryApi::Select(2) + signal.value() - 6;
 }
 )gti");

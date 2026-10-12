@@ -20,6 +20,6 @@ if __name__ == "__main__":
              "interface_static_cleanup": [
                  ((), (0, "2\n1\n4\n3\n", "")),
                  (("reject",), (0, "2\n1\n", "")),
-                 (("fail", "fail"), (101, "4\n3\n2\n1\n", failure)),
+                 (("fail", "fail"), (70, "4\n3\n2\n1\n", failure)),
              ],
          })
