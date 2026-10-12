@@ -214,7 +214,8 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
         gnu = "#define __GNUC__ 15\n#define __GNUG__ 15\n"
         with patch("iterator_sanitizer_support.subprocess.run",
                    return_value=subprocess.CompletedProcess([], 0, gnu, "")) as probe:
-            self.assertEqual(gcc_sanitizer_arguments(environment), ("-fno-inline-functions-called-once",))
+            self.assertEqual(gcc_sanitizer_arguments(environment),
+                             ("-fno-inline-functions-called-once", "-fno-inline"))
         probe.assert_called_once_with(["/native path/c++", "-dM", "-E", "-x", "c++", "-"],
                                       input="", env=environment, capture_output=True, text=True, timeout=10)
         for macros in ("", "#define __GNUC__ 15\n", *(gnu + f"#define {other} 1\n" for other in
@@ -244,7 +245,8 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
 
         with patch.object(sys, "argv", ["matrix", "fake-gti", "--jobs", "1"]), \
                 patch.object(matrix.subprocess, "run", process), \
-                patch.object(accessor, "gcc_sanitizer_arguments", return_value=("-fno-inline-functions-called-once",)), \
+                patch.object(accessor, "gcc_sanitizer_arguments",
+                             return_value=("-fno-inline-functions-called-once", "-fno-inline")), \
                 contextlib.redirect_stdout(io.StringIO()):
             matrix.main(names=("json_borrowed_range", "other"),
                         native_inputs_by_name={"json_borrowed_range": ("provider.cpp",)},
@@ -256,9 +258,11 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
             json = Path(command[1]).stem == "json_borrowed_range"
             sanitized = "-fsanitize=address,undefined" in command
             self.assertEqual("-fno-inline-functions-called-once" in command, json and sanitized)
+            self.assertEqual("-fno-inline" in command, json and sanitized)
             if json and sanitized:
                 self.assertLess(command.index("-fno-omit-frame-pointer"), command.index("provider.cpp"))
                 self.assertLess(command.index("provider.cpp"), command.index("-fno-inline-functions-called-once"))
+                self.assertLess(command.index("-fno-inline-functions-called-once"), command.index("-fno-inline"))
 
     def test_selected_gcc_sanitizer_flag_retains_real_asan_and_ubsan_instrumentation(self):
         environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",

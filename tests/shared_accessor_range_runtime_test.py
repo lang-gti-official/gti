@@ -9,7 +9,8 @@ from iterator_sanitizer_support import gcc_sanitizer_arguments
 
 def native_arguments_by_case(name, label, environment):
     # This fixture is one inseparable borrowed JSON accessor scenario. GCC15
-    # sanitizer compilation exceeds 120s without the measured narrow flag;
+    # sanitizer compilation exceeds 120s under concurrent validation without
+    # the measured GCC-only inlining policy;
     # keep the original program, O1, strict FP and both sanitizers unchanged.
     if name == "json_borrowed_range" and label == "sanitized":
         return gcc_sanitizer_arguments(environment)

@@ -2,6 +2,56 @@
 
 ## Container iterator completion: full-run reconciliation (2026-10-12)
 
+The clean final implementation candidate `a051a13b`, reconciled with canonical
+`aa85ce0d`, passes the unfiltered local suite: 672/672 gates in 1,980.25 seconds.
+The independent batch/standalone emitter comparison passes across 143 examples
+and 37,080 ready bodies; the native cutover oracle passes across all 143 examples
+and both endpoint configurations. All four new iterator examples participate.
+The 13-gate integration selection and the all-target Release build also pass.
+Complete local evidence is retained under
+`/private/tmp/gti-iterator-a051-final-validation.LRKKhd/`; an independent log
+census confirms 672 unique test entries, 672 passing records and no failed record.
+
+Fresh performance at the same clean candidate is independently reviewed against
+frozen `5385c0b0`: two five-warmup/21-interleaved-round campaigns, six complete-state
+cases and negative controls, with all 305 artifacts and 434 unique material
+references checked. Paired vector ratios are 0.991625 and 0.991034; particle
+ratios are 1.000856 and 0.999246. Runtime peak RSS is unchanged; generated C++
+grows roughly 10%, native text roughly 2.2% and executable size under 0.5%.
+Single native build/memory observations are retained, not statistical compile-time
+claims. The explicit counted-text cost branch passes its twelve negatives,
+complete checksums and zero-allocation control; doubled extent gives ratio 2.240.
+These are macOS-host results, not universal C++ parity. Raw evidence remains under
+`/private/tmp/gti-iterator-a051-final-performance.RzqPtU/`.
+
+The unchanged final Linux run `run-9c774d4f374146c5a43a41d4da538432` is terminal:
+Release GCC 14/LLVM 21 build passes, and the 45-gate selection passes 44/45.
+Only `json_borrowed_range/sanitized` exceeds its original 120-second compile
+budget under concurrent load despite the actual-GCC 15 no-called-once flag.
+Movement, storage/lane allocation controls and all eleven actual-GCC native
+tooling tests pass. Complete untruncated logs and source/tool identities are
+retained under `/private/tmp/gti-iterator-linux-a051a13b-results.Idmc94/run-results/`;
+the managed remote source/build tree is removed. This is not a successful
+platform result. The remaining native-cost/resource gap requires measured
+repair and fresh acceptance before integration; neither a budget increase nor
+omitting the atomic JSON program is an accepted repair.
+
+An idle native-only proxy freezes the exact current Linux-target program and
+runtime. The existing no-called-once flag takes 86.13 seconds wall / 86.04
+seconds CPU, with 1.576 GiB peak RSS; additionally disabling inlining takes
+80.20 seconds wall / CPU and 1.541 GiB. Both retain O1, strict FP, ASan/UBSan,
+the 120-second limit, all original JSON assertions and empty output. Actual
+instrumentation/linkage and independent ASan heap-overflow / UBSan overflow
+controls pass under both policies. Samples show roughly 87.4% host idle,
+negligible steal/throttling and at least 9.66 GiB available memory. The two large
+ELF exports are tail-truncated, but the complete binaries are hashed and
+executed remotely before cleanup; full source, measurements, instrumentation
+and control records remain under `/private/tmp/agent109-json-a051-proxy-results/`.
+The measured extra flag is confined to the atomic fixture's actual-GCC
+sanitizer mode. Its approximately 7% idle compile saving is a candidate repair,
+not concurrent platform acceptance; scheduler accounting is not changed without
+evidence of an undercount.
+
 The clean reconciled `65a32870` unfiltered local run completes all 672 gates in
 1,810.63 seconds: 669 pass and three fail. The complete independent
 batch/standalone emitter comparison and native cutover oracle pass; this is
@@ -6878,7 +6928,8 @@ non-sanitized mode still compiles the combined program. This is not a source
 or optimization-policy change to the compiler.
 
 The atomic borrowed-JSON accessor fixture cannot be independently partitioned.
-Its sanitizer-only extra `-fno-inline-functions-called-once` argument is selected
+Its sanitizer-only extra `-fno-inline-functions-called-once` and `-fno-inline`
+arguments are selected
 by probing the invoked native C++ driver's predefined macros and excluding
 Clang/other known GCC-compatible drivers, not by the operating system or GTI's
 host compiler. Its O1, ASan/UBSan, strict-FP flags, 120-second compile budget and
@@ -6886,10 +6937,10 @@ original execution oracle remain unchanged. The `native_fixture_build` unit
 gate checks reconstruction, complete mode/budget/native-input preservation and
 driver classification. On an actual selected GCC driver it also compiles tiny
 separate-TU controls, verifies sanitizer symbols, and independently requires
-ASan heap-buffer-overflow and UBSan signed-overflow reports with the extra flag.
+ASan heap-buffer-overflow and UBSan signed-overflow reports with the extra flags.
 That native control is explicitly inapplicable when no GCC flag is selected;
 it does not replace any fixture's sanitizer execution. Neither partitioning nor
-the narrow flag establishes concurrent platform acceptance without a fresh run.
+the narrow policy establishes concurrent platform acceptance without a fresh run.
 
 Native compiler invocation spelling is likewise distinct from canonical binary
 identity: resolving `clang++` to `clang` changes link-driver selection. Runtime

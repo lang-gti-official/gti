@@ -56,4 +56,4 @@ def native_driver_is_gcc(environment):
 
 def gcc_sanitizer_arguments(environment=None):
     environment = os.environ if environment is None else environment
-    return ("-fno-inline-functions-called-once",) if native_driver_is_gcc(environment) else ()
+    return ("-fno-inline-functions-called-once", "-fno-inline") if native_driver_is_gcc(environment) else ()
