@@ -1474,7 +1474,10 @@ public:
     }
   }
 
-  void emitLoweredAliasForwardDeclarations(LoweredDeclarationId parent) {
+  void emitLoweredAliasForwardDeclarations(LoweredDeclarationId parent,
+                                           bool nestedOwnersComplete = false) {
+    if (nestedOwnersComplete && !loweredHasNestedTypes)
+      return;
     for (const LoweredDeclaration *declaration : loweredChildren(parent)) {
       if (declaration->kind == LoweredDeclarationKind::Namespace) {
         writeIndent();
@@ -1482,7 +1485,8 @@ public:
                << loweredNamespaceSpelling(declaration->name, parent == 0)
                << " {\n";
         ++indentation;
-        emitLoweredAliasForwardDeclarations(declaration->id);
+        emitLoweredAliasForwardDeclarations(declaration->id,
+                                            nestedOwnersComplete);
         --indentation;
         writeIndent();
         output << "}\n";
@@ -1490,12 +1494,17 @@ public:
       }
       if (const auto *alias = std::get_if<LoweredNamespaceAliasDeclaration>(
               &declaration->payload)) {
+        if (nestedOwnersComplete)
+          continue;
         writeIndent();
         output << "namespace " << declaration->name << " = ";
         emitLoweredNamePath(alias->target);
         output << ";\n";
       } else if (const auto *alias = std::get_if<LoweredTypeAliasDeclaration>(
                      &declaration->payload)) {
+        if ((loweredHasNestedTypes && needsCompleteNestedOwner(alias->type)) !=
+            nestedOwnersComplete)
+          continue;
         writeIndent();
         output << "using " << declaration->name << " = ";
         emitSemanticType(alias->type);
@@ -1935,7 +1944,23 @@ public:
         continue;
       }
       if (declaration->kind == LoweredDeclarationKind::LanguageLinkage) {
-        if (!nestedOwnersComplete) {
+        const auto children = loweredChildren(declaration->id);
+        const bool deferred =
+            loweredHasNestedTypes &&
+            std::any_of(
+                children.begin(), children.end(), [&](const auto *child) {
+                  const auto *function =
+                      std::get_if<LoweredFunctionDeclaration>(&child->payload);
+                  return function != nullptr &&
+                         (needsCompleteNestedOwner(function->returnType) ||
+                          std::any_of(function->parameters.begin(),
+                                      function->parameters.end(),
+                                      [&](const auto &parameter) {
+                                        return needsCompleteNestedOwner(
+                                            parameter.type);
+                                      }));
+                });
+        if (deferred == nestedOwnersComplete) {
           emitLoweredExternCBlock(*declaration);
           loweredForwardedLinkage.insert(declaration->id);
         }
@@ -2107,8 +2132,10 @@ public:
     emitLoweredStorageRepresentationType(storage);
   }
 
-  void
-  emitLoweredGlobalStorageForwardDeclarations(LoweredDeclarationId parent) {
+  void emitLoweredGlobalStorageForwardDeclarations(
+      LoweredDeclarationId parent, bool nestedOwnersComplete = false) {
+    if (nestedOwnersComplete && !loweredHasNestedTypes)
+      return;
     bool emitted = false;
     for (const LoweredDeclaration *declaration : loweredChildren(parent)) {
       if (declaration->kind == LoweredDeclarationKind::Namespace) {
@@ -2117,7 +2144,8 @@ public:
                << loweredNamespaceSpelling(declaration->name, parent == 0)
                << " {\n";
         ++indentation;
-        emitLoweredGlobalStorageForwardDeclarations(declaration->id);
+        emitLoweredGlobalStorageForwardDeclarations(declaration->id,
+                                                    nestedOwnersComplete);
         --indentation;
         writeIndent();
         output << "}\n";
@@ -2128,6 +2156,9 @@ public:
       if (storage == nullptr || storage->ownerClass != 0) {
         continue;
       }
+      if ((loweredHasNestedTypes && needsCompleteNestedOwner(storage->type)) !=
+          nestedOwnersComplete)
+        continue;
       writeIndent();
       if (storage->internalLinkage) {
         output << "struct "
@@ -4008,6 +4039,123 @@ public:
     output << "}\n";
   }
 
+  // Reuse verified field/base types to order lexical siblings. A pointer to a
+  // direct sibling needs only its forward declaration, while naming a sibling's
+  // child requires that sibling's definition even through a pointer.
+  std::vector<const LoweredDeclaration *>
+  orderedLoweredNestedTypes(const LoweredDeclaration &owner) const {
+    std::vector<const LoweredDeclaration *> children;
+    std::unordered_map<LoweredDeclarationId, std::size_t> schedule;
+    for (const auto *child : loweredChildren(owner.id)) {
+      if (std::holds_alternative<LoweredClassDeclaration>(child->payload)) {
+        schedule.emplace(child->id, children.size());
+        children.push_back(child);
+      }
+    }
+    std::vector<unsigned char> state(children.size(), 0);
+    std::vector<const LoweredDeclaration *> ordered;
+    std::function<void(std::size_t)> visit;
+    std::unordered_set<HirClassInstanceId> visitingInstances;
+    const auto collectType =
+        [&](const auto &self, const SemanticType &type, bool complete,
+            std::vector<std::size_t> &dependencies) -> void {
+      switch (type.kind) {
+      case SemanticType::RawPointer:
+      case SemanticType::Reference:
+      case SemanticType::UniqueOwner:
+      case SemanticType::SharedPointer:
+        for (const auto &argument : type.arguments)
+          self(self, argument, false, dependencies);
+        return;
+      case SemanticType::Class: {
+        const auto *referenced = loweredClassRow(type.classId);
+        const auto *sibling = referenced;
+        while (sibling != nullptr && sibling->parent != owner.id)
+          sibling = loweredProgram.findDeclaration(sibling->parent);
+        if (sibling != nullptr && (complete || sibling != referenced)) {
+          if (const auto found = schedule.find(sibling->id);
+              found != schedule.end())
+            dependencies.push_back(found->second);
+        }
+        if (!complete)
+          return;
+        const MirClassInstance *instance = nullptr;
+        for (const auto &candidate : mir.classInstances()) {
+          if (candidate.type == type) {
+            instance = &candidate;
+            break;
+          }
+        }
+        if (instance != nullptr &&
+            visitingInstances.insert(instance->id).second) {
+          for (const auto &base : instance->bases)
+            self(self, base.type, true, dependencies);
+          for (const auto &field : instance->declaredFields)
+            self(self, field.type, true, dependencies);
+          if (instance->compilerCapability ==
+                  CompilerCapabilityTypeKind::OptionalStorage ||
+              instance->compilerCapability ==
+                  CompilerCapabilityTypeKind::UninitializedStorage ||
+              instance->compilerCapability ==
+                  CompilerCapabilityTypeKind::MutexStorage)
+            for (const auto &argument : type.arguments)
+              self(self, argument, true, dependencies);
+          visitingInstances.erase(instance->id);
+        }
+        return;
+      }
+      default:
+        for (const auto &argument : type.arguments)
+          self(self, argument, complete, dependencies);
+        return;
+      }
+    };
+    const auto collectDeclaration =
+        [&](const auto &self, const LoweredDeclaration &row,
+            std::vector<std::size_t> &dependencies) -> void {
+      if (const auto *type =
+              std::get_if<LoweredClassDeclaration>(&row.payload)) {
+        for (const auto &base : type->bases)
+          collectType(collectType, base.type, true, dependencies);
+      } else if (const auto *storage =
+                     std::get_if<LoweredStorageDeclaration>(&row.payload)) {
+        collectType(collectType, storage->type, !storage->staticStorage,
+                    dependencies);
+      } else if (const auto *function =
+                     std::get_if<LoweredFunctionDeclaration>(&row.payload)) {
+        collectType(collectType, function->returnType, false, dependencies);
+        for (const auto &parameter : function->parameters)
+          collectType(collectType, parameter.type, false, dependencies);
+      } else if (const auto *alias =
+                     std::get_if<LoweredTypeAliasDeclaration>(&row.payload)) {
+        collectType(collectType, alias->type, false, dependencies);
+      }
+      for (const auto *child : loweredChildren(row.id))
+        self(self, *child, dependencies);
+    };
+    visit = [&](std::size_t index) {
+      if (state[index] == 2)
+        return;
+      if (state[index] == 1)
+        throw std::logic_error("nested representation declarations contain a "
+                               "cyclic completeness dependency");
+      state[index] = 1;
+      std::vector<std::size_t> dependencies;
+      collectDeclaration(collectDeclaration, *children[index], dependencies);
+      std::sort(dependencies.begin(), dependencies.end());
+      dependencies.erase(std::unique(dependencies.begin(), dependencies.end()),
+                         dependencies.end());
+      for (const auto dependency : dependencies)
+        if (dependency != index)
+          visit(dependency);
+      state[index] = 2;
+      ordered.push_back(children[index]);
+    };
+    for (std::size_t index = 0; index < children.size(); ++index)
+      visit(index);
+    return ordered;
+  }
+
   void emitLoweredClassDefinitionBody(
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &declaration,
@@ -4098,19 +4246,20 @@ public:
     // spell canonical identities (including explicitly re-exported private
     // types), so representation-only type declarations must be nameable here.
     // Emit them before fields/factories; type declarations have no execution.
-    bool emittedNested = false;
-    for (const LoweredDeclaration *member : loweredChildren(classRow.id)) {
-      if (const auto *nested =
-              std::get_if<LoweredClassDeclaration>(&member->payload)) {
-        if (!emittedNested) {
-          writeIndent();
-          output << "public:\n";
-          emittedNested = true;
-        }
-        emitLoweredClassDefinition(*member, *nested);
+    const auto nestedTypes = orderedLoweredNestedTypes(classRow);
+    if (!nestedTypes.empty()) {
+      writeIndent();
+      output << "public:\n";
+      for (const auto *member : nestedTypes) {
+        const auto &nested = std::get<LoweredClassDeclaration>(member->payload);
+        emitLoweredTemplateDeclaration(nested.genericParameters);
+        writeIndent();
+        output << (nested.kind == ClassKind::Struct ? "struct " : "class ")
+               << member->name << ";\n";
       }
-    }
-    if (emittedNested) {
+      for (const auto *member : nestedTypes)
+        emitLoweredClassDefinition(
+            *member, std::get<LoweredClassDeclaration>(member->payload));
       writeIndent();
       output << (access == AccessModifier::Private ? "private:\n"
                                                    : "public:\n");
@@ -4355,6 +4504,29 @@ public:
       }
     }
 
+    // A lexical child is emitted inside its top-level owner, not as a second
+    // namespace declaration. References to it schedule that complete owner.
+    if (loweredHasNestedTypes) {
+      for (const auto &row : loweredProgram.declarations()) {
+        const auto *type = std::get_if<LoweredClassDeclaration>(&row.payload);
+        if (type == nullptr || row.ownerClass == 0)
+          continue;
+        const LoweredDeclaration *owner = &row;
+        const LoweredClassDeclaration *ownerType = type;
+        while (owner->ownerClass != 0) {
+          owner = loweredClassRow(owner->ownerClass);
+          if (owner == nullptr)
+            throw std::logic_error("nested class lost its lowered owner");
+          ownerType = std::get_if<LoweredClassDeclaration>(&owner->payload);
+          if (ownerType == nullptr)
+            throw std::logic_error("nested class owner is not a lowered class");
+        }
+        if (const auto found = sourceClassSchedule.find(ownerType->id);
+            found != sourceClassSchedule.end())
+          sourceClassSchedule.emplace(type->id, found->second);
+      }
+    }
+
     std::unordered_map<std::string, std::size_t> concreteClassSchedule;
     for (const MirClassInstance &instance : mir.classInstances()) {
       const std::optional<std::string> name =
@@ -4402,10 +4574,28 @@ public:
       std::vector<EnumId> enumerations;
     };
 
+    const auto collectNestedOwnerDependencies =
+        [&](const auto &self, const SemanticType &type,
+            TypeDependencies &result) -> void {
+      if (type.kind == SemanticType::Class) {
+        const auto *row = loweredClassRow(type.classId);
+        if (row != nullptr && row->ownerClass != 0) {
+          if (const auto found = sourceClassSchedule.find(type.classId);
+              found != sourceClassSchedule.end())
+            result.classes.push_back(found->second);
+        }
+      }
+      for (const auto &argument : type.arguments)
+        self(self, argument, result);
+    };
+
     std::unordered_set<HirClassInstanceId> visitingLayoutArguments;
     const auto collectTypeDependencies = [&](const auto &self,
                                              const SemanticType &type,
                                              TypeDependencies &result) -> void {
+      if (loweredHasNestedTypes)
+        collectNestedOwnerDependencies(collectNestedOwnerDependencies, type,
+                                       result);
       switch (type.kind) {
       case SemanticType::RawPointer:
       case SemanticType::Reference:
@@ -4567,43 +4757,46 @@ public:
     };
 
     const auto collectSourceDependencies =
-        [&](const LoweredDeclaration &row,
+        [&](const auto &self, const LoweredDeclaration &row,
             const LoweredClassDeclaration &declaration,
-            TypeDependencies &result) {
-          if (const auto found = sourceClassSchedule.find(
-                  declaration.exactSpecializationPrimary);
-              found != sourceClassSchedule.end()) {
-            result.classes.push_back(found->second);
-          }
-          for (const LoweredClassBase &base : declaration.bases) {
-            collectTypeDependencies(collectTypeDependencies, base.type, result);
-          }
-          for (const LoweredDeclaration *member : loweredChildren(row.id)) {
-            const auto *storage =
-                std::get_if<LoweredStorageDeclaration>(&member->payload);
-            if (storage != nullptr) {
-              collectTypeDependencies(collectTypeDependencies, storage->type,
-                                      result);
-            }
-          }
-          if (!declaration.genericParameters.empty()) {
-            return;
-          }
-          for (const MirClassInstance &instance : mir.classInstances()) {
-            if (instance.declaration != declaration.id) {
-              continue;
-            }
-            for (const HirBaseInstance &base : instance.bases) {
-              collectTypeDependencies(collectTypeDependencies, base.type,
-                                      result);
-            }
-            for (const MirClassFieldInfo &field : instance.declaredFields) {
-              collectTypeDependencies(collectTypeDependencies, field.type,
-                                      result);
-            }
-            collectInitializerDependencies(instance.fieldInitializers, result);
-          }
-        };
+            TypeDependencies &result) -> void {
+      if (const auto found =
+              sourceClassSchedule.find(declaration.exactSpecializationPrimary);
+          found != sourceClassSchedule.end()) {
+        result.classes.push_back(found->second);
+      }
+      for (const LoweredClassBase &base : declaration.bases) {
+        collectTypeDependencies(collectTypeDependencies, base.type, result);
+      }
+      for (const LoweredDeclaration *member : loweredChildren(row.id)) {
+        if (const auto *nested =
+                std::get_if<LoweredClassDeclaration>(&member->payload)) {
+          self(self, *member, *nested, result);
+          continue;
+        }
+        const auto *storage =
+            std::get_if<LoweredStorageDeclaration>(&member->payload);
+        if (storage != nullptr) {
+          collectTypeDependencies(collectTypeDependencies, storage->type,
+                                  result);
+        }
+      }
+      if (!declaration.genericParameters.empty()) {
+        return;
+      }
+      for (const MirClassInstance &instance : mir.classInstances()) {
+        if (instance.declaration != declaration.id) {
+          continue;
+        }
+        for (const HirBaseInstance &base : instance.bases) {
+          collectTypeDependencies(collectTypeDependencies, base.type, result);
+        }
+        for (const MirClassFieldInfo &field : instance.declaredFields) {
+          collectTypeDependencies(collectTypeDependencies, field.type, result);
+        }
+        collectInitializerDependencies(instance.fieldInitializers, result);
+      }
+    };
 
     const auto collectConcreteDependencies =
         [&](const LoweredClassDeclaration &declaration,
@@ -4708,7 +4901,8 @@ public:
       }
       TypeDependencies dependencies;
       if (node.concrete == nullptr) {
-        collectSourceDependencies(row, *declaration, dependencies);
+        collectSourceDependencies(collectSourceDependencies, row, *declaration,
+                                  dependencies);
       } else {
         collectConcreteDependencies(*declaration, *node.concrete, dependencies);
       }
@@ -7338,9 +7532,15 @@ public:
     capture(plan, CppProgramTextRole::DeclarationTypeMemberLifecycle, [&] {
       emitLoweredGlobalStorageForwardDeclarations(0);
       emitLoweredTypeDefinitions();
+      emitLoweredAliasForwardDeclarations(0, true);
+      emitLoweredGlobalStorageForwardDeclarations(0, true);
       // A C++ nested name cannot be declared through an incomplete owner.
       // GTI selection is already sealed; this is declaration scheduling only.
       emitLoweredFunctionForwardDeclarations(0, true);
+    });
+    capture(plan, CppProgramTextRole::NativeAndThreadAdapter,
+            [&] { emitNativeCallbackAdapterDeclarations(true); });
+    capture(plan, CppProgramTextRole::DeclarationTypeMemberLifecycle, [&] {
       emitLoweredCallableAdapterDefinitions();
       emitLoweredSourceDeclarations(0);
       emitLoweredStaticFieldDefinitions();
@@ -7930,13 +8130,20 @@ public:
     }
   }
 
-  void emitNativeCallbackAdapterDeclarations() {
+  void
+  emitNativeCallbackAdapterDeclarations(bool nestedOwnersComplete = false) {
+    if (nestedOwnersComplete && !loweredHasNestedTypes)
+      return;
     bool emitted = false;
     for (const CppMirGeneratedThunk &thunk : programPlan.thunks) {
       if (thunk.identity.kind != CppMirThunkKind::NativeInteropAdapter) {
         continue;
       }
       const CppMirNativeCallbackThunk &callback = nativeCallbackPayload(thunk);
+      if ((loweredHasNestedTypes &&
+           needsCompleteNestedOwner(callback.adapter.type)) !=
+          nestedOwnersComplete)
+        continue;
       (void)nativeCallbackTarget(callback);
       writeIndent();
       emitNativeCallbackAdapterSignature(callback, false);

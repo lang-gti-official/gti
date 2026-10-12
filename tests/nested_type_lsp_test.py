@@ -149,6 +149,16 @@ def main():
             assert "struct Network" in formatted and "Config::Network::Tls" in formatted, formatted
             change(7, formatted)
             assert not diagnostics(7)
+            denied = source + "using Forbidden = demo::Config::Secrets;\n"
+            change(8, denied)
+            errors = diagnostics(8)
+            private_error = next(item for item in errors if item["code"] == "GTI-S2007")
+            assert private_error["range"]["start"] == lsp_position(
+                denied, denied.rindex("Secrets")), private_error
+            related = private_error["relatedInformation"]
+            assert related[0]["location"]["uri"] == uri, related
+            assert related[0]["location"]["range"]["start"] == lsp_position(
+                denied, denied.index("struct Secrets") + len("struct ")), related
         finally:
             session.close()
     return 0
