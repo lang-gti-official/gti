@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.414.1 — Assignments of logical values no longer read freed analysis state
+
+- Assigning a `&&`, `||` or conditional value to a field, a receiver member
+  or an array element (for example `this.open = armed && ready;`) no longer
+  makes the compiler read freed memory while it checks the assignment against
+  live borrows. The fault could crash the checker or, depending on the
+  allocator, misjudge that check; it surfaced as an AddressSanitizer report
+  when checking every standard-library body imported by `import std;`.
+  Diagnostics for valid and invalid programs are otherwise unchanged.
+
 ## 0.414.0 — Interface static methods
 
 - Interfaces can declare ordinary `static` helpers and factories, including
