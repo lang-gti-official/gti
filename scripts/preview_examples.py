@@ -49,10 +49,25 @@ def validate_results(path, required):
         raise ValueError("A required example gate failed or was skipped")
 
 
+def manifest_tests(path):
+    manifest = json.loads(path.read_text())
+    if manifest.get("schema") != 1 or not isinstance(manifest.get("features"), list):
+        raise ValueError("Invalid preview manifest")
+    focused = []
+    for feature in manifest["features"]:
+        names = feature.get("tests")
+        if not isinstance(names, list) or not names or any(
+                not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name) for name in names):
+            raise ValueError("Invalid focused preview checks")
+        focused.extend(names)
+    return focused
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build")
     parser.add_argument("--focused", action="append", default=[])
+    parser.add_argument("--manifest", action="store_true", help="include every committed preview feature's focused checks")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     build = Path(args.build).resolve()
@@ -61,7 +76,12 @@ def main():
     if Path(cache.get("CMAKE_HOME_DIRECTORY", "")).resolve() != root or cache.get("CMAKE_BUILD_TYPE") not in {
             "Release", "RelWithDebInfo", "MinSizeRel"}:
         raise ValueError("Example gate requires this candidate's optimized compiler build")
-    required = required_tests(sys.platform) | set(args.focused)
+    focused = list(args.focused)
+    if args.manifest:
+        focused.extend(manifest_tests(root / ".gti-preview.json"))
+    if "preview_admission" in focused:
+        raise ValueError("Preview admission cannot recursively select itself")
+    required = required_tests(sys.platform) | set(focused)
     sources = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "examples"],
                              capture_output=True, text=True, check=True)
     validate_sources(sources.stdout.split("\0"))

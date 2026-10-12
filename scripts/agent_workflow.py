@@ -775,7 +775,7 @@ def main():
     abandon.add_argument("--reason", required=True)
     sub.add_parser("status").add_argument("task", nargs="?")
     sub.add_parser("protection").add_argument("--configure", action="store_true")
-    sub.add_parser("preview", help="prepare, verify and publish a combined early preview").add_argument(
+    sub.add_parser("preview", help="optionally submit a detached combined preview job").add_argument(
         "arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     try:
