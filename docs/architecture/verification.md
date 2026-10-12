@@ -17,8 +17,8 @@ Audits retain a complete diagnostic pass without influencing emitted artifacts.
 
 `aggregate_std_runtime` validates example 147 in all eight standard/optimization,
 no-elision and sanitizer modes. After reconciliation with the promoted JSON
-library and safe atomic waiting, its reviewed inventory is 386 MIR bodies, 3,167 LoweredProgram
-declarations and 217 generated items. The aggregate LSP
+library, safe atomic waiting and introsort, its reviewed inventory is 386 MIR
+bodies, 3,174 LoweredProgram declarations and 218 generated items. The aggregate LSP
 gate covers UTF-16 hover/definition, a missing-return diagnostic, completion in
 incomplete source and recovery. The macOS installed-runtime gate checks the
 aggregate after relocation without source-tree configuration.
