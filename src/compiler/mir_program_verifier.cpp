@@ -236,6 +236,13 @@ exactAtomicSynchronization(IntrinsicKind intrinsic,
   case IntrinsicKind::AtomicLoad:
     expected = SynchronizationOperationKind::AtomicLoad;
     break;
+  case IntrinsicKind::AtomicWait:
+    expected = SynchronizationOperationKind::AtomicWait;
+    break;
+  case IntrinsicKind::AtomicNotifyOne:
+  case IntrinsicKind::AtomicNotifyAll:
+    expected = SynchronizationOperationKind::AtomicNotify;
+    break;
   case IntrinsicKind::AtomicStore:
     expected = SynchronizationOperationKind::AtomicStore;
     break;
@@ -9584,6 +9591,50 @@ exactPolymorphicStorageIntrinsicContract(const MirProgram &program,
 }
 
 [[nodiscard]] bool
+exactAtomicWaitingContract(const MirProgram &program, const MirBody &body,
+                           const MirInstruction &instruction) {
+  const bool wait = instruction.intrinsic == IntrinsicKind::AtomicWait;
+  if (!wait && instruction.intrinsic != IntrinsicKind::AtomicNotifyOne &&
+      instruction.intrinsic != IntrinsicKind::AtomicNotifyAll)
+    return true;
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.result || instruction.info.type != SemanticType::Void ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly || instruction.loan ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      instruction.borrowArgument != 0 ||
+      instruction.borrowAccess != AccessMode::ReadOnly ||
+      !instruction.localFailureSites.empty() ||
+      !instruction.definedFailure.empty() || !instruction.lifecycle.empty() ||
+      instruction.operands.size() != (wait ? 2U : 1U) ||
+      instruction.parameterTypes.size() != instruction.operands.size() ||
+      !exactAtomicSynchronization(instruction.intrinsic,
+                                  instruction.synchronization))
+    return false;
+  const MirOperand &storage = instruction.operands.front();
+  const SemanticType *element = exactCapabilityReferenceValue(
+      program, storage.type, AccessMode::ReadOnly,
+      CompilerCapabilityTypeKind::AtomicStorage);
+  const MirPlace *place = body.findPlace(storage.place);
+  if (element == nullptr || storage.kind != MirOperandKind::BorrowRead ||
+      storage.place == 0 || storage.value != 0 || storage.loan != 0 ||
+      storage.literal || place == nullptr ||
+      storage.type.arguments.front() != place->type ||
+      instruction.parameterTypes.front() != storage.type)
+    return false;
+  if (!wait) return true;
+  const MirOperand &old = instruction.operands[1];
+  const MirValue *value = body.findValue(old.value);
+  return old.kind == MirOperandKind::Value && old.value != 0 &&
+         old.place == 0 && old.loan == 0 && !old.literal &&
+         value != nullptr && value->info.type == *element &&
+         old.type == *element && instruction.parameterTypes[1] == *element;
+}
+
+[[nodiscard]] bool
 exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
                             const MirInstruction &instruction) {
   const bool mutexIntrinsic =
@@ -11031,6 +11082,9 @@ verifyMirProgramContracts(const MirProgram &program) {
     for (const MirBlock &block : body.blocks) {
       for (const MirInstruction &instruction : block.instructions) {
         const bool atomicIntrinsic =
+            instruction.intrinsic == IntrinsicKind::AtomicWait ||
+            instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ||
+            instruction.intrinsic == IntrinsicKind::AtomicNotifyAll ||
             instruction.intrinsic == IntrinsicKind::AtomicLoad ||
             instruction.intrinsic == IntrinsicKind::AtomicStore ||
             instruction.intrinsic == IntrinsicKind::AtomicExchange ||
@@ -11145,8 +11199,9 @@ verifyMirProgramContracts(const MirProgram &program) {
                    "C-thread call has no exact synchronization contract"});
         }
         if (atomicIntrinsic &&
-            !exactAtomicSynchronization(instruction.intrinsic,
-                                        instruction.synchronization)) {
+            (!exactAtomicSynchronization(instruction.intrinsic,
+                                         instruction.synchronization) ||
+             !exactAtomicWaitingContract(program, body, instruction))) {
           result.errors.push_back(
               {.bodyKind = body.kind,
                .owner = owner,

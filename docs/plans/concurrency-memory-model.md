@@ -569,6 +569,11 @@ unlocks before propagating a primary failure. The surface deliberately has no
 poisoning; lock acquisition failure is a defined host-operation outcome, while
 an application needing transactional invariants records them in `T`.
 
+Safe scalar atomic `wait`/`notify_one`/`notify_all` now use existing shared
+storage loans, exact MIR waiting/notification effects and host parking. This
+supports completion counters and scalar state handoffs without busy polling;
+it does not suspend a protected-value loan or implement a job scheduler.
+
 A safe condition-variable API over owner-tied guards still needs verified
 release/wait/reacquire and loan suspension. The separate unsafe manual
 `cnd_*`/`mtx_*` family is implemented in `<std/cthread>`; its caller-managed
