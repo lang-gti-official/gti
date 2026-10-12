@@ -22,6 +22,7 @@ Unsafe member contracts
 ==================
 
 struct Sensor {
+  unsafe Sensor() {}
   unsafe int read() { return 1; }
   unsafe static int load() { return 2; }
 };
@@ -33,6 +34,10 @@ concept readable<T> = requires(T& source) { unsafe { source.read() } -> int; };
   (class_declaration
     (identifier)
     (class_body
+      (constructor_declaration
+        (identifier)
+        (parameter_clause)
+        (block))
       (method_declaration
         (type
           (primitive_type))

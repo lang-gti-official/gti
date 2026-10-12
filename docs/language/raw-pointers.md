@@ -379,7 +379,19 @@ The gated operations are:
 - pointer arithmetic, difference, increment, decrement, and `+=`/`-=`;
 - a call to an `extern "C"` function whose return type or any parameter type is
   a raw pointer; and
-- a call to a GTI function declared `unsafe`.
+- a call to a GTI function or ordinary source constructor declared `unsafe`.
+
+An ordinary constructor may be written `unsafe Type(arguments) { ... }`.
+Overload selection is unchanged; the selected constructor's caller contract
+requires a lexical unsafe block. The declaration does not grant permission to
+the body, default arguments or initializer list. Zero-argument unsafe
+constructors can be called explicitly inside unsafe, but do not satisfy safe
+default-initialization requirements or authorize implicit field/base/array
+initialization. Unsafe base-constructor calls cannot be expressed in the current
+initializer-list syntax, which has no lexical unsafe block. Special-member
+policies (`= default`/`= delete`) and destructors cannot be declared unsafe.
+The same rule applies to unrelated user-defined classes and generic instances;
+it is not a special rule for string construction.
 
 Unsafe blocks may nest and otherwise follow ordinary block scope and cleanup
 rules. Permission does not escape the closing brace. A nested lambda starts a

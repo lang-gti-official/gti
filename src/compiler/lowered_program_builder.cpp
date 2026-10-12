@@ -825,6 +825,7 @@ private:
                     : std::nullopt,
             .hasRequiresClause = declaration->requiresClause().has_value(),
             .constexprConstructor = info->constexprConstructor,
+            .requiresUnsafe = info->requiresUnsafe,
             .compilerPrivate = info->compilerPrivate};
       }
     } else if (const auto *declaration = stmtAs<DestructorDecl>(&statement)) {
@@ -1084,6 +1085,9 @@ private:
     if (source.id != lowered.id || source.owner != lowered.owner ||
         source.generatedDefault != lowered.generatedDefault ||
         source.constexprConstructor != lowered.constexprConstructor ||
+        source.requiresUnsafe != lowered.requiresUnsafe ||
+        source.requiresUnsafe != (source.source != nullptr &&
+                                  source.source->unsafeKeyword().has_value()) ||
         source.constexprConstructor !=
             (source.source != nullptr && source.source->isConstexpr()) ||
         source.typeArguments != lowered.typeArguments ||

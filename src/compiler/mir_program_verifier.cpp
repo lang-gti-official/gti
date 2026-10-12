@@ -2950,6 +2950,14 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
         }
       }
       const MirConstructorInstance *constructorTarget = nullptr;
+      if (instruction.unsafeOperation ==
+              UnsafeOperationKind::DeclaredUnsafeConstruction &&
+          !instruction.constructorTarget) {
+        return verificationFailure(
+            body, owner,
+            "unsafe construction lacks an exact constructor target", block.id,
+            instruction.id);
+      }
       if (!instruction.constructorTarget && !instruction.functionTarget &&
           (instruction.kind == MirInstructionKind::Call ||
            instruction.kind == MirInstructionKind::Construct) &&
@@ -3038,6 +3046,23 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
               body, owner,
               "construct borrow contract references an invalid "
               "constructor target",
+              block.id, instruction.id);
+        }
+        if (constructorTarget->requiresUnsafe &&
+            instruction.unsafeOperation !=
+                UnsafeOperationKind::DeclaredUnsafeConstruction &&
+            instruction.unsafeOperation !=
+                UnsafeOperationKind::ObjectLifetime) {
+          return verificationFailure(
+              body, owner,
+              "construction does not retain its target's unsafe contract",
+              block.id, instruction.id);
+        }
+        if (!constructorTarget->requiresUnsafe &&
+            instruction.unsafeOperation ==
+                UnsafeOperationKind::DeclaredUnsafeConstruction) {
+          return verificationFailure(
+              body, owner, "construction has a forged unsafe contract",
               block.id, instruction.id);
         }
         if (inPlaceArgumentOffset) {

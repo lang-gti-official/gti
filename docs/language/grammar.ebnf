@@ -102,8 +102,8 @@ declaration            = conditional-declaration
 empty-declaration      = ";" ;
 
 unsafe-function-modifier = "unsafe" ;
-(* GTI free functions and ordinary non-polymorphic instance/static methods;
-   not constructors, destructors, operators, virtual/interface-instance/override methods,
+(* GTI free functions, ordinary source constructors and non-polymorphic instance/static methods;
+   not special-member policies, destructors, operators, virtual/interface-instance/override methods,
    runtime bindings, extern-C declarations or hosted main. Every call requires a
    lexical unsafe block. The modifier grants no unsafe permission to the body
    and cannot be erased by callback or safe function-item conversion. *)
@@ -556,7 +556,7 @@ access-specifier       = ( "public" | "private" ) ":" ;
    lifetime and escape contract is specified in ownership-and-lifetimes.md. *)
 
 constructor-declaration
-                       = [ "constexpr" ] IDENTIFIER
+                       = [ "unsafe" ] [ "constexpr" ] IDENTIFIER
                          [ generic-parameter-clause ] parameter-clause
                          [ requires-clause ]
                          [ constructor-initializer-list ] block

@@ -4,6 +4,11 @@
 #include <std/detail/iterator>
 
 namespace gti_internal {
+namespace runtime {
+extern "C" {
+  const uint8_t* gti_rt_c_string_bytes_v1(c_string text);
+}
+}
 class unique_owner<T> {};
 class shared_owner<T> {};
 // Layout-only capability: no engagement bit and no automatic payload drop.
@@ -195,6 +200,13 @@ unsafe string_view assume_string_view<Owner>(
 /// unsafe validity assertion. No scan or character allocation happens here.
 unsafe c_string assume_c_string<Owner>(const char* address, Owner& owner) {
   unsafe { return gti_internal::c_string_from_address(address, owner); }
+}
+
+/// Exposes a non-owning byte address without scanning or extending its lifetime.
+/// The caller must preserve the original storage and prove every subsequent
+/// read's validity; null remains null. No checked reference is created.
+unsafe const uint8_t* c_string_bytes(c_string text) {
+  unsafe { return gti_internal::runtime::gti_rt_c_string_bytes_v1(text); }
 }
 
 /// Exclusive ownership of one dynamically allocated `T`.
@@ -981,6 +993,9 @@ public:
   }
   prefix_owner(prefix_owner<T>& other) = delete;
   prefix_owner(prefix_owner<T>&& other) = default;
+  expected<void, alloc_errc> try_allocate(uint64_t count) mut {
+    return this.data.try_allocate(count);
+  }
   uint64_t capacity() { return this.data.capacity(); }
   uint64_t length() { return this.data.length(); }
   unsafe const T* address() { unsafe { return this.data.address(); } }

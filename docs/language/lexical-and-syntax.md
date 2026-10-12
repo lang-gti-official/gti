@@ -51,7 +51,7 @@ consuming receiver/signature forms defined by the grammar; these contexts do
 not introduce general C++ rvalue-reference parameters.
 
 `unsafe` introduces an ordinary lexical block, a GTI function or ordinary
-method's caller-obligation modifier, or an unsafe compound member-signature
+method/ordinary source constructor's caller-obligation modifier, or an unsafe compound member-signature
 requirement. `[[unsafe]]` is not
 an accepted attribute spelling. `const` is a
 keyword for the implemented raw-pointer pointee/slot qualifiers; its presence

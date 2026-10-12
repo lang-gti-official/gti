@@ -5177,7 +5177,8 @@ auto SemanticVisitor::Impl::baseHasAccessibleDefaultConstructor(
   }
   const ClassInfo &owner = classInfo(base.type.classId);
   if (const ConstructorInfo *declared = defaultConstructor(owner)) {
-    if (declared->access != AccessModifier::Public && owner.id != derived) {
+    if (declared->requiresUnsafe ||
+        (declared->access != AccessModifier::Public && owner.id != derived)) {
       return false;
     }
     return !requestsStructuralDefaultConstruction(*declared) ||
@@ -5288,6 +5289,16 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
   }
 
   const ViableConstructor &selected = viable.front();
+  if (selected.constructor != nullptr && selected.constructor->requiresUnsafe) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2055", DiagnosticPhase::Semantics, location,
+        "An unsafe base constructor cannot be called from an initializer list; "
+        "constructor initializers do not establish an unsafe block.");
+    diagnostic.related.push_back(
+        {tokenSpan(*selected.constructor->declaration->unsafeKeyword()),
+         "Unsafe base constructor declared here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
   if (selected.constructor != nullptr &&
       selected.constructor->access != AccessModifier::Public &&
       !isWithinClass(baseOwner.id)) {
@@ -7947,7 +7958,9 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
                            .owner = owner.id,
                            .declaration = constructor,
                            .access = access,
-                           .constexprConstructor = constructor->isConstexpr()};
+                           .constexprConstructor = constructor->isConstexpr(),
+                           .requiresUnsafe =
+                               constructor->unsafeKeyword().has_value()};
       info.requiredParameterCount =
           requiredParameterCount(constructor->parameters());
       info.defaultArgumentEffectOwners =
