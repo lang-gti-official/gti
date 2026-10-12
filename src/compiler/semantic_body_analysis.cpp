@@ -2797,7 +2797,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   const bool polymorphic =
       methodDeclaration &&
       (stmt.isVirtual() || stmt.isPure() || stmt.isOverride() ||
-       (currentClass && classInfo(*currentClass).kind == ClassKind::Interface));
+       (!stmt.isStatic() &&
+        classInfo(*currentClass).kind == ClassKind::Interface));
   const bool directOwningPayloadTransport =
       stmt.body() != nullptr && !intrinsicDeclaration &&
       !stmt.runtimeBinding() && !stmt.hasCLinkage() && !stmt.operatorName() &&
@@ -2825,9 +2826,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
              "Trailing requires clauses are not supported on operator "
              "declarations in the bounded requirements model.",
              "GTI-S2049");
-    } else if (methodDeclaration &&
-               (stmt.isVirtual() || stmt.isPure() || stmt.isOverride() ||
-                classInfo(*currentClass).kind == ClassKind::Interface)) {
+    } else if (polymorphic) {
       report(stmt.requiresClause()->keyword,
              "Trailing requires clauses are not supported on polymorphic "
              "methods in the bounded requirements model.",
@@ -3204,7 +3203,8 @@ auto SemanticVisitor::Impl::deferTrustedBody(const FunctionDecl &stmt) const
   if (stmt.isVirtual() || stmt.isOverride() || stmt.isPure()) {
     return false;
   }
-  if (currentClass && classInfo(*currentClass).kind == ClassKind::Interface) {
+  if (currentClass && classInfo(*currentClass).kind == ClassKind::Interface &&
+      !stmt.isStatic()) {
     return false;
   }
   // The language requires a constexpr definition to be analysed before a
