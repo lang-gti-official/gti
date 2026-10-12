@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.411.1 — Comparators built from generic classes
+## 0.412.1 — Comparators built from generic classes
 
 - Inside a generic function, a callable built from the function's own type
   parameters now satisfies callable concepts such as `std::comparator`,
@@ -20,6 +20,18 @@ for what minor and patch releases mean.
   concrete instance satisfied the concept. The same applies to member
   requirements on a generic class instance, such as a `Box<T>` whose `read()`
   returns `T`.
+
+## 0.412.0 — Declared field defaults through reflection; JSON files
+
+- `std::meta::field<T, I>::has_default()` tells whether a field declares an
+  initializer, and `default_value()` evaluates a fresh copy of it where the
+  call is (GTI-S2119 for a field without one), so generic code can reach a
+  declaration's default without an instance.
+- `<std/json>`: `[[std::json::defaulted]]` fields and
+  `decode_options::set_missing_members_defaulted(true)` fill absent members
+  from declared defaults instead of failing with `missing_field`; ignored
+  fields take their declared defaults; `read_file<T>`, `write_file` and
+  `write_file_pretty` move documents to and from disk (`errc::io_failure`).
 
 ## 0.411.0 — Portable aggregate standard-library imports
 

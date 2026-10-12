@@ -1,0 +1,95 @@
+// A configuration file through <std/json>: absent members take declared
+// defaults with `[[defaulted]]` or the decode option, ignored fields keep
+// their declared defaults, and whole documents move to and from disk.
+#include <std/json>
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+struct editor_ui {
+  [[std::json::defaulted]]
+  bool enable_docking = true;
+  [[std::json::defaulted]]
+  bool enable_multi_viewports = true;
+  [[std::json::defaulted]]
+  std::string font_path = std::string("assets://fonts/mono.ttf");
+  [[std::json::defaulted]]
+  float font_size = 18.0;
+  std::string ini_path = std::string("config://imgui.ini");
+  [[std::json::ignore]]
+  std::vector<int32_t> recent = {1, 2};
+};
+
+struct window {
+  uint32_t width = 1280;
+  uint32_t height = 720;
+  std::optional<std::string> title = std::optional<std::string>();
+};
+
+int main() {
+  // Only the required member is present: defaulted fields keep their
+  // declared initializers, the ignored field too.
+  auto sparse = std::json::decode<editor_ui>("{\"ini_path\":\"config://custom.ini\"}");
+  if (!sparse) {
+    std::print(sparse.error().description());
+    std::print("\n");
+    return 1;
+  }
+  editor_ui ui = std::move(sparse).value();
+  if (!ui.enable_docking || !ui.enable_multi_viewports || ui.font_path.view() != "assets://fonts/mono.ttf" ||
+      ui.font_size != 18.0 || ui.ini_path.view() != "config://custom.ini" ||
+      ui.recent.size() != std::size_t(2) || ui.recent[std::size_t(1)] != 2) {
+    return 2;
+  }
+  // A present member still wins, and a required one is still required.
+  auto partial = std::json::decode<editor_ui>("{\"ini_path\":\"x\",\"font_size\":12.5,\"enable_docking\":false}");
+  if (!partial || partial.value().font_size != 12.5 || partial.value().enable_docking || !partial.value().enable_multi_viewports) {
+    return 3;
+  }
+  auto missing = std::json::decode<editor_ui>("{\"font_size\":1}");
+  if (missing || missing.error().code != std::json::errc::missing_field || missing.error().path.view() != "/ini_path") {
+    return 4;
+  }
+
+  // The option applies the same rule to every field with a default.
+  mut std::json::decode_options lenient{};
+  lenient.set_missing_members_defaulted(true);
+  auto empty = std::json::decode<window>("{}", lenient);
+  if (!empty || empty.value().width != 1280 || empty.value().height != 720 || empty.value().title.has_value()) {
+    return 5;
+  }
+  auto strict = std::json::decode<window>("{}");
+  if (strict || strict.error().code != std::json::errc::missing_field || strict.error().path.view() != "/width") {
+    return 6;
+  }
+
+  // Round trip through a file, compact and pretty.
+  std::string_view path = "/tmp/gti-json-config-fixture.json";
+  window shape = {.width = uint32_t(1920), .height = uint32_t(1080), .title = std::optional<std::string>(std::string("Editor"))};
+  auto saved = std::json::write_file_pretty(path, shape);
+  if (!saved) {
+    return 7;
+  }
+  auto loaded = std::json::read_file<window>(path);
+  if (!loaded) {
+    std::print(loaded.error().description());
+    std::print("\n");
+    return 8;
+  }
+  window back = std::move(loaded).value();
+  if (back.width != 1920 || back.height != 1080 || !back.title.has_value() || back.title.value().view() != "Editor") {
+    return 9;
+  }
+  auto compact = std::json::write_file(path, ui);
+  auto reloaded = std::json::read_file<editor_ui>(path, lenient);
+  if (!compact || !reloaded || reloaded.value().ini_path.view() != "config://custom.ini") {
+    return 10;
+  }
+
+  // A missing file is `io_failure` without a source location.
+  auto absent = std::json::read_file<window>("/tmp/gti-json-config-does-not-exist.json");
+  if (absent || absent.error().code != std::json::errc::io_failure || absent.error().has_source_location()) {
+    return 11;
+  }
+  return 0;
+}

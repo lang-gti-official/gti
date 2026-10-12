@@ -3668,6 +3668,8 @@ private:
   declarationAttributesOf(const SemanticType &subject,
                           std::optional<std::uint64_t> index) const;
   const std::vector<ResolvedDeclarationAttribute> noDeclarationAttributes;
+  void analyzeMetaFieldDefault(const Call &expr, const Get &member,
+                               const SemanticType &fieldObject);
   void analyzeMetaAttributeAccess(const Call &expr, const Get &member,
                                   const SemanticType &metaObject,
                                   bool typeSubject);
