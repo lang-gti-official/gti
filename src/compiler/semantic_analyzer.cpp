@@ -28,6 +28,19 @@ void SemanticVisitor::requireFunctionBodies(
 
 bool SemanticVisitor::check(const Expr &expr) { return impl->check(expr); }
 
+bool SemanticVisitor::analyzeDemandedPrimaryBody(const FunctionDecl &body) {
+  const FunctionDecl *roots[] = {&body};
+  return impl->analyzeLateDemand(roots);
+}
+
+bool SemanticVisitor::lateDemandFailed() const {
+  return impl->lateDemandFailed;
+}
+
+std::vector<const FunctionDecl *> SemanticVisitor::lateDemandedBodies() const {
+  return impl->lateDemandedBodies;
+}
+
 bool SemanticVisitor::applyProgramRequest(const Program &program,
                                           const ProgramRequest &request) {
   return impl->applyProgramRequest(program, request);
@@ -70,9 +83,11 @@ SemanticInstanceAnalysis SemanticVisitor::analyzeFunctionInstance(
     const std::vector<CompileTimeValue> &classValueArguments,
     const std::vector<SemanticType> &functionTypeArguments,
     const std::vector<CompileTimeValue> &functionValueArguments) {
-  return impl->analyzeFunctionInstance(
-      functionId, classTypeArguments, classValueArguments,
-      functionTypeArguments, functionValueArguments);
+  return impl->withLateDemand([&] {
+    return impl->analyzeFunctionInstance(
+        functionId, classTypeArguments, classValueArguments,
+        functionTypeArguments, functionValueArguments);
+  });
 }
 
 SemanticInstanceAnalysis SemanticVisitor::analyzeConstructorInstance(
@@ -81,23 +96,29 @@ SemanticInstanceAnalysis SemanticVisitor::analyzeConstructorInstance(
     const std::vector<CompileTimeValue> &classValueArguments,
     const std::vector<SemanticType> &constructorTypeArguments,
     const std::vector<CompileTimeValue> &constructorValueArguments) {
-  return impl->analyzeConstructorInstance(
-      constructorId, classTypeArguments, classValueArguments,
-      constructorTypeArguments, constructorValueArguments);
+  return impl->withLateDemand([&] {
+    return impl->analyzeConstructorInstance(
+        constructorId, classTypeArguments, classValueArguments,
+        constructorTypeArguments, constructorValueArguments);
+  });
 }
 
 SemanticInstanceAnalysis SemanticVisitor::analyzeDestructorInstance(
     ClassId classId, const std::vector<SemanticType> &classTypeArguments,
     const std::vector<CompileTimeValue> &classValueArguments) {
-  return impl->analyzeDestructorInstance(classId, classTypeArguments,
-                                         classValueArguments);
+  return impl->withLateDemand([&] {
+    return impl->analyzeDestructorInstance(classId, classTypeArguments,
+                                           classValueArguments);
+  });
 }
 
 SemanticInstanceAnalysis SemanticVisitor::analyzeClassFieldInitializers(
     ClassId classId, const std::vector<SemanticType> &classTypeArguments,
     const std::vector<CompileTimeValue> &classValueArguments) {
-  return impl->analyzeClassFieldInitializers(classId, classTypeArguments,
-                                             classValueArguments);
+  return impl->withLateDemand([&] {
+    return impl->analyzeClassFieldInitializers(classId, classTypeArguments,
+                                               classValueArguments);
+  });
 }
 
 } // namespace lang

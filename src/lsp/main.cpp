@@ -4403,6 +4403,10 @@ private:
          static_cast<std::int64_t>(metrics.semanticDemandRounds)},
         {"semanticDemandFallbacks",
          static_cast<std::int64_t>(metrics.semanticDemandFallbacks)},
+        {"semanticLateDemandBodies",
+         static_cast<std::int64_t>(metrics.semanticLateDemandBodies)},
+        {"semanticLateDemandMicroseconds",
+         static_cast<std::int64_t>(metrics.semanticLateDemandMicroseconds)},
         {"hirMicroseconds", static_cast<std::int64_t>(metrics.hirMicroseconds)},
         {"semanticBorrowSummaryCandidateInspections",
          static_cast<std::int64_t>(

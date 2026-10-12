@@ -2969,7 +2969,8 @@ auto SemanticVisitor::Impl::discoverOwnedCallableContracts() -> void {
   std::vector<PendingOwnedContract> pending;
   for (const auto &[_, function] : semanticModel.functions) {
     if (function.declaration == nullptr || function.ownerClass != 0 ||
-        function.declaration->body() == nullptr) {
+        function.declaration->body() == nullptr ||
+        !finalizesFunction(function)) {
       continue;
     }
     const ReturnStmt *soleReturn =
@@ -3025,7 +3026,8 @@ auto SemanticVisitor::Impl::discoverOwnedCallableContracts() -> void {
 
 auto SemanticVisitor::Impl::discoverOwnedCallableValueParameters() -> void {
   for (auto &[_, function] : semanticModel.functions) {
-    if (function.declaration == nullptr || !function.declaration->body())
+    if (function.declaration == nullptr || !function.declaration->body() ||
+        !finalizesFunction(function))
       continue;
     for (std::size_t index = 0; index < function.parameterTypes.size();
          ++index) {
@@ -3124,7 +3126,7 @@ auto SemanticVisitor::Impl::ownedTransportMatchesConcrete(
 auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
   std::vector<Diagnostic> ownedDiagnostics;
   for (const auto &[call, resolved] : semanticModel.calls) {
-    if (call == nullptr) {
+    if (call == nullptr || !finalizesCall(call)) {
       continue;
     }
     const FunctionInfo *target = semanticModel.findFunction(resolved.function);
@@ -3242,7 +3244,8 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
 auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
   std::vector<Diagnostic> argumentDiagnostics;
   for (const auto &[call, resolved] : semanticModel.calls) {
-    if (call == nullptr || resolved.callableArguments.empty()) {
+    if (call == nullptr || resolved.callableArguments.empty() ||
+        !finalizesCall(call)) {
       continue;
     }
     const FunctionInfo *target = semanticModel.findFunction(resolved.function);
@@ -3309,7 +3312,7 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
 auto SemanticVisitor::Impl::validateConfinedCallableContracts() -> void {
   std::vector<Diagnostic> contractDiagnostics;
   for (const auto &[_, function] : semanticModel.functions) {
-    if (function.declaration == nullptr) {
+    if (function.declaration == nullptr || !finalizesFunction(function)) {
       continue;
     }
     for (const CallableParameterContract &contract :
@@ -3459,8 +3462,12 @@ auto SemanticVisitor::Impl::callableContractRequiresOnce(
 
 auto SemanticVisitor::Impl::validateOnceCallableForwardings() -> void {
   std::vector<Diagnostic> forwardingDiagnostics;
-  for (const SemanticModel::PendingCallableForwarding &forwarding :
-       semanticModel.pendingCallableForwardings) {
+  const auto &forwardings = semanticModel.pendingCallableForwardings;
+  for (std::size_t index =
+           lateFinalization == nullptr ? 0 : lateFinalization->forwardings;
+       index < forwardings.size(); ++index) {
+    const SemanticModel::PendingCallableForwarding &forwarding =
+        forwardings[index];
     if (forwarding.call == nullptr ||
         !callableContractRequiresOnce(forwarding.target,
                                       forwarding.targetParameterIndex) ||
@@ -3540,7 +3547,8 @@ auto SemanticVisitor::Impl::validateOnceCallableForwardings() -> void {
 auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
   std::vector<Diagnostic> useDiagnostics;
   for (const auto &[_, function] : semanticModel.functions) {
-    if (function.declaration == nullptr || !function.declaration->body()) {
+    if (function.declaration == nullptr || !function.declaration->body() ||
+        !finalizesFunction(function)) {
       continue;
     }
     for (const CallableParameterContract &contract :
@@ -4371,11 +4379,16 @@ auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
 
 auto SemanticVisitor::Impl::finalizeCThreadRequirements() -> void {
   // Declaration order and wrapper spelling must not determine availability.
-  // Propagate the exact native requirement through resolved source calls.
+  // Propagate the exact native requirement through resolved source calls. A
+  // late batch's callers are its own bodies, so it propagates its own uses.
+  const auto &uses = requestSession.cThreadCallUses;
+  const std::size_t firstUse =
+      lateFinalization == nullptr ? 0 : lateFinalization->cThreadCallUses;
   bool changed = true;
   while (changed) {
     changed = false;
-    for (const CThreadCallUse &use : requestSession.cThreadCallUses) {
+    for (std::size_t index = firstUse; index < uses.size(); ++index) {
+      const CThreadCallUse &use = uses[index];
       const FunctionInfo *callee = semanticModel.findFunction(*use.callee);
       const FunctionInfo *caller =
           use.caller == nullptr ? nullptr
@@ -4390,7 +4403,8 @@ auto SemanticVisitor::Impl::finalizeCThreadRequirements() -> void {
       changed = true;
     }
   }
-  for (const CThreadCallUse &use : requestSession.cThreadCallUses) {
+  for (std::size_t index = firstUse; index < uses.size(); ++index) {
+    const CThreadCallUse &use = uses[index];
     const FunctionInfo *callee = semanticModel.findFunction(*use.callee);
     if (!use.trusted && callee != nullptr && callee->requiresCThreadRuntime) {
       (void)validateConcurrentSurfaceAvailability(use.location,
