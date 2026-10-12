@@ -574,6 +574,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testExpressionJoinsKeepAssignmentPlaces",
+      "suite": "ownership"
+    },
+    {
       "name": "testFixedWidthIntegers",
       "suite": "constexpr"
     },
