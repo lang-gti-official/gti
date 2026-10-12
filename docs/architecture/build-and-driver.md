@@ -186,6 +186,27 @@ retained versions without assuming
 an Intel or Apple Silicon installation prefix. Existing build generators are
 preserved while configuration/install rules are refreshed.
 
+`--preview` selects the canonical GitHub `preview` commit directly and builds
+CLI, LSP and parser together in a persistent detached worktree under the
+primary checkout's sibling `gti-preview-installs/<full-commit>`. It never
+switches or resets the calling checkout or incorporates its uncommitted work.
+An existing source worktree must remain clean, detached and at that exact
+commit; modifications or new commits cause refusal. The complete installation
+and Lazy config point at that selected source. The staged archive includes
+`share/gti/PREVIEW_SOURCE`, and output reports commit and version. This selects
+the user's active ordinary tool commands using the existing backup/activation
+rules; it does not create a second set of executable names.
+
+The default still builds this checkout. `--preview --activate-only` is rejected
+because source selection requires a new build. `--preview --dry-run` only
+resolves and reports the remote source (no fetch or local writes); unlike the
+default dry run, it cannot inspect the selected checkout's build/prerequisites
+until that checkout exists. A missing preview branch fails without installing
+anything. The preview branch is populated only by the separate
+[combined preview workflow](agent-workflow.md#early-combined-preview), and can
+contain PRs still awaiting full validation/review. Preview is not a release
+channel and never publishes stable/nightly packages. Installation is opt-in.
+
 There is no maximum-major admission check: system packages must provide the
 required APIs, RTTI, approved support targets, and an exactly matching Clang
 package. LLVM 23.1.2 has been built and tested; admission of a later release is

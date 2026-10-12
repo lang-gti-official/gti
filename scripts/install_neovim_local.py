@@ -18,6 +18,45 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOOLS = ("gti", "gti_lsp")
+CANONICAL = "https://github.com/lang-gti-official/gti.git"
+
+
+def preview_source(root, dry_run=False):
+    """Pin canonical preview in a persistent detached worktree; never reset source."""
+    def git(*arguments):
+        return run(["git", "-C", root, *arguments], capture=True).stdout.strip()
+
+    # Resolve the fixed canonical repository directly. Local remote aliases,
+    # SSH/HTTPS spelling and push URLs cannot redirect preview installation.
+    fields = git("ls-remote", "--exit-code", CANONICAL, "refs/heads/preview").split()
+    if len(fields) != 2 or fields[1] != "refs/heads/preview" or not re.fullmatch(r"[0-9a-f]{40}", fields[0]):
+        raise ValueError("canonical preview has no published commit")
+    head = fields[0]
+    common = pathlib.Path(git("rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+    destination = common.parent.parent / "gti-preview-installs" / head
+    print(f"Selected preview source: {head}\nPreview checkout: {destination}")
+    print("Preview can include PRs whose full validation and review are still pending.")
+    if dry_run:
+        print("Dry run: no fetch, checkout, build, configuration or installation performed.")
+        return None, head
+    git("fetch", CANONICAL, head)
+    if git("rev-parse", "FETCH_HEAD") != head:
+        raise ValueError("preview fetch did not resolve the selected commit")
+    manifest = json.loads(git("show", head + ":.gti-preview.json"))
+    if manifest.get("schema") != 1 or not isinstance(manifest.get("features"), list):
+        raise ValueError("preview source has no valid inclusion manifest")
+    if destination.exists():
+        selected = lambda *args: run(["git", "-C", destination, *args], capture=True).stdout.strip()
+        attached = subprocess.run(["git", "-C", str(destination), "symbolic-ref", "-q", "HEAD"],
+                                  capture_output=True, text=True, check=False)
+        if (destination.is_symlink() or selected("rev-parse", "--show-toplevel") != str(destination)
+                or selected("rev-parse", "HEAD") != head
+                or selected("status", "--porcelain") or attached.returncode != 1):
+            raise ValueError("existing preview checkout changed; preserve it and resolve manually")
+    else:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        git("worktree", "add", "--detach", str(destination), head)
+    return destination, head
 
 
 def default_jobs():
@@ -222,9 +261,12 @@ def configure_command(build, llvm_dir):
 
 
 def main():
+    global ROOT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=pathlib.Path,
-                        default=ROOT / "out/neovim-local-build")
+                        help="build directory (default: selected source's out/neovim-local-build)")
+    parser.add_argument("--preview", action="store_true",
+                        help="build canonical preview in an isolated checkout and activate it")
     parser.add_argument("--llvm-dir", type=pathlib.Path,
                         help="directory containing LLVMConfig.cmake")
     parser.add_argument("--config", type=pathlib.Path,
@@ -249,6 +291,14 @@ def main():
         parser.error("this installer is for macOS")
     if args.jobs < 1:
         parser.error("--jobs must be a positive integer")
+    if args.preview:
+        if args.activate_only:
+            parser.error("--preview selects and builds source; it cannot be combined with --activate-only")
+        selected, head = preview_source(ROOT, args.dry_run)
+        if selected is None:
+            return
+        ROOT = selected
+        print(f"Installing CLI, LSP and parser from preview commit {head}")
     prerequisites = ("nvim",) if args.activate_only else ("cmake", "nvim", "tar", "c++")
     for executable in prerequisites:
         if not shutil.which(executable):
@@ -279,7 +329,7 @@ def main():
         finish_activation(configuration, content, args.replace_config,
                           bin_dir, toolchain, args.replace_bin, args.no_terminal, version)
         return
-    build = args.build_dir.expanduser().resolve()
+    build = (args.build_dir or ROOT / "out/neovim-local-build").expanduser().resolve()
     if build == ROOT or ROOT.is_relative_to(build):
         parser.error("--build-dir must not be the source checkout or its parent")
     if build == ROOT / "toolchain" or build.is_relative_to(ROOT / "toolchain"):
@@ -314,7 +364,8 @@ def main():
         return
     if configure:
         run(configure)
-    run(["cmake", "--build", build, "--parallel", str(args.jobs),
+    run(["python3", ROOT / "scripts/build_window.py", "--kind", "build", "--",
+         "cmake", "--build", build, "--parallel", str(args.jobs),
          "--target", "gti", "gti_lsp", "gti_tree_sitter"])
     version = (ROOT / "VERSION").read_text().strip()
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
@@ -331,6 +382,8 @@ def main():
         scratch = pathlib.Path(directory)
         stage = scratch / "stage"
         run(["cmake", "--install", build, "--prefix", stage, "--component", "gti_toolchain"])
+        if args.preview:
+            (stage / "share/gti/PREVIEW_SOURCE").write_text(head + "\n")
         archive = scratch / f"gti-v{version}-{native_platform}.tar.gz"
         run(["cmake", "-E", "tar", "czf", archive, "."], cwd=stage)
         checksum = pathlib.Path(str(archive) + ".sha256")
@@ -352,6 +405,8 @@ def main():
     validate_installed_toolchain(toolchain)
     finish_activation(configuration, content, args.replace_config,
                       bin_dir, toolchain, args.replace_bin, args.no_terminal, version)
+    if args.preview:
+        print(f"Installed preview GTI {version} from {head}")
 
 
 def finish_activation(configuration, content, replace_config, bin_dir,

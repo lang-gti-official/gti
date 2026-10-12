@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Owned C-string imports and unsafe constructors (0.415.0)
+## Owned C-string imports and unsafe constructors (0.416.0)
 
 `unsafe_function_contract` covers unrelated ordinary, class-generic,
 constructor-generic and constexpr unsafe constructors, exact caller permission,
@@ -32,6 +32,19 @@ known-length view constructor. The latter does not scan for NUL: these are
 different contracts, not a speedup claim. The combined probe built in 2.26 s,
 used 343 MiB peak compiler RSS and produced a 206,032-byte executable. Timings
 are local observations, not portable thresholds or a claim of failure-path parity.
+
+## Implicit receiver owning-field replacement (0.414.2)
+
+`implicit_receiver_owned_assignment_runtime` exercises nested unqualified
+receiver-field replacement in constructors and mutable virtual methods, with
+fresh string construction, call-produced and explicitly moved unique owners,
+and dispatch through an owning interface pointer. Its failure fixture checks
+exactly-once constructor rollback after replacement. Both fixtures run under
+C++20/C++23 at O0/O1/O3, disabled copy elision, and ASan/UBSan.
+`testNestedOwnedFieldAssignment` additionally rejects forged root/suffix field
+identities, dereference projections, captures, immutable containing fields and
+missing representation rows. The change reuses the explicit-receiver path;
+it changes no source semantics, ABI, allocation policy or cleanup schedule.
 
 ## Interface static methods (0.414.0)
 
@@ -4438,6 +4451,17 @@ also checks that `verify` releases the metadata lock while its checks run,
 holds exactly one build-window `suite` slot for them, reclaims a slot whose
 owner exited, reports a live holder when the window is full, and lets a peer
 task checkpoint while validation is in progress.
+
+`preview_workflow` uses disposable Git repositories to exercise combined
+candidate admission, focused-check replay, mandatory example-gate dispatch,
+failed/dirty/stale publication refusal, append-only removal, and original-PR
+preservation. It also checks preview installer pinning, dirty-checkout
+preservation, unavailable-source failure and read-only source selection.
+Existing `neovim_local_installer` coverage retains default installation and
+activation behavior. These orchestration tests fake compiler builds; actual
+preview admission separately requires its optimized build and automated
+example gates on the combined source. Workflow changes do not themselves
+claim that a preview candidate or installed toolchain has been validated.
 
 `build_window` exercises `scripts/build_window.py` in a temporary directory:
 slot files record owner pid, time, kind and command and disappear on release;

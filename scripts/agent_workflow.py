@@ -536,8 +536,12 @@ class Workflow:
         if not pr.get("merged"):
             root = self.tree(state)
             clean(root)
+            if (root / ".gti-preview.json").exists():
+                raise WorkflowError("Preview candidates cannot merge wholesale into main; finish each original task PR")
             verified = state.get("verified", {})
             head, base = git(root, "rev-parse", "HEAD"), self.fetch()
+            if git(root, "log", "--format=%H", base + ".." + head, "--", ".gti-preview.json"):
+                raise WorkflowError("Preview history cannot merge wholesale into main; finish each original task PR")
             if verified.get("head") != head or verified.get("base") != base or pr["head"]["sha"] != head:
                 raise WorkflowError("Current head/base/PR differ from validation; checkpoint, reconcile and verify again")
             if not body.strip():
@@ -771,9 +775,17 @@ def main():
     abandon.add_argument("--reason", required=True)
     sub.add_parser("status").add_argument("task", nargs="?")
     sub.add_parser("protection").add_argument("--configure", action="store_true")
+    sub.add_parser("preview", help="prepare, verify and publish a combined early preview").add_argument(
+        "arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     try:
         workflow = Workflow(args.repo)
+        if args.command == "preview":
+            # Keep one exception/Git helper identity when this file is __main__.
+            sys.modules.setdefault("agent_workflow", sys.modules[__name__])
+            from preview_workflow import main as preview_main
+            print(json.dumps(preview_main(workflow, args.arguments), indent=2))
+            return 0
         if args.command == "verify":
             # verify takes the metadata lock itself, only around record changes.
             result = workflow.verify(args.task, json.loads(Path(args.remote_steps_file or args.checks_file).read_text()),
