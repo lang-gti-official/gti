@@ -3228,6 +3228,20 @@ auto SemanticVisitor::Impl::enterDeclarationContext(
     for (const auto &[name, member] : info.members) {
       scopes.back().emplace(name, member.symbol);
     }
+    addEnclosingClassStaticMembers(*owner);
+  }
+}
+
+auto SemanticVisitor::Impl::addEnclosingClassStaticMembers(ClassId owner)
+    -> void {
+  // Detached and concrete body analysis must see the same lexical static
+  // members as the declaration walk, without capturing an outer receiver.
+  for (ClassId parent = classInfo(owner).enclosingClass; parent != 0;
+       parent = classInfo(parent).enclosingClass) {
+    for (const auto &[name, member] : classInfo(parent).members) {
+      if (member.symbol.staticMember)
+        scopes.back().emplace(name, member.symbol);
+    }
   }
 }
 
@@ -3519,6 +3533,11 @@ auto SemanticVisitor::Impl::rebuildLexicalEnvironment() -> void {
   currentSourceUnit = 0;
   loanFlow = lexicalLoanFlow;
   beginScope();
+  ClassId innermostClass = 0;
+  for (const auto &frame : lexicalFrames) {
+    if (frame.owner != nullptr)
+      innermostClass = frame.ownerId;
+  }
   for (const RequestSessionState::LexicalFrame &frame : lexicalFrames) {
     currentSourceUnit = frame.sourceUnit;
     if (frame.space != nullptr) {
@@ -3531,6 +3550,8 @@ auto SemanticVisitor::Impl::rebuildLexicalEnvironment() -> void {
       beginTypeParameterScope(info.genericParameters);
       beginScope();
       for (const auto &[name, member] : info.members) {
+        if (frame.ownerId != innermostClass && !member.symbol.staticMember)
+          continue;
         scopes.back().emplace(name, member.symbol);
       }
     }
@@ -5300,7 +5321,7 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
   }
   if (qualified && symbol.ownerClass != 0 &&
       symbol.access == AccessModifier::Private &&
-      currentClass != symbol.ownerClass) {
+      !isWithinClass(symbol.ownerClass)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, expr.name(),
         "Static member '" + expr.name().lexeme + "' of '" +
@@ -9158,6 +9179,19 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
     return;
   }
   recordQualifiedPathUses(expr.name());
+  if (!validateClassPathAliases(expr.name(), expr.name().last())) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (expr.name().segments.size() > 1) {
+    NamePath ownerPath(std::vector<Token>(expr.name().segments.begin(),
+                                          expr.name().segments.end() - 1));
+    if (const auto owner = resolveClassPath(ownerPath, currentNamespace);
+        owner && !validateNestedClassAccess(*owner, expr.name().last())) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+  }
   if (expr.ownerType()) {
     validateType(*expr.ownerType());
     recordTypeUse(*expr.ownerType());
@@ -9224,7 +9258,7 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
   }
   if (symbol->ownerClass != 0 && symbol->type != SemanticType::Function &&
       symbol->access == AccessModifier::Private &&
-      currentClass != symbol->ownerClass) {
+      !isWithinClass(symbol->ownerClass)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, expr.name().last(),
         "Static member '" + expr.name().last().lexeme + "' of '" +
@@ -9902,6 +9936,18 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
     currentType = SemanticType::Unknown;
     return;
   }
+  if (symbol->ownerClass != 0 && !symbol->staticMember &&
+      currentClass != symbol->ownerClass && isWithinClass(symbol->ownerClass) &&
+      !isSameOrDerivedClass(openClassType(*currentClass),
+                            openClassType(symbol->ownerClass))) {
+    report(expr.name(),
+           "Outer instance member '" + expr.name().lexeme +
+               "' requires an explicit enclosing object; a nested type "
+               "does not capture its enclosing instance.",
+           "GTI-S2039");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (symbol->type == SemanticType::Function && !analyzingCallCallee) {
     if (contextualInitializerType &&
         contextualInitializerType->kind == SemanticType::NativeFunction) {
@@ -9935,7 +9981,7 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
                               "from field initializers yet.");
   }
   if (symbol->ownerClass != 0 && symbol->access == AccessModifier::Private &&
-      currentClass != symbol->ownerClass) {
+      !isWithinClass(symbol->ownerClass)) {
     const ClassInfo &declaringOwner = classInfo(symbol->ownerClass);
     Diagnostic diagnostic =
         makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, expr.name(),

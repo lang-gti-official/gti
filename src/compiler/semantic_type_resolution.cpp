@@ -1128,6 +1128,10 @@ auto SemanticVisitor::Impl::resolveClassArguments(
     result.valid = false;
     return result;
   }
+  if (!validateNestedClassAccess(classId, site)) {
+    result.valid = false;
+    return result;
+  }
 
   if (arguments.size() < classInfo(classId).genericParameters.size())
     resolveClassGenericDefaults(classId);
@@ -1963,7 +1967,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
 
   if (selected.constructor != nullptr &&
       selected.constructor->access == AccessModifier::Private &&
-      currentClass != classId) {
+      !isWithinClass(classId)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, paren,
         "Constructor of '" + owner.name.lexeme + "' is private.");
@@ -2755,7 +2759,7 @@ auto SemanticVisitor::Impl::resolveDefaultConstruction(const SemanticType &type,
   }
   if (!constructor->genericParameters.empty() ||
       (constructor->access == AccessModifier::Private &&
-       currentClass != owner->id)) {
+       !isWithinClass(owner->id))) {
     return std::nullopt;
   }
 
@@ -3119,6 +3123,50 @@ auto SemanticVisitor::Impl::validateArrayExtent(
   }
 }
 
+auto SemanticVisitor::Impl::isWithinClass(ClassId owner) const -> bool {
+  for (ClassId current = currentClass.value_or(0); current != 0;
+       current = classInfo(current).enclosingClass) {
+    if (current == owner)
+      return true;
+  }
+  return false;
+}
+
+auto SemanticVisitor::Impl::validateNestedClassAccess(ClassId id,
+                                                      const Token &use)
+    -> bool {
+  for (ClassId current = id; current != 0;
+       current = classInfo(current).enclosingClass) {
+    const ClassInfo &nested = classInfo(current);
+    if (nested.enclosingClass != 0 &&
+        nested.enclosingAccess == AccessModifier::Private &&
+        !isWithinClass(nested.enclosingClass)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2007", DiagnosticPhase::Semantics, use,
+          "Nested type '" + nested.name.lexeme + "' of '" +
+              classInfo(nested.enclosingClass).name.lexeme + "' is private.");
+      diagnostic.related.push_back(
+          {tokenSpan(nested.name), "Nested type is declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      return false;
+    }
+  }
+  return true;
+}
+
+auto SemanticVisitor::Impl::validateClassPathAliases(const NamePath &path,
+                                                     const Token &use) -> bool {
+  for (std::size_t count = 1; count < path.segments.size(); ++count) {
+    NamePath prefix(std::vector<Token>(path.segments.begin(),
+                                       path.segments.begin() + count));
+    if (const auto alias = resolveTypeAliasPath(prefix, currentNamespace);
+        alias && !validateTypeAliasAccess(*alias, use)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 auto SemanticVisitor::Impl::validateTypeAliasAccess(
     const ResolvedTypeAlias &alias, const Token &use) -> bool {
   for (const ResolvedTypeAlias &qualifier : alias.qualifiers) {
@@ -3131,7 +3179,7 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
     return false;
   }
   if (alias.ownerClass != 0 && alias.access == AccessModifier::Private &&
-      currentClass != alias.ownerClass) {
+      !isWithinClass(alias.ownerClass)) {
     const ClassInfo &owner = classInfo(alias.ownerClass);
     Diagnostic diagnostic =
         makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, use,
@@ -3787,6 +3835,10 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   if (type.arguments.size() < classInfo(*classId).genericParameters.size())
     resolveClassGenericDefaults(*classId);
   const ClassInfo &declaration = classInfo(*classId);
+  if (!validateClassPathAliases(type.name, type.name.last()))
+    return;
+  if (!validateNestedClassAccess(*classId, type.name.last()))
+    return;
   if (!declaration.declaration->genericArgumentPatterns().empty() ||
       (!declaration.genericParameters.empty() &&
        declaration.genericParameters.back().pack)) {
@@ -6651,6 +6703,7 @@ auto SemanticVisitor::Impl::prepareClassInstanceContext(
   for (const auto &[name, member] : owner.members) {
     scopes.back().emplace(name, substituteSymbol(member.symbol, concreteClass));
   }
+  addEnclosingClassStaticMembers(classId);
   instanceClassContextActive = true;
   return true;
 }

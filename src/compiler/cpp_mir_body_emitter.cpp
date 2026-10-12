@@ -44274,14 +44274,15 @@ private:
 
   void emitEdgeArguments(const MirBlock &source, MirBlockId target,
                          const std::vector<MirOperand> &arguments,
-                         std::size_t edge, const ScalarBodyFacts &facts) {
+                         std::size_t edge, const ScalarBodyFacts &facts,
+                         bool incomingChecked = false) {
     const MirBlock *destination = facts.body.findBlock(target);
     if (destination == nullptr ||
         destination->parameters.size() != arguments.size()) {
       throw std::logic_error(
           "verified MIR edge lost its block-argument signature");
     }
-    if (failureForm && edge == 1 &&
+    if (failureForm && edge == 1 && !incomingChecked &&
         source.terminator.kind == MirTerminatorKind::Invoke) {
       const auto *producer =
           findInstruction(facts.body, source.terminator.invokeInstruction);
@@ -44358,7 +44359,7 @@ private:
             emitControlFlowTransfer(block, terminator.target, 0, controlFlow);
             --indentation;
             writeIndent();
-            output << "} else {\n";
+            output << "} else [[unlikely]] {\n";
             ++indentation;
             emitEdgeArguments(block, terminator.elseTarget,
                               terminator.elseArguments, 1, facts);
@@ -44564,7 +44565,7 @@ private:
         emitControlFlowTransfer(block, terminator.target, 0, controlFlow);
         --indentation;
         writeIndent();
-        output << "} else {\n";
+        output << "} else [[unlikely]] {\n";
         ++indentation;
         writeIndent();
         output << "if (__gti_mir_thread_join_" << producer->id
@@ -44643,11 +44644,14 @@ private:
       emitControlFlowTransfer(block, terminator.target, 0, controlFlow);
       --indentation;
       writeIndent();
-      output << "} else {\n";
+      output << "} else [[unlikely]] {\n";
       ++indentation;
-      emitFailureRecordWrite(*producer);
+      const bool published = emitColdFailurePublication(*producer);
+      if (!published) {
+        emitFailureRecordWrite(*producer);
+      }
       emitEdgeArguments(block, terminator.elseTarget, terminator.elseArguments,
-                        1, facts);
+                        1, facts, published);
       emitControlFlowTransfer(block, terminator.elseTarget, 1, controlFlow);
       --indentation;
       writeIndent();
@@ -46394,6 +46398,32 @@ private:
     --indentation;
     writeIndent();
     output << "}\n";
+  }
+
+  // A detector's failure record and incoming-cleanup check are published by
+  // one cold support call, so a successful caller's native inlining cost
+  // excludes them. A panic keeps its inline record because it also captures
+  // its message and may forward the caller's site.
+  bool emitColdFailurePublication(const MirInstruction &instruction) {
+    if (instruction.intrinsic == IntrinsicKind::Panic ||
+        instruction.kind == MirInstructionKind::Drop) {
+      return false;
+    }
+    if (instruction.localFailureSites.size() != 1 ||
+        instruction.definedFailure.localOrigins.size() != 1 ||
+        program.failureMetadata().findSite(
+            instruction.localFailureSites.front()) == nullptr) {
+      throw std::logic_error(
+          "failure-form MIR detector lost its canonical site");
+    }
+    writeIndent();
+    output << "::gti_internal::backend::mir_publish_failure_v1("
+              "__gti_mir_failure_record, __gti_mir_failure_status_"
+           << instruction.id << ", UINT32_C("
+           << instruction.localFailureSites.front()
+           << "), &::gti_internal::backend::"
+              "__gti_failure_artifact_descriptor_v1);\n";
+    return true;
   }
 
   void emitFailureRecordWrite(
