@@ -437,6 +437,7 @@ base-clause            = ":" base-specifier { "," base-specifier } ;
 base-specifier         = [ "public" | "private" ] base-type ;
 
 class-member           = conditional-class-members
+                       | nested-class-declaration
                        | configuration-directive
                        | compile-error-directive
                        | static-assert-declaration
@@ -450,6 +451,15 @@ class-member           = conditional-class-members
                        | static-variable-declaration
                        | [ declaration-attributes ] variable-declaration
                        | empty-declaration ;
+
+(* Named class/struct definitions nest in a non-generic class/struct.
+   Anonymous records, nested interface/union declarations, and capturing an
+   enclosing generic's arguments are not admitted by this slice. *)
+nested-class-declaration = [ declaration-attributes ] [ class-attributes ]
+                          ( "class" | "struct" ) IDENTIFIER
+                          [ generic-parameter-clause
+                          | generic-signature-pattern-clause ] [ base-clause ]
+                          ( "{" { class-member } "}" ";" | ";" ) ;
 
 conditional-class-members
                        = conditional-start { class-member }

@@ -861,16 +861,30 @@ private:
   StmtPtr classDeclaration(
       std::vector<ClassAttribute> attributes, Token keyword,
       std::optional<CompilerTypeBinding> compilerTypeBinding = std::nullopt) {
+    const NestingGuard nesting = enterNesting(keyword);
     const ClassKind kind =
         keyword.kind == TokenKind::STRUCT      ? ClassKind::Struct
         : keyword.kind == TokenKind::INTERFACE ? ClassKind::Interface
         : keyword.kind == TokenKind::UNION     ? ClassKind::Union
                                                : ClassKind::Class;
+    if (currentClassName &&
+        ((kind != ClassKind::Class && kind != ClassKind::Struct) ||
+         (currentClassKind != ClassKind::Class &&
+          currentClassKind != ClassKind::Struct))) {
+      throw error(keyword,
+                  "Only named classes and structs can be nested inside "
+                  "classes and structs.");
+    }
     Token name = consume(TokenKind::IDENTIFIER, "Expect type name.");
     std::optional<TypeRef> exactSpecialization;
     std::vector<GenericParameter> genericParameters;
     std::vector<TypeRef> genericArgumentPatterns;
     if (check(TokenKind::SCOPE)) {
+      if (currentClassName) {
+        throw error(name,
+                    "Exact qualified class specializations are limited to "
+                    "namespace scope.");
+      }
       NamePath target = parseNamePath(name);
       if (!check(TokenKind::LESS)) {
         throw error(target.last(),
@@ -2111,6 +2125,10 @@ private:
       if (check(TokenKind::LEFT_BRACKET) &&
           peekAt(1).kind == TokenKind::LEFT_BRACKET) {
         return bracketAttributedDeclaration(LanguageLinkage::Gti);
+      }
+      if (match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
+                 TokenKind::UNION})) {
+        return classDeclaration({}, previous());
       }
       if (check(TokenKind::MUT) && peekAt(1).kind == TokenKind::LEFT_BRACE) {
         Token keyword = advance();
