@@ -1520,6 +1520,12 @@ set_tests_properties(
 
 if(Python3_Interpreter_FOUND)
   add_test(
+    NAME bounded_log
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/bounded_log_test.py"
+  )
+  set_tests_properties(bounded_log PROPERTIES TIMEOUT 30)
+  add_test(
     NAME agent_workflow
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/agent_workflow_test.py"
