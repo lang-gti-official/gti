@@ -5,7 +5,7 @@ int main() {
   for (mut int key = 2; key <= 10; key += 2) {
     [[discard]] values.insert(key, key * 10);
   }
-  for (mut auto& entry : values) { entry.second += 1; }
+  for (mut auto& entry : values) { entry.mapped() += 1; }
   int four = 4;
   if (values.at(four) != 41 || values.count(four) != 1) { return 1; }
   int five = 5;
@@ -28,7 +28,7 @@ int main() {
   }
   {
     mut auto found = values.find_mut(four);
-    (*found).second = 44;
+    (*found).mapped() = 44;
   }
   if (values.at(four) != 44) { return 9; }
   {

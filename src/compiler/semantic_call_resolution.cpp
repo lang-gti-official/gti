@@ -4034,8 +4034,10 @@ auto SemanticVisitor::Impl::recordRawBorrowCall(
                        .callee = resolved.declaration,
                        .intrinsic = resolved.intrinsic,
                        .location = call.paren()};
-  for (const auto &argument : call.arguments()) {
-    use.arguments.push_back(rawBorrowArgument(argument, call.paren()));
+  for (std::size_t index = 0;
+       index < resolvedCallArgumentCount(call, &resolved); ++index) {
+    use.arguments.push_back(rawBorrowArgument(
+        *resolvedCallArgument(call, &resolved, index), call.paren()));
   }
   if (const auto *member = exprAs<Get>(call.callee().get());
       member && resolved.receiverMode != CallReceiverMode::None) {
@@ -4911,6 +4913,17 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return selectStructuralOperator(iterator, OverloadedOperator::Dereference,
                                     {}, false);
   };
+  const auto readableElement =
+      [&](const CallableCandidate &candidate) -> std::optional<SemanticType> {
+    const auto &result = candidate.returnType;
+    if (result.kind == SemanticType::Reference && result.arguments.size() == 1)
+      return result.arguments.front();
+    if (candidate.receiverMutability == ReceiverMutability::ReadOnly &&
+        candidate.returnBorrowOrigin == BorrowOriginKind::None &&
+        readableIteratorValue(result))
+      return result;
+    return std::nullopt;
+  };
   const auto selectedSentinelOperator = [&](const SemanticType &iterator,
                                             OverloadedOperator operation,
                                             const SemanticType &sentinel) {
@@ -4938,12 +4951,11 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
                                   const SemanticType *referent) {
     const std::optional<CallableCandidate> candidate =
         selectedDereference(iterator);
-    if (!candidate || candidate->returnType.kind != SemanticType::Reference ||
-        candidate->returnType.arguments.size() != 1) {
+    if (!candidate) {
       return false;
     }
-    return referent == nullptr ||
-           candidate->returnType.arguments.front() == *referent;
+    const auto element = readableElement(*candidate);
+    return element && (referent == nullptr || *element == *referent);
   };
   const auto mutableReference = [](const CallableCandidate &candidate,
                                    const SemanticType *referent) {
@@ -4973,6 +4985,19 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
   const auto selectedRangeMember =
       [&](const SemanticType &range, std::string_view name,
           ReceiverMutability receiver) -> std::optional<CallableCandidate> {
+    if (range == SemanticType::StringView &&
+        receiver == ReceiverMutability::ReadOnly) {
+      auto factory = textViewMemberFactory(name);
+      if (factory && factory->parameterTypes.size() == 1) {
+        // Structural member queries consume the same trusted declaration
+        // identity as written member calls; its first input is the receiver.
+        factory->parameterTypes.clear();
+        return factory;
+      }
+      if (name == "size")
+        return CallableCandidate{.returnType = SemanticType::UInt64};
+      return std::nullopt;
+    }
     const ClassInfo *owner = classInfo(range);
     if (owner == nullptr) {
       return std::nullopt;
@@ -5114,7 +5139,8 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
   const auto callableSatisfies = [&](const SemanticType &callable,
                                      std::span<const SemanticType> parameters,
                                      const SemanticType &result,
-                                     CallableInvocationCapability required) {
+                                     CallableInvocationCapability required,
+                                     bool referenceArguments = true) {
     if (result.kind == SemanticType::Reference ||
         typeTraits(result).containsBorrowedState ||
         containsLambdaType(result)) {
@@ -5131,8 +5157,10 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
         return true;
       }
       for (std::size_t index = 0; index < parameters.size(); ++index) {
-        if (!readableCallableParameter(candidate.parameterTypes[index],
-                                       parameters[index])) {
+        if (referenceArguments
+                ? !readableCallableParameter(candidate.parameterTypes[index],
+                                             parameters[index])
+                : candidate.parameterTypes[index] != parameters[index]) {
           return true;
         }
       }
@@ -5190,13 +5218,17 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     }
     const std::optional<CallableCandidate> dereference =
         selectedDereference(shape->iterator);
-    if (!dereference ||
-        dereference->returnType.kind != SemanticType::Reference ||
-        dereference->returnType.arguments.size() != 1 ||
-        dereference->returnType.referenceAccess != AccessMode::ReadOnly) {
+    if (!dereference) {
       return std::nullopt;
     }
-    return dereference->returnType.arguments.front();
+    const auto &result = dereference->returnType;
+    if (result.kind == SemanticType::Reference &&
+        result.arguments.size() == 1 &&
+        result.referenceAccess == AccessMode::ReadOnly)
+      return result.arguments.front();
+    if (result.kind != SemanticType::Reference)
+      return readableElement(*dereference);
+    return std::nullopt;
   };
 
   switch (kind) {
@@ -5384,18 +5416,18 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     }
     const std::optional<CallableCandidate> dereference =
         selectedDereference(arguments[1]);
-    if (!dereference ||
-        dereference->returnType.kind != SemanticType::Reference ||
-        dereference->returnType.arguments.size() != 1) {
+    const auto element =
+        dereference ? readableElement(*dereference) : std::nullopt;
+    if (!element) {
       return false;
     }
-    const SemanticType &element = dereference->returnType.arguments.front();
     const SemanticType &result =
         kind == StructuralConstraintKind::IndirectPredicate ? SemanticType::Bool
                                                             : arguments[2];
-    return callableSatisfies(arguments[0],
-                             std::span<const SemanticType>(&element, 1), result,
-                             CallableInvocationCapability::Mutable);
+    return callableSatisfies(
+        arguments[0], std::span<const SemanticType>(&*element, 1), result,
+        CallableInvocationCapability::Mutable,
+        dereference->returnType.kind == SemanticType::Reference);
   }
   case StructuralConstraintKind::RangePredicate:
   case StructuralConstraintKind::RangeOperation: {
@@ -6637,7 +6669,7 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     std::vector<CompileTimeValue> valueArguments,
     std::vector<std::size_t> ephemeralBorrowArguments,
     std::vector<CallableArgumentBoundary> callableArguments,
-    CallReceiverMode receiverMode) -> void {
+    CallReceiverMode receiverMode, const ExprPtr *argumentReceiver) -> void {
   requireFunctionDefinition(function, expressionToken(call.callee()));
   const bool pointerBearingCFunction =
       function.declaration != nullptr && function.declaration->hasCLinkage() &&
@@ -6748,7 +6780,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       function.declaration == nullptr
           ? std::vector<const Expr *>{}
           : omittedDefaultArguments(function.declaration->parameters(),
-                                    call.arguments().size());
+                                    call.arguments().size() +
+                                        (argumentReceiver != nullptr));
   recordDefaultArgumentDependencies(defaultArguments);
   ResolvedCallInfo resolved{
       .function = function.id,
@@ -6804,7 +6837,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       .dispatchOwner = function.dispatchOwner,
       .receiverMode = receiverMode,
       .ephemeralBorrowArguments = std::move(ephemeralBorrowArguments),
-      .callableArguments = std::move(callableArguments)};
+      .callableArguments = std::move(callableArguments),
+      .argumentReceiver = argumentReceiver};
   semanticModel.record(call, resolved);
   recordSelectedCallOccurrence(call, std::move(resolved));
 }

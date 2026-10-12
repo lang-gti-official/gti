@@ -1,0 +1,55 @@
+// An ordinary owning range has no external stored-borrow dependency.
+// Its cursor still protects its physical shell and the inline proxy's shell.
+extern "C" { void user_dual_range_event(int identity); }
+
+class UserSingleEnd {
+  std::size_t limit;
+public:
+  UserSingleEnd(std::size_t limit) : limit(limit) {}
+  std::size_t position() { return this.limit; }
+};
+
+class UserSingleProxy {
+  UserSingleRange& owner;
+  mut std::size_t coordinate;
+public:
+  UserSingleProxy(UserSingleRange& owner, std::size_t coordinate)
+      : owner(owner), coordinate(coordinate) {}
+  int& value() { return this.owner.at(this.coordinate); }
+  bool finished(UserSingleEnd end) { return this.coordinate == end.position(); }
+  void next() mut { this.coordinate++; }
+};
+
+class UserSingleCursor {
+  mut UserSingleProxy projection;
+public:
+  UserSingleCursor(UserSingleRange& owner, std::size_t coordinate)
+      : projection(UserSingleProxy(owner, coordinate)) {}
+  ~UserSingleCursor() { user_dual_range_event(100); }
+  UserSingleProxy& operator*() { return this.projection; }
+  bool operator!=(UserSingleEnd end) { return !this.projection.finished(end); }
+  void operator++() mut { this.projection.next(); }
+};
+
+class UserSingleRange {
+  int values[3] = {1,2,3};
+public:
+  UserSingleRange() {}
+  ~UserSingleRange() { user_dual_range_event(200); }
+  int& at(std::size_t index) { return this.values[index]; }
+  UserSingleCursor begin() { return UserSingleCursor(this,std::size_t(0)); }
+  UserSingleEnd end() { return UserSingleEnd(std::size_t(3)); }
+};
+
+int main() {
+  UserSingleRange range{};
+  mut int total = 0;
+  {
+    mut auto cursor = range.begin();
+    auto end = range.end();
+    for (; cursor != end; ++cursor) { total += (*cursor).value(); }
+  }
+  for (auto& entry : range) { total += entry.value(); }
+  for (auto& entry : UserSingleRange()) { total += entry.value(); }
+  return total == 18 ? 0 : 1;
+}

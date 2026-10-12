@@ -2535,10 +2535,67 @@ auto SemanticVisitor::Impl::analyzeArrayMemberCall(
   recordSelectedCallOccurrence(call, std::move(resolved));
 }
 
+auto SemanticVisitor::Impl::textViewMemberFactory(std::string_view member) const
+    -> std::optional<CallableCandidate> {
+  // A builtin counted view has no source class body. Its cursor operations
+  // are ordinary source functions selected only from this trusted unit.
+  // The public alias spelling is deliberately absent from this binding.
+  const auto &symbols = activeNamespaceSymbols();
+  const auto found =
+      symbols.find("gti_internal::text_view_" + std::string(member));
+  if (found == symbols.end() || found->second.overloads.size() != 1 ||
+      sourceGraph == nullptr)
+    return std::nullopt;
+  const auto &candidate = found->second.overloads.front();
+  const auto *unit = sourceGraph->findUnit(candidate.record().sourceUnit);
+  if (unit == nullptr || unit->role != SourceUnitRole::StandardLibrary ||
+      unit->standardLibraryName != "std/string_view" ||
+      candidate.ownerClass != 0 || candidate.declaration == nullptr ||
+      candidate.declaration->body() == nullptr ||
+      candidate.record().intrinsic != IntrinsicKind::None ||
+      candidate.record().requiresUnsafe || candidate.parameterPack ||
+      !candidate.record().genericParameters.empty() ||
+      candidate.parameterTypes.empty() ||
+      candidate.parameterTypes.front() !=
+          SemanticType::referenceTo(SemanticType::StringView,
+                                    AccessMode::ReadOnly))
+    return std::nullopt;
+  return candidate;
+}
+
 auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
     const Call &call, const Get &member,
     const std::vector<SemanticType> &argumentTypes, const Token &paren)
     -> void {
+  if (const auto factory = textViewMemberFactory(member.name().lexeme)) {
+    std::vector<const ExprPtr *> inputs{&member.object()};
+    for (const auto &argument : call.arguments())
+      inputs.push_back(&argument);
+    std::vector<SemanticType> types{semanticModel.typeOf(*member.object())};
+    types.insert(types.end(), argumentTypes.begin(), argumentTypes.end());
+    if (inputs.size() != factory->parameterTypes.size()) {
+      report(paren,
+             "Text-view '" + member.name().lexeme +
+                 "' has the wrong number of arguments.",
+             "GTI-S2035");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+      if (!callArgumentMatches(factory->parameterTypes[index], types[index],
+                               *inputs[index])) {
+        reportCallArgumentMismatch(index, factory->parameterTypes[index],
+                                   types[index], *inputs[index], "Text-view");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+    }
+    validateCallPlaceExclusivityImpl(factory->parameterTypes, inputs, paren);
+    recordResolvedCall(call, *factory, {}, {}, {}, {}, CallReceiverMode::None,
+                       &member.object());
+    currentType = callExpressionType(factory->returnType);
+    return;
+  }
   if (member.name().lexeme != "size" && member.name().lexeme != "empty") {
     currentType = SemanticType::Unknown;
     return;
@@ -4851,11 +4908,13 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved == nullptr ||
         resolved->borrowOrigin != BorrowOriginKind::Argument ||
-        resolved->borrowArgument >= call->arguments().size()) {
+        resolved->borrowArgument >=
+            resolvedCallArgumentCount(*call, resolved)) {
       return StoredCarrierReturnProvenance::None;
     }
     const StoredCarrierReturnProvenance source = storedCarrierReturnProvenance(
-        call->arguments()[resolved->borrowArgument], parameter, visiting);
+        *resolvedCallArgument(*call, resolved, resolved->borrowArgument),
+        parameter, visiting);
     if (source == StoredCarrierReturnProvenance::None ||
         source == StoredCarrierReturnProvenance::CarrierShellProjection ||
         source == StoredCarrierReturnProvenance::ExternalReferentProjection) {
@@ -6926,6 +6985,19 @@ auto SemanticVisitor::Impl::validateParameterPacks(
   }
 }
 
+auto SemanticVisitor::Impl::readableIteratorValue(
+    const SemanticType &type) const -> bool {
+  if (type == SemanticType::Void || type == SemanticType::Unknown ||
+      type.kind == SemanticType::Reference ||
+      // These legacy builtin text handles carry expression-specific owner
+      // dependencies that their ordinary type traits alone cannot exclude.
+      type.kind == SemanticType::StringView ||
+      type.kind == SemanticType::CString)
+    return false;
+  const auto traits = typeTraits(type);
+  return traits.copyable && !traits.containsBorrowedState;
+}
+
 auto SemanticVisitor::Impl::validateOperatorDeclaration(
     const FunctionDecl &function, bool methodDeclaration) -> void {
   if (!function.operatorName()) {
@@ -7035,8 +7107,15 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
       returnType != SemanticType::Bool) {
     fail(std::string(operatorSourceSpelling(name.kind)) + " must return bool.");
   }
-  if ((name.kind == OverloadedOperator::Dereference ||
-       name.kind == OverloadedOperator::Arrow) &&
+  if (name.kind == OverloadedOperator::Dereference &&
+      returnType.kind != SemanticType::Reference &&
+      (function.receiverMutability() != ReceiverMutability::ReadOnly ||
+       !readableIteratorValue(returnType))) {
+    fail("operator* must return a checked reference, or use a read-only "
+         "receiver to return an independent copyable value without borrowed "
+         "state.");
+  }
+  if (name.kind == OverloadedOperator::Arrow &&
       returnType.kind != SemanticType::Reference) {
     fail(std::string(operatorSourceSpelling(name.kind)) +
          " must return a checked reference.");

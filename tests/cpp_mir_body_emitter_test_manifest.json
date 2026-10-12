@@ -14,6 +14,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testCheckedReferenceExpectedAssignment",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testCheckedReferenceClassAssignment",
       "suite": "lifecycle"
     },
@@ -23,6 +27,14 @@
     },
     {
       "name": "testOwningCallFieldInputTransfers",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testOwnedExpectedMemberArgumentTransfer",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testExpectedRetainedTemplateLayout",
       "suite": "lifecycle"
     },
     {
@@ -563,6 +575,10 @@
     },
     {
       "name": "testUniqueOwnerUpcastFailureBody",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCleanupFreeExpectedMemberProducer",
       "suite": "lifecycle"
     },
     {

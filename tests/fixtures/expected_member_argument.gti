@@ -1,0 +1,85 @@
+#include <std/string>
+#include <std/vector>
+
+// The result is transferred to an unrelated source-defined member, not just
+// to a compiler-known or standard-library consumer. The receiver is borrowed
+// separately, while MIR owns publication and cleanup of the argument.
+enum class member_errc { absent };
+mut int payload_drops = 0;
+
+class MemberPayload {
+  std::string text;
+  int id;
+  int drop_divisor;
+public:
+  MemberPayload(int id, int drop_divisor)
+      : text(std::string("payload")), id(id), drop_divisor(drop_divisor) {}
+  int number() { return this.id; }
+  ~MemberPayload() {
+    ++payload_drops;
+    std::println(this.id);
+    int checked = 12 / this.drop_divisor;
+  }
+};
+
+expected<MemberPayload, member_errc> make_member_payload(int id,
+                                                        int drop_divisor) {
+  if (id <= 0) { return unexpected(member_errc::absent); }
+  return MemberPayload(id, drop_divisor);
+}
+
+class MemberConsumer {
+  mut int calls = 0;
+public:
+  void consume(expected<MemberPayload, member_errc> value, int divisor) mut {
+    ++this.calls;
+    std::println(100);
+    int checked = 12 / divisor;
+    if (value && value.value().number() <= 0) { std::println(-1); }
+  }
+  int inspect(expected<MemberPayload, member_errc> value) {
+    return value ? value.value().number() : 0;
+  }
+  int count() { return this.calls; }
+};
+
+class MemberGuard {
+public:
+  ~MemberGuard() { std::println(99); }
+};
+mut MemberConsumer& member_alias(mut MemberConsumer& receiver) { return receiver; }
+
+int main(int argc, std::vector<std::string> argv) {
+  MemberGuard guard{};
+  mut MemberConsumer receiver{};
+  if (argc == 2) {
+    receiver.consume(make_member_payload(1, 1), 12 / (argc - 2));
+    return 1;
+  }
+  if (argc == 3) {
+    receiver.consume(make_member_payload(2, 1), argc - 3);
+    return 2;
+  }
+  if (argc == 4) {
+    receiver.consume(make_member_payload(3, argc - 4), argc - 4);
+    return 3;
+  }
+  receiver.consume(make_member_payload(1, 1), 1);
+  receiver.consume(make_member_payload(0, 1), 1);
+  if (receiver.count() != 2 || payload_drops != 1) { return 4; }
+  if (receiver.inspect(make_member_payload(2, 1)) != 2 || payload_drops != 2) {
+    return 5;
+  }
+  member_alias(receiver).consume(make_member_payload(5, 1), 1);
+  if (receiver.count() != 3 || payload_drops != 3) { return 8; }
+  {
+    mut std::vector<expected<MemberPayload, member_errc>> values{};
+    auto named = make_member_payload(3, 1);
+    values.push_back(std::move(named));
+    values.push_back(make_member_payload(4, 1));
+    values.push_back(make_member_payload(0, 1));
+    if (values.size() != 3 || payload_drops != 3) { return 6; }
+  }
+  if (payload_drops != 5) { return 7; }
+  return 0;
+}

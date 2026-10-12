@@ -14,7 +14,7 @@ int main() {
     value_sum += entry.second;
   }
   if (key_sum != 5 || value_sum != 50) { return 1; }
-  for (mut auto& entry : values) { entry.second += 1; }
+  for (mut auto& entry : values) { entry.mapped() += 1; }
   int key = 3;
   if (values.at(key) != 31) { return 2; }
   {

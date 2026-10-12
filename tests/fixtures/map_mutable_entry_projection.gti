@@ -1,0 +1,90 @@
+#include <std/map>
+#include <std/unordered_map>
+#include <std/set>
+#include <std/unordered_set>
+#include <std/string>
+#include <std/utility>
+#include <std/memory>
+
+int main() {
+  mut std::map<int, int> ordered{};
+  [[discard]] ordered.insert(2, 20);
+  [[discard]] ordered.insert(1, 10);
+  [[discard]] ordered.insert(3, 30);
+  {
+    mut auto cursor = ordered.begin_mut();
+    if (cursor->first() != 1 || cursor->key() != 1) { return 1; }
+    cursor->second() = 11;
+    ++cursor;
+    cursor->mapped() = 22;
+    --cursor;
+    if (cursor->mapped() != 11) { return 2; }
+  }
+  for (mut auto& entry : ordered) { entry.mapped() += 1; }
+  int one = 1;
+  int two = 2;
+  int three = 3;
+  if (ordered.at(one) != 12 || ordered.at(two) != 23 || ordered.at(three) != 31) { return 3; }
+  {
+    mut auto reverse = ordered.rbegin_mut();
+    if (reverse->key() != 3) { return 4; }
+    reverse->mapped() = 33;
+    ++reverse;
+    if (reverse->first() != 2) { return 5; }
+  }
+  mut int keys = 0;
+  for (auto& entry : ordered) { keys += entry.first; }
+  if (keys != 6 || ordered.at(three) != 33) { return 6; }
+
+  mut std::unordered_map<int, int> hashed{};
+  [[discard]] hashed.insert(1, 10);
+  [[discard]] hashed.insert(2, 20);
+  [[discard]] hashed.insert(3, 30);
+  [[discard]] hashed.erase(two);
+  {
+    mut auto cursor = hashed.begin_mut();
+    if (cursor->key() != 1) { return 7; }
+    cursor->mapped() = 12;
+    ++cursor;
+    if (cursor->first() != 3) { return 8; }
+    cursor->second() = 32;
+  }
+  for (mut auto& entry : hashed) { entry.mapped() += 1; }
+  if (!hashed.contains(one) || !hashed.contains(three) || hashed.contains(two) ||
+      hashed.at(one) != 13 || hashed.at(three) != 33) { return 9; }
+
+  // Owning keys stay read-only; mapped owning values remain replaceable.
+  mut std::map<std::string, std::string> named{};
+  [[discard]] named.insert(std::string("alpha"), std::string("old"));
+  {
+    mut auto cursor = named.begin_mut();
+    cursor->mapped() = std::string("new");
+    if (cursor->key() != "alpha" || cursor->second() != "new") { return 10; }
+  }
+  mut std::map<int,std::unique_ptr<int>> owned{};
+  [[discard]] owned.insert(1,std::make_unique<int>(10));
+  {
+    mut auto cursor = owned.begin_mut();
+    cursor->mapped() = std::make_unique<int>(11);
+    if (cursor->key() != 1 || *cursor->mapped() != 11) { return 14; }
+  }
+
+  mut std::set<int> unique{};
+  {
+    mut auto inserted = unique.insert(7);
+    if (!inserted.second || *inserted.first != 7) { return 11; }
+  }
+  mut std::unordered_set<int> hash_unique{};
+  {
+    mut auto inserted = hash_unique.insert(9);
+    if (!inserted.second || *inserted.first != 9) { return 12; }
+  }
+
+  // The rule is about an API's projection, not about ordinary immutable fields.
+  mut std::detail::map_entry<int, int> local{1, 10};
+  local = std::detail::map_entry<int, int>(2, 20);
+  mut std::detail::map_entry<int, int> other{3, 30};
+  std::swap(local, other);
+  if (local.first != 3 || other.first != 2) { return 13; }
+  return 0;
+}

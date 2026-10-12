@@ -2167,14 +2167,15 @@ public:
                const VariableDecl *rangeBinding,
                const VariableDecl *iteratorBinding,
                const VariableDecl *sentinelBinding,
-               const VariableDecl *elementBinding, const ForStmt *coreLoop)
+               const VariableDecl *elementBinding, const ForStmt *coreLoop,
+               const VariableDecl *elementOwnerBinding = nullptr)
       : keyword_(std::move(keyword)), bindingMutability_(bindingMutability),
         bindingType_(std::move(bindingType)),
         bindingName_(std::move(bindingName)), colon_(std::move(colon)),
         lowered_(std::move(lowered)), ownerBinding_(ownerBinding),
         rangeBinding_(rangeBinding), iteratorBinding_(iteratorBinding),
         sentinelBinding_(sentinelBinding), elementBinding_(elementBinding),
-        coreLoop_(coreLoop) {}
+        coreLoop_(coreLoop), elementOwnerBinding_(elementOwnerBinding) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitRangeForStmt(*this);
@@ -2204,6 +2205,9 @@ public:
     return elementBinding_;
   }
   [[nodiscard]] const ForStmt *coreLoop() const { return coreLoop_; }
+  [[nodiscard]] const VariableDecl *elementOwnerBinding() const {
+    return elementOwnerBinding_;
+  }
 
 private:
   Token keyword_;
@@ -2218,6 +2222,7 @@ private:
   const VariableDecl *sentinelBinding_ = nullptr;
   const VariableDecl *elementBinding_ = nullptr;
   const ForStmt *coreLoop_ = nullptr;
+  const VariableDecl *elementOwnerBinding_ = nullptr;
 };
 
 class FunctionDecl final : public StmtOfKind<StmtKind::FunctionDecl> {
@@ -2624,12 +2629,14 @@ public:
                bool rangeBinding = false,
                std::optional<Token> constexprKeyword = std::nullopt,
                bool rangeOwner = false, bool rangeIterator = false,
-               std::optional<Token> mutKeyword = std::nullopt)
+               std::optional<Token> mutKeyword = std::nullopt,
+               bool rangeElementOwner = false)
       : mutability_(mutability), type_(std::move(type)), name_(std::move(name)),
         initializer_(std::move(initializer)),
         staticKeyword_(std::move(staticKeyword)), rangeBinding_(rangeBinding),
         constexprKeyword_(std::move(constexprKeyword)), rangeOwner_(rangeOwner),
-        rangeIterator_(rangeIterator), mutKeyword_(std::move(mutKeyword)) {}
+        rangeIterator_(rangeIterator), mutKeyword_(std::move(mutKeyword)),
+        rangeElementOwner_(rangeElementOwner) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitVariableDecl(*this);
@@ -2649,6 +2656,7 @@ public:
   [[nodiscard]] bool isRangeBinding() const { return rangeBinding_; }
   [[nodiscard]] bool isRangeOwner() const { return rangeOwner_; }
   [[nodiscard]] bool isRangeIterator() const { return rangeIterator_; }
+  [[nodiscard]] bool isRangeElementOwner() const { return rangeElementOwner_; }
   [[nodiscard]] bool isConstexpr() const {
     return constexprKeyword_.has_value();
   }
@@ -2677,6 +2685,7 @@ private:
   bool rangeOwner_ = false;
   bool rangeIterator_ = false;
   std::optional<Token> mutKeyword_;
+  bool rangeElementOwner_ = false;
   std::vector<DeclarationAttribute> declarationAttributes_;
 };
 

@@ -1,0 +1,86 @@
+#include <std/string>
+#include <std/vector>
+
+// Independent source members use the same one-result staging as namespace
+// functions. A result has no owner dependency even though its producer does.
+mut int default_constructions = 0;
+class MemberCode {
+  int number;
+public:
+  MemberCode() : number(0) { ++default_constructions; }
+  MemberCode(int number) : number(number) {}
+  int value() { return this.number; }
+};
+class NonDefaultMemberCode {
+  int number;
+public:
+  NonDefaultMemberCode(int number) : number(number) {}
+  int value() { return this.number; }
+};
+class ResultFactory {
+  int number;
+public:
+  ResultFactory(int number) : number(number) {}
+  expected<NonDefaultMemberCode, int> make() {
+    return NonDefaultMemberCode(this.number);
+  }
+  expected<NonDefaultMemberCode, int> missing() { return unexpected(-7); }
+  expected<MemberCode, int> missing_default() { return unexpected(-9); }
+  expected<NonDefaultMemberCode, int> checked(int divisor) {
+    return NonDefaultMemberCode(this.number / divisor);
+  }
+};
+class ResultCleanup {
+  int divisor;
+public:
+  ResultCleanup(int divisor) : divisor(divisor) {}
+  ~ResultCleanup() {
+    std::println(90);
+    int checked = 12 / this.divisor;
+  }
+};
+class ResultOuterCleanup {
+public:
+  ~ResultOuterCleanup() { std::println(99); }
+};
+expected<NonDefaultMemberCode, int> forward_method(ResultFactory& factory,
+                                                 int divisor) {
+  ResultCleanup cleanup{divisor};
+  return factory.make();
+}
+expected<NonDefaultMemberCode, int> forward_checked(ResultFactory& factory,
+                                                  int divisor) {
+  ResultCleanup cleanup{1};
+  return factory.checked(divisor);
+}
+int inspect_member_result(expected<NonDefaultMemberCode, int> value) {
+  return value ? value.value().value() : 0;
+}
+int main(int argc, std::vector<std::string> argv) {
+  ResultOuterCleanup outer{};
+  ResultFactory factory{32};
+  if (argc == 2) {
+    auto result = forward_method(factory, 0);
+    return 20;
+  }
+  if (argc == 3) {
+    auto result = forward_checked(factory, 0);
+    return 21;
+  }
+  auto forwarded = forward_method(factory, 1);
+  if (!forwarded || forwarded.value().value() != 32) { return 1; }
+  if (!factory.make().has_value() || factory.missing().has_value()) { return 2; }
+  if (inspect_member_result(factory.make()) != 32 ||
+      inspect_member_result(factory.missing()) != 0) { return 3; }
+  mut auto replaced = factory.make();
+  replaced = factory.missing();
+  if (replaced || replaced.error() != -7) { return 4; }
+  replaced = factory.make();
+  if (replaced.value().value() != 32) { return 5; }
+  if (factory.missing_default().has_value() || default_constructions != 0) {
+    return 6;
+  }
+  auto checked = forward_checked(factory, 1);
+  if (!checked || checked.value().value() != 32) { return 7; }
+  return 0;
+}

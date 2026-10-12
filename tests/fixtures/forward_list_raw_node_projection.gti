@@ -1,0 +1,34 @@
+#include <std/memory>
+
+struct UserNode {
+  mut std::unique_ptr<int32_t> next{};
+};
+
+class UserField {
+  mut int32_t value = 41;
+public:
+  int32_t read() { return this.value; }
+  void update(int32_t value) mut { this.value = value; }
+  bool operator==(int32_t value) { return this.value == value; }
+};
+
+struct UserContainer {
+  mut UserField field{};
+};
+
+int main() {
+  UserNode root{};
+  const UserNode* address = &root;
+  unsafe {
+    if (address->next != nullptr) { return 1; }
+  }
+  mut UserContainer owner{};
+  UserContainer* writable = &owner;
+  const UserContainer* readable = &owner;
+  unsafe {
+    if (readable->field.read() != 41) { return 2; }
+    writable->field.update(42);
+    if (!(readable->field == int32_t(42))) { return 3; }
+  }
+  return 0;
+}

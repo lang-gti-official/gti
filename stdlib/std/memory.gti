@@ -1,6 +1,8 @@
 // Ownership and typed allocation are ordinary GTI policy over
 // declaration-bound private capabilities.
 
+#include <std/detail/iterator>
+
 namespace gti_internal {
 class unique_owner<T> {};
 class shared_owner<T> {};
@@ -1027,6 +1029,156 @@ public:
 };
 }
 
+namespace detail {
+/// A slot endpoint is not an element. Sparse cursors skip vacant positions.
+class memory_slot_sentinel {
+  size_t limit;
+public:
+  memory_slot_sentinel(size_t limit) : limit(limit) {}
+  size_t position() { return this.limit; }
+};
+
+class sparse_iterator<std::storage_element T, uint64_t Reverse = 0> {
+  gti_internal::sparse_slots<T>& slots;
+  mut size_t position;
+public:
+  sparse_iterator(gti_internal::sparse_slots<T>& slots, size_t position)
+      : slots(slots), position(position) {
+    gti_internal::require_container_argument(position <= slots.capacity());
+    if constexpr (Reverse != 0) {
+      mut size_t previous = this.position;
+      this.position = size_t(0);
+      while (previous > size_t(0)) {
+        previous--;
+        if (this.slots.initialized(previous)) { this.position = previous + size_t(1); break; }
+      }
+    } else {
+      while (this.position < this.slots.capacity() && !this.slots.initialized(this.position)) {
+        this.position++;
+      }
+    }
+  }
+  T& operator*() {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), this.slots.capacity(), ptrdiff_t(-1));
+      return this.slots.read(selected);
+    }
+    return this.slots.read(this.position);
+  }
+  T& operator->() { return *this; }
+  void operator++() mut {
+    if constexpr (Reverse != 0) {
+      gti_internal::require_container_argument(this.position > size_t(0));
+      mut size_t previous = this.position - size_t(1);
+      while (previous > size_t(0)) {
+        previous--;
+        if (this.slots.initialized(previous)) { this.position = previous + size_t(1); return; }
+      }
+      this.position = size_t(0);
+      return;
+    }
+    gti_internal::require_container_argument(this.position < this.slots.capacity());
+    mut size_t next = this.position + size_t(1);
+    while (next < this.slots.capacity() && !this.slots.initialized(next)) { next++; }
+    this.position = next;
+  }
+  void operator--() mut {
+    if constexpr (Reverse != 0) {
+      mut size_t next = this.position;
+      while (next < this.slots.capacity() && !this.slots.initialized(next)) { next++; }
+      gti_internal::require_container_argument(next < this.slots.capacity());
+      this.position = next + size_t(1);
+      return;
+    }
+    mut size_t previous = this.position;
+    mut bool found = false;
+    while (previous > size_t(0)) {
+      previous--;
+      if (this.slots.initialized(previous)) { found = true; break; }
+    }
+    gti_internal::require_container_argument(found);
+    this.position = previous;
+  }
+  bool operator!=(memory_slot_sentinel end) { return this.position != end.position(); }
+  bool operator==(memory_slot_sentinel end) { return this.position == end.position(); }
+  bool operator!=(sparse_iterator<T, Reverse>& other) { return this.position != other.position; }
+  bool operator==(sparse_iterator<T, Reverse>& other) { return this.position == other.position; }
+};
+
+class sparse_mut_iterator<std::storage_element T, uint64_t Reverse = 0> {
+  mut gti_internal::sparse_slots<T>& slots;
+  mut size_t position;
+public:
+  sparse_mut_iterator(mut gti_internal::sparse_slots<T>& slots, size_t position)
+      : slots(slots), position(position) {
+    gti_internal::require_container_argument(position <= slots.capacity());
+    if constexpr (Reverse != 0) {
+      mut size_t previous = this.position;
+      this.position = size_t(0);
+      while (previous > size_t(0)) {
+        previous--;
+        if (this.slots.initialized(previous)) { this.position = previous + size_t(1); break; }
+      }
+    } else {
+      while (this.position < this.slots.capacity() && !this.slots.initialized(this.position)) {
+        this.position++;
+      }
+    }
+  }
+  T& operator*() {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), this.slots.capacity(), ptrdiff_t(-1));
+      return this.slots.read(selected);
+    }
+    return this.slots.read(this.position);
+  }
+  mut T& operator*() mut {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), this.slots.capacity(), ptrdiff_t(-1));
+      return this.slots.read_mut(selected);
+    }
+    return this.slots.read_mut(this.position);
+  }
+  T& operator->() { return *this; }
+  mut T& operator->() mut { return *this; }
+  void operator++() mut {
+    if constexpr (Reverse != 0) {
+      gti_internal::require_container_argument(this.position > size_t(0));
+      mut size_t previous = this.position - size_t(1);
+      while (previous > size_t(0)) {
+        previous--;
+        if (this.slots.initialized(previous)) { this.position = previous + size_t(1); return; }
+      }
+      this.position = size_t(0);
+      return;
+    }
+    gti_internal::require_container_argument(this.position < this.slots.capacity());
+    mut size_t next = this.position + size_t(1);
+    while (next < this.slots.capacity() && !this.slots.initialized(next)) { next++; }
+    this.position = next;
+  }
+  void operator--() mut {
+    if constexpr (Reverse != 0) {
+      mut size_t next = this.position;
+      while (next < this.slots.capacity() && !this.slots.initialized(next)) { next++; }
+      gti_internal::require_container_argument(next < this.slots.capacity());
+      this.position = next + size_t(1);
+      return;
+    }
+    mut size_t previous = this.position;
+    mut bool found = false;
+    while (previous > size_t(0)) {
+      previous--;
+      if (this.slots.initialized(previous)) { found = true; break; }
+    }
+    gti_internal::require_container_argument(found);
+    this.position = previous;
+  }
+  bool operator!=(memory_slot_sentinel end) { return this.position != end.position(); }
+  bool operator==(memory_slot_sentinel end) { return this.position == end.position(); }
+};
+}
+
 /// A move-only owner of partially initialized typed storage.
 ///
 /// `T` must not contain borrowed state. Final-address emplacement supports
@@ -1043,6 +1195,12 @@ class storage<gti_internal::sparse_element T> {
   mut gti_internal::sparse_slots<T> data;
 
 public:
+  using const_iterator = detail::sparse_iterator<T>;
+  using iterator = detail::sparse_mut_iterator<T>;
+  using const_reverse_iterator = detail::sparse_iterator<T, 1>;
+  using reverse_iterator = detail::sparse_mut_iterator<T, 1>;
+  using sentinel = detail::memory_slot_sentinel;
+
   // Source factory token prevents unchecked adoption by application code.
   storage(gti_internal::empty_storage_adoption token,
           std::detail::process_lease objects,
@@ -1053,6 +1211,21 @@ public:
 
   storage(storage<T>& other) = delete;
   storage(storage<T>&& other) = default;
+
+  /// Traverses live slots in increasing slot order, never vacant capacity.
+  const_iterator begin() { return const_iterator(this.data, size_t(0)); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel end() { return sentinel(this.capacity()); }
+  sentinel cend() { return this.end(); }
+  const_iterator end_iterator() { return const_iterator(this.data, this.capacity()); }
+  iterator begin_mut() mut { return iterator(this.data, size_t(0)); }
+  iterator end_mut() mut { return iterator(this.data, this.capacity()); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this.data, this.capacity()); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return sentinel(size_t(0)); }
+  sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut { return reverse_iterator(this.data, this.capacity()); }
+  reverse_iterator rend_mut() mut { return reverse_iterator(this.data, size_t(0)); }
 
   /// Returns the number of owned `T` slots.
   size_t capacity() {
@@ -1174,6 +1347,119 @@ enum class arena_errc {
   full,
 };
 
+namespace detail {
+// A monotonic arena has a live prefix; unlike sparse traversal, movement and
+// distance are constant-time and refer only to that prefix, not spare slots.
+class arena_iterator<std::storage_element T, uint64_t Reverse = 0> {
+  storage<T>& slots;
+  size_t limit;
+  mut size_t position;
+public:
+  arena_iterator(storage<T>& slots, size_t limit, size_t position)
+      : slots(slots), limit(limit), position(position) {
+    gti_internal::require_container_argument(position <= limit && limit <= slots.capacity());
+  }
+  T& operator*() {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), this.limit, ptrdiff_t(-1));
+      return this.slots.get(selected);
+    }
+    gti_internal::index_bounds_check(this.position, this.limit);
+    return this.slots.get(this.position);
+  }
+  T& operator->() { return *this; }
+  T& operator[](ptrdiff_t offset) {
+    mut size_t selected = checked_iterator_position(this.position, size_t(0), this.limit, offset, Reverse != 0);
+    if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), this.limit, ptrdiff_t(-1)); }
+    gti_internal::index_bounds_check(selected, this.limit);
+    return this.slots.get(selected);
+  }
+  void operator++() mut {
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), this.limit);
+  }
+  void operator--() mut {
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), this.limit);
+  }
+  void operator+=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), this.limit, offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), this.limit, offset, Reverse == 0);
+  }
+  ptrdiff_t operator-(memory_slot_sentinel end) {
+    if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position());
+  }
+  ptrdiff_t operator-(arena_iterator<T, Reverse>& other) {
+    if constexpr (Reverse != 0) { return checked_iterator_difference(other.position, this.position); }
+    return checked_iterator_difference(this.position, other.position);
+  }
+  bool operator!=(memory_slot_sentinel end) { return this.position != end.position(); }
+  bool operator==(memory_slot_sentinel end) { return this.position == end.position(); }
+  bool operator!=(arena_iterator<T, Reverse>& other) { return this.position != other.position; }
+  bool operator==(arena_iterator<T, Reverse>& other) { return this.position == other.position; }
+};
+
+class arena_mut_iterator<std::storage_element T, uint64_t Reverse = 0> {
+  mut storage<T>& slots;
+  size_t limit;
+  mut size_t position;
+public:
+  arena_mut_iterator(mut storage<T>& slots, size_t limit, size_t position)
+      : slots(slots), limit(limit), position(position) {
+    gti_internal::require_container_argument(position <= limit && limit <= slots.capacity());
+  }
+  T& operator*() {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), this.limit, ptrdiff_t(-1));
+      return this.slots.get(selected);
+    }
+    gti_internal::index_bounds_check(this.position, this.limit);
+    return this.slots.get(this.position);
+  }
+  mut T& operator*() mut {
+    if constexpr (Reverse != 0) {
+      size_t selected = checked_iterator_position(this.position, size_t(0), this.limit, ptrdiff_t(-1));
+      return this.slots.get_mut(selected);
+    }
+    gti_internal::index_bounds_check(this.position, this.limit);
+    return this.slots.get_mut(this.position);
+  }
+  T& operator->() { return *this; }
+  mut T& operator->() mut { return *this; }
+  T& operator[](ptrdiff_t offset) {
+    mut size_t selected = checked_iterator_position(this.position, size_t(0), this.limit, offset, Reverse != 0);
+    if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), this.limit, ptrdiff_t(-1)); }
+    gti_internal::index_bounds_check(selected, this.limit);
+    return this.slots.get(selected);
+  }
+  mut T& operator[](ptrdiff_t offset) mut {
+    mut size_t selected = checked_iterator_position(this.position, size_t(0), this.limit, offset, Reverse != 0);
+    if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), this.limit, ptrdiff_t(-1)); }
+    gti_internal::index_bounds_check(selected, this.limit);
+    return this.slots.get_mut(selected);
+  }
+  void operator++() mut {
+    this.position = checked_iterator_step<Reverse>(this.position, size_t(0), this.limit);
+  }
+  void operator--() mut {
+    this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), this.limit);
+  }
+  void operator+=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), this.limit, offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.position = checked_iterator_position(this.position, size_t(0), this.limit, offset, Reverse == 0);
+  }
+  ptrdiff_t operator-(memory_slot_sentinel end) {
+    if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
+    return checked_iterator_difference(this.position, end.position());
+  }
+  bool operator!=(memory_slot_sentinel end) { return this.position != end.position(); }
+  bool operator==(memory_slot_sentinel end) { return this.position == end.position(); }
+};
+}
+
 /// A move-only homogeneous monotonic arena over checked typed storage.
 ///
 /// Positions are ordinary indexes, not owning handles. `reset()` invalidates
@@ -1185,6 +1471,12 @@ class arena<gti_internal::movable_sparse_element T> {
   mut size_t next = 0;
 
 public:
+  using const_iterator = detail::arena_iterator<T>;
+  using iterator = detail::arena_mut_iterator<T>;
+  using const_reverse_iterator = detail::arena_iterator<T, 1>;
+  using reverse_iterator = detail::arena_mut_iterator<T, 1>;
+  using sentinel = detail::memory_slot_sentinel;
+
   // The private token makes this constructor available to the source-defined
   // factory without exposing unchecked storage adoption to applications.
   arena(gti_internal::empty_storage_adoption token, storage<T> backing)
@@ -1192,6 +1484,20 @@ public:
 
   arena(arena<T>& other) = delete;
   arena(arena<T>&& other) = default;
+
+  const_iterator begin() { return const_iterator(this.values, this.next, size_t(0)); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel end() { return sentinel(this.next); }
+  sentinel cend() { return this.end(); }
+  const_iterator end_iterator() { return const_iterator(this.values, this.next, this.next); }
+  iterator begin_mut() mut { return iterator(this.values, this.next, size_t(0)); }
+  iterator end_mut() mut { return iterator(this.values, this.next, this.next); }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this.values, this.next, this.next); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return sentinel(size_t(0)); }
+  sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut { return reverse_iterator(this.values, this.next, this.next); }
+  reverse_iterator rend_mut() mut { return reverse_iterator(this.values, this.next, size_t(0)); }
 
   /// Returns the fixed allocation extent.
   size_t capacity() {
@@ -1257,6 +1563,12 @@ class pool<gti_internal::movable_sparse_element T> {
   mut size_t live = 0;
 
 public:
+  using const_iterator = detail::sparse_iterator<T>;
+  using iterator = detail::sparse_mut_iterator<T>;
+  using const_reverse_iterator = detail::sparse_iterator<T, 1>;
+  using reverse_iterator = detail::sparse_mut_iterator<T, 1>;
+  using sentinel = detail::memory_slot_sentinel;
+
   // The private token makes this constructor available to the source-defined
   // factory without exposing unchecked storage adoption to applications.
   pool(gti_internal::empty_storage_adoption token, storage<T> backing)
@@ -1264,6 +1576,20 @@ public:
 
   pool(pool<T>& other) = delete;
   pool(pool<T>&& other) = default;
+
+  const_iterator begin() { return this.values.begin(); }
+  const_iterator cbegin() { return this.begin(); }
+  sentinel end() { return this.values.end(); }
+  sentinel cend() { return this.end(); }
+  const_iterator end_iterator() { return this.values.end_iterator(); }
+  iterator begin_mut() mut { return this.values.begin_mut(); }
+  iterator end_mut() mut { return this.values.end_mut(); }
+  const_reverse_iterator rbegin() { return this.values.rbegin(); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  sentinel rend() { return this.values.rend(); }
+  sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut { return this.values.rbegin_mut(); }
+  reverse_iterator rend_mut() mut { return this.values.rend_mut(); }
 
   /// Returns the fixed allocation extent.
   size_t capacity() {

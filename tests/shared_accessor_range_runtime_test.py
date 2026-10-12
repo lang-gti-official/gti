@@ -4,6 +4,17 @@
 import pathlib
 
 from lambda_pack_invocation_runtime_test import main
+from iterator_sanitizer_support import gcc_sanitizer_arguments
+
+
+def native_arguments_by_case(name, label, environment):
+    # This fixture is one inseparable borrowed JSON accessor scenario. GCC15
+    # sanitizer compilation exceeds 120s under concurrent validation without
+    # the measured GCC-only inlining policy;
+    # keep the original program, O1, strict FP and both sanitizers unchanged.
+    if name == "json_borrowed_range" and label == "sanitized":
+        return gcc_sanitizer_arguments(environment)
+    return ()
 
 
 if __name__ == "__main__":
@@ -15,4 +26,5 @@ if __name__ == "__main__":
     main(names=("shared_accessor_range", "json_borrowed_range"),
          cases={"shared_accessor_range": [
              ((), (0, "90\n", "")),
-             (("fail",), (70, "3\n5\n90\n", failure))]})
+             (("fail",), (70, "3\n5\n90\n", failure))]},
+         native_arguments_by_case=native_arguments_by_case)

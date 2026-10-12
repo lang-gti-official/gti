@@ -1,0 +1,91 @@
+#include <std/deque>
+#include <std/list>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+// Separate linked/segmented TU keeps sanitizer compilation bounded.
+int main() {
+  mut std::deque<int> deque = {1, 2, 3, 4, 5, 6, 7, 8};
+  mut std::list<int> list = {1, 2, 3, 4, 5, 6, 7, 8};
+  {
+    adoption_count_begin();
+    mut int checksum = 0;
+    for (mut int round = 0; round < 64; round++) {
+      auto end = deque.end();
+      auto rend = deque.rend();
+      for (mut auto cursor = deque.begin(); cursor != end; ++cursor) {
+        checksum += *cursor;
+      }
+      for (mut auto cursor = deque.rbegin(); cursor != rend; ++cursor) {
+        checksum += *cursor;
+      }
+      {
+        auto first = deque.begin();
+        mut auto independent = first;
+        ++independent;
+        if (*first != 1 || *independent != 2 || first == independent) { return 1; }
+        checksum += *first + *independent;
+      }
+      {
+        mut auto cursor = deque.begin_mut();
+        while (cursor != end) { *cursor += 1; ++cursor; }
+      }
+      {
+        mut auto cursor = deque.rbegin_mut();
+        while (cursor != rend) { *cursor -= 1; ++cursor; }
+      }
+    }
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0) || checksum != 4800) { return 2; }
+    mut int next_value = 1;
+    for (auto& value : deque) {
+      if (value != next_value) { return 3; }
+      next_value++;
+    }
+
+    if (next_value != 9) { return 12; }
+  }
+  {
+    adoption_count_begin();
+    mut int checksum = 0;
+    for (mut int round = 0; round < 64; round++) {
+      auto end = list.end();
+      auto rend = list.rend();
+      for (mut auto cursor = list.begin(); cursor != end; ++cursor) {
+        checksum += *cursor;
+      }
+      for (mut auto cursor = list.rbegin(); cursor != rend; ++cursor) {
+        checksum += *cursor;
+      }
+      {
+        auto first = list.begin();
+        mut auto independent = first;
+        ++independent;
+        if (*first != 1 || *independent != 2 || first == independent) { return 1; }
+        checksum += *first + *independent;
+      }
+      {
+        mut auto cursor = list.begin_mut();
+        while (cursor != end) { *cursor += 1; ++cursor; }
+      }
+      {
+        mut auto cursor = list.rbegin_mut();
+        while (cursor != rend) { *cursor -= 1; ++cursor; }
+      }
+    }
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0) || checksum != 4800) { return 2; }
+    mut int next_value = 1;
+    for (auto& value : list) {
+      if (value != next_value) { return 3; }
+      next_value++;
+    }
+
+    if (next_value != 9) { return 13; }
+  }
+  return 0;
+}

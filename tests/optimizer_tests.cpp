@@ -3808,7 +3808,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v83\n") &&
+  expect(dump.starts_with("mir-body-v84\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -4398,6 +4398,13 @@ int main() {
     auto &changed = functions[instance->id - 1];
     mutate(changed, changed.body.loans[entry->id - 1]);
     const auto verified = lang::verifyMirProgram(forged);
+    if (verified.valid() ||
+        std::none_of(verified.errors.begin(), verified.errors.end(),
+                     [&](const auto &error) {
+                       return error.message.find(expected) != std::string::npos;
+                     }))
+      for (const auto &error : verified.errors)
+        std::cerr << "copied-carrier forgery: " << error.message << '\n';
     expect(!verified.valid() &&
                std::any_of(verified.errors.begin(), verified.errors.end(),
                            [&](const lang::MirVerificationError &error) {
@@ -4437,7 +4444,8 @@ int main() {
   reject(
       [](auto &, auto &loan) { loan.access = lang::AccessMode::Mutable; },
       "a shared reference field cannot forge mutable external-owner authority",
-      "abstract stored dependency access does not match");
+      "stored entry dependency access does not match its exact reference "
+      "field");
   reject(
       [&](auto &function, auto &loan) {
         auto *publication = initialize(function.body, loan.carriers.front());
@@ -4664,7 +4672,16 @@ int main() {
         const auto verified = lang::verifyMirProgram(forged);
         const std::string expected =
             forgeLifecycle ? "abstract stored dependency cannot own"
-                           : "abstract stored dependency access does not match";
+                           : "stored entry dependency access does not match "
+                             "its exact reference field";
+        if (verified.valid() ||
+            std::none_of(verified.errors.begin(), verified.errors.end(),
+                         [&](const auto &error) {
+                           return error.message.find(expected) !=
+                                  std::string::npos;
+                         }))
+          for (const auto &error : verified.errors)
+            std::cerr << "lock-carrier forgery: " << error.message << '\n';
         expect(!verified.valid() &&
                    std::any_of(verified.errors.begin(), verified.errors.end(),
                                [&](const auto &error) {
@@ -8800,9 +8817,140 @@ int main() {
          "value instead of removing it");
 }
 
+void testRangePublicationPreserved() {
+  const auto frontend = lang::Frontend().analyze("range-publication.gti", R"gti(
+class End { public: End() {} };
+class Cursor {
+  mut int index = 0;
+public:
+  Cursor() {}
+  int operator*() { return 7; }
+  bool operator!=(End end) { return this.index < 2; }
+  void operator++() mut { this.index++; }
+};
+class Sequence {
+public:
+  Sequence() {}
+  Cursor begin() { return Cursor(); }
+  End end() { return End(); }
+};
+int main() {
+  Sequence sequence{};
+  mut int total = 0;
+  for (auto& value : sequence) {
+    bool unrelated = 2 < 3;
+    total += value + (unrelated ? 3 : 4);
+  }
+  return total - 20;
+}
+)gti");
+  expect(frontend.canGenerateCode(),
+         "independent user value range supplies canonical publication MIR");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  const auto *function = findHirFunction(frontend, "main");
+  const lang::MirBodyAddress address{lang::MirBodyKind::Function, function->id};
+  const auto *body = lang::findMirBody(frontend.mir, address);
+  expect(body && body->rangeIterations.size() == 1 &&
+             body->rangeIterations.front().materializesElementValue,
+         "user range has one exact materialized element inventory");
+  if (!body || body->rangeIterations.size() != 1)
+    return;
+  const auto &range = body->rangeIterations.front();
+  std::size_t published = 0;
+  for (const auto &block : body->blocks)
+    for (const auto &instruction : block.instructions) {
+      const auto *publication =
+          lang::mirRangePublishedInstruction(*body, instruction);
+      if (!publication)
+        continue;
+      ++published;
+      expect(publication->id == range.id,
+             "query returns the authoritative range publication, not names");
+      auto unchanged = frontend.mir;
+      lang::MirEditor editor(unchanged, "forged-range-publication");
+      lang::MirBodyAnalysisManager analyses;
+      editor.queueLiteralReplacement({address, instruction.id},
+                                     instruction.operation,
+                                     lang::Literal{std::uint64_t{7}});
+      const auto rejected = editor.apply(analyses);
+      expect(!rejected.valid() && !rejected.changed &&
+                 std::any_of(rejected.verification.errors.begin(),
+                             rejected.verification.errors.end(),
+                             [](const auto &error) {
+                               return error.message.find("range publication") !=
+                                      std::string::npos;
+                             }) &&
+                 lang::MirPrinter().print(unchanged) ==
+                     lang::MirPrinter().print(frontend.mir),
+             "canonical editor rejects exact producer/Initialize replacement "
+             "atomically with a range-publication reason");
+    }
+  expect(published == 2 && lang::mirRangePublishedElementOwner(
+                               *body, range.elementOwner) == &range,
+         "only original dereference and owner Initialize are published");
+  const lang::OptimizationPipeline pipeline;
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+        lang::OptimizationLevel::O3}) {
+    const auto compatibility = pipeline.run(frontend.hir, level);
+    const auto optimized = pipeline.run({.hir = frontend.hir,
+                                         .mir = frontend.mir,
+                                         .level = level,
+                                         .compatibility = &compatibility});
+    const auto *result = lang::findMirBody(optimized.mir, address);
+    expect(optimized.valid() && result &&
+               result->rangeIterations == body->rangeIterations &&
+               lang::verifyMirOptimizationCoherence(
+                   optimized.sourceMir, optimized.mir,
+                   optimized.report.transformations)
+                   .valid(),
+           "O0/O2/O3 preserve and independently replay range publication");
+    if (level == lang::OptimizationLevel::O0) {
+      expect(optimized.report.transformations.empty() &&
+                 lang::MirPrinter().print(optimized.mir) ==
+                     lang::MirPrinter().print(frontend.mir),
+             "O0 remains transformation-free for user value ranges");
+    } else {
+      const auto *promotion = findPass(optimized.report, "scalar-promotion");
+      expect(promotion &&
+                 std::any_of(
+                     promotion->remarks.begin(), promotion->remarks.end(),
+                     [&](const auto &remark) {
+                       return remark.kind ==
+                                  lang::OptimizationRemarkKind::Missed &&
+                              remark.body == address &&
+                              remark.place == range.elementOwner &&
+                              remark.message.find("iteration-local stable") !=
+                                  std::string::npos;
+                     }),
+             "declined element-owner promotion reports its exact stable "
+             "publication requirement");
+      expect(std::any_of(
+                 optimized.report.transformations.begin(),
+                 optimized.report.transformations.end(),
+                 [&](const auto &record) { return record.body == address; }),
+             "ordinary unrelated computations in a range body still optimize");
+    }
+    if (result) {
+      auto forged = optimized.mir;
+      lang::findMirBody(forged, address)->rangeIterations.front().elementOwner =
+          range.owner;
+      expect(!lang::verifyMirOptimizationCoherence(
+                  optimized.sourceMir, forged, optimized.report.transformations)
+                  .valid(),
+             "evidence replay rejects substituted range publication storage");
+    }
+  }
+}
+
 int main() {
   lang::installCrashHandlers("gti_optimizer_tests");
   testRecordPublishedInitializerRetained();
+  testRangePublicationPreserved();
   testComparisonComputeFold();
   testBinaryFloatComputeFold();
   testBranchLiteralFold();

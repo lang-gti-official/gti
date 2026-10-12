@@ -629,6 +629,13 @@ Unsupported operations, places, lifetimes, failure edges, or representation
 facts reject the complete program before output; there is no AST/HIR body
 fallback.
 
+An ordinary by-value parameter is already an owned incoming value. Its exact
+MIR binding traits select native movement when it is movable but noncopyable,
+including cleanup-free wrappers and borrowed carriers. This transport does not
+create another semantic move, loan or cleanup obligation. Reference formals
+and byte-preserving indirect native-record arguments retain their separate
+representation contracts; no public owner or range name selects the prologue.
+
 Admission queries reject structurally inapplicable values before performing
 body-wide ownership searches or instruction lookups. In particular, Expected
 class-extraction receiver searches require an Expected-typed receiver, their
@@ -695,7 +702,16 @@ family labels and indentation is therefore formatting, not a second
 admission path.
 
 Whole-program admission validates MIR and the copied representation map once
-per `analyzeProgram`/`buildProgramPlan` operation. Initializer vocabulary probes
+per `analyzeProgram`/`buildProgramPlan` operation. The separate
+`analyzeProgramStructure` operation batches the same structural results and
+canonical body order as standalone `analyze(address)`, including hosted startup,
+with one fresh whole-program validation. Structural readiness is not complete
+text admission: field-initializer bodies can be structurally ready while outside
+the text vocabulary. Production preflight continues to use `analyzeProgram`,
+and production emission continues to require a sealed `buildProgramPlan`.
+Global MIR/map failure returns no independently ready body results; missing
+body-local representation rows retain their exact structural issues.
+Initializer vocabulary probes
 and plan assembly reuse that operation's body analysis; nested base-constructor
 probes use a private body-local vocabulary helper, not the standalone validating
 entry point. Invalid global input stops before body plans are constructed.
@@ -703,6 +719,11 @@ Standalone `analyze`, `buildPlan`, and `initializerSchedule` still validate thei
 inputs on every call. No validation cache survives an operation or is keyed only
 by a program address. Optional caller-owned metrics count actual whole-program
 verifications for deterministic regression checks without changing admission.
+The emitter corpus uses one structural batch for its readiness sweep and one
+immutable program plan for its production/general-text agreement sweep rather
+than revalidating the whole program separately for each body. Exact standalone
+result/text comparisons and global/body-local forgery tests guard this reuse;
+there is no persistent certificate or change to the admission predicate.
 
 Before spelling a body, the backend derives a pointer-free
 `CppMirControlFlowPlan` solely from that body's sealed optimized MIR. The plan
@@ -1042,6 +1063,13 @@ constructor, or on the success edge of a fallible call. Both forms keep the
 payload in its local slot while later parameter cleanup runs; a failure-free
 constructor does not justify publishing early across a fallible destructor.
 
+A failure-free source call returning a complete owning Expected likewise uses
+the existing exact returned-call-result slot proof. Its value activation and
+optional reparent into an unpublished ReturnResult retain the local envelope
+through fallible cleanup. Failure destroys that envelope; only the final Return
+transfers it to the caller. Value admission consumes this proof rather than
+falling back to an observable default construction of the success alternative.
+
 Owning error alternatives use the same placement-result boundary as owning
 success alternatives, including `expected<int, Error>` and
 `expected<void, Error>`. Scalar/void success with a cleanup-free class error
@@ -1076,6 +1104,20 @@ other owners' destructor Invokes without losing the prepared argument's
 already-destroyed state. An Expected returned by a resolved member call can
 likewise occupy the single value-rooted slot consumed by `?`; its receiver
 schedule remains independently verified.
+
+An owning Expected result can also fill an exact ordinary source member's
+by-value parameter. The existing typed member-receiver borrow and staging proof
+is required independently of the argument's single-consumer, activation,
+dominance, transfer and failure-cleanup proof. The receiver is not consumed or
+given a longer lifetime by the argument transfer.
+
+Expected/Unexpected native, byte-preserving and borrowed envelopes follow the
+value ABI; their alternative storage handles any payload byte transport.
+Representation-only `byte_transport` classifications therefore identify those
+envelopes without instantiating a native wrapper through ADL while its payload
+is still incomplete. This agrees with the lowered type's transport decision;
+it neither adds a by-value layout dependency nor changes semantic lifecycle or
+copy/move permission. Recursive pointer-backed container layouts remain finite.
 
 In transformed constructors with owned-parameter fields, passive scalar and
 plain-enum parameter reads remain in the MIR body schedule. They are not
@@ -1266,6 +1308,15 @@ runs in order, and the Return moves it into the caller's placement storage. A
 cleanup failure leaves only that cleanup-free representation for the slot to
 retire. A call with nothing but inert records before its Return keeps the
 direct placement into the caller's storage instead.
+
+The same result-staging proof applies to an exact ordinary source member, not
+only a namespace function. Its ordered receiver input retains its own checked
+loan and ends according to MIR; no result alternative may contain borrowed
+state. A failure-free member constructs the wrapper from its returned value,
+while a transformed member constructs it only on its Invoke success edge.
+Neither route default-constructs an unused success payload. Missing or unrelated
+receivers, a substituted static/return target, extra result-place aliases and
+additional consumers fail the existing exact call and single-slot proofs.
 
 An Expected whose success payload is an enum with a boundary row (an
 integral enum, or a payload enum whose variants hold only passive movable
@@ -1689,13 +1740,15 @@ needs cleanup, because that payload is move-only. If such a copy were admitted,
 it would still fail closed here.
 
 The same cleanup-free placement call result may instead replace one whole
-mutable binding of its type. MIR pairs that `Assign` with a
+mutable binding or an exact checked mutable referent of its type. MIR pairs that
+`Assign` with a
 `CleanupBeforeAssign`, whose recipe must be passive: no node has a destructor,
 owned pointee, closure, fixed array, polymorphic or recursive cleanup, or
 active cleanup. An integral enum alternative is such a node, as it is for the
 cleanup-free alternative rule. That cleanup executes nothing and cannot fail. The producer's
-success edge must reach that exact pair directly, as for a class result
-replacing a binding. The producer constructs the slot on success. The `Assign`
+success edge must reach that exact pair directly, allowing only the selected
+referent loan's neutral two-phase activation before the pair. The producer
+constructs the slot on success. The `Assign`
 move-assigns the staged wrapper into the binding, and the moved-from
 representation is retired immediately. A failing producer never constructs the
 slot and leaves the binding to MIR's failure cleanup. Native move assignment
@@ -1716,6 +1769,14 @@ MIR's active `CleanupBeforeAssign` first retires the old value on its own
 success edge. The `Assign` then moves the slot's wrapper in, and the slot's
 `Drop` ends only the moved-from representation. On the cleanup's failure edge
 the result keeps its obligation and is cleaned there.
+
+For checked-reference replacement, the exact mutable parameter reference or
+selected mutable-reference-returning call supplies the destination. A referent's
+enclosing owner retains cleanup, so its owning `Replace` has target zero rather
+than a new binding obligation. The paired old-value cleanup, held RHS, loan
+activation/end and later moved-from-shell Drop keep their original MIR schedule.
+Read-only access, a different producer/dependency, an unpaired cleanup or a forged
+ownership handoff cannot acquire publication support from native assignability.
 
 Owning sources keep MIR's active, possibly fallible replacement cleanup, which
 retires the old value on its own success edge. A move out of another owning
@@ -2699,6 +2760,22 @@ declaration order, child input preparation, original Invoke outcomes, and
 publication/rollback identities still require proof. An observable or panicking
 default that the selected constructor overrides must never execute.
 
+The complete owned-parameter field prefix may include scalar/enum parameter
+copies beside moved fields. A copied sibling must retain its exact
+declaration-ordered parameter `Load`, field `Initialize`, and full-expression
+boundary, with no hidden value use, failure, cleanup or borrowed state. Those
+copies remain executable MIR statements rather than being hoisted into native
+initializers. The complete witness preserves every moved parameter's unique
+source, loan/drop handoff and publication; a scalar sibling must not make a
+later moved field lose its otherwise valid prefix proof.
+
+Range endpoint permission markers have no native borrowing representation.
+The writer admits `ParkRangeCursor` and `RestoreRangeCursor` only with canonical
+neutral instruction shape and one exact verified range-inventory membership.
+They erase to comments, without a cursor copy, allocation, native reborrow or
+change to begin/end evaluation order. The backend never infers permission from
+the public range or cursor type.
+
 A cleanup-free, zero-input, single-field constructor can retain a child's
 status-tag native construction when that child has no ordinary constructor
 representation. The proof covers the complete parent body: one selected
@@ -2824,6 +2901,15 @@ consuming the enclosing object's obligation. These are representation choices
 over MIR's verified ownership events, not permissions to consume arbitrary
 borrowed referents.
 
+For a source-defined writable dereference operator, synthesized destination
+value information may inherit the surrounding assignment's read-only category.
+That contextual information is not access authority. Admission consumes the
+exact selected mutable-reference declaration, its matching mutable `CallResult`
+loan and referent type, and the existing replacement/cleanup proof. It does not
+create another owning drop for the referent or widen a read-only returned
+reference. Unrelated cursor fixtures exercise repeated owning replacement and
+reject independently forged declarations, access, origins and cleanup pairs.
+
 Move-assignment from an existing class binding into a mutable class binding has
 its own exact representation. The source may be immutable because GTI
 immutability prevents restoration rather than consumption; the backend does
@@ -2900,6 +2986,20 @@ obligation. An owning `Replace` therefore has target zero, while its paired
 Unlike an ephemeral call-result loan, the named reference is not ended at commit:
 subsequent uses retain the original MIR-verified loan interval. This representation
 does not authorize movement out of a borrowed referent.
+
+An owning class call result may also replace an exact unprojected mutable
+call-result loan returned by an ordinary source accessor. The result-slot
+admission and assignment emitter share one witness requiring the exact GTI
+source declaration, mutable reference result, producer/result identity and
+loan access. The referent has no separate owning obligation. MIR's existing
+paired replacement preparation destroys the old target only after the RHS
+successfully exists; its `Replace` retains target zero and the staging shell
+is dropped once. The backend neither invents a destination owner nor repeats
+the accessor call. Read-only, detached or independently owned loans and missing
+replacement/cleanup pairs fail closed. The unrelated owning-accessor matrix
+checks left-before-right evaluation, both pre-construction and partially built
+RHS failures, the old target's preserved contents, and exactly-once destruction.
+
 Body-local MIR verification requires exactly one `Replace` from each consumed
 active-cleanup RHS value obligation; validating only present lifecycle events
 is insufficient, because a missing transfer could leave the published source

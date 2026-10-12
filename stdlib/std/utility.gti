@@ -19,8 +19,10 @@ namespace std {
   }
 
   namespace detail {
-    // A mutable entry still has an immutable key: changing a stored key would
-    // invalidate an ordered tree or hash table's lookup invariant.
+    // Owning storage record. Its key field is read-only, but an ordinary local
+    // record may still be moved or replaced as a whole. Dictionaries therefore
+    // never expose a mutable reference to this owning record: mutable cursors
+    // publish checked key/mapped projections instead.
     struct map_entry<K, V> {
       K first;
       mut V second;

@@ -51,6 +51,8 @@ public:
   void operator()() {}
 };
 struct Data { mut int left = 0; mut int right = 0; };
+struct Record { int number = 7; };
+struct RawRecord { int* address = nullptr; };
 class Pair {
   int& input;
   mut int& output;
@@ -476,6 +478,51 @@ void checkInvocations() {
 }
 
 void checkProductionLowering() {
+  const auto aggregateTask =
+      invocation("expected<Record, int> result = Record(); "
+                 "[[discard]] std::parallel_invoke([result]() -> void { "
+                 "[[discard]] result.has_value(); }); return 0;",
+                 true, lang::FrontendPhase::Mir, false);
+  for (const auto &diagnostic : aggregateTask.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(aggregateTask.canGenerateCode(),
+         "Expected of an unrelated transferable record retains captured and "
+         "flattened-pack concurrency capabilities");
+  if (aggregateTask.canGenerateCode())
+    checkScopeMir(aggregateTask);
+  struct DeniedCapture {
+    const char *type;
+    const char *code;
+    const char *reason;
+  };
+  for (const auto &control :
+       {DeniedCapture{"Affine", "GTI-S2084", "owned state may transfer"},
+        DeniedCapture{"RawRecord", "GTI-S2046",
+                      "contains borrowed or raw-pointer capture state"}}) {
+    const auto denied =
+        invocation("expected<" + std::string(control.type) +
+                       ", int> result = " + control.type +
+                       "(); "
+                       "[[discard]] std::parallel_invoke([result]() -> void { "
+                       "[[discard]] result.has_value(); }); return 0;",
+                   true, lang::FrontendPhase::Mir, false);
+    const bool exactRejection =
+        !denied.canGenerateCode() &&
+        std::any_of(denied.diagnostics.begin(), denied.diagnostics.end(),
+                    [&](const auto &diagnostic) {
+                      return diagnostic.code == control.code &&
+                             diagnostic.phase ==
+                                 lang::DiagnosticPhase::Semantics &&
+                             diagnostic.message.find(control.reason) !=
+                                 std::string::npos;
+                    });
+    if (!exactRejection)
+      for (const auto &diagnostic : denied.diagnostics)
+        std::cerr << control.type << ": " << diagnostic.code << ": "
+                  << diagnostic.message << '\n';
+    expect(exactRejection,
+           "raw and thread-affine Expected captures remain nontransferable");
+  }
   const auto fixtures =
       std::filesystem::path(__FILE__).parent_path() / "fixtures";
   lang::FrontendOptions options;
