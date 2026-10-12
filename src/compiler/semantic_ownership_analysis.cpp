@@ -2185,6 +2185,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "meta_field_is_public") {
       return IntrinsicKind::MetaFieldIsPublic;
     }
+    if (name == "meta_field_has_default") {
+      return IntrinsicKind::MetaFieldHasDefault;
+    }
     if (name == "meta_type_name") {
       return IntrinsicKind::MetaTypeName;
     }
@@ -7213,6 +7216,7 @@ metaQueryShape(IntrinsicKind intrinsic) {
   case IntrinsicKind::MetaFieldName:
     return MetaQueryShape{.indices = 1, .result = SemanticType::StringView};
   case IntrinsicKind::MetaFieldIsPublic:
+  case IntrinsicKind::MetaFieldHasDefault:
     return MetaQueryShape{.indices = 1, .result = SemanticType::Bool};
   case IntrinsicKind::MetaTypeName:
     return MetaQueryShape{.result = SemanticType::StringView};
@@ -7420,11 +7424,16 @@ auto SemanticVisitor::Impl::metaQueryConstant(
   case IntrinsicKind::MetaTypeName:
     return ConstantValue{typeSpelling(subject)};
   case IntrinsicKind::MetaFieldName:
-  case IntrinsicKind::MetaFieldIsPublic: {
+  case IntrinsicKind::MetaFieldIsPublic:
+  case IntrinsicKind::MetaFieldHasDefault: {
     const std::optional<MetaFieldFacts> field =
         index ? metaFieldFacts(subject, *index) : std::nullopt;
     if (!field) {
       return std::nullopt;
+    }
+    if (intrinsic == IntrinsicKind::MetaFieldHasDefault) {
+      return ConstantValue{field->declaration != nullptr &&
+                           field->declaration->initializer() != nullptr};
     }
     return intrinsic == IntrinsicKind::MetaFieldName
                ? ConstantValue{field->name}
@@ -7683,6 +7692,9 @@ auto SemanticVisitor::Impl::metaIntrinsicConstant(
              call.intrinsic == IntrinsicKind::MetaTypeAttribute) {
     types = 2;
     indices = call.intrinsic == IntrinsicKind::MetaFieldAttribute ? 1 : 0;
+  } else if (call.intrinsic == IntrinsicKind::MetaFieldDefault) {
+    types = 1;
+    indices = 1;
   } else {
     return std::nullopt;
   }
