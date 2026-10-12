@@ -13,7 +13,7 @@ construction, borrowed access before movement, and transfer/share independence
 from enclosing policy. They
 also cover C records, opaque pointers and callback signatures, ordinary moves,
 defined-failure cleanup, and the nested reflected-JSON example. The example
-adds 411 unique MIR bodies and a reviewed LoweredProgram census row; existing
+adds 427 unique MIR bodies and a reviewed LoweredProgram census row; existing
 example expectations are unchanged.
 
 The owning regression compares nested and flat token layout and verifies that

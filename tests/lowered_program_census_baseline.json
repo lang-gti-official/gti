@@ -2161,8 +2161,8 @@
       }
     },
     "148-nested-configuration.gti": {
-      "declarations": 1843,
-      "bodies": 411,
+      "declarations": 1876,
+      "bodies": 427,
       "generated_items": 229,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2177,8 +2177,8 @@
     }
   },
   "totals": {
-    "declarations": 102021,
-    "bodies": 15837,
+    "declarations": 102054,
+    "bodies": 15853,
     "generated_items": 9835
   }
 }
