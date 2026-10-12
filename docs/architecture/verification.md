@@ -5155,8 +5155,9 @@ This caught an independent return-publication bug: a sole terminator use was
 mistaken for a Return even when it was an enum Switch. `mir_backend` now checks
 that the switch subject's load executes, while genuine copy returns retain
 their publication path. No optimization or backend interpretation is used as
-the authority for a constant result. Named enumerator/global-symbol borrowing
-is not added to the executor's checked local-origin profile.
+the authority for a constant result. Existing read-only calls on named
+enumerators remain covered; general global-object borrowing is not added to
+the executor's checked local-origin profile.
 
 `testConstexprMutation`, `constexpr_mutation_runtime` and
 `constexpr_builders_example` cover mutable reference forwarding, `void` calls,
