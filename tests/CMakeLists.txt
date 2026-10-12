@@ -1013,6 +1013,11 @@ add_test(NAME borrowed_callable_conditionals_runtime
                  "${PROJECT_SOURCE_DIR}/tests/borrowed_callable_conditionals_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(borrowed_callable_conditionals_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME aggregate_std_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/aggregate_std_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(aggregate_std_runtime PROPERTIES TIMEOUT 240)
 if(TARGET gti_lsp)
   add_test(NAME borrowed_callable_conditionals_lsp
     COMMAND "${Python3_EXECUTABLE}"

@@ -1935,10 +1935,8 @@ public:
 
   [[nodiscard]] const FunctionInfo *findFunction(FunctionId id) const;
 
-  // While a sink is set, every successful function lookup records the
-  // function's identity in it. Trusted-body deferral installs one during the
-  // body pass to learn which functions analysed code reached; see
-  // TrustedBodyAnalysis. Lookups themselves are unchanged.
+  // Primary body facts are required before concrete HIR discovery may use a
+  // function definition. Invalid primary analysis never reaches HIR.
   void recordAnalyzedFunctionBody(const FunctionDecl &body) {
     analyzedFunctionBodies.insert(&body);
   }
@@ -1947,6 +1945,8 @@ public:
            (base != nullptr && base->hasAnalyzedFunctionBody(body));
   }
 
+  // While a sink is set, every successful function lookup records its identity.
+  // Body analysis scopes this side channel; completed snapshots retain no sink.
   std::unordered_set<FunctionId> *
   setFunctionDemandSink(std::unordered_set<FunctionId> *sink) const {
     auto *previous = functionDemandSink;

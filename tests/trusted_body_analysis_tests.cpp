@@ -5,6 +5,7 @@
 // no library-located diagnostic the complete pass did not.
 #include "gti/frontend.h"
 #include "gti/frontend_work.h"
+#include "gti/semantic_analyzer.h"
 #include "gti/source_graph.h"
 
 #include <algorithm>
@@ -59,6 +60,12 @@ void checkFixtures(const std::filesystem::path &root) {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(unused.semanticValid,
          "unused trusted errors are left to a full library check");
+  lang::SemanticVisitor reused(lang::TargetInfo::host(), &unused.sourceGraph,
+                               false, nullptr, &unused.sources,
+                               lang::RawPointerAuditMode::Off, false,
+                               lang::TrustedBodyAnalysis::Reachable);
+  expect(reused.check(unused.program) && reused.check(unused.program),
+         "reused visitors discard body-demand and lexical state");
   expect(!analyzeSource("int main() { return 0; }", true).semanticValid,
          "complete checks still reject unused trusted errors");
   expect(!analyzeSource("", false, true).semanticValid,
@@ -177,6 +184,32 @@ void checkEntry(const std::filesystem::path &root,
            completeLibrary, reachableLibrary);
   }
 }
+
+void measureEntry(const std::filesystem::path &root,
+                  const std::filesystem::path &entry) {
+  for (auto policy : {lang::TrustedBodyAnalysis::Complete,
+                      lang::TrustedBodyAnalysis::Reachable}) {
+    lang::FrontendWorkMetrics metrics;
+    lang::FrontendOptions options;
+    options.trustedBodies = policy;
+    options.lowerReachableOnly = true;
+    options.lowerLibraryReachableOnly = true;
+    options.workMetrics = &metrics;
+    const auto result = lang::Frontend(options).analyze(
+        entry, std::nullopt, {root / "stdlib/prelude.gti"}, {},
+        {root / "stdlib"});
+    expect(result.canGenerateCode(), "measured artifact profile remains valid");
+    std::cout << entry.filename().string() << " "
+              << (policy == lang::TrustedBodyAnalysis::Complete ? "complete"
+                                                                : "reachable")
+              << " semantic_us=" << metrics.semanticMicroseconds
+              << " hir_us=" << metrics.hirMicroseconds
+              << " deferred=" << metrics.semanticDeferredBodies
+              << " checked=" << metrics.semanticAnalyzedDeferredBodies
+              << " rounds=" << metrics.semanticDemandRounds
+              << " fallback=" << metrics.semanticDemandFallbacks << '\n';
+  }
+}
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -185,9 +218,12 @@ int main(int argc, char *argv[]) {
                : std::filesystem::path(__FILE__).parent_path().parent_path());
   checkFixtures(root);
   std::vector<std::filesystem::path> entries;
+  bool measure = false;
   if (argc > 2) {
     for (int index = 2; index < argc; ++index)
-      if (std::string(argv[index]) != "--fixtures")
+      if (std::string(argv[index]) == "--measure")
+        measure = true;
+      else if (std::string(argv[index]) != "--fixtures")
         entries.push_back(root / argv[index]);
   } else {
     for (const char *directory : {"examples", "stdlib/tests"}) {
@@ -202,7 +238,11 @@ int main(int argc, char *argv[]) {
   }
   std::sort(entries.begin(), entries.end());
   for (const std::filesystem::path &entry : entries) {
+    expect(std::filesystem::is_regular_file(entry),
+           "parity entry exists: " + entry.string());
     checkEntry(root, entry);
+    if (measure)
+      measureEntry(root, entry);
   }
   std::cout << "checked " << entries.size()
             << " entries for trusted-body analysis parity\n";
