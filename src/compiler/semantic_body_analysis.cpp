@@ -12423,10 +12423,19 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
     ++suppressLoanPlaceAccessDepth;
     ++programStoragePlaceUseDepth;
   }
+  const Expr *inferredExpression = declaration.initializer().get();
+  while (const auto *grouping = exprAs<Grouping>(inferredExpression)) {
+    inferredExpression = grouping->expression().get();
+  }
+  // Only a conditional value join needs an unknown initializer context.
+  // In particular, auto x{...} must retain its missing-constructed-type error;
+  // Unknown there means recovery from an already-invalid explicit type.
   const SemanticType initializerType =
-      declaration.initializer()
+      !declaration.initializer() ? SemanticType::Unknown
+      : exprAs<ConditionalExpr>(inferredExpression)
           ? analyzeInitializer(declaration.initializer(), SemanticType::Unknown)
-          : SemanticType::Unknown;
+          : analyzeExpectedCallableResult(declaration.initializer(),
+                                          SemanticType::Unknown);
   if (ordinaryReference && declaration.initializer()) {
     if (declaration.isMutable())
       recordMutableBindingUse(declaration.initializer());

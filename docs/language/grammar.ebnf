@@ -1639,29 +1639,33 @@ lambda-capture         = IDENTIFIER
    Capture defaults, reference and other init captures, implicit capture,
    `this`, and mutable lambdas are rejected. Lambda values are lexical.
    They may be copied into another local `auto` binding or passed to a direct
-   by-value generic parameter whose visible body uses it as a confined
+   by-value or checked-reference generic parameter whose visible body uses it as a confined
    callable. Calls may require exact `void`, exact `bool`, or an exact
    non-reference value without tracked borrowed state or lambda identity,
    supplied by an explicit initializer, assignment target, condition, or
    enclosing return type. A direct nested call used as an argument of another
    open callable can instead obtain its exact non-void result from concrete
-   instantiation; reference, borrowed-state and lambda results remain excluded.
+   instantiation. A direct callable arm of an inferred conditional initializer
+   can likewise defer its result to concrete instantiation, where exact arm
+   agreement is required; reference, borrowed-state and lambda results remain excluded.
    Concrete instantiation checks every invocation
    against the lambda or exact class `operator()` signature. A callable
    parameter declared without `mut` permits only repeatable read-callable
-   invocation. `mut Operation operation` permits repeatable mutable invocation
+   invocation. `mut Operation operation` and `mut Operation& operation` permit repeatable mutable invocation
    and accepts either a read-callable target or a class target whose selected
    `operator()` is `mut`. Writing `std::move(operation)()` on a direct by-value
    generic parameter instead declares a confined once-callable use. It accepts
    an exact reusable read- or mut-callable target as well as a class target with
    an exact trailing-`&&` `operator()`, consumes the parameter place, and is
    rejected when any reachable path could use or invoke that place again. A
-   callable parameter may pass through another direct by-value generic
+   callable parameter may pass through another direct by-value or checked-reference generic
    parameter only
    when that selected parameter has a visible, proven confined contract;
    semantics, HIR, and MIR retain the forwarding edge. Once invoked, a confined
    parameter cannot occur in the function's return type under that confined
-   contract. Open callable result inference and unsupported borrowed results
+   contract. Checked-reference parameters retain caller ownership and ordinary
+   borrow access and exclusivity; they cannot be consumed or escape. General
+   open callable result inference outside these contexts and unsupported borrowed results
    remain excluded. Separately, exact owned generic transport permits ordinary
    callable retention, returns, owned captures and fields; source-defined
    owning wrappers provide read/mut/once erasure. Those profiles preserve exact
