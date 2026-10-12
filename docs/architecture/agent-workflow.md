@@ -479,13 +479,18 @@ dependencies and a graphics session; this automated gate does not certify GUI
 execution. Preview is therefore evidence for the automated runnable examples
 on the recorded host, not a claim that every interactive program or every
 platform has run. No main validation requirement is reduced by this scope.
+With no pending feature checks, the build targets are `gti`, `gti_runtime`
+and `gti_lsp`, which cover the fixed example harness dependencies. Candidates
+with focused checks build all targets because arbitrary registered CTest names
+can require additional test executables; neither path reduces gate coverage.
 
 Use `GTI_REMOTE_RUNNER=mini ... preview verify CANDIDATE --remote` (or a named
 Linux host) to run the same generated argv plan through the remote runner.
 Additional CMake settings use repeated `--cmake-arg=...`; `--jobs N` controls
 the build. Local and remote execution both use the shared build windows. Logs
 and exact-head evidence live under the common Git directory's
-`gti-agent-workflow/preview/<candidate>-results`; `preview status CANDIDATE`
+`gti-agent-workflow/preview/<candidate>-results-<attempt>` (a fresh destination
+for every attempt, preserving earlier evidence); `preview status CANDIDATE`
 reports the token-free recovery record. Candidate branches are published as
 `codex/preview-<candidate>` and retained for recovery. No candidate PR is opened.
 
