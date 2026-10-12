@@ -2108,15 +2108,15 @@ movedValueCallableReceiverStage(const MirBody &body,
       place->root == MirPlaceRootKind::Binding &&
       place->projections.size() == 1 &&
       place->projections.front().kind == MirProjectionKind::Dereference &&
-      std::any_of(body.places.begin(), body.places.end(),
-                  [&](const MirPlace &base) {
-                    return base.root == MirPlaceRootKind::Binding &&
-                           base.binding == place->binding &&
-                           base.projections.empty() && base.initiallyAvailable &&
-                           base.type.kind == SemanticType::Reference &&
-                           base.type.arguments.size() == 1 &&
-                           base.type.arguments.front() == place->type;
-                  });
+      std::any_of(
+          body.places.begin(), body.places.end(), [&](const MirPlace &base) {
+            return base.root == MirPlaceRootKind::Binding &&
+                   base.binding == place->binding && base.projections.empty() &&
+                   base.initiallyAvailable &&
+                   base.type.kind == SemanticType::Reference &&
+                   base.type.arguments.size() == 1 &&
+                   base.type.arguments.front() == place->type;
+          });
   const bool receiverField =
       body.kind == MirBodyKind::Function &&
       place->root == MirPlaceRootKind::This && place->projections.size() == 1 &&
@@ -57141,7 +57141,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               const MirInstruction *referenceStage =
                   valueOperand(operand) &&
                           operand.type.kind == SemanticType::Reference
-                      ? definitionFor(body, operand) : nullptr;
+                      ? definitionFor(body, operand)
+                      : nullptr;
               const bool referenceReady =
                   parameter.boundary == CallableBoundary::Confined &&
                   operand.type == parameter.callableType &&

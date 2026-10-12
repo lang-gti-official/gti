@@ -618,12 +618,20 @@ feedback and must not be presented as clean-head integration evidence.
   once. Two raising runs fail inside a cleanup-free closure arm and inside an
   owning closure arm. In the owning run, the old value and an untouched named
   binding are each retired once.
-- **Out of scope.** Inside a generic body, an unconstrained callable
+- **Historical boundary, revised in 0.407.0.** Inside a generic body, an unconstrained callable
   parameter's invocation has no result type before instantiation. A
   conditional pairing it with a non-dependent arm, as in
   `ok ? produce(1) : make(2)`, is rejected by semantic analysis
   (`GTI-S2050`). Two invocations of the parameter, assigned to an explicitly
   typed binding, are covered.
+  The borrowed-callable/conditional-result slice subsequently supports direct
+  checked-reference parameters and deferred inferred conditional arms. Its
+  owning test is `testBorrowedCallableConditionals`; its native gate is
+  `borrowed_callable_conditionals_runtime` (C++20/C++23 O0/O1/O3, no-elide,
+  ASan/UBSan), including move-only state, exact results and cleanup on failure.
+  Example 028 adds eight MIR bodies, eight declarations and four generated
+  items (one callable and three concrete-instance adapters); only that
+  example's census and the corresponding totals change.
 
 ## Expected conditionals replacing bindings (0.405.2)
 
