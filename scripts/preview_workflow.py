@@ -59,6 +59,8 @@ class Preview:
                 raise WorkflowError("Preview needs a new worktree outside the primary checkout")
             manifest = (json.loads(git(self.flow.repo, "show", previous + ":" + MANIFEST))
                         if previous else {"schema": 1, "features": [], "removed": []})
+            if manifest.get("schema") != 1 or not isinstance(manifest.get("features"), list):
+                raise WorkflowError("Published preview has an unsupported inclusion manifest")
             operations = []
             if remove:
                 rows = [row for row in manifest["features"] if row["task"] == task]
@@ -67,11 +69,17 @@ class Preview:
                 if any(self.flow.ancestor(row["head"], main) for row in rows):
                     raise WorkflowError("Task is already integrated into main; preview cannot revert accepted main behavior")
                 for row in reversed(rows):
-                    operations.append({"kind": "revert", "sha": row["merge"], "feature": row})
+                    removed = manifest.setdefault("removed", [])
+                    removal = len(removed)
+                    removed.append({**row, "reverts": []})
+                    for commit in reversed(row["contributions"]):
+                        operations.append({"kind": "revert", "sha": commit, "removal": removal})
                 manifest["features"] = [row for row in manifest["features"] if row["task"] != task]
             elif task is not None:
                 checks = tests(checks)
                 task_state = self.flow.load(task)
+                if not task_state.get("pr"):
+                    raise WorkflowError("Checkpoint the completed feature and open its task PR before preview admission")
                 pr = self.flow.pull(task_state)
                 if pr["state"] != "open":
                     raise WorkflowError("Only an open task PR can enter preview")
@@ -87,12 +95,14 @@ class Preview:
                 git(self.flow.repo, "fetch", "origin", task_state["branch"])
                 if git(self.flow.repo, "rev-parse", "FETCH_HEAD") != head:
                     raise WorkflowError("PR moved while preparing; prepare a new candidate")
-                for removed in manifest.get("removed", []):
-                    if removed["task"] == task and not removed.get("restored"):
-                        operations.append({"kind": "restore", "sha": removed["revert"]})
-                        removed["restored"] = True
-                feature = {"task": task, "pr": pr["number"], "head": head, "tests": checks}
+                feature = {"task": task, "pr": pr["number"], "head": head, "tests": checks,
+                           "contributions": []}
                 manifest["features"].append(feature)
+                for removed in reversed(manifest.get("removed", [])):
+                    if removed["task"] == task and not removed.get("restored"):
+                        for commit in reversed(removed["reverts"]):
+                            operations.append({"kind": "restore", "sha": commit, "feature": feature})
+                        removed["restored"] = True
                 operations.append({"kind": "merge", "sha": head, "feature": feature})
             operations.append({"kind": "merge", "sha": main})
             state = {"id": uuid.uuid4().hex, "main": main, "previous": previous,
@@ -108,6 +118,14 @@ class Preview:
             with self.flow.lock():
                 return self.resume(identity, locked=True)
         state = self.load(identity)
+        if state["phase"] == "prepared" and not state.get("checkpointed"):
+            root = Path(state["worktree"])
+            clean(root)
+            if git(root, "rev-parse", "HEAD") != state["head"]:
+                raise WorkflowError("Candidate changed before checkpoint publication")
+            git(root, "push", "-u", "origin", "HEAD:refs/heads/" + state["branch"])
+            state["checkpointed"] = True
+            return self.save(state)
         if state["phase"] != "preparing":
             return state
         root = Path(state["worktree"])
@@ -136,12 +154,14 @@ class Preview:
             after = git(root, "rev-parse", "HEAD")
             if operation.get("feature"):
                 feature = operation["feature"]
-                if operation["kind"] == "revert":
-                    manifest.setdefault("removed", []).append({**feature, "revert": after})
-                else:
-                    # JSON persistence does not retain object aliases.
-                    row = next(row for row in manifest["features"] if row["task"] == feature["task"])
+                # JSON persistence does not retain object aliases.
+                row = next(row for row in manifest["features"] if row["task"] == feature["task"])
+                if after != operation["before"]:
+                    row["contributions"].append(after)
+                if operation["kind"] == "merge":
                     row["merge"] = after
+            if "removal" in operation:
+                manifest["removed"][operation["removal"]]["reverts"].append(after)
             state["operations"].pop(0)
             self.save(state)
         if state["operations"] == []:
@@ -150,12 +170,17 @@ class Preview:
             path = root / MANIFEST
             path.write_text(json.dumps(manifest, indent=2) + "\n")
             git(root, "add", "--", MANIFEST)
-            git(root, "commit", "-m", "Record combined preview candidate identities")
+            if git(root, "diff", "--cached", "--name-only"):
+                git(root, "commit", "-m", "Record combined preview candidate identities")
             state.update(head=git(root, "rev-parse", "HEAD"), manifest=manifest, phase="prepared")
-            git(root, "push", "-u", "origin", "HEAD:refs/heads/" + state["branch"])
-            return self.save(state)
+            self.save(state)
+            return self.resume(identity, locked=True)
 
     def current(self, state):
+        if not state.get("head"):
+            raise WorkflowError("Finish candidate preparation with preview resume before validation/publication")
+        if not state.get("checkpointed"):
+            raise WorkflowError("Publish the candidate checkpoint with preview resume before validation")
         root = Path(state["worktree"])
         clean(root)
         if git(root, "rev-parse", "HEAD") != state["head"]:
@@ -216,7 +241,7 @@ class Preview:
     def publish(self, identity):
         with self.flow.lock():
             state = self.load(identity)
-            if state.get("verified", {}).get("head") != state["head"]:
+            if not state.get("head") or state.get("verified", {}).get("head") != state["head"]:
                 raise WorkflowError("Validate the combined candidate before publishing preview")
             # An uncertain push is recoverable without changing or retesting source.
             if self.remote() == state["head"]:
