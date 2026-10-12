@@ -56,7 +56,7 @@ int main() {
   for (mut int index = 1; index < 97; index++) {
     resources.push_back(Resource((index * 37) % 97));
   }
-  // A conservative 2*n*ceil(log2(n)) upper bound for this heap sort.
+  // A conservative 2*n*ceil(log2(n)) upper bound for these inputs.
   std::sort(resources, Compare(1358));
   for (mut int index = 0; index < 97; index++) {
     if (resources[std::size_t(index)].id() != index) { return 1; }

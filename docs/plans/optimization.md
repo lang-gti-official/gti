@@ -63,7 +63,7 @@ below retain their technical prerequisites under the revised admission policy:
 | RT-6 affine loop versioning | Requires a non-failing, side-effect-free preflight and an unchanged checked fallback. Hoisting may not change the first failure, partial stores, evaluation order or floating-point ordering. The fallback's presence alone does not prove the preflight safe. Validate representative clients and preflight costs as part of acceptance. |
 | RT-7 iterator counters/reductions | Prove length fits the **counter's** domain; allocation capacity alone does not prove a `ptrdiff_t` counter cannot overflow. Speculative reductions additionally require non-observable, exactly restorable state and ordered first-failure replay. Do not apply a wrapping accumulator to ordinary effectful loops. |
 | RT-8 slot/drop self-checks | Earlier measurement found no demonstrated value; that is not an architecture admission gate. Before omitting an assertion, identify the exact verifier invariant and every representation caller that establishes it. Do not assume all backend checks are redundant or introduce an unchecked release mode. |
-| RT-9 library algorithms/layout | General source-library architecture, not nominal compiler shortcuts. Sort changes require comparator failure/order and worst-case tests; flat maps require explicit iterator/reference/address and allocation contracts. Design representations to match their invariants and validate workload time/cache/allocation costs before acceptance. |
+| RT-9 library algorithms/layout | General source-library architecture, not nominal compiler shortcuts. Sort changes require comparator failure/order and worst-case tests; flat maps require explicit iterator/reference/address and allocation contracts. Design representations to match their invariants and validate workload time/cache/allocation costs before acceptance. The sort slice is delivered in 0.408.1 as bounded iterative introsort; see [RT-9](#rt-9-library-algorithm-and-data-structure-choices). |
 | RT-10 bounded MIR inlining | General optimization architecture may justify this work without a prior workload speedup or proxy. Needs source provenance, argument order, loan/drop/cleanup composition, recursive/native/virtual boundaries, cost limits and independent replay. Validate representative call chains and code-size/compile-time tradeoffs. |
 
 Closed-world executable lowering from #176 is already integrated; the old
@@ -440,6 +440,19 @@ the optimizer discharges them. The runtime benefit therefore still depends on
 the refresh above: effect derivation on optimized MIR with an independently
 replayed Invoke-to-Call edit.
 
+**Reach of the refresh (2026-10-12, main `94470419`).** On the `-O2`
+optimized MIR of every runtime-audit probe, a function qualifies when every
+local failure outcome carries a discharge and every propagating call targets a
+function that already qualifies. Four functions qualify: three small helpers in
+`matrix` and one in `expected`. The other probes' hot callees keep an
+undischarged overflow check (`calls`, which is RT-2's loop-carried context) or
+call stdlib paths that can genuinely fail, such as allocation. The refresh also
+needs real failure-route retirement. `rewriteMirUnreachableBlock` refuses any
+body with failure records, drops, loans or cleanup boundaries, and the
+verifier requires one Invoke per producer record. So the refresh is an
+invariant-heavy MIR change with little current reach. Its value grows as RT-2,
+RT-3 and RT-5 discharge more checks, and it should follow them.
+
 #### RT-5: no relational facts between indices and lengths
 
 **Evidence.**
@@ -576,7 +589,8 @@ statically for unconditionally initialized locals.
 These are library changes with ordinary tests, not compiler work, but the
 screen shows they are among the largest single wins.
 
-- **Sort.** `std::sort` is iterative heapsort. On identical C++ the heapsort
+- **Sort (delivered in 0.408.1; see the status below).** `std::sort` was
+  iterative heapsort. On identical C++ the heapsort
   costs 2.63x libc++'s introsort. Introsort (or pattern-defeating
   quicksort) keeps the contract: in place, unstable, O(n log n) worst case,
   strict weak order required. An inconsistent comparator still cannot cause
@@ -594,6 +608,19 @@ screen shows they are among the largest single wins.
   checks. The existing ledger already requires allocation, cache, and address
   evidence before any representation change, and this screen supplies the
   first such evidence.
+
+**Status (2026-10-12).** The sort item is delivered in 0.408.1. `std::sort` is
+bounded iterative introsort: a pseudo-median-of-nine pivot, a bounds-guarded
+Hoare partition, insertion sort for short ranges, and a heapsort fallback that
+keeps the worst case O(n log n). Both overloads share it through small phase
+functions that borrow the comparator. On the Mac mini at `-O2`, sort-only time
+is 1.76x faster on the `sort` probe, 2.09x on 200k strings, and 1.03x on a
+lambda-comparator integer sort; the probe is now 3.67x its C++ twin instead of
+6.37x. Keeping the phase functions small matters: a first single-function
+version stopped clang inlining the failure-ABI `operator[]` and regressed the
+comparator workload, which is RT-1's inlining cost in a library shape. The
+growth fast path and hash-map items are unchanged. Measurements are in
+[performance-tooling.md](performance-tooling.md#rt-9-introsort-for-stdsort-2026-10-12).
 
 #### RT-10: MIR inlining as the enabling transform
 
