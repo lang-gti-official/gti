@@ -4534,7 +4534,10 @@ candidate admission, focused-check replay, mandatory example-gate dispatch,
 failed/dirty/stale publication refusal, append-only removal, and original-PR
 preservation. It also checks preview installer pinning, dirty-checkout
 preservation, unavailable-source failure and read-only source selection.
-Existing `neovim_local_installer` coverage retains default installation and
+Detached submission coverage checks copied worker tooling, duplicate submission,
+remembered focused tests, exact-head pinning, stale retry bounds, interrupted
+status, default remote-runner dispatch, successful checkout cleanup, and normal
+PR integration after a failed optional preview. Existing `neovim_local_installer` coverage retains default installation and
 activation behavior. These orchestration tests fake compiler builds; actual
 preview admission separately requires its optimized build and automated
 example gates on the combined source. Workflow changes do not themselves

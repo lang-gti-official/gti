@@ -19,6 +19,13 @@ for what minor and patch releases mean.
 - `std::c_string_bytes` exposes a non-owning byte address for other source-defined
   consumers. Example 151 demonstrates copying and constructor contracts.
 
+## 0.416.1 — Generic return formatting for split methods
+
+- Formatting out-of-class definitions keeps generic return types tight, as in
+  `std::unique_ptr<Window> Window::Create()`, instead of adding comparison-style
+  spaces inside the type arguments. Nested generics and qualified owners share
+  the fix; actual relational expressions retain their operator spacing.
+
 ## 0.416.0 — Optional out-of-class method definitions
 
 - Ordinary non-generic class, struct and static interface methods can keep

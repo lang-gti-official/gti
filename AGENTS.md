@@ -50,8 +50,12 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   "review first" override automatic integration. Read-only reviews/discussions
   do not authorize implementation or publication. Installation remains opt-in.
 - Completed features may enter the opt-in `preview` source branch through
-  `scripts/agent_workflow.py preview` while their original PRs continue full
-  validation and review. Select tasks explicitly; never sweep unrelated open
+  `python3 scripts/agent_workflow.py preview submit <task> --tests <focused-ctest-names>`
+  while their original PRs continue full validation and review. Submission is
+  optional and detached: do not wait for it before normal verification, merge,
+  or task cleanup. Preview failure/conflict/staleness is not a main-PR blocker.
+  The helper owns the preview queue, candidate checkout, validation and publication;
+  use `preview status` only when its outcome is relevant. Select tasks explicitly; never sweep unrelated open
   PRs into preview. Admission rebuilds the combined source and requires every
   included feature's registered focused tests plus the automated example gate.
   Follow [the preview contract](docs/architecture/agent-workflow.md#early-combined-preview),
