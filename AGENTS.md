@@ -49,6 +49,16 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
 - Explicit requests such as "PR only", "leave local", "do not merge", or
   "review first" override automatic integration. Read-only reviews/discussions
   do not authorize implementation or publication. Installation remains opt-in.
+- Completed features may enter the opt-in `preview` source branch through
+  `scripts/agent_workflow.py preview` while their original PRs continue full
+  validation and review. Select tasks explicitly; never sweep unrelated open
+  PRs into preview. Admission rebuilds the combined source and requires every
+  included feature's registered focused tests plus the automated example gate.
+  Follow [the preview contract](docs/architecture/agent-workflow.md#early-combined-preview),
+  including its platform/interactive coverage, exact inclusion records and
+  append-only removal. Preview is never merged wholesale into main and never
+  weakens the original PR's acceptance. Local installation uses the user's
+  explicit `install_neovim_local.py --preview` selection.
 - GitHub (`lang-gti-official/gti`, remote `origin`) is the canonical host for
   branches, pull requests, issues, CI and releases. The self-hosted Gitea
   repository (remote `gitea`) is a backup mirror of `main` and the tags that
