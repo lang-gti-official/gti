@@ -107,14 +107,23 @@ including a unit that another module imports, loads each unit once. An
 application interface can pass a standard module on to its importers with
 `export import std.vector;`.
 
+`import std;` imports the portable public standard library in one declaration.
+It is an ordinary source interface in `stdlib/std.gti`, re-exporting the named
+standard modules. It excludes the currently POSIX-only `std.environment`,
+`std.process`, and `std.tcp`, which require explicit imports on supported targets,
+and it excludes experimental facilities. Individual imports remain useful for
+documenting dependencies and reducing source-loading/registration work.
+
 Imports and includes use the same compilation pipeline; an import does not
-precompile anything or promise a compilation speedup. Only reachable executable
-code is lowered for an artifact, but every loaded unit still participates in
-semantic analysis. `import std;` is not implemented: an aggregate interface
-still needs a selection policy for platform-gated units and analysis-cost
-acceptance. This is remaining implementation work, not a permanent prohibition
-or a claim that unused library bodies must always be emitted. Import each unit
-you use in the current surface.
+precompile anything or promise a compilation speedup. All declarations are
+registered and checked. Artifact builds and editor requests check trusted
+library function bodies on demand; application and dependency-package bodies
+are still checked even when unused. Constructors, destructors, virtual methods,
+and constant definitions remain eager. Concrete generic discovery closes any
+additional body requirements before usable HIR is accepted. `gti check` and
+artifact raw-pointer audits retain complete checking. These are analysis-cost
+choices, not permission to emit unchecked code or ignore errors in application
+code. See `examples/147-standard-library-import.gti`.
 
 ### Fixed-lane SIMD
 
