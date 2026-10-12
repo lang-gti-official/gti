@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.410.2 — Comparators built from generic classes
+## 0.411.1 — Comparators built from generic classes
 
 - Inside a generic function, a callable built from the function's own type
   parameters now satisfies callable concepts such as `std::comparator`,
@@ -20,6 +20,20 @@ for what minor and patch releases mean.
   concrete instance satisfied the concept. The same applies to member
   requirements on a generic class instance, such as a `Box<T>` whose `read()`
   returns `T`.
+
+## 0.411.0 — Portable aggregate standard-library imports
+
+- `import std;` makes the portable public standard-library modules available
+  through one source-defined interface. Individual imports and includes remain
+  supported. POSIX-only `std.environment`, `std.process`, and `std.tcp`, plus
+  experimental facilities, still require explicit imports.
+- Artifact builds and editor queries check trusted library bodies on demand,
+  including concrete generic dependencies. Application and package code remains
+  fully checked. `gti check` and optional raw-pointer audit diagnostics retain
+  complete analysis; auditing cannot change the emitted artifact.
+- The aggregate is installed with the toolchain, and example 147 demonstrates
+  its use. This is not precompiled-module support; loading and registering the
+  full portable library still costs more than selecting individual modules.
 
 ## 0.410.1 — Faster `std::sort`
 

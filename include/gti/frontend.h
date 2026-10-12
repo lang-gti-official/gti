@@ -86,7 +86,8 @@ struct FrontendOptions {
   // those bodies, because application provenance flows through them.
   bool reportLibraryAuditFindings = false;
   // When compiler-trusted function bodies are analysed; see
-  // TrustedBodyAnalysis. `Deferred` is a test mode.
+  // TrustedBodyAnalysis. `Deferred` is a test mode; artifacts and editor
+  // snapshots may use `Reachable`. Full checks retain `Complete`.
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
 };
 

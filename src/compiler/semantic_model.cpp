@@ -974,6 +974,9 @@ SemanticModel::findRangeIteration(const RangeForStmt &statement) const {
 SemanticModel::findFunction(const FunctionDecl &declaration) const {
   const auto found = functions.find(&declaration);
   if (found != functions.end()) {
+    if (functionDemandSink != nullptr) {
+      functionDemandSink->insert(found->second.id);
+    }
     return &found->second;
   }
   return base == nullptr ? nullptr : base->findFunction(declaration);
@@ -1610,6 +1613,7 @@ SemanticModel::findDestructor(const DestructorDecl &declaration) const {
 }
 
 void SemanticModel::clear() {
+  analyzedFunctionBodies.clear();
   expressions.clear();
   statementFullExpressions.clear();
   constructorFullExpressions.clear();
