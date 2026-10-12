@@ -19,6 +19,29 @@ struct Ordering {
   };
   struct Later { int value = 17; };
 };
+struct Inheritance {
+  struct Derived : public Base { Derived() : Base() {} };
+  struct Base { int value; Base() : value(23) {} };
+};
+struct Graph {
+  struct A { B* next = nullptr; };
+  struct B { A* next = nullptr; };
+};
+[[no_transfer, no_share]] struct Policies {
+  struct Value { int value = 29; };
+};
+T transfer_value<std::transferable T>(T value) { return value; }
+void share_value<std::shareable T>(T& value) {}
+struct Borrowing {
+  class Value {
+    std::string text;
+    int number = 31;
+  public:
+    Value(std::string input) : text(std::move(input)) {}
+    [[borrowed_from(this)]] int& code() { return number; }
+    uint64_t length() { return text.size(); }
+  };
+};
 struct Config {
   struct Network {
     int port = 8080;
@@ -69,12 +92,24 @@ int main() {
   application::Aliases::Public exposed{};
   application::Alias::Child standalone{};
   application::Ordering::First ordered{};
+  application::Inheritance::Derived derived{};
+  application::Graph::A graph{};
+  application::Policies::Value policy = application::transfer_value(application::Policies::Value());
+  application::share_value(policy);
+  application::Borrowing::Value source = application::Borrowing::Value(std::string("nested"));
+  {
+    int& borrowed = source.code();
+    if (borrowed != 31) { return 2; }
+  }
+  application::Borrowing::Value moved = std::move(source);
   if (config.network.port != 8080 || network.retry.count != 3 ||
       retry.count != 3 || alias.port != 8080 ||
       config.logging.verbosity() != 2 || box.value != 5 ||
       service.secret_value() != 7 || shadow.item.value != 9 ||
       exposed.value != 11 || standalone.value != 13 ||
-      ordered.value.value != 17 || global.value != 17) {
+      ordered.value.value != 17 || global.value != 17 ||
+      derived.value != 23 || graph.next != nullptr || policy.value != 29 ||
+      moved.length() != 6) {
     return 1;
   }
   std::println("nested types");

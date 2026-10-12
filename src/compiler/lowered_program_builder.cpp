@@ -675,8 +675,12 @@ private:
         // Namespace scope is separate from the lexical class prefix in the
         // semantic qualified name. Nested class ownership is already retained
         // by parent/ownerClass; it must not become a namespace in a backend.
-        row.namespaceScope = namespaceScope;
-        childNamespace = namespaceScope;
+        // A namespace-qualified exact specialization can be written outside
+        // that namespace; retain its resolved namespace rather than its AST
+        // placement. Only lexical class owners need the enclosing prefix split.
+        row.namespaceScope =
+            info->enclosingClass == 0 ? info->namespaceScope : namespaceScope;
+        childNamespace = row.namespaceScope;
         childOwner = info->id;
         LoweredClassDeclaration payload{
             .id = info->id,

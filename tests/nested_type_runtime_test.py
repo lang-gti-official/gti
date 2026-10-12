@@ -109,6 +109,8 @@ struct Native make_native(void) { return (struct Native){7}; }
 int32_t consume(struct Native value) { return value.value; }
 typedef int32_t (*Callback)(struct Native);
 Callback native_callback(void) { return consume; }
+struct Handle { int32_t value; };
+struct Handle *native_handle(void) { static struct Handle value = {1}; return &value; }
 ''', encoding="utf-8")
         native_object = scratch / "nested_native.o"
         run([os.environ.get("CC", "cc"), "-std=c11", "-O2", "-c",
@@ -116,16 +118,20 @@ Callback native_callback(void) { return consume; }
         native_consumer = scratch / "nested_native.gti"
         native_consumer.write_text('''struct Container {
   [[c_abi]] struct Native { int32_t value; };
+  [[c_opaque]] struct Handle;
 };
 using NativeCallback = (Container::Native) -> int32_t;
 extern "C" {
   Container::Native make_native();
   int32_t consume(Container::Native value);
   NativeCallback native_callback();
+  Container::Handle* native_handle();
 }
 int main() {
   Container::Native value = make_native();
   unsafe {
+    Container::Handle* handle = native_handle();
+    if (handle == nullptr) { return 1; }
     NativeCallback callback = native_callback();
     return consume(value) + callback(value) - 14;
   }
