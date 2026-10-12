@@ -1,0 +1,38 @@
+#include <std/string>
+#include <std/memory>
+
+struct Details {
+  mut std::string title = std::string("initial");
+  mut std::unique_ptr<int> number = nullptr;
+};
+struct Data {
+  mut Details details{};
+};
+interface Window {
+  bool matches(std::string_view title, int number);
+  void replace(std::string_view title, int number) mut;
+};
+class DefaultWindow : public Window {
+  mut Data data{};
+public:
+  DefaultWindow(std::string_view title, int number) {
+    data.details.title = std::string(title);
+    data.details.number = std::make_unique<int>(number);
+  }
+  void replace(std::string_view title, int number) mut override {
+    data.details.title = std::string(title);
+    auto replacement = std::make_unique<int>(number);
+    data.details.number = std::move(replacement);
+  }
+  bool matches(std::string_view title, int number) override {
+    return data.details.title.view() == title && *data.details.number == number;
+  }
+};
+int main() {
+  mut auto window = std::upcast_unique<Window, DefaultWindow>(
+      std::make_unique<DefaultWindow>("constructed", 7));
+  if (!window->matches("constructed", 7)) { return 1; }
+  window->replace("replaced", 9);
+  if (!window->matches("replaced", 9)) { return 2; }
+  return 0;
+}
