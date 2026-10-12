@@ -10,6 +10,13 @@ import sys
 
 SKIP_RETURN_CODE = 77
 
+# GCC's ASan/UBSan instrumentation of a whole-program translation unit is
+# slow. One standard-library fixture takes over two minutes uncontended on an
+# 8-core Linux host, and more than five under a parallel suite; Clang takes
+# far less. Sanitized native builds use this bound instead of an ordinary
+# compile timeout.
+SANITIZED_BUILD_TIMEOUT = 1200
+
 
 def thread_sanitizer_enabled() -> bool:
     if sys.platform == "win32":
