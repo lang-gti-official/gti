@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Aggregate standard import and trusted body demand (0.410.0)
+## Aggregate standard import and trusted body demand (0.410.1)
 
 The source-defined `stdlib/std.gti` inventory re-exports 44 portable public
 modules, leaving environment/process/TCP and experimental units explicit.
@@ -11,6 +11,9 @@ trusted errors, reached callees/function items, eager constant/virtual bodies,
 visitor reuse, and generic calls through an unrelated `Producer`.
 The body-order gate remains independent. Incomplete HIR cannot become an
 artifact: newly selected primary bodies trigger semantic closure first.
+The allocator audit-independence gate also compares the aggregate example and
+all existing allocator fixtures with auditing off, warning, and library findings.
+Audits retain a complete diagnostic pass without influencing emitted artifacts.
 
 `aggregate_std_runtime` validates example 147 in all eight standard/optimization,
 no-elision and sanitizer modes. After reconciliation with the promoted JSON

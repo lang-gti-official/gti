@@ -39,20 +39,40 @@ FrontendResult analyze(const CompilationRequest &request,
   // Artifacts contain only code the program roots reach.
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = artifact;
-  if (artifact && request.rawPointerAudit() == RawPointerAuditMode::Off &&
-      !request.rawPointerAuditLibraryFindings())
+  const auto finish = [&](FrontendResult result) {
+    addIncludeSuggestions(
+        result, options, request.entry(), {request.standardLibrary().prelude},
+        {}, {request.standardLibrary().root}, request.packageSources());
+    std::erase_if(result.diagnostics, [&](const Diagnostic &diagnostic) {
+      return request.warnings().suppresses(diagnostic) ||
+             request.packageWarnings().suppresses(diagnostic,
+                                                  result.sourceGraph);
+    });
+    return result;
+  };
+  std::optional<std::vector<Diagnostic>> auditDiagnostics;
+  if (artifact && options.rawPointerAudit != RawPointerAuditMode::Off) {
+    // Auditing retains complete trusted-body coverage, including concrete
+    // generic findings. Its model must not select artifact identities or code:
+    // even macro isolation must be independent of optional audit policy.
+    FrontendResult audited = Frontend(options).analyzeLoaded(
+        request.entry(), inputs.sourceGraph, inputs.sources, inputs.diagnostics,
+        inputs.sourceValid);
+    if (!audited.canGenerateCode())
+      return finish(std::move(audited));
+    auditDiagnostics = std::move(audited.diagnostics);
+  }
+  if (artifact) {
     options.trustedBodies = TrustedBodyAnalysis::Reachable;
+    options.rawPointerAudit = RawPointerAuditMode::Off;
+    options.reportLibraryAuditFindings = false;
+  }
   FrontendResult result = Frontend(options).analyzeLoaded(
       request.entry(), std::move(inputs.sourceGraph), std::move(inputs.sources),
       std::move(inputs.diagnostics), inputs.sourceValid);
-  addIncludeSuggestions(
-      result, options, request.entry(), {request.standardLibrary().prelude}, {},
-      {request.standardLibrary().root}, request.packageSources());
-  std::erase_if(result.diagnostics, [&](const Diagnostic &diagnostic) {
-    return request.warnings().suppresses(diagnostic) ||
-           request.packageWarnings().suppresses(diagnostic, result.sourceGraph);
-  });
-  return result;
+  if (auditDiagnostics && result.canGenerateCode())
+    result.diagnostics = std::move(*auditDiagnostics);
+  return finish(std::move(result));
 }
 
 CompilationResult compileWithLoadedInputs(const CompilationRequest &request,

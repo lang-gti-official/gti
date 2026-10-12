@@ -563,8 +563,13 @@ invalid until they are satisfied. The frontend repeats semantic analysis with
 a monotonically growing required-body set, discarding partial HIR before
 replacing its immutable base snapshot. At most three discovery retries precede
 conservative complete checking. Metrics report retries/fallbacks and cumulative
-semantic/HIR time. Complete `gti check` and artifact raw-pointer audit profiles
-are unchanged. This bounded staging avoids unchecked code generation without
+semantic/HIR time. `gti check` retains complete analysis. Artifact raw-pointer
+audits run a separate complete diagnostic analysis before the same reachable,
+audit-off artifact analysis used without auditing. Strict findings still stop
+compilation; successful audit diagnostics are retained, but the audit model
+cannot change emitted identities or macro isolation. This deliberately costs
+an additional analysis only when an optional audit is requested.
+This bounded staging avoids unchecked code generation without
 claiming that all generic dependencies are known from declaration-time calls.
 
 Text-return relay predeclaration consults the owning class's registered instance

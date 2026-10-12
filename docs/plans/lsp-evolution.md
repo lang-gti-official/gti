@@ -297,7 +297,7 @@ layer.
    mechanical gate exists as the `body_analysis_order` test: the complete pass
    and the `Deferred` test mode (trusted bodies after application bodies, in
    reverse order) must produce identical diagnostics over the examples and
-   standard-library tests. Implemented in 0.410.0 using the deferred
+   standard-library tests. Implemented in 0.410.1 using the deferred
    `codex/lsp-lazy-bodies` checkpoint as the starting point. Snapshots and
    completion now use reachable trusted bodies; generic HIR discovery requests
    missing primary facts before accepting usable HIR. Artifact builds use the
