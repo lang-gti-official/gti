@@ -40,6 +40,7 @@ struct CppRepresentationScope::Facts {
                      std::vector<const LoweredDeclaration *>>
       children;
   std::map<std::pair<ClassId, LoweredDeclarationId>, bool> directRepresentation;
+  std::unordered_map<ClassId, std::string> lexicalClassNames;
   std::optional<std::unordered_set<ClassId>> templateClosure;
   std::optional<bool> callableTemplateCarrier;
   std::unordered_set<const MirBody *> bodies;
@@ -173,11 +174,8 @@ concreteClassPrimaryRow(const LoweredProgram &program,
       declaration.cOpaqueHandle || declaration.cAbiRecord) {
     return false;
   }
-  const LoweredDeclaration *parent = program.findDeclaration(primaryRow.parent);
-  if (parent != nullptr &&
-      std::holds_alternative<LoweredClassDeclaration>(parent->payload)) {
-    return false;
-  }
+  // Lexical nesting is not native nesting. Named children use independent
+  // namespace-level identities, so it adds no concrete-layout restriction.
   std::vector<const LoweredDeclaration *> scanned;
   const std::vector<const LoweredDeclaration *> *children = nullptr;
   if (const auto *facts = representationFacts(program)) {
@@ -695,12 +693,49 @@ bool cppVirtualFamilyHasConditionalResultChannel(
   return false;
 }
 
+std::string cppClassDeclarationNameSpelling(const LoweredProgram &program,
+                                            ClassId id) {
+  const auto *row = program.findClassDeclarationRow(id);
+  const auto *info = program.findClassDeclaration(id);
+  if (row == nullptr || info == nullptr)
+    return {};
+  if (row->ownerClass == 0)
+    return row->name;
+  auto *facts = representationFacts(program);
+  if (facts != nullptr) {
+    if (const auto found = facts->lexicalClassNames.find(id);
+        found != facts->lexicalClassNames.end())
+      return found->second;
+  }
+  std::vector<std::uint8_t> identity;
+  appendIdentityText(identity, "lexical-class-primary");
+  appendIdentityText(identity, info->qualifiedName);
+  appendIdentityText(identity, row->source.source);
+  // Same-spelled disjoint signature primaries remain distinct declarations.
+  // Use their source identity, never traversal-local semantic IDs.
+  appendIdentityInteger(identity, row->source.start);
+  std::string name = "__gti_lexical_class_" + identityDigestHex(identity);
+  if (facts != nullptr)
+    facts->lexicalClassNames.emplace(id, name);
+  return name;
+}
+
 std::string cppClassTemplateNameSpelling(const LoweredProgram &program,
                                          ClassId id) {
   const LoweredClassDeclaration *info = program.findClassDeclaration(id);
-  return info == nullptr ? std::string{}
-                         : cppLoweredQualifiedName(info->qualifiedName,
-                                                   info->cOpaqueHandle);
+  const LoweredDeclaration *row = program.findClassDeclarationRow(id);
+  if (row != nullptr && row->ownerClass != 0) {
+    std::string qualified;
+    for (const auto &segment : row->namespaceScope)
+      qualified += segment + "::";
+    qualified += cppClassDeclarationNameSpelling(program, id);
+    return cppLoweredQualifiedName(qualified, false);
+  }
+  return info == nullptr
+             ? std::string{}
+             : cppLoweredQualifiedName(info->qualifiedName,
+                                       info->cOpaqueHandle && row != nullptr &&
+                                           row->ownerClass == 0);
 }
 
 std::string cppNativeTypeSpelling(const LoweredProgram &program,
@@ -1117,8 +1152,7 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
             cppConcreteClassTypeSpelling(program, type)) {
       return *concrete;
     }
-    std::string result = cppLoweredQualifiedName(classInfo->qualifiedName,
-                                                 classInfo->cOpaqueHandle);
+    std::string result = cppClassTemplateNameSpelling(program, type.classId);
     const std::vector<SemanticType> &typeArguments =
         classInfo->exactSpecializationPrimary == 0
             ? type.arguments
@@ -1175,6 +1209,10 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
               : enumInfo->qualifiedName.substr(0, separator + 2) + *name,
           false);
     }
+    if (const auto *row = program.findEnumDeclarationRow(type);
+        row != nullptr && row->ownerClass != 0)
+      return cppClassTemplateNameSpelling(program, row->ownerClass) +
+             "::" + row->name;
     return cppLoweredQualifiedName(enumInfo->qualifiedName, false);
   }
   case SemanticType::Reference: {
@@ -1341,11 +1379,13 @@ cppConcreteClassTypeSpelling(const LoweredProgram &program,
   if (!name || primary == nullptr) {
     return std::nullopt;
   }
-  const std::size_t separator = primary->qualifiedName.rfind("::");
-  const std::string qualified =
-      separator == std::string::npos
-          ? *name
-          : primary->qualifiedName.substr(0, separator + 2) + *name;
+  const auto *row = concreteClassPrimaryRow(program, *declaration);
+  if (row == nullptr)
+    return std::nullopt;
+  std::string qualified;
+  for (const auto &segment : row->namespaceScope)
+    qualified += segment + "::";
+  qualified += *name;
   return cppLoweredQualifiedName(qualified, false);
 }
 
