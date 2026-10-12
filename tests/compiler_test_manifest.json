@@ -134,6 +134,14 @@
       "suite": "declarations"
     },
     {
+      "name": "testInterfaceStaticMethods",
+      "suite": "declarations"
+    },
+    {
+      "name": "testInterfaceStaticAmbiguity",
+      "suite": "declarations"
+    },
+    {
       "name": "testInheritedGenericTargetInstances",
       "suite": "declarations"
     },

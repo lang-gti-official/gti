@@ -310,6 +310,170 @@ def test_inheritance_tooling(executable, root):
         session.close()
 
 
+def test_interface_static_methods_tooling(executable, root):
+    source = (
+        "interface Window {\n"
+        "  static int Create(int backend) {\n"
+        "    return backend == 0 ? default_width() : 320;\n"
+        "  }\n"
+        "  int width();\n"
+        "private:\n"
+        "  static int default_width() { return 800; }\n"
+        "};\n"
+        "class DesktopWindow : public Window {\n"
+        "public:\n"
+        "  int width() override { return Window::Create(0); }\n"
+        "};\n"
+        "int observe(Window& window) { return window.width(); }\n"
+        "int main() { DesktopWindow window{};\n"
+        "  return observe(window) == Window::Create(0) ? 0 : 1; }\n"
+    )
+    path = root / "interface-static-methods.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"capabilities": {"textDocument": {
+                "hover": {"contentFormat": ["markdown"]},
+                "completion": {"completionItem": {"snippetSupport": True}},
+            }}},
+        })
+        initialized = session.receive_until(lambda message: message.get("id") == 1)[
+            "result"
+        ]
+        legend = initialized["capabilities"]["semanticTokensProvider"]["legend"]
+        static_modifier = 1 << legend["tokenModifiers"].index("static")
+        method_type = legend["tokenTypes"].index("method")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, source)
+
+        def request(request_id, method, offset, text=source):
+            session.send({
+                "jsonrpc": "2.0", "id": request_id, "method": method,
+                "params": {"textDocument": {"uri": uri},
+                           "position": lsp_position(text, offset)},
+            })
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        declaration = source.index("Create(int backend)")
+        call = source.rindex("Create(0)")
+        expected_signature = "static int32_t Window::Create(int32_t backend)"
+        for request_id, offset in ((2, declaration + 1), (3, call + 1)):
+            hover = request(request_id, "textDocument/hover", offset)
+            assert hover["contents"]["value"].startswith(
+                f"```gti\n{expected_signature}\n```"
+            ), hover
+        definition = request(4, "textDocument/definition", call + 1)
+        assert definition == {
+            "uri": uri,
+            "range": {"start": lsp_position(source, declaration),
+                      "end": lsp_position(source, declaration + len("Create"))},
+        }, definition
+
+        qualified = request(9, "textDocument/completion", call)
+        qualified_labels = {item["label"] for item in qualified["items"]}
+        assert "Create" in qualified_labels, qualified
+        assert "default_width" not in qualified_labels, qualified
+
+        session.send({
+            "jsonrpc": "2.0", "id": 5,
+            "method": "textDocument/semanticTokens/full",
+            "params": {"textDocument": {"uri": uri}},
+        })
+        data = session.receive_until(lambda message: message.get("id") == 5)[
+            "result"
+        ]["data"]
+        tokens = semantic_tokens_by_position(data)
+        for offset in (declaration, call):
+            position = lsp_position(source, offset)
+            token = tokens[(position["line"], position["character"])]
+            assert token["type"] == method_type, token
+            assert token["modifiers"] & static_modifier, token
+
+        session.send({
+            "jsonrpc": "2.0", "id": 6, "method": "textDocument/formatting",
+            "params": {"textDocument": {"uri": uri},
+                       "options": {"tabSize": 2, "insertSpaces": True}},
+        })
+        formatted = session.receive_until(lambda message: message.get("id") == 6)[
+            "result"
+        ][0]["newText"]
+        assert "interface Window {" in formatted, formatted
+        assert "static int Create(int backend) {" in formatted, formatted
+
+        def change(text, version):
+            session.send({
+                "jsonrpc": "2.0", "method": "textDocument/didChange",
+                "params": {"textDocument": {"uri": uri, "version": version},
+                           "contentChanges": [{"text": text}]},
+            })
+            return session.receive_until(
+                lambda message: message.get("method")
+                == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == version
+            )["params"]
+
+        completion_source = source.replace(
+            "observe(window) == Window::Create(0)",
+            "observe(window) == Window::Cre",
+        )
+        change(completion_source, 2)
+        prefix = completion_source.rindex("Window::Cre") + len("Window::Cre")
+        completion = request(
+            7, "textDocument/completion", prefix, completion_source
+        )
+        create = next(
+            item for item in completion["items"] if item["label"] == "Create"
+        )
+        assert create["kind"] == 2, create
+        assert create["detail"] == expected_signature, create
+
+        # A declaration without a body is not an abstract static requirement.
+        unused_declaration = (
+            "interface Declared { static int Missing(); int read(); };\n"
+            "class Reader : public Declared { public: "
+            "int read() override { return 1; } };\n"
+            "int main() { Reader reader{}; return reader.read() - 1; }\n"
+        )
+        assert not has_error_diagnostics(change(unused_declaration, 3))
+        cases = (
+            ("interface Broken { int read() { return 1; } };\n"
+             "int main() { return 0; }\n", "GTI-S2041", "cannot have a body"),
+            ("interface Broken { static int Helper() = 0; };\n"
+             "int main() { return 0; }\n", "GTI-S2042", "cannot be virtual"),
+            ("interface Broken { virtual static int Helper() { return 1; } };\n"
+             "int main() { return 0; }\n", "GTI-S2042", "cannot be virtual"),
+            ("interface Broken { static int Helper() override { return 1; } };\n"
+             "int main() { return 0; }\n", "GTI-S2042", "cannot be virtual"),
+        )
+        for version, (text, code, wording) in enumerate(cases, start=4):
+            publication = change(text, version)
+            assert any(
+                item.get("code") == code and wording in item.get("message", "")
+                for item in publication["diagnostics"]
+            ), publication
+
+        # Editor declaration snapshots permit ordinary bodyless source calls;
+        # closed artifact requests diagnose missing definitions with GTI-S2106.
+        selected_declaration = (
+            "interface Declared { static int Missing(); };\n"
+            "int main() { return Declared::Missing(); }\n"
+        )
+        assert not has_error_diagnostics(change(selected_declaration, 4 + len(cases)))
+
+        # Recovery must restore the concrete method and clear old diagnostics.
+        restored = change(source, 5 + len(cases))
+        assert not has_error_diagnostics(restored), restored
+        assert request(8, "textDocument/definition", call + 1) == definition
+    finally:
+        session.close()
+
+
 def test_parser_depth_and_formatter_token_boundaries(executable, root):
     deep_source = (
         "int32_t nested() { return "
@@ -10717,11 +10881,17 @@ def main():
         raise SystemExit(
             "usage: lsp_smoke_test.py /path/to/gti_lsp "
             "[allocator-policy|atomic|mutex|constexpr-aggregate|"
-            "expected-payload-range|constraint-provenance|function-contracts|io|mutable-stored|owner-dependent-views|dependency-chain]"
+            "expected-payload-range|constraint-provenance|function-contracts|interface-static|io|mutable-stored|owner-dependent-views|dependency-chain]"
         )
 
     if len(sys.argv) == 3:
-        if sys.argv[2] == "allocator-policy":
+        if sys.argv[2] == "interface-static":
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-interface-static-") as root:
+                test_interface_static_methods_tooling(
+                    sys.argv[1], pathlib.Path(root)
+                )
+            print("GTI interface static method LSP test passed")
+        elif sys.argv[2] == "allocator-policy":
             with tempfile.TemporaryDirectory(prefix="gti-lsp-allocator-") as root:
                 test_compiler_private_tooling_boundary(
                     sys.argv[1], pathlib.Path(root)
@@ -11773,6 +11943,7 @@ def main():
     test_direct_dependency_visibility(sys.argv[1], root)
     test_missing_include_and_format_config(sys.argv[1], root)
     test_inheritance_tooling(sys.argv[1], root)
+    test_interface_static_methods_tooling(sys.argv[1], root)
     test_parser_depth_and_formatter_token_boundaries(sys.argv[1], root)
 
 

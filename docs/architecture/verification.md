@@ -1,5 +1,45 @@
 # Compiler Verification
 
+## Interface static methods (0.414.0)
+
+`testInterfaceStaticMethods` and `testInterfaceStaticAmbiguity` cover ordinary
+concrete interface statics, access, default arguments, method generics and
+constraints, constant evaluation, unsafe calls, inherited lookup, and selected
+declaration definition closure. Instance members remain public, bodyless pure
+contracts. Static-only interfaces remain abstract and support polymorphic
+destruction. The MIR and LoweredProgram mutation tests reject static methods
+with forged receiver, owner, virtual/pure/override flags or virtual roots for
+both unrelated ordinary classes and interfaces. No new MIR operation is needed:
+resolved static calls use the existing direct-call and failure-cleanup paths.
+
+`interface_static_runtime` runs example 149 and the owned-factory cleanup
+fixture under C++20/C++23 at O0/O1/O3, disabled copy elision, and ASan/UBSan.
+It checks implementation selection, defaults, inherited static generics,
+recoverable failure, exact reverse cleanup, and defined-failure status and
+source attribution. `interface_static_lsp` checks lookup, navigation,
+completion, diagnostics, incomplete-source recovery, tokens and formatting.
+The example adds 68 MIR bodies and 579 LoweredProgram declarations with 24
+generated items to the reviewed corpus inventories.
+
+The optimized Apple Silicon candidate `d0cf20fa01721c51928236488159ae6624041c7d`
+passed 41 compiler/MIR/backend/optimizer/corpus/LSP/runtime gates and 10
+compatibility controls after reconciliation with nested types and cold failure
+paths (`9d563a5f50f9eec49bf7202ca839907a96b6b046`). These include both complete
+149-example inventories and the differential corpus oracle. Subsequent
+upstream changes require fresh affected checks at the final reconciled head;
+the task's retained verification record identifies that exact head and base.
+
+`interface_static_performance` compares receiver-free interface and class
+statics with a C++ success-domain control, retaining emitted C++, disassembly,
+toolchain identities, build costs and complete-state output. On that candidate,
+three warmups and seven interleaved samples of five million transformations
+gave class/interface/C++ medians of 20.634/20.853/20.579 ms. Both GTI binaries
+were 123,800 bytes; emitted C++ was 196,467/197,381 bytes. Native builds took
+249.9/253.1 ms with 76.87/77.17 MB peak RSS. All produced the same checksum.
+Static dispatch adds no receiver allocation or virtual lookup. The small timing
+difference is shared-host variation, not a speedup claim; the C++ control does
+not establish parity for GTI's complete failure and cleanup contract.
+
 ## Named nested types (0.413.0)
 
 `nested_type_syntax`, `nested_type_runtime` and `nested_type_lsp` cover named

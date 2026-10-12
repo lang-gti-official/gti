@@ -3127,6 +3127,13 @@ the original carrier shell remains live until its MIR-authored cleanup.
 
 ### Declarations And ABI
 
+Interface-owned static functions use the ordinary static declaration and direct
+call path. Purity comes only from the verified function's `pureVirtual` fact,
+never from the enclosing interface kind. Lowered declaration and MIR instance
+inventories must agree on static, virtual/pure/override roots and receiver access;
+contradictory metadata is rejected before representation planning. Static methods
+add no dispatch-table slots or implicit receivers.
+
 `CppEmitter` walks `LoweredDeclaration` rows to assemble namespaces, aliases,
 classes, enums, access sections, templates, callable signatures, global/static
 storage, fields, native linkage, opaque ABI types, compiler-provided

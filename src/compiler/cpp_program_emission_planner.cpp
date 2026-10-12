@@ -2628,8 +2628,7 @@ public:
         writeIndent();
         emitLoweredFunctionSignature(row, function, nullptr, false, true, {},
                                      generic);
-        if (function.pureVirtual ||
-            (owner != nullptr && owner->kind == ClassKind::Interface)) {
+        if (function.pureVirtual) {
           output << " = 0;\n";
         } else {
           output << ";\n";
@@ -2772,11 +2771,7 @@ public:
           loweredConcreteFunctionDeclaration(function, *instance);
       writeIndent();
       emitLoweredFunctionSignature(row, function, instance, false, true);
-      output << (function.pureVirtual ||
-                         std::get<LoweredClassDeclaration>(classRow.payload)
-                                 .kind == ClassKind::Interface
-                     ? " = 0;\n"
-                     : ";\n");
+      output << (function.pureVirtual ? " = 0;\n" : ";\n");
       if (loweredFailureBodySupported(*instance) ||
           loweredVirtualFailureContractRetained(function.id)) {
         writeIndent();

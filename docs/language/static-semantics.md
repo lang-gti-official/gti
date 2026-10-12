@@ -389,7 +389,8 @@ bound is diagnosed as `GTI-S2105`, not a hang or backend failure. These are
 compiler resource bounds rather than a termination proof for generic programs.
 
 Class members follow their declared access and the default associated with
-`class` or `struct`. `interface` members are public contracts. Namespace
+`class` or `struct`. `interface` instance members are public contracts;
+its static methods follow ordinary access rules and are public by default. Namespace
 `static` declarations have source-unit internal linkage. Type-owned static
 members do not participate in instance layout or lifecycle.
 
@@ -623,7 +624,7 @@ plain by-value values; references, raw pointers, C strings, and types
 containing tracked borrowed state remain explicit. Operators, lambdas,
 payload-enum fields, parameter
 packs, runtime/intrinsic and `extern "C"` declarations, virtual/override/
-interface methods, copy/move constructor policies, and `main` do not admit
+interface instance methods, copy/move constructor policies, and `main` do not admit
 defaults. The expression must exactly initialize the declared parameter type,
 subject only to the ordinary bounded assignment compatibility. Recursive
 omitted-default expansion is ill-formed.
@@ -907,7 +908,7 @@ prevents facts from separate alternatives from being combined into a proof.
 The named concept predicate remains attached to an inline generic parameter
 for concrete viability even when the common fact set is empty.
 
-Operators and virtual, pure, overriding, or interface methods cannot carry a
+Operators and virtual, pure, overriding, or interface instance methods cannot carry a
 trailing clause in the bounded first version. Operator availability and
 polymorphic contract equivalence require separate representation rules.
 
@@ -997,14 +998,47 @@ implement interfaces. Interfaces contain public behaviour contracts and no
 instance state. Duplicate bases, cycles, diamonds, private inheritance, and
 multiple state-bearing bases are ill-formed.
 
-An interface method is written as a bodyless signature ending in `;`. The
-enclosing `interface` makes that signature virtual and pure; spelling the C++
-pure specifier `= 0;` inside an interface is redundant and ill-formed. A class
-or struct continues to use `virtual`, `override`, and `= 0;` for its explicit
-virtual roots, implementations, and pure methods.
+An interface instance method is written as a bodyless signature ending in `;`.
+The enclosing `interface` makes that signature virtual and pure; spelling the
+C++ pure specifier `= 0;` inside an interface is redundant and ill-formed. A
+class or struct continues to use `virtual`, `override`, and `= 0;` for its
+explicit virtual roots, implementations, and pure methods.
+
+An interface may also contain concrete `static` methods.
+These are ordinary type-owned functions, not requirements on implementing
+types: they have no receiver, do not participate in virtual dispatch, and do
+not occupy a dispatch-table slot. A factory such as `Window::Create(...)` can
+therefore select and return an owned implementation before any window exists.
+Each call may create a separate owner; `static` does not imply a singleton or
+shared instance. Use `expected<std::unique_ptr<Window>, window_errc>` when
+selection can fail, and explicitly upcast a concrete owner with
+`std::upcast_unique<Window, ConcreteWindow>(...)`.
+
+Static interface methods reuse ordinary static-method qualification, overload,
+generic, access and concurrent-profile rules. They are public by default, but
+may use ordinary access modifiers for implementation helpers. They cannot use
+`this`, access instance state, declare a receiver qualifier, or be `virtual`,
+`override` or pure. A bodyless static declaration is an ordinary declaration,
+not a requirement on implementing types; selecting a missing implementation
+reports `GTI-S2106` under ordinary definition-closure rules. Static abstract
+requirements are not supported. This does not allow instance method bodies,
+fields, constructors or non-public instance requirements. The runnable
+[`149-interface-static-factories.gti`](../../examples/149-interface-static-factories.gti)
+demonstrates a recoverable factory selecting two implementations and ordinary
+instance dispatch through the returned owner.
+
+An interface remains abstract and has polymorphic destruction even when it has
+no instance signatures. Its implementing class is concrete once all inherited
+instance requirements are implemented; static declarations do not add any.
+Inherited static functions use ordinary member lookup. Identically named static
+functions from separate bases need not be unified with an override: a call
+selecting indistinguishable candidates is ambiguous and can instead qualify
+the intended base. The ordinary prohibition on accidentally hiding a same-signature
+non-virtual base member still applies.
 
 ```gti
 interface Renderable {
+  static int initial_frame() { return 1; }
   int render(int frame);
 };
 

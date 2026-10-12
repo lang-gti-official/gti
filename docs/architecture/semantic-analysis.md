@@ -583,7 +583,8 @@ builds and editor snapshots/completion. Function lookups during body analysis
 record demand in a scoped sink. Deferred trusted functions are analyzed to a
 fixed point, in their original declaration contexts. Declaration registration,
 all application/package bodies, entry-file bodies, constant definitions and
-virtual/interface methods remain checked. Constructors and destructors are not
+virtual/interface instance methods remain checked. Ordinary static interface
+helpers follow the same demand rules as other static functions. Constructors and destructors are not
 deferred. There is no cross-snapshot semantic cache.
 
 Concrete generic instantiation may select another primary function body that
@@ -1114,6 +1115,10 @@ compiler IDs. Important facts include:
 - AST-selected full-expression roots for statements and constructor
   initializers;
 - class bases, override roots, abstract/polymorphic state, and destruction;
+- type-owned static function identity, separate from interface instance
+  contracts: static methods have no receiver or virtual roots, and use ordinary
+  access, default, generic, constraint and definition-closure rules. Interfaces
+  remain abstract with polymorphic destruction even without instance signatures;
 - array extents, switch constants, lambdas, target selections, moves, loans,
   unsafe operations, selected execution profile, and completion context;
 - concrete implicit-return movement for an exact whole move-only local or

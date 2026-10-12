@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.413.3 — Assignments of logical values no longer read freed analysis state
+## 0.414.1 — Assignments of logical values no longer read freed analysis state
 
 - Assigning a `&&`, `||` or conditional value to a field, a receiver member
   or an array element (for example `this.open = armed && ready;`) no longer
@@ -18,6 +18,19 @@ for what minor and patch releases mean.
   allocator, misjudge that check; it surfaced as an AddressSanitizer report
   when checking every standard-library body imported by `import std;`.
   Diagnostics for valid and invalid programs are otherwise unchanged.
+
+## 0.414.0 — Interface static methods
+
+- Interfaces can declare ordinary `static` helpers and factories, including
+  recoverable factories returning an owned concrete implementation through
+  `std::unique_ptr<Interface>`. These functions have no receiver or virtual
+  dispatch slot and are not implementation requirements. Instance methods
+  remain public, pure, bodyless contracts.
+- Static helpers reuse ordinary access, default arguments, method generics,
+  constraints, constexpr and explicit unsafe-call rules. A selected static
+  declaration without a definition receives the ordinary compiler diagnostic.
+  Editor lookup, completion, navigation and formatting follow the same rule.
+- Example 149 demonstrates factory selection and instance dispatch.
 
 ## 0.413.2 — Faster editor analysis with standard-library includes
 
