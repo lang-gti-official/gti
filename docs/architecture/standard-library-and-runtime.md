@@ -882,6 +882,20 @@ matrix, and the sealed C++ plan maps private storage and the verified order to
 their native representations. The backend never infers an atomic from a class
 name or reconstructs an order from source syntax.
 
+Safe scalar waiting uses the same private storage and ordinary public source
+wrappers. Exact private wait declarations attach `AtomicWait` plus a load-legal
+order; notification declarations attach `AtomicNotify` without an order and
+retain distinct one/all intrinsic identities. MIR validates stable shared
+storage, exact scalar operands, void results, absent ownership transfer and
+failure edges, and the synchronization identity. Both operations are retained
+as non-removable, non-speculatable, non-reorderable effects even for relaxed
+waiting. Only verified MIR emits native wait/notify calls. The C++20/C++23
+representation delegates parking to `std::atomic<T>` without extra GTI state,
+polling policy, or per-call allocation. This is a target implementation of
+GTI's documented wait contract, not semantic authority from the C++ spelling.
+No mutex-loan suspension, public-name exception, new syntax or LSP inference
+path is introduced. Ordinary application wrappers compose the same calls.
+
 Fixed-width integer `fetch_add`, `fetch_sub`, `fetch_and`, `fetch_or`, and
 `fetch_xor` remain source-library policy: private generic update helpers form
 strong compare/exchange loops from those same exact declarations. Consequently
@@ -1026,14 +1040,15 @@ views. No libcurl type, option, callback, or pointer crosses into public GTI.
 The response handle owns bytes that have already been received; it is not a
 public streaming or socket abstraction.
 
-`<std/json>` needs no runtime or compiler-private capability. Its strict parser,
-owned value tree, exact number lexemes, deterministic serializer, limits,
-structured errors, and explicit `codec<T>` customization are all GTI source.
-This is an intentional proof that a format library can remain portable policy
-once the ordinary string and vector ownership primitives are sufficient.
-String-owning errors execute through verified MIR in both native Expected
-representations. The parser and builders use ordinary exact-error propagation;
-conversion branches that add JSON Pointer context remain explicit source code.
+`<std/json>` needs no runtime or compiler-private capability. Its strict
+scanner, reflection-driven encoding and decoding, exact number handling,
+deterministic serializer, limits, structured errors and explicit `codec<T>`
+customization are all GTI source over `<std/meta>`. This is an intentional
+proof that a format library can remain portable policy once compile-time
+reflection, `std::meta::construct` and the ordinary string and vector
+ownership primitives are sufficient. String-owning errors execute through
+verified MIR in both native Expected representations; the branches that add
+JSON Pointer context remain explicit source code.
 Arena/pool factories use the same propagation rule, while elapsed clock
 subtraction deliberately maps arithmetic errors through a typed
 `transform_error` function. None changes recoverable errors into panic.

@@ -1,118 +1,91 @@
-// JSON documents: build a nested object/array tree, serialize compact and
-// pretty, reparse and compare, walk objects with key_at/value_at and arrays
-// with elements(), exact 64-bit extrema, escapes and surrogate pairs, error
-// codes with locations/paths, nesting limits, and borrowed get() results.
+// JSON documents: encode a nested struct compact and pretty, decode it back
+// and compare, optionals for null and absent members, exact 64-bit extrema,
+// escapes and surrogate pairs, error codes with paths and locations, and
+// nesting limits.
 #include <std/json>
+#include <std/optional>
 #include <std/string>
 #include <std/vector>
-#include <std/format>
 
-int count_numbers(std::json::value& node) {
-  if (node.is_number()) { return 1; }
-  mut int total = 0;
-  if (node.is_array()) {
-    for (auto& child : node.elements()) { total += count_numbers(child); }
-  } else if (node.is_object()) {
-    for (mut std::size_t i = 0; i < node.object_size(); i++) {
-      total += count_numbers(node.value_at(i));
-    }
-  }
-  return total;
-}
+struct point {
+  int64_t x = 0;
+  uint64_t y = 0;
+};
+
+struct shape {
+  std::string name = std::string("");
+  std::vector<point> outline = std::vector<point>();
+  std::optional<std::string> note = std::optional<std::string>();
+  bool closed = true;
+};
 
 int main() {
-  mut auto root = std::json::value::object();
-  mut auto servers = std::json::value::array();
-  for (mut int i = 0; i < 3; i++) {
-    mut auto server = std::json::value::object();
-    std::string host = std::to_string(i);
-    auto named = server.set("host", host.view());
-    auto port = server.set("port", int64_t(8000 + i));
-    auto up = server.set("up", i != 1);
-    if (!named || !port || !up) { return 1; }
-    auto pushed = servers.push(std::move(server));
-    if (!pushed) { return 2; }
+  point low = {.x = int64_t(-9223372036854775807) - int64_t(1), .y = uint64_t(0)};
+  point high = {.x = int64_t(9223372036854775807), .y = uint64_t(18446744073709551615)};
+  mut std::vector<point> outline = std::vector<point>();
+  outline.push_back(low);
+  outline.push_back(high);
+  shape value = {.name = std::string("tab\there \"quoted\""), .outline = std::move(outline)};
+
+  auto compact = std::json::encode(value);
+  if (!compact) { return 1; }
+  if (compact.value().view() != "{\"name\":\"tab\\there \\\"quoted\\\"\",\"outline\":[{\"x\":-9223372036854775808,\"y\":0},{\"x\":9223372036854775807,\"y\":18446744073709551615}],\"note\":null,\"closed\":true}") {
+    return 2;
   }
-  auto stored = root.set("servers", std::move(servers));
-  auto lowest = root.set("lowest", int64_t(-9223372036854775807) - int64_t(1));
-  auto highest = root.set("highest", uint64_t(18446744073709551615));
-  auto text = root.set("text", "tab\tquote\"é");
-  auto nothing = root.set("nothing", std::json::value::null());
-  if (!stored || !lowest || !highest || !text || !nothing) { return 3; }
-  // set() on an existing key replaces in place without reordering.
-  auto replaced = root.set("lowest", int64_t(-1));
-  if (!replaced || root.key_at(std::size_t(1)) != "lowest") { return 4; }
-
-  std::string compact = std::json::stringify(root);
-  std::println(compact);
-  std::string expected_text{"{\"servers\":[{\"host\":\"0\",\"port\":8000,\"up\":true},{\"host\":\"1\",\"port\":8001,\"up\":false},{\"host\":\"2\",\"port\":8002,\"up\":true}],\"lowest\":-1,\"highest\":18446744073709551615,\"text\":\"tab\\tquote\\\"é\",\"nothing\":null}"};
-  if (compact != expected_text) { return 5; }
-
-  std::string pretty = std::json::stringify_pretty(root, uint8_t(1));
-  auto reparsed = std::json::parse(pretty.view());
-  if (!reparsed) { std::println(reparsed.error().description()); return 6; }
-  mut auto copy = std::move(reparsed).value();
-  if (std::json::stringify(copy) != compact) { return 7; }
-  if (count_numbers(copy) != 5) { return 8; }
-
-  // Borrowed get(): a checked read-only view into the document.
-  {
-    auto list = copy.get("servers");
-    if (!list) { return 9; }
-    std::json::value& array = list.value();
-    if (!array.is_array() || array.size() != 3) { return 10; }
-    auto port = array.at(std::size_t(2)).get_uint64("port");
-    if (!port || port.value() != uint64_t(8002)) { return 11; }
-    auto wrong = array.at(std::size_t(0)).get_boolean("host");
-    if (wrong || wrong.error().code() != std::json::errc::type_mismatch) { return 12; }
+  auto pretty = std::json::encode_pretty(value, uint8_t(1));
+  if (!pretty) { return 3; }
+  std::string readable_text = std::move(pretty).value();
+  std::string_view readable = readable_text.view();
+  if (readable.size() <= compact.value().size() || readable[std::size_t(0)] != '{' || readable[std::size_t(1)] != '\n') {
+    return 4;
   }
-  auto huge = copy.get_uint64("highest");
-  auto as_signed = copy.get_int64("highest");
-  if (!huge || huge.value() != uint64_t(18446744073709551615)) { return 13; }
-  if (as_signed || as_signed.error().code() != std::json::errc::number_out_of_range) { return 14; }
-  auto decoded = copy.get_string("text");
-  if (!decoded || decoded.value() != "tab\tquote\"é") { return 15; }
-  if (!copy.contains("nothing") || !copy.at("nothing").is_null() || copy.contains("absent")) { return 16; }
 
-  // Walk object keys in insertion order.
-  mut std::string keys{};
-  for (mut std::size_t i = 0; i < copy.object_size(); i++) {
-    keys.append(copy.key_at(i).view());
-    keys.push_back(' ');
+  // Both texts decode to the same value.
+  auto from_compact = std::json::decode<shape>(compact.value().view());
+  auto from_pretty = std::json::decode<shape>(readable);
+  if (!from_compact || !from_pretty) { return 5; }
+  shape a = std::move(from_compact).value();
+  shape b = std::move(from_pretty).value();
+  if (a.name.view() != b.name.view() || a.name.view() != value.name.view() ||
+      a.outline.size() != std::size_t(2) || b.outline.size() != std::size_t(2) ||
+      a.outline[std::size_t(0)].x != low.x || a.outline[std::size_t(1)].y != high.y ||
+      a.note.has_value() || b.note.has_value() || !a.closed) {
+    return 6;
   }
-  if (keys != "servers lowest highest text nothing ") { return 17; }
 
-  // Surrogate pair decoding, exact number lexemes and doubles.
-  auto unicode = std::json::parse("{\"g\":\"\\ud83d\\ude00\",\"n\":1.50e2}");
-  if (!unicode) { return 18; }
-  mut auto u = std::move(unicode).value();
-  auto g = u.get_string("g");
-  auto n = u.get_double("n");
-  if (!g || g.value().size() != 4 || !n || n.value() != 150.0) { return 19; }
-  if (std::json::stringify(u) != "{\"g\":\"😀\",\"n\":1.50e2}") { return 20; }
+  // Escapes and surrogate pairs decode to UTF-8; an absent optional is empty.
+  auto escaped = std::json::decode<shape>("{\"name\":\"\\u0041\\ud83d\\ude00\",\"outline\":[],\"closed\":false}");
+  if (!escaped) { return 7; }
+  shape escaped_shape = std::move(escaped).value();
+  std::string_view text = escaped_shape.name.view();
+  if (text.size() != std::size_t(5) || text[std::size_t(0)] != 'A' || uint8_t(text[std::size_t(1)]) != uint8_t(240) ||
+      escaped_shape.note.has_value() || escaped_shape.closed) {
+    return 8;
+  }
 
-  // Syntax errors carry a location; access errors carry a path instead.
-  auto trailing = std::json::parse("{\n  \"a\": [1, 2,]\n}");
-  if (trailing || !trailing.error().has_source_location() ||
-      trailing.error().line() != 2 || trailing.error().code() != std::json::errc::unexpected_token) { return 21; }
-  std::println("{}:{} {}", trailing.error().line(), trailing.error().column(), trailing.error().description());
-  auto lone = std::json::parse("\"\\ud800\"");
-  if (lone || lone.error().code() != std::json::errc::invalid_unicode) { return 22; }
-  auto leading_zero = std::json::parse("[01]");
-  if (leading_zero || leading_zero.error().code() != std::json::errc::invalid_number) { return 23; }
+  // Errors: code, JSON Pointer path, line and column.
+  auto missing = std::json::decode<shape>("{\n  \"outline\": [],\n  \"closed\": true\n}");
+  if (missing || missing.error().code != std::json::errc::missing_field || missing.error().path.view() != "/name") {
+    return 9;
+  }
+  auto wrong = std::json::decode<shape>("{\"name\":\"n\",\"outline\":[{\"x\":1,\"y\":-1}],\"closed\":true}");
+  if (wrong || wrong.error().code != std::json::errc::number_out_of_range || wrong.error().path.view() != "/outline/0/y") {
+    return 10;
+  }
+  auto syntax = std::json::decode<shape>("{\"name\":\"n\",\n\"outline\":[{\"x\":1,\"y\":2}\n\"closed\":true}");
+  if (syntax || syntax.error().code != std::json::errc::unexpected_character || syntax.error().line != std::size_t(3) ||
+      syntax.error().column != std::size_t(1)) {
+    return 11;
+  }
+  auto duplicate = std::json::decode<point>("{\"x\":1,\"y\":2,\"x\":3}");
+  if (duplicate || duplicate.error().code != std::json::errc::duplicate_key) { return 12; }
 
-  mut std::json::parse_options shallow = std::json::parse_options();
-  shallow.set_max_depth(std::size_t(2));
-  auto deep = std::json::parse("[[1]]", shallow);  // scalars count as nested values
-  if (deep || deep.error().code() != std::json::errc::nesting_limit) { return 24; }
-  auto ok = std::json::parse("[1]", shallow);
-  if (!ok) { return 25; }
-
-  // Independent deep clone.
-  mut auto edited = copy.clone();
-  auto flipped = edited.at("servers").at(std::size_t(0)).set("up", false);
-  if (!flipped) { return 26; }
-  auto original = copy.at("servers").at(std::size_t(0)).get_boolean("up");
-  if (!original || !original.value()) { return 27; }
+  // Limits.
+  mut std::json::decode_options limits{};
+  limits.set_max_depth(std::size_t(3));
+  auto too_deep = std::json::decode<std::vector<std::vector<std::vector<std::vector<int32_t>>>>>("[[[[1]]]]", limits);
+  if (too_deep || too_deep.error().code != std::json::errc::nesting_limit) { return 13; }
+  auto within = std::json::decode<std::vector<std::vector<std::vector<int32_t>>>>("[[[1]]]", limits);
+  if (!within) { return 14; }
   return 0;
 }

@@ -4,7 +4,7 @@
     "stdlib/prelude.gti": "a33aa3f09d625f30f05d937483d0db075649a2037e45e990ae628ce07f28e448",
     "stdlib/std/algorithm.gti": "066565364db62775f45d7b5bfe19864672b5c8c853967c4f1a90a0efc203cc70",
     "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
-    "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
+    "stdlib/std/atomic.gti": "c7edcd7882161c47b5a6de827025181621df547bfaaedbed5cbcafe9a7f89d2b",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
     "stdlib/std/chrono.gti": "cd8448851fa4e487b0c62c0db24d429d31d195863bc74a1290839c484470c75a",
@@ -16,7 +16,6 @@
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
-    "stdlib/std/experimental/json.gti": "03476e462b52d16de353fa6b8598006aa89572d5abf31e99bca558c533997dc2",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "a5a15a5fcf0b908e161df030798829c11a95bfd4d9bc8c116394469e6d56af1a",
@@ -24,7 +23,7 @@
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
     "stdlib/std/iterator.gti": "89bca11053f5e8fa115c3625047bb3b6708c34b6c18f350e74cf4a8c9b96f286",
-    "stdlib/std/json.gti": "822408f7becd7819ee9dab464fc6f0d0f2f2fe6af30cdcf967f9613d6ae1b07e",
+    "stdlib/std/json.gti": "eeae4bb76fe539d54f40f1c7b7fafd6d70fca59345c7c4803bf280bb2eddf7f1",
     "stdlib/std/list.gti": "b670d0cf766d8bfae1cc32c51517510bcd434dc834ed31d8f8a46ff59da800e0",
     "stdlib/std/map.gti": "24bf0e1e969a92e4d6df567d6b13e1e5e2519e3bf2f80c225ca5937dcfeba3cf",
     "stdlib/std/memory.gti": "479b7a52d38437db574b236e7addc02ca866745c704ca5299748ffaa4f1aef75",
@@ -251,6 +250,14 @@
       "id": "atomic-orders",
       "mode": "run",
       "source": "tests/fixtures/atomic_orders.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "atomic-wait",
+      "mode": "run",
+      "source": "tests/fixtures/atomic_wait.gti",
       "execution_profile": "concurrent",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
@@ -568,20 +575,6 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
-      "id": "experimental-json",
-      "mode": "run",
-      "source": "tests/fixtures/experimental_json.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
-    },
-    {
-      "id": "experimental-json-parity",
-      "mode": "run",
-      "source": "tests/fixtures/experimental_json_parity.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
-    },
-    {
       "id": "filesystem",
       "mode": "run",
       "source": "tests/fixtures/filesystem_path.gti",
@@ -850,27 +843,19 @@
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_json.gti",
       "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "demo\n{\"name\":\"demo\",\"private\":true,\"count\":42,\"items\":[\"one\",2]}\n", "stderr": ""}
-    },
-    {
-      "id": "json-codec",
-      "mode": "run",
-      "source": "tests/fixtures/stdlib_json_codec.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
-    },
-    {
-      "id": "json-object-iteration",
-      "mode": "run",
-      "source": "tests/fixtures/json_object_iteration.gti",
-      "native_sources": ["tests/fixtures/stdlib_adoption_allocation_counts.cpp"],
-      "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "json-owning-error-backend",
       "mode": "run",
       "source": "tests/fixtures/json_expected_value_backend_bug.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "json-parity",
+      "mode": "run",
+      "source": "tests/fixtures/json_parity.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -1683,7 +1668,10 @@
         "std::atomic::fetch_sub",
         "std::atomic::fetch_xor",
         "std::atomic::load",
+        "std::atomic::notify_all",
+        "std::atomic::notify_one",
         "std::atomic::store",
+        "std::atomic::wait",
         "std::atomic_compare_exchange_result::exchanged",
         "std::atomic_compare_exchange_result::observed",
         "std::memory_order_acq_rel::memory_order_acq_rel",
@@ -1692,7 +1680,7 @@
         "std::memory_order_release::memory_order_release",
         "std::memory_order_seq_cst::memory_order_seq_cst"
       ],
-      "case_ids": ["atomic", "atomic-fetch", "atomic-orders"],
+      "case_ids": ["atomic", "atomic-fetch", "atomic-orders", "atomic-wait"],
       "required_instantiations": ["bool", "every fixed-width signed and unsigned integer", "move construction", "every legal explicit load/store/exchange order", "all nine legal strong-CAS success/failure order pairs", "all five integer fetch families under every read-modify-write order", "narrow fixed-width fetch conversion", "checked fetch_add overflow before publication"],
       "evidence": ["docs/language/concurrency.md", "examples/076-scalar-atomics.gti", "stdlib/std/atomic.gti", "tests/atomic_tests.cpp", "tests/atomic_runtime_test.py", "tests/atomic_tsan_test.py", "tests/fixtures/atomic_fetch.gti", "tests/fixtures/atomic_fetch_overflow.gti", "tests/fixtures/atomic_orders.gti", "tests/fixtures/atomic_scalar.gti"]
     },
@@ -2005,43 +1993,6 @@
         "tests/fixtures/environment_lookup.gti",
         "tests/environment_runtime_test.py",
         "tests/runtime_environment_tests.cpp"
-      ]
-    },
-    {
-      "id": "experimental-json.executable",
-      "source": "stdlib/std/experimental/json.gti",
-      "status": "executable",
-      "operations": [
-        "std::experimental::json::codec",
-        "std::experimental::json::decode",
-        "std::experimental::json::decode_options",
-        "std::experimental::json::describe",
-        "std::experimental::json::encode",
-        "std::experimental::json::encode_pretty",
-        "std::experimental::json::errc",
-        "std::experimental::json::error",
-        "std::experimental::json::error::description",
-        "std::experimental::json::error::has_source_location",
-        "std::experimental::json::error::prepend_index",
-        "std::experimental::json::error::prepend_key",
-        "std::experimental::json::ignore",
-        "std::experimental::json::name"
-      ],
-      "case_ids": ["experimental-json", "experimental-json-parity"],
-      "required_instantiations": [
-        "bool, fixed-width integers with range checks, float and double with exact lexemes, std::string, std::string_view (encode), enum, nested struct, std::vector of scalars and of structs, std::optional, std::map and std::unordered_map with std::string keys, a codec specialization",
-        "name and ignore attributes",
-        "every errc through decode failures with offsets, JSON Pointer paths and line/column",
-        "strict strings: UTF-8 validation, escapes, surrogate pairs, control characters",
-        "pretty printing and decode limits"
-      ],
-      "evidence": [
-        "docs/language/json.md#experimental-reflected-json",
-        "examples/141-reflected-json.gti",
-        "stdlib/std/experimental/json.gti",
-        "tests/fixtures/experimental_json.gti",
-        "tests/fixtures/experimental_json_parity.gti",
-        "tests/reflection_runtime_test.py"
       ]
     },
     {
@@ -2455,28 +2406,41 @@
       "evidence": ["stdlib/std/iterator.gti", "tests/fixtures/stdlib_surface_iterator.gti", "tests/container_iterator_movement_test.py"]
     },
     {
-      "id": "json.checked-object-projections",
-      "source": "stdlib/std/json.gti",
-      "status": "executable",
-      "operations": ["std::json::value::keys", "std::json::value::members", "std::json::value::values", "std::json::value::values_mut"],
-      "case_ids": ["json-object-iteration"],
-      "required_instantiations": ["immutable insertion-ordered keys", "owning descendant proxies without cloning", "exclusive value replacement without extent changes", "zero-allocation traversal"],
-      "evidence": ["examples/091-json-documents.gti", "tests/fixtures/json_object_iteration.gti", "tests/fixtures/json_object_iteration_failure.gti", "tests/json_object_iterator_runtime_test.py", "docs/language/json.md"]
-    },
-    {
       "id": "json.executable",
       "source": "stdlib/std/json.gti",
       "status": "executable",
-      "operations": ["std::json public surface"],
-      "case_ids": ["json", "json-codec", "json-owning-error-backend", "owned-error-pipelines", "json-object-iteration"],
-      "required_instantiations": [],
+      "operations": [
+        "std::json::codec",
+        "std::json::decode",
+        "std::json::decode_options",
+        "std::json::describe",
+        "std::json::encode",
+        "std::json::encode_pretty",
+        "std::json::errc",
+        "std::json::error",
+        "std::json::error::description",
+        "std::json::error::has_source_location",
+        "std::json::error::prepend_index",
+        "std::json::error::prepend_key",
+        "std::json::ignore",
+        "std::json::name"
+      ],
+      "case_ids": ["json", "json-owning-error-backend", "json-parity", "owned-error-pipelines"],
+      "required_instantiations": [
+        "bool, fixed-width integers with range checks, float and double with exact lexemes, std::string, std::string_view (encode), enum, nested struct, std::vector of scalars and of structs, std::optional, std::map and std::unordered_map with std::string keys, a codec specialization",
+        "name and ignore attributes",
+        "every errc through decode failures with offsets, JSON Pointer paths and line/column",
+        "strict strings: UTF-8 validation, escapes, surrogate pairs, control characters",
+        "pretty printing and decode limits"
+      ],
       "evidence": [
         "docs/language/json.md",
+        "examples/141-reflected-json.gti",
         "stdlib/std/json.gti",
-        "tests/fixtures/json_expected_value_backend_bug.gti",
-        "tests/fixtures/stdlib_json_codec.gti",
+        "tests/fixtures/json_parity.gti",
+        "tests/fixtures/stdlib_owned_error_pipelines.gti",
         "tests/fixtures/stdlib_surface_json.gti",
-        "tests/json_stdlib_test.py"
+        "tests/reflection_runtime_test.py"
       ]
     },
     {

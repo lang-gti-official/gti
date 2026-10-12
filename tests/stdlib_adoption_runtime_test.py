@@ -79,7 +79,7 @@ def main():
             "7\n8268\n7\n8268\n5\n12351\n16\n24803\n", ""))]),
         "pipeline": (fixtures / "stdlib_owned_error_pipelines.gti", [((), (0, "", ""))]),
         "example": (repository / "examples/100-owned-error-pipelines.gti",
-                    [((), (0, "tea\nJSON object key is missing at /name\n", ""))]),
+                    [((), (0, "tea\nobject is missing a required field at /name\n", ""))]),
         "void": (void_source, [
             ((), (0, "20\n30\n10\n20\n30\n11\n20\n30\n12\n90\n99\n", "")),
             (("error",), (0, "20\n30\n10\n20\n30\n11\n90\n70\n99\n", "")),

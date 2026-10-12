@@ -1901,6 +1901,21 @@ auto SemanticVisitor::Impl::trustedSynchronizationOperation(
     return operation(SynchronizationOperationKind::AtomicLoad,
                      AtomicMemoryOrder::SequentiallyConsistent);
   }
+  if (name == "atomic_wait_relaxed") {
+    return operation(SynchronizationOperationKind::AtomicWait,
+                     AtomicMemoryOrder::Relaxed);
+  }
+  if (name == "atomic_wait_acquire") {
+    return operation(SynchronizationOperationKind::AtomicWait,
+                     AtomicMemoryOrder::Acquire);
+  }
+  if (name == "atomic_wait") {
+    return operation(SynchronizationOperationKind::AtomicWait,
+                     AtomicMemoryOrder::SequentiallyConsistent);
+  }
+  if (name == "atomic_notify_one" || name == "atomic_notify_all") {
+    return {.kind = SynchronizationOperationKind::AtomicNotify};
+  }
   if (name == "atomic_store_relaxed") {
     return operation(SynchronizationOperationKind::AtomicStore,
                      AtomicMemoryOrder::Relaxed);
@@ -2010,6 +2025,11 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
       return IntrinsicKind::AtomicExchange;
     case SynchronizationOperationKind::AtomicCompareExchange:
       return IntrinsicKind::AtomicCompareExchange;
+    case SynchronizationOperationKind::AtomicWait:
+      return IntrinsicKind::AtomicWait;
+    case SynchronizationOperationKind::AtomicNotify:
+      return name == "atomic_notify_one" ? IntrinsicKind::AtomicNotifyOne
+                                         : IntrinsicKind::AtomicNotifyAll;
     default:
       return IntrinsicKind::None;
     }
@@ -6897,8 +6917,12 @@ auto SemanticVisitor::Impl::analyzeAtomicIntrinsicCall(
   };
 
   const std::size_t expectedArguments =
-      intrinsic == IntrinsicKind::AtomicLoad ? 1
+      intrinsic == IntrinsicKind::AtomicLoad ||
+              intrinsic == IntrinsicKind::AtomicNotifyOne ||
+              intrinsic == IntrinsicKind::AtomicNotifyAll
+          ? 1
       : intrinsic == IntrinsicKind::AtomicStore ||
+              intrinsic == IntrinsicKind::AtomicWait ||
               intrinsic == IntrinsicKind::AtomicExchange
           ? 2
           : 4;
@@ -6962,8 +6986,12 @@ auto SemanticVisitor::Impl::analyzeAtomicIntrinsicCall(
              "This atomic operation infers its scalar type from storage.",
              "GTI-S2086");
     }
-    currentType = intrinsic == IntrinsicKind::AtomicStore ? SemanticType::Void
-                                                          : *elementType;
+    currentType = intrinsic == IntrinsicKind::AtomicStore ||
+                          intrinsic == IntrinsicKind::AtomicWait ||
+                          intrinsic == IntrinsicKind::AtomicNotifyOne ||
+                          intrinsic == IntrinsicKind::AtomicNotifyAll
+                      ? SemanticType::Void
+                      : *elementType;
   }
 
   std::vector<SemanticType> parameterTypes = argumentTypes;
@@ -8248,6 +8276,9 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     return;
   }
   if (intrinsic == IntrinsicKind::AtomicLoad ||
+      intrinsic == IntrinsicKind::AtomicWait ||
+      intrinsic == IntrinsicKind::AtomicNotifyOne ||
+      intrinsic == IntrinsicKind::AtomicNotifyAll ||
       intrinsic == IntrinsicKind::AtomicStore ||
       intrinsic == IntrinsicKind::AtomicExchange ||
       intrinsic == IntrinsicKind::AtomicCompareExchange) {

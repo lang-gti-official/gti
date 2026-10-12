@@ -85,6 +85,28 @@ prerequisites and measured clients; they are not added to this implementation.
 
 ## Scoped concurrency and composable shared jobs (2026-10-11)
 
+### Safe waiting follow-up (2026-10-12)
+
+`C-WAIT-01` adds safe scalar atomic wait/notify as the first waiting slice.
+The implementation uses the existing stable shared atomic-storage loan,
+load-legal orders, distinct verified MIR wait/notification effects and native
+parking. Public wrappers and completion loops remain source-defined. No GTI
+per-wait allocation or per-object metadata is added. This unlocks sleeping
+completion counters and scalar handoffs for managed/scoped workers.
+
+Acceptance requires positive and negative semantic tests, malformed-MIR
+rejection, optimizer barriers, C++20/C++23 O0/O1/O3 handshake/broadcast execution,
+editor and installed-library coverage, sanitizers where available, and runtime,
+allocation and code-size evidence. The implementation passes the focused
+macOS/Linux gates, 674/675 remote full-sweep tests and the sole remote
+permission-limited debugger gate locally; measured costs and exact snapshot
+identities are recorded in [verification](../architecture/verification.md#safe-atomic-waiting-2026-10-12).
+Final clean-head reconciliation remains the integration gate. Guard-aware
+condition variables (loan suspension), timed waits and persistent worker pools
+remain separate goals, not claims of this slice.
+
+### Scoped concurrency acceptance
+
 **State:** the public APIs and production execution paths are implemented and
 validated in PR #20 for 0.405.0. The reflected-JSON reconciliation passes all 51
 combined-head integration gates and all 648 remote full-sweep checks, plus the
@@ -274,11 +296,10 @@ clients) and phase 3 (`std::meta::construct`, method/constructor/parameter
 metaobjects, source locations, budget hardening). Reflection is no longer
 "later breadth" in the roadmap; what remains restricted (invocation through
 metaobjects, static-field metaobjects, runtime reflection, source generation,
-layout) is recorded in the alignment ledger. The verification gate,
-`std::experimental::json`, is built and covers `std::json`'s codec use cases
-(see the acceptance note in `reflection.md`); deprecating `std::json`'s
-explicit codecs is the owner's decision, then the parked `lsp-lazy-bodies`
-task resumes. The campaign touches the parser,
+layout) is recorded in the alignment ledger. The verification gate
+passed: the reflection-driven library is `<std/json>` since 0.409.0 and the
+owned document model is removed (see the acceptance note in
+`reflection.md`); next the parked `lsp-lazy-bodies` task resumes. The campaign touches the parser,
 semantic analysis (declaration-stage attribute evaluation, folded queries,
 aliases), HIR lowering and the trusted standard library; its one MIR change
 materialises direct-initialized temporaries before projection and its one
@@ -312,7 +333,7 @@ workflow determine task scope and integration.
 | Native import `C-08B` | ready for a bounded language/import slice | Native scalar, recursive pointer and indirect-call identities delivered. Introduce true foreign-storage identity and unsafe loads/stores, then import actual external variables; retain TLS/volatile exclusions until specified. |
 | `L-CONST-01` extension | mutable-builder profile implemented; further profiles ready to select | Checked mutable references, void helpers, non-consuming mutable methods/operators and explicit constructor-body writes use staged verified MIR. Select the remaining enum/Expected operation migration, stored-reference, pack, owning/sum or operator profile with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | lazy trusted-body prerequisite met | Body-order/demand facts and editor-scoped HIR exist. Demand/memoize trusted body facts, apply the same scope to completion and measure diagnostics/latency. Cross-snapshot semantic reuse follows only if simpler steps leave it necessary. See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
-| `RT-2` through `RT-10` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.408.1. RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
+| `RT-2` through `RT-10` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2 | Continuation records entered by `ContinueFailure` share identical cleanup suffixes; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; path-dependent steps stay private. |
 | Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
 
@@ -770,7 +791,7 @@ and select an independent row.
   `e4545de11a8ad92f45e53f7b313b8a068fa66991c3d769cc64d70c3f08216ca8`
   on base `4ea7d42e` plus this campaign's changes, with AppleClang 21 and LLVM
   22.1.8. Broad campaign integration and the installed client pass.
-- **Introsort (0.408.1, RT-9):** both overloads now share bounded iterative
+- **Introsort (0.410.1, RT-9):** both overloads now share bounded iterative
   introsort through small phase functions that borrow the one comparator. The
   default relation is a stateless `operator<` comparator. Auxiliary storage is
   fixed and there are still no allocations; checked restoring swaps remain the
@@ -1751,7 +1772,7 @@ removing the diagnostic alone is not sufficient implementation evidence.
 Borrowed `expected<T&, E>` extraction through `.expect()` is implemented and
 documented in [expected values](../language/expected.md). It yields a place tied
 to the original owner, even after destruction of the temporary expected shell.
-`std::json::value::get` returns this shape; it does not yield an owned JSON node.
+The former `std::json::value::get` (before 0.409.0) returned this shape rather than an owned JSON node.
 The move-only-copy diagnostic on `mut auto value = borrowed_result` rejects a
 real attempted copy. The old unconditional movement hint has been replaced:
 current guidance explains `auto&` and conditional explicit cloning, and suggests

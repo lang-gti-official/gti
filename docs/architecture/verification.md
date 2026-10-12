@@ -1,5 +1,54 @@
 # Compiler Verification
 
+## Safe atomic waiting (2026-10-12)
+
+`C-WAIT-01` adds `atomic<T>::wait`, `notify_one` and `notify_all` for the
+existing nine scalar atomic domains. Semantic tests cover load-legal orders,
+profile/target admission and an unrelated source-defined completion wrapper.
+Malformed-MIR tests reject forged kind, storage, scalar and order contracts;
+optimizer tests retain wait/notification synchronization barriers. Runtime
+coverage includes ready values, all domain/order combinations, repeated
+release/acquire handoffs, early notifications and three-waiter broadcasts on
+C++20/C++23 at O0/O1/O3. The public example is `076-scalar-atomics.gti`.
+
+The clean `95ceb0d0` Mac mini snapshot
+`3ad8205743010f779457cdd1899fd66a70e8cd8bde383438a319f1cf033d1709`
+passes the full Release build, separate production corpus and both census
+regenerations. The recorded census delta changes only example 076 and totals:
+eleven additional declarations, two bodies and two concrete adapters. With
+that reviewed metadata delta, the unfiltered suite passes 674/675 in 1625.96 s,
+including actual ThreadSanitizer execution, waiting LSP and relocated installed
+consumers. `source_debug_lldb` alone fails because the SSH host cannot obtain
+debugger permission; the unchanged gate passes locally in 1.98 s. This is
+combined platform evidence, not a claim of an entirely passing remote sweep.
+Results are retained under `.git/gti-remote-runner/results/` as
+`run-bb89736361ee4b7ba17517b17380e71e`, without truncated logs.
+
+Clean `72064ce9` (benchmark-descriptor correction only since that checkpoint)
+passes the Release GCC 14/LLVM 21 build and all three atomic semantic/runtime
+gates on Linux. Run `run-f214f2f58cd94aa1b29ce7c69800762c` retains the full
+benchmark JSON and resource observations. Its source snapshot is
+`5138a1c2654bf48edf0292562f20622542395753f183bf9252eef95eb4b5984e`.
+
+The `atomic-wait-ready` workload compares 50 million ready acquire-waits and
+notifications with matching native C++23/O3 operations, three warmups and 15
+interleaved rounds. macOS medians are 1345.981 ms GTI / 1343.350 ms C++
+(CV 0.65% / 1.00%): effective parity, not a speedup. Linux medians are
+733.881 / 682.259 ms (CV 5.36% / 7.41%): GTI is about 7.6% slower, so universal
+parity is not claimed. Executables are 124752 / 34608 bytes on macOS and
+115112 / 16528 on Linux; single full-build observations are 0.438 / 0.101 s
+and 1.021 / 0.132 s. Linux single-observation build peak RSS is
+169072 / 46712 KiB; runtime peak RSS is 3996 / 3856 KiB. These whole-program
+costs include GTI lowering, checked code and hosted runtime, not just waiting.
+The measurements are not a before/after regression comparison: waiting is new.
+
+The ready-path allocation fixture records zero GTI no-throw allocation-seam
+calls across 10000 iterations; it does not observe arbitrary host/libc heap
+activity. The implementation adds no GTI per-wait allocation or per-object
+state. Blocked-wake latency, fairness, timeouts, native parking implementation
+costs and Windows execution are not measured or promised here. Guard-aware
+condition variables and persistent worker pools remain separate slices.
+
 ## Container iterator completion: delivery acceptance (2026-10-12)
 
 The owner accepts integration of the completed container campaign after the
@@ -5354,9 +5403,9 @@ Expected payload into a constructor, later-argument failure, and `?` on a member
 call result. These focused matrices cover C++20/C++23, O0/O1/O3, disabled
 elision, and ASan/UBSan.
 
-`json_stdlib` additionally compiles and executes the full DOM and codec
-fixtures, plus a returned temporary `response.body().view()` input, at the
-C++23/O0 and C++20/O3 endpoints. JSON's surface ledger records executable
+`json_runtime` compiles and executes the reflection-driven `<std/json>`
+fixtures (`stdlib_surface_json.gti`, `json_parity.gti`) at O0/O1/O3 under
+C++20 and C++23. JSON's surface ledger records executable
 cases rather than expecting the former backend ICE. These focused gates do
 not replace the owning-callback campaign's final production suite.
 
@@ -6430,8 +6479,9 @@ exchange. Both include C++20/C++23, optimized/unoptimized, disabled-elision,
 and ASan/UBSan execution. The semantic/MIR suite rejects direct layout cycles,
 forged active-variant cleanup selectors, unguarded extractions, and upgraded
 loans. `borrowed_payload_pattern_lsp` checks navigation, tokens, exact
-diagnostic locations, and versioned recovery. `json_stdlib` is the end-to-end
-library client of recursive enum storage, without a privileged lowering path.
+diagnostic locations, and versioned recovery. `<std/json>` (0.408 and earlier) was the end-to-end
+library client of recursive enum storage, without a privileged lowering path;
+the payload-enum suites keep that coverage.
 
 For defined integer arithmetic, `defined_integer_arithmetic` covers all eight
 fixed-width domains, all nine add/subtract/multiply identities, signed and
@@ -7115,7 +7165,7 @@ job retains the explicit selection documented above; it is not a full-suite
 coverage claim.
 
 The largest compound suites (`stdlib_surface`, `returned_field_address_runtime`,
-`json_stdlib`, `generic_algorithm_breadth`, `complete_containers`) bound the
+`generic_algorithm_breadth`, `complete_containers`) bound the
 suite's critical path, so they reserve `GTI_TEST_HEAVY_CASE_JOBS` workers
 (default `4`) instead of the per-suite default; CTest charges them that many
 processors. Long single-process gates carry a measured `COST` ordering hint

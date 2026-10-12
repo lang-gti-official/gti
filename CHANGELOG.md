@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.408.1 — Faster `std::sort`
+## 0.410.1 — Faster `std::sort`
 
 - `std::sort` now uses introsort instead of heapsort. It partitions around a
   sampled median, uses insertion sort for short ranges, and falls back to
@@ -18,6 +18,21 @@ for what minor and patch releases mean.
   times as fast. Results, the comparator contract, failure behaviour and the
   absence of allocation are unchanged. The order of equal elements was never
   specified and may differ.
+
+## 0.409.0 — `<std/json>` is the reflection-driven library
+
+- `std::experimental::json` is now `<std/json>` (`std::json::encode`,
+  `encode_pretty`, `decode<T>`, `decode_options`, `codec<T>`, `name` and
+  `ignore` attributes, `error` with `errc`, offset, line/column and JSON
+  Pointer path). The owned `std::json::value` document model, `parse`,
+  `stringify`, the builders and the value-based `codec<T>::decode(value&)`
+  protocol are removed. Programs that parsed text of unknown shape decode into
+  `std::map<std::string, V>` or a struct of optionals; codecs convert between
+  the application type and a plain record struct or text. Examples 91, 92, 93,
+  100 and 131 show the new forms.
+- Decoding failures inside members now report the member's JSON Pointer path
+  (`/items/1`) for syntax errors as well as shape errors, and structural
+  errors name the unexpected character rather than the end of the text.
 
 ## 0.407.0 — Reflected JSON covers the codec use cases
 
