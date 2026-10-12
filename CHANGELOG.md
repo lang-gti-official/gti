@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.416.1 — Linux linking and sleep fixes
+
+- On Linux, native files and libraries passed after `--`, and project native
+  libraries, can now call GTI runtime functions or replace runtime hooks.
+  The GTI runtime library is now linked after every other input. GNU ld
+  previously reported duplicate definitions, or left such calls unresolved.
+  macOS was unaffected.
+- On Linux, an interrupted `thrd_sleep` no longer reports a host failure when
+  the interruption arrives within the timer's slack. It now reports the
+  interruption, with a remaining time no greater than the request.
+
 ## 0.416.0 — Optional out-of-class method definitions
 
 - Ordinary non-generic class, struct and static interface methods can keep
