@@ -345,7 +345,7 @@ edits (parse fully cached), milliseconds per edit:
 With late demand the 089 edit analyses 284 of 1,250 deferred library bodies,
 12 of them late (about 10 ms including their finalization). The
 `transit-planner` `network.gti` edit never needed a repeated analysis and is
-unchanged at 105-115 ms (about 200 ms before demand-driven bodies). What
+unchanged at 105-125 ms (about 200 ms before demand-driven bodies). What
 remains on the eight-include file is one analysis: registration of every
 loaded unit (about 40 ms), the lexical body pass with eagerly analysed library
 constructors, destructors, virtual and constant definitions plus application
