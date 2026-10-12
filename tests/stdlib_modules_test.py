@@ -28,6 +28,10 @@ def main():
     for name in modules:
         text = (stdlib / "modules" / f"{name}.gti").read_text(encoding="utf-8")
         assert text == interface(name), f"stdlib/modules/{name}.gti is not canonical"
+    portable = sorted(set(units) - {"environment", "process", "tcp"})
+    aggregate = (stdlib / "std.gti").read_text(encoding="utf-8")
+    assert [line for line in aggregate.splitlines() if line.startswith("export import ")] == [
+        f"export import std.{name};" for name in portable], "portable aggregate inventory drift"
 
     environment = dict(os.environ, GTI_STDLIB_PATH=str(stdlib))
     with tempfile.TemporaryDirectory(prefix="gti-stdlib-modules-") as temporary:
@@ -43,6 +47,14 @@ def main():
             assert result.returncode == 0, result.stdout + result.stderr
 
         run_cases([(name, name) for name in modules], check, configured_jobs())
+        source = root / "aggregate.gti"
+        source.write_text("import std;\nimport std.vector;\n#include <std/string>\n"
+                          "int main() { mut std::vector<int> values{}; values.push_back(42); "
+                          "return values[std::size_t(0)] - 42; }\n")
+        result = subprocess.run(
+            [str(compiler), str(source), "--emit-mir", "-o", os.devnull],
+            capture_output=True, text=True, env=environment, timeout=300)
+        assert result.returncode == 0, result.stdout + result.stderr
     print(f"standard-library modules: {len(modules)} interfaces import and lower")
 
 

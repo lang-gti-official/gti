@@ -74,6 +74,10 @@ public:
   SemanticVisitor &operator=(SemanticVisitor &&) noexcept;
 
   bool check(const Program &program);
+  // Select additional primary bodies for the next check, after HIR discovery.
+  // AST identities must belong to that same parsed program.
+  void
+  requireFunctionBodies(const std::unordered_set<const FunctionDecl *> &bodies);
   bool check(const Expr &expr);
   // Applies artifact-level entry/export policy after ordinary language
   // semantics have resolved every declaration.

@@ -732,7 +732,7 @@ install(DIRECTORY "runtime/include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}
 install(DIRECTORY "vendor/expected_lite/include/nonstd"
         DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
         COMPONENT gti_toolchain)
-install(FILES "stdlib/prelude.gti"
+install(FILES "stdlib/prelude.gti" "stdlib/std.gti"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
         COMPONENT gti_toolchain)
 install(DIRECTORY "stdlib/std"
