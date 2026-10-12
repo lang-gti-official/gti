@@ -483,7 +483,7 @@ add_test(NAME out_of_class_cleanup
 set_tests_properties(out_of_class_cleanup PROPERTIES TIMEOUT 600)
 add_test(NAME out_of_class_performance
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_performance_test.py" $<TARGET_FILE:gti>
-          "${CMAKE_CURRENT_BINARY_DIR}/out-of-class-performance")
+          "${PROJECT_BINARY_DIR}/Testing/out-of-class-performance")
 set_tests_properties(out_of_class_performance PROPERTIES TIMEOUT 180)
 add_executable(gti_borrowing_composition_tests borrowing_composition_tests.cpp)
 target_link_libraries(gti_borrowing_composition_tests PRIVATE gti_cpp_backend)

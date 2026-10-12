@@ -1798,9 +1798,9 @@ void testOutOfClassMethods() {
           std::equal(originalTokens.begin(), originalTokens.end(),
                      formattedTokens.begin(),
                      [](const lang::Token &left, const lang::Token &right) {
-                          return left.kind == right.kind &&
-                                 (left.kind == lang::TokenKind::END_OF_FILE ||
-                                  left.lexeme == right.lexeme);
+                       return left.kind == right.kind &&
+                              (left.kind == lang::TokenKind::END_OF_FILE ||
+                               left.lexeme == right.lexeme);
                      }),
       "qualified definitions format without changing tokens or qualification");
   const auto frontend = lang::Frontend().analyze("split-methods.gti", R"(
@@ -1881,6 +1881,35 @@ int main() {
   expect(contractResult.canGenerateCode(),
          "private constructors, consuming receivers and differently named "
          "borrowed parameters keep declaration contracts");
+  const std::string borrowed = R"(
+struct Cell {
+  mut int number = 3;
+  int& read();
+  void set(int value) mut;
+  int take() &&;
+};
+int& Cell::read() { return this.number; }
+void Cell::set(int value) mut { this.number = value; }
+int Cell::take() && { return this.number; }
+)";
+  const auto borrowControl = lang::Frontend().analyze(
+      "split-borrow.gti",
+      borrowed + "int main() { mut Cell c{}; c.set(4); auto& b = c.read(); "
+                 "return b - 4; }",
+      {standardLibraryPrelude()});
+  expect(borrowControl.canGenerateCode(),
+         "a separately defined accessor retains its receiver origin");
+  for (const auto *operation :
+       {"c.set(4);", "int taken = std::move(c).take();"}) {
+    const auto invalidBorrow = lang::Frontend().analyze(
+        "split-borrow.gti",
+        borrowed + "int main() { mut Cell c{}; auto& b = c.read(); " +
+            operation + " return b; }",
+        {standardLibraryPrelude()});
+    expect(invalidBorrow.syntaxValid && !invalidBorrow.semanticValid,
+           "a separate method must not mutate or consume a receiver with a "
+           "live borrowed result");
+  }
   for (const auto &[source, message] :
        std::vector<std::pair<std::string, std::string>>{
            {"int Missing::read() { return 1; }", "visible"},
