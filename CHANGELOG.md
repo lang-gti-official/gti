@@ -22,8 +22,19 @@ for what minor and patch releases mean.
   now works through native helpers.
 - Definitions inside generic enclosing types, including exact specializations,
   remain diagnosed until child identity can retain the enclosing specialization.
-  Anonymous records and
-  nested interfaces/unions are not part of this release.
+  Anonymous records and nested interfaces/unions are not part of this release.
+
+## 0.412.1 — Comparators built from generic classes
+
+- Inside a generic function, a callable built from the function's own type
+  parameters now satisfies callable concepts such as `std::comparator`,
+  `std::predicate` and `std::read_callable`. This covers a class instance such
+  as `less<T>()` and a lambda taking `T&`. For example,
+  `std::sort(values, less<T>())` now compiles inside a generic function.
+  Previously these calls were rejected with GTI-S2029 even though every
+  concrete instance satisfied the concept. The same applies to member
+  requirements on a generic class instance, such as a `Box<T>` whose `read()`
+  returns `T`.
 
 ## 0.412.0 — Declared field defaults through reflection; JSON files
 
