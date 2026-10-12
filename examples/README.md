@@ -208,6 +208,8 @@ is a teaching helper, not a production server.
 | `147-standard-library-import.gti` | one portable standard-library import, vector, owning strings and formatting, without importing platform-only APIs |
 | `148-nested-configuration.gti` | named nested structs/classes, public qualified type paths, three-level nesting, and recursive reflected JSON configuration decoding and encoding |
 | `149-interface-static-factories.gti` | concrete static interface factories, recoverable backend selection, explicit owning upcasts and ordinary virtual dispatch |
+| `150-out-of-class-methods.gti` | optional split method definitions, private receiver state, declaration defaults, constexpr statics and receiver-borrowed results |
+| `window-factory/` | a static interface factory defined in a registered private implementation file, selecting concrete window types without circular imports; run `gti run` in the directory |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run

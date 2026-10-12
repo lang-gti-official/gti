@@ -611,7 +611,7 @@ private:
         {.id = id,
          .sourceUnit = declaration.sourceUnit,
          .declaration = declaration.id,
-         .source = declaration.declaration,
+         .source = declaration.bodyDeclaration(),
          .owner = owner,
          .typeArguments = std::move(functionTypeArguments),
          .valueArguments = std::move(functionValueArguments),
@@ -1902,7 +1902,7 @@ private:
   // base records through node-stable lookups, never across a provider call by
   // vector position.
   bool requirePrimaryBody(const FunctionInfo &function) {
-    const FunctionDecl *body = function.declaration;
+    const FunctionDecl *body = function.bodyDeclaration();
     if (body == nullptr || body->body() == nullptr ||
         baseModel->hasAnalyzedFunctionBody(*body))
       return true;
@@ -1992,18 +1992,19 @@ private:
     lambdaTargets.clear();
     seedLambdaTargets(snapshot.typeArguments);
     HirBody body;
+    const FunctionDecl *bodyDeclaration = declaration->bodyDeclaration();
     std::vector<HirBindingId> parameterBindings;
-    parameterBindings.reserve(declaration->declaration->parameters().size());
-    for (const Parameter &parameter : declaration->declaration->parameters()) {
+    parameterBindings.reserve(bodyDeclaration->parameters().size());
+    for (const Parameter &parameter : bodyDeclaration->parameters()) {
       parameterBindings.push_back(lowerBinding(parameter, *model, body));
     }
-    if (declaration->declaration->body()) {
+    if (bodyDeclaration->body()) {
       body.roots =
-          lowerStatements(declaration->declaration->body()->statements(),
-                          *model, classArguments, classValueArguments, body);
+          lowerStatements(bodyDeclaration->body()->statements(), *model,
+                          classArguments, classValueArguments, body);
     }
     finalizeLifetimes(body, *model, true);
-    lowerLoans(*model, body, declaration->declaration);
+    lowerLoans(*model, body, bodyDeclaration);
     std::vector<HirCallableParameter> callableParameters;
     callableParameters.reserve(declaration->callableParameters.size());
     for (const CallableParameterContract &parameter :

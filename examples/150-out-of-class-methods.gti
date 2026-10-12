@@ -1,0 +1,51 @@
+#include <std/string>
+
+// Most methods can stay inline. Split a declaration and definition when its
+// body needs other types or would obscure the public API. Parameter names may
+// differ; defaults and access remain on the declaration.
+class Counter {
+  mut int count = 0;
+public:
+  Counter() {}
+  void add(int amount = 1) mut;
+  int read();
+  static constexpr int initial();
+};
+
+void Counter::add(int value) mut {
+  this.count += value;
+}
+
+int Counter::read() {
+  return this.count;
+}
+
+constexpr int Counter::initial() {
+  return 7;
+}
+
+static_assert(Counter::initial() == 7);
+
+// Borrowed results still depend on the receiver; moving the body out of the
+// class must not erase its lifetime contract.
+class Label {
+  std::string text;
+public:
+  Label(std::string value) : text(std::move(value)) {}
+  std::string_view view();
+};
+
+std::string_view Label::view() {
+  return this.text.view();
+}
+
+int main() {
+  mut Counter counter{};
+  counter.add(Counter::initial());
+  counter.add();
+  if (counter.read() != 8) { return 1; }
+  Label label{std::string("separate definitions")};
+  if (label.view() != "separate definitions") { return 2; }
+  std::println(label.view());
+  return 0;
+}

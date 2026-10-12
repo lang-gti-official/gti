@@ -60,7 +60,11 @@ def checked(argv):
     return result
 
 
-def main():
+def main(gti_variants=None):
+    gti_variants = gti_variants or {kind: GTI.replace("TYPE", kind) for kind in ("class", "interface")}
+    reference, comparison = gti_variants
+    kinds = (*gti_variants, "cpp")
+    ratio_name = f"{comparison}_over_{reference}_ratio"
     compiler = Path(sys.argv[1]).resolve()
     evidence = Path(sys.argv[2]).resolve()
     evidence.mkdir(parents=True, exist_ok=True)
@@ -73,9 +77,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-interface-static-cost-") as temp:
         directory = Path(temp)
         binaries = {}
-        for kind in ("class", "interface", "cpp"):
+        for kind in kinds:
             source = directory / (kind + (".cpp" if kind == "cpp" else ".gti"))
-            text = CPP if kind == "cpp" else GTI.replace("TYPE", kind)
+            text = CPP if kind == "cpp" else gti_variants[kind]
             source.write_text(text)
             binary = directory / kind
             argv = ([native, "-std=c++23", "-O3", str(source), "-o", str(binary)]
@@ -101,8 +105,7 @@ def main():
             binaries[kind] = binary
         expected = None
         for repetition in range(10):
-            kinds = ("class", "interface", "cpp") if repetition % 2 == 0 else ("cpp", "interface", "class")
-            for kind in kinds:
+            for kind in (kinds if repetition % 2 == 0 else tuple(reversed(kinds))):
                 before = time.perf_counter()
                 run = checked([str(binaries[kind])])
                 duration = time.perf_counter() - before
@@ -113,11 +116,11 @@ def main():
         report["complete_state_output"] = expected.strip()
         for variant in report["variants"].values():
             variant["median_seconds"] = statistics.median(variant["runs_seconds"])
-        report["interface_over_class_ratio"] = (
-            report["variants"]["interface"]["median_seconds"] /
-            report["variants"]["class"]["median_seconds"])
+        report[ratio_name] = (
+            report["variants"][comparison]["median_seconds"] /
+            report["variants"][reference]["median_seconds"])
     (evidence / "report.json").write_text(json.dumps(report, indent=2) + "\n")
-    print(json.dumps({"interface_over_class_ratio": report["interface_over_class_ratio"],
+    print(json.dumps({ratio_name: report[ratio_name],
                       "output": report["complete_state_output"],
                       "evidence": str(evidence / "report.json")}))
 

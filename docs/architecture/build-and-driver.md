@@ -1068,6 +1068,33 @@ dependency aliases resolve; re-exporting declarations never leaks aliases.
 Direct compilation remains manifest-independent and can write a relative
 quoted import instead.
 
+An optional table registers bodies separately from interfaces:
+
+```toml
+[module-implementations]
+geometry = ["src/geometry_impl.gti"]
+```
+
+Each key must already occur in `[modules]`. Values are arrays of existing,
+package-contained, relative `.gti` file paths. Duplicate physical registration,
+interface/implementation overlap, non-files and symlink escapes are rejected.
+An implementation is ordinary source, not another `export module` interface;
+it explicitly imports its interface and the dependencies its bodies use.
+Importing the registered interface automatically loads these files, including
+when it is reached through a dependency package. Unused module registrations
+do not load bodies. Consumers gain no visibility into implementation helpers.
+
+Registration names, paths and order participate in project-model identity;
+loaded implementation bytes participate in source keys, reports and editor
+snapshot invalidation. Private implementation roots are traversed before the
+entry root in deterministic registration/discovery order, with their own
+ordinary source dependencies first. Existing initialization/lifetime rules
+still apply. No source directories are scanned, no implementation file needs
+to be included by a consumer, and no independently linked GTI object is added.
+Direct mode still does not discover a manifest: use explicit source edges or
+project mode for registered implementations. `examples/window-factory` is a
+runnable project illustrating this arrangement.
+
 `ProjectPackage` and immutable `PackageSourceRoot` values carry these maps;
 `SourceLoader` owns language resolution. Registrations are part of project
 model identity, while interface bytes and import/re-export edges participate in

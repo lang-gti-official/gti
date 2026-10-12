@@ -4749,15 +4749,16 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
       function != nullptr && function->declaration != nullptr &&
       function->returnBorrowOrigin == BorrowOriginKind::Argument &&
       function->returnBorrowParameter <
-          function->declaration->parameters().size() &&
-      (&function->declaration->parameters()[function->returnBorrowParameter] ==
-           &parameter ||
+          function->bodyDeclaration()->parameters().size() &&
+      (&function->bodyDeclaration()
+               ->parameters()[function->returnBorrowParameter] == &parameter ||
        std::any_of(
            function->returnBorrowParameters.begin(),
            function->returnBorrowParameters.end(),
            [&](std::size_t index) {
-             return index < function->declaration->parameters().size() &&
-                    &function->declaration->parameters()[index] == &parameter;
+             return index < function->bodyDeclaration()->parameters().size() &&
+                    &function->bodyDeclaration()->parameters()[index] ==
+                        &parameter;
            }));
   const bool dynamicTextCarrier =
       carrier->type.kind == SemanticType::StringView ||
@@ -6469,7 +6470,7 @@ auto SemanticVisitor::Impl::exactThreadTaskEntry(const SemanticType &type,
     if (function == nullptr || function->ownerClass != 0 ||
         function->entryPoint || function->linkage != LanguageLinkage::Gti ||
         function->declaration == nullptr ||
-        function->declaration->body() == nullptr ||
+        function->bodyDeclaration()->body() == nullptr ||
         !function->genericParameters.empty()) {
       return std::nullopt;
     }

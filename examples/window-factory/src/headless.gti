@@ -1,0 +1,7 @@
+import window;
+
+class HeadlessWindow : public Window {
+public:
+  HeadlessWindow() {}
+  int Width() override { return 320; }
+};

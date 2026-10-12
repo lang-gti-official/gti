@@ -138,6 +138,8 @@ std::vector<SourceUnitId> SourceGraph::compilationOrder() const {
       visit(unit.id);
     }
   }
+  for (const auto implementation : implementationRoots)
+    visit(implementation);
   visit(entry);
   for (const SourceUnit &unit : units) {
     visit(unit.id);
@@ -149,6 +151,7 @@ void SourceGraph::clear() {
   units.clear();
   dependencies.clear();
   configuredPreludeRoots.clear();
+  implementationRoots.clear();
   unitsByPath.clear();
   entry = 0;
 }

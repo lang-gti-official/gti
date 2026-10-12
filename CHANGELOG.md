@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.415.0 — Optional out-of-class method definitions
+
+- Ordinary non-generic class, struct and static interface methods can keep
+  their declaration in the type and define the body later using
+  `ReturnType Owner::method(...) { ... }`. Existing receiver, ownership,
+  access, default-argument and failure rules remain in force.
+- `[module-implementations]` registers private implementation files for
+  source modules. Consumers import the interface; a factory implementation
+  can import it and include concrete implementations without an import cycle.
+  No mandatory header/source split, filesystem scanning or separate binary
+  compilation is introduced.
+- Example 150 demonstrates split receiver methods, borrowed results and
+  constexpr statics; `examples/window-factory` demonstrates the project layout.
+
 ## 0.414.0 — Interface static methods
 
 - Interfaces can declare ordinary `static` helpers and factories, including
