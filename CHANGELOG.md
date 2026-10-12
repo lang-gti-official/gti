@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.410.1 — Portable aggregate standard-library imports
+## 0.411.0 — Portable aggregate standard-library imports
 
 - `import std;` makes the portable public standard-library modules available
   through one source-defined interface. Individual imports and includes remain

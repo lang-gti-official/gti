@@ -1111,9 +1111,9 @@
       }
     },
     "076-scalar-atomics.gti": {
-      "declarations": 248,
-      "bodies": 47,
-      "generated_items": 16,
+      "declarations": 259,
+      "bodies": 49,
+      "generated_items": 18,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -1122,7 +1122,7 @@
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
         "thread_task_adapter": 2,
-        "concrete_instance_adapter": 11
+        "concrete_instance_adapter": 13
       }
     },
     "077-callable-concepts.gti": {
@@ -2146,7 +2146,7 @@
       }
     },
     "147-standard-library-import.gti": {
-      "declarations": 3156,
+      "declarations": 3167,
       "bodies": 386,
       "generated_items": 217,
       "generated_kinds": {
@@ -2162,8 +2162,8 @@
     }
   },
   "totals": {
-    "declarations": 99867,
-    "bodies": 15309,
-    "generated_items": 9579
+    "declarations": 99889,
+    "bodies": 15311,
+    "generated_items": 9581
   }
 }
