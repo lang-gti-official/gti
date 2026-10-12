@@ -21417,8 +21417,10 @@ transformedFailureCallee(const MirProgram &program,
   // An unqualified instance field is a Symbol-rooted place, while `this.field`
   // is This + Field. Resolve both through the same concrete owner/field rows;
   // a module/static symbol must never acquire receiver-field privileges.
+  // Keep any suffix: `field.child` must validate the same complete path as
+  // `this.field.child`, including every intermediate field's mutability.
   if (destination.root == MirPlaceRootKind::Symbol && destination.symbol != 0 &&
-      destination.capture == 0 && destination.projections.empty()) {
+      destination.capture == 0) {
     const MirClassInstance *owner = nullptr;
     if (body.kind == MirBodyKind::Constructor) {
       for (const auto &candidate : program.constructorInstances())
@@ -21439,7 +21441,7 @@ transformedFailureCallee(const MirProgram &program,
     MirPlaceProjection field;
     field.kind = MirProjectionKind::Field;
     field.field = destination.symbol;
-    projected.projections.push_back(field);
+    projected.projections.insert(projected.projections.begin(), field);
     return moveOnlyOwnedFieldDestination(program, representations, body, value,
                                          projected);
   }

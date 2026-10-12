@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.415.0 — Owned C-string imports
+## 0.416.0 — Owned C-string imports
 
 - Unsafe `std::string(c_string)` copies foreign text into owned storage.
 - `std::string::try_from_c_string` returns recoverable null, size-overflow and
