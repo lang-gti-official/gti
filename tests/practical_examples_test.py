@@ -12,8 +12,8 @@ from http.server import ThreadingHTTPServer
 
 
 OUTPUTS = {
-    "091-json-documents.gti": 'tea\n42\ndocumentation\ngood first issue\n{"title":"Improve examples","open":true,"labels":["documentation","good first issue"]}\n',
-    "092-json-codecs.gti": 'alice\n{"id":7,"login":"alice"}\none\ntwo\n/0/login\n',
+    "091-json-documents.gti": 'tea\n42\n{"title":"Improve examples","open":true,"labels":["documentation","good first issue"]}\ndocumentation\ngood first issue\n{\n  "title": "Improve examples",\n  "open": true,\n  "labels": [\n    "documentation",\n    "good first issue"\n  ]\n}\n',
+    "092-json-codecs.gti": 'alice\n{"id":7,"login":"alice"}\none\ntwo\n/members/0/login\n',
     "093-http-json-client.gti": "https://example.com/api/users?name=Alice%20Smith\nUsage: http-json URL [post]\n",
     "094-binary-text-encoding.gti": "QQBC\n410042\n",
     "095-explicit-cloning.gti": "build\nbuild!\n",

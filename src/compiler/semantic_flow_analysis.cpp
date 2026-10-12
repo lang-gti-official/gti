@@ -2137,6 +2137,9 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::ThreadSpawn:
         case IntrinsicKind::ThreadJoinable:
         case IntrinsicKind::AtomicLoad:
+        case IntrinsicKind::AtomicWait:
+        case IntrinsicKind::AtomicNotifyOne:
+        case IntrinsicKind::AtomicNotifyAll:
         case IntrinsicKind::AtomicStore:
         case IntrinsicKind::AtomicExchange:
         case IntrinsicKind::AtomicCompareExchange:

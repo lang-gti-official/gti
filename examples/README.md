@@ -35,8 +35,8 @@ You do not need to read the entire sequence to find an API pattern:
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
 | Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
 | Format my own application types | [106: custom formatters](106-custom-formatters.gti) |
-| Parse, inspect, build, and serialize JSON | [91: JSON documents](091-json-documents.gti) |
-| Map JSON to my own classes and report field errors | [92: JSON codecs](092-json-codecs.gti) |
+| Read and write JSON as plain structs | [91: JSON documents](091-json-documents.gti) |
+| Map JSON to a class with an invariant and report field errors | [92: JSON codecs](092-json-codecs.gti) |
 | Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
 | Encode counted bytes as Base64 or hex | [94: binary-to-text encoding](094-binary-text-encoding.gti) |
 | Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](095-explicit-cloning.gti) |
@@ -137,7 +137,7 @@ is a teaching helper, not a production server.
 | `073-constructor-local-generics.gti` | inferred constructor-local types and iterator/sentinel string construction |
 | `074-read-only-range-loans.gti` | loop-bounded element loans over fixed arrays and owned temporary ranges |
 | `075-bounded-arena-pool.gti` | fixed-capacity typed arenas and reusable pools with checked owner-tied access |
-| `076-scalar-atomics.gti` | share-safe integer fetch operations with explicit relaxed, acquire, and acquire-release orders across managed threads |
+| `076-scalar-atomics.gti` | share-safe integer fetch operations and sleeping completion with acquire wait/notification across managed threads |
 | `077-callable-concepts.gti` | exact reusable predicate, operation, and consuming-action contracts |
 | `078-owning-payload-enums.gti` | closed payload enums that directly own active-cleanup alternatives |
 | `079-class-scoped-type-aliases.gti` | access-controlled aliases declared as class members |
@@ -150,8 +150,8 @@ is a teaching helper, not a production server.
 | `088-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
 | `089-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
 | `090-generic-algorithms.gti` | search, mutation, replacement, and filtered copying |
-| `091-json-documents.gti` | parsing, typed access, missing versus null, builders, array traversal, and deep cloning |
-| `092-json-codecs.gti` | exact codec specialization, owned application values, arrays, and JSON Pointer errors |
+| `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
+| `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |
 | `093-http-json-client.gti` | encoded URLs, bounded GET/POST requests, transport/status/schema errors, and JSON responses |
 | `094-binary-text-encoding.gti` | Base64/hex round trips, embedded zero bytes, and strict decoding |
 | `095-explicit-cloning.gti` | vector/string cloning, ownership transfer, and exact member requirements |
@@ -159,7 +159,7 @@ is a teaching helper, not a production server.
 | `097-constexpr-tables.gti` | constexpr constructors, methods, arrays, loops, and static assertions |
 | `098-shared-ownership.gti` | shared handles, explicit cloning versus moving, and final-owner cleanup |
 | `099-borrowed-expected.gti` | read-only fallible lookup, local-alias return publication, nested read-only accessors, borrowed `?` propagation, and consuming `.expect` with owner lifetime checks |
-| `100-owned-error-pipelines.gti` | exact-error propagation and explicit conversion into an owning application error without losing JSON path context |
+| `100-owned-error-pipelines.gti` | exact-error propagation and explicit conversion of a `std::json::error` into an owning application error without losing its path |
 | `101-owned-algorithm-results.gti` | move-only string transformation and bounded comparator sorting for asset-build work |
 | `102-constexpr-frame-budget.gti` | compile-time duration budgets, passive asset metadata, and pre-epoch timestamp decomposition |
 | `103-resource-exchange.gti` | restoring exchange and swap of unrelated move-only resources without copying |
@@ -188,7 +188,7 @@ is a teaching helper, not a production server.
 | `128-inline-object-pool.gti` | an application-defined two-slot pool using public manual-lifetime facilities, immovable owning objects, recoverable capacity failure and checked access |
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `130-fresh-result-initialization.gti` | fresh same-type factory results, redundant typed wrappers, immovable owning values and final-address identity |
-| `131-inferred-references.gti` | local shared/exclusive `auto&` references, last-use borrowing and JSON lookup through borrowed `expected::expect` |
+| `131-inferred-references.gti` | local shared/exclusive `auto&` references, last-use borrowing and a reference into a decoded JSON document kept alive by its owner |
 | `133-raw-text-owner-views.gti` | counted and zero-terminated text views derived from an unrelated inline byte owner, with the unsafe bridge's checked borrow tied to that owner |
 | `134-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
 | `135-inline-polymorphic-values.gti` | an application interface owned by `std::inline_polymorphic`, with small sensors inline, an owning sensor boxed, state preserved across vector growth, and replacement |

@@ -1,0 +1,87 @@
+#include <std/atomic>
+#include <std/thread>
+
+std::atomic<int32_t> turn{0};
+std::atomic<int32_t> payload{0};
+std::atomic<int32_t> failures{0};
+std::atomic<int32_t> ready{0};
+std::atomic<int32_t> finished{0};
+std::atomic<bool> gate{false};
+
+void ready_scalar<std::atomic_scalar T>(T current, T old) {
+  std::atomic<T> value{current};
+  value.wait(old);
+  value.wait(old, std::memory_order_relaxed());
+  value.wait(old, std::memory_order_acquire());
+  value.wait(old, std::memory_order_seq_cst());
+  value.notify_one();
+  value.notify_all();
+}
+
+void producer() {
+  for (mut int32_t i = 1; i <= 1000; i++) {
+    turn.wait(1, std::memory_order_acquire());
+    payload.store(i, std::memory_order_relaxed());
+    turn.store(1, std::memory_order_release());
+    turn.notify_one();
+  }
+}
+
+void consumer() {
+  for (mut int32_t i = 1; i <= 1000; i++) {
+    turn.wait(0, std::memory_order_acquire());
+    if (payload.load(std::memory_order_relaxed()) != i) {
+      [[discard]] failures.fetch_add(1);
+    }
+    turn.store(0, std::memory_order_release());
+    turn.notify_one();
+  }
+}
+
+void waiter() {
+  [[discard]] ready.fetch_add(1);
+  ready.notify_all();
+  gate.wait(false);
+  if (!gate.load()) { [[discard]] failures.fetch_add(1); }
+  [[discard]] finished.fetch_add(1);
+}
+
+void release_waiters() {
+  mut int32_t observed = ready.load();
+  while (observed != 3) {
+    ready.wait(observed);
+    observed = ready.load();
+  }
+  // Wakeups on unchanged state must not allow wait(false) to return.
+  gate.notify_all();
+  gate.store(true);
+  gate.notify_all();
+}
+
+int main() {
+  ready_scalar(true, false);
+  ready_scalar(int8_t(1), int8_t(0));
+  ready_scalar(int16_t(1), int16_t(0));
+  ready_scalar(int32_t(1), int32_t(0));
+  ready_scalar(int64_t(1), int64_t(0));
+  ready_scalar(uint8_t(1), uint8_t(0));
+  ready_scalar(uint16_t(1), uint16_t(0));
+  ready_scalar(uint32_t(1), uint32_t(0));
+  ready_scalar(uint64_t(1), uint64_t(0));
+  // Changed-before-wait, repeated notifications without waiters, each order,
+  // and subword/wide storage use the same scalar contract.
+  std::atomic<uint8_t> byte{uint8_t(2)};
+  byte.notify_one();
+  byte.notify_all();
+  byte.wait(uint8_t(1), std::memory_order_relaxed());
+  std::atomic<uint64_t> wide{uint64_t(9)};
+  wide.wait(uint64_t(0), std::memory_order_seq_cst());
+  auto ping_pong = std::parallel_invoke(
+      []() -> void { producer(); }, []() -> void { consumer(); });
+  if (!ping_pong) { return 1; }
+  auto broadcast = std::parallel_invoke(
+      []() -> void { waiter(); }, []() -> void { waiter(); },
+      []() -> void { waiter(); }, []() -> void { release_waiters(); });
+  if (!broadcast) { return 2; }
+  return failures.load() == 0 && finished.load() == 3 ? 0 : 3;
+}
