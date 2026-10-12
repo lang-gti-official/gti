@@ -339,6 +339,9 @@ private intermediate owner. A nested type has no enclosing object, hidden
 parent pointer, or implicit access to an outer instance's fields. Its values
 use ordinary construction, access, ownership, cleanup, reflection and
 transfer/share rules. Nesting adds no runtime state.
+As with existing transparent aliases, an explicitly public alias may expose a
+private type selected inside its owner; that does not make the original private
+name accessible or allow a private alias as a path qualifier.
 
 Nested types may have their own generic parameters. Definitions inside a
 generic enclosing type are currently rejected with `GTI-S2030`: retaining the

@@ -177,6 +177,7 @@ public:
   }
 
   void indexLoweredDeclarations() {
+    loweredHasNestedTypes = false;
     loweredDeclarationChildren.assign(loweredProgram.declarations().size() + 1,
                                       {});
     for (const LoweredDeclaration &declaration :
@@ -186,6 +187,9 @@ public:
             "lowered declaration parent is outside the declaration tree");
       }
       loweredDeclarationChildren[declaration.parent].push_back(&declaration);
+      loweredHasNestedTypes |=
+          declaration.kind == LoweredDeclarationKind::Class &&
+          declaration.ownerClass != 0;
     }
   }
 
@@ -1896,7 +1900,23 @@ public:
     output << "}\n";
   }
 
-  void emitLoweredFunctionForwardDeclarations(LoweredDeclarationId parent) {
+  bool needsCompleteNestedOwner(const SemanticType &type) const {
+    if (type.kind == SemanticType::Class) {
+      const auto *row = loweredClassRow(type.classId);
+      if (row != nullptr && row->ownerClass != 0)
+        return true;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const auto &argument) {
+                         return needsCompleteNestedOwner(argument);
+                       });
+  }
+
+  void
+  emitLoweredFunctionForwardDeclarations(LoweredDeclarationId parent,
+                                         bool nestedOwnersComplete = false) {
+    if (nestedOwnersComplete && !loweredHasNestedTypes)
+      return;
     for (const LoweredDeclaration *declaration : loweredChildren(parent)) {
       if (declaration->kind == LoweredDeclarationKind::Namespace) {
         writeIndent();
@@ -1904,15 +1924,18 @@ public:
                << loweredNamespaceSpelling(declaration->name, parent == 0)
                << " {\n";
         ++indentation;
-        emitLoweredFunctionForwardDeclarations(declaration->id);
+        emitLoweredFunctionForwardDeclarations(declaration->id,
+                                               nestedOwnersComplete);
         --indentation;
         writeIndent();
         output << "}\n";
         continue;
       }
       if (declaration->kind == LoweredDeclarationKind::LanguageLinkage) {
-        emitLoweredExternCBlock(*declaration);
-        loweredForwardedLinkage.insert(declaration->id);
+        if (!nestedOwnersComplete) {
+          emitLoweredExternCBlock(*declaration);
+          loweredForwardedLinkage.insert(declaration->id);
+        }
         continue;
       }
       const auto *function =
@@ -1921,13 +1944,31 @@ public:
           function->linkage == LanguageLinkage::C) {
         continue;
       }
+      const auto needsComplete = [&](const auto &types) {
+        return std::any_of(types.begin(), types.end(), [&](const auto &type) {
+          return needsCompleteNestedOwner(type);
+        });
+      };
+      const auto instances = loweredFunctionInstances(function->id);
+      const bool deferred =
+          loweredHasNestedTypes &&
+          (needsCompleteNestedOwner(function->returnType) ||
+           std::any_of(function->parameters.begin(), function->parameters.end(),
+                       [&](const auto &parameter) {
+                         return needsCompleteNestedOwner(parameter.type);
+                       }) ||
+           std::any_of(
+               instances.begin(), instances.end(), [&](const auto *instance) {
+                 return needsCompleteNestedOwner(instance->returnType) ||
+                        needsComplete(instance->parameterTypes);
+               }));
+      if (deferred != nestedOwnersComplete)
+        continue;
       emitLoweredBoundaryMarkers(*declaration, *function);
       if (function->definitionKind == MirDefinitionKind::RuntimeBinding ||
           function->intrinsic != IntrinsicKind::None) {
         continue;
       }
-      const std::vector<const MirFunctionInstance *> instances =
-          loweredFunctionInstances(function->id);
       const bool generic = !function->genericParameters.empty();
       const bool threadTaskTemplate =
           generic && loweredFunctionNeedsThreadTaskTemplate(instances);
@@ -4050,6 +4091,27 @@ public:
       output << "public:\n";
       access = AccessModifier::Public;
     }
+    // Nested type visibility is a GTI semantic fact. Internal C++ adapters
+    // spell canonical identities (including explicitly re-exported private
+    // types), so representation-only type declarations must be nameable here.
+    // Emit them before fields/factories; type declarations have no execution.
+    bool emittedNested = false;
+    for (const LoweredDeclaration *member : loweredChildren(classRow.id)) {
+      if (const auto *nested =
+              std::get_if<LoweredClassDeclaration>(&member->payload)) {
+        if (!emittedNested) {
+          writeIndent();
+          output << "public:\n";
+          emittedNested = true;
+        }
+        emitLoweredClassDefinition(*member, *nested);
+      }
+    }
+    if (emittedNested) {
+      writeIndent();
+      output << (access == AccessModifier::Private ? "private:\n"
+                                                   : "public:\n");
+    }
     emitLoweredConstexprAggregateFactory(classRow, declaration, access,
                                          concreteInstance);
     for (const LoweredDeclaration *member : loweredChildren(classRow.id)) {
@@ -4119,7 +4181,7 @@ public:
         loweredEmittedTypes.insert(member->id);
       } else if (const auto *nested =
                      std::get_if<LoweredClassDeclaration>(&member->payload)) {
-        emitLoweredClassDefinition(*member, *nested);
+        static_cast<void>(nested); // Already emitted before value members.
       } else if (const auto *alias = std::get_if<LoweredTypeAliasDeclaration>(
                      &member->payload)) {
         writeIndent();
@@ -7273,6 +7335,9 @@ public:
     capture(plan, CppProgramTextRole::DeclarationTypeMemberLifecycle, [&] {
       emitLoweredGlobalStorageForwardDeclarations(0);
       emitLoweredTypeDefinitions();
+      // A C++ nested name cannot be declared through an incomplete owner.
+      // GTI selection is already sealed; this is declaration scheduling only.
+      emitLoweredFunctionForwardDeclarations(0, true);
       emitLoweredCallableAdapterDefinitions();
       emitLoweredSourceDeclarations(0);
       emitLoweredStaticFieldDefinitions();
@@ -9297,6 +9362,7 @@ public:
   std::unordered_set<SymbolId> loweredNamespaceStaticSymbols;
   std::vector<const LoweredDeclaration *> loweredDeferredStaticFields;
   std::vector<const LoweredDeclaration *> loweredDeferredMembers;
+  bool loweredHasNestedTypes = false;
   struct DeferredCallableAdapter {
     LoweredDeclaration row;
     LoweredFunctionDeclaration function;

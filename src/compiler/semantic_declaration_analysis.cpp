@@ -2416,6 +2416,12 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
     } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(classDecl->name());
       if (classDecl->isExactSpecialization()) {
+        if (enclosingClass != 0) {
+          report(classDecl->name(),
+                 "Exact class specializations must be declared at namespace "
+                 "scope, not inside another type.",
+                 "GTI-S2030");
+        }
         continue;
       }
       if (enclosingClass != 0 &&
@@ -4477,7 +4483,7 @@ auto SemanticVisitor::Impl::collectClassMembers(const StmtList &statements,
       beginTypeParameterScope(info.genericParameters);
       collectMembers(classDecl->members(), info, access);
       for (const auto &[name, nested] : info.nestedTypes) {
-        if (info.members.contains(name)) {
+        if (info.members.contains(name) || info.typeAliases.contains(name)) {
           report(classInfo(nested).name,
                  "Nested type '" + name + "' conflicts with a member of '" +
                      info.name.lexeme + "'.",
@@ -8673,6 +8679,7 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
             .qualifiedName =
                 qualifiedName(owner.namespaceScope, owner.name.lexeme),
             .namespaceScope = owner.namespaceScope,
+            .enclosingClass = owner.enclosingClass,
             .exactSpecializationPrimary = owner.exactSpecializationPrimary,
             .exactTypeArguments = owner.exactTypeArguments,
             .exactValueArguments = owner.exactValueArguments,
@@ -8764,6 +8771,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .qualifiedName =
                 qualifiedName(owner.namespaceScope, owner.name.lexeme),
             .namespaceScope = owner.namespaceScope,
+            .enclosingClass = owner.enclosingClass,
             .exactSpecializationPrimary = owner.exactSpecializationPrimary,
             .exactTypeArguments = owner.exactTypeArguments,
             .exactValueArguments = owner.exactValueArguments,

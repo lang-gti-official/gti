@@ -1,6 +1,18 @@
 #include <std/string>
 
 namespace application {
+using Item = int;
+struct Shadowing {
+  Item item{};
+  struct Item { int value = 9; };
+};
+class Aliases {
+  struct Secret { int value = 11; };
+public:
+  using Public = Secret;
+};
+struct Standalone { struct Child { int value = 13; }; };
+using Alias = Standalone;
 struct Config {
   struct Network {
     int port = 8080;
@@ -45,10 +57,14 @@ int main() {
   application::Config::NetworkType alias{};
   application::Config::Box<int> box{.value = 5};
   application::Service service{};
+  application::Shadowing shadow{};
+  application::Aliases::Public exposed{};
+  application::Alias::Child standalone{};
   if (config.network.port != 8080 || network.retry.count != 3 ||
       retry.count != 3 || alias.port != 8080 ||
       config.logging.verbosity() != 2 || box.value != 5 ||
-      service.secret_value() != 7) {
+      service.secret_value() != 7 || shadow.item.value != 9 ||
+      exposed.value != 11 || standalone.value != 13) {
     return 1;
   }
   std::println("nested types");

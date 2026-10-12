@@ -3088,6 +3088,8 @@ private:
                        AccessModifier *enclosingAccess = nullptr);
   [[nodiscard]] bool isWithinClass(ClassId owner) const;
   [[nodiscard]] bool validateNestedClassAccess(ClassId id, const Token &use);
+  [[nodiscard]] bool validateClassPathAliases(const NamePath &path,
+                                              const Token &use);
   void resolveClassGenericDefaults(ClassId id);
 
   [[nodiscard]] std::vector<GenericParameterInfo>

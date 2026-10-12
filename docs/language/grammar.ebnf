@@ -458,7 +458,7 @@ class-member           = conditional-class-members
 nested-class-declaration = [ declaration-attributes ]
                           ( "class" | "struct" ) IDENTIFIER
                           [ generic-parameter-clause ] [ base-clause ]
-                          "{" { class-member } "}" ";" ;
+                          ( "{" { class-member } "}" ";" | ";" ) ;
 
 conditional-class-members
                        = conditional-start { class-member }

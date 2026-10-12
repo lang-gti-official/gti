@@ -125,6 +125,7 @@ struct Outer {
            "struct Outer { struct { int value; } child; Outer() {} };",
            "struct Outer { union Child { int value; }; Outer() {} };",
            "struct Outer { [[no_transfer]] interface Child {}; Outer() {} };",
+           "struct Outer { class n::Box<int> {}; Outer() {} };",
            "interface Outer { struct Child {}; };",
            "union Outer { class Child {}; };",
        }) {

@@ -880,6 +880,11 @@ private:
     std::vector<GenericParameter> genericParameters;
     std::vector<TypeRef> genericArgumentPatterns;
     if (check(TokenKind::SCOPE)) {
+      if (currentClassName) {
+        throw error(name,
+                    "Exact qualified class specializations are limited to "
+                    "namespace scope.");
+      }
       NamePath target = parseNamePath(name);
       if (!check(TokenKind::LESS)) {
         throw error(target.last(),
