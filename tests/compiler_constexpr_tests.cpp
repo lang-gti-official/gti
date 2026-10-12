@@ -2812,9 +2812,6 @@ void testConstexprEnumBuilders() {
         "constexpr E bad() { mut E value = E::low; value = F::low; return "
         "value; }",
         "E runtime = E::low; constexpr E bad = runtime;",
-        "constexpr bool inspect(E& value) { return value == E::low; } "
-        "constexpr bool bad() { return inspect(E::low); } "
-        "static_assert(bad());",
         "constexpr void bad() { set(E::low); }",
         "E runtime() { return E::low; } constexpr E bad() { mut E value = "
         "E::low; set(value); return runtime(); } constexpr E value = bad();"}) {

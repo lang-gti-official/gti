@@ -1615,10 +1615,9 @@ This does not introduce integer-to-enum conversions or payload-enum execution.
 Checked-integer `expected` results retain their older compatibility evaluation
 and are not yet usable in mutable constexpr builders, including as fields.
 Their MIR value/operation migration remains a prerequisite.
-Checked enum references in this profile designate local/parameter/receiver
-storage; it does not add constant execution of references to global objects
-or directly to named enumerator symbols. Pass those enum constants by value,
-or bind them in a local before borrowing.
+Checked enum references in this MIR profile designate local/parameter/receiver
+storage. It does not add general constant execution of references to global
+objects or change the existing compatibility evaluator's read-only calls.
 
 Completed free constexpr functions may also transform fully initialized passive
 structural records supplied by value: copy into a mutable local, mutate fields
