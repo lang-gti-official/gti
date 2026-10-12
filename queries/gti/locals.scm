@@ -43,6 +43,9 @@
 
 (function_declaration
   name: (identifier) @local.definition.function) @local.scope
+(function_declaration
+  name: (scoped_identifier
+    name: (identifier) @local.definition.method)) @local.scope
 
 (extern_c_function_prototype
   name: (identifier) @local.definition.function) @local.scope

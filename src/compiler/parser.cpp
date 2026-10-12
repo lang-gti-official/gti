@@ -1059,6 +1059,21 @@ private:
     } else {
       name = consume(TokenKind::IDENTIFIER, "Expect declaration name.");
     }
+    std::optional<NamePath> definitionOwner;
+    if (check(TokenKind::SCOPE)) {
+      if (!allowFunction || allowOperators || operatorName) {
+        throw error(
+            peek(),
+            "An out-of-class method definition must be at namespace scope.");
+      }
+      std::vector<Token> owner;
+      while (match({TokenKind::SCOPE})) {
+        owner.push_back(name);
+        name = consume(TokenKind::IDENTIFIER,
+                       "Expect a method or owner name after '::'.");
+      }
+      definitionOwner.emplace(std::move(owner));
+    }
     std::vector<GenericParameter> genericParameters;
     if (!operatorName && check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
@@ -1084,13 +1099,18 @@ private:
       }
       return functionDeclaration(
           std::move(type), name, std::move(genericParameters),
-          std::move(runtimeBinding), allowMutableReceiver, mutability,
+          std::move(runtimeBinding),
+          allowMutableReceiver || definitionOwner.has_value(), mutability,
           std::move(operatorName), std::move(staticKeyword),
           std::move(virtualKeyword), linkage, std::move(constexprKeyword),
           std::move(nativeCArray), std::move(nativeLinkName),
-          std::move(unsafeKeyword), std::move(functionAttributes));
+          std::move(unsafeKeyword), std::move(functionAttributes),
+          std::move(definitionOwner));
     }
 
+    if (definitionOwner) {
+      throw error(name, "Expect '(' after out-of-class method name.");
+    }
     if (operatorName) {
       throw error(operatorName->symbol,
                   "Expect '(' after overloaded operator name.");
@@ -1144,7 +1164,8 @@ private:
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
-      std::vector<FunctionAttribute> functionAttributes = {}) {
+      std::vector<FunctionAttribute> functionAttributes = {},
+      std::optional<NamePath> definitionOwner = std::nullopt) {
     std::vector<Parameter> parameters = parameterList();
     if (operatorName && operatorName->kind == OverloadedOperator::Dereference &&
         !parameters.empty()) {
@@ -1210,6 +1231,10 @@ private:
     }
 
     std::optional<PureSpecifier> pureSpecifier;
+    if (definitionOwner &&
+        (check(TokenKind::SEMICOLON) || check(TokenKind::EQUAL))) {
+      throw error(peek(), "An out-of-class method definition requires a body.");
+    }
     if (match({TokenKind::EQUAL})) {
       Token equal = previous();
       Token zero = consume(TokenKind::INT_LITERAL,
@@ -1255,7 +1280,8 @@ private:
         std::move(overrideKeyword), std::nullopt, linkage,
         std::move(constexprKeyword), std::move(requiresClause),
         std::move(nativeCArray), std::move(nativeLinkName),
-        std::move(unsafeKeyword), std::move(functionAttributes));
+        std::move(unsafeKeyword), std::move(functionAttributes),
+        std::move(definitionOwner));
   }
 
   StmtPtr conversionOperatorDeclaration(

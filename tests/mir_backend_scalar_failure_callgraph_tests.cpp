@@ -1088,13 +1088,20 @@ void testMutations(const std::filesystem::path &fixture) {
           findFunction(frontend.hir, headerDrift, "overflowing_leaf")) {
     leaf->staticMember = true;
   }
-  // A static flag on a free function contradicts its exact header. The program
-  // verifier rejects a static member without an owner class; were it to accept
-  // the drift, the hosted selector must still reject it.
-  expect(!lang::verifyMirProgram(headerDrift).valid() ||
-             emissionRejected(frontend, headerDrift, compatibility),
-         "exact source/MIR function-header drift must fail closed before "
-         "production");
+  expect(!lang::verifyMirProgram(headerDrift).valid(),
+         "a free function cannot become a static member without an owner");
+
+  headerDrift = frontend.mir;
+  if (lang::MirFunctionInstance *leaf =
+          findFunction(frontend.hir, headerDrift, "overflowing_leaf")) {
+    leaf->constexprFunction = !leaf->constexprFunction;
+  }
+  expect(lang::verifyMirProgram(headerDrift).valid(),
+         "a conservative function-header mutation should remain generic MIR");
+  if (lang::verifyMirProgram(headerDrift).valid()) {
+    expect(emissionRejected(frontend, headerDrift, compatibility),
+           "the hosted selector must reject exact source/MIR header drift");
+  }
 }
 
 } // namespace

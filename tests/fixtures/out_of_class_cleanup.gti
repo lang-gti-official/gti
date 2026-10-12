@@ -1,0 +1,42 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Trace {
+  int number;
+public:
+  Trace(int id) : number(id) {}
+  ~Trace() { std::println(this.number); }
+};
+
+interface Service {
+  static std::unique_ptr<Service> create(int mode);
+  int value();
+};
+
+class Implementation : public Service {
+  Trace member;
+public:
+  Implementation() : member(Trace(3)) {}
+  ~Implementation() { std::println(4); }
+  int value() override;
+};
+
+int Implementation::value() { return 42; }
+
+std::unique_ptr<Service> Service::create(int choice) {
+  Trace first{1};
+  Trace second{2};
+  auto implementation = std::make_unique<Implementation>();
+  if (choice != 0) {
+    mut int zero = choice - 1;
+    int failure = 1 / zero;
+  }
+  return std::upcast_unique<Service, Implementation>(std::move(implementation));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  auto service = Service::create(argc - 1);
+  if (service->value() != 42) { return 1; }
+  return 0;
+}

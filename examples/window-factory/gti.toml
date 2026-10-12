@@ -1,0 +1,15 @@
+manifest-version = 1
+
+[package]
+name = "window-factory"
+version = "0.1.0"
+
+[modules]
+window = "src/window.gti"
+
+[module-implementations]
+window = ["src/window_factory.gti"]
+
+[targets.window-factory]
+kind = "executable"
+root = "src/main.gti"

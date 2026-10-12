@@ -54,6 +54,13 @@ occurrences. An inferred value of a private type can still present its ordinary
 public members without exposing that type's name as a namespace candidate.
 Dirty interface overlays invalidate consumers through the existing dependency
 generation machinery, and closing an overlay restores the on-disk surface.
+Registered implementation files are retained source dependencies as well.
+Out-of-class bodies, in-class declarations and calls share one semantic method
+symbol; definition navigation points at the body, while references include
+both declaration and definition. Body parameter names belong to that body and
+can be renamed locally. The existing conservative restriction on renaming
+public/non-local symbols remains in force. The protocol does not independently
+match signatures or load implementation files.
 Unrelated semantic errors do not suppress module completion. Import-path/module-
 name completion and import-directive navigation are not added by this slice.
 
