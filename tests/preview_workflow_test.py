@@ -206,6 +206,40 @@ class PreviewTests(unittest.TestCase):
             Preview(self.flow).prepare("task", self.root / "remove-main", remove=True)
         self.assertFalse((self.root / "remove-main").exists())
 
+    def refresh_removed_feature_after_main_acceptance(self, add_feature):
+        tree = self.feature()
+        first = self.prepare()
+        self.verify(first)
+        preview = Preview(self.flow)
+        preview.publish(first["id"])
+        removed = preview.prepare("task", self.root / "removed", remove=True)
+        self.verify(removed)
+        preview.publish(removed["id"])
+        # The original PR is accepted independently of its preview admission.
+        accepted = git(tree, "rev-parse", "HEAD")
+        git(self.remote, "update-ref", "refs/heads/main", accepted)
+        if add_feature:
+            self.feature("second")
+            refreshed = self.prepare("second", "refreshed")
+        else:
+            refreshed = preview.prepare(None, self.root / "refreshed")
+        root = Path(refreshed["worktree"])
+        self.assertEqual((root / "task.txt").read_text(), "task")
+        record = refreshed["manifest"]["removed"][0]
+        self.assertTrue(record["restored"])
+        self.assertEqual(record["accepted_in_main"], accepted)
+        self.assertEqual([row["task"] for row in refreshed["manifest"]["features"]],
+                         ["second"] if add_feature else [])
+        self.verify(refreshed)
+        preview.publish(refreshed["id"])
+        self.assertTrue(self.flow.ancestor(removed["head"], refreshed["head"]))
+
+    def test_seed_restores_removed_feature_accepted_into_main(self):
+        self.refresh_removed_feature_after_main_acceptance(False)
+
+    def test_admission_restores_removed_dependency_accepted_into_main(self):
+        self.refresh_removed_feature_after_main_acceptance(True)
+
     def test_seed_and_conflict_resume(self):
         seeded = Preview(self.flow).prepare(None, self.root / "seed")
         self.assertEqual(seeded["manifest"]["features"], [])

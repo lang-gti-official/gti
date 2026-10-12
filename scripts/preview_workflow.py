@@ -62,6 +62,14 @@ class Preview:
             if manifest.get("schema") != 1 or not isinstance(manifest.get("features"), list):
                 raise WorkflowError("Published preview has an unsupported inclusion manifest")
             operations = []
+            # Git remembers the original head even after a preview revert, so
+            # merging main alone would retain that revert. Restore accepted
+            # contributions first; they now belong to main, not pending PRs.
+            for removed in reversed(manifest.get("removed", [])):
+                if not removed.get("restored") and self.flow.ancestor(removed["head"], main):
+                    for commit in reversed(removed["reverts"]):
+                        operations.append({"kind": "restore", "sha": commit})
+                    removed.update(restored=True, accepted_in_main=main)
             if remove:
                 rows = [row for row in manifest["features"] if row["task"] == task]
                 if not rows:
