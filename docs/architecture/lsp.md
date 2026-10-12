@@ -19,9 +19,10 @@ Hover and definition retain the exact declaration identity; semantic tokens
 mark the function static rather than treating it as a virtual requirement.
 The LSP publishes the frontend's interface/static restrictions, including pure
 or virtual static declarations and instance method bodies, without
-reconstructing those rules in the protocol layer. A called bodyless static
-declaration follows ordinary missing-definition diagnostics rather than being
-treated as an abstract requirement.
+reconstructing those rules in the protocol layer. Bodyless static declarations
+follow the ordinary declaration-snapshot contract rather than becoming abstract
+requirements: editor snapshots can retain them, while closed artifact requests
+diagnose a selected missing implementation with `GTI-S2106`.
 
 Local `auto&`/`mut auto&` declarations publish the compiler's concrete reference
 type and access in inferred-type hover. Uses retain the reference binding's
