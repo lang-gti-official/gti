@@ -3050,9 +3050,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
         }
         if (constructorTarget->requiresUnsafe &&
             instruction.unsafeOperation !=
-                UnsafeOperationKind::DeclaredUnsafeConstruction &&
-            instruction.unsafeOperation !=
-                UnsafeOperationKind::ObjectLifetime) {
+                UnsafeOperationKind::DeclaredUnsafeConstruction) {
           return verificationFailure(
               body, owner,
               "construction does not retain its target's unsafe contract",

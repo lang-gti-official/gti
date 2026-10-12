@@ -393,6 +393,15 @@ policies (`= default`/`= delete`) and destructors cannot be declared unsafe.
 The same rule applies to unrelated user-defined classes and generic instances;
 it is not a special rule for string construction.
 
+Raw in-place argument construction selects only safe constructors. Its existing
+storage/lifetime permission is not a proof of arbitrary constructor-specific
+preconditions, and must not let safe generic emplacement silently call an unsafe
+constructor. Construct an owned value explicitly inside unsafe, then move that
+completed value into storage. Direct in-place use of unsafe constructors,
+including immovable objects, remains a future extension: it requires an explicit
+construction-effect contract and safe-construction constraints for generic
+wrappers before that boundary can be broadened.
+
 Unsafe blocks may nest and otherwise follow ordinary block scope and cleanup
 rules. Permission does not escape the closing brace. A nested lambda starts a
 new safety context, so dangerous operations in its body require their own

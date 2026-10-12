@@ -74,6 +74,8 @@ unsafe void destroy_at<T>(T* address) requires layout_queryable<T> {
 /// The caller guarantees writable extent/alignment and nonconflicting access.
 /// On failure no complete object is published; GTI rolls back initialized
 /// subobjects and prepared owning arguments using its ordinary cleanup rules.
+/// Argument construction selects only safe constructors. For an unsafe
+/// constructor, explicitly construct an owned value first and move it here.
 [[discardable]]
 unsafe T* construct_at<T, Args...>(T* address, Args... args)
     requires layout_queryable<T> {
