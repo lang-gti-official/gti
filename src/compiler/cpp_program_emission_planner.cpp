@@ -177,6 +177,24 @@ public:
   }
 
   void indexLoweredDeclarations() {
+    nativeClassRows.clear();
+    lexicalClassChildren.clear();
+    for (const auto &row : loweredProgram.declarations()) {
+      const auto *type = std::get_if<LoweredClassDeclaration>(&row.payload);
+      if (type == nullptr || row.ownerClass == 0)
+        continue;
+      lexicalClassChildren[row.ownerClass].push_back(&row);
+      LoweredDeclaration native = row;
+      native.name = cppClassDeclarationNameSpelling(loweredProgram, type->id);
+      native.ownerClass = 0;
+      const LoweredDeclaration *parent =
+          loweredProgram.findDeclaration(row.parent);
+      while (parent != nullptr &&
+             std::holds_alternative<LoweredClassDeclaration>(parent->payload))
+        parent = loweredProgram.findDeclaration(parent->parent);
+      native.parent = parent == nullptr ? 0 : parent->id;
+      nativeClassRows.emplace(type->id, std::move(native));
+    }
     loweredDeclarationChildren.assign(loweredProgram.declarations().size() + 1,
                                       {});
     for (const LoweredDeclaration &declaration :
@@ -185,7 +203,13 @@ public:
         throw std::logic_error(
             "lowered declaration parent is outside the declaration tree");
       }
-      loweredDeclarationChildren[declaration.parent].push_back(&declaration);
+      const auto *type =
+          std::get_if<LoweredClassDeclaration>(&declaration.payload);
+      const auto found = type == nullptr ? nativeClassRows.end()
+                                         : nativeClassRows.find(type->id);
+      const auto *native =
+          found == nativeClassRows.end() ? &declaration : &found->second;
+      loweredDeclarationChildren[native->parent].push_back(native);
     }
   }
 
@@ -684,6 +708,9 @@ public:
   }
 
   [[nodiscard]] const LoweredDeclaration *loweredClassRow(ClassId id) const {
+    if (const auto found = nativeClassRows.find(id);
+        found != nativeClassRows.end())
+      return &found->second;
     if (id == 0) {
       return nullptr;
     }
@@ -3967,6 +3994,32 @@ public:
     output << "}\n";
   }
 
+  void emitLoweredLexicalClassFriends(ClassId owner) {
+    const auto found = lexicalClassChildren.find(owner);
+    if (found == lexicalClassChildren.end())
+      return;
+    for (const auto *row : found->second) {
+      const auto &child = std::get<LoweredClassDeclaration>(row->payload);
+      if (!child.genericParameters.empty() &&
+          !loweredClassNeedsNativePrimary(child)) {
+        for (const auto *instance : loweredConcreteClassInstances(child.id)) {
+          writeIndent();
+          output << "friend "
+                 << cppSemanticTypeSpelling(loweredProgram, standard,
+                                            instance->type)
+                 << ";\n";
+        }
+      } else {
+        emitLoweredTemplateDeclaration(child.genericParameters);
+        writeIndent();
+        output << "friend " << (child.genericParameters.empty() ? "" : "class ")
+               << cppClassTemplateNameSpelling(loweredProgram, child.id)
+               << ";\n";
+      }
+      emitLoweredLexicalClassFriends(child.id);
+    }
+  }
+
   void emitLoweredClassDefinitionBody(
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &declaration,
@@ -4044,6 +4097,9 @@ public:
     }
     output << " {\n";
     ++indentation;
+    // Preserve semantic-authorized lexical access without requiring native
+    // physical nesting. Friendship carries no GTI permission or object state.
+    emitLoweredLexicalClassFriends(declaration.id);
     AccessModifier access = declaration.kind == ClassKind::Class
                                 ? AccessModifier::Private
                                 : AccessModifier::Public;
@@ -4100,11 +4156,22 @@ public:
       } else if (const auto *constructor =
                      std::get_if<LoweredConstructorDeclaration>(
                          &member->payload)) {
+        // Verified GTI construction uses lifetime-slot helpers outside this
+        // native class. Semantic access remains authoritative; C++ access
+        // must not reject an already-authorized constructor in those helpers.
+        if (access == AccessModifier::Private) {
+          writeIndent();
+          output << "public:\n";
+        }
         if (concreteInstance == nullptr) {
           emitLoweredConstructorDeclaration(*member, *constructor, classRow);
         } else {
           emitLoweredConcreteConstructorDeclaration(
               *member, *constructor, classRow, *concreteInstance);
+        }
+        if (access == AccessModifier::Private) {
+          writeIndent();
+          output << "private:\n";
         }
       } else if (const auto *destructor =
                      std::get_if<LoweredDestructorDeclaration>(
@@ -4269,7 +4336,12 @@ public:
     std::vector<const LoweredDeclaration *> enumerations;
     std::vector<ClassEmissionNode> classes;
     std::unordered_map<ClassId, std::size_t> sourceClassSchedule;
-    for (const LoweredDeclaration &row : loweredProgram.declarations()) {
+    for (const LoweredDeclaration &sourceRow : loweredProgram.declarations()) {
+      const auto *sourceClass =
+          std::get_if<LoweredClassDeclaration>(&sourceRow.payload);
+      const LoweredDeclaration &row = sourceClass == nullptr
+                                          ? sourceRow
+                                          : *loweredClassRow(sourceClass->id);
       const LoweredDeclaration *parent =
           loweredProgram.findDeclaration(row.parent);
       if (parent != nullptr &&
@@ -5450,13 +5522,8 @@ public:
     if (declaration == nullptr) {
       throw std::logic_error("lowered class name lost its declaration");
     }
-    const LoweredDeclaration *parent =
-        loweredProgram.findDeclaration(classRow.parent);
-    if (parent != nullptr &&
-        std::holds_alternative<LoweredClassDeclaration>(parent->payload)) {
-      emitLoweredPrimaryClassName(*parent);
-      output << "::";
-    }
+    // This row may name a concrete carrier, not its canonical source primary.
+    // Nested primary rows already carry their independent native spelling.
     output << classRow.name;
     if (declaration->exactSpecializationPrimary != 0 ||
         !declaration->genericArgumentPatterns.empty()) {
@@ -5783,19 +5850,13 @@ public:
     std::string result;
     const auto append = [&](const auto &self,
                             const LoweredDeclaration &row) -> void {
-      const LoweredDeclaration *parent =
-          loweredProgram.findDeclaration(row.parent);
-      if (parent != nullptr &&
-          std::holds_alternative<LoweredClassDeclaration>(parent->payload)) {
-        self(self, *parent);
-        result += "::";
-      }
-      result += row.name;
       const auto *declaration =
           std::get_if<LoweredClassDeclaration>(&row.payload);
       if (declaration == nullptr) {
         return;
       }
+      static_cast<void>(self);
+      result += row.name;
       if (declaration->exactSpecializationPrimary != 0 ||
           !declaration->genericArgumentPatterns.empty()) {
         result += loweredDeclaredClassArguments(*declaration);
@@ -9296,6 +9357,11 @@ public:
   std::optional<CppMirBodyEmissionMap> generalEmissionMap;
   std::vector<std::vector<const LoweredDeclaration *>>
       loweredDeclarationChildren;
+  // Text-planning views only: the sealed LoweredProgram retains its lexical
+  // ownership/access tree. Native scopes must not create false layout edges.
+  std::unordered_map<ClassId, LoweredDeclaration> nativeClassRows;
+  std::unordered_map<ClassId, std::vector<const LoweredDeclaration *>>
+      lexicalClassChildren;
   std::unordered_set<LoweredDeclarationId> loweredForwardedLinkage;
   std::unordered_set<SymbolId> loweredNamespaceStaticSymbols;
   std::vector<const LoweredDeclaration *> loweredDeferredStaticFields;

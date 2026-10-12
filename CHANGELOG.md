@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.412.3 — Failure checks stay off the fast path
+## 0.413.1 — Failure checks stay off the fast path
 
 - Operations that can fail, such as checked arithmetic, bounds checks and
   container growth, now keep their failure handling out of the fast path. The
@@ -22,6 +22,21 @@ for what minor and patch releases mean.
 - Moving cold code can shift where an unrelated hot loop lands in memory, so
   some loops measure a few percent faster or slower. Two probes are about 10%
   slower for that reason alone.
+
+## 0.413.0 — Named nested structs and classes
+
+- Non-generic classes and structs can define named child classes and structs,
+  including children with their own generic parameters. Qualified names such
+  as `Config::Network` retain ordinary access, ownership, cleanup and reflection
+  rules without capturing an outer object. Example 148 demonstrates a nested
+  configuration decoded and encoded with `<std/json>`.
+- Nested scopes have lexical access to enclosing private members, with an
+  explicit object required for instance members. Private constructors remain
+  inaccessible to outside source calls while authorized lifetime construction
+  now works through native helpers.
+- Definitions inside generic enclosing types, including exact specializations,
+  remain diagnosed until child identity can retain the enclosing specialization.
+  Anonymous records and nested interfaces/unions are not part of this release.
 
 ## 0.412.2 — Callable signature and exported return-type formatting
 

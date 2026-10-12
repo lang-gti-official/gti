@@ -511,6 +511,12 @@ private:
     classDiscoveryDepths.push_back(
         nextDiscovery(output.program.classes.back().instantiationSite));
     discoveredGenericInstances += generic;
+    if (declaration->enclosingClass != 0) {
+      // Keep the lexical declaration shell even when only its child is used.
+      // No outer object is constructed or captured. Register this instance
+      // before following the parent, whose fields can refer back to the child.
+      (void)enqueueClass(SemanticType::classType(declaration->enclosingClass));
+    }
     return id;
   }
 
