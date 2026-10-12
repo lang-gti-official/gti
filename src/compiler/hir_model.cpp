@@ -394,6 +394,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           "HIR generated-default obligation differs from semantics");
   }
   for (const auto &instance : program.constructorInstances()) {
+    const auto *declaration = instance.source != nullptr
+                                  ? semantics.findConstructor(*instance.source)
+                                  : nullptr;
+    if (instance.requiresUnsafe !=
+        (declaration != nullptr && declaration->requiresUnsafe))
+      result.errors.emplace_back(
+          "constructor unsafe contract differs from semantics");
     if ((instance.declaration == 0) != instance.generatedDefault ||
         (instance.source == nullptr) != instance.generatedDefault)
       result.errors.emplace_back(

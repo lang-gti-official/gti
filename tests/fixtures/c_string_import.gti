@@ -1,0 +1,94 @@
+#include <std/string>
+#include <std/memory>
+#include <std/panic>
+
+using ErrorCallback = (int32_t, c_string) -> void;
+extern "C" {
+  c_string foreign_message();
+  c_string foreign_empty();
+  c_string foreign_embedded();
+  c_string foreign_bytes();
+  c_string foreign_large();
+  void foreign_size_limit(uint64_t limit);
+  void foreign_rewrite();
+  void foreign_callback(ErrorCallback callback);
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+  uint64_t adoption_bytes();
+  void adoption_fail_at(uint64_t allocation);
+  void adoption_check_cleanup();
+}
+
+void receive_error(int32_t code, c_string description) {
+  unsafe {
+    auto copied = std::string(description);
+    if (code != 7 || copied.view() != "callback description") {
+      std::panic("Callback text mismatch");
+    }
+  }
+}
+
+int main() {
+  unsafe {
+    c_string no_address = nullptr;
+    if (std::c_string_bytes(no_address) != nullptr) { return 14; }
+    const uint8_t* address = std::c_string_bytes(foreign_message());
+    if (address[0] != uint8_t('G')) { return 15; }
+    // Failure is recoverable and does not leak or abort.
+    adoption_fail_at(uint64_t(1));
+    {
+      auto failed = std::string::try_from_c_string(foreign_message());
+      if (failed || failed.error() != std::c_string_errc::resource_exhausted) { return 1; }
+    }
+    adoption_count_end();
+    adoption_check_cleanup();
+
+    foreign_size_limit(uint64_t(3));
+    auto overflow = std::string::try_from_c_string(foreign_message());
+    foreign_size_limit(uint64_t(0));
+    if (overflow || overflow.error() != std::c_string_errc::size_overflow) { return 11; }
+
+    adoption_count_begin();
+    auto null_text = std::string::try_from_c_string(nullptr);
+    auto empty = std::string::try_from_c_string(foreign_empty());
+    auto empty_owned = std::string(foreign_empty());
+    if (null_text || null_text.error() != std::c_string_errc::null_pointer) { return 2; }
+    if (!empty || empty.value().size() != uint64_t(0) || empty_owned.size() != uint64_t(0)) { return 3; }
+    if (adoption_allocations() != uint64_t(0)) { return 4; }
+    adoption_count_end();
+
+    adoption_count_begin();
+    auto text = std::string(foreign_message());
+    if (adoption_allocations() != uint64_t(1) || adoption_bytes() != uint64_t(11)) { return 5; }
+    adoption_count_end();
+    foreign_rewrite();
+    if (text.view() != "GLFW error") { return 6; }
+
+    auto terminated = std::string(foreign_embedded());
+    if (terminated.view() != "one") { return 7; }
+    auto binary = std::string::try_from_c_string(foreign_bytes());
+    if (!binary || binary.value().size() != uint64_t(255)) { return 8; }
+    for (mut uint64_t i = 0; i < uint64_t(255); i++) {
+      if (binary.value()[i] != char(uint8_t(i + uint64_t(1)))) { return 9; }
+    }
+    foreign_callback(receive_error);
+
+    adoption_count_begin();
+    auto large = std::string::try_from_c_string(foreign_large());
+    if (!large || large.value().size() != uint64_t(65536) ||
+        large.value()[uint64_t(65535)] != 'x') { return 12; }
+    if (adoption_allocations() != uint64_t(1) || adoption_bytes() != uint64_t(65537)) { return 13; }
+    adoption_count_end();
+
+    mut std::string owner{"owned input"};
+    mut std::string copied{};
+    {
+      c_string pointer = owner.c_string();
+      copied = std::string(pointer);
+    }
+    owner.clear();
+    if (copied.view() != "owned input") { return 10; }
+  }
+  return 0;
+}

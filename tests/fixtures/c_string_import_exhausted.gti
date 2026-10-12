@@ -1,0 +1,10 @@
+#include <std/string>
+extern "C" {
+  c_string foreign_message();
+  void adoption_fail_at(uint64_t allocation);
+}
+int main() {
+  adoption_fail_at(uint64_t(1));
+  unsafe { auto text = std::string(foreign_message()); }
+  return 1;
+}

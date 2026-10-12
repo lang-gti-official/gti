@@ -1779,13 +1779,15 @@ public:
                   std::optional<RequiresClause> requiresClause,
                   std::vector<ConstructorInitializer> initializers,
                   std::optional<SpecialMemberSpecifier> specifier,
-                  std::unique_ptr<BlockStmt> body)
+                  std::unique_ptr<BlockStmt> body,
+                  std::optional<Token> unsafeKeyword = {})
       : constexprKeyword_(std::move(constexprKeyword)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)),
         requiresClause_(std::move(requiresClause)),
         initializers_(std::move(initializers)),
-        specifier_(std::move(specifier)), body_(std::move(body)) {}
+        specifier_(std::move(specifier)), body_(std::move(body)),
+        unsafeKeyword_(std::move(unsafeKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitConstructorDecl(*this);
@@ -1816,6 +1818,10 @@ public:
   }
   [[nodiscard]] const std::unique_ptr<BlockStmt> &body() const { return body_; }
 
+  [[nodiscard]] const std::optional<Token> &unsafeKeyword() const {
+    return unsafeKeyword_;
+  }
+
 private:
   std::optional<Token> constexprKeyword_;
   Token name_;
@@ -1825,6 +1831,7 @@ private:
   std::vector<ConstructorInitializer> initializers_;
   std::optional<SpecialMemberSpecifier> specifier_;
   std::unique_ptr<BlockStmt> body_;
+  std::optional<Token> unsafeKeyword_;
 };
 
 class DestructorDecl final : public StmtOfKind<StmtKind::DestructorDecl> {

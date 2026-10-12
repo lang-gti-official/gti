@@ -476,6 +476,7 @@ add_library(
   "runtime/src/io.cpp"
   "runtime/src/math.cpp"
   "runtime/src/memory.cpp"
+  "runtime/src/c_string.cpp"
   "runtime/src/process.cpp"
   "runtime/src/random.cpp"
   "runtime/src/thread.cpp"

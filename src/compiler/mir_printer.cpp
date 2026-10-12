@@ -270,7 +270,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v101 valid=" << program.valid() << '\n';
+    output << "mir-v102 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -658,6 +658,7 @@ public:
          program.constructorInstances()) {
       output << "constructor @" << instance.id << " owner=" << instance.owner
              << " constexpr=" << instance.constexprConstructor
+             << " requires-unsafe=" << instance.requiresUnsafe
              << " generated-default=" << instance.generatedDefault
              << " type-arguments=[";
       for (std::size_t index = 0; index < instance.typeArguments.size();
