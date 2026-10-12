@@ -2222,6 +2222,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_callables.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_receiver_effects.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_deferred_range.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_defaults.gti"
   )
   set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
   add_test(
@@ -2231,6 +2232,7 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/stdlib_surface_json.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/json_parity.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/json_config.gti"
   )
   set_tests_properties(json_runtime PROPERTIES TIMEOUT 1200)
   add_test(

@@ -1200,6 +1200,95 @@ auto SemanticVisitor::Impl::analyzeMetaAttributeAccess(
   currentType = constructed == SemanticType::Unknown ? constructed : attribute;
 }
 
+// `field<T, I>().default_value()`: the value of the field's declared default
+// initializer, evaluated where the call is. Semantics aliases the call to a
+// clone of that initializer, analysed under the field's type like the
+// declaration itself; a field without an initializer is rejected.
+auto SemanticVisitor::Impl::analyzeMetaFieldDefault(
+    const Call &expr, const Get &member, const SemanticType &fieldObject)
+    -> void {
+  if (!expr.arguments().empty() || !expr.typeArguments().empty() ||
+      fieldObject.arguments.size() != 1 ||
+      fieldObject.valueArguments.size() != 1) {
+    report(expr.paren(), "'default_value' takes no arguments.", "GTI-S2019");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const SemanticType &owner = fieldObject.arguments.front();
+  const CompileTimeValue &index = fieldObject.valueArguments.front();
+  if (containsOpenTypeParameter(owner) ||
+      index.kind != CompileTimeValue::UInt64) {
+    // Symbolic: the field type is the computed compiler type, rewritten by
+    // concrete reanalysis together with the alias below.
+    const ClassId computed = compilerTypeClass(CompilerTypeKind::MetaFieldType);
+    currentType = computed == 0
+                      ? SemanticType::Unknown
+                      : SemanticType::classType(computed, {owner}, {index});
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .typeArguments = {owner},
+                               .valueArguments = {index},
+                               .intrinsic = IntrinsicKind::MetaFieldDefault});
+    return;
+  }
+  const std::optional<MetaFieldFacts> facts =
+      metaFieldFacts(owner, index.value);
+  if (!facts) {
+    report(expr.paren(),
+           "Field index " + std::to_string(index.value) +
+               " is out of range for '" + typeSpelling(owner) +
+               "', which has " + std::to_string(metaFieldCount(owner)) +
+               " instance field(s).",
+           "GTI-S2111");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (facts->declaration == nullptr || !facts->declaration->initializer()) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2119", DiagnosticPhase::Semantics, member.name(),
+        "Field '" + facts->name + "' of '" + typeSpelling(owner) +
+            "' declares no default initializer.");
+    diagnostic.hints.emplace_back(
+        "Test for a default with has_default() before reading it.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  semanticModel.record(
+      expr, ResolvedCallInfo{.returnType = facts->type,
+                             .typeArguments = {owner},
+                             .valueArguments = {index},
+                             .intrinsic = IntrinsicKind::MetaFieldDefault});
+  std::shared_ptr<const Expr> clone =
+      cloneExpr(*facts->declaration->initializer(), 0);
+  synthesizedExpressions.push_back(clone);
+  const Expr &alias = semanticModel.recordExpressionAlias(expr, clone);
+  // The initializer's names resolve where the field was declared, not where
+  // `default_value` is called: analyse the clone in the owner's namespace,
+  // source unit and class, as the declaration itself is analysed.
+  const ClassInfo &ownerInfo = classInfo(owner.classId);
+  const auto enclosingNamespace = currentNamespace;
+  const SourceUnitId enclosingUnit = currentSourceUnit;
+  const std::optional<ClassId> enclosingClass = currentClass;
+  const bool enclosingFieldInitializer = analyzingFieldInitializer;
+  const std::optional<SemanticType> enclosingType = contextualInitializerType;
+  const Expr *enclosingExpression = contextualInitializerExpression;
+  currentNamespace = ownerInfo.namespaceScope;
+  currentSourceUnit = ownerInfo.sourceUnit;
+  currentClass = owner.classId;
+  analyzingFieldInitializer = true;
+  contextualInitializerType = facts->type;
+  contextualInitializerExpression = &alias;
+  const SemanticType produced = analyze(alias);
+  contextualInitializerType = enclosingType;
+  contextualInitializerExpression = enclosingExpression;
+  analyzingFieldInitializer = enclosingFieldInitializer;
+  currentClass = enclosingClass;
+  currentSourceUnit = enclosingUnit;
+  currentNamespace = enclosingNamespace;
+  currentType = produced == SemanticType::Unknown ? produced : facts->type;
+}
+
 auto SemanticVisitor::Impl::isEffectFreeMetaReceiver(
     const Expr &expression) const -> bool {
   switch (expression.exprKind()) {
@@ -5716,6 +5805,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           member->name().lexeme == "attribute") {
         analyzeMetaAttributeAccess(expr, *member, *objectType,
                                    metaObject == CompilerTypeKind::MetaType);
+        return;
+      }
+      if (metaObject == CompilerTypeKind::MetaField &&
+          member->name().lexeme == "default_value") {
+        analyzeMetaFieldDefault(expr, *member, *objectType);
         return;
       }
     }

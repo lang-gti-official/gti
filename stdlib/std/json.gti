@@ -8,9 +8,11 @@
 //
 // Field keys are the declared names unless `[[std::json::name("key")]]`
 // renames one; `[[std::json::ignore]]` leaves a field out of the
-// text and default-constructs it on decoding. Members of the text that name
-// no field are checked but not decoded; a repeated key is an error
-// (`duplicate_key`).
+// text and takes its declared default on decoding; `[[std::json::defaulted]]`
+// lets an absent member take the field's declared default too. Members of the
+// text that name no field are checked but not decoded; a repeated key is an
+// error (`duplicate_key`). `read_file`/`write_file` move whole documents
+// to and from disk.
 //
 // Supported types, at the top level and as fields: bool, the fixed-width
 // integers (range-checked), float and double (shortest round-trip text, exact
@@ -28,6 +30,7 @@
 // an `errc`, the byte offset, the one-based line and column, and a JSON
 // Pointer path to the failing value.
 #include <std/charconv>
+#include <std/cstdio>
 #include <std/format>
 #include <std/map>
 #include <std/meta>
@@ -53,6 +56,7 @@ enum class errc {
   nesting_limit,
   document_too_large,
   trailing_characters,
+  io_failure,
 };
 
 std::string_view describe(errc code) {
@@ -70,6 +74,7 @@ std::string_view describe(errc code) {
     case errc::nesting_limit: return "nesting exceeds the configured depth";
     case errc::document_too_large: return "document exceeds the configured size";
     case errc::trailing_characters: return "characters follow the JSON value";
+    case errc::io_failure: return "the file could not be read or written";
   }
   return "unknown JSON error";
 }
@@ -120,17 +125,25 @@ struct error {
   }
 };
 
-/// Resource limits for decoding; the defaults match `std::json`.
+/// Resource limits and leniency for decoding.
 struct decode_options {
   mut {
     std::size_t max_depth;
     std::size_t max_document_bytes;
+    bool missing_members_defaulted;
   }
-  decode_options() : max_depth(std::size_t(128)), max_document_bytes(std::size_t(67108864)) {}
-  decode_options(std::size_t max_depth, std::size_t max_document_bytes)
-      : max_depth(max_depth), max_document_bytes(max_document_bytes) {}
+  decode_options()
+      : max_depth(std::size_t(128)), max_document_bytes(std::size_t(67108864)),
+        missing_members_defaulted(false) {}
+  decode_options(std::size_t max_depth, std::size_t max_document_bytes, bool missing_members_defaulted)
+      : max_depth(max_depth), max_document_bytes(max_document_bytes),
+        missing_members_defaulted(missing_members_defaulted) {}
   void set_max_depth(std::size_t maximum) mut { this.max_depth = maximum; }
   void set_max_document_bytes(std::size_t maximum) mut { this.max_document_bytes = maximum; }
+  /// When set, an absent member whose field declares a default initializer
+  /// takes that default instead of failing with `missing_field`, as if every
+  /// such field were `[[defaulted]]`.
+  void set_missing_members_defaulted(bool enabled) mut { this.missing_members_defaulted = enabled; }
 };
 
 /// `[[std::json::name("key")]]`: the object key of a field.
@@ -140,6 +153,11 @@ struct decode_options {
 
 /// `[[std::json::ignore]]`: the field is not part of the text.
 [[attribute]] struct ignore {};
+
+/// `[[std::json::defaulted]]`: an absent member takes the field's declared
+/// default initializer instead of failing with `missing_field`. The field
+/// must declare a default.
+[[attribute]] struct defaulted {};
 
 /// Applications specialize this class for a type they own that the field
 /// rules do not cover (`class std::json::codec<Model> { ... }`):
@@ -1231,12 +1249,18 @@ struct object_producer<T> {
   decode_options options;
   object_producer(std::string_view text, std::size_t begin, std::vector<member> members, decode_options& limits)
       : text(text), begin(begin), members(std::move(members)),
-        options(decode_options(limits.max_depth, limits.max_document_bytes)) {}
+        options(decode_options(limits.max_depth, limits.max_document_bytes, limits.missing_members_defaulted)) {}
   object_producer(object_producer<T>& other) = delete;
 
   expected<std::meta::field_type<T, I>, error> produce<uint64_t I>(std::meta::field<T, I> field) mut {
     if constexpr (std::meta::field<T, I>().has_attribute<ignore>()) {
-      return default_value<std::meta::field_type<T, I>>();
+      // Never in the text: the declared default when there is one.
+      if constexpr (std::meta::field<T, I>().has_default()) {
+        auto declared = std::meta::field<T, I>().default_value();
+        return std::move(declared);
+      } else {
+        return default_value<std::meta::field_type<T, I>>();
+      }
     }
     std::string_view key = key_of(field);
     for (auto& candidate : this.members) {
@@ -1250,8 +1274,19 @@ struct object_producer<T> {
         return std::move(value);
       }
     }
+    // Absent: an optional is empty; a `[[defaulted]]` field (or every field
+    // with a default, under the option) takes its declared initializer.
     if constexpr (is_optional<std::meta::field_type<T, I>>()) {
       return default_value<std::meta::field_type<T, I>>();
+    } else if constexpr (std::meta::field<T, I>().has_attribute<defaulted>()) {
+      static_assert(std::meta::field<T, I>().has_default(), "a [[std::json::defaulted]] field must declare a default initializer");
+      auto declared = std::meta::field<T, I>().default_value();
+      return std::move(declared);
+    } else if constexpr (std::meta::field<T, I>().has_default()) {
+      if (this.options.missing_members_defaulted) {
+        auto declared = std::meta::field<T, I>().default_value();
+        return std::move(declared);
+      }
     }
     mut error missing = located(errc::missing_field, this.text, this.begin);
     missing.prepend_key(key);
@@ -1329,6 +1364,68 @@ expected<T, error> decode<T>(std::string_view text, decode_options& options) {
 expected<T, error> decode<T>(std::string_view text) {
   mut decode_options options{};
   return decode<T>(text, options);
+}
+
+/// The `T` encoded in the file at `path`; `io_failure` when it cannot be
+/// opened or read, otherwise the decoding result.
+expected<T, error> read_file<T>(std::string_view path, decode_options& options) {
+  mut auto opened = std::fopen(path, std::file_mode::read);
+  if (!opened) {
+    return unexpected(error(errc::io_failure, std::size_t(0), std::size_t(0), std::size_t(0)));
+  }
+  mut auto file = std::move(opened).value();
+  mut std::string text = std::string("");
+  while (true) {
+    mut auto chunk = std::fread(*file, std::size_t(4096));
+    if (!chunk) {
+      return unexpected(error(errc::io_failure, std::size_t(0), std::size_t(0), std::size_t(0)));
+    }
+    if (chunk.value().size() == std::size_t(0)) {
+      break;
+    }
+    text.append(chunk.value().view());
+    if (text.size() > options.max_document_bytes) {
+      return unexpected(detail::located(errc::document_too_large, text.view(), std::size_t(0)));
+    }
+  }
+  return decode<T>(text.view(), options);
+}
+
+expected<T, error> read_file<T>(std::string_view path) {
+  mut decode_options options{};
+  return read_file<T>(path, options);
+}
+
+/// Writes `text` to `path`, replacing any existing file.
+expected<void, error> write_text(std::string_view path, std::string_view text) {
+  mut auto opened = std::fopen(path, std::file_mode::write);
+  if (!opened) {
+    return unexpected(error(errc::io_failure, std::size_t(0), std::size_t(0), std::size_t(0)));
+  }
+  mut auto file = std::move(opened).value();
+  mut auto written = std::fwrite(text, *file);
+  if (!written) {
+    return unexpected(error(errc::io_failure, std::size_t(0), std::size_t(0), std::size_t(0)));
+  }
+  mut auto closed = std::fclose(*file);
+  if (!closed) {
+    return unexpected(error(errc::io_failure, std::size_t(0), std::size_t(0), std::size_t(0)));
+  }
+  return;
+}
+
+/// Encodes `value` compactly into the file at `path`.
+expected<void, error> write_file<T>(std::string_view path, T& value) {
+  std::string text = ?encode(value);
+  return write_text(path, text.view());
+}
+
+/// Encodes `value` with newlines and indentation into the file at `path`,
+/// ending with a newline.
+expected<void, error> write_file_pretty<T>(std::string_view path, T& value, uint8_t indentation = 2) {
+  mut std::string text = ?encode_pretty(value, indentation);
+  text.push_back('\n');
+  return write_text(path, text.view());
 }
 
 }
