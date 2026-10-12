@@ -1397,7 +1397,9 @@ add_test(NAME restoring_exchange_shapes_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/restoring_exchange_shapes_runtime_test.py"
           $<TARGET_FILE:gti>)
-set_tests_properties(restoring_exchange_shapes_runtime PROPERTIES TIMEOUT 600)
+# Its GCC sanitized build may take minutes under a parallel suite;
+# see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
+set_tests_properties(restoring_exchange_shapes_runtime PROPERTIES TIMEOUT 1800)
 add_test(NAME restoring_indexed_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/restoring_indexed_runtime_test.py"
@@ -2441,7 +2443,9 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/expected_ergonomics_runtime_test.py"
             "$<TARGET_FILE:gti>")
-  set_tests_properties(expected_ergonomics_runtime PROPERTIES TIMEOUT 600)
+  # Its GCC sanitized build may take minutes under a parallel suite;
+  # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
+  set_tests_properties(expected_ergonomics_runtime PROPERTIES TIMEOUT 1800)
   add_test(
     NAME borrowed_expected_extraction_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -2707,7 +2711,9 @@ if(Python3_Interpreter_FOUND)
       COMMAND "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tests/composable_io_runtime_test.py"
         "$<TARGET_FILE:gti>")
-    set_tests_properties(composable_io_runtime PROPERTIES TIMEOUT 600)
+    # Its GCC sanitized build may take minutes under a parallel suite;
+    # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
+    set_tests_properties(composable_io_runtime PROPERTIES TIMEOUT 1800)
     if(TARGET gti_lsp)
       add_test(NAME extensible_formatting_lsp
         COMMAND "${Python3_EXECUTABLE}"
@@ -2898,7 +2904,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/string_operations_runtime_test.py"
             "$<TARGET_FILE:gti>"
   )
-  set_tests_properties(string_operations_runtime PROPERTIES TIMEOUT 300)
+  # Its GCC sanitized build may take minutes under a parallel suite;
+  # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
+  set_tests_properties(string_operations_runtime PROPERTIES TIMEOUT 1800)
   add_test(NAME string_operations_errors
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/string_operations_errors_test.py" "$<TARGET_FILE:gti>")
   set_tests_properties(string_operations_errors PROPERTIES TIMEOUT 300)
@@ -2910,7 +2918,9 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(expected_passive_publication_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME charconv_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/charconv_runtime_test.py" "$<TARGET_FILE:gti>")
-  set_tests_properties(charconv_runtime PROPERTIES TIMEOUT 300)
+  # Its GCC sanitized build may take minutes under a parallel suite;
+  # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
+  set_tests_properties(charconv_runtime PROPERTIES TIMEOUT 1800)
   add_test(NAME complete_containers
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/complete_containers_test.py" "$<TARGET_FILE:gti>")
   set_tests_properties(complete_containers PROPERTIES TIMEOUT 900)
@@ -2923,7 +2933,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/filesystem_operations_runtime_test.py"
             "$<TARGET_FILE:gti>"
   )
-  set_tests_properties(filesystem_operations_runtime PROPERTIES TIMEOUT 600)
+  # Its GCC sanitized build may take minutes under a parallel suite;
+  # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
+  set_tests_properties(filesystem_operations_runtime PROPERTIES TIMEOUT 1800)
   add_test(
     NAME encoding_runtime
     COMMAND "${Python3_EXECUTABLE}"

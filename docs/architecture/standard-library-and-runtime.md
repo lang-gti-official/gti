@@ -1156,7 +1156,9 @@ record, ownership operation, or AST/HIR emission path is added.
 `runtime/src/cthread_sleep.cpp` is a separate archive member, preserving the
 yield-only C link boundary and native-symbol test overrides. POSIX calls
 `nanosleep` once, maps `EINTR` to interruption, and changes neither signal
-handlers nor masks. Windows rounds up to the relative waitable timer's 100ns
+handlers nor masks. Linux measures `nanosleep`'s remainder against the timer's
+slack-extended expiry. An interruption within the slack can therefore report
+more than was requested, so POSIX clamps the remainder to the request. Windows rounds up to the relative waitable timer's 100ns
 units with checked range conversion and uses an alertable wait; an APC/I/O
 completion interruption reports a clamped remainder derived from
 `GetTickCount64`, at host tick resolution. Neither path retries interruption.

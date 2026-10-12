@@ -207,6 +207,7 @@ def main():
             f"LLVM_DIR:PATH={alias}\nClang_DIR:PATH=/old/clang\n")
         configure = installer.configure_command
         with mock.patch.object(installer, "ROOT", project), \
+                mock.patch.object(installer.platform, "system", return_value="Darwin"), \
                 mock.patch.object(installer.shutil, "which", return_value="fixture"), \
                 mock.patch.object(installer, "run", return_value=mock.Mock(stdout='"unused"')), \
                 mock.patch.object(installer, "discover_llvm", side_effect=AssertionError(

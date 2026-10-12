@@ -46,7 +46,9 @@ void reject(const std::string &source, std::string_view code,
              found->primary.end == offset + anchor.size(),
          "diagnostic identifies exactly the offending mapper/member token");
   expect(found->primary.source ==
-             std::filesystem::weakly_canonical("transform_error.gti").string(),
+             std::filesystem::weakly_canonical(
+                 std::filesystem::absolute("transform_error.gti"))
+                 .string(),
          "diagnostic retains exact source identity");
   expect(found->phase == lang::DiagnosticPhase::Semantics &&
              found->severity == lang::DiagnosticSeverity::Error,

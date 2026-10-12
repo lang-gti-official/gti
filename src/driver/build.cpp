@@ -1912,7 +1912,6 @@ effectiveNativeInputs(const ToolchainLayout &toolchain, CppStandard standard,
   }
   if (additional.orderedLinkOperands.empty() && !groupLinkContribution) {
     append(inputs.libraryFiles, nativeObjects);
-    inputs.libraryFiles.push_back(toolchain.runtimeLibrary);
     append(inputs.libraryFiles, additional.libraryFiles);
     append(inputs.libraries, additional.libraries);
     append(inputs.frameworks, additional.frameworks);
@@ -1921,8 +1920,6 @@ effectiveNativeInputs(const ToolchainLayout &toolchain, CppStandard standard,
       inputs.orderedLinkOperands.push_back(
           {NativeLinkOperandKind::File, object.string()});
     }
-    inputs.orderedLinkOperands.push_back(
-        {NativeLinkOperandKind::File, toolchain.runtimeLibrary.string()});
     append(inputs.orderedLinkOperands, additional.orderedLinkOperands);
     // Dependency link contributions follow the application's own, in the
     // composed dependents-before-dependencies order, so a dependent's
@@ -1933,6 +1930,10 @@ effectiveNativeInputs(const ToolchainLayout &toolchain, CppStandard standard,
   }
   append(inputs.linkerArguments, additional.linkerArguments);
   append(inputs.trailingArguments, additional.trailingArguments);
+  // The runtime is the last link input, after forwarded arguments too, so
+  // native objects, libraries and forwarded sources may call or replace its
+  // definitions under order-sensitive linkers exactly as under ld64.
+  inputs.finalLibraryFiles.push_back(toolchain.runtimeLibrary);
   return inputs;
 }
 

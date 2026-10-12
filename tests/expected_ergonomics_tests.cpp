@@ -66,7 +66,8 @@ void reject(const std::string &source, std::string_view code,
   }
   const auto start = source.rfind(anchor);
   check(found->primary.source ==
-                std::filesystem::weakly_canonical("expected_ergonomics.gti")
+                std::filesystem::weakly_canonical(
+                    std::filesystem::absolute("expected_ergonomics.gti"))
                     .string() &&
             found->primary.start == start &&
             found->primary.end == start + anchor.size(),
