@@ -123,8 +123,9 @@ int main() {
     if (row.type == right.type)
       row.type = left.type;
   }
-  const lang::CppMirBodyEmitter rejected(frontend.mir,
-                                         lang::CppMirBodyEmissionMap(rows));
+  // The emitter keeps a reference to its map, so the map must outlive it.
+  const lang::CppMirBodyEmissionMap rejectedMap(rows);
+  const lang::CppMirBodyEmitter rejected(frontend.mir, rejectedMap);
   expect(
       !rejected
            .analyze({lang::MirBodyKind::Function,
