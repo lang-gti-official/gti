@@ -457,13 +457,48 @@ because their full acceptance may still be running.
 
 ```sh
 # Select the owning regression tests by their exact CTest names.
-python3 scripts/agent_workflow.py preview prepare my-task \
-  --worktree /absolute/new-preview-candidate --tests cpp_mir_body_emitter_lifecycle
-# Use the candidate ID printed by prepare:
-python3 scripts/agent_workflow.py preview verify CANDIDATE \
-  --cmake-arg=-DLLVM_DIR=/path/to/lib/cmake/llvm
-python3 scripts/agent_workflow.py preview publish CANDIDATE
+python3 scripts/agent_workflow.py preview submit my-task --tests cpp_mir_body_emitter_lifecycle
 ```
+
+This is the only normal agent-facing preview action. It returns a submission
+ID and log path after launching a detached worker; it does **not** wait for
+builds, tests or publication. Continue ordinary `verify`, `finish` and cleanup
+without waiting for preview. A failed, conflicting, stale or interrupted
+preview job never changes the original task's acceptance records or PR state.
+Omitting `--tests` on resubmission reuses that task's last explicit selection;
+the first submission requires focused names. An identical live submission is
+deduplicated. A different live submission for the same task is refused, not
+silently replaced. `preview status [SUBMISSION]` reports progress, or lists
+submissions without contacting the remote build host. Submission success means
+queued, not preview-validated or published.
+
+The worker copies its small tooling closure outside the task worktree so normal
+task cleanup is safe. A separate single-slot preview semaphore serializes
+admissions; it consumes no ordinary build slot while waiting. Once selected,
+the existing remote runner uses the configured/default host (or
+`GTI_REMOTE_RUNNER`) and its LLVM/compiler/job defaults, an optimized Release
+build, and `preview_admission`. That aggregate CTest is registered **only** in
+combined candidates carrying `.gti-preview.json`; it invokes the existing
+example gate with every manifest feature's exact focused checks. No aggregate
+gate is registered in ordinary main/PR suites. Source compiler and project
+CLI behavior are unchanged.
+
+The submitted PR head is pinned: a closed/advanced PR becomes superseded, never
+an implicit request to admit a different commit. Main/preview advancement gets
+one fresh preparation and revalidation attempt, then a separate stale result.
+Re-submit later if preview is still useful. Conflicts and failed candidates
+retain their checkout and log for optional recovery; they require no action
+to finish the original PR. On successful publication the worker removes only
+its unchanged, clean checkout, retaining checkpoint refs and evidence. Modified
+or ignored files are preserved. An exited worker is reported as interrupted;
+inspect its retained log and any remote run before resubmitting rather than
+automatically launching a duplicate uncertain run.
+
+The lower-level `prepare`, `verify`, `publish`, `seed`, `resume` and `revert`
+commands remain for maintainer recovery, not mandatory feature-delivery steps.
+For example, `preview prepare my-task --worktree /absolute/new-candidate
+--tests owning_test`, followed by `preview verify CANDIDATE` and
+`preview publish CANDIDATE`, still supports explicit local validation settings.
 
 `verify` configures and builds an optimized compiler from the combined source,
 reruns the focused checks of **every included feature**, and runs the fixed
@@ -522,7 +557,7 @@ the restoration as accepted by that exact main commit; it does not reclassify
 accepted work as a pending preview feature. Conflicts still require explicit
 resolution and the combined candidate must pass the normal preview gates.
 
-Preview candidates and source installations are retained intentionally; do not
+Low-level/failed preview candidates and source installations are retained intentionally; do not
 delete them while another user may rely on their commits or installed paths.
 No automatic pruning/resetting of modified worktrees is performed.
 

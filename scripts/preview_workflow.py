@@ -48,7 +48,7 @@ class Preview:
             raise WorkflowError("Use the candidate ID returned by preview prepare")
         return json.loads((self.directory / (identity + ".json")).read_text())
 
-    def prepare(self, task, worktree, checks=None, remove=False):
+    def prepare(self, task, worktree, checks=None, remove=False, selection=None):
         with self.flow.lock():
             main = self.flow.fetch()
             previous = self.remote()
@@ -85,13 +85,15 @@ class Preview:
                 manifest["features"] = [row for row in manifest["features"] if row["task"] != task]
             elif task is not None:
                 checks = tests(checks)
-                task_state = self.flow.load(task)
+                task_state = selection["task_record"] if selection else self.flow.load(task)
                 if not task_state.get("pr"):
                     raise WorkflowError("Checkpoint the completed feature and open its task PR before preview admission")
                 pr = self.flow.pull(task_state)
                 if pr["state"] != "open":
                     raise WorkflowError("Only an open task PR can enter preview")
                 head = pr["head"]["sha"]
+                if selection and head != selection["head"]:
+                    raise WorkflowError("Submitted PR head changed; submit the updated task explicitly")
                 if self.flow.ancestor(head, main):
                     raise WorkflowError("PR head is already integrated into main")
                 if any(row["task"] == task for row in manifest["features"]):
@@ -197,7 +199,7 @@ class Preview:
             raise WorkflowError("Preview or main advanced; prepare and validate a new combined candidate")
         return root
 
-    def verify(self, identity, cmake_args, remote=False, jobs=4):
+    def verify(self, identity, cmake_args, remote=False, jobs=4, automatic=False):
         with self.flow.lock():
             state = self.load(identity)
             root = self.current(state)
@@ -226,7 +228,9 @@ class Preview:
             with tempfile.TemporaryDirectory(prefix="gti-preview-plan-") as temporary:
                 plan = Path(temporary) / "steps.json"
                 plan.write_text(json.dumps(steps))
-                result = runner.main(["--repo", str(root), "run", "--steps-file", str(plan), "--results", str(logs)])
+                options = (["--ctest-regex", "^preview_admission$", "--cmake-arg=-DGTI_BUILD_LSP=ON"]
+                           if automatic else ["--steps-file", str(plan)])
+                result = runner.main(["--repo", str(root), "run", *options, "--results", str(logs)])
             if result:
                 raise WorkflowError(f"Preview validation failed; see {logs}")
             report = json.loads((logs / "report.json").read_text())
@@ -235,6 +239,10 @@ class Preview:
                     for key in ("source", "final_source")):
                 raise WorkflowError("Remote preview evidence does not match the candidate")
             execution = {"kind": "remote", "runner": report.get("runner"), "run": report.get("id")}
+            if automatic:
+                # The runner resolves host LLVM/compiler/job defaults remotely.
+                # Retain its actual plan, not the low-level custom-step plan.
+                steps = report["steps"]
         else:
             logs.mkdir()
             for index, step in enumerate(steps):
@@ -273,6 +281,9 @@ class Preview:
 def main(workflow, arguments):
     parser = argparse.ArgumentParser(prog="agent_workflow.py preview")
     sub = parser.add_subparsers(dest="command", required=True)
+    submit = sub.add_parser("submit", help="queue optional preview admission and return immediately")
+    submit.add_argument("task")
+    submit.add_argument("--tests", nargs="+", help="exact focused CTest names; remembered on resubmission")
     sub.add_parser("seed", help="start or refresh preview from main without adding a PR").add_argument("--worktree", required=True)
     for name in ("prepare", "revert"):
         prepare = sub.add_parser(name)
@@ -287,9 +298,16 @@ def main(workflow, arguments):
     verify.add_argument("--jobs", type=int, default=4)
     sub.add_parser("publish").add_argument("candidate")
     sub.add_parser("resume").add_argument("candidate")
-    sub.add_parser("status").add_argument("candidate")
+    sub.add_parser("status").add_argument("candidate", nargs="?", help="submission or candidate ID; omitted lists submissions")
     args = parser.parse_args(arguments)
     preview = Preview(workflow)
+    if args.command in {"submit", "status"}:
+        from preview_submit import Submissions
+        submissions = Submissions(workflow)
+        if args.command == "submit":
+            return submissions.submit(args.task, args.tests)
+        if args.candidate is None or submissions.exists(args.candidate):
+            return submissions.status(args.candidate)
     if args.command == "seed":
         return preview.prepare(None, args.worktree)
     if args.command in {"prepare", "revert"}:
