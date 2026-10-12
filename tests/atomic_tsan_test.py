@@ -30,7 +30,7 @@ def execute(
 
 
 def main() -> int:
-    if len(sys.argv) != 6:
+    if len(sys.argv) not in (6, 7):
         raise SystemExit(
             "usage: atomic_tsan_test.py /path/to/gti concurrent.gti "
             "orders.gti fetch.gti /path/to/c++"
@@ -46,6 +46,8 @@ def main() -> int:
         pathlib.Path(sys.argv[4]).resolve(),
     ]
     native_compiler = pathlib.Path(sys.argv[5]).absolute()
+    if len(sys.argv) == 7:
+        sources.append(pathlib.Path(sys.argv[6]).resolve())
 
     with tempfile.TemporaryDirectory(prefix="gti-atomic-tsan-") as scratch:
         root = pathlib.Path(scratch)
