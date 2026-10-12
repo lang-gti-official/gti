@@ -5354,9 +5354,9 @@ Expected payload into a constructor, later-argument failure, and `?` on a member
 call result. These focused matrices cover C++20/C++23, O0/O1/O3, disabled
 elision, and ASan/UBSan.
 
-`json_stdlib` additionally compiles and executes the full DOM and codec
-fixtures, plus a returned temporary `response.body().view()` input, at the
-C++23/O0 and C++20/O3 endpoints. JSON's surface ledger records executable
+`json_runtime` compiles and executes the reflection-driven `<std/json>`
+fixtures (`stdlib_surface_json.gti`, `json_parity.gti`) at O0/O1/O3 under
+C++20 and C++23. JSON's surface ledger records executable
 cases rather than expecting the former backend ICE. These focused gates do
 not replace the owning-callback campaign's final production suite.
 
@@ -6430,8 +6430,9 @@ exchange. Both include C++20/C++23, optimized/unoptimized, disabled-elision,
 and ASan/UBSan execution. The semantic/MIR suite rejects direct layout cycles,
 forged active-variant cleanup selectors, unguarded extractions, and upgraded
 loans. `borrowed_payload_pattern_lsp` checks navigation, tokens, exact
-diagnostic locations, and versioned recovery. `json_stdlib` is the end-to-end
-library client of recursive enum storage, without a privileged lowering path.
+diagnostic locations, and versioned recovery. `<std/json>` (0.407 and earlier) was the end-to-end
+library client of recursive enum storage, without a privileged lowering path;
+the payload-enum suites keep that coverage.
 
 For defined integer arithmetic, `defined_integer_arithmetic` covers all eight
 fixed-width domains, all nine add/subtract/multiply identities, signed and
@@ -7115,7 +7116,7 @@ job retains the explicit selection documented above; it is not a full-suite
 coverage claim.
 
 The largest compound suites (`stdlib_surface`, `returned_field_address_runtime`,
-`json_stdlib`, `generic_algorithm_breadth`, `complete_containers`) bound the
+`generic_algorithm_breadth`, `complete_containers`) bound the
 suite's critical path, so they reserve `GTI_TEST_HEAVY_CASE_JOBS` workers
 (default `4`) instead of the per-suite default; CTest charges them that many
 processors. Long single-process gates carry a measured `COST` ordering hint

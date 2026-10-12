@@ -274,11 +274,10 @@ clients) and phase 3 (`std::meta::construct`, method/constructor/parameter
 metaobjects, source locations, budget hardening). Reflection is no longer
 "later breadth" in the roadmap; what remains restricted (invocation through
 metaobjects, static-field metaobjects, runtime reflection, source generation,
-layout) is recorded in the alignment ledger. The verification gate,
-`std::experimental::json`, is built and covers `std::json`'s codec use cases
-(see the acceptance note in `reflection.md`); deprecating `std::json`'s
-explicit codecs is the owner's decision, then the parked `lsp-lazy-bodies`
-task resumes. The campaign touches the parser,
+layout) is recorded in the alignment ledger. The verification gate
+passed: the reflection-driven library is `<std/json>` since 0.408.0 and the
+owned document model is removed (see the acceptance note in
+`reflection.md`); next the parked `lsp-lazy-bodies` task resumes. The campaign touches the parser,
 semantic analysis (declaration-stage attribute evaluation, folded queries,
 aliases), HIR lowering and the trusted standard library; its one MIR change
 materialises direct-initialized temporaries before projection and its one
@@ -1741,7 +1740,7 @@ removing the diagnostic alone is not sufficient implementation evidence.
 Borrowed `expected<T&, E>` extraction through `.expect()` is implemented and
 documented in [expected values](../language/expected.md). It yields a place tied
 to the original owner, even after destruction of the temporary expected shell.
-`std::json::value::get` returns this shape; it does not yield an owned JSON node.
+The former `std::json::value::get` (before 0.408.0) returned this shape rather than an owned JSON node.
 The move-only-copy diagnostic on `mut auto value = borrowed_result` rejects a
 real attempted copy. The old unconditional movement hint has been replaced:
 current guidance explains `auto&` and conditional explicit cloning, and suggests
