@@ -146,6 +146,8 @@ be recovered by adopting the preserved branch and rediscovering its PR.
 For cancelled/superseded work, commit and checkpoint its intended changes,
 then `abandon <task> --reason <text>`. This closes the PR while retaining the
 published branch and worktree. Never delete unmerged work because of its age.
+A task with no PR and no commits beyond `origin/main` holds no work, so the
+same command removes its clean worktree and branches instead of opening a PR.
 
 Report the merged PR, resulting local-main commit, validation and any cleanup
 exception. State that the checkout is ready for the installer only after sync.
