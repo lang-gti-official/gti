@@ -1374,8 +1374,8 @@ private:
   static bool
   isPointerDeclarator(const std::vector<Lexeme> &lexemes, std::size_t index,
                       const std::unordered_set<std::string> &declaredTypes) {
-    const Lexeme *previous = previousSignificant(lexemes, index);
-    const Lexeme *next = nextSignificant(lexemes, index);
+    const Lexeme *previous = previousSyntaxLexeme(lexemes, index);
+    const Lexeme *next = nextSyntaxLexeme(lexemes, index);
     if (previous == nullptr || next == nullptr) {
       return false;
     }
@@ -1420,8 +1420,8 @@ private:
   static bool
   isReferenceDeclarator(const std::vector<Lexeme> &lexemes, std::size_t index,
                         const std::unordered_set<std::string> &declaredTypes) {
-    const Lexeme *previous = previousSignificant(lexemes, index);
-    const Lexeme *next = nextSignificant(lexemes, index);
+    const Lexeme *previous = previousSyntaxLexeme(lexemes, index);
+    const Lexeme *next = nextSyntaxLexeme(lexemes, index);
     if (previous == nullptr || next == nullptr) {
       return false;
     }
@@ -1467,9 +1467,9 @@ private:
 
   static bool isDeclarationModifier(const Lexeme &lexeme) {
     return lexeme.kind == Kind::Word &&
-           (lexeme.text == "virtual" || lexeme.text == "static" ||
-            lexeme.text == "constexpr" || lexeme.text == "mut" ||
-            lexeme.text == "unsafe");
+           (lexeme.text == "export" || lexeme.text == "virtual" ||
+            lexeme.text == "static" || lexeme.text == "constexpr" ||
+            lexeme.text == "mut" || lexeme.text == "unsafe");
   }
 
   static bool isDeclarationBoundary(const Lexeme *lexeme) {
@@ -1665,7 +1665,24 @@ private:
       const std::unordered_set<std::string> &declaredTypes) {
     const std::optional<std::size_t> parameters =
         enclosingLeftParen(lexemes, marker);
-    if (!parameters ||
+    if (!parameters) {
+      return false;
+    }
+    // Signature types have unnamed parameters and may use types imported from
+    // another source unit. A terminal pointer/borrow marker in such a slot
+    // cannot be a complete binary expression; no nominal-name list is needed.
+    const Lexeme *next = nextSyntaxLexeme(lexemes, marker);
+    const Lexeme *result = previousSyntaxLexeme(lexemes, *parameters);
+    const bool unnamedSignatureParameter =
+        next != nullptr && result != nullptr &&
+        (next->kind == Kind::Comma || next->kind == Kind::RightParen) &&
+        ((result->kind == Kind::Word &&
+          !isNonTypeDeclarationWord(result->text)) ||
+         result->kind == Kind::Greater || result->kind == Kind::ShiftRight ||
+         result->kind == Kind::RightBracket ||
+         (result->kind == Kind::Operator &&
+          (result->text == "*" || result->text == "&")));
+    if (!unnamedSignatureParameter &&
         !isFunctionParameterClause(lexemes, *parameters, declaredTypes)) {
       return false;
     }
@@ -2119,7 +2136,8 @@ private:
             (candidate.text == "&" || candidate.text == "&&") &&
             next != nullptr &&
             (next->kind == Kind::Comma || next->kind == Kind::Greater ||
-             next->kind == Kind::ShiftRight);
+             next->kind == Kind::ShiftRight ||
+             (parenthesisDepth > 0 && next->kind == Kind::RightParen));
         if (!referenceSuffix &&
             (candidate.text == "&" || candidate.text == "&&" ||
              candidate.text == "||" || candidate.text == "==" ||
@@ -2277,8 +2295,7 @@ private:
         beforeType->kind != Kind::Semicolon &&
         beforeType->kind != Kind::Colon &&
         beforeType->kind != Kind::Directive &&
-        !(beforeType->kind == Kind::Word &&
-          (beforeType->text == "mut" || beforeType->text == "static"))) {
+        !isDeclarationModifier(*beforeType)) {
       return false;
     }
 
