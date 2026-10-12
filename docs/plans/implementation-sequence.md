@@ -3081,7 +3081,15 @@ contracts for exact admitted shapes.
     keep the cleanup before them private, because verification proves their
     meaning along their own producer's path.
   - Normal-path exits still each destroy their own live owners. Sharing those
-    exit drops would be a separate normal-path change.
+    exit drops would be a separate normal-path change. Measured cost
+    (2026-10-12): a 100-line body in `tests/fixtures/filesystem_operations.gti`
+    with 103 exits emitted 17,087 lines of C++ holding 718 fallible drops.
+    GCC 15 compiles that translation unit in 3.4 s, but its AddressSanitizer
+    use-after-scope instrumentation ran for more than 20 minutes on it (4.4 s
+    with `-fno-sanitize-address-use-after-scope`), and the fixture's
+    ASan/UBSan build took 1h45m. Split into five short phases, the fixture's
+    largest body is 2,896 lines and that build takes 43 s. Long source bodies
+    keep this cost until exit drops are shared.
 
 - **State/role:** delivered foundation with bounded extensions; `D-FAIL-01`,
   `I-CAP-01`, `M-LIFE-01`, and the source-body backend cutover are done. Exact
