@@ -1,0 +1,72 @@
+// Declared field defaults through reflection: `has_default()` is a folded
+// constant and `default_value()` evaluates a fresh copy of the declared
+// initializer where it is called, for literals, constructor calls, nested
+// brace initializers and containers, inside and outside `constexpr for`.
+#include <std/meta>
+#include <std/string>
+#include <std/vector>
+
+struct point {
+  int32_t x = 0;
+  int32_t y = 0;
+};
+
+struct settings {
+  bool docking = true;
+  float font_size = 18.0;
+  double ratio = 2.5d;
+  std::string font = std::string("mono.ttf");
+  point origin = {.x = 3, .y = -4};
+  std::vector<int32_t> sizes = {8, 16};
+  std::string_view label = "settings";
+};
+
+struct bare {
+  std::string key;
+  int32_t count;
+};
+
+// A generic client fills every defaulted field from its declaration and
+// counts the rest, without naming the struct.
+uint64_t defaulted_fields<T>() {
+  mut uint64_t total = 0;
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (field.has_default()) {
+      auto fresh = field.default_value();
+      total = total + 1;
+    }
+  }
+  return total;
+}
+
+int main() {
+  static_assert(std::meta::field<settings, 0>().has_default());
+  static_assert(!std::meta::field<bare, 0>().has_default());
+  static_assert(!std::meta::field<bare, 1>().has_default());
+
+  bool docking = std::meta::field<settings, 0>().default_value();
+  float font_size = std::meta::field<settings, 1>().default_value();
+  double ratio = std::meta::field<settings, 2>().default_value();
+  std::string font = std::meta::field<settings, 3>().default_value();
+  point origin = std::meta::field<settings, 4>().default_value();
+  std::vector<int32_t> sizes = std::meta::field<settings, 5>().default_value();
+  std::string_view label = std::meta::field<settings, 6>().default_value();
+  if (!docking || font_size != 18.0 || ratio != 2.5d || font.view() != "mono.ttf" ||
+      origin.x != 3 || origin.y != -4 || sizes.size() != std::size_t(2) ||
+      sizes[std::size_t(1)] != 16 || label != "settings") {
+    return 1;
+  }
+
+  // Each call is a fresh value: mutating one does not affect the next.
+  mut std::vector<int32_t> first = std::meta::field<settings, 5>().default_value();
+  first.push_back(32);
+  std::vector<int32_t> second = std::meta::field<settings, 5>().default_value();
+  if (first.size() != std::size_t(3) || second.size() != std::size_t(2)) {
+    return 2;
+  }
+
+  if (defaulted_fields<settings>() != uint64_t(7) || defaulted_fields<bare>() != uint64_t(0)) {
+    return 3;
+  }
+  return 0;
+}

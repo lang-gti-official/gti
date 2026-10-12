@@ -61,8 +61,21 @@ Types, at the top level and as fields:
 - `std::vector<E>`; `std::map<std::string, V>` and
   `std::unordered_map<std::string, V>` as objects with dynamic keys.
 - Nested reflectable structs, with `[[std::json::name("key")]]`
-  renaming a field and `[[std::json::ignore]]` leaving it out of
-  the text and default-constructing it on decoding.
+  renaming a field, `[[std::json::ignore]]` leaving it out of the text (on
+  decoding it takes its declared default, or default construction when it
+  declares none), and `[[std::json::defaulted]]` letting an absent member
+  take the field's declared default initializer instead of failing with
+  `missing_field`. `decode_options::set_missing_members_defaulted(true)`
+  applies that rule to every field that declares a default, which is what a
+  configuration file usually wants:
+
+  ```gti
+  struct editor_ui {
+    [[std::json::defaulted]] bool enable_docking = true;
+    [[std::json::defaulted]] float font_size = 18.0;
+    std::string ini_path = std::string("config://imgui.ini");  // required
+  };
+  ```
 - Any type with a `std::json::codec<T>` specialization:
 
   ```gti
@@ -90,11 +103,16 @@ surrogates), no leading zeros, no comments, no trailing commas, nothing after
 the root value. `decode_options` bounds nesting depth (`set_max_depth`,
 default 128) and document bytes (`set_max_document_bytes`, default 64 MiB).
 
+Whole documents move to and from disk with `read_file<T>(path[, options])`,
+`write_file(path, value)` and `write_file_pretty(path, value, indentation)`
+over `<std/cstdio>`; a file that cannot be opened, read or written is
+`io_failure`, with no source location.
+
 Decoding reports `std::json::error`: `code` (an `errc`:
 `unexpected_end`, `unexpected_character`, `invalid_number`,
 `invalid_escape`, `invalid_unicode`, `duplicate_key`, `missing_field`,
 `invalid_enumerator`, `type_mismatch`, `number_out_of_range`,
-`nesting_limit`, `document_too_large`, `trailing_characters`),
+`nesting_limit`, `document_too_large`, `trailing_characters`, `io_failure`),
 `description()`, the byte `offset` into the input, one-based `line` and
 `column` (`has_source_location()` is false for encoding failures), and `path`,
 a JSON Pointer to the value being decoded (`/points/1/x`, with `~` and `/`
