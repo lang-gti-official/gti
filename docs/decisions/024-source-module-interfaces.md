@@ -44,7 +44,8 @@ Modules are GTI language boundaries, not C++ modules or binary distributions.
 - `std` names the configured standard library in direct and project
   compilation. `import std.name;` selects the compiler-shipped interface
   `modules/name.gti` beneath a standard-library root. Each such interface
-  republishes `<std/name>`. There is no aggregate `std` module, and packages
+  republishes `<std/name>`. The aggregate `std` module re-exports the portable
+  public units (see the 0.409.0 amendment below), and packages
   cannot register `std` as a module name or dependency alias.
 - Compiler-supplied configuration flags apply to modules. Source-local flag
   mutations in an importer do not configure the imported module, and module
@@ -129,13 +130,13 @@ the standard library observes no application flags. Replay under each domain's
 flags with canonical-syntax comparison is the actual invariant, and it already
 caught the cases flag equality missed.
 
-An aggregate `import std;` remains separate work. Artifact requests now retain
+Before 0.409.0, aggregate `import std;` remained separate work. Artifact requests retain
 the reached program prefix for MIR and emission. The subsequent
 `lowerLibraryReachableOnly` artifact profile also skips unreached
 compiler-trusted HIR declarations while retaining complete lowering of entry,
 application and package units. `gti check` retains complete HIR lowering.
-Semantic analysis still checks every imported trusted body; demand-driven
-trusted-body analysis remains a separate prerequisite for reducing that work.
+At that stage semantic analysis still checked every imported trusted body;
+demand-driven trusted-body analysis remained a prerequisite for reducing that work.
 This is not an undone MIR/backend cutover or a reason to restart library HIR
 pruning.
 
@@ -147,6 +148,25 @@ identify cost families; they are not a current-head benchmark or a universal
 acceptance threshold. Aggregate import needs current latency evidence and an
 explicit platform-gated unit selection rule. Lazy trusted-body analysis and
 narrower physical-carrier emission are reusable ways to reduce those costs.
+
+### Aggregate standard import and trusted body demand (0.409.0)
+
+`stdlib/std.gti` now re-exports all portable public named standard modules.
+The POSIX-only environment/process/TCP units and experimental facilities remain
+explicit imports; the same aggregate surface is available on all target triples.
+There is no new conditional-import syntax or compiler-owned list of exports.
+The module inventory test guards the source-defined list, and installation ships
+the aggregate beside the prelude.
+
+Artifact builds and editor analysis reuse the deferred trusted-body work from
+`codex/lsp-lazy-bodies` (`e8e93faa`), integrated with current body-order authority.
+Untrusted application/package code remains fully checked. HIR-discovered
+generic dependencies request additional primary semantic bodies before valid HIR
+can be accepted, with a bounded complete-check fallback. Full checks and
+artifact raw-pointer audits retain complete analysis. This explicitly revises
+the earlier editor-only restriction: body demand is an analysis policy, never a
+weaker execution contract. Per-unit semantic reuse and narrower carrier emission
+remain separate optimizations, not prerequisites for the aggregate spelling.
 
 `import` and `module` become reserved GTI keywords; `export` was already a
 reserved C++ keyword. A minor-version migration must call out the two newly

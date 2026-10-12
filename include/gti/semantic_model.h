@@ -1935,6 +1935,25 @@ public:
 
   [[nodiscard]] const FunctionInfo *findFunction(FunctionId id) const;
 
+  // While a sink is set, every successful function lookup records the
+  // function's identity in it. Trusted-body deferral installs one during the
+  // body pass to learn which functions analysed code reached; see
+  // TrustedBodyAnalysis. Lookups themselves are unchanged.
+  void recordAnalyzedFunctionBody(const FunctionDecl &body) {
+    analyzedFunctionBodies.insert(&body);
+  }
+  [[nodiscard]] bool hasAnalyzedFunctionBody(const FunctionDecl &body) const {
+    return analyzedFunctionBodies.contains(&body) ||
+           (base != nullptr && base->hasAnalyzedFunctionBody(body));
+  }
+
+  std::unordered_set<FunctionId> *
+  setFunctionDemandSink(std::unordered_set<FunctionId> *sink) const {
+    auto *previous = functionDemandSink;
+    functionDemandSink = sink;
+    return previous;
+  }
+
   [[nodiscard]] const LambdaInfo *findLambda(const Lambda &declaration) const;
 
   [[nodiscard]] const LambdaInfo *findLambda(LambdaId id) const;
@@ -2466,6 +2485,8 @@ private:
   std::size_t placeSnapshot_ = 0;
   // Instance-delta base; see beginInstanceDelta.
   const SemanticModel *base = nullptr;
+  std::unordered_set<const FunctionDecl *> analyzedFunctionBodies;
+  mutable std::unordered_set<FunctionId> *functionDemandSink = nullptr;
 };
 
 class SemanticTypePrinter {
