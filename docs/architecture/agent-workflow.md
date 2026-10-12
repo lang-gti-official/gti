@@ -10,6 +10,82 @@ local-only and installation instructions override the appropriate default.
 `AGENTS.md` provides standing authorization; the `agent-workflow` skill supplies
 agent procedure and `finish-release` supplies version/publication policy.
 
+## Bounded output, analysis and waiting
+
+Execution efficiency protects time and context without weakening design review,
+defined safety, performance acceptance, or necessary validation. No fixed limit
+on reasoning depth or the number of reviews applies. A new counterexample,
+unproven invariant, alternative representation, or performance/maintainability
+concern can justify revisiting a decision without an external code change.
+At meaningful checkpoints retain the question, findings and remaining proof
+obligations, so reconsideration builds on earlier work rather than loses it.
+
+### Output and evidence
+
+Routine tool/log responses must fit within 200 lines and 16 KiB, including
+aggregated nested calls. Keep raw command output and structured reports under
+the normal local/remote evidence contract; expose exit status, pass/fail/skip
+counts, source identity and paths first. Fetching remote results still obeys
+the separate bundle-retention/truncation limits below. Display limits never
+justify altering tests, cutting off a command, hiding failures, or describing
+truncated evidence as complete.
+
+For saved logs use the read-only, byte-and-line-bounded tail viewer:
+
+```sh
+python3 scripts/bounded_log.py /absolute/path/build.log
+python3 scripts/bounded_log.py /absolute/path/test.log --lines 100 --max-bytes 16384
+```
+
+Its defaults are 40 output lines and 8 KiB; hard ceilings are 200 lines and
+16 KiB, including its header. It reads only a bounded tail, also handling huge
+single-line JSON and invalid UTF-8 without flooding context. It does not modify
+the file. Success means the excerpt was read, not that the recorded test passed.
+Regression coverage is `bounded_log` / `python3 tests/bounded_log_test.py`.
+
+Locate failures with scoped searches and inspect the relevant span/excerpt.
+If larger inspection is necessary, state the question and use focused chunks
+or structured projections; never dump whole session histories, ignored-file
+inventories or directory trees by default. Activated skill instructions must
+be read completely, using chunks if needed. For canonical manuals, use the
+documentation index and headings to select the sections that own this task.
+Do not re-read unchanged material solely because a process is quiet.
+
+### Live operations and checkpoints
+
+Keep a compact ledger in existing task/PR notes or temporary state, containing
+acceptance obligations, resolved decisions/open questions, exact source/base
+and compiler/build/platform identities, commands/results/log paths, and live
+session or remote run IDs. This is operational state, not another canonical
+architecture document. On compaction/resumption recover that state and pending
+operations before launching anything again; re-read instructions when required
+or changed, and revisit unresolved work.
+
+Resume/wait on the same process or run. Prefer product session/thread waits or
+managed detached remote runs; use interruptible waits no longer than 60 seconds
+at a time. Begin remote status checks at 30–60 seconds and back off to 2–5
+minutes if unchanged, using bounded interruptible waits between checks. Poll
+one authoritative status source, not repeated SSH tails, process lists, Git
+state and document reads together. Keep user updates concise; report meaningful
+progress, failures, required decisions, or a materially changed schedule.
+
+Quiet output or a normal build-window queue is not proof of a hang or a blocker.
+Use the command's timeout, elapsed time and liveness/progress evidence before
+investigating a stall. Never reclaim a live peer's slot or duplicate an active
+validation run. Independent useful analysis may proceed while tests run; when
+only an external result remains, wait rather than manufacture additional review.
+These rules do not discourage deep review, counterexample searches or fixing
+newly discovered obligations.
+
+Reconcile near the final validation boundary. If main advances during a run,
+retain its exact-head evidence and inspect the upstream delta after completion.
+Then select fresh validation for the reconciled clean published head/base.
+Every affected, previously failed and required broad/platform gate still runs;
+uncertain interaction risk calls for broader checks, not optimistic omission.
+Do not relabel earlier results or override the helper's identity checks. When
+cost or duration grows materially, explain the cause, evidence obtained and
+remaining work to the user; efficiency does not authorize reduced correctness.
+
 ## Task identity and operations
 
 `scripts/agent_workflow.py` uses Python's standard library and Git. One task
