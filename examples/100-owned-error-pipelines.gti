@@ -11,17 +11,20 @@ public:
   std::string_view message() { return description.view(); }
 };
 
+struct config {
+  std::string name = std::string("");
+};
+
 ConfigError config_error(std::json::error error) {
   mut std::string message = std::string(error.description());
   message.append(" at ");
-  message.append(error.path().view());
+  message.append(error.path.view());
   return ConfigError(std::move(message));
 }
 
 expected<std::string, ConfigError> read_name(std::string_view source) {
-  std::json::value document =
-      ?std::json::parse(source).transform_error(config_error);
-  return ?document.get_string("name").transform_error(config_error);
+  config parsed = ?std::json::decode<config>(source).transform_error(config_error);
+  return std::string(parsed.name.view());
 }
 
 int main() {
