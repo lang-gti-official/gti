@@ -59,6 +59,10 @@ def main():
                 "class C { C(int value) {} public: struct N {}; }; "
                 "int main() { C value{1}; return 0; }",
                 "GTI-S2007", "Constructor",),
+            "private_unrelated_base_constructor": (
+                "class C { C(int value) {} }; "
+                "struct D : public C { D() : C(1) {} }; int main() { return 0; }",
+                "GTI-S2007", "Constructor of base",),
             "no_reverse_private_access": (
                 "struct C { class N { int code = 1; }; "
                 "int read(N& value) { return value.code; } }; int main() { return 0; }",
@@ -71,6 +75,11 @@ def main():
             "generic_enclosing": (
                 "struct C<T> { struct N { T value; }; }; int main() { return 0; }",
                 "GTI-S2030", "generic enclosing types",),
+            "exact_generic_enclosing": (
+                "namespace exact { struct C<T> {}; } "
+                "struct exact::C<int> { struct N { int value = 1; }; }; "
+                "int main() { return 0; }",
+                "GTI-S2030", "including exact specializations",),
             "member_collision": (
                 "struct C { struct N { int value; }; int N = 0; }; int main() { return 0; }",
                 "GTI-S2006", "conflicts with a member",),

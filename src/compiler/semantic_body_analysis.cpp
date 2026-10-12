@@ -9665,7 +9665,9 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
     return;
   }
   if (symbol->ownerClass != 0 && !symbol->staticMember &&
-      currentClass != symbol->ownerClass && isWithinClass(symbol->ownerClass)) {
+      currentClass != symbol->ownerClass && isWithinClass(symbol->ownerClass) &&
+      !isSameOrDerivedClass(openClassType(*currentClass),
+                            openClassType(symbol->ownerClass))) {
     report(expr.name(),
            "Outer instance member '" + expr.name().lexeme +
                "' requires an explicit enclosing object; a nested type "

@@ -5522,7 +5522,9 @@ public:
     if (declaration == nullptr) {
       throw std::logic_error("lowered class name lost its declaration");
     }
-    output << cppClassDeclarationNameSpelling(loweredProgram, declaration->id);
+    // This row may name a concrete carrier, not its canonical source primary.
+    // Nested primary rows already carry their independent native spelling.
+    output << classRow.name;
     if (declaration->exactSpecializationPrimary != 0 ||
         !declaration->genericArgumentPatterns.empty()) {
       output << loweredDeclaredClassArguments(*declaration);
@@ -5854,8 +5856,7 @@ public:
         return;
       }
       static_cast<void>(self);
-      result +=
-          cppClassDeclarationNameSpelling(loweredProgram, declaration->id);
+      result += row.name;
       if (declaration->exactSpecializationPrimary != 0 ||
           !declaration->genericArgumentPatterns.empty()) {
         result += loweredDeclaredClassArguments(*declaration);

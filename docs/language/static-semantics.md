@@ -338,7 +338,9 @@ declaring owner and lexically nested types, but a public child cannot bypass a
 private intermediate owner. Lexically nested types may access their enclosing
 types' private aliases and members; this privilege does not extend in the
 opposite direction or to unrelated types. Instance-member access still needs
-an explicit enclosing object. A nested type has no enclosing object, hidden
+an explicit enclosing object, except that an explicitly inherited base is
+already part of the current receiver and uses ordinary inherited access.
+A nested type has no enclosing object, hidden
 parent pointer, or implicit access to an outer instance's fields. Its values
 use ordinary construction, access, ownership, cleanup, reflection and
 transfer/share rules. Nesting adds no runtime state.
@@ -347,7 +349,8 @@ private type selected inside its owner; that does not make the original private
 name accessible or allow a private alias as a path qualifier.
 
 Nested types may have their own generic parameters. Definitions inside a
-generic enclosing type are currently rejected with `GTI-S2030`: retaining the
+generic enclosing type or its exact specialization are currently rejected with
+`GTI-S2030`: retaining the
 enclosing specialization in the child identity and substitution is a remaining
 prerequisite. Anonymous records, field-name injection, nested interfaces/unions
 and inherited nested-type lookup are not part of this slice. The
