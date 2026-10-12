@@ -55,12 +55,17 @@ void callableSignatureFormatting() {
     lang::Lexer afterLexer;
     const auto before = beforeLexer.scan(source);
     const auto after = afterLexer.scan(formatted);
-    bool same = before.size() == after.size();
+    bool same = !beforeLexer.hadError() && !afterLexer.hadError() &&
+                before.size() == after.size();
+    // The EOF sentinel's spelling can include trailing whitespace; only
+    // significant token spellings belong to the preservation contract.
     for (std::size_t i = 0; same && i < before.size(); ++i)
       same = before[i].kind == after[i].kind &&
-             before[i].lexeme == after[i].lexeme;
-    expect(same && lang::Formatter().format(formatted) == formatted,
-           "complete and incomplete signatures must retain their tokens");
+             (before[i].kind == lang::TokenKind::END_OF_FILE ||
+              before[i].lexeme == after[i].lexeme);
+    expect(same, "signature tokens must be preserved: " + source);
+    expect(lang::Formatter().format(formatted) == formatted,
+           "signature formatting must be idempotent: " + source);
   }
 }
 
