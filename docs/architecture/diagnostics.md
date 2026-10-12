@@ -58,7 +58,9 @@ the first application as related information; `GTI-S2116` rejects
 `has_attribute<A>()`; `GTI-S2117` rejects `enumerator::value()` on a payload
 enum, whose alternatives are not integer constants, and enumerator reflection
 on a non-enum type. `GTI-S2118` rejects `std::meta::construct<T>` for a type
-that is not eligible for designated construction. Reflected field access
+that is not eligible for designated construction. `GTI-S2119` rejects
+`field::default_value()` on a field whose declaration has no initializer
+(`has_default()` tells). Reflected field access
 reports an owner argument of another type as an ordinary argument mismatch
 (`GTI-S2003`), naming the described owner and the field's declaration. Diagnostics produced inside an expanded copy carry related
 information naming the element and are deduplicated across identical copies.

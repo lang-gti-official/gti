@@ -385,6 +385,7 @@ enum class IntrinsicKind {
   MetaFieldCount,
   MetaFieldName,
   MetaFieldIsPublic,
+  MetaFieldHasDefault,
   MetaTypeName,
   MetaTypeKind,
   MetaFieldAttributeCount,
@@ -423,6 +424,9 @@ enum class IntrinsicKind {
   // call and aliases it to a construction of the attribute struct.
   MetaFieldAttribute,
   MetaTypeAttribute,
+  // Declared default value: semantics aliases the call to a clone of the
+  // field's default initializer.
+  MetaFieldDefault,
   // Reflected field access: semantics analyses the field projection it
   // denotes and aliases the call to it.
   MetaFieldGet,

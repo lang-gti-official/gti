@@ -200,7 +200,8 @@ The current implemented foundation includes:
   `std::meta::type_of<T>()`, `std::meta::name_of<T>()`,
   `std::meta::primary_name_of<T>()`, type predicates, the
   `field` and `type` metaobjects with `name()`, `index()`, `is_public()`,
-  `type()`, `get()` and `get_mut()`, declared attributes
+  `type()`, `get()`, `get_mut()`, `has_default()` and `default_value()`,
+  declared attributes
   (`has_attribute<A>()`, `attribute<A>()`, `attributes()`),
   `enumerators_of<E>()`/`alternatives_of<E>()` with payload fields,
   `bases_of<T>()`, `arguments_of<T>()`, the `std::meta::reflectable<T>`
@@ -492,8 +493,10 @@ The current implemented foundation includes:
   reflection: structs as objects with declared names or `[[name("key")]]` as
   keys, `[[ignore]]`d fields, nested structs, vectors, optionals, string-keyed
   maps, enums by enumerator name, exact number lexemes with range checks,
-  strict UTF-8 and escapes, `codec<T>` specializations for other types, and
-  `error` failures with `errc`, offset, line/column and a JSON Pointer path;
+  strict UTF-8 and escapes, `codec<T>` specializations for other types,
+  `[[defaulted]]` fields and a decode option that fill absent members from
+  declared defaults, `read_file`/`write_file`, and `error` failures with
+  `errc`, offset, line/column and a JSON Pointer path;
   see [JSON](json.md); and
 - `<std/source_location>` immutable, owned call-site snapshots containing the
   source file, qualified function name, one-based line, and a column value.

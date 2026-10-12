@@ -21,9 +21,21 @@ for what minor and patch releases mean.
   inaccessible to outside source calls while authorized lifetime construction
   now works through native helpers.
 - Definitions inside generic enclosing types, including exact specializations,
-  remain diagnosed until child
-  identity can retain the enclosing specialization. Anonymous records and
+  remain diagnosed until child identity can retain the enclosing specialization.
+  Anonymous records and
   nested interfaces/unions are not part of this release.
+
+## 0.412.0 — Declared field defaults through reflection; JSON files
+
+- `std::meta::field<T, I>::has_default()` tells whether a field declares an
+  initializer, and `default_value()` evaluates a fresh copy of it where the
+  call is (GTI-S2119 for a field without one), so generic code can reach a
+  declaration's default without an instance.
+- `<std/json>`: `[[std::json::defaulted]]` fields and
+  `decode_options::set_missing_members_defaulted(true)` fill absent members
+  from declared defaults instead of failing with `missing_field`; ignored
+  fields take their declared defaults; `read_file<T>`, `write_file` and
+  `write_file_pretty` move documents to and from disk (`errc::io_failure`).
 
 ## 0.411.0 — Portable aggregate standard-library imports
 

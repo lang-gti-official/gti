@@ -1663,6 +1663,13 @@ is a literal at run time and a constant in constant evaluation. `name()` is
 the declared identifier; `name_of<T>()` is the qualified spelling the
 compiler uses for `T`.
 
+`field.has_default()` is true when the field's declaration has an
+initializer, and `field.default_value()` is a fresh value of that initializer
+evaluated where the call is, under the field's type exactly as the
+declaration evaluates it (GTI-S2119 when there is none). It is the only way
+to reach a declared default without an instance, so a decoder can fill an
+absent member from the declaration.
+
 `field.get(owner)` denotes the place `owner.<field>`, and `field.get_mut(owner)`
 the same place for writing. They are not calls at run time: semantics analyzes
 the projection the call denotes, at the call site, under the ordinary field
