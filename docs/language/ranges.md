@@ -494,8 +494,8 @@ the source. Overlapping whole-owner access is rejected; an undersized
 destination fails at the checked write after evaluating that element's mapper.
 
 Both `std::sort(values)` (using `operator<`) and `std::sort(values, compare)`
-use iterative heapsort with O(n log n) comparisons and constant auxiliary
-storage. The latter retains one owned repeatable comparator throughout. The comparator
+use iterative introsort with O(n log n) worst-case comparisons and fixed-size
+auxiliary storage. The latter retains one owned repeatable comparator throughout. The comparator
 must supply a strict weak order. Neither overload promises stability; equal
 elements may be reordered. This does not change the stable node-container
 sort contracts. Source comparisons, checked element accesses and cleanup keep

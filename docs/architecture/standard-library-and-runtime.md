@@ -1434,7 +1434,7 @@ publication, and cleanup on both ordinary and failure exits.
 `array::swap` uses whole-array structural transfer. Array/vector
 `swap_elements` perform public bounds checks. Arrays use the retained fixed-array
 indexed transfer; vectors use three general relocations through source-selected
-uninitialized storage. Reverse and heapsort
+uninitialized storage. Reverse and introsort
 are ordinary GTI over these APIs, with read-only comparison scopes ending
 before each mutation. No public container or algorithm name grants compiler
 authority, and neither the library nor backend adds a copy/clone pivot.
