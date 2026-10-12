@@ -21,6 +21,17 @@ for what minor and patch releases mean.
 - Fix a native return-publication shortcut that could omit an enum switch's
   subject load when the enclosing function returned the same enum type.
 
+## 0.417.1 — Linux linking and sleep fixes
+
+- On Linux, native files and libraries passed after `--`, and project native
+  libraries, can now call GTI runtime functions or replace runtime hooks.
+  The GTI runtime library is now linked after every other input. GNU ld
+  previously reported duplicate definitions, or left such calls unresolved.
+  macOS was unaffected.
+- On Linux, an interrupted `thrd_sleep` no longer reports a host failure when
+  the interruption arrives within the timer's slack. It now reports the
+  interruption, with a remaining time no greater than the request.
+
 ## 0.417.0 — Owned C-string imports
 
 - Unsafe `std::string(c_string)` copies foreign text into owned storage.

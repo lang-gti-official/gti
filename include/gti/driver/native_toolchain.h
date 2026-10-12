@@ -125,6 +125,11 @@ struct NativeInputs {
   std::vector<NativeLinkOperand> orderedLinkOperands;
   std::vector<std::string> linkerArguments;
   std::vector<std::string> trailingArguments;
+  // Driver-owned archives that every other input may reference or replace,
+  // such as the GTI runtime. They follow every other input and forwarded
+  // argument: order-sensitive linkers search an archive only for symbols
+  // already undefined when they reach it.
+  std::vector<std::filesystem::path> finalLibraryFiles;
   // Composed native contributions of the selected package's transitive
   // dependency closure, in dependents-before-dependencies order. Only
   // project resolution populates this; direct mode has no package graph.

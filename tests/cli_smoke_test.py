@@ -2408,9 +2408,17 @@ def main():
             ]
         )
         recorded_arguments = argument_log.read_text(encoding="utf-8").splitlines()
+        runtime_archives = [
+            argument for argument in recorded_arguments
+            if os.path.basename(argument) in ("libgti_runtime.a", "gti_runtime.lib")
+        ]
+        assert len(runtime_archives) == 1, recorded_arguments
         expected_command_tail = [
             "-DGTI_FIRST=1",
             "-DGTI_SECOND=2",
+            # The runtime archive is the final link input, after every
+            # forwarded argument, so forwarded natives may use or replace it.
+            runtime_archives[0],
             "-fno-fast-math",
             "-ffp-contract=off",
             "-D__gti_strict_ieee754=1",
