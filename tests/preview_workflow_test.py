@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import agent_workflow_test as lifecycle
 from agent_workflow import git, WorkflowError
 from preview_workflow import Preview, tests as focused_tests
+import preview_workflow
 from preview_examples import NESTED, required_tests, validate_inventory, validate_results, validate_sources
 import install_neovim_local as installer
 
@@ -114,6 +115,58 @@ class PreviewTests(unittest.TestCase):
             Preview(self.flow).publish(first["id"])
         self.assertEqual(Preview(self.flow).remote(), second["head"])
 
+    def test_publish_lease_closes_race_after_remote_check(self):
+        self.feature()
+        first = self.prepare()
+        second = self.prepare(suffix="candidate2")
+        self.verify(first)
+        original = preview_workflow.git
+
+        def racing_git(root, *args, **kwargs):
+            if args and args[0] == "push":
+                git(self.remote, "update-ref", "refs/heads/preview", second["head"])
+            return original(root, *args, **kwargs)
+
+        with patch.object(preview_workflow, "git", side_effect=racing_git), self.assertRaises(WorkflowError):
+            Preview(self.flow).publish(first["id"])
+        self.assertEqual(Preview(self.flow).remote(), second["head"])
+
+    def test_lost_publish_response_can_be_retried(self):
+        self.feature()
+        candidate = self.prepare()
+        self.verify(candidate)
+        original = preview_workflow.git
+
+        def lost_response(root, *args, **kwargs):
+            result = original(root, *args, **kwargs)
+            if args and args[0] == "push":
+                raise WorkflowError("simulated lost response")
+            return result
+
+        with patch.object(preview_workflow, "git", side_effect=lost_response), self.assertRaises(WorkflowError):
+            Preview(self.flow).publish(candidate["id"])
+        self.assertEqual(Preview(self.flow).publish(candidate["id"])["phase"], "published")
+
+    def test_candidate_checkpoint_can_resume_after_push_failure(self):
+        self.feature()
+        original = preview_workflow.git
+
+        def unavailable(root, *args, **kwargs):
+            if args and args[0] == "push":
+                raise WorkflowError("simulated push failure")
+            return original(root, *args, **kwargs)
+
+        with patch.object(preview_workflow, "git", side_effect=unavailable), self.assertRaises(WorkflowError):
+            self.prepare()
+        preview = Preview(self.flow)
+        state = json.loads(next(preview.directory.glob("*.json")).read_text())
+        self.assertEqual(state["phase"], "prepared")
+        with self.assertRaises(WorkflowError):
+            preview.verify(state["id"], [])
+        recovered = preview.resume(state["id"])
+        self.assertEqual(recovered["head"], state["head"])
+        self.assertTrue(recovered["checkpointed"])
+
     def test_revert_preserves_history_and_original_pr(self):
         self.feature()
         first = self.prepare()
@@ -126,10 +179,16 @@ class PreviewTests(unittest.TestCase):
         Preview(self.flow).publish(removed["id"])
         self.assertTrue(self.flow.ancestor(first["head"], removed["head"]))
         self.assertEqual(self.api.prs[0]["state"], "open")
+        (self.root / "task" / "new.txt").write_text("updated feature")
+        self.flow.checkpoint("task", "Update removed feature", ["new.txt"])
         restored = self.prepare(suffix="restored")
         self.assertEqual((Path(restored["worktree"]) / "task.txt").read_text(), "task")
+        self.assertEqual((Path(restored["worktree"]) / "new.txt").read_text(), "updated feature")
         self.verify(restored)
         Preview(self.flow).publish(restored["id"])
+        removed_again = Preview(self.flow).prepare("task", self.root / "removed-again", remove=True)
+        self.assertFalse((Path(removed_again["worktree"]) / "task.txt").exists())
+        self.assertFalse((Path(removed_again["worktree"]) / "new.txt").exists())
 
     def test_already_reachable_head_and_reverting_main_are_refused(self):
         tree = self.feature()
@@ -202,6 +261,7 @@ class PreviewTests(unittest.TestCase):
         dirty = self.primary / "base.txt"
         dirty.write_text("user changes")
         primary_head = git(self.primary, "rev-parse", "HEAD")
+        git(self.primary, "remote", "set-url", "origin", "https://example.invalid/lookalike/gti.git")
         with patch.object(installer, "CANONICAL", str(self.remote)):
             root, head = installer.preview_source(self.primary)
             self.assertEqual(head, candidate["head"])
@@ -213,6 +273,12 @@ class PreviewTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 installer.preview_source(self.primary)
             self.assertEqual((root / "task.txt").read_text(), "preview edits")
+            git(root, "add", "task.txt")
+            git(root, "commit", "-m", "Unique local preview work")
+            unique = git(root, "rev-parse", "HEAD")
+            with self.assertRaises(ValueError):
+                installer.preview_source(self.primary)
+            self.assertEqual(git(root, "rev-parse", "HEAD"), unique)
 
     def test_preview_dry_run_only_resolves_and_missing_preview_fails(self):
         with patch.object(installer, "CANONICAL", str(self.remote)):
