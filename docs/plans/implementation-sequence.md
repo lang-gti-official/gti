@@ -274,11 +274,10 @@ clients) and phase 3 (`std::meta::construct`, method/constructor/parameter
 metaobjects, source locations, budget hardening). Reflection is no longer
 "later breadth" in the roadmap; what remains restricted (invocation through
 metaobjects, static-field metaobjects, runtime reflection, source generation,
-layout) is recorded in the alignment ledger. The verification gate,
-`std::experimental::json`, is built and covers `std::json`'s codec use cases
-(see the acceptance note in `reflection.md`); deprecating `std::json`'s
-explicit codecs is the owner's decision, then the parked `lsp-lazy-bodies`
-task resumes. The campaign touches the parser,
+layout) is recorded in the alignment ledger. The verification gate
+passed: the reflection-driven library is `<std/json>` since 0.409.0 and the
+owned document model is removed (see the acceptance note in
+`reflection.md`); next the parked `lsp-lazy-bodies` task resumes. The campaign touches the parser,
 semantic analysis (declaration-stage attribute evaluation, folded queries,
 aliases), HIR lowering and the trusted standard library; its one MIR change
 materialises direct-initialized temporaries before projection and its one
@@ -311,7 +310,7 @@ workflow determine task scope and integration.
 | `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
 | Native import `C-08B` | ready for a bounded language/import slice | Native scalar, recursive pointer and indirect-call identities delivered. Introduce true foreign-storage identity and unsafe loads/stores, then import actual external variables; retain TLS/volatile exclusions until specified. |
 | `L-CONST-01` extension | mutable-builder profile implemented; further profiles ready to select | Checked mutable references, void helpers, non-consuming mutable methods/operators and explicit constructor-body writes use staged verified MIR. Select the remaining enum/Expected operation migration, stored-reference, pack, owning/sum or operator profile with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
-| `T-LSP` latency client | reachable trusted bodies implemented in 0.409.1 | Snapshots and completion use demand-driven trusted bodies, with explicit HIR-to-semantics requests and a bounded complete-check fallback. Cross-snapshot semantic reuse remains separate work. See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
+| `T-LSP` latency client | reachable trusted bodies implemented in 0.410.0 | Snapshots and completion use demand-driven trusted bodies, with explicit HIR-to-semantics requests and a bounded complete-check fallback. Cross-snapshot semantic reuse remains separate work. See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
 | `RT-2` through `RT-10` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. |
 | Shared failure-cleanup tails (`M-FAIL-01`) | ready to define and implement one bounded record-flow profile | Reuse verified obligations and block-parameter machinery; carry the original failure record across each incoming edge before sharing an exact cleanup suffix. Prove record/phase/drop identity, secondary-failure behavior and linear growth on synthetic owners, then validate the JSON client's generated-size/native-build costs. The preserved measurements below are a baseline, not fresh current-head results. |
 | Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
@@ -1741,7 +1740,7 @@ removing the diagnostic alone is not sufficient implementation evidence.
 Borrowed `expected<T&, E>` extraction through `.expect()` is implemented and
 documented in [expected values](../language/expected.md). It yields a place tied
 to the original owner, even after destruction of the temporary expected shell.
-`std::json::value::get` returns this shape; it does not yield an owned JSON node.
+The former `std::json::value::get` (before 0.409.0) returned this shape rather than an owned JSON node.
 The move-only-copy diagnostic on `mut auto value = borrowed_result` rejects a
 real attempted copy. The old unconditional movement hint has been replaced:
 current guidance explains `auto&` and conditional explicit cloning, and suggests
@@ -9408,7 +9407,7 @@ owned by the rows and domain plans above.
 | Project dependencies/cache | **project/tests/cache/path/Git/registry workflows delivered** | Further registry governance/backends, native cache profile coverage and library publication remain; do not repeat foundational stages. |
 | LSP project index/process isolation | **project facts/snapshot foundation delivered; fault-state safety incomplete** | `T-LSP-06` owns containment hardening or isolation; lazy trusted-body/scoped-completion work addresses latency before speculative cross-snapshot reuse. |
 | Separate compilation/stable GTI ABI | later-breadth proposal | deterministic names, layout/ABI, package model, concrete emission |
-| Module vocabulary | Source interfaces and standard-library modules implemented; aggregate `import std;` in 0.409.1 | ADR 024 defines imports, exports/re-exports, package maps and `export #include` republication; legacy includes remain unchanged. The portable aggregate excludes POSIX-only and experimental units. Artifact/editor trusted bodies are demand-checked, with explicit closure before HIR acceptance; application/package checking and `gti check` remain complete. Remaining: narrower registration/carrier cost, cross-snapshot semantic reuse if justified, migration to real exports where useful, and independent linkage if separate compilation needs it. |
+| Module vocabulary | Source interfaces and standard-library modules implemented; aggregate `import std;` in 0.410.0 | ADR 024 defines imports, exports/re-exports, package maps and `export #include` republication; legacy includes remain unchanged. The portable aggregate excludes POSIX-only and experimental units. Artifact/editor trusted bodies are demand-checked, with explicit closure before HIR acceptance; application/package checking and `gti check` remain complete. Remaining: narrower registration/carrier cost, cross-snapshot semantic reuse if justified, migration to real exports where useful, and independent linkage if separate compilation needs it. |
 
 ## Required Architectural Corrections
 
