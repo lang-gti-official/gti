@@ -769,6 +769,11 @@ the source graph. The computed types `method_list`, `operator_list`,
 `constructor_parameter_list`, `constructor_parameter_type`, `list_first` and
 `list_rest` are rewritten like the field computed types.
 `MetaTypePrimaryName` folds the primary's qualified name without arguments.
+`MetaFieldHasDefault` folds whether the field's `VariableDecl` carries an
+initializer, and `field<T, I>().default_value()` (`analyzeMetaFieldDefault`,
+intrinsic `MetaFieldDefault`) aliases the call to a clone of that initializer
+analysed under the field's type, exactly like `attribute<A>()` aliases to a
+synthesized construction; the open form is deferred to concrete reanalysis.
 
 A reflection client dispatches on an open parameter with `if constexpr`, so
 the symbolic primary defers the branch (`recordConstexprBranch` with no
