@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Named nested types (0.412.0)
+## Named nested types (0.413.0)
 
 `nested_type_syntax`, `nested_type_runtime` and `nested_type_lsp` cover named
 classes/structs, recursive scopes, enclosing constructor recovery, qualified

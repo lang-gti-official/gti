@@ -71,6 +71,15 @@ public:
     int read() { return code; }
   };
 };
+class NestedBase {
+  int value;
+  NestedBase(int input) : value(input) {}
+public:
+  struct Child : public NestedBase {
+    Child() : NestedBase(41) {}
+    int read() { return value; }
+  };
+};
 struct Config {
   struct Network {
     int port = 8080;
@@ -137,6 +146,7 @@ int main() {
   application::LexicalAccess::Child::Grandchild grandchild{};
   application::LexicalAccess::GenericChild<int> generic_child{};
   application::LexicalAccess::GenericChild<int>::value_type alias_value = 3;
+  application::NestedBase::Child inherited_receiver{};
   if (config.network.port != 8080 || network.retry.count != 3 ||
       retry.count != 3 || alias.port != 8080 ||
       config.logging.verbosity() != 2 || box.value != 5 ||
@@ -147,7 +157,8 @@ int main() {
       moved.length() != 6 || cross_a.child.peer != nullptr ||
       cross_b.child.peer != nullptr || lexical.read() != 37 ||
       lexical.default_value() != 37 || grandchild.read() != 37 ||
-      generic_child.read() != 37 || alias_value != 3) {
+      generic_child.read() != 37 || alias_value != 3 ||
+      inherited_receiver.read() != 41) {
     return 1;
   }
   std::println("nested types");

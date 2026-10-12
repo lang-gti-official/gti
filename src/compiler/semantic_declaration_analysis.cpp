@@ -2421,6 +2421,30 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  "Exact class specializations must be declared at namespace "
                  "scope, not inside another type.",
                  "GTI-S2030");
+        } else {
+          // Closed exact owners still need specialization-aware child
+          // identity. Do not silently skip their newly parsed declarations.
+          const auto rejectNested = [&](const auto &self,
+                                        const StmtList &members) -> void {
+            for (const StmtPtr &member : members) {
+              if (const auto *conditional =
+                      stmtAs<ConditionalStmt>(member.get())) {
+                if (const StmtList *branch = conditional->activeBranch(target))
+                  self(self, *branch);
+              } else if (const auto *nested = stmtAs<ClassDecl>(member.get())) {
+                report(nested->name(),
+                       "Nested type definitions inside generic enclosing "
+                       "types, including exact specializations, are not "
+                       "supported yet; the enclosing specialization must be "
+                       "retained in the nested type identity.",
+                       "GTI-S2030");
+                diagnostics.back().related.push_back(
+                    {tokenSpan(classDecl->name()),
+                     "Specialized enclosing type is declared here."});
+              }
+            }
+          };
+          rejectNested(rejectNested, classDecl->members());
         }
         continue;
       }
@@ -5259,7 +5283,8 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
 
   const ViableConstructor &selected = viable.front();
   if (selected.constructor != nullptr &&
-      selected.constructor->access != AccessModifier::Public) {
+      selected.constructor->access != AccessModifier::Public &&
+      !isWithinClass(baseOwner.id)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, location,
         "Constructor of base '" + typeSpelling(baseType) + "' is private.");

@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.412.0 — Named nested structs and classes
+## 0.413.0 — Named nested structs and classes
 
 - Non-generic classes and structs can define named child classes and structs,
   including children with their own generic parameters. Qualified names such
@@ -20,7 +20,8 @@ for what minor and patch releases mean.
   explicit object required for instance members. Private constructors remain
   inaccessible to outside source calls while authorized lifetime construction
   now works through native helpers.
-- Definitions inside generic enclosing types remain diagnosed until child
+- Definitions inside generic enclosing types, including exact specializations,
+  remain diagnosed until child
   identity can retain the enclosing specialization. Anonymous records and
   nested interfaces/unions are not part of this release.
 
