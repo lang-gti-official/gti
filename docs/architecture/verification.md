@@ -1,5 +1,18 @@
 # Compiler Verification
 
+## Implicit receiver owning-field replacement (0.414.2)
+
+`implicit_receiver_owned_assignment_runtime` exercises nested unqualified
+receiver-field replacement in constructors and mutable virtual methods, with
+fresh string construction, call-produced and explicitly moved unique owners,
+and dispatch through an owning interface pointer. Its failure fixture checks
+exactly-once constructor rollback after replacement. Both fixtures run under
+C++20/C++23 at O0/O1/O3, disabled copy elision, and ASan/UBSan.
+`testNestedOwnedFieldAssignment` additionally rejects forged root/suffix field
+identities, dereference projections, captures, immutable containing fields and
+missing representation rows. The change reuses the explicit-receiver path;
+it changes no source semantics, ABI, allocation policy or cleanup schedule.
+
 ## Interface static methods (0.414.0)
 
 `testInterfaceStaticMethods` and `testInterfaceStaticAmbiguity` cover ordinary
