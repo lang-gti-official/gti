@@ -195,6 +195,13 @@ the exact compact concept-declaration form `concept name<T>=...`; a comparison
 never inherits generic-angle state across an assignment, statement boundary,
 or unmatched delimiter.
 
+Callable signature arguments retain that compact generic spelling, for example
+`std::function<void(Event&)>` and `Handler<Result(Event&, Other*) mut>`.
+Unnamed signature parameters follow the configured `ReferenceAlignment`, even
+when their nominal types are imported from another source unit or separated
+from their markers by comment trivia. Recognition is structural, not tied to
+standard-library wrapper names, and does not change expression operator spacing.
+
 Constructor-local value parameters use the same compact clause, for example
 `Buffer<uint64_t N>(T values[N])`. A brace after `(` or `,` in a call remains
 an inline initializer (`make({1, 2}, {3, 4})`) rather than being formatted as a

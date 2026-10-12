@@ -407,6 +407,32 @@ def main():
             assert any("moved" in error["message"] for error in errors), errors
             change(51, consuming_wrapper)
             assert not diagnostics(51)
+            # Imported nominal types are not declared in the formatted buffer.
+            # Keep the callback's generic angles and anonymous reference
+            # parameters compact, without recognizing std::function by name.
+            (pathlib.Path(directory) / "events.gti").write_text(
+                "export module events;\nexport struct Event { int code = 0; };\n")
+            window = (
+                "// supplementary character: \U0001f600\n"
+                "export module window;\nimport std;\nimport \"events.gti\";\n"
+                "export interface Window {\n"
+                "  using EventCallbackFn = std::function < void(Event &) >;\n"
+                "  void SetEventCallback(EventCallbackFn& callback);\n"
+                "};\n"
+            )
+            change(52, window)
+            assert not diagnostics(52)
+            edits = request("textDocument/formatting", {
+                "textDocument": {"uri": uri},
+                "options": {"tabSize": 2, "insertSpaces": True}})
+            formatted = edits[0]["newText"] if edits else window
+            assert "using EventCallbackFn = std::function<void(Event&)>;" in formatted, formatted
+            change(53, formatted)
+            assert not diagnostics(53)
+            edits = request("textDocument/formatting", {
+                "textDocument": {"uri": uri},
+                "options": {"tabSize": 2, "insertSpaces": True}})
+            assert not edits or edits[0]["newText"] == formatted, edits
         finally:
             session.close()
 

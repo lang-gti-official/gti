@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.412.1 — Callable signature formatting
+
+- Source and LSP formatting keep callable types such as
+  `std::function<void(Event&)>` compact, including unnamed borrowed parameters
+  whose types are imported from another file. Custom reference alignment is
+  preserved, without changing comparison or bitwise-expression spacing.
+
 ## 0.412.0 — Declared field defaults through reflection; JSON files
 
 - `std::meta::field<T, I>::has_default()` tells whether a field declares an
