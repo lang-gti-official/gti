@@ -1088,6 +1088,14 @@ void testMutations(const std::filesystem::path &fixture) {
           findFunction(frontend.hir, headerDrift, "overflowing_leaf")) {
     leaf->staticMember = true;
   }
+  expect(!lang::verifyMirProgram(headerDrift).valid(),
+         "a free function cannot become a static member without an owner");
+
+  headerDrift = frontend.mir;
+  if (lang::MirFunctionInstance *leaf =
+          findFunction(frontend.hir, headerDrift, "overflowing_leaf")) {
+    leaf->constexprFunction = !leaf->constexprFunction;
+  }
   expect(lang::verifyMirProgram(headerDrift).valid(),
          "a conservative function-header mutation should remain generic MIR");
   if (lang::verifyMirProgram(headerDrift).valid()) {

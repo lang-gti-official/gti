@@ -1,0 +1,10 @@
+export module window;
+import std.memory;
+
+export enum class window_backend { desktop, headless };
+
+// No reference to the concrete implementations is needed in this contract.
+export interface Window {
+  static std::unique_ptr<Window> Create(window_backend backend = window_backend::desktop);
+  int Width();
+};

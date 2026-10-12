@@ -1,5 +1,73 @@
 # Compiler Verification
 
+## Optional out-of-class method definitions (0.416.0)
+
+`testOutOfClassMethods` covers canonical declaration/body association, private
+member access, static factories, renamed parameters, default arguments,
+constexpr calls, consuming receivers and borrowed-result contracts. Negative
+cases reject unmatched and duplicate definitions, altered signatures and
+receiver modes, misplaced namespaces, repeated declaration-only information,
+unsupported generic owners/methods, and mutation or consumption while a returned
+borrow remains live. A forged HIR body association must fail publication into
+LoweredProgram; definitions never add a second callable or backend row.
+
+`out_of_class_runtime` runs example 150 under C++20/C++23 at O0/O1/O3, and builds
+the `examples/window-factory` package. It checks transitive package loading,
+implementation privacy, changed-body cache invalidation, unused implementation
+registrations, missing definitions, and invalid or escaping manifest paths.
+`out_of_class_cleanup` checks owning factory results and separately defined
+virtual overrides under those modes, disabled copy elision and ASan/UBSan:
+successful and defined-failure paths retain exactly-once reverse cleanup, exit
+status and source attribution. `out_of_class_lsp` covers definition/references,
+hover, local-parameter rename, unsaved body changes, signature diagnostics with
+UTF-16 ranges and declaration-related information. Public-method rename retains
+its existing unsupported boundary. Formatter idempotence/token preservation and
+the pinned Tree-sitter corpus, queries and shipped-source tests cover the syntax.
+
+The reviewed 150-example inventories add only example 150: 115 MIR bodies and
+1,109 LoweredProgram declarations, including 75 generated items. Existing rows
+are unchanged. The complete differential corpus oracle and the six focused
+compiler/feature/worker-registration gates passed on Apple Silicon with an
+optimized compiler, after reconciliation with the lifetime fix in `c425f91b`.
+The task's final verification record binds broad acceptance to its exact
+published head and base; these focused results do not substitute for it.
+
+The unfiltered 687-test Apple Silicon sweep on `337920ae` completed in
+1,683.04 seconds: 684 passed. Its three failures were a missing LSP test-client
+capability for related diagnostic information, a stale mutation-test assumption
+that an ownerless static function was valid MIR, and the SSH host's explicit
+denial of debugger permission. The corrected tests request the capability,
+require rejection of the malformed static header while retaining a separate
+generic-MIR-valid header-drift check, and recognize that exact host prohibition
+under the existing debugger-skip policy. No compiler/runtime code changed in
+those corrections. Final validation re-runs the affected tests and relevant
+compiler/backend/corpus gates on the clean published head. The actual LLDB
+breakpoint/continue check also passed on the local Mac with the same Mini-built
+optimized candidate (`gti` SHA-256
+`597462f4cbd7cfc7d417272e5b65f7e2b42e28160b2e72d2447c9460ceb6c5ef`).
+This is combined host and delta-validation evidence, not a claim that the
+initial remote sweep was entirely green.
+
+The final reconciliation includes upstream `2fb2a594`: the nested implicit
+receiver owning-field emission fix and preview-workflow tooling. The follow-up
+gate therefore includes the backend emitter/lifecycle suites and corpus,
+implicit-receiver runtime/sanitizer fixture, and workflow/version tests, in
+addition to the corrected tests and the feature's own checks. Earlier broad
+results retain their original source identity rather than being relabeled as
+evidence for that upstream delta.
+
+`out_of_class_performance` compares an inline static body, its split definition
+and a C++ success-domain control. On snapshot `1108fc2878bb91f6bfb50174a59e763838d15d2c22b654bfcc83cfb76fdd7a7b`
+(GTI 0.415.0, Apple clang 21.0.0), three warmups and seven interleaved samples
+of five million transforms produced the same complete-state checksum. Median
+inline/split/C++ times were 17.328/17.402/17.211 ms. Both GTI binaries were
+123,800 bytes; emitted C++ was 196,546/196,499 bytes. Native builds took
+218.1/220.2 ms with peak RSS of 75.87/75.92 MB. The loop does not allocate;
+splitting a definition introduces no runtime allocation or dispatch mechanism.
+These observations show no material feature cost, not a speedup or parity claim
+for GTI's broader failure contract. Reports, compiler/source identities, emitted
+C++ and disassembly are retained under `Testing/out-of-class-performance`.
+
 ## Implicit receiver owning-field replacement (0.414.2)
 
 `implicit_receiver_owned_assignment_runtime` exercises nested unqualified

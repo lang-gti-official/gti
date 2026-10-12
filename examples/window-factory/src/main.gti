@@ -1,0 +1,8 @@
+import window;
+
+int main() {
+  auto desktop = Window::Create();
+  auto headless = Window::Create(window_backend::headless);
+  if (desktop->Width() != 800 || headless->Width() != 320) { return 1; }
+  return 0;
+}

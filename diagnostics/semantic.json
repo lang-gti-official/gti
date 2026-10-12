@@ -108,6 +108,15 @@
     "arguments": 1
   },
   {
+    "id": "OutOfClassDefinition",
+    "code": "GTI-S2120",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "function-definition",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
     "id": "GenericInstantiationLimit",
     "code": "GTI-S2105",
     "phase": "Semantics",

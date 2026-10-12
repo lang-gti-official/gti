@@ -1785,6 +1785,170 @@ int main() {
          "free functions should reject receiver mutability qualifiers");
 }
 
+void testOutOfClassMethods() {
+  const std::string splitText =
+      "struct Test{int value();};int Test::value(){return 1;}";
+  const auto formatted = lang::Formatter().format(splitText);
+  const auto originalTokens = lang::Lexer().scan(splitText);
+  const auto formattedTokens = lang::Lexer().scan(formatted);
+  expect(
+      formatted.find("Test::value()") != std::string::npos &&
+          lang::Formatter().format(formatted) == formatted &&
+          originalTokens.size() == formattedTokens.size() &&
+          std::equal(originalTokens.begin(), originalTokens.end(),
+                     formattedTokens.begin(),
+                     [](const lang::Token &left, const lang::Token &right) {
+                       return left.kind == right.kind &&
+                              (left.kind == lang::TokenKind::END_OF_FILE ||
+                               left.lexeme == right.lexeme);
+                     }),
+      "qualified definitions format without changing tokens or qualification");
+  const auto frontend = lang::Frontend().analyze("split-methods.gti", R"(
+namespace demo {
+interface Factory { static int make(int n = 7); };
+class Counter {
+  mut int count = 0;
+public:
+  Counter() {}
+  int read();
+  void add(int amount) mut;
+};
+int Factory::make(int value) { return value; }
+int Counter::read() { return this.count; }
+void Counter::add(int value) mut { this.count += value; }
+}
+int main() {
+  mut demo::Counter count{};
+  count.add(demo::Factory::make());
+  return count.read() - 7;
+}
+)",
+                                                 {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(frontend.canGenerateCode(),
+         "separate static and receiver method bodies retain canonical identity "
+         "and defaults");
+  if (frontend.canGenerateCode()) {
+    const auto artifact =
+        gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
+                          lang::OptimizationPipeline().run(
+                              frontend.hir, lang::OptimizationLevel::O0));
+    expect(!artifact.contents.empty(),
+           "split methods must seal as one canonical class member, not "
+           "namespace functions");
+    lang::HirProgram forged = frontend.hir;
+    auto &instances = const_cast<std::vector<lang::HirFunctionInstance> &>(
+        forged.functionInstances());
+    bool changed = false;
+    for (auto &instance : instances) {
+      const auto *info = frontend.semantics.findFunction(instance.declaration);
+      if (info != nullptr && info->definition != nullptr) {
+        instance.source = info->declaration;
+        changed = true;
+        break;
+      }
+    }
+    const auto rejected = lang::LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, forged, frontend.mir,
+        frontend.mir, {}, lang::TargetInfo::host());
+    expect(
+        changed && !rejected.valid(),
+        "publication must reject replacing the bound body with its prototype");
+  }
+  const std::string contracts = R"(
+class Maker {
+  Maker() {}
+public:
+  static Maker create();
+  int take() &&;
+  [[borrowed_from(input)]] static int& relay(int& input);
+};
+Maker Maker::create() { return Maker(); }
+int Maker::take() && { return 7; }
+int& Maker::relay(int& value) { return value; }
+int main() {
+  Maker made = Maker::create();
+  int number = std::move(made).take();
+  auto& borrowed = Maker::relay(number);
+  return borrowed - 7;
+}
+)";
+  const auto contractResult = lang::Frontend().analyze(
+      "split-contracts.gti", contracts, {standardLibraryPrelude()});
+  expect(contractResult.canGenerateCode(),
+         "private constructors, consuming receivers and differently named "
+         "borrowed parameters keep declaration contracts");
+  const std::string borrowed = R"(
+struct Cell {
+  mut int number = 3;
+  int& read();
+  void set(int value) mut;
+  int take() &&;
+};
+int& Cell::read() { return this.number; }
+void Cell::set(int value) mut { this.number = value; }
+int Cell::take() && { return this.number; }
+)";
+  const auto borrowControl = lang::Frontend().analyze(
+      "split-borrow.gti",
+      borrowed + "int main() { mut Cell c{}; c.set(4); auto& b = c.read(); "
+                 "return b - 4; }",
+      {standardLibraryPrelude()});
+  expect(borrowControl.canGenerateCode(),
+         "a separately defined accessor retains its receiver origin");
+  for (const auto *operation :
+       {"c.set(4);", "int taken = std::move(c).take();"}) {
+    const auto invalidBorrow = lang::Frontend().analyze(
+        "split-borrow.gti",
+        borrowed + "int main() { mut Cell c{}; auto& b = c.read(); " +
+            operation + " return b; }",
+        {standardLibraryPrelude()});
+    expect(invalidBorrow.syntaxValid && !invalidBorrow.semanticValid,
+           "a separate method must not mutate or consume a receiver with a "
+           "live borrowed result");
+  }
+  for (const auto &[source, message] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"int Missing::read() { return 1; }", "visible"},
+           {"struct A {}; int A::read() { return 1; }", "No declared method"},
+           {"struct A { int read(); }; bool A::read() { return true; }",
+            "return type"},
+           {"struct A { int read() { return 1; } }; int A::read() { return 2; "
+            "}",
+            "already has"},
+           {"struct A { int read(); }; int A::read() { return 1; } int "
+            "A::read() { return 2; }",
+            "already has"},
+           {"interface A { int read(); }; int A::read() { return 1; }", "pure"},
+           {"struct A { static int read(); }; static int A::read() { return 1; "
+            "}",
+            "specifiers"},
+           {"struct A { int read(int x = 1); }; int A::read(int x = 2) { "
+            "return x; }",
+            "Default arguments"},
+           {"struct A { int read() mut; }; int A::read() { return 1; }",
+            "receiver qualifier"},
+           {"struct A { static T read<T>(T x); }; T A::read<T>(T x) { return "
+            "x; }",
+            "non-generic"},
+           {"struct A { int read(); }; namespace wrong { int A::read() { "
+            "return 1; } }",
+            "enclosing namespace"}}) {
+    const auto invalid = lang::Frontend().analyze(
+        "split-invalid.gti", source + "\nint main() { return 0; }",
+        {standardLibraryPrelude()});
+    const auto *diagnostic =
+        findDiagnosticByCode(invalid.diagnostics, "GTI-S2120");
+    expect(!invalid.canGenerateCode() && diagnostic != nullptr &&
+               diagnostic->message.find(message) != std::string::npos,
+           "invalid separate definitions must receive a source diagnostic: " +
+               message);
+  }
+}
+
 void testInterfaceStaticMethods() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("interface-static-methods.gti", R"(
@@ -11966,6 +12130,7 @@ constexpr NamedTest kTests[] = {
     {"testConstructorsAndReceiverMutability",
      testConstructorsAndReceiverMutability},
     {"testInheritanceAndInterfaces", testInheritanceAndInterfaces},
+    {"testOutOfClassMethods", testOutOfClassMethods},
     {"testInterfaceStaticMethods", testInterfaceStaticMethods},
     {"testInterfaceStaticAmbiguity", testInterfaceStaticAmbiguity},
     {"testInheritedGenericTargetInstances",
