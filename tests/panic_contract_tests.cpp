@@ -48,9 +48,18 @@ int main() { checked(true); return 0; }
       for (const auto &instruction : block.instructions) {
         if (!instruction.tracksCaller)
           continue;
-        ++calls;
-        forwarded += instruction.forwardsCallerLocation;
-        terminals += instruction.neverReturns;
+        // Count the tracked forwarding chain and this fixture's entry, not
+        // unrelated ordinary anchors in additional standard-library helpers.
+        // All calls below still receive the exact-location/mutation checks.
+        if (function.tracksCaller ||
+            function.entryKind != lang::ProgramEntryKind::None) {
+          ++calls;
+          forwarded += instruction.forwardsCallerLocation;
+          terminals += instruction.neverReturns;
+        } else {
+          check(!instruction.forwardsCallerLocation,
+                "ordinary library callers anchor rather than forward");
+        }
         check(instruction.callerLocation.has_value() &&
                   result.mir.failureMetadata().callerSiteFor(
                       *instruction.callerLocation) ==
