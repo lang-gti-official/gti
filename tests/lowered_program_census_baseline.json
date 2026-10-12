@@ -2160,7 +2160,22 @@
         "concrete_instance_adapter": 99
       }
     },
-    "148-interface-static-factories.gti": {
+    "148-nested-configuration.gti": {
+      "declarations": 1876,
+      "bodies": 427,
+      "generated_items": 229,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 42,
+        "callable_adapter": 13,
+        "lifecycle_cleanup": 7,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 165
+      }
+    },
+    "149-interface-static-factories.gti": {
       "declarations": 579,
       "bodies": 68,
       "generated_items": 24,
@@ -2177,8 +2192,8 @@
     }
   },
   "totals": {
-    "declarations": 100757,
-    "bodies": 15494,
-    "generated_items": 9630
+    "declarations": 102633,
+    "bodies": 15921,
+    "generated_items": 9859
   }
 }

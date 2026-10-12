@@ -462,6 +462,29 @@ permitted construction, not source overload availability or omitted-field policy
 
 ## Analysis Order
 
+Named nested classes/structs have explicit semantic enclosing-class identity,
+declaration access and an owner's direct nested-type inventory. Registration
+recurses through lexical class bodies before resolving members, aliases and
+lifecycles; type lookup and constructor lookup reuse those same identities.
+Access checks include every enclosing type, and nested method analysis cannot
+borrow an implicit outer instance. The first profile admits non-generic owners
+and generic children; generic-owner capture requires preserving specialization
+arguments in nested identities and is rejected before HIR. HIR/MIR retain
+ordinary nominal types and existing lifecycle operations. Lowered declaration
+parent/owner identities preserve nesting separately from namespace scope, so
+the C++ planner never opens an enclosing class as a namespace.
+The C++ representation gives each child an independent namespace-level native
+identity derived from its resolved declaration/source identity. Text-planning
+views do not mutate the sealed lexical declaration tree. Ordinary layout
+scheduling follows bases and by-value fields, not enclosing scopes: mutually
+pointing children remain finite even when each outer type stores its child.
+Representation friendship preserves semantic-authorized lexical access. Native
+constructors are callable by lifetime-slot helpers; semantic constructor access
+still rejects unauthorized source calls. Deferred/concrete body contexts retain
+enclosing static members without adding an enclosing receiver, and
+generic children reuse ordinary concrete-instance naming. These choices do not
+alter GTI visibility or introduce an outer object.
+
 `SemanticVisitor::check(const Program&)` is staged because later facts depend
 on declaration-wide registration. It currently:
 

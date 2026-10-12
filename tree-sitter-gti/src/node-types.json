@@ -956,6 +956,10 @@
           "named": true
         },
         {
+          "type": "class_declaration",
+          "named": true
+        },
+        {
           "type": "compile_error_directive",
           "named": true
         },
@@ -1423,6 +1427,10 @@
         },
         {
           "type": "attributed_field_declaration",
+          "named": true
+        },
+        {
+          "type": "class_declaration",
           "named": true
         },
         {

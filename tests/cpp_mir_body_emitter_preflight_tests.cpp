@@ -292,8 +292,11 @@ int main() { Accessor accessor{2}; return guarded(accessor.read()); }
       ++retained;
     } else {
       ++erased;
+      // A detector's cold publication helper runs the same check after it
+      // writes the record; other failure edges call the check directly.
       expect(text.text.find("mir_check_incoming_cleanup_failure_v1(") !=
-                 std::string::npos,
+                     std::string::npos ||
+                 text.text.find("mir_publish_failure_v1(") != std::string::npos,
              "propagation-only functions still detect an ancestor's primary "
              "failure when they fail inside cleanup");
     }

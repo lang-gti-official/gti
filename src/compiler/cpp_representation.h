@@ -36,6 +36,8 @@ private:
 cppScopedBodyAnalysis(const MirBody &body, std::string_view kind);
 
 [[nodiscard]] std::string
+cppClassDeclarationNameSpelling(const LoweredProgram &program, ClassId id);
+[[nodiscard]] std::string
 cppClassTemplateNameSpelling(const LoweredProgram &program, ClassId id);
 
 // Deterministic C++ representation authorities over the sealed lowered

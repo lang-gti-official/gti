@@ -14,7 +14,7 @@ if __name__ == "__main__":
     failure = (f"{cleanup.name}:{failure_line}: runtime error[GTI-R0002]: "
                "division_by_zero in integer_division\n")
     main(names=("interface_static_example", "interface_static_cleanup"),
-         fixture_paths={"interface_static_example": root / "examples/148-interface-static-factories.gti"},
+         fixture_paths={"interface_static_example": root / "examples/149-interface-static-factories.gti"},
          cases={
              "interface_static_example": [((), (0, "interface static factories work\n", ""))],
              "interface_static_cleanup": [
