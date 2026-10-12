@@ -231,9 +231,9 @@ The current implemented foundation includes:
   does not grant mutable access to the object; and
 - `<std/array>` `std::array<T, N>` over checked fixed-array storage, including
   front/back access, copyable-element fill, read-only random-access cursors,
-  and confined mutable traversal. Constructors, `size`, `empty`, and the
-  read-only `at`, `front`, and `back` methods support constexpr evaluation for
-  supported elements; mutable access and iterator traversal remain runtime
+  and checked exclusive positional/reverse cursors. Constructors, `size`,
+  `empty`, and the read-only `at`, `front`, and `back` methods support constexpr
+  evaluation for supported elements; mutable access and iterator traversal remain runtime
   operations; and
 - `<std/string>` `std::string` as a move-only owner over a source-defined
   terminated character prefix, including
@@ -1166,9 +1166,11 @@ the broader `std::copyable`, because it is not copy-assignable or reseatable.
 A source-defined helper that receives the iterator by value may return only
 the iterator's exact owner dependency: either the carrier value or its exact
 stored referent of the same type, never an iterator-position/shell projection.
-`begin_mut()` supplies the separate ephemeral mutable iterator used by range
-`for`; its exclusive parent loan prevents overlapping owner operations and each
-iteration carries one mutable element child loan. The mutable iterator remains
+`begin_mut()` supplies a separate source-defined exclusive cursor for range
+`for` and explicit traversal. Its retained parent loan prevents overlapping
+owner operations; dereference carries a mutable element child loan that must
+end before the cursor moves. Mutable cursors support checked positional and
+reverse traversal without duplicating their exclusive permission and remain
 non-copyable. Container-specific invalidation precision remains outside this
 slice.
 
