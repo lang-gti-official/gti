@@ -15,7 +15,7 @@ def main():
         root = pathlib.Path(temporary)
         api, body, entry = (root / name for name in ("api.gti", "body.gti", "main.gti"))
         interface = "export module api;\nexport interface Factory { static int make(int number = 7); };\n"
-        implementation = "import api;\n// UTF-16: 🦉\nint Factory::make(int value) { return value; }\n"
+        implementation = "import api;\n/* UTF-16: 🦉 */ int Factory::make(int value) { return value; }\n"
         source = "import api;\nint main() { return Factory::make() - 7; }\n"
         write(api, interface)
         write(body, implementation)
@@ -73,7 +73,10 @@ def main():
             mismatch = implementation.replace("int Factory::make", "bool Factory::make").replace("return value", "return true")
             change(body_uri, 4, mismatch)
             errors = diagnostics_for(session, body_uri, 4)
-            assert any(item.get("code") == "GTI-S2120" for item in errors), errors
+            diagnostic = next((item for item in errors if item.get("code") == "GTI-S2120"), None)
+            assert diagnostic is not None, errors
+            assert diagnostic["range"]["start"] == lsp_position(mismatch, mismatch.index("make")), diagnostic
+            assert diagnostic.get("relatedInformation"), diagnostic
             change(body_uri, 5, implementation)
             assert diagnostics_for(session, body_uri, 5) == []
             where = request("textDocument/definition", body_uri, implementation, implementation.index("Factory") + 1)

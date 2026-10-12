@@ -1,5 +1,49 @@
 # Compiler Verification
 
+## Optional out-of-class method definitions (0.415.0)
+
+`testOutOfClassMethods` covers canonical declaration/body association, private
+member access, static factories, renamed parameters, default arguments,
+constexpr calls, consuming receivers and borrowed-result contracts. Negative
+cases reject unmatched and duplicate definitions, altered signatures and
+receiver modes, misplaced namespaces, repeated declaration-only information,
+unsupported generic owners/methods, and mutation or consumption while a returned
+borrow remains live. A forged HIR body association must fail publication into
+LoweredProgram; definitions never add a second callable or backend row.
+
+`out_of_class_runtime` runs example 150 under C++20/C++23 at O0/O1/O3, and builds
+the `examples/window-factory` package. It checks transitive package loading,
+implementation privacy, changed-body cache invalidation, unused implementation
+registrations, missing definitions, and invalid or escaping manifest paths.
+`out_of_class_cleanup` checks owning factory results and separately defined
+virtual overrides under those modes, disabled copy elision and ASan/UBSan:
+successful and defined-failure paths retain exactly-once reverse cleanup, exit
+status and source attribution. `out_of_class_lsp` covers definition/references,
+hover, local-parameter rename, unsaved body changes, signature diagnostics with
+UTF-16 ranges and declaration-related information. Public-method rename retains
+its existing unsupported boundary. Formatter idempotence/token preservation and
+the pinned Tree-sitter corpus, queries and shipped-source tests cover the syntax.
+
+The reviewed 150-example inventories add only example 150: 115 MIR bodies and
+1,109 LoweredProgram declarations, including 75 generated items. Existing rows
+are unchanged. The complete differential corpus oracle and the six focused
+compiler/feature/worker-registration gates passed on Apple Silicon with an
+optimized compiler, after reconciliation with the lifetime fix in `c425f91b`.
+The task's final verification record binds broad acceptance to its exact
+published head and base; these focused results do not substitute for it.
+
+`out_of_class_performance` compares an inline static body, its split definition
+and a C++ success-domain control. On snapshot `1108fc2878bb91f6bfb50174a59e763838d15d2c22b654bfcc83cfb76fdd7a7b`
+(GTI 0.415.0, Apple clang 21.0.0), three warmups and seven interleaved samples
+of five million transforms produced the same complete-state checksum. Median
+inline/split/C++ times were 17.328/17.402/17.211 ms. Both GTI binaries were
+123,800 bytes; emitted C++ was 196,546/196,499 bytes. Native builds took
+218.1/220.2 ms with peak RSS of 75.87/75.92 MB. The loop does not allocate;
+splitting a definition introduces no runtime allocation or dispatch mechanism.
+These observations show no material feature cost, not a speedup or parity claim
+for GTI's broader failure contract. Reports, compiler/source identities, emitted
+C++ and disassembly are retained under `Testing/out-of-class-performance`.
+
 ## Interface static methods (0.414.0)
 
 `testInterfaceStaticMethods` and `testInterfaceStaticAmbiguity` cover ordinary
