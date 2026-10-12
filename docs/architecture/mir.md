@@ -156,12 +156,16 @@ ineligible. Untaken runtime-only
 calls do not execute. Rewritten/tombstoned instructions and optimizer-produced
 control flow cannot determine constant eligibility.
 
-The existing enum and checked-integer `expected` constant profiles have not yet
-migrated their values and operations to this executor. They retain their
-compatibility evaluation where previously supported, but cannot participate in
-the new mutation-capable MIR profile, including as aggregate fields. This is a
-representation/operation prerequisite, not permission for mutable calls to
-retry the copy-based AST interpreter.
+Ordinary payload-free enums use the semantic enum catalogue's nominal identity
+and exact underlying integer domain. `EnumConstant`, exact-type comparisons and
+enumerator switch labels execute here, including enum locals, record fields and
+array elements in mutable builders. Value reads of resolved enumerators lower
+to constants; explicit place formation and source borrowing rules are unchanged.
+Checked-integer `expected` values and operations have not yet migrated to this
+executor. They retain compatibility evaluation where previously supported, but
+cannot participate in the mutation-capable MIR profile, including as aggregate
+fields. This is a representation/operation prerequisite, not permission for
+mutable calls to retry the copy-based AST interpreter.
 
 The service returns `ConstantValue` or a failure carrying the concrete body
 address, block, and instruction identity, including constructor failures.

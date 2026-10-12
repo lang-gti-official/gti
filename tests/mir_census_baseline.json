@@ -138,7 +138,7 @@
     "139-ordered-search.gti": 146,
     "140-environment-configuration.gti": 128,
     "141-reflected-json.gti": 516,
-    "142-constexpr-builders.gti": 54,
+    "142-constexpr-builders.gti": 63,
     "143-checked-container-iteration.gti": 482,
     "144-checked-view-iteration.gti": 397,
     "145-live-slot-and-lane-iteration.gti": 292,
@@ -149,5 +149,5 @@
     "150-out-of-class-methods.gti": 116,
     "151-c-string-import.gti": 120
   },
-  "total": 16231
+  "total": 16240
 }

@@ -26747,6 +26747,20 @@ checkedConversionIntrinsicCall(const MirInstruction &instruction) {
          instruction.localFailureSites.size() == 1;
 }
 
+// A terminator use is not necessarily a Return: switches and branches also
+// consume SSA values. Result-publication shortcuts require the exact return
+// operand, otherwise they can suppress an ordinary control-flow input load.
+[[nodiscard]] bool hasUniqueReturnUse(const MirBody &body, MirValueId value) {
+  const auto uses = returnValueExecutableUses(body, value);
+  if (uses.size() != 1 || uses.front().kind != MirValueUseKind::Terminator)
+    return false;
+  const auto *block = body.findBlock(uses.front().block);
+  return block && block->terminator.kind == MirTerminatorKind::Return &&
+         block->terminator.value &&
+         block->terminator.value->kind == MirOperandKind::Value &&
+         block->terminator.value->value == value;
+}
+
 // A class-valued failure Return publishes its constructor call inline
 // through the `T *` out-parameter: the construct's value result has
 // exactly the Return as its consumer and never declares a local.
@@ -26759,9 +26773,7 @@ returnConstructDefinition(const MirBody &body, MirValueId value) {
       definition->kind != MirInstructionKind::Construct ||
       !definition->result || definition->receiver ||
       definition->constructorKind != ConstructorKind::Ordinary ||
-      returnValueExecutableUses(body, value).size() != 1 ||
-      returnValueExecutableUses(body, value).front().kind !=
-          MirValueUseKind::Terminator) {
+      !hasUniqueReturnUse(body, value)) {
     return nullptr;
   }
   return definition;
@@ -26784,9 +26796,7 @@ returnDefaultConstructionDefinition(const MirBody &body, MirValueId value) {
            IntrinsicKind::DefaultTypeParameterConstruction) ||
       !definition->operands.empty() || !definition->callableArguments.empty() ||
       !definition->localFailureSites.empty() || !definition->result ||
-      returnValueExecutableUses(body, value).size() != 1 ||
-      returnValueExecutableUses(body, value).front().kind !=
-          MirValueUseKind::Terminator) {
+      !hasUniqueReturnUse(body, value)) {
     return nullptr;
   }
   return definition;
@@ -26815,9 +26825,7 @@ returnCopyLoadDefinition(const MirBody &body, MirValueId value) {
       definition->operands.front().place == 0 ||
       definition->operands.front().type != record->info.type ||
       !definition->localFailureSites.empty() ||
-      returnValueExecutableUses(body, value).size() != 1 ||
-      returnValueExecutableUses(body, value).front().kind !=
-          MirValueUseKind::Terminator) {
+      !hasUniqueReturnUse(body, value)) {
     return nullptr;
   }
   const MirPlace *source = body.findPlace(definition->operands.front().place);

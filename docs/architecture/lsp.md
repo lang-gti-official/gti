@@ -387,6 +387,8 @@ retain the qualifier and canonical concrete signature. Unsupported aggregate
 evaluation publishes compiler-owned `GTI-S2057` detail, hints, and related
 locations. The protocol adapter has no aggregate evaluator or diagnostic
 allowlist, and a corrected document snapshot clears the stale failure.
+Enum-valued mutable constexpr helpers use that same frontend execution path;
+the editor does not maintain an older scalar-only eligibility list.
 
 For `[[c_opaque]] struct Name;`, hover renders the incomplete declaration and
 the compiler-owned address-only contract instead of value/concurrency

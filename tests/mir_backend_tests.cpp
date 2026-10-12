@@ -835,6 +835,36 @@ int main() { return huge() == int64_t(9223372036854775807) ? 0 : 1; }
          "rejected rather than emitted through implementation-defined C++");
 }
 
+void testEnumSwitchLoadIsNotAReturnCopy() {
+  auto frontend = analyze("enum-switch-return-copy.gti", R"(
+enum class State : uint8_t { cold, hot };
+State select(State value) {
+  switch (value) {
+  case State::cold: return State::hot;
+  default: return State::cold;
+  }
+}
+State identity(State value) { return value; }
+int main() { return identity(select(State::cold)) == State::hot ? 0 : 1; }
+)");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto compatibility = lang::OptimizationPipeline().run(
+      frontend.hir, lang::OptimizationLevel::O0);
+  const auto artifact = emit(frontend, frontend.mir, compatibility);
+  const auto selected = functionDefinition(artifact.contents, "select");
+  const auto identity = functionDefinition(artifact.contents, "identity");
+  expect(!selected.empty() &&
+             selected.find("switch (") != std::string_view::npos &&
+             selected.find(" = __gti_mir_p_1;") != std::string_view::npos &&
+             selected.find("spells at its Return") == std::string_view::npos,
+         "a switch subject load must execute even when its type matches the "
+         "function result");
+  expect(!identity.empty() &&
+             identity.find("return __gti_mir_p_1;") != std::string_view::npos,
+         "the actual unique Return still supports direct copy publication");
+}
+
 } // namespace
 
 // An untyped non-negative literal widening into a larger scalar field
@@ -880,6 +910,7 @@ int main() {
   testForgedValidLiteralIsRejected();
   testMissingEligibleInstanceIsRejected();
   testJointHirMirLiteralForgeryIsRejected();
+  testEnumSwitchLoadIsNotAReturnCopy();
   testImplicitLiteralWideningConstructorStageVerifies();
   return failures == 0 ? 0 : 1;
 }
