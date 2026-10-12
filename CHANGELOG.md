@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.408.1 — Faster `std::sort`
+
+- `std::sort` now uses introsort instead of heapsort. It partitions around a
+  sampled median, uses insertion sort for short ranges, and falls back to
+  heapsort so that the worst case stays at O(n log n) comparisons. Sorting a
+  million integers is about 1.8 times as fast, and sorting strings about 2.1
+  times as fast. Results, the comparator contract, failure behaviour and the
+  absence of allocation are unchanged. The order of equal elements was never
+  specified and may differ.
+
 ## 0.407.0 — Reflected JSON covers the codec use cases
 
 - `<std/experimental/json>` now handles what applications wrote

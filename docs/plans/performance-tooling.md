@@ -23,6 +23,54 @@ require correction or explicit owner acceptance. Noisy shared CI remains a
 correctness/report gate, not a timing oracle. The sole live queue is
 [the implementation sequence](implementation-sequence.md).
 
+## RT-9: introsort for `std::sort` (2026-10-12)
+
+`std::sort` replaces iterative heapsort with bounded iterative introsort: a
+pseudo-median-of-nine pivot (median of three for ranges up to 40), a
+bounds-guarded Hoare partition, insertion sort for ranges up to 16, and a
+heapsort fallback after `2*floor(log2(n))` partition levels. Both overloads now
+share one implementation; the default relation is a stateless `operator<`
+comparator.
+
+**Identity and method.** The baseline is main `94470419` with heapsort, against
+the same tree with introsort. Both are Release builds on the Mac mini
+(macOS arm64, AppleClang, `-O2`, `-std=c++23`), run one at a time with nothing
+else in the suite window. Sort-only time is the program's minimum run time minus
+the same program's minimum with its `std::sort` call removed, so element
+generation is not counted.
+
+| Workload (sort-only minimum) | Heapsort | Introsort | Ratio |
+| --- | ---: | ---: | ---: |
+| `sort` probe: 8 x 1M `int32_t`, `<` | 860.9 ms | 488.9 ms | 1.76x |
+| 4 x 200k decimal `std::string`, `<` | 303.7 ms | 145.2 ms | 2.09x |
+| 8 x 1M `int32_t`, lambda comparator | 503.4 ms | 487.3 ms | 1.03x |
+
+The whole `sort` probe runs 877.8 ms against 505.8 ms, which is 3.67x its
+idiomatic C++ twin (137.6 ms) instead of 6.37x.
+
+**Comparisons.** Reverse input of 1,024 elements takes 13,012 comparisons
+instead of 16,407. Every shape in `algorithm_comparator_sort.gti` stays within
+`2*n*(ceil(log2(n))+1)`. McIlroy's killer adversary costs 34,274 comparisons at
+n=1,024 through either overload, against a 56,320 bound; without the heapsort
+fallback a median-sampling quicksort needs about n*n/4.
+
+**Native inlining decides the result.** A first version kept two overloads with
+the whole algorithm inline in each. It improved the probe only to 749 ms and
+made the comparator workload 1.71x slower (862.8 ms). A `sample` profile showed
+why: in that large function clang no longer inlined `vector::operator[]` or
+`swap_elements`, whose failure-ABI forms became out-of-line calls (27% of the
+comparator profile), while heapsort's small loop had kept them inline. With the
+native inline threshold raised to 2000, the same build ran 492.9 ms. Splitting
+the algorithm into small phase functions that borrow the comparator
+(`mut Compare&`) restored inlining and reached that ceiling without a compiler
+change. Clang's inlining of failure-ABI accessors remains the cost that RT-1's
+broader inline policy would address.
+
+**Tooling note.** `screen.py attribute` stops at the `arith` variant because
+checked arithmetic now uses overflow builtins and no longer emits the
+`if (overflow) {` guard it rewrites. Its `inline` variant still works; the other
+rewrites need current guard patterns.
+
 ## Inline std::function targets (2026-10-09)
 
 Status: integrated through the general `<std/polymorphic>` owner. The

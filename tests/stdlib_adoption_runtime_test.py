@@ -22,7 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
     parser.add_argument("--quick", action="store_true")
-    parser.add_argument("--fixture", choices=("pipeline", "void", "example", "url", "url-failure", "transform", "transform-failure", "optional", "sort", "sort-failure"))
+    parser.add_argument("--fixture", choices=("pipeline", "void", "example", "url", "url-failure", "transform", "transform-failure", "optional", "sort", "sort-failure", "sort-adversary"))
     args = parser.parse_args()
     repository = Path(__file__).resolve().parent.parent
     fixtures = repository / "tests/fixtures"
@@ -63,7 +63,8 @@ def main():
             (("comparison",), (70, "call\n" * 4 + "comparator\n4\nouter\n", sort_failure("mode - 2"))),
             (("destructor", "failure"), (70, "call\n" * 6 + "comparator\n6\nouter\n", sort_failure("mode - 3"))),
         ]),
-        "sort": (fixtures / "algorithm_comparator_sort.gti", [((), (0, "1294\n3106\n7203\n16407\n", ""))]),
+        "sort": (fixtures / "algorithm_comparator_sort.gti", [((), (0, "1252\n2754\n5998\n13012\n", ""))]),
+        "sort-adversary": (fixtures / "algorithm_sort_adversary.gti", [((), (0, "34274\n34274\n", ""))]),
         "optional": (fixtures / "optional_value_or_contract.gti", [((), (0, "", ""))]),
         "transform": (fixtures / "algorithm_transform_owned.gti", [((), (0, "", ""))]),
         "transform-failure": (transform_source, [
