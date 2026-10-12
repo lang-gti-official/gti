@@ -1,0 +1,166 @@
+#include <std/memory>
+#include <std/resource>
+#include <std/simd>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+// Fixed sparse slots and mask state are populated before measurement.
+int main() {
+  mut auto allocated = std::try_make_pool<int>(std::size_t(7));
+  if (!allocated) { return 10; }
+  mut auto pool = std::move(allocated).value();
+  [[discard]] pool.try_insert(10);
+  [[discard]] pool.try_insert(99);
+  [[discard]] pool.try_insert(20);
+  [[discard]] pool.try_insert(88);
+  [[discard]] pool.try_insert(30);
+  pool.erase(std::size_t(1));
+  pool.erase(std::size_t(3));
+  {
+    adoption_count_begin();
+    mut int checksum = 0;
+    for (mut int round = 0; round < 64; round++) {
+      auto end = pool.end();
+      auto rend = pool.rend();
+      mut int count = 0;
+      for (mut auto cursor = pool.begin(); cursor != end; ++cursor) {
+        checksum += *cursor;
+        count++;
+      }
+      if (count != 3) { return 1; }
+      {
+        auto first = pool.begin();
+        mut auto independent = first;
+        ++independent;
+        if (*first != 10 || *independent != 20 || first == independent) { return 2; }
+      }
+      mut int next_value = 30;
+      for (mut auto cursor = pool.rbegin(); cursor != rend; ++cursor) {
+        if (*cursor != next_value) { return 3; }
+        checksum += *cursor;
+        next_value -= 10;
+      }
+      if (next_value != 0) { return 4; }
+      {
+        mut auto cursor = pool.begin_mut();
+        while (cursor != end) { *cursor += 1; ++cursor; }
+      }
+      {
+        mut auto cursor = pool.rbegin_mut();
+        while (cursor != rend) { *cursor -= 1; ++cursor; }
+      }
+    }
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0) || checksum != 7680) { return 5; }
+  }
+  if (pool.get(std::size_t(0)) != 10 || pool.get(std::size_t(2)) != 20 ||
+      pool.get(std::size_t(4)) != 30 || pool.size() != std::size_t(3) ||
+      pool.capacity() != std::size_t(7)) { return 12; }
+  for (mut std::size_t index = 0; index < std::size_t(7); index++) {
+    bool live = index == std::size_t(0) || index == std::size_t(2) || index == std::size_t(4);
+    if (pool.contains(index) != live) { return 12; }
+  }
+
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_storage<int, std::process_resource> slots{resource};
+    if (!slots.try_allocate(std::size_t(9))) { return 13; }
+    slots.emplace(std::size_t(1), 10);
+    slots.emplace(std::size_t(4), 20);
+    slots.emplace(std::size_t(8), 30);
+    {
+      adoption_count_begin();
+      mut int checksum = 0;
+      for (mut int round = 0; round < 64; round++) {
+        auto end = slots.end();
+        auto rend = slots.rend();
+        mut int count = 0;
+        for (mut auto cursor = slots.begin(); cursor != end; ++cursor) {
+          checksum += *cursor;
+          count++;
+        }
+        if (count != 3) { return 1; }
+        {
+          auto first = slots.begin();
+          mut auto independent = first;
+          ++independent;
+          if (*first != 10 || *independent != 20 || first == independent) { return 2; }
+        }
+        mut int next_value = 30;
+        for (mut auto cursor = slots.rbegin(); cursor != rend; ++cursor) {
+          if (*cursor != next_value) { return 3; }
+          checksum += *cursor;
+          next_value -= 10;
+        }
+        if (next_value != 0) { return 4; }
+        {
+          mut auto cursor = slots.begin_mut();
+          while (cursor != end) { *cursor += 1; ++cursor; }
+        }
+        {
+          mut auto cursor = slots.rbegin_mut();
+          while (cursor != rend) { *cursor -= 1; ++cursor; }
+        }
+      }
+      adoption_count_end();
+      if (adoption_allocations() != uint64_t(0) || checksum != 7680) { return 5; }
+    }
+    for (mut std::size_t index = 0; index < std::size_t(9); index++) {
+      bool live = index == std::size_t(1) || index == std::size_t(4) || index == std::size_t(8);
+      if (slots.initialized(index) != live) { return 15; }
+    }
+    if (slots.get(std::size_t(1)) != 10 || slots.get(std::size_t(4)) != 20 ||
+        slots.get(std::size_t(8)) != 30) { return 16; }
+  }
+  mut std::simd_mask<8> mask{};
+  for (mut std::size_t index = 0; index < std::size_t(8); index++) {
+    mask.set(index, index % std::size_t(2) == std::size_t(0));
+  }
+  {
+    adoption_count_begin();
+    mut int checksum = 0;
+    for (mut int round = 0; round < 64; round++) {
+      auto end = mask.end();
+      auto rend = mask.rend();
+      mut int index = 0;
+      for (mut auto cursor = mask.begin(); cursor != end; ++cursor) {
+        if (*cursor != (index % 2 == 0)) { return 1; }
+        if (*cursor) { checksum += index + 1; }
+        index++;
+      }
+      if (index != 8) { return 2; }
+      {
+        auto first = mask.begin();
+        mut auto independent = first;
+        ++independent;
+        if (!*first || *independent || first == independent) { return 3; }
+      }
+      index = 7;
+      for (mut auto cursor = mask.rbegin(); cursor != rend; ++cursor) {
+        if (*cursor != (index % 2 == 0)) { return 4; }
+        if (*cursor) { checksum += index + 1; }
+        index--;
+      }
+      if (index != -1) { return 5; }
+      {
+        mut auto cursor = mask.begin_mut();
+        while (cursor != end) { *cursor = !*cursor; ++cursor; }
+      }
+      {
+        mut auto cursor = mask.rbegin_mut();
+        while (cursor != rend) { *cursor = !*cursor; ++cursor; }
+      }
+    }
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0) || checksum != 2048 || mask.count() != std::size_t(4)) { return 17; }
+  }
+  for (mut std::size_t index = 0; index < std::size_t(8); index++) {
+    if (mask[index] != (index % std::size_t(2) == std::size_t(0))) { return 18; }
+  }
+  return 0;
+}

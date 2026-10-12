@@ -556,6 +556,12 @@ enum class MirInstructionKind {
   // enclosing representation stays live but disarmed/empty, including on
   // failure. RHS ownership is untouched until the success-path Assign.
   CleanupBeforeAssign,
+  // Compile-time-only permission transitions for the exact read-only endpoint
+  // of a structural mutable range. They do not start/end a lifetime or release
+  // resources. Verification binds them to the range inventory and both Invoke
+  // continuations before a backend may erase them.
+  ParkRangeCursor,
+  RestoreRangeCursor,
   Count,
 };
 
@@ -991,6 +997,20 @@ struct MirValueUse {
   friend bool operator==(const MirValueUse &, const MirValueUse &) = default;
 };
 
+struct MirRangeEndpointParking {
+  MirLoanId cursor = 0;
+  HirValueId endValue = 0;
+  MirInstructionId beginCall = 0;
+  MirInstructionId endCall = 0;
+  MirInstructionId endReceiver = 0;
+  MirInstructionId park = 0;
+  MirInstructionId restore = 0;
+  std::vector<MirInstructionId> failureRestores;
+
+  friend bool operator==(const MirRangeEndpointParking &,
+                         const MirRangeEndpointParking &) = default;
+};
+
 struct MirRangeIteration {
   std::size_t id = 0;
   HirStatementId hirStatement = 0;
@@ -1006,8 +1026,16 @@ struct MirRangeIteration {
   MirPlaceId iterator = 0;
   MirPlaceId sentinel = 0;
   MirPlaceId element = 0;
+  MirPlaceId elementOwner = 0;
+  HirStatementId elementOwnerStatement = 0;
   MirLoanId rangeLoan = 0;
   MirLoanId elementLoan = 0;
+  MirLoanId elementOwnerLoan = 0;
+  MirValueId elementAccessValue = 0;
+  HirValueId elementAccessSource = 0;
+  FunctionId dereferenceFunction = 0;
+  MirDropObligationId elementOwnerDrop = 0;
+  MirDropObligationId elementSourceDrop = 0;
   MirValueId expectedPayloadExtraction = 0;
   MirDropObligationId ownerDrop = 0;
   MirBlockId conditionEntryBlock = 0;
@@ -1019,6 +1047,8 @@ struct MirRangeIteration {
   std::uint64_t arrayLength = 0;
   bool ownsRangeTemporary = false;
   bool expectedPayloadProjection = false;
+  bool materializesElementValue = false;
+  std::optional<MirRangeEndpointParking> endpointParking;
 
   friend bool operator==(const MirRangeIteration &,
                          const MirRangeIteration &) = default;
@@ -1922,6 +1952,17 @@ enumerateMirBodyAddresses(const MirProgram &program);
 mirRecordPublishedConstructorInitializer(const MirProgram &program,
                                          const MirBody &body, std::size_t owner,
                                          const MirInstruction &instruction);
+
+// These exact producers and stable places are consumed by the independently
+// verified range inventory, not just ordinary SSA uses. Canonical rewrites
+// must preserve them until they can repair and replay the corresponding range
+// publication contract. Ordinary computations inside a range body are not
+// protected merely because they occur in a loop.
+[[nodiscard]] const MirRangeIteration *
+mirRangePublishedInstruction(const MirBody &body,
+                             const MirInstruction &instruction);
+[[nodiscard]] const MirRangeIteration *
+mirRangePublishedElementOwner(const MirBody &body, MirPlaceId place);
 
 // Complete protected-place set, preserving deterministic first-seen order.
 // Missing/malformed loan or dependency identities yield an empty set so

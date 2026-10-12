@@ -1,0 +1,47 @@
+#include <std/string>
+#include <std/vector>
+enum class expected_errc { missing };
+struct Position {
+  int32_t id;
+  Position(int32_t id) : id(id) {}
+  Position(Position& other) = delete;
+  Position(Position&& other) = default;
+};
+class OwnedPosition {
+public:
+  int32_t id;
+  OwnedPosition(int32_t id) : id(id) {}
+  ~OwnedPosition() { std::println(this.id); }
+};
+expected<Position, expected_errc> position(int32_t id) {
+  if (id < 0) return unexpected(expected_errc::missing);
+  return Position(id);
+}
+expected<OwnedPosition, expected_errc> owned_position(int32_t id) {
+  if (id < 0) return unexpected(expected_errc::missing);
+  return OwnedPosition(id);
+}
+int main() {
+  mut std::vector<expected<Position, expected_errc>> plain{};
+  auto first = position(1);
+  plain.push_back(std::move(first));
+  {
+    mut auto cursor = plain.begin_mut();
+    *cursor = position(2);
+    *cursor = position(-1);
+    *cursor = position(3);
+  }
+  if (!plain[std::size_t(0)] || plain[std::size_t(0)].value().id != 3) return 1;
+  mut std::vector<expected<OwnedPosition, expected_errc>> owned{};
+  auto start = owned_position(1);
+  owned.push_back(std::move(start));
+  {
+    mut auto cursor = owned.rbegin_mut();
+    *cursor = owned_position(2);
+    *cursor = owned_position(-1);
+    *cursor = true ? owned_position(3) : owned_position(-1);
+    *cursor = owned_position(4);
+  }
+  if (!owned[std::size_t(0)] || owned[std::size_t(0)].value().id != 4) return 2;
+  return 0;
+}

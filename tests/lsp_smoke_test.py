@@ -6157,6 +6157,40 @@ def test_recursive_layout_diagnostic(executable, root):
         }, diagnostic
         assert diagnostic["relatedInformation"], diagnostic
         assert "std::unique_ptr<Cell>" in diagnostic["data"]["hints"][0]
+        inline = "struct Cell { expected<Cell, int> inner; };\n"
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 2},
+                       "contentChanges": [{"text": inline}]},
+        })
+        changed = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and any(item.get("code") == "GTI-S2082"
+                    for item in message["params"]["diagnostics"])
+        )["params"]
+        cycle = next(item for item in changed["diagnostics"]
+                     if item.get("code") == "GTI-S2082")
+        start = inline.index("expected")
+        assert cycle["range"] == {
+            "start": lsp_position(inline, start),
+            "end": lsp_position(inline, start + len("expected")),
+        }, cycle
+        assert cycle["relatedInformation"], cycle
+        assert "std::unique_ptr<Cell>" in cycle["data"]["hints"][0]
+        assert not cycle.get("data", {}).get("fixes"), cycle
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 3},
+                       "contentChanges": [{"text": "struct Cell { expected<int, int> inner; };\n"}]},
+        })
+        cleared = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )["params"]
+        assert not has_error_diagnostics(cleared), cleared
     finally:
         session.close()
 

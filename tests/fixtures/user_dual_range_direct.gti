@@ -1,0 +1,22 @@
+#include "user_dual_range_support.gti"
+#include <std/vector>
+#include <std/string>
+#include <std/panic>
+
+// Baseline: exactly the same source-defined carrier/proxy works through
+// an explicit cursor, separating range lowering from source/API validity.
+int main(int argc, std::vector<std::string> argv) {
+  std::vector<UserDualElement> first = {UserDualElement(1, std::string("left"))};
+  std::vector<UserDualElement> second = {UserDualElement(2, std::string("right"))};
+  auto range = UserDualRange(first.as_span(), second.as_span(), argc - 1);
+  UserDualGuard surrounding{5};
+  auto cursor = range.begin();
+  UserDualProxy& entry = *cursor;
+  if (argc == 4) {
+    UserDualGuard body{6};
+    std::panic("user dual loop body failure");
+  }
+  if (entry.left().value() != 1 || entry.right().value() != 2 ||
+      entry.left().text().empty() || entry.right().text().empty()) { return 1; }
+  return 0;
+}

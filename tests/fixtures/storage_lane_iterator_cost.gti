@@ -1,0 +1,128 @@
+#include <std/memory>
+#include <std/simd>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+  uint64_t slot_traversal_now_ns();
+  void slot_traversal_observe(uint64_t checksum);
+  void slot_traversal_report(uint64_t family, uint64_t length, uint64_t elapsed,
+                             uint64_t allocations, uint64_t checksum);
+}
+
+uint64_t traverse_storage(std::storage<int32_t>& values, std::size_t rounds) {
+  mut uint64_t checksum = 0;
+  auto end = values.end();
+  auto rend = values.rend();
+  for (mut std::size_t round = 0; round < rounds; round++) {
+    for (mut auto cursor = values.begin(); cursor != end; ++cursor) {
+      checksum += uint64_t(*cursor);
+    }
+    for (mut auto cursor = values.rbegin(); cursor != rend; ++cursor) {
+      checksum += uint64_t(*cursor);
+    }
+  }
+  return checksum;
+}
+
+uint64_t traverse_arena(std::arena<int32_t>& values, std::size_t rounds) {
+  mut uint64_t checksum = 0;
+  auto end = values.end();
+  auto rend = values.rend();
+  for (mut std::size_t round = 0; round < rounds; round++) {
+    for (mut auto cursor = values.begin(); cursor != end; ++cursor) {
+      checksum += uint64_t(*cursor);
+    }
+    for (mut auto cursor = values.rbegin(); cursor != rend; ++cursor) {
+      checksum += uint64_t(*cursor);
+    }
+  }
+  return checksum;
+}
+
+uint64_t traverse_lanes<uint64_t N>(std::simd<float, N>& values, std::size_t rounds) {
+  mut uint64_t checksum = 0;
+  auto end = values.end();
+  auto rend = values.rend();
+  for (mut std::size_t round = 0; round < rounds; round++) {
+    for (mut auto cursor = values.begin(); cursor != end; ++cursor) {
+      checksum += uint64_t(*cursor);
+    }
+    for (mut auto cursor = values.rbegin(); cursor != rend; ++cursor) {
+      checksum += uint64_t(*cursor);
+    }
+  }
+  return checksum;
+}
+
+int measure_storage(std::size_t capacity) {
+  std::allocator allocator{};
+  mut auto allocated = allocator.try_storage<int32_t>(capacity);
+  if (!allocated) { return 1; }
+  mut auto values = std::move(allocated).value();
+  for (mut std::size_t position = 0; position < capacity; position += 4) {
+    values.construct(position, int32_t(position));
+  }
+  [[discard]] traverse_storage(values, std::size_t(100));
+  adoption_count_begin();
+  uint64_t start = slot_traversal_now_ns();
+  uint64_t checksum = traverse_storage(values, std::size_t(20000));
+  uint64_t elapsed = slot_traversal_now_ns() - start;
+  adoption_count_end();
+  uint64_t allocations = adoption_allocations();
+  if (allocations != uint64_t(0)) { return 2; }
+  slot_traversal_observe(checksum);
+  slot_traversal_report(uint64_t(1), uint64_t(capacity), elapsed, allocations, checksum);
+  return 0;
+}
+
+int measure_arena(std::size_t length) {
+  mut auto allocated = std::try_make_arena<int32_t>(length * 2);
+  if (!allocated) { return 3; }
+  mut auto values = std::move(allocated).value();
+  for (mut std::size_t position = 0; position < length; position++) {
+    [[discard]] values.try_insert(int32_t(position));
+  }
+  [[discard]] traverse_arena(values, std::size_t(100));
+  adoption_count_begin();
+  uint64_t start = slot_traversal_now_ns();
+  uint64_t checksum = traverse_arena(values, std::size_t(20000));
+  uint64_t elapsed = slot_traversal_now_ns() - start;
+  adoption_count_end();
+  uint64_t allocations = adoption_allocations();
+  if (allocations != uint64_t(0)) { return 4; }
+  slot_traversal_observe(checksum);
+  slot_traversal_report(uint64_t(2), uint64_t(length), elapsed, allocations, checksum);
+  return 0;
+}
+
+int measure_lanes<uint64_t N>() {
+  std::simd<float, N> values{1.0};
+  [[discard]] traverse_lanes(values, std::size_t(100));
+  adoption_count_begin();
+  uint64_t start = slot_traversal_now_ns();
+  uint64_t checksum = traverse_lanes(values, std::size_t(20000));
+  uint64_t elapsed = slot_traversal_now_ns() - start;
+  adoption_count_end();
+  uint64_t allocations = adoption_allocations();
+  if (allocations != uint64_t(0)) { return 5; }
+  slot_traversal_observe(checksum);
+  slot_traversal_report(uint64_t(3), N, elapsed, allocations, checksum);
+  return 0;
+}
+
+int main() {
+  for (mut int round = 0; round < 5; round++) {
+    if (round % 2 == 0) {
+      if (measure_storage(std::size_t(128)) != 0 || measure_storage(std::size_t(256)) != 0) { return 6; }
+      if (measure_arena(std::size_t(128)) != 0 || measure_arena(std::size_t(256)) != 0) { return 7; }
+      if (measure_lanes<8>() != 0 || measure_lanes<16>() != 0) { return 8; }
+    } else {
+      if (measure_lanes<16>() != 0 || measure_lanes<8>() != 0) { return 9; }
+      if (measure_arena(std::size_t(256)) != 0 || measure_arena(std::size_t(128)) != 0) { return 10; }
+      if (measure_storage(std::size_t(256)) != 0 || measure_storage(std::size_t(128)) != 0) { return 11; }
+    }
+  }
+  return 0;
+}

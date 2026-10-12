@@ -969,8 +969,9 @@ constructed. GTI does not permit object slicing. Polymorphic destruction is
 derived by the compiler from lifecycle metadata.
 
 An ordinary class or struct cannot contain itself transitively by value. Fixed
-arrays preserve the by-value edge, while references, raw pointers, and owning
-standard-library wrappers form indirection boundaries. `GTI-S2082` diagnoses
+arrays and inline Expected/Unexpected alternatives preserve the by-value edge,
+including an error alternative. References, raw pointers and wrappers whose
+actual storage is indirect form indirection boundaries. `GTI-S2082` diagnoses
 the field that would make the containing object layout infinite before
 lifecycle inference or constructor-body analysis.
 

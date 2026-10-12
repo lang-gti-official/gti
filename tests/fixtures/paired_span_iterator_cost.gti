@@ -1,0 +1,58 @@
+#include <std/paired_span>
+#include <std/vector>
+#include <std/string>
+#include <std/memory>
+#include <std/iterator>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+void require_proxy<I>(I cursor)
+    requires std::random_access_iterator<I> &&
+             std::dereferences_to<I, std::paired_span<int, std::string>::value_type> {}
+
+int main() {
+  std::vector<int> ids = {10, 20, 30};
+  std::vector<std::string> names = {std::string("one"), std::string("two")};
+  auto pairs = std::paired_span<int, std::string>(ids.as_span(), names.as_span());
+  if (std::layout_of<std::paired_span<int, std::string>::value_type>().bytes !=
+      std::layout_of<std::size_t>().bytes * std::size_t(2) ||
+      std::layout_of<std::paired_span<int, std::string>::const_iterator>().bytes !=
+      std::layout_of<std::size_t>().bytes * std::size_t(3)) { return 1; }
+
+  adoption_count_begin();
+  require_proxy(pairs.begin());
+  require_proxy(pairs.rbegin());
+  mut int sum = 0;
+  for (mut std::size_t repeat = 0; repeat < std::size_t(128); ++repeat) {
+    mut auto forward = pairs.begin();
+    auto independent = forward;
+    forward += std::ptrdiff_t(2);
+    --forward;
+    sum += forward->first();
+    forward -= std::ptrdiff_t(1);
+    sum += forward->first();
+    if (independent->first() != 10) { return 2; }
+    {
+      auto selected = forward[std::ptrdiff_t(1)];
+      if (selected.first() != 20 || selected.second() != "two") { return 5; }
+    }
+    mut auto reverse = pairs.rbegin();
+    reverse += std::ptrdiff_t(2);
+    --reverse;
+    sum += reverse->first();
+    reverse -= std::ptrdiff_t(1);
+    sum += reverse->first();
+    if (reverse->second() != "two") { return 3; }
+    {
+      auto selected = reverse[std::ptrdiff_t(1)];
+      if (selected.first() != 10 || selected.second() != "one") { return 6; }
+    }
+  }
+  adoption_count_end();
+  if (sum != 60 * 128 || adoption_allocations() != uint64_t(0)) { return 4; }
+  return 0;
+}

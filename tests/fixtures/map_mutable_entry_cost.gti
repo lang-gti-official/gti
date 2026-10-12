@@ -1,0 +1,99 @@
+#include <std/map>
+#include <std/unordered_map>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+  uint64_t slot_traversal_now_ns();
+  void slot_traversal_observe(uint64_t checksum);
+  void slot_traversal_report(uint64_t family, uint64_t length, uint64_t elapsed,
+                             uint64_t allocations, uint64_t checksum);
+}
+
+uint64_t update(mut std::map<int,int>& values, std::size_t rounds) {
+  mut uint64_t checksum = 0;
+  auto end = values.end();
+  for (mut std::size_t round = 0; round < rounds; round++) {
+    for (mut auto cursor = values.begin_mut(); cursor != end; ++cursor) {
+      cursor->mapped() += 1;
+      checksum += uint64_t(cursor->key()) + uint64_t(cursor->mapped());
+    }
+  }
+  return checksum;
+}
+
+uint64_t update(mut std::unordered_map<int,int>& values, std::size_t rounds) {
+  mut uint64_t checksum = 0;
+  auto end = values.end();
+  for (mut std::size_t round = 0; round < rounds; round++) {
+    for (mut auto cursor = values.begin_mut(); cursor != end; ++cursor) {
+      cursor->mapped() += 1;
+      checksum += uint64_t(cursor->key()) + uint64_t(cursor->mapped());
+    }
+  }
+  return checksum;
+}
+
+int measure(mut std::map<int,int>& values, uint64_t family, std::size_t length) {
+  for (mut int index = 0; index < int(length); index++) {
+    [[discard]] values.insert(index,0);
+  }
+  [[discard]] update(values,std::size_t(100));
+  adoption_count_begin();
+  uint64_t start = slot_traversal_now_ns();
+  uint64_t checksum = update(values,std::size_t(2000));
+  uint64_t elapsed = slot_traversal_now_ns() - start;
+  adoption_count_end();
+  uint64_t allocations = adoption_allocations();
+  if (allocations != uint64_t(0)) { return 1; }
+  slot_traversal_observe(checksum);
+  slot_traversal_report(family,uint64_t(length),elapsed,allocations,checksum);
+  // Complete final state, not merely a checksum: keys survived mapped writes.
+  for (mut int key = 0; key < int(length); key++) {
+    if (!values.contains(key) || values.at(key) != 2100) { return 2; }
+  }
+  return 0;
+}
+
+int measure(mut std::unordered_map<int,int>& values, uint64_t family, std::size_t length) {
+  for (mut int index = 0; index < int(length); index++) {
+    [[discard]] values.insert(index,0);
+  }
+  [[discard]] update(values,std::size_t(100));
+  adoption_count_begin();
+  uint64_t start = slot_traversal_now_ns();
+  uint64_t checksum = update(values,std::size_t(2000));
+  uint64_t elapsed = slot_traversal_now_ns() - start;
+  adoption_count_end();
+  uint64_t allocations = adoption_allocations();
+  if (allocations != uint64_t(0)) { return 1; }
+  slot_traversal_observe(checksum);
+  slot_traversal_report(family,uint64_t(length),elapsed,allocations,checksum);
+  for (mut int key = 0; key < int(length); key++) {
+    if (!values.contains(key) || values.at(key) != 2100) { return 2; }
+  }
+  return 0;
+}
+
+int ordered(std::size_t length) {
+  mut std::map<int,int> values{};
+  return measure(values,uint64_t(1),length);
+}
+int hashed(std::size_t length) {
+  mut std::unordered_map<int,int> values{};
+  return measure(values,uint64_t(2),length);
+}
+
+int main() {
+  for (mut int sample = 0; sample < 5; sample++) {
+    if (sample % 2 == 0) {
+      if (ordered(std::size_t(128)) != 0 || hashed(std::size_t(128)) != 0 ||
+          ordered(std::size_t(256)) != 0 || hashed(std::size_t(256)) != 0) { return 1; }
+    } else {
+      if (hashed(std::size_t(256)) != 0 || ordered(std::size_t(256)) != 0 ||
+          hashed(std::size_t(128)) != 0 || ordered(std::size_t(128)) != 0) { return 2; }
+    }
+  }
+  return 0;
+}

@@ -1,0 +1,56 @@
+// Dereference returns an external stored-reference field, not cursor storage.
+// A borrowed element type must not by itself select the inline-proxy profile.
+class ExternalElement {
+  int& value;
+public:
+  ExternalElement(int& value) : value(value) {}
+  int& read() { return this.value; }
+};
+
+class ExternalEnd {
+  int coordinate;
+public:
+  ExternalEnd(int coordinate) : coordinate(coordinate) {}
+  int position() { return this.coordinate; }
+};
+
+class ExternalCursor {
+  ExternalElement& element;
+  mut int coordinate = 0;
+public:
+  ExternalCursor(ExternalElement& element) : element(element) {}
+  ExternalElement& operator*() { return this.element; }
+  void operator++() mut { this.coordinate++; }
+  bool operator!=(ExternalEnd end) { return this.coordinate != end.position(); }
+};
+
+class ExternalRange {
+  ExternalElement element;
+public:
+  ExternalRange(int& value) : element(ExternalElement(value)) {}
+  ExternalCursor begin() { return ExternalCursor(this.element); }
+  ExternalEnd end() { return ExternalEnd(2); }
+};
+
+int inspect_external(ExternalRange& range) {
+  mut int total = 0;
+  for (auto& element : range) {
+    for (auto& inner : range) { total += element.read() + inner.read(); }
+  }
+  return total;
+}
+
+int main() {
+  mut int value = 3;
+  {
+    ExternalRange range{value};
+    if (inspect_external(range) != 24) { return 1; }
+    mut auto cursor = range.begin();
+    auto end = range.end();
+    mut int total = 0;
+    for (; cursor != end; ++cursor) { total += (*cursor).read(); }
+    if (total != 6) { return 2; }
+  }
+  value = 5;
+  return value - 5;
+}

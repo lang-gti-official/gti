@@ -1,0 +1,91 @@
+#include <std/vector>
+#include <std/array>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+// Setup precedes each observed shared/exclusive forward/reverse window.
+int main() {
+  mut std::vector<int> vector = {1, 2, 3, 4, 5, 6, 7, 8};
+  mut std::array<int, 8> array = std::array<int, 8>({1, 2, 3, 4, 5, 6, 7, 8});
+  {
+    adoption_count_begin();
+    mut int checksum = 0;
+    for (mut int round = 0; round < 64; round++) {
+      auto end = vector.end();
+      auto rend = vector.rend();
+      for (mut auto cursor = vector.begin(); cursor != end; ++cursor) {
+        checksum += *cursor;
+      }
+      for (mut auto cursor = vector.rbegin(); cursor != rend; ++cursor) {
+        checksum += *cursor;
+      }
+      {
+        auto first = vector.begin();
+        mut auto independent = first;
+        ++independent;
+        if (*first != 1 || *independent != 2 || first == independent) { return 1; }
+        checksum += *first + *independent;
+      }
+      {
+        mut auto cursor = vector.begin_mut();
+        while (cursor != end) { *cursor += 1; ++cursor; }
+      }
+      {
+        mut auto cursor = vector.rbegin_mut();
+        while (cursor != rend) { *cursor -= 1; ++cursor; }
+      }
+    }
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0) || checksum != 4800) { return 2; }
+    mut int next_value = 1;
+    for (auto& value : vector) {
+      if (value != next_value) { return 3; }
+      next_value++;
+    }
+
+    if (next_value != 9) { return 10; }
+  }
+  {
+    adoption_count_begin();
+    mut int checksum = 0;
+    for (mut int round = 0; round < 64; round++) {
+      auto end = array.end();
+      auto rend = array.rend();
+      for (mut auto cursor = array.begin(); cursor != end; ++cursor) {
+        checksum += *cursor;
+      }
+      for (mut auto cursor = array.rbegin(); cursor != rend; ++cursor) {
+        checksum += *cursor;
+      }
+      {
+        auto first = array.begin();
+        mut auto independent = first;
+        ++independent;
+        if (*first != 1 || *independent != 2 || first == independent) { return 1; }
+        checksum += *first + *independent;
+      }
+      {
+        mut auto cursor = array.begin_mut();
+        while (cursor != end) { *cursor += 1; ++cursor; }
+      }
+      {
+        mut auto cursor = array.rbegin_mut();
+        while (cursor != rend) { *cursor -= 1; ++cursor; }
+      }
+    }
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0) || checksum != 4800) { return 2; }
+    mut int next_value = 1;
+    for (auto& value : array) {
+      if (value != next_value) { return 3; }
+      next_value++;
+    }
+
+    if (next_value != 9) { return 11; }
+  }
+  return 0;
+}

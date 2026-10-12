@@ -1,0 +1,88 @@
+#include <std/set>
+#include <std/unordered_set>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+// Immutable key projections never receive exclusive element access.
+int main() {
+  std::set<int> ordered = {8, 3, 7, 1, 5, 2, 6, 4};
+  std::unordered_set<int> hash = {8, 3, 7, 1, 5, 2, 6, 4};
+  {
+    adoption_count_begin();
+    mut int checksum = 0;
+    for (mut int round = 0; round < 64; round++) {
+      auto end = ordered.end();
+      mut int squares = 0;
+      mut int count = 0;
+      mut uint64_t seen = uint64_t(0);
+      for (mut auto cursor = ordered.begin(); cursor != end; ++cursor) {
+        int key = *cursor;
+        if (key < 1 || key > 8) { return 1; }
+        checksum += key;
+        squares += key * key;
+        seen |= uint64_t(1) << uint64_t(key - 1);
+        count++;
+      }
+      if (count != 8 || squares != 204 || seen != uint64_t(255)) { return 2; }
+      {
+        auto first = ordered.begin();
+        int original = *first;
+        mut auto independent = first;
+        ++independent;
+        if (*first != original || *independent == original || first == independent) { return 3; }
+      }
+      auto rend = ordered.rend();
+      mut int next_value = 8;
+      for (mut auto cursor = ordered.rbegin(); cursor != rend; ++cursor) {
+        if (*cursor != next_value) { return 4; }
+        checksum += *cursor;
+        next_value--;
+      }
+      if (next_value != 0) { return 5; }
+      auto last = ordered.end_iterator();
+      if (last != end) { return 6; }
+    }
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0)) { return 7; }
+    if (checksum != 4608) { return 9; }
+  }
+  {
+    adoption_count_begin();
+    mut int checksum = 0;
+    for (mut int round = 0; round < 64; round++) {
+      auto end = hash.end();
+      mut int squares = 0;
+      mut int count = 0;
+      mut uint64_t seen = uint64_t(0);
+      for (mut auto cursor = hash.begin(); cursor != end; ++cursor) {
+        int key = *cursor;
+        if (key < 1 || key > 8) { return 1; }
+        checksum += key;
+        squares += key * key;
+        seen |= uint64_t(1) << uint64_t(key - 1);
+        count++;
+      }
+      if (count != 8 || squares != 204 || seen != uint64_t(255)) { return 2; }
+      {
+        auto first = hash.begin();
+        int original = *first;
+        mut auto independent = first;
+        ++independent;
+        if (*first != original || *independent == original || first == independent) { return 3; }
+      }
+      auto last = hash.end_iterator();
+      if (last != end) { return 6; }
+    }
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0)) { return 7; }
+    if (checksum != 2304) { return 9; }
+  }
+  for (mut int key = 1; key <= 8; key++) {
+    if (!ordered.contains(key) || !hash.contains(key)) { return 12; }
+  }
+  return ordered.size() == std::size_t(8) && hash.size() == std::size_t(8) ? 0 : 13;
+}

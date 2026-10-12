@@ -27,6 +27,7 @@ public:
 
 struct Once { void operator()() && {} };
 struct Data { mut int left = 0; mut int right = 0; };
+struct Record { int number = 7; };
 void noop() {}
 
 class Nested {
@@ -89,6 +90,17 @@ int main() {
   if (result != 21) return 15;
   if (local_before_carrier(data.left) != 21 ||
       carrier_before_local(data.right) != 21) return 16;
+  expected<Record, int> captured = Record();
+  if (!std::parallel_invoke([captured]() -> void {
+        if (!captured || captured.value().number != 7)
+          std::panic("Expected record capture lost");
+      })) return 17;
+  expected<std::unique_ptr<Record>, int> owned_result =
+      std::make_unique<Record>();
+  if (!std::parallel_invoke([held = std::move(owned_result)]() -> void {
+        if (!held || held.value()->number != 7)
+          std::panic("Expected owning record capture lost");
+      })) return 18;
   // Both exclusive and shared loans ended before these parent mutations.
   data.left = 1;
   data.right = 2;

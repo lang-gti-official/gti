@@ -1,4 +1,5 @@
 #include <std/memory>
+#include <std/detail/iterator>
 
 namespace std {
 namespace detail {
@@ -13,62 +14,191 @@ public:
   }
 };
 
-class span_iterator<std::storage_element T> {
+class span_iterator<std::storage_element T, uint64_t Reverse = 0> {
   std::detail::prefix_owner<T>& data;
   mut size_t current_position;
+  size_t first_position;
   size_t final_position;
 
 public:
   span_iterator(std::detail::prefix_owner<T>& source, size_t position, size_t end)
-      : data(source), current_position(position), final_position(end) {
+      : data(source), current_position(position), first_position(position), final_position(end) {
+    if (position > end) { gti_internal::index_bounds_check(position, end); }
+    if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
+  }
+
+  span_iterator(std::detail::prefix_owner<T>& source, size_t begin,
+                size_t position, size_t end)
+      : data(source), current_position(position), first_position(begin), final_position(end) {
+    if (begin > position) { gti_internal::index_bounds_check(begin, position); }
     if (position > end) { gti_internal::index_bounds_check(position, end); }
     if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
   }
 
   T& operator*() {
-    gti_internal::index_bounds_check(this.current_position, this.final_position);
-    unsafe { return this.data.read_unchecked(this.current_position); }
+    mut size_t position = this.current_position;
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, this.first_position,
+                                                   this.final_position, ptrdiff_t(-1));
+    }
+    gti_internal::index_bounds_check(position, this.final_position);
+    unsafe { return this.data.read_unchecked(position); }
   }
 
+  T& operator->() { return *this; }
+
   void operator++() mut {
-    gti_internal::index_bounds_check(this.current_position, this.final_position);
-    this.current_position++;
+    this.current_position = detail::checked_iterator_step<Reverse>(
+        this.current_position, this.first_position, this.final_position);
+  }
+
+  void operator--() mut {
+    this.current_position = detail::checked_iterator_step<Reverse, 1>(
+        this.current_position, this.first_position, this.final_position);
+  }
+
+  void operator+=(ptrdiff_t offset) mut {
+    this.current_position = detail::checked_iterator_position(
+        this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
+  }
+
+  void operator-=(ptrdiff_t offset) mut {
+    this.current_position = detail::checked_iterator_position(
+        this.current_position, this.first_position, this.final_position, offset, Reverse == 0);
+  }
+
+  T& operator[](ptrdiff_t offset) {
+    mut size_t position = detail::checked_iterator_position(
+        this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, this.first_position,
+                                                   this.final_position, ptrdiff_t(-1));
+    }
+    gti_internal::index_bounds_check(position, this.final_position);
+    unsafe { return this.data.read_unchecked(position); }
+  }
+
+  ptrdiff_t operator-(span_sentinel sentinel) {
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(sentinel.position(), this.current_position); }
+    return detail::checked_iterator_difference(this.current_position, sentinel.position());
+  }
+
+  ptrdiff_t operator-(span_iterator<T, Reverse>& other) {
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(other.current_position, this.current_position); }
+    return detail::checked_iterator_difference(this.current_position, other.current_position);
   }
 
   bool operator!=(span_sentinel sentinel) {
     return this.current_position != sentinel.position();
   }
 
-  bool operator!=(span_iterator<T>& other) {
+  bool operator!=(span_iterator<T, Reverse>& other) {
     return this.current_position != other.current_position;
+  }
+
+  bool operator==(span_sentinel sentinel) {
+    return this.current_position == sentinel.position();
+  }
+
+  bool operator==(span_iterator<T, Reverse>& other) {
+    return this.current_position == other.current_position;
   }
 };
 
-class mutable_span_iterator<std::storage_element T> {
+class mutable_span_iterator<std::storage_element T, uint64_t Reverse = 0> {
   mut std::detail::prefix_owner<T>& data;
   mut size_t current_position;
+  size_t first_position;
   size_t final_position;
 public:
   mutable_span_iterator(mut std::detail::prefix_owner<T>& source,
                         size_t begin, size_t end)
-      : data(source), current_position(begin), final_position(end) {
+      : data(source), current_position(begin), first_position(begin), final_position(end) {
     if (begin > end) { gti_internal::index_bounds_check(begin, end); }
     if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
   }
+  mutable_span_iterator(mut std::detail::prefix_owner<T>& source,
+                        size_t begin, size_t position, size_t end)
+      : data(source), current_position(position), first_position(begin), final_position(end) {
+    if (begin > position) { gti_internal::index_bounds_check(begin, position); }
+    if (position > end) { gti_internal::index_bounds_check(position, end); }
+    if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
+  }
   T& operator*() {
-    gti_internal::index_bounds_check(this.current_position, this.final_position);
-    unsafe { return this.data.read_unchecked(this.current_position); }
+    mut size_t position = this.current_position;
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, this.first_position,
+                                                   this.final_position, ptrdiff_t(-1));
+    }
+    gti_internal::index_bounds_check(position, this.final_position);
+    unsafe { return this.data.read_unchecked(position); }
   }
   mut T& operator*() mut {
-    gti_internal::index_bounds_check(this.current_position, this.final_position);
-    unsafe { return this.data.read_mut_unchecked(this.current_position); }
+    mut size_t position = this.current_position;
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, this.first_position,
+                                                   this.final_position, ptrdiff_t(-1));
+    }
+    gti_internal::index_bounds_check(position, this.final_position);
+    unsafe { return this.data.read_mut_unchecked(position); }
   }
+  T& operator->() { return *this; }
+  mut T& operator->() mut { return *this; }
   void operator++() mut {
-    gti_internal::index_bounds_check(this.current_position, this.final_position);
-    this.current_position++;
+    this.current_position = detail::checked_iterator_step<Reverse>(
+        this.current_position, this.first_position, this.final_position);
+  }
+  void operator--() mut {
+    this.current_position = detail::checked_iterator_step<Reverse, 1>(
+        this.current_position, this.first_position, this.final_position);
+  }
+  void operator+=(ptrdiff_t offset) mut {
+    this.current_position = detail::checked_iterator_position(
+        this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.current_position = detail::checked_iterator_position(
+        this.current_position, this.first_position, this.final_position, offset, Reverse == 0);
+  }
+  T& operator[](ptrdiff_t offset) {
+    mut size_t position = detail::checked_iterator_position(
+        this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, this.first_position,
+                                                   this.final_position, ptrdiff_t(-1));
+    }
+    gti_internal::index_bounds_check(position, this.final_position);
+    unsafe { return this.data.read_unchecked(position); }
+  }
+  mut T& operator[](ptrdiff_t offset) mut {
+    mut size_t position = detail::checked_iterator_position(
+        this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
+    if constexpr (Reverse != 0) {
+      position = detail::checked_iterator_position(position, this.first_position,
+                                                   this.final_position, ptrdiff_t(-1));
+    }
+    gti_internal::index_bounds_check(position, this.final_position);
+    unsafe { return this.data.read_mut_unchecked(position); }
+  }
+  ptrdiff_t operator-(span_sentinel sentinel) {
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(sentinel.position(), this.current_position); }
+    return detail::checked_iterator_difference(this.current_position, sentinel.position());
+  }
+  ptrdiff_t operator-(mutable_span_iterator<T, Reverse>& other) {
+    if constexpr (Reverse != 0) { return detail::checked_iterator_difference(other.current_position, this.current_position); }
+    return detail::checked_iterator_difference(this.current_position, other.current_position);
   }
   bool operator!=(span_sentinel sentinel) {
     return this.current_position != sentinel.position();
+  }
+  bool operator==(span_sentinel sentinel) {
+    return this.current_position == sentinel.position();
+  }
+  bool operator!=(mutable_span_iterator<T, Reverse>& other) {
+    return this.current_position != other.current_position;
+  }
+  bool operator==(mutable_span_iterator<T, Reverse>& other) {
+    return this.current_position == other.current_position;
   }
 };
 }
@@ -91,6 +221,7 @@ class span<std::storage_element T> {
 
 public:
   using const_iterator = detail::span_iterator<T>;
+  using const_reverse_iterator = detail::span_iterator<T, 1>;
   using sentinel = detail::span_sentinel;
 
   // The source owner, not a raw address, retains the checked dependency.
@@ -165,6 +296,22 @@ public:
   detail::span_sentinel end() {
     return detail::span_sentinel(this.first_position + this.element_count);
   }
+
+  detail::span_iterator<T> end_iterator() {
+    size_t end = this.first_position + this.element_count;
+    return detail::span_iterator<T>(this.data, this.first_position, end, end);
+  }
+
+  detail::span_iterator<T> cbegin() { return this.begin(); }
+  detail::span_sentinel cend() { return this.end(); }
+
+  const_reverse_iterator rbegin() {
+    size_t end = this.first_position + this.element_count;
+    return const_reverse_iterator(this.data, this.first_position, end, end);
+  }
+  detail::span_sentinel rend() { return detail::span_sentinel(this.first_position); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  detail::span_sentinel crend() { return this.rend(); }
 };
 
 /// An exclusive, move-only view of initialized contiguous elements.
@@ -186,6 +333,8 @@ class mutable_span<std::storage_element T> {
 public:
   using iterator = detail::mutable_span_iterator<T>;
   using const_iterator = detail::span_iterator<T>;
+  using reverse_iterator = detail::mutable_span_iterator<T, 1>;
+  using const_reverse_iterator = detail::span_iterator<T, 1>;
   using sentinel = detail::span_sentinel;
 
   mutable_span(mut std::detail::prefix_owner<T>& source,
@@ -260,6 +409,31 @@ public:
   }
   detail::span_sentinel end() {
     return detail::span_sentinel(this.first_position + this.element_count);
+  }
+  detail::span_iterator<T> end_iterator() {
+    size_t end = this.first_position + this.element_count;
+    return detail::span_iterator<T>(this.data, this.first_position, end, end);
+  }
+  detail::mutable_span_iterator<T> end_mut() mut {
+    size_t end = this.first_position + this.element_count;
+    return detail::mutable_span_iterator<T>(this.data, this.first_position, end, end);
+  }
+  detail::span_iterator<T> cbegin() { return this.begin(); }
+  detail::span_sentinel cend() { return this.end(); }
+  const_reverse_iterator rbegin() {
+    size_t end = this.first_position + this.element_count;
+    return const_reverse_iterator(this.data, this.first_position, end, end);
+  }
+  detail::span_sentinel rend() { return detail::span_sentinel(this.first_position); }
+  const_reverse_iterator crbegin() { return this.rbegin(); }
+  detail::span_sentinel crend() { return this.rend(); }
+  reverse_iterator rbegin_mut() mut {
+    size_t end = this.first_position + this.element_count;
+    return reverse_iterator(this.data, this.first_position, end, end);
+  }
+  reverse_iterator rend_mut() mut {
+    return reverse_iterator(this.data, this.first_position, this.first_position,
+                            this.first_position + this.element_count);
   }
 };
 }

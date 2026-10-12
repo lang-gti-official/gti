@@ -4449,6 +4449,17 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
     return byValueTypeReachesClass(type.arguments.front(), target, visiting,
                                    visitingEnums, exhausted);
   }
+  if (type.kind == SemanticType::Expected ||
+      type.kind == SemanticType::Unexpected) {
+    // Alternatives occupy inline object storage even when only the error arm
+    // is constructed. Their wrapper is not an owning indirection boundary.
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const SemanticType &alternative) {
+                         return byValueTypeReachesClass(alternative, target,
+                                                        visiting, visitingEnums,
+                                                        exhausted);
+                       });
+  }
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
       type.enumId <= enums.size()) {
     if (std::find(visitingEnums.begin(), visitingEnums.end(), type) !=

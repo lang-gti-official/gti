@@ -1,0 +1,51 @@
+#include <std/string>
+#include <std/vector>
+enum class expected_errc { missing };
+class Tracked {
+  int32_t tag;
+  int32_t cleanup_divisor;
+public:
+  Tracked(int32_t tag, int32_t divisor, int32_t cleanup_divisor)
+      : tag(tag), cleanup_divisor(cleanup_divisor) {
+    int32_t checked = 12 / divisor;
+  }
+  ~Tracked() {
+    std::println(this.tag);
+    int32_t checked = 12 / this.cleanup_divisor;
+  }
+};
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println(9); }
+};
+class Holder {
+public:
+  mut expected<Tracked, expected_errc> value;
+  Holder(expected<Tracked, expected_errc> value) : value(std::move(value)) {}
+};
+class Cursor {
+  mut Holder& owner;
+public:
+  Cursor(mut Holder& owner) : owner(owner) {}
+  mut expected<Tracked, expected_errc>& operator*() mut { return this.owner.value; }
+};
+expected<Tracked, expected_errc> initial(int32_t cleanup_divisor) {
+  return Tracked(1, 1, cleanup_divisor);
+}
+expected<Tracked, expected_errc> replacement(int32_t divisor) {
+  return Tracked(2, divisor, 1);
+}
+void replace(mut Holder& owner, int32_t divisor) {
+  mut Cursor cursor{owner};
+  *cursor = replacement(divisor);
+}
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  mut Holder holder{initial(argc == 3 || argc == 5 ? 0 : 1)};
+  replace(holder, argc == 2 || argc == 5 ? 0 : 1);
+  int32_t divisor = argc == 4 ? 0 : 1;
+  int32_t checked = 12 / divisor;
+  std::println(99);
+  return 0;
+}

@@ -1,0 +1,10 @@
+#include <std/map>
+#include <std/utility>
+int main() {
+  mut std::map<int, int> values{};
+  [[discard]] values.insert(1, 10);
+  mut auto cursor = values.begin_mut();
+  *cursor = std::detail::map_entry<int, int>(2, 20);
+  int key = 2;
+  return values.contains(key) ? 0 : 1;
+}

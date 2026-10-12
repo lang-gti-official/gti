@@ -231,9 +231,9 @@ The current implemented foundation includes:
   does not grant mutable access to the object; and
 - `<std/array>` `std::array<T, N>` over checked fixed-array storage, including
   front/back access, copyable-element fill, read-only random-access cursors,
-  and confined mutable traversal. Constructors, `size`, `empty`, and the
-  read-only `at`, `front`, and `back` methods support constexpr evaluation for
-  supported elements; mutable access and iterator traversal remain runtime
+  and checked exclusive positional/reverse cursors. Constructors, `size`,
+  `empty`, and the read-only `at`, `front`, and `back` methods support constexpr
+  evaluation for supported elements; mutable access and iterator traversal remain runtime
   operations; and
 - `<std/string>` `std::string` as a move-only owner over a source-defined
   terminated character prefix, including
@@ -744,18 +744,21 @@ public member aliases:
 | `iterator` | `begin_mut()` |
 | `sentinel` | `end()` |
 
-`vector`, `array`, `deque`, `list`, and `mutable_span` provide all three.
-`span`, `string`, `resource_vector`, and `forward_list` iterate read-only and
-provide `const_iterator` and `sentinel`; `forward_list`'s `begin()` and `end()`
-remain declaration scaffolds. `map` and `unordered_map` add `sentinel` to their
+`vector`, `array`, `deque`, `list`, `mutable_span`, `string`,
+`resource_vector`, and `forward_list` provide all three. Read-only `span`
+provides `const_iterator` and `sentinel`. `map` and `unordered_map` add `sentinel` to their
 existing `iterator` and `const_iterator`, which also name the results of
 `find_mut` and `find`. `set` and `unordered_set` add `sentinel`; their
 `iterator` names the insertion-result iterator.
 
 Each alias is transparent and names exactly the `std::detail` type the
-operation returns, so it changes no borrowing rule. A mutable `iterator` is
-still a range-`for` carrier, so it can be returned from a range's own
-`begin_mut()` but not stored in an ordinary local. Outside the owner, the
+operation returns, so it changes no borrowing rule. A mutable `iterator` can
+be retained in a checked local or transferred by move while preserving its
+exclusive owner dependency; it cannot duplicate that permission or outlive
+its owner. Applicable containers also provide reverse aliases/endpoints and
+common-position endpoints under the
+[traversal capability contract](ranges.md#container-traversal-capabilities).
+Outside the owner, the
 aliases can be named through an alias of a concrete specialization:
 
 ```gti
@@ -1166,9 +1169,11 @@ the broader `std::copyable`, because it is not copy-assignable or reseatable.
 A source-defined helper that receives the iterator by value may return only
 the iterator's exact owner dependency: either the carrier value or its exact
 stored referent of the same type, never an iterator-position/shell projection.
-`begin_mut()` supplies the separate ephemeral mutable iterator used by range
-`for`; its exclusive parent loan prevents overlapping owner operations and each
-iteration carries one mutable element child loan. The mutable iterator remains
+`begin_mut()` supplies a separate source-defined exclusive cursor for range
+`for` and explicit traversal. Its retained parent loan prevents overlapping
+owner operations; dereference carries a mutable element child loan that must
+end before the cursor moves. Mutable cursors support checked positional and
+reverse traversal without duplicating their exclusive permission and remain
 non-copyable. Container-specific invalidation precision remains outside this
 slice.
 
@@ -1239,15 +1244,19 @@ both inputs sorted; equal elements from the receiving list come first.
 default-constructs or copies only added elements, and destroys a truncated
 suffix. Clear and ordinary destruction drain the chain iteratively.
 
-The `<std/forward_list>` declaration-only iterator is explicitly move-only and
-read-only.
-Nullable owner-tied traversal and invalidation remain unavailable; iterator
-operations are still bodyless. `emplace_front` has final-field construction and
+`<std/forward_list>` provides source-defined shared and exclusive forward
+cursors over the nullable node chain. Shared copies advance independently
+while retaining their checked owner dependency; exclusive cursors are
+noncopyable. `begin/cbegin`, `end/cend`, common-position end cursors and
+`begin_mut` support explicit loops, range-for and compatible generic algorithms.
+Dereference and arrow access remain checked, and all overlapping owner
+invalidation is excluded while a cursor or element loan remains live.
+`emplace_front` has final-field construction and
 cleanup evidence, including passing current O0/O3 execution of the retained
 borrowed constructor-pack reproducer. `L-UP-10` tracks its remaining broad
-composition/cleanup acceptance, not a currently failing reproducer. The declaration-only span is
-replaced by the executable `std::span<T>` and `std::mutable_span<T>` surfaces
-above; raw address exposure remains absent.
+composition/cleanup acceptance, not a currently failing reproducer. Executable
+`std::span<T>` and `std::mutable_span<T>` retain their checked view contract;
+iteration does not add raw address exposure.
 
 `<std/list>` is an executable doubly-linked sequence. Each element has one
 exclusive node owner; private checked slot indexes represent previous/next

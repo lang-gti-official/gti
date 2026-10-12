@@ -2656,11 +2656,24 @@ private:
     TypeRef sentinelType(generatedToken(TokenKind::AUTO, "auto", colon));
 
     StmtList loopBody;
+    ExprPtr elementAccess = std::make_unique<Unary>(
+        generatedToken(TokenKind::STAR, "*", colon),
+        generatedVariable(iteratorName), generatedVariable(rangeName));
+    const VariableDecl *elementOwnerBindingPointer = nullptr;
+    if (!mutableElementLoan && bindingType.reference) {
+      Token elementOwnerName = generatedToken(
+          TokenKind::IDENTIFIER, "__gti_element_owner_" + suffix, colon);
+      auto elementOwner = std::make_shared<VariableDecl>(
+          Mutability::Immutable,
+          TypeRef(generatedToken(TokenKind::AUTO, "auto", colon)),
+          elementOwnerName, std::move(elementAccess), std::nullopt, false,
+          std::nullopt, false, false, std::nullopt, true);
+      elementOwnerBindingPointer = elementOwner.get();
+      loopBody.emplace_back(std::move(elementOwner));
+      elementAccess = generatedVariable(elementOwnerName);
+    }
     auto elementBinding = std::make_shared<VariableDecl>(
-        bindingMutability, bindingType, bindingName,
-        std::make_unique<Unary>(generatedToken(TokenKind::STAR, "*", colon),
-                                generatedVariable(iteratorName),
-                                generatedVariable(rangeName)),
+        bindingMutability, bindingType, bindingName, std::move(elementAccess),
         std::nullopt, true);
     const VariableDecl *elementBindingPointer = elementBinding.get();
     loopBody.emplace_back(std::move(elementBinding));
@@ -2711,7 +2724,7 @@ private:
         std::move(bindingName), std::move(colon),
         std::make_unique<BlockStmt>(std::move(lowered)), ownerBindingPointer,
         rangeBindingPointer, iteratorBindingPointer, sentinelBindingPointer,
-        elementBindingPointer, coreLoopPointer);
+        elementBindingPointer, coreLoopPointer, elementOwnerBindingPointer);
   }
 
   StmtPtr switchStatement() {

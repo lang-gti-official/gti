@@ -2771,6 +2771,28 @@ struct Branch {
              countDiagnosticCode(fixedArray.diagnostics, "GTI-S2082") == 1 &&
              hasDiagnostic(fixedArray.diagnostics, "through field 'children'"),
          "fixed arrays should preserve their by-value recursive layout edge");
+
+  for (const auto &field :
+       {"expected<Cell, int> inner;", "expected<int, Cell> inner;",
+        "expected<Cell, int> inner[2];"}) {
+    const std::string source =
+        "struct Cell {\n  " + std::string(field) + "\n};\n";
+    const auto result =
+        lang::Frontend().analyze("recursive-expected-layout.gti", source);
+    const auto *diagnostic =
+        findDiagnosticByCode(result.diagnostics, "GTI-S2082");
+    const auto start = source.find("expected");
+    expect(!result.canGenerateCode() && diagnostic != nullptr &&
+               diagnostic->primary.start == start &&
+               diagnostic->primary.end == start + 8 &&
+               countDiagnosticCode(result.diagnostics, "GTI-S2082") == 1 &&
+               countDiagnosticCode(result.diagnostics, "GTI-B0001") == 0 &&
+               hasRelatedDiagnostic(result.diagnostics,
+                                    "recursively contained type") &&
+               hasDiagnosticHint(result.diagnostics, "std::unique_ptr<Cell>"),
+           "inline Expected alternatives preserve the recursive layout edge "
+           "at the source field, including arrays and the error alternative");
+  }
 }
 
 void testNamedGenerics() {

@@ -1,0 +1,20 @@
+import std.string_view;
+
+int main() {
+  std::string_view text = "A\0bc";
+  mut int count = 0;
+  for (char& character : text) {
+    if (character != text[std::size_t(count)]) { return 1; }
+    count++;
+  }
+  if (count != 4) { return 1; }
+  mut auto forward = text.begin();
+  mut auto copied = forward;
+  ++copied;
+  if (*forward != 'A' || *copied != '\0') { return 2; }
+  mut auto reverse = text.rbegin();
+  if (*reverse != 'c') { return 3; }
+  reverse += std::ptrdiff_t(4);
+  if (reverse != text.rend()) { return 4; }
+  return 0;
+}

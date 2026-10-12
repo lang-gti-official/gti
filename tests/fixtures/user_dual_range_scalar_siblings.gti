@@ -1,0 +1,43 @@
+#include <std/vector>
+#include <std/span>
+
+// Independent scalar parameter copies must not change the native field
+// publication proof merely because their declaration position differs.
+class LeadingScalarViews {
+  int bias;
+  std::span<int> first;
+  std::span<int> second;
+public:
+  LeadingScalarViews(int bias, std::span<int> first, std::span<int> second)
+      : bias(bias), first(std::move(first)), second(std::move(second)) {}
+  int total() { return this.bias + this.first[std::size_t(0)] + this.second[std::size_t(0)]; }
+};
+
+class MiddleScalarViews {
+  std::span<int> first;
+  int bias;
+  std::span<int> second;
+public:
+  MiddleScalarViews(int bias, std::span<int> first, std::span<int> second)
+      : first(std::move(first)), bias(bias), second(std::move(second)) {}
+  int total() { return this.bias + this.first[std::size_t(0)] + this.second[std::size_t(0)]; }
+};
+
+class TrailingScalarViews {
+  std::span<int> first;
+  std::span<int> second;
+  int bias;
+public:
+  TrailingScalarViews(int bias, std::span<int> first, std::span<int> second)
+      : first(std::move(first)), second(std::move(second)), bias(bias) {}
+  int total() { return this.bias + this.first[std::size_t(0)] + this.second[std::size_t(0)]; }
+};
+
+int main() {
+  std::vector<int> first = {1};
+  std::vector<int> second = {2};
+  LeadingScalarViews leading{3, first.as_span(), second.as_span()};
+  MiddleScalarViews middle{3, first.as_span(), second.as_span()};
+  TrailingScalarViews trailing{3, first.as_span(), second.as_span()};
+  return leading.total() + middle.total() + trailing.total() - 18;
+}

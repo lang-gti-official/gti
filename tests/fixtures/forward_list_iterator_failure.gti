@@ -1,0 +1,46 @@
+#include <std/forward_list>
+#include <std/string>
+#include <std/vector>
+#include <std/array>
+#include <std/algorithm>
+
+class TraversalGuard {
+public:
+  ~TraversalGuard() { std::println("cleaned"); }
+};
+
+class TrackedNode {
+public:
+  int32_t identity;
+  TrackedNode(int32_t identity) : identity(identity) {}
+  TrackedNode(TrackedNode& other) = delete;
+  TrackedNode(TrackedNode&& other) = delete;
+  ~TrackedNode() { std::println(this.identity); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  TraversalGuard guard{};
+  mut std::forward_list<TrackedNode> owned{};
+  [[discard]] owned.emplace_front(1);
+  [[discard]] owned.emplace_front(2);
+  [[discard]] owned.emplace_front(3);
+  mut std::forward_list<int32_t> values{};
+  if (argc == 1) {
+    auto empty = values.begin();
+    return *empty;
+  } else if (argc == 2) {
+    mut auto empty = values.begin();
+    ++empty;
+  } else if (argc == 3) {
+    mut auto empty = values.begin_mut();
+    *empty = 1;
+  } else if (argc == 4) {
+    mut auto empty = values.begin_mut();
+    ++empty;
+  } else {
+    values.push_front(0);
+    std::array<int32_t, 2> source = std::array<int32_t, 2>({1, 2});
+    std::copy(source.begin(), source.end(), values.begin_mut());
+  }
+  return 1;
+}

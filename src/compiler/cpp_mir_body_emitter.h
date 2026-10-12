@@ -651,6 +651,10 @@ public:
   analyze(MirBodyAddress address) const;
   [[nodiscard]] CppMirBodyEmissionPlan buildPlan(MirBodyAddress address) const;
   [[nodiscard]] CppMirProgramEmissionPlan buildProgramPlan() const;
+  // Batch the same structural analyses as analyze(address), validating this
+  // immutable program/map once within this call. Global failure returns no
+  // independently Ready bodies. Structural Ready alone is not text admission.
+  [[nodiscard]] CppMirProgramEmissionAnalysis analyzeProgramStructure() const;
   // Verifies both MIR/representation coherence and complete text coverage for
   // every core body. A Ready result is the backend preflight guarantee that no
   // executable body needs an AST/HIR emission path.
@@ -731,6 +735,8 @@ public:
       HirConstructorInstanceId constructor) const;
 
 private:
+  [[nodiscard]] CppMirProgramEmissionAnalysis
+  analyzeProgramImpl(bool includeTextVocabulary) const;
   [[nodiscard]] CppMirBodyEmissionPlan
   buildPlanFromAnalysis(CppMirBodyEmissionAnalysis analysis) const;
   [[nodiscard]] bool supportsBodyTextImpl(MirBodyAddress address,
