@@ -650,6 +650,17 @@ analysis returns, once HIR's diagnostics are in the result, so retained
 snapshots hold syntax, semantics, and source identity only. Code generation
 remains disabled.
 
+Editor analysis and completion also set `trustedBodies = Reachable`:
+standard-library (compiler-trusted) function bodies are analysed only when
+something analysed demands them. A body that only concrete generic discovery
+selects is completed during HIR lowering by late demand, inside the same
+analysis, so an edit runs registration, body analysis and HIR once (see "Body
+Order And Demand" in [semantic-analysis.md](semantic-analysis.md)). The
+bounded repeated analysis remains only for the cases late demand refuses. The
+frontend trace reports `semanticLateDemandBodies`,
+`semanticLateDemandMicroseconds`, `semanticDemandRounds` and
+`semanticDemandFallbacks` for every analysis.
+
 Before analysis and completion, the LSP asks the driver for immutable
 `ProjectFacts` for the package containing the entry document. The facts select
 the nearest workspace member/package, the selected profile's analysis
