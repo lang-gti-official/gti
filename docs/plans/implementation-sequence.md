@@ -97,7 +97,11 @@ completion counters and scalar handoffs for managed/scoped workers.
 Acceptance requires positive and negative semantic tests, malformed-MIR
 rejection, optimizer barriers, C++20/C++23 O0/O1/O3 handshake/broadcast execution,
 editor and installed-library coverage, sanitizers where available, and runtime,
-allocation and code-size evidence. Validation is in progress. Guard-aware
+allocation and code-size evidence. The implementation passes the focused
+macOS/Linux gates, 674/675 remote full-sweep tests and the sole remote
+permission-limited debugger gate locally; measured costs and exact snapshot
+identities are recorded in [verification](../architecture/verification.md#safe-atomic-waiting-2026-10-12).
+Final clean-head reconciliation remains the integration gate. Guard-aware
 condition variables (loan suspension), timed waits and persistent worker pools
 remain separate goals, not claims of this slice.
 
