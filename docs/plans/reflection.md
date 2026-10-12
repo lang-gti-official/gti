@@ -272,9 +272,14 @@ state: `primary_name_of` (added); a range-for inside a primary-deferred
 accepts the instance's own plan there); the C++ emitter rejects a function
 that returns an `expected` call result or moved `expected` local with a class
 or enum payload while a dropped local is live (general emitter gap, fixed
-separately; the library binds results before returning them). Still open for
-the deprecation of `std::json`: optional members and `null`, maps, doubles
-with exact lexemes, pretty printing.
+separately; the library binds results before returning them). The second slice
+(0.406.0) brought the codec-use parity the owner asked for: optionals and
+`null`, string-keyed maps, exact number lexemes with range checks, strict
+UTF-8 and escapes, `codec<T>` specializations detected through reflection,
+pretty printing, decode limits, and errors with JSON Pointer paths and
+line/column. What `std::json` still offers beyond it is the dynamic `value`
+document model and lexeme-preserving numbers; deprecating `std::json`'s
+explicit codecs is now the owner's call, the DOM stays.
 
 Goal: decoding without weakening initialization or ownership, the remaining
 declaration kinds, and the move of reflection from "later breadth" to a

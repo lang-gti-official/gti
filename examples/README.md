@@ -197,7 +197,7 @@ is a teaching helper, not a production server.
 | `138-structural-construction.gti` | `std::meta::construct` building structs field by field from a byte reader and a text reader, with `expected` failures stopping production before construction |
 | `139-ordered-search.gti` | partition-point discovery and comparator bounds/binary search over application records without `operator<`, using the same descending order as sorting |
 | `140-environment-configuration.gti` | read-only owned environment configuration, missing versus explicitly empty values, and invalid-name rejection; try `GTI_DEMO_PROFILE=development` when running it |
-| `141-reflected-json.gti` | `<std/experimental/json>` encoding and decoding a reflectable struct with nested structs, vectors, an enum, a renamed and an ignored field, and a decoding failure with its kind and offset |
+| `141-reflected-json.gti` | `<std/experimental/json>` encoding and decoding a reflectable struct with nested structs, vectors, an enum, an optional, a renamed and an ignored field, pretty output, and a decoding failure with its kind, path and offset |
 | `142-constexpr-builders.gti` | checked mutable constexpr references, `void` helpers, constructor-body edits, mutable array access and reflection-driven field mutation, with runtime parity |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
