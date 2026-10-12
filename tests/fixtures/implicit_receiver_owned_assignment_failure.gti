@@ -1,0 +1,21 @@
+#include <std/string>
+
+struct Details {
+  mut std::string title = std::string("initial");
+};
+struct Marker {
+  ~Marker() { std::println("cleaned"); }
+};
+class Owner {
+  mut Marker marker{};
+  mut Details details{};
+public:
+  Owner(std::string_view title, int divisor) {
+    details.title = std::string(title);
+    int result = 10 / divisor;
+  }
+};
+int main() {
+  Owner owner{"replacement", 0};
+  return 0;
+}
