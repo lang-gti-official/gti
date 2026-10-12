@@ -1178,15 +1178,15 @@ void testOrderedExecutableBuildCommand() {
                  lang::driver::ExecutableBuildStatus::NativeCompilerFailure &&
              runtime != command.end() && target != command.end() &&
              provider != command.end() && nativeObject != command.end() &&
-             result.cCompilations.size() == 1 && nativeObject < runtime &&
-             runtime < target && target < provider &&
+             result.cCompilations.size() == 1 && nativeObject < target &&
+             target < provider && provider < runtime &&
              std::find(command.begin(), command.end(),
                        "ignored-category-file.a") == command.end() &&
              std::find(command.begin(), command.end(),
                        "-lignored-category-library") == command.end(),
-         "executable builds should place compiled C objects before the runtime "
-         "and authoritative ordered project operands without duplicating split "
-         "metadata categories");
+         "executable builds should place compiled C objects and authoritative "
+         "ordered project operands before the runtime, which links last, "
+         "without duplicating split metadata categories");
   expect(result.backendDiagnosticLog &&
              result.backendDiagnosticLog->succeeded() &&
              readFile(result.backendDiagnosticLog->path).find("Command:") !=

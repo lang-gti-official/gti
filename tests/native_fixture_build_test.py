@@ -18,6 +18,7 @@ from iterator_sanitizer_support import (gcc_sanitizer_arguments,
                                         partition_main,
                                         selected_native_driver)
 import lambda_pack_invocation_runtime_test as matrix
+from sanitizer_support import SANITIZED_BUILD_TIMEOUT
 import shared_accessor_range_runtime_test as accessor
 import storage_lane_iterator_runtime_test as storage
 
@@ -255,9 +256,9 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
         self.assertEqual(len(commands), 16)
         self.assertEqual(len(callbacks), 16)
         for command, options in commands:
-            self.assertEqual(options["timeout"], 120)
             provided = Path(command[1]).stem == "with_provider"
             sanitized = "-fsanitize=address,undefined" in command
+            self.assertEqual(options["timeout"], SANITIZED_BUILD_TIMEOUT if sanitized else 120)
             self.assertEqual("-fno-inline-functions-called-once" in command, provided and sanitized)
             self.assertEqual("-fno-inline" in command, provided and sanitized)
             if provided and sanitized:
