@@ -473,7 +473,8 @@ int main() {
       !copyResult.canGenerateCode() && copyError != nullptr &&
           copyError->phase == lang::DiagnosticPhase::Semantics &&
           copyError->primary.source ==
-              std::filesystem::weakly_canonical("dereference-owner-copy.gti")
+              std::filesystem::weakly_canonical(
+                  std::filesystem::absolute("dereference-owner-copy.gti"))
                   .string() &&
           copyError->primary.start == dereferencePrefix.size() &&
           copyError->primary.end == dereferencePrefix.size() + 6 &&
@@ -733,7 +734,8 @@ int main() {
       findDiagnosticByCode(userConflict.diagnostics, "GTI-S2017");
   expect(!userConflict.semanticValid && userDiagnostic != nullptr &&
              userDiagnostic->primary.source ==
-                 std::filesystem::weakly_canonical("user-carrier-operands.gti")
+                 std::filesystem::weakly_canonical(
+                     std::filesystem::absolute("user-carrier-operands.gti"))
                      .string() &&
              userDiagnostic->primary.start == userCarrier.find("&&") &&
              userDiagnostic->primary.end == userCarrier.find("&&") + 2 &&
