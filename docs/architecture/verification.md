@@ -1,5 +1,37 @@
 # Compiler Verification
 
+## Aggregate standard import and trusted body demand (0.409.1)
+
+The source-defined `stdlib/std.gti` inventory re-exports 44 portable public
+modules, leaving environment/process/TCP and experimental units explicit.
+`stdlib_modules` checks mixed imports/includes and Darwin, Linux and Windows
+target analysis. `trusted_body_analysis` compares complete and reachable
+application diagnostics over the examples and library tests, exercises unused
+trusted errors, reached callees/function items, eager constant/virtual bodies,
+visitor reuse, and generic calls through an unrelated `Producer`.
+The body-order gate remains independent. Incomplete HIR cannot become an
+artifact: newly selected primary bodies trigger semantic closure first.
+
+`aggregate_std_runtime` validates example 147 in all eight standard/optimization,
+no-elision and sanitizer modes. Its reviewed inventory is 422 MIR bodies,
+3,129 LoweredProgram declarations and 245 generated items. The aggregate LSP
+gate covers UTF-16 hover/definition, a missing-return diagnostic, completion in
+incomplete source and recovery. The macOS installed-runtime gate checks the
+aggregate after relocation without source-tree configuration.
+
+Initial optimized M2 Max measurements (AppleClang 21, LLVM 23.1.2) compared
+the same artifact HIR scope: example 147's complete semantic/HIR times were
+956/54 ms, versus 758/98 ms with reachable bodies; example 20 was 140/12 ms
+versus 138/22 ms. Both needed one demand retry and no complete fallback.
+These shared-host observations are not a universal speedup claim. Equivalent
+O3 aggregate and individual-import programs produced identical output and
+the same 98,304-byte text / 16,384-byte data segment sizes. This change adds
+no runtime representation or allocation policy; no runtime speedup is claimed.
+The aggregate editor probe took 0.61–1.25 seconds and skipped most deferred
+bodies, but does **not** meet the plan's eventual 100 ms latency target.
+Registration, source loading/cache pressure and repeated demand staging remain
+measured optimization work, not hidden completed milestones.
+
 ## Container iterator completion: delivery acceptance (2026-10-12)
 
 The owner accepts integration of the completed container campaign after the

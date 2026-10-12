@@ -88,6 +88,33 @@ void checkFixtures(const std::filesystem::path &root) {
                         "missing_virtual; } };")
               .semanticValid,
          "virtual dispatch bodies remain checked");
+
+  // Concrete callable lookup may discover a callee that the open generic body
+  // cannot select. The closure rule is not specific to a standard-library type.
+  const std::string genericLibrary =
+      "int unused_broken() { return missing_unused; }\n"
+      "int leaf() { return 42; }\n"
+      "class Producer { public: int operator()(int n) { return leaf() + n; } "
+      "};\n"
+      "int value_of<T>(T& value) { return value(0); }\n";
+  const std::string consumer =
+      "#include <std/cmath>\n"
+      "int main() { Producer value{}; return value_of(value) - 42; }\n";
+  lang::FrontendWorkMetrics metrics;
+  lang::FrontendOptions options;
+  options.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  options.workMetrics = &metrics;
+  const auto generic = lang::Frontend(options).analyze(
+      entry, consumer, {root / "stdlib/prelude.gti"},
+      {{library.string(), genericLibrary}}, {root / "stdlib"});
+  if (!generic.canGenerateCode())
+    for (const auto &diagnostic : generic.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(generic.canGenerateCode(), "generic library demands reach valid MIR");
+  expect(metrics.semanticDemandFallbacks == 0,
+         "bounded generic demand does not require complete fallback");
 }
 
 std::string key(const lang::Diagnostic &diagnostic) {

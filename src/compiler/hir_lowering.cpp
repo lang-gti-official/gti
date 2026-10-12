@@ -178,6 +178,7 @@ private:
     ensurePlaceDomain(output.program.moduleBody);
     processPendingInstances();
     output.program.valid_ =
+        output.requiredSemanticBodies.empty() &&
         !hasErrorDiagnostics(output.diagnostics) && lifecycleValid &&
         output.program.destructors.empty() && output.program.lambdas.empty();
     return std::move(output);
