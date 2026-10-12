@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.416.1 — Generic return formatting for split methods
+
+- Formatting out-of-class definitions keeps generic return types tight, as in
+  `std::unique_ptr<Window> Window::Create()`, instead of adding comparison-style
+  spaces inside the type arguments. Nested generics and qualified owners share
+  the fix; actual relational expressions retain their operator spacing.
+
 ## 0.416.0 — Optional out-of-class method definitions
 
 - Ordinary non-generic class, struct and static interface methods can keep
