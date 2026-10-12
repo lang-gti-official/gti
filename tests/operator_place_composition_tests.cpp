@@ -193,9 +193,10 @@ void checkNegative(std::string declarations, std::string body,
                  diagnostic.message.find(expectedMessage) != std::string::npos;
         });
     expect(located != result.diagnostics.end() &&
-               located->primary.source == std::filesystem::weakly_canonical(
-                                              "operator-place-negative.gti")
-                                              .string() &&
+               located->primary.source ==
+                   std::filesystem::weakly_canonical(
+                       std::filesystem::absolute("operator-place-negative.gti"))
+                       .string() &&
                located->primary.end > located->primary.start,
            "the invalid place has its owning semantic diagnostic and exact "
            "source identity");

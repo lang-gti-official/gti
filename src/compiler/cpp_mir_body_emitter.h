@@ -638,10 +638,23 @@ struct CppMirBodyEmissionMetrics {
   std::size_t programVerifications = 0;
 };
 
+// The emitter keeps references to its program and map. Clang diagnoses a named
+// emitter that outlives a temporary bound to either; GCC compiles the marker
+// away.
+#if defined(__has_cpp_attribute)
+#if __has_cpp_attribute(clang::lifetimebound)
+#define GTI_CPP_MIR_LIFETIME_BOUND [[clang::lifetimebound]]
+#endif
+#endif
+#ifndef GTI_CPP_MIR_LIFETIME_BOUND
+#define GTI_CPP_MIR_LIFETIME_BOUND
+#endif
+
 class CppMirBodyEmitter {
 public:
-  CppMirBodyEmitter(const MirProgram &program,
-                    const CppMirBodyEmissionMap &representations,
+  CppMirBodyEmitter(const MirProgram &program GTI_CPP_MIR_LIFETIME_BOUND,
+                    const CppMirBodyEmissionMap &representations
+                        GTI_CPP_MIR_LIFETIME_BOUND,
                     CppMirBodyEmissionMetrics *metrics = nullptr,
                     std::span<const LoweredBody> debugBodies = {})
       : program_(program), representations_(representations), metrics_(metrics),

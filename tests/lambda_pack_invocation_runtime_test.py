@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from sanitizer_support import SANITIZED_BUILD_TIMEOUT
 
 
 def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
@@ -51,8 +52,9 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
                 native_arguments += native_arguments_by_case(name, label, environment)
             if native_arguments:
                 command += ["--", *native_arguments]
+            timeout = SANITIZED_BUILD_TIMEOUT if label == "sanitized" else 120
             built = subprocess.run(command, capture_output=True, text=True,
-                                   timeout=120, env=environment)
+                                   timeout=timeout, env=environment)
             if built.returncode != 0:
                 # Keep the compiler's saved reason in detached-run evidence,
                 # rather than leaving only a temporary remote path in the log.
