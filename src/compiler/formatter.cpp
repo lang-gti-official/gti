@@ -1467,9 +1467,9 @@ private:
 
   static bool isDeclarationModifier(const Lexeme &lexeme) {
     return lexeme.kind == Kind::Word &&
-           (lexeme.text == "virtual" || lexeme.text == "static" ||
-            lexeme.text == "constexpr" || lexeme.text == "mut" ||
-            lexeme.text == "unsafe");
+           (lexeme.text == "export" || lexeme.text == "virtual" ||
+            lexeme.text == "static" || lexeme.text == "constexpr" ||
+            lexeme.text == "mut" || lexeme.text == "unsafe");
   }
 
   static bool isDeclarationBoundary(const Lexeme *lexeme) {
@@ -2295,8 +2295,7 @@ private:
         beforeType->kind != Kind::Semicolon &&
         beforeType->kind != Kind::Colon &&
         beforeType->kind != Kind::Directive &&
-        !(beforeType->kind == Kind::Word &&
-          (beforeType->text == "mut" || beforeType->text == "static"))) {
+        !isDeclarationModifier(*beforeType)) {
       return false;
     }
 

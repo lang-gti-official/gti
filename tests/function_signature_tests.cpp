@@ -20,6 +20,16 @@ void callableSignatureFormatting() {
        "using Callback = Handler<void(Event& /* borrow */)>;\n"},
       {"interface Window{using Callback=Handler < void(Event &) >;};",
        "interface Window {\n  using Callback = Handler<void(Event&)>;\n};\n"},
+      {"namespace psych { export std::unique_ptr < Window > CreateWindow(); }",
+       "namespace psych {\n  export std::unique_ptr<Window> "
+       "CreateWindow();\n}\n"},
+      {"export Owner < Window > create();", "export Owner<Window> create();\n"},
+      {"export /* factory */ Owner < Window > create();",
+       "export /* factory */ Owner<Window> create();\n"},
+      {"export unsafe static constexpr Owner < Window > create();",
+       "export unsafe static constexpr Owner<Window> create();\n"},
+      {"constexpr Owner < Window > create();",
+       "constexpr Owner<Window> create();\n"},
       {"bool test(){return left<read(value&mask)>right;}",
        "bool test() {\n  return left < read(value & mask) > right;\n}\n"},
       {"bool test(){return left<read(value&mask)&&right>count;}",
@@ -49,7 +59,8 @@ void callableSignatureFormatting() {
   for (const std::string source :
        {"using Callback=Handler<void(Event &, Other *)>;",
         "using Callback=Handler<void(Event & /* borrow */)>;",
-        "using Callback=Handler<void(Event &", "if(left<read(value&"}) {
+        "using Callback=Handler<void(Event &", "if(left<read(value&",
+        "export Owner < Window > create();"}) {
     const std::string formatted = lang::Formatter().format(source);
     lang::Lexer beforeLexer;
     lang::Lexer afterLexer;

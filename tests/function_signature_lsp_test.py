@@ -419,6 +419,9 @@ def main():
                 "  using EventCallbackFn = std::function < void(Event &) >;\n"
                 "  void SetEventCallback(EventCallbackFn& callback);\n"
                 "};\n"
+                "export std::unique_ptr < Event > CreateEvent() {\n"
+                "  return std::make_unique<Event>();\n"
+                "}\n"
             )
             change(52, window)
             assert not diagnostics(52)
@@ -427,6 +430,7 @@ def main():
                 "options": {"tabSize": 2, "insertSpaces": True}})
             formatted = edits[0]["newText"] if edits else window
             assert "using EventCallbackFn = std::function<void(Event&)>;" in formatted, formatted
+            assert "export std::unique_ptr<Event> CreateEvent()" in formatted, formatted
             change(53, formatted)
             assert not diagnostics(53)
             edits = request("textDocument/formatting", {
