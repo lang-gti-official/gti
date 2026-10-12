@@ -5788,7 +5788,7 @@ private:
               : resolved->intrinsic == IntrinsicKind::AtomicWait
                   ? SynchronizationOperationKind::AtomicWait
               : resolved->intrinsic == IntrinsicKind::AtomicNotifyOne ||
-                        resolved->intrinsic == IntrinsicKind::AtomicNotifyAll
+                      resolved->intrinsic == IntrinsicKind::AtomicNotifyAll
                   ? SynchronizationOperationKind::AtomicNotify
               : resolved->intrinsic == IntrinsicKind::AtomicStore
                   ? SynchronizationOperationKind::AtomicStore

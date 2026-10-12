@@ -248,17 +248,17 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
-      "id": "atomic-wait",
+      "id": "atomic-orders",
       "mode": "run",
-      "source": "tests/fixtures/atomic_wait.gti",
+      "source": "tests/fixtures/atomic_orders.gti",
       "execution_profile": "concurrent",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
-      "id": "atomic-orders",
+      "id": "atomic-wait",
       "mode": "run",
-      "source": "tests/fixtures/atomic_orders.gti",
+      "source": "tests/fixtures/atomic_wait.gti",
       "execution_profile": "concurrent",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
@@ -1691,10 +1691,10 @@
         "std::atomic::fetch_sub",
         "std::atomic::fetch_xor",
         "std::atomic::load",
-        "std::atomic::wait",
-        "std::atomic::notify_one",
         "std::atomic::notify_all",
+        "std::atomic::notify_one",
         "std::atomic::store",
+        "std::atomic::wait",
         "std::atomic_compare_exchange_result::exchanged",
         "std::atomic_compare_exchange_result::observed",
         "std::memory_order_acq_rel::memory_order_acq_rel",

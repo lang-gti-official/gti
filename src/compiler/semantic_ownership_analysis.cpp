@@ -6919,7 +6919,8 @@ auto SemanticVisitor::Impl::analyzeAtomicIntrinsicCall(
   const std::size_t expectedArguments =
       intrinsic == IntrinsicKind::AtomicLoad ||
               intrinsic == IntrinsicKind::AtomicNotifyOne ||
-              intrinsic == IntrinsicKind::AtomicNotifyAll ? 1
+              intrinsic == IntrinsicKind::AtomicNotifyAll
+          ? 1
       : intrinsic == IntrinsicKind::AtomicStore ||
               intrinsic == IntrinsicKind::AtomicWait ||
               intrinsic == IntrinsicKind::AtomicExchange
@@ -6989,7 +6990,8 @@ auto SemanticVisitor::Impl::analyzeAtomicIntrinsicCall(
                           intrinsic == IntrinsicKind::AtomicWait ||
                           intrinsic == IntrinsicKind::AtomicNotifyOne ||
                           intrinsic == IntrinsicKind::AtomicNotifyAll
-                      ? SemanticType::Void : *elementType;
+                      ? SemanticType::Void
+                      : *elementType;
   }
 
   std::vector<SemanticType> parameterTypes = argumentTypes;
