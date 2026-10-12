@@ -718,11 +718,12 @@ void testNativeCommandConstruction() {
   inputs.includeDirectories = {"runtime include", "vendor"};
   inputs.compilerArguments = {"-DDEBUG=1"};
   inputs.libraryDirectories = {"native lib"};
-  inputs.libraryFiles = {"libgti_runtime.a"};
+  inputs.libraryFiles = {"libnative.a"};
   inputs.libraries = {"engine"};
   inputs.frameworks = {"Metal"};
   inputs.linkerArguments = {"-pthread"};
-  inputs.trailingArguments = {"-Wl,--as-needed", "-DTAIL=1"};
+  inputs.trailingArguments = {"-Wl,--as-needed", "forwarded.cpp"};
+  inputs.finalLibraryFiles = {"libgti_runtime.a"};
 
   const lang::driver::NativeCompileRequest request(
       "custom-c++", "generated source.cpp", "game", lang::CppStandard::Cpp20,
@@ -738,7 +739,7 @@ void testNativeCommandConstruction() {
       "-DDEBUG=1",
       "generated source.cpp",
       "-Lnative lib",
-      "libgti_runtime.a",
+      "libnative.a",
       "-lengine",
       "-framework",
       "Metal",
@@ -746,7 +747,8 @@ void testNativeCommandConstruction() {
       "-o",
       "game",
       "-Wl,--as-needed",
-      "-DTAIL=1",
+      "forwarded.cpp",
+      "libgti_runtime.a",
       "-fno-fast-math",
       "-ffp-contract=off",
       "-D__gti_strict_ieee754=1",
@@ -755,7 +757,9 @@ void testNativeCommandConstruction() {
   expected.emplace_back("-Wl,-reproducible");
 #endif
   expect(command == expected,
-         "native command construction should preserve structured input order");
+         "native command construction should preserve structured input order "
+         "and link driver-owned archives after every other input, so "
+         "order-sensitive linkers let forwarded sources use or replace them");
   const auto debugCommand = lang::driver::NativeToolchain().command(
       lang::driver::NativeCompileRequest(
           "custom-c++", "generated.cpp", "program", lang::CppStandard::Cpp23,
@@ -1174,15 +1178,15 @@ void testOrderedExecutableBuildCommand() {
                  lang::driver::ExecutableBuildStatus::NativeCompilerFailure &&
              runtime != command.end() && target != command.end() &&
              provider != command.end() && nativeObject != command.end() &&
-             result.cCompilations.size() == 1 && nativeObject < runtime &&
-             runtime < target && target < provider &&
+             result.cCompilations.size() == 1 && nativeObject < target &&
+             target < provider && provider < runtime &&
              std::find(command.begin(), command.end(),
                        "ignored-category-file.a") == command.end() &&
              std::find(command.begin(), command.end(),
                        "-lignored-category-library") == command.end(),
-         "executable builds should place compiled C objects before the runtime "
-         "and authoritative ordered project operands without duplicating split "
-         "metadata categories");
+         "executable builds should place compiled C objects and authoritative "
+         "ordered project operands before the runtime, which links last, "
+         "without duplicating split metadata categories");
   expect(result.backendDiagnosticLog &&
              result.backendDiagnosticLog->succeeded() &&
              readFile(result.backendDiagnosticLog->path).find("Command:") !=

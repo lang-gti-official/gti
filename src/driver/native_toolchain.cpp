@@ -534,6 +534,9 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
   command.push_back(request.output().string());
   command.insert(command.end(), inputs.trailingArguments.begin(),
                  inputs.trailingArguments.end());
+  for (const std::filesystem::path &library : inputs.finalLibraryFiles) {
+    command.push_back(library.string());
+  }
   // These language-semantic flags deliberately follow every forwarded native
   // argument so a package cannot re-enable reassociation or contraction.
   command.emplace_back("-fno-fast-math");
