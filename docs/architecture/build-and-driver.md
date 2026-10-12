@@ -1090,7 +1090,11 @@ root package's native sources, another package's sources, or the generated
 whole-program translation unit. Group library directories and link operands
 append after the root package's own, in deterministic
 dependents-before-dependencies order (reverse postorder over the dependency
-graph). Target-scope native tables on a dependency do not compose; they apply
+graph). The GTI runtime archive is the final link input, after every operand
+and every argument forwarded after `--`. Order-sensitive linkers such as GNU ld
+search an archive only for symbols that are already undefined, so this order
+lets native objects, libraries and forwarded sources call runtime functions or
+replace runtime definitions, as Apple's ld64 always allows. Target-scope native tables on a dependency do not compose; they apply
 only when that package is built directly. Dependency native groups now use the
 same scoped dependency-discovery and exact-input cache contract as root native
 inputs; a group is not by itself a cache bypass. Unmodeled inputs retain the
