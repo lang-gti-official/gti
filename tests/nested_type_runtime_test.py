@@ -39,7 +39,7 @@ def main():
                 failed = run([str(owning), "fail"], expected=70)
                 assert failed.stdout == "2\n1\n" and "GTI-R0006" in failed.stderr, failed
 
-        example = repository / "examples/147-nested-configuration.gti"
+        example = repository / "examples/148-nested-configuration.gti"
         for standard, optimization in (("c++20", "O0"), ("c++23", "O3")):
             executable = scratch / f"config-{standard}-{optimization}"
             run([str(compiler), str(example), "--std", standard, f"-{optimization}",

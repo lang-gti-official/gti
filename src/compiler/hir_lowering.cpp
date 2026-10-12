@@ -142,8 +142,9 @@ public:
       }
       processPendingInstances();
     }
-    output.program.valid_ =
-        !hasErrorDiagnostics(output.diagnostics) && lifecycleValid;
+    output.program.valid_ = output.requiredSemanticBodies.empty() &&
+                            !hasErrorDiagnostics(output.diagnostics) &&
+                            lifecycleValid;
     if (output.program.valid_ &&
         !verifyHirProgramPlans(*baseModel, output.program).valid()) {
       output.program.valid_ = false;
@@ -177,6 +178,7 @@ private:
     ensurePlaceDomain(output.program.moduleBody);
     processPendingInstances();
     output.program.valid_ =
+        output.requiredSemanticBodies.empty() &&
         !hasErrorDiagnostics(output.diagnostics) && lifecycleValid &&
         output.program.destructors.empty() && output.program.lambdas.empty();
     return std::move(output);
@@ -1826,7 +1828,7 @@ private:
     const HirFunctionInstance &snapshot = output.program.functions[id - 1];
     const FunctionInfo *declaration =
         baseModel->findFunction(snapshot.declaration);
-    if (declaration == nullptr) {
+    if (declaration == nullptr || !requirePrimaryBody(*declaration)) {
       return nullptr;
     }
     std::vector<SemanticType> classArguments;
@@ -1892,6 +1894,17 @@ private:
     return result;
   }
 
+  bool requirePrimaryBody(const FunctionInfo &function) {
+    const FunctionDecl *body = function.declaration;
+    if (body == nullptr || body->body() == nullptr ||
+        baseModel->hasAnalyzedFunctionBody(*body))
+      return true;
+    auto &requests = output.requiredSemanticBodies;
+    if (std::find(requests.begin(), requests.end(), body) == requests.end())
+      requests.push_back(body);
+    return false;
+  }
+
   void processFunction(std::size_t index) {
     const HirFunctionInstance snapshot = output.program.functions[index];
     const FunctionInfo *declaration =
@@ -1899,6 +1912,8 @@ private:
     if (declaration == nullptr || declaration->declaration == nullptr) {
       return;
     }
+    if (!requirePrimaryBody(*declaration))
+      return;
     std::vector<SemanticType> classArguments;
     std::vector<CompileTimeValue> classValueArguments;
     if (snapshot.owner) {

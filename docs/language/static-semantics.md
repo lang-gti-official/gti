@@ -351,7 +351,7 @@ generic enclosing type are currently rejected with `GTI-S2030`: retaining the
 enclosing specialization in the child identity and substitution is a remaining
 prerequisite. Anonymous records, field-name injection, nested interfaces/unions
 and inherited nested-type lookup are not part of this slice. The
-[nested configuration example](../../examples/147-nested-configuration.gti)
+[nested configuration example](../../examples/148-nested-configuration.gti)
 demonstrates nested records and a class with reflected JSON.
 
 This form extends type contexts, not direct specialized-alias constructor

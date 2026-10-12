@@ -39,6 +39,21 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   currentSourceUnit = 0;
   structuredBindingElements.clear();
   requestSession.recoveredExhaustiveSwitches.clear();
+  deferredBodies.clear();
+  demandedFunctions.clear();
+  visitedFunctionDeclarations.clear();
+  analyzedBodies.clear();
+  bodiesInProgress.clear();
+  bodyPhaseActive = false;
+  onDemandBodyAnalysis = false;
+  declarationOrders.clear();
+  declarationOrderCounter = 0;
+  currentDeclarationOrder = 0;
+  lexicalFrames.clear();
+  lexicalFrameVersion = 0;
+  lexicalLoanFlow = {};
+  heldDiagnostics.clear();
+  lexicallyReachableFunctions.clear();
   semanticModel.clear();
   semanticModel.setExecutionProfile(target.executionProfile);
   semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
@@ -149,7 +164,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   catalog.seal();
   valueFlow.beginBody(catalog);
   if (workMetrics != nullptr) {
-    workMetrics->semanticRegistrationMicroseconds = static_cast<std::size_t>(
+    workMetrics->semanticRegistrationMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - registrationStart)
             .count());
@@ -160,15 +175,21 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   bodyPhaseActive = true;
   analyzeDeclarationAttributes();
   indexLexicallyReachableFunctions(program.declarations());
-  runLexicalPass(program.declarations());
-  measureTopLevelStatements = false;
-  analyzeDeferredBodies();
+  {
+    FunctionDemandScope demandScope(
+        semanticModel, trustedBodies == TrustedBodyAnalysis::Reachable
+                           ? &demandedFunctions
+                           : nullptr);
+    runLexicalPass(program.declarations());
+    measureTopLevelStatements = false;
+    analyzeDeferredBodies();
+  }
   bodyPhaseActive = false;
   recordGenericDefaultConstantUses();
   validateDefaultArgumentCycles();
   endScope();
   if (workMetrics != nullptr) {
-    workMetrics->semanticBodyMicroseconds = static_cast<std::size_t>(
+    workMetrics->semanticBodyMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - bodyStart)
             .count());
@@ -190,7 +211,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   finalizeAdvisoryDiagnostics();
   catalog.assertUnchangedSinceSeal();
   if (workMetrics != nullptr) {
-    workMetrics->semanticFinalizationMicroseconds = static_cast<std::size_t>(
+    workMetrics->semanticFinalizationMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - finalizationStart)
             .count());
@@ -2546,6 +2567,7 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
 
 auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     -> void {
+  FunctionDemandScope pauseDemand(semanticModel, nullptr);
   const DeclarationOrderScope declarationOrder{*this, stmt};
   // A declaration analysed on demand (see ensureBodyAnalyzed) is complete;
   // the lexical pass must not process it a second time. Concrete-instance
@@ -2925,8 +2947,13 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
 auto SemanticVisitor::Impl::analyzeFunctionBody(
     const FunctionDecl &stmt, const FunctionInfo *functionInfo,
     bool declarationErrors, bool constexprDeclarationValid) -> void {
+  FunctionDemandScope demandScope(
+      semanticModel, trustedBodies == TrustedBodyAnalysis::Reachable
+                         ? &demandedFunctions
+                         : nullptr);
   if (!instanceAnalysisActive) {
     analyzedBodies.insert(&stmt);
+    semanticModel.recordAnalyzedFunctionBody(stmt);
     bodiesInProgress.insert(&stmt);
   }
   struct InProgressGuard {
@@ -3066,8 +3093,9 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
 auto SemanticVisitor::Impl::deferTrustedBody(const FunctionDecl &stmt) const
     -> bool {
   if (trustedBodies == TrustedBodyAnalysis::Complete ||
-      instanceAnalysisActive || onDemandBodyAnalysis || functionDepth != 0 ||
-      lambdaDepth != 0 || sourceGraph == nullptr || currentSourceUnit == 0 ||
+      requiredFunctionBodies.contains(&stmt) || instanceAnalysisActive ||
+      onDemandBodyAnalysis || functionDepth != 0 || lambdaDepth != 0 ||
+      sourceGraph == nullptr || currentSourceUnit == 0 ||
       currentSourceUnit == sourceGraph->entryUnit() ||
       !sourceGraph->isCompilerTrusted(currentSourceUnit)) {
     return false;
@@ -3582,8 +3610,8 @@ auto SemanticVisitor::Impl::advanceLexicalPass(const FunctionDecl *until)
   }
 }
 
-// Analyses the bodies the lexical pass deferred, in reverse lexical order;
-// this is the test mode that proves results do not depend on body order. Each
+// Complete deferral drains in reverse order; reachable deferral drains only
+// the transitive demand set. Each
 // body is analysed exactly as in place: its namespace, source unit, owning
 // class scope with members, generic parameters and requirement scope are
 // re-established around the shared body half.
@@ -3592,12 +3620,10 @@ auto SemanticVisitor::Impl::analyzeDeferredBodies() -> void {
     return;
   }
   const auto start = std::chrono::steady_clock::now();
-  std::size_t analyzedCount = 0;
   const auto analyzeOne = [&](const RequestSessionState::DeferredBody body) {
     if (analyzedBodies.contains(body.declaration)) {
       return; // Analysed on demand by a caller meanwhile.
     }
-    ++analyzedCount;
     const std::vector<std::string> enclosingNamespace = currentNamespace;
     const SourceUnitId enclosingUnit = currentSourceUnit;
     const std::optional<ClassId> enclosingClass = currentClass;
@@ -3621,8 +3647,26 @@ auto SemanticVisitor::Impl::analyzeDeferredBodies() -> void {
     currentSourceUnit = enclosingUnit;
     currentClass = enclosingClass;
   };
-  for (std::size_t index = deferredBodies.size(); index > 0; --index) {
-    analyzeOne(deferredBodies[index - 1]);
+  if (trustedBodies == TrustedBodyAnalysis::Deferred) {
+    for (std::size_t index = deferredBodies.size(); index > 0; --index)
+      analyzeOne(deferredBodies[index - 1]);
+  } else {
+    // Conservative fixed point: selected callees, callable values and other
+    // consulted records can demand further bodies. Every body runs at most
+    // once and retains its original lexical visibility and safety checks.
+    std::unordered_set<const FunctionDecl *> processed;
+    bool progress = true;
+    while (progress) {
+      progress = false;
+      for (std::size_t index = 0; index < deferredBodies.size(); ++index) {
+        const auto body = deferredBodies[index];
+        if (!demandedFunctions.contains(body.function) ||
+            !processed.insert(body.declaration).second)
+          continue;
+        progress = true;
+        analyzeOne(body);
+      }
+    }
   }
   if (workMetrics != nullptr) {
     workMetrics->semanticTrustedBodyMicroseconds += static_cast<std::size_t>(
@@ -3630,7 +3674,10 @@ auto SemanticVisitor::Impl::analyzeDeferredBodies() -> void {
             std::chrono::steady_clock::now() - start)
             .count());
     workMetrics->semanticDeferredBodies += deferredBodies.size();
-    workMetrics->semanticAnalyzedDeferredBodies += analyzedCount;
+    workMetrics->semanticAnalyzedDeferredBodies += std::count_if(
+        deferredBodies.begin(), deferredBodies.end(), [&](const auto &body) {
+          return analyzedBodies.contains(body.declaration);
+        });
   }
 }
 

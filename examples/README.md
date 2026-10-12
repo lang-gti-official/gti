@@ -204,7 +204,8 @@ is a teaching helper, not a production server.
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
 | `146-counted-text-view-iteration.gti` | dynamically owned text-view cursors, checked reverse/positional access, generic distance, and retained view-shell lifetime |
-| `147-nested-configuration.gti` | named nested structs/classes, public qualified type paths, three-level nesting, and recursive reflected JSON configuration decoding and encoding |
+| `147-standard-library-import.gti` | one portable standard-library import, vector, owning strings and formatting, without importing platform-only APIs |
+| `148-nested-configuration.gti` | named nested structs/classes, public qualified type paths, three-level nesting, and recursive reflected JSON configuration decoding and encoding |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run

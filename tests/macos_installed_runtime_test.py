@@ -75,6 +75,11 @@ def main():
             '#include <std/string>', 'import std.string;'))
         run([cli, source, "-o", executable], environment)
         assert "portable installed GTI" in run([executable], environment)
+        # The portable aggregate must also resolve entirely from the installation.
+        assert (relocated / "share/gti/stdlib/std.gti").is_file()
+        source.write_text(source.read_text().replace('import std.string;', 'import std;'))
+        run([cli, source, "-o", executable], environment)
+        assert "portable installed GTI" in run([executable], environment)
         # The owned environment API and its module must work without source
         # paths/overrides after relocation, using only the packaged runtime.
         source.write_text('import std.environment;\n#include <std/string>\n'
