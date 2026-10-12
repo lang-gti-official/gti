@@ -90,7 +90,7 @@ silently reused from whichever domain loaded it first. Sharing is diagnosed
 when a replay selects different syntax. As of 0.393.0, different incoming
 flags alone are no longer diagnosed.
 
-## Revision: Optional Private Implementation Files (0.415.0)
+## Revision: Optional Private Implementation Files (0.416.0)
 
 The initial interface-only boundary made a factory on an interface awkward:
 its body needed a concrete implementation which in turn imported the interface.

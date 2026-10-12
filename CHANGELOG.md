@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.415.0 — Optional out-of-class method definitions
+## 0.416.0 — Optional out-of-class method definitions
 
 - Ordinary non-generic class, struct and static interface methods can keep
   their declaration in the type and define the body later using
