@@ -328,10 +328,31 @@ An enclosing generic must establish the selected owner's constraints: for
 example, `CursorTraits<std::move_constructible T>` may define
 `using iterator = std::vector<T>::iterator;`; unconstrained `T` does not gain
 vector's move-construction guarantee merely by naming its alias.
+Named classes and structs can be declared directly inside a non-generic class
+or struct. The enclosing access section controls visibility of the nested
+type; a struct defaults to public and a class to private. `Config::Network`
+names a distinct nominal type, not a namespace and not an implicit field.
+Nested types and their enclosing type may use these names unqualified within
+their lexical class scopes. A private nested type is accessible inside its
+declaring owner and lexically nested types, but a public child cannot bypass a
+private intermediate owner. A nested type has no enclosing object, hidden
+parent pointer, or implicit access to an outer instance's fields. Its values
+use ordinary construction, access, ownership, cleanup, reflection and
+transfer/share rules. Nesting adds no runtime state.
+
+Nested types may have their own generic parameters. Definitions inside a
+generic enclosing type are currently rejected with `GTI-S2030`: retaining the
+enclosing specialization in the child identity and substitution is a remaining
+prerequisite. Anonymous records, field-name injection, nested interfaces/unions
+and inherited nested-type lookup are not part of this slice. The
+[nested configuration example](../../examples/147-nested-configuration.gti)
+demonstrates nested records and a class with reflected JSON.
+
 This form extends type contexts, not direct specialized-alias constructor
 expressions; introduce a named alias or use direct brace initialization at the
 typed declaration. Existing restrictions on aliases in exact class definitions
-remain in force. Only direct type aliases can follow a class-like owner;
+remain in force. Direct type aliases and named nested classes/structs can follow
+a class-like owner;
 fields, methods, namespace members, alias templates and inherited aliases do
 not become type members. A malformed or missing member is diagnosed by the
 frontend before HIR/MIR/backend entry. `Box::value_type` remains rejected

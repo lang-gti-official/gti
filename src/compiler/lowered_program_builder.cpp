@@ -672,8 +672,11 @@ private:
       if (const ClassTypeInfo *info = semantics_.findClassType(*declaration)) {
         row.generic = !info->genericParameters.empty();
         row.semanticIdentity = info->id;
-        row.namespaceScope = info->namespaceScope;
-        childNamespace = info->namespaceScope;
+        // Namespace scope is separate from the lexical class prefix in the
+        // semantic qualified name. Nested class ownership is already retained
+        // by parent/ownerClass; it must not become a namespace in a backend.
+        row.namespaceScope = namespaceScope;
+        childNamespace = namespaceScope;
         childOwner = info->id;
         LoweredClassDeclaration payload{
             .id = info->id,

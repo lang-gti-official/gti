@@ -1,0 +1,56 @@
+#include <std/string>
+
+namespace application {
+struct Config {
+  struct Network {
+    int port = 8080;
+    struct Retry {
+      int count = 3;
+    };
+    Retry retry{};
+  };
+
+  class Logging {
+    int level;
+  public:
+    Logging(int value) : level(value) {}
+    int verbosity() { return level; }
+  };
+
+  struct Box<T> {
+    T value;
+  };
+
+  using NetworkType = Network;
+  Network network{};
+  Logging logging{2};
+};
+
+class Service {
+  struct Secret {
+    int value = 7;
+  };
+public:
+  int secret_value() {
+    Secret secret{};
+    return secret.value;
+  }
+};
+}
+
+int main() {
+  application::Config config{};
+  application::Config::Network network{};
+  application::Config::Network::Retry retry{};
+  application::Config::NetworkType alias{};
+  application::Config::Box<int> box{.value = 5};
+  application::Service service{};
+  if (config.network.port != 8080 || network.retry.count != 3 ||
+      retry.count != 3 || alias.port != 8080 ||
+      config.logging.verbosity() != 2 || box.value != 5 ||
+      service.secret_value() != 7) {
+    return 1;
+  }
+  std::println("nested types");
+  return 0;
+}

@@ -757,6 +757,14 @@ auto SemanticVisitor::Impl::registerClassTypeAliases(
           *alias, scope,
           std::vector<std::string>(scope.begin(), scope.end() - 1), &owner,
           access);
+    } else if (const auto *nested = stmtAs<ClassDecl>(statement.get())) {
+      auto nestedScope = scope;
+      nestedScope.push_back(nested->name().lexeme);
+      AccessModifier nestedAccess = nested->kind() == ClassKind::Class
+                                        ? AccessModifier::Private
+                                        : AccessModifier::Public;
+      registerClassTypeAliases(nested->members(), nestedScope, *nested,
+                               nestedAccess);
     }
   }
 }
@@ -2389,19 +2397,37 @@ auto SemanticVisitor::Impl::classArgumentPatternsMatch(
 }
 
 auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
-                                            std::vector<std::string> scope)
+                                            std::vector<std::string> scope,
+                                            ClassId enclosingClass,
+                                            AccessModifier *enclosingAccess)
     -> void {
   for (const StmtPtr &statement : statements) {
     if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
       if (const StmtList *branch = conditional->activeBranch(target)) {
-        registerClasses(*branch, scope);
+        registerClasses(*branch, scope, enclosingClass, enclosingAccess);
       }
+    } else if (const auto *specifier =
+                   stmtAs<AccessSpecifierDecl>(statement.get())) {
+      if (enclosingAccess != nullptr)
+        *enclosingAccess = specifier->modifier();
     } else if (const auto *variable = stmtAs<VariableDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(variable->name());
       recordGenericDefaultConstant(*variable, scope);
     } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(classDecl->name());
       if (classDecl->isExactSpecialization()) {
+        continue;
+      }
+      if (enclosingClass != 0 &&
+          !classInfo(enclosingClass).genericParameters.empty()) {
+        report(classDecl->name(),
+               "Nested type definitions inside generic enclosing types are "
+               "not supported yet; enclosing generic arguments must be "
+               "retained in the nested type identity.",
+               "GTI-S2030");
+        diagnostics.back().related.push_back(
+            {tokenSpan(classInfo(enclosingClass).name),
+             "Generic enclosing type is declared here."});
         continue;
       }
       const std::string qualified =
@@ -2585,6 +2611,9 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           .name = classDecl->name(),
           .kind = classDecl->kind(),
           .namespaceScope = scope,
+          .enclosingClass = enclosingClass,
+          .enclosingAccess = enclosingAccess == nullptr ? AccessModifier::Public
+                                                        : *enclosingAccess,
           .signatureFamilyPrimary = familyPrimary,
           .genericParameters = std::move(genericParameters),
           .cAbiRecord = capabilityPolicies.cAbiRecord,
@@ -2629,6 +2658,17 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         }
         members.push_back(id);
       }
+      if (enclosingClass != 0) {
+        classInfo(enclosingClass)
+            .nestedTypes.emplace(classDecl->name().lexeme, id);
+      }
+      auto nestedScope = scope;
+      nestedScope.push_back(classDecl->name().lexeme);
+      AccessModifier nestedAccess = classDecl->kind() == ClassKind::Class
+                                        ? AccessModifier::Private
+                                        : AccessModifier::Public;
+      registerClasses(classDecl->members(), std::move(nestedScope), id,
+                      &nestedAccess);
     } else if (const auto *namespaceDecl =
                    stmtAs<NamespaceDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(namespaceDecl->name());
@@ -4363,15 +4403,18 @@ auto SemanticVisitor::Impl::nativeCArrayCountParameter(
 }
 
 auto SemanticVisitor::Impl::registerNamespaceSymbols(
-    const StmtList &statements, std::vector<std::string> scope) -> void {
+    const StmtList &statements, std::vector<std::string> scope, bool typesOnly)
+    -> void {
   for (const StmtPtr &statement : statements) {
     if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
       if (const StmtList *branch = conditional->activeBranch(target)) {
-        registerNamespaceSymbols(*branch, scope);
+        registerNamespaceSymbols(*branch, scope, typesOnly);
       }
     } else if (const auto *externC = stmtAs<ExternCDecl>(statement.get())) {
       registerNamespaceSymbols(externC->declarations(), scope);
     } else if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
+      if (typesOnly)
+        continue;
       currentSourceUnit = sourceUnitFor(function->name());
       Symbol symbol = functionSymbol(*function, scope);
       if (!symbol.overloads.empty()) {
@@ -4396,6 +4439,10 @@ auto SemanticVisitor::Impl::registerNamespaceSymbols(
         }
         declareNamespaceSymbol(scope, classDecl->name(),
                                SemanticType::typeName(found->second), false);
+        auto nestedScope = scope;
+        nestedScope.push_back(classDecl->name().lexeme);
+        registerNamespaceSymbols(classDecl->members(), std::move(nestedScope),
+                                 true);
       }
     } else if (const auto *namespaceDecl =
                    stmtAs<NamespaceDecl>(statement.get())) {
@@ -4429,8 +4476,19 @@ auto SemanticVisitor::Impl::collectClassMembers(const StmtList &statements,
       currentClass = info.id;
       beginTypeParameterScope(info.genericParameters);
       collectMembers(classDecl->members(), info, access);
+      for (const auto &[name, nested] : info.nestedTypes) {
+        if (info.members.contains(name)) {
+          report(classInfo(nested).name,
+                 "Nested type '" + name + "' conflicts with a member of '" +
+                     info.name.lexeme + "'.",
+                 "GTI-S2006");
+        }
+      }
       endTypeParameterScope();
       currentClass = enclosingClass;
+      auto nestedScope = scope;
+      nestedScope.push_back(classDecl->name().lexeme);
+      collectClassMembers(classDecl->members(), std::move(nestedScope));
     } else if (const auto *namespaceDecl =
                    stmtAs<NamespaceDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(namespaceDecl->name());

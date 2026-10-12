@@ -439,32 +439,10 @@ module.exports = grammar({
       ),
 
     class_declaration: ($) =>
-      seq(
-        optional(field("compiler_binding", $.compiler_type_binding)),
-        optional(field("declared_attributes", $.declared_attribute_list)),
-        optional(
-          field("attributes", $.class_attribute_list),
-        ),
-        field("kind", choice("class", "struct", "interface", "union")),
-        choice(
-          seq(
-            field("name", $.identifier),
-            optional(choice(
-              field("type_parameters", $.generic_parameter_clause),
-              field("type_patterns", $.generic_signature_pattern_clause),
-            )),
-          ),
-          seq(
-            field("name", $.scoped_identifier),
-            field("type_arguments", $.type_argument_clause),
-          ),
-        ),
-        optional(field("bases", $.base_clause)),
-        choice(
-          seq(field("body", $.class_body), ";"),
-          field("forward_declaration", ";"),
-        ),
-      ),
+      classDeclaration($, choice("class", "struct", "interface", "union")),
+
+    _nested_class_declaration: ($) =>
+      classDeclaration($, choice("class", "struct")),
 
     class_attribute_list: ($) =>
       seq(
@@ -554,6 +532,7 @@ module.exports = grammar({
         $.compile_error_directive,
         $.static_assert_declaration,
         $.type_alias_declaration,
+        alias($._nested_class_declaration, $.class_declaration),
         $.mutable_field_group,
         $.access_specifier,
         $.constructor_declaration,
@@ -1534,6 +1513,33 @@ module.exports = grammar({
 
 function commaSep1(rule) {
   return seq(rule, repeat(seq(",", rule)));
+}
+
+function classDeclaration($, kind) {
+  return seq(
+    optional(field("compiler_binding", $.compiler_type_binding)),
+    optional(field("declared_attributes", $.declared_attribute_list)),
+    optional(field("attributes", $.class_attribute_list)),
+    field("kind", kind),
+    choice(
+      seq(
+        field("name", $.identifier),
+        optional(choice(
+          field("type_parameters", $.generic_parameter_clause),
+          field("type_patterns", $.generic_signature_pattern_clause),
+        )),
+      ),
+      seq(
+        field("name", $.scoped_identifier),
+        field("type_arguments", $.type_argument_clause),
+      ),
+    ),
+    optional(field("bases", $.base_clause)),
+    choice(
+      seq(field("body", $.class_body), ";"),
+      field("forward_declaration", ";"),
+    ),
+  );
 }
 
 function nonAssignmentExpression($) {

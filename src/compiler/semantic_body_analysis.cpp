@@ -9583,6 +9583,16 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
     currentType = SemanticType::Unknown;
     return;
   }
+  if (symbol->ownerClass != 0 && !symbol->staticMember &&
+      currentClass != symbol->ownerClass && isWithinClass(symbol->ownerClass)) {
+    report(expr.name(),
+           "Outer instance member '" + expr.name().lexeme +
+               "' requires an explicit enclosing object; a nested type "
+               "does not capture its enclosing instance.",
+           "GTI-S2039");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (symbol->type == SemanticType::Function && !analyzingCallCallee) {
     if (contextualInitializerType &&
         contextualInitializerType->kind == SemanticType::NativeFunction) {
