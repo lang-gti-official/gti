@@ -4244,6 +4244,13 @@ private:
 
   void applyMoveStates(const ScopeStack &source);
 
+  // Replaces the current scope state with `source` without reallocating the
+  // Symbol of any binding present in both. An enclosing expression may hold a
+  // SemanticPlace (whose root points into `scopes`) across the analysis of a
+  // nested expression, so expression-level flow joins restore through this
+  // rather than assigning or moving a whole ScopeStack into `scopes`.
+  void restoreScopeState(const ScopeStack &source);
+
   void beginValueControlFlow(ValueControlFlowKind kind, const Stmt &statement);
 
   [[nodiscard]] ValueControlFlowContext endValueControlFlow();

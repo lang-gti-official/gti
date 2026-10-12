@@ -7216,11 +7216,38 @@ auto SemanticVisitor::Impl::mergedValueStates(
     merged.resize(base.size());
   }
   for (std::size_t index = 1; index < states.size(); ++index) {
-    scopes = base;
+    restoreScopeState(base);
     mergeValueStates(base, merged, states[index]);
     merged = scopes;
   }
   return merged;
+}
+
+auto SemanticVisitor::Impl::restoreScopeState(const ScopeStack &source)
+    -> void {
+  if (scopes.size() > source.size()) {
+    scopes.resize(source.size());
+  }
+  for (std::size_t scopeIndex = 0; scopeIndex < source.size(); ++scopeIndex) {
+    const Scope &from = source[scopeIndex];
+    if (scopeIndex == scopes.size()) {
+      // Moving existing scopes during growth keeps their nodes, and therefore
+      // their Symbol addresses.
+      scopes.push_back(from);
+      continue;
+    }
+    Scope &target = scopes[scopeIndex];
+    std::erase_if(target, [&from](const auto &entry) {
+      return !from.contains(entry.first);
+    });
+    for (const auto &[name, symbol] : from) {
+      if (const auto found = target.find(name); found != target.end()) {
+        found->second = symbol;
+      } else {
+        target.emplace(name, symbol);
+      }
+    }
+  }
 }
 
 auto SemanticVisitor::Impl::applyMoveStates(const ScopeStack &source) -> void {
