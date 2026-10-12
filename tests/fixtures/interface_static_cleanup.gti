@@ -1,0 +1,68 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+enum class creation_errc { rejected };
+
+class Trace {
+  int number;
+public:
+  Trace(int number) : number(number) {}
+  ~Trace() { std::println(this.number); }
+};
+
+interface Service {
+  static expected<std::unique_ptr<Service>, creation_errc> create(int mode) {
+    Trace first{1};
+    Trace second{2};
+    if (mode == 1) { return unexpected(creation_errc::rejected); }
+    auto implementation = std::make_unique<Implementation>();
+    if (mode == 2) {
+      mut int zero = mode - 2;
+      int failure = 1 / zero;
+    }
+    return std::upcast_unique<Service, Implementation>(std::move(implementation));
+  }
+  int number();
+};
+
+class Implementation : public Service {
+  Trace member;
+public:
+  Implementation() : member(Trace(3)) {}
+  ~Implementation() { std::println(4); }
+  int number() override { return 42; }
+};
+
+// Static functions never add instance requirements, including an interface
+// with no instance signatures. Its polymorphic destruction remains intact.
+interface Marker {
+  static std::unique_ptr<Marker> create() {
+    return std::upcast_unique<Marker, Marked>(std::make_unique<Marked>());
+  }
+};
+class Marked : public Marker { public: Marked() {} };
+
+concept Number<T> = std::numeric<T>;
+interface Rules {
+  static int seed(int value = 7) { return helper(value); }
+  static T identity<T>(T value) requires Number<T> { return value; }
+  static constexpr int twice(int value) { return value * 2; }
+  unsafe static int unchecked() { return 9; }
+  static int unselected();
+private:
+  static int helper(int value) { return value; }
+};
+static_assert(Rules::twice(3) == 6);
+class InheritedRules : public Rules {};
+
+int main(int argc, std::vector<std::string> argv) {
+  if (InheritedRules::identity<int>(InheritedRules::seed()) != 7) { return 2; }
+  unsafe { if (Rules::unchecked() != 9) { return 3; } }
+  auto result = Service::create(argc - 1);
+  if (!result) { return 0; }
+  auto owner = std::move(result).value();
+  auto marker = Marker::create();
+  if (owner->number() != 42) { return 1; }
+  return 0;
+}

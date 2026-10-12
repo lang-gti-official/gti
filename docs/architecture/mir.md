@@ -1977,6 +1977,13 @@ IDs are body-local and start at one.
 
 ## Lowering And Verification
 
+Every type-owned static function retains an exact owner but no instance receiver:
+it cannot carry virtual/pure/override flags, virtual roots, mutable/consuming
+receiver access or a `This`-root place. This is a structural invariant for all
+static methods, including interface factories, not a public-name exception.
+LoweredProgram verifies that declaration metadata agrees with the MIR instance;
+backends cannot infer a function's purity from its enclosing type kind.
+
 For each body, MIR lowering creates an entry block and root scope, seeds
 parameter cleanup, lowers prologue/construction values, lowers statements,
 synthesizes a legal terminal edge, rebuilds reachability and value uses, then

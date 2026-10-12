@@ -90,6 +90,7 @@ if(Python3_Interpreter_FOUND)
     cleanup_context_scope_runtime
     storage_final_address_runtime string_operations_runtime string_ordering_runtime
     structural_relocation_runtime temporary_owner_borrow_runtime unordered_map
+    interface_static_runtime
     uninitialized_carrier_runtime
     stdlib_modules
     stdlib_surface

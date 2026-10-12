@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.414.0 — Interface static methods
+
+- Interfaces can declare ordinary `static` helpers and factories, including
+  recoverable factories returning an owned concrete implementation through
+  `std::unique_ptr<Interface>`. These functions have no receiver or virtual
+  dispatch slot and are not implementation requirements. Instance methods
+  remain public, pure, bodyless contracts.
+- Static helpers reuse ordinary access, default arguments, method generics,
+  constraints, constexpr and explicit unsafe-call rules. A selected static
+  declaration without a definition receives the ordinary compiler diagnostic.
+  Editor lookup, completion, navigation and formatting follow the same rule.
+- Example 149 demonstrates factory selection and instance dispatch.
+
 ## 0.413.2 — Faster editor analysis with standard-library includes
 
 - The language server analyses each edit once again. When a generic call

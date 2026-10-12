@@ -451,6 +451,14 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     if (payload->ownerClass != declaration.ownerClass) {
       return invalid("function declaration has an inconsistent class owner");
     }
+    if (payload->staticMember &&
+        (payload->ownerClass == 0 || payload->virtualMethod ||
+         payload->pureVirtual || payload->overrideMethod ||
+         !payload->virtualRoots.empty() ||
+         payload->receiverMutability != ReceiverMutability::ReadOnly)) {
+      return invalid("static method declaration has a virtual or receiver "
+                     "contract, or lacks its class owner");
+    }
     break;
   }
   case LoweredDeclarationKind::Constructor: {
@@ -1068,6 +1076,12 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
                             *instance.owner <= program.classInstances_.size());
     if (instance.id != index + 1 || instance.id != mir.id ||
         instance.declaration != mir.declaration || declaration == nullptr ||
+        declaration->staticMember != mir.staticMember ||
+        declaration->virtualMethod != mir.virtualMethod ||
+        declaration->pureVirtual != mir.pureVirtual ||
+        declaration->overrideMethod != mir.overrideMethod ||
+        declaration->virtualRoots != mir.virtualRoots ||
+        declaration->receiverMutability != mir.receiverMutability ||
         declaration->requiresUnsafe != mir.requiresUnsafe ||
         declaration->neverReturns != mir.neverReturns ||
         declaration->tracksCaller != mir.tracksCaller ||

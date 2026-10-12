@@ -12480,6 +12480,22 @@ verifyMirProgramContracts(const MirProgram &program) {
            .message = "function body caller parameter does not match its "
                       "declaration contract"});
     }
+    if (instance.staticMember &&
+        (!instance.owner ||
+         program.findClassInstance(*instance.owner) == nullptr ||
+         instance.virtualMethod || instance.pureVirtual ||
+         instance.overrideMethod || !instance.virtualRoots.empty() ||
+         instance.receiverMutability != ReceiverMutability::ReadOnly ||
+         std::any_of(instance.body.places.begin(), instance.body.places.end(),
+                     [](const MirPlace &place) {
+                       return place.root == MirPlaceRootKind::This;
+                     }))) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = instance.id,
+           .message = "static method must retain one exact owner and no "
+                      "virtual or receiver contract"});
+    }
     if (instance.neverReturns &&
         instance.definitionKind == MirDefinitionKind::Source &&
         std::any_of(instance.body.blocks.begin(), instance.body.blocks.end(),
