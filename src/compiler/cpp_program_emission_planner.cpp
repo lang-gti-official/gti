@@ -350,6 +350,9 @@ public:
         for (const MirInstruction &instruction : block.instructions) {
           switch (instruction.intrinsic) {
           case IntrinsicKind::AtomicLoad:
+          case IntrinsicKind::AtomicWait:
+          case IntrinsicKind::AtomicNotifyOne:
+          case IntrinsicKind::AtomicNotifyAll:
           case IntrinsicKind::AtomicStore:
           case IntrinsicKind::AtomicExchange:
           case IntrinsicKind::AtomicCompareExchange:

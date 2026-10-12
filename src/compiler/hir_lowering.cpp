@@ -5780,6 +5780,9 @@ private:
             lifecycleValid = false;
           }
         } else if (resolved->intrinsic == IntrinsicKind::AtomicLoad ||
+                   resolved->intrinsic == IntrinsicKind::AtomicWait ||
+                   resolved->intrinsic == IntrinsicKind::AtomicNotifyOne ||
+                   resolved->intrinsic == IntrinsicKind::AtomicNotifyAll ||
                    resolved->intrinsic == IntrinsicKind::AtomicStore ||
                    resolved->intrinsic == IntrinsicKind::AtomicExchange ||
                    resolved->intrinsic ==
@@ -5788,6 +5791,11 @@ private:
           const SynchronizationOperationKind expected =
               resolved->intrinsic == IntrinsicKind::AtomicLoad
                   ? SynchronizationOperationKind::AtomicLoad
+              : resolved->intrinsic == IntrinsicKind::AtomicWait
+                  ? SynchronizationOperationKind::AtomicWait
+              : resolved->intrinsic == IntrinsicKind::AtomicNotifyOne ||
+                      resolved->intrinsic == IntrinsicKind::AtomicNotifyAll
+                  ? SynchronizationOperationKind::AtomicNotify
               : resolved->intrinsic == IntrinsicKind::AtomicStore
                   ? SynchronizationOperationKind::AtomicStore
               : resolved->intrinsic == IntrinsicKind::AtomicExchange

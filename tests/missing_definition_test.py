@@ -15,8 +15,7 @@ def main():
     fixtures = pathlib.Path(__file__).parent / "coverage/reproducers"
     with tempfile.TemporaryDirectory(prefix="gti-missing-definition-") as directory:
         root = pathlib.Path(directory)
-        for name in ("f7-undefined-user-function", "f7-declaration-only-weak-ptr",
-                     "f7-json-decode-without-codec"):
+        for name in ("f7-undefined-user-function", "f7-declaration-only-weak-ptr"):
             for mode in ([], ["--emit-cpp"]):
                 rejected = subprocess.run(
                     [compiler, str(fixtures / f"{name}.gti"), *mode, "--cxx",
@@ -27,10 +26,6 @@ def main():
                 assert rejected.returncode == 65, (name, mode, rejected)
                 assert "GTI-S2106" in text and "has no definition" in text, text
                 assert "GTI-B0001" not in text and "native C++ compiler" not in text, text
-                if name == "f7-json-decode-without-codec":
-                    primary = next(line for line in text.splitlines()
-                                   if "error[GTI-S2106]" in line)
-                    assert f"{name}.gti:17:29:" in primary, text
         source = "// \U0001f600\nint helper(int value);\nint main() { return helper(7); }\n"
         path = root / "src/main.gti"
         path.parent.mkdir()

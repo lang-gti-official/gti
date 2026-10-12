@@ -1,15 +1,15 @@
-// std::experimental::json parity with std::json's codec uses: optionals and
+// std::json parity with std::json's codec uses: optionals and
 // null, string-keyed maps, exact number lexemes and range checks, strict
 // strings (UTF-8, escapes, surrogates), codec specializations, pretty
 // printing, structured errors with paths and locations, and decode limits.
-#include <std/experimental/json>
+#include <std/json>
 #include <std/map>
 #include <std/optional>
 #include <std/string>
 #include <std/unordered_map>
 #include <std/vector>
 
-namespace ej = std::experimental::json;
+namespace ej = std::json;
 
 // A type with an invariant: encoded as a bare number of degrees.
 class temperature {
@@ -20,21 +20,21 @@ public:
   double value() { return this.degrees; }
 };
 
-class std::experimental::json::codec<temperature> {
+class std::json::codec<temperature> {
 public:
-  expected<void, std::experimental::json::error> encode(temperature& value, mut std::string& out) {
+  expected<void, std::json::error> encode(temperature& value, mut std::string& out) {
     double degrees = value.value();
-    mut auto text = std::experimental::json::encode(degrees);
+    mut auto text = std::json::encode(degrees);
     if (!text) {
-      mut std::experimental::json::error failure = std::move(text).error();
+      std::json::error failure = std::move(text).error();
       return unexpected(std::move(failure));
     }
     out.append(text.value().view());
     return;
   }
 
-  expected<temperature, std::experimental::json::error> decode(std::string_view text) {
-    double degrees = ?std::experimental::json::decode<double>(text);
+  expected<temperature, std::json::error> decode(std::string_view text) {
+    double degrees = ?std::json::decode<double>(text);
     return temperature(degrees);
   }
 };

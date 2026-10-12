@@ -41619,13 +41619,19 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Call &&
         (instruction.intrinsic == IntrinsicKind::AtomicLoad ||
+         instruction.intrinsic == IntrinsicKind::AtomicWait ||
+         instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ||
+         instruction.intrinsic == IntrinsicKind::AtomicNotifyAll ||
          instruction.intrinsic == IntrinsicKind::AtomicStore ||
          instruction.intrinsic == IntrinsicKind::AtomicExchange ||
          instruction.intrinsic == IntrinsicKind::AtomicCompareExchange)) {
-      const bool store = instruction.intrinsic == IntrinsicKind::AtomicStore;
+      const bool noResult = instruction.info.type == SemanticType::Void;
+      const bool notify =
+          instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ||
+          instruction.intrinsic == IntrinsicKind::AtomicNotifyAll;
       const bool compareExchange =
           instruction.intrinsic == IntrinsicKind::AtomicCompareExchange;
-      if (!store) {
+      if (!noResult) {
         output << "__gti_mir_v_" << *instruction.result << " = ";
       }
       if (compareExchange) {
@@ -41645,6 +41651,12 @@ private:
       } else {
         emitCallArgument(instruction.operands[0], false, false);
         output << (instruction.intrinsic == IntrinsicKind::AtomicLoad ? ".load("
+                   : instruction.intrinsic == IntrinsicKind::AtomicWait
+                       ? ".wait("
+                   : instruction.intrinsic == IntrinsicKind::AtomicNotifyOne
+                       ? ".notify_one("
+                   : instruction.intrinsic == IntrinsicKind::AtomicNotifyAll
+                       ? ".notify_all("
                    : instruction.intrinsic == IntrinsicKind::AtomicStore
                        ? ".store("
                        : ".exchange(");
@@ -41652,7 +41664,9 @@ private:
           emitOperand(instruction.operands[1]);
           output << ", ";
         }
-        output << cppAtomicMemoryOrder(*instruction.synchronization.order);
+        if (!notify) {
+          output << cppAtomicMemoryOrder(*instruction.synchronization.order);
+        }
       }
       output << ");\n";
       return;
@@ -57453,6 +57467,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             continue;
           }
           if (instruction.intrinsic == IntrinsicKind::AtomicLoad ||
+              instruction.intrinsic == IntrinsicKind::AtomicWait ||
+              instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ||
+              instruction.intrinsic == IntrinsicKind::AtomicNotifyAll ||
               instruction.intrinsic == IntrinsicKind::AtomicStore ||
               instruction.intrinsic == IntrinsicKind::AtomicExchange ||
               instruction.intrinsic == IntrinsicKind::AtomicCompareExchange) {
@@ -57461,21 +57478,34 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                     ? nullptr
                     : atomicStorageElement(instruction.operands.front());
             const std::size_t operandCount =
-                instruction.intrinsic == IntrinsicKind::AtomicLoad ? 1
+                instruction.intrinsic == IntrinsicKind::AtomicLoad ||
+                        instruction.intrinsic ==
+                            IntrinsicKind::AtomicNotifyOne ||
+                        instruction.intrinsic == IntrinsicKind::AtomicNotifyAll
+                    ? 1
                 : instruction.intrinsic == IntrinsicKind::AtomicStore ||
+                        instruction.intrinsic == IntrinsicKind::AtomicWait ||
                         instruction.intrinsic == IntrinsicKind::AtomicExchange
                     ? 2
                     : 4;
             const SynchronizationOperationKind expectedSynchronization =
                 instruction.intrinsic == IntrinsicKind::AtomicLoad
                     ? SynchronizationOperationKind::AtomicLoad
+                : instruction.intrinsic == IntrinsicKind::AtomicWait
+                    ? SynchronizationOperationKind::AtomicWait
+                : instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ||
+                        instruction.intrinsic == IntrinsicKind::AtomicNotifyAll
+                    ? SynchronizationOperationKind::AtomicNotify
                 : instruction.intrinsic == IntrinsicKind::AtomicStore
                     ? SynchronizationOperationKind::AtomicStore
                 : instruction.intrinsic == IntrinsicKind::AtomicExchange
                     ? SynchronizationOperationKind::AtomicReadModifyWrite
                     : SynchronizationOperationKind::AtomicCompareExchange;
             const bool resultReady =
-                instruction.intrinsic == IntrinsicKind::AtomicStore
+                (instruction.intrinsic == IntrinsicKind::AtomicStore ||
+                 instruction.intrinsic == IntrinsicKind::AtomicWait ||
+                 instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ||
+                 instruction.intrinsic == IntrinsicKind::AtomicNotifyAll)
                     ? !instruction.result &&
                           instruction.info.type == SemanticType::Void
                     : instruction.result.has_value() &&

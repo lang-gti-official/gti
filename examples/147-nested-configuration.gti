@@ -1,6 +1,6 @@
 // Named nested types organize a schema without capturing an outer object.
 // Reflected JSON recursively follows fields, not lexical declaration scopes.
-#include <std/experimental/json>
+#include <std/json>
 #include <std/string>
 
 struct Config {
@@ -25,7 +25,7 @@ struct Config {
 
 int main() {
   Config::Network::Retry retry{.attempts = uint32_t(5)};
-  mut auto decoded = std::experimental::json::decode<Config>(
+  mut auto decoded = std::json::decode<Config>(
       "{\"network\":{\"host\":\"example.org\",\"port\":443,\"retry\":{\"attempts\":5}},\"logging\":{\"enabled\":true}}");
   if (!decoded) {
     std::println(decoded.error().description());
@@ -39,7 +39,7 @@ int main() {
   if (config.network.retry.attempts != retry.attempts) {
     return 2;
   }
-  mut auto encoded = std::experimental::json::encode(config);
+  mut auto encoded = std::json::encode(config);
   if (!encoded) {
     return 3;
   }
