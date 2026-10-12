@@ -13,9 +13,12 @@ not a second semantic or test-selection authority.
 
 1. Run `git status --short` and preserve unrelated work. Do not clean, reset,
    stage, or reformat files outside the requested change.
-2. Read [`docs/index.md`](../../../docs/index.md) and
-   [`docs/architecture/verification.md`](../../../docs/architecture/verification.md),
-   plus the owning language, architecture, decision, and plan documents.
+2. Read [`docs/index.md`](../../../docs/index.md), then locate and read the
+   task-relevant sections of
+   [`docs/architecture/verification.md`](../../../docs/architecture/verification.md)
+   and the owning language, architecture, decision, and plan documents. Use
+   headings/search first rather than dumping the entire verification history.
+   Read activated skill instructions completely.
 3. Use the user-specified base when present. Otherwise verify the working tree
    against `HEAD`, including staged, unstaged, and untracked files.
 4. Run the deterministic surface planner from the repository root:
@@ -58,6 +61,11 @@ not a second semantic or test-selection authority.
 
 ## Run Checks
 
+Before expensive runs, record the acceptance gates, commands, compiler/build
+mode and platform, source head/base, and where results will be retained. Run
+focused owning/portability checks before a broad sweep when they can expose an
+invalid setup cheaply; they do not replace required broad coverage.
+
 1. Run the narrow owning test first, followed by every affected cross-phase or
    tooling gate. Use exact CTest names or a deliberately bounded `-R` regex.
 2. Build before running a target when its executable may be stale or absent.
@@ -81,6 +89,21 @@ not a second semantic or test-selection authority.
 5. If a check fails, preserve its raw command and output, identify the owning
    failure, and fix only when the task authorizes implementation. Never hide a
    failure by weakening, deleting, or skipping the test.
+
+Use the [execution contract](../../../docs/architecture/agent-workflow.md#bounded-output-analysis-and-waiting)
+for bounded log display and waiting on the same live operation. A tail is not
+proof of success: verify exit status, test counts/skips, source identity and
+truncation metadata. Keep the complete evidence available under the runner's
+retention contract; do not reduce test execution to meet a display budget.
+
+When upstream changes invalidate integration binding, inspect the delta and
+record why each gate remains applicable or needs fresh execution. Validate the
+new clean published head/base through the helper. Repeat every affected,
+previously failed and required broad/platform gate; broaden when interaction
+risk is uncertain. Earlier passes stay attributed to their original sources,
+not substituted for fresh acceptance. Do not restart a running suite merely
+because main advanced. Deeper correctness/design analysis can expand the
+checks at any point; cost controls never waive the resulting obligations.
 
 ## Report The Result
 
