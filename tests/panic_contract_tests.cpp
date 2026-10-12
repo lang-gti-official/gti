@@ -40,6 +40,7 @@ int main() { checked(true); return 0; }
   if (!result.canGenerateCode())
     return;
 
+  unsigned allCalls = 0;
   unsigned calls = 0;
   unsigned forwarded = 0;
   unsigned terminals = 0;
@@ -48,6 +49,7 @@ int main() { checked(true); return 0; }
       for (const auto &instruction : block.instructions) {
         if (!instruction.tracksCaller)
           continue;
+        ++allCalls;
         // Count the tracked forwarding chain and this fixture's entry, not
         // unrelated ordinary anchors in additional standard-library helpers.
         // All calls below still receive the exact-location/mutation checks.
@@ -144,7 +146,8 @@ int main() { checked(true); return 0; }
       }
     }
   }
-  check(hirCalls == calls, "HIR/MIR preserve the same tracked-call inventory");
+  check(hirCalls == allCalls,
+        "HIR/MIR preserve the same tracked-call inventory");
   const auto lowered = gti_test::lowerProgram(result, result.mir, result.mir);
   const auto printed = lang::LoweredProgramPrinter().print(lowered);
   check(printed.find(";never-returns=1;tracks-caller=1") != std::string::npos,
