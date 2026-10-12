@@ -87,6 +87,14 @@ std::int32_t nativeSleep(std::int64_t seconds, std::int64_t nanoseconds,
   if (errno != EINTR) {
     return -2;
   }
+  // Linux measures the remainder against the timer's slack-extended expiry,
+  // so an interruption inside that slack reports more than was requested.
+  // Clamp it to the request, as the Windows path clamps its tick remainder.
+  if (remaining.tv_sec > requested.tv_sec ||
+      (remaining.tv_sec == requested.tv_sec &&
+       remaining.tv_nsec > requested.tv_nsec)) {
+    remaining = requested;
+  }
   *remainingSeconds = static_cast<std::int64_t>(remaining.tv_sec);
   *remainingNanoseconds = static_cast<std::int64_t>(remaining.tv_nsec);
   return -1;
