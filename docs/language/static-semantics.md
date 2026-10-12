@@ -712,6 +712,30 @@ inference through an open callable, overload selection from unknown results,
 or implicit callable escape. Existing receiver capabilities, ownership and
 left-to-right evaluation rules remain unchanged.
 
+A generic callable parameter may be a checked reference: `F& f` permits
+read-only invocation and `mut F& f` permits read-only or mutable invocation.
+The argument must satisfy ordinary reference binding and exclusivity rules.
+Its environment remains caller-owned, and a mutable invocation changes that
+same object. Direct forwarding to another proven confined parameter is
+supported, including reference reborrows; this does not permit access upgrades,
+consuming a borrowed object, reference packs, capture, storage or escape of a
+confined callable. No `requires` clause is necessary; callable concepts can
+add an explicit signature requirement.
+
+A conditional in an `auto` value initializer can defer a direct open callable
+arm's result until concrete semantic instantiation. Either or both arms may
+be callable invocations, including parenthesized invocations and nested
+conditionals. Each concrete instance must satisfy the existing arm-compatibility
+rules: exact types apart from the established raw-pointer joins. This adds no
+common-type conversion or overload ranking from an unknown result.
+The inferred callable results must be non-void, non-reference values without
+tracked borrowed state or lambda identity. An explicitly typed initializer or
+enclosing return still supplies an exact result requirement immediately.
+An unresolved result is not `void`; all executable signatures and bindings
+must be concrete before HIR/MIR. Direct `auto result = f(...);` remains outside
+this conditional-join slice. A discarded conditional retains the ordinary
+void-operation contract.
+
 Receiver mutability may distinguish method overloads. A read-only receiver can
 select only a read-only method; a mutable receiver prefers the otherwise exact
 mutable overload when both exist. Ordinary methods and `operator()` also admit

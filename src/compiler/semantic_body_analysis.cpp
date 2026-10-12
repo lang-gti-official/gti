@@ -6757,21 +6757,27 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
   const SemanticType contextualType =
       contextualInitializerType.value_or(SemanticType::Unknown);
   ++loanFlow.rawConditionalExpressionDepth;
+  // An auto initializer can defer an arm's callable result until concrete
+  // semantic reanalysis. A discarded conditional keeps the existing void-call
+  // requirement; unresolved must not silently stand for void in a value join.
+  const bool inferredValue = contextualInitializerType.has_value();
   const SemanticType thenType =
-      contextualType == SemanticType::Unknown
+      contextualType == SemanticType::Unknown && !inferredValue
           ? analyze(expr.thenExpression())
-          : analyzeExpectedCallableResult(expr.thenExpression(),
-                                          contextualType);
+          : analyzeExpectedCallableResult(expr.thenExpression(), contextualType,
+                                          contextualType ==
+                                              SemanticType::Unknown);
   const ScopeStack thenScopes = scopes;
 
   scopes = beforeBranches;
   const SemanticType elseExpectation =
       contextualType == SemanticType::Unknown ? thenType : contextualType;
   const SemanticType elseType =
-      elseExpectation == SemanticType::Unknown
+      elseExpectation == SemanticType::Unknown && !inferredValue
           ? analyze(expr.elseExpression())
-          : analyzeExpectedCallableResult(expr.elseExpression(),
-                                          elseExpectation);
+          : analyzeExpectedCallableResult(
+                expr.elseExpression(), elseExpectation,
+                elseExpectation == SemanticType::Unknown);
   --loanFlow.rawConditionalExpressionDepth;
   const ScopeStack elseScopes = scopes;
 
@@ -12417,11 +12423,19 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
     ++suppressLoanPlaceAccessDepth;
     ++programStoragePlaceUseDepth;
   }
+  const Expr *inferredExpression = declaration.initializer().get();
+  while (const auto *grouping = exprAs<Grouping>(inferredExpression)) {
+    inferredExpression = grouping->expression().get();
+  }
+  // Only a conditional value join needs an unknown initializer context.
+  // In particular, auto x{...} must retain its missing-constructed-type error;
+  // Unknown there means recovery from an already-invalid explicit type.
   const SemanticType initializerType =
-      declaration.initializer()
-          ? analyzeExpectedCallableResult(declaration.initializer(),
-                                          SemanticType::Unknown)
-          : SemanticType::Unknown;
+      !declaration.initializer() ? SemanticType::Unknown
+      : exprAs<ConditionalExpr>(inferredExpression)
+          ? analyzeInitializer(declaration.initializer(), SemanticType::Unknown)
+          : analyzeExpectedCallableResult(declaration.initializer(),
+                                          SemanticType::Unknown);
   if (ordinaryReference && declaration.initializer()) {
     if (declaration.isMutable())
       recordMutableBindingUse(declaration.initializer());

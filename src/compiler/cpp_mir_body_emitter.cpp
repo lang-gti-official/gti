@@ -2104,11 +2104,24 @@ movedValueCallableReceiverStage(const MirBody &body,
   const bool parameter = place->root == MirPlaceRootKind::Binding &&
                          place->projections.empty() &&
                          place->initiallyAvailable;
+  const bool referenceParameter =
+      place->root == MirPlaceRootKind::Binding &&
+      place->projections.size() == 1 &&
+      place->projections.front().kind == MirProjectionKind::Dereference &&
+      std::any_of(
+          body.places.begin(), body.places.end(), [&](const MirPlace &base) {
+            return base.root == MirPlaceRootKind::Binding &&
+                   base.binding == place->binding && base.projections.empty() &&
+                   base.initiallyAvailable &&
+                   base.type.kind == SemanticType::Reference &&
+                   base.type.arguments.size() == 1 &&
+                   base.type.arguments.front() == place->type;
+          });
   const bool receiverField =
       body.kind == MirBodyKind::Function &&
       place->root == MirPlaceRootKind::This && place->projections.size() == 1 &&
       place->projections.front().kind == MirProjectionKind::Field;
-  if (!parameter && !receiverField) {
+  if (!parameter && !referenceParameter && !receiverField) {
     return nullptr;
   }
   return definition;
@@ -57122,8 +57135,25 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               const bool nativeReady = operand.type.hasNativeFunctionShape() &&
                                        valueOperand(operand) &&
                                        typeRow(operand.type);
+              // A confined reference argument uses the same ordered loan
+              // stage and pointer carrier as every other checked reference.
+              // It does not copy or construct a callable environment.
+              const MirInstruction *referenceStage =
+                  valueOperand(operand) &&
+                          operand.type.kind == SemanticType::Reference
+                      ? definitionFor(body, operand)
+                      : nullptr;
+              const bool referenceReady =
+                  parameter.boundary == CallableBoundary::Confined &&
+                  operand.type == parameter.callableType &&
+                  typeRow(operand.type) && referenceStage != nullptr &&
+                  referenceStage->kind == MirInstructionKind::CallInput &&
+                  referenceStage->callInputRole == MirCallInputRole::Argument &&
+                  referenceStage->operands.size() == 1 &&
+                  (loanArgumentSupported(referenceStage->operands.front()) ||
+                   borrowStagedCallInput(body, operand) != nullptr);
               if (!lambdaReady && !classReady && !functionItemReady &&
-                  !nativeReady) {
+                  !nativeReady && !referenceReady) {
                 callableArgumentsReady = false;
                 break;
               }

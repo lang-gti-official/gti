@@ -999,6 +999,18 @@ add_test(NAME expected_conditional_arms_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_conditional_arms_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_conditional_arms_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME borrowed_callable_conditionals_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/borrowed_callable_conditionals_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(borrowed_callable_conditionals_runtime PROPERTIES TIMEOUT 240)
+if(TARGET gti_lsp)
+  add_test(NAME borrowed_callable_conditionals_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrowed_callable_conditionals_lsp_test.py"
+            $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(borrowed_callable_conditionals_lsp PROPERTIES TIMEOUT 120)
+endif()
 add_test(NAME consuming_call_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/consuming_call_assignment_runtime_test.py"

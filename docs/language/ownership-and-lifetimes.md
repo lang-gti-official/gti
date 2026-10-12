@@ -1190,8 +1190,11 @@ such as `std::construct_at`, `std::assume_ref`, `std::destroy_at` and
 `std::layout_of` therefore accept closure-bearing objects. Reaching the object
 again keeps its explicit unsafe obligation, and the checked reference that
 `assume_ref`/`assume_mut` return borrows a closure-free owner witness. A
-reference to a closure-bearing object is still a callable boundary, so
-`int peek<T>(T& value)` still rejects a lambda argument with GTI-S2046.
+reference to a closure-bearing object is still a callable boundary. Direct
+`F&`/`mut F&` parameters now admit visible, proven confined invocation and
+forwarding, using ordinary checked loans and retaining caller ownership.
+An otherwise unclassified `int peek<T>(T& value) { return 1; }` still rejects
+a lambda argument with GTI-S2046 because it establishes no callable contract.
 [`136-inline-closure-cells.gti`](../../examples/136-inline-closure-cells.gti)
 keeps a closure in an application-defined inline cell this way.
 
