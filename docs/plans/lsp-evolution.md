@@ -311,7 +311,7 @@ layer.
    The eight-include file needed that on every edit (two repetitions, three
    registrations, three body passes and three HIR lowerings), so per-edit
    time doubled to about 1,180 ms although 78 percent of library bodies were
-   skipped. Since 0.412.2 the semantic visitor completes such a body during
+   skipped. Since 0.412.3 the semantic visitor completes such a body during
    HIR lowering (late demand): it analyses it in the base model through the
    deferred-body drain, finalizes exactly that batch, and re-runs any concrete
    instance that consulted it. The repeated analysis remains as a bounded
@@ -340,7 +340,7 @@ edits (parse fully cached), milliseconds per edit:
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | before demand-driven bodies (`2f4f50ae`) | 605 | 355 | 42 | 270 | 205 | n/a |
 | demand with repeated analysis (0.412.0) | 1,180 | 540 | 117 | 140 | 570 | 2 |
-| late demand (0.412.2) | 440 | 195 | 41 | 57 | 200 | 0 |
+| late demand (0.412.3) | 440 | 195 | 41 | 57 | 200 | 0 |
 
 With late demand the 089 edit analyses 284 of 1,250 deferred library bodies,
 12 of them late (about 10 ms including their finalization). The
