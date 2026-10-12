@@ -1128,6 +1128,10 @@ auto SemanticVisitor::Impl::resolveClassArguments(
     result.valid = false;
     return result;
   }
+  if (!validateNestedClassAccess(classId, site)) {
+    result.valid = false;
+    return result;
+  }
 
   if (arguments.size() < classInfo(classId).genericParameters.size())
     resolveClassGenericDefaults(classId);
@@ -3119,6 +3123,37 @@ auto SemanticVisitor::Impl::validateArrayExtent(
   }
 }
 
+auto SemanticVisitor::Impl::isWithinClass(ClassId owner) const -> bool {
+  for (ClassId current = currentClass.value_or(0); current != 0;
+       current = classInfo(current).enclosingClass) {
+    if (current == owner)
+      return true;
+  }
+  return false;
+}
+
+auto SemanticVisitor::Impl::validateNestedClassAccess(ClassId id,
+                                                      const Token &use)
+    -> bool {
+  for (ClassId current = id; current != 0;
+       current = classInfo(current).enclosingClass) {
+    const ClassInfo &nested = classInfo(current);
+    if (nested.enclosingClass != 0 &&
+        nested.enclosingAccess == AccessModifier::Private &&
+        !isWithinClass(nested.enclosingClass)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2007", DiagnosticPhase::Semantics, use,
+          "Nested type '" + nested.name.lexeme + "' of '" +
+              classInfo(nested.enclosingClass).name.lexeme + "' is private.");
+      diagnostic.related.push_back(
+          {tokenSpan(nested.name), "Nested type is declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      return false;
+    }
+  }
+  return true;
+}
+
 auto SemanticVisitor::Impl::validateTypeAliasAccess(
     const ResolvedTypeAlias &alias, const Token &use) -> bool {
   for (const ResolvedTypeAlias &qualifier : alias.qualifiers) {
@@ -3787,6 +3822,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   if (type.arguments.size() < classInfo(*classId).genericParameters.size())
     resolveClassGenericDefaults(*classId);
   const ClassInfo &declaration = classInfo(*classId);
+  if (!validateNestedClassAccess(*classId, type.name.last()))
+    return;
   if (!declaration.declaration->genericArgumentPatterns().empty() ||
       (!declaration.genericParameters.empty() &&
        declaration.genericParameters.back().pack)) {

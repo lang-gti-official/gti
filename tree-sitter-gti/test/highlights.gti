@@ -313,3 +313,12 @@ using SpecializedHighlight = Box<Box<int>>::nested::value_type;
 Box<int>::value_type qualified_member_highlight(Box<int>::value_type value) {
   return value;
 }
+
+struct NestedOwnerHighlight {
+  class NestedChildHighlight {
+  public:
+    NestedChildHighlight() {}
+  };
+  NestedOwnerHighlight() {}
+};
+NestedOwnerHighlight::NestedChildHighlight nested_type_highlight;
