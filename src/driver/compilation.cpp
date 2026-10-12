@@ -39,6 +39,9 @@ FrontendResult analyze(const CompilationRequest &request,
   // Artifacts contain only code the program roots reach.
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = artifact;
+  if (artifact && request.rawPointerAudit() == RawPointerAuditMode::Off &&
+      !request.rawPointerAuditLibraryFindings())
+    options.trustedBodies = TrustedBodyAnalysis::Reachable;
   FrontendResult result = Frontend(options).analyzeLoaded(
       request.entry(), std::move(inputs.sourceGraph), std::move(inputs.sources),
       std::move(inputs.diagnostics), inputs.sourceValid);

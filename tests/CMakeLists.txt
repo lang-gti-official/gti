@@ -816,6 +816,10 @@ add_test(NAME raw_borrow_contract COMMAND gti_raw_borrow_tests)
 add_executable(gti_body_analysis_order_tests "${PROJECT_SOURCE_DIR}/tests/body_analysis_order_tests.cpp")
 target_link_libraries(gti_body_analysis_order_tests PRIVATE gti_compiler)
 add_test(NAME body_analysis_order COMMAND gti_body_analysis_order_tests)
+add_executable(gti_trusted_body_analysis_tests "${PROJECT_SOURCE_DIR}/tests/trusted_body_analysis_tests.cpp")
+target_link_libraries(gti_trusted_body_analysis_tests PRIVATE gti_compiler)
+add_test(NAME trusted_body_analysis COMMAND gti_trusted_body_analysis_tests)
+set_tests_properties(trusted_body_analysis PROPERTIES TIMEOUT 600)
 add_executable(gti_reflection_tests "${PROJECT_SOURCE_DIR}/tests/reflection_tests.cpp")
 target_link_libraries(gti_reflection_tests PRIVATE gti_compiler)
 add_test(NAME reflection_semantics COMMAND gti_reflection_tests)
@@ -840,6 +844,11 @@ add_executable(gti_discardable_result_tests "${PROJECT_SOURCE_DIR}/tests/discard
 target_link_libraries(gti_discardable_result_tests PRIVATE gti_compiler)
 add_test(NAME discardable_result COMMAND gti_discardable_result_tests)
 if(TARGET gti_lsp)
+  add_test(NAME aggregate_std_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/aggregate_std_lsp_test.py"
+            $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(aggregate_std_lsp PROPERTIES TIMEOUT 120)
   add_test(NAME raw_pointer_audit_policy
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_audit_policy_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
   set_tests_properties(raw_pointer_audit_policy PROPERTIES TIMEOUT 240)

@@ -91,7 +91,10 @@ selects `<root>/modules/name.gti` beneath a standard-library root, a fixed
 layout rather than a search, and the loaded interface has the
 `StandardLibrary` role and the logical name `modules/name`. Its module name
 does not collide with an application interface of the same name. The bare
-`import std;` is rejected, because the library has no aggregate module.
+`import std;` selects `<root>/std.gti`, an ordinary interface re-exporting the
+portable public units. POSIX-only environment/process/TCP and experimental
+units remain explicit. Both paths retain canonical identity and module-header
+validation; neither searches arbitrary application files.
 Includes cannot load an interface and imports cannot load a legacy unit. An
 interface's `export #include` resolves exactly as an include, then records an
 `ExportInclude` edge that republishes that one legacy unit to importers. An imported interface starts from compiler-supplied

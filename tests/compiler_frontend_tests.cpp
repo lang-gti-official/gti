@@ -2864,9 +2864,10 @@ int main() {
          "a republished unit does not republish its own nested includes");
 
   const auto aggregate = analyze("import std;\nint main() { return 0; }\n");
-  expect(!aggregate.sourceValid &&
-             hasDiagnostic(aggregate.diagnostics, "no aggregate module"),
-         "the standard library has no aggregate module");
+  if (!aggregate.canGenerateCode())
+    report(aggregate);
+  expect(aggregate.canGenerateCode(),
+         "the portable standard-library aggregate imports and lowers");
   const auto missing =
       analyze("import std.missing;\nint main() { return 0; }\n");
   expect(!missing.sourceValid &&

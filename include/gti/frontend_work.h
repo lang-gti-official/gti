@@ -29,6 +29,8 @@ struct FrontendWorkMetrics {
   // demand; see TrustedBodyAnalysis.
   std::size_t semanticDeferredBodies = 0;
   std::size_t semanticAnalyzedDeferredBodies = 0;
+  std::size_t semanticDemandRounds = 0;
+  std::size_t semanticDemandFallbacks = 0;
   std::size_t semanticApplicationBodyMicroseconds = 0;
   std::size_t semanticFinalizationMicroseconds = 0;
   std::size_t hirMicroseconds = 0;
@@ -56,6 +58,8 @@ struct FrontendWorkMetrics {
     semanticTrustedBodyMicroseconds = 0;
     semanticDeferredBodies = 0;
     semanticAnalyzedDeferredBodies = 0;
+    semanticDemandRounds = 0;
+    semanticDemandFallbacks = 0;
     semanticApplicationBodyMicroseconds = 0;
     semanticFinalizationMicroseconds = 0;
     hirMicroseconds = 0;
