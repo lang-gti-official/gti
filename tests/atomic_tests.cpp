@@ -136,6 +136,9 @@ void forEachInstruction(lang::MirProgram &program, Function &&function) {
 
 bool isAtomic(lang::IntrinsicKind kind) {
   return kind == lang::IntrinsicKind::AtomicLoad ||
+         kind == lang::IntrinsicKind::AtomicWait ||
+         kind == lang::IntrinsicKind::AtomicNotifyOne ||
+         kind == lang::IntrinsicKind::AtomicNotifyAll ||
          kind == lang::IntrinsicKind::AtomicStore ||
          kind == lang::IntrinsicKind::AtomicExchange ||
          kind == lang::IntrinsicKind::AtomicCompareExchange;
@@ -695,6 +698,101 @@ void testFetchOperations() {
   }
 }
 
+void testWaiting() {
+  const std::string source = R"(
+#include <std/atomic>
+class Completion {
+  std::atomic<int32_t> state{1};
+public:
+  void wait() {
+    this.state.wait(0);
+    this.state.wait(0, std::memory_order_relaxed());
+    this.state.wait(0, std::memory_order_acquire());
+    this.state.wait(0, std::memory_order_seq_cst());
+  }
+  void wake() { this.state.notify_one(); this.state.notify_all(); }
+};
+int main() { Completion completion{}; completion.wait(); completion.wake(); return 0; }
+)";
+  const auto frontend = analyze("atomic-waiting.gti", source);
+  if (!frontend.canGenerateCode())
+    printDiagnostics(frontend);
+  expect(frontend.canGenerateCode(),
+         "unrelated source wrapper can wait and notify");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto kind :
+       {lang::IntrinsicKind::AtomicWait, lang::IntrinsicKind::AtomicNotifyOne,
+        lang::IntrinsicKind::AtomicNotifyAll}) {
+    expect(atomicCount(frontend.mir, kind) > 0,
+           "waiting retains exact MIR intrinsic");
+    auto forged = frontend.mir;
+    auto *call = findAtomic(forged, kind);
+    call->synchronization.kind = lang::SynchronizationOperationKind::AtomicLoad;
+    expect(!lang::verifyMirProgram(forged).valid(),
+           "waiting cannot be forged as a load");
+    auto stripped = frontend.mir;
+    findAtomic(stripped, kind)->intrinsic = lang::IntrinsicKind::None;
+    expect(!lang::verifyMirProgram(stripped).valid(),
+           "waiting requires trusted identity");
+    auto wrongStorage = frontend.mir;
+    findAtomic(wrongStorage, kind)->operands[0].kind =
+        lang::MirOperandKind::Move;
+    expect(!lang::verifyMirProgram(wrongStorage).valid(),
+           "waiting borrows stable storage");
+  }
+  for (const auto order : {lang::AtomicMemoryOrder::Release,
+                           lang::AtomicMemoryOrder::AcquireRelease}) {
+    auto invalid = frontend.mir;
+    findAtomic(invalid, lang::IntrinsicKind::AtomicWait)
+        ->synchronization.order = order;
+    expect(!lang::verifyMirProgram(invalid).valid(),
+           "wait rejects release orders in MIR");
+  }
+  auto notifyOrder = frontend.mir;
+  findAtomic(notifyOrder, lang::IntrinsicKind::AtomicNotifyAll)
+      ->synchronization.order = lang::AtomicMemoryOrder::Acquire;
+  expect(!lang::verifyMirProgram(notifyOrder).valid(),
+         "notify has no ordering dimension");
+  auto wrongOld = frontend.mir;
+  findAtomic(wrongOld, lang::IntrinsicKind::AtomicWait)->operands[1].type =
+      lang::SemanticType::Bool;
+  expect(!lang::verifyMirProgram(wrongOld).valid(),
+         "wait old must match scalar type");
+
+  for (const std::string order : {"release", "acq_rel"}) {
+    auto invalid =
+        analyze("invalid-wait.gti",
+                "#include <std/atomic>\nint main() { std::atomic<int32_t> "
+                "a{0}; a.wait(0, std::memory_order_" +
+                    order + "()); return 0; }");
+    expect(!invalid.canGenerateCode() && !hasCode(invalid, "GTI-B0001"),
+           "invalid wait order rejected before backend");
+  }
+  lang::TargetInfo single = concurrentTarget();
+  single.executionProfile = lang::ExecutionProfile::SingleThreaded;
+  expect(!analyze("wait-single.gti", source, single).canGenerateCode(),
+         "waiting requires concurrent execution profile");
+  expect(!analyze("wait-no-threads.gti", source, concurrentTarget(false))
+              .canGenerateCode(),
+         "waiting requires target threads");
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+    const auto optimized =
+        lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                          .mir = frontend.mir,
+                                          .level = level,
+                                          .target = concurrentTarget()});
+    expect(optimized.valid(), "optimized waiting program remains valid");
+    for (const auto kind :
+         {lang::IntrinsicKind::AtomicWait, lang::IntrinsicKind::AtomicNotifyOne,
+          lang::IntrinsicKind::AtomicNotifyAll})
+      expect(atomicCount(optimized.mir, kind) ==
+                 atomicCount(frontend.mir, kind),
+             "optimization preserves blocking and wakeups");
+  }
+}
+
 void testVerifierMutations() {
   const lang::FrontendResult frontend =
       analyze("atomic-verifier.gti", validProgram());
@@ -764,5 +862,6 @@ int main() {
   testExplicitOrders();
   testFetchOperations();
   testVerifierMutations();
+  testWaiting();
   return failures == 0 ? 0 : 1;
 }

@@ -85,6 +85,28 @@ prerequisites and measured clients; they are not added to this implementation.
 
 ## Scoped concurrency and composable shared jobs (2026-10-11)
 
+### Safe waiting follow-up (2026-10-12)
+
+`C-WAIT-01` adds safe scalar atomic wait/notify as the first waiting slice.
+The implementation uses the existing stable shared atomic-storage loan,
+load-legal orders, distinct verified MIR wait/notification effects and native
+parking. Public wrappers and completion loops remain source-defined. No GTI
+per-wait allocation or per-object metadata is added. This unlocks sleeping
+completion counters and scalar handoffs for managed/scoped workers.
+
+Acceptance requires positive and negative semantic tests, malformed-MIR
+rejection, optimizer barriers, C++20/C++23 O0/O1/O3 handshake/broadcast execution,
+editor and installed-library coverage, sanitizers where available, and runtime,
+allocation and code-size evidence. The implementation passes the focused
+macOS/Linux gates, 674/675 remote full-sweep tests and the sole remote
+permission-limited debugger gate locally; measured costs and exact snapshot
+identities are recorded in [verification](../architecture/verification.md#safe-atomic-waiting-2026-10-12).
+Final clean-head reconciliation remains the integration gate. Guard-aware
+condition variables (loan suspension), timed waits and persistent worker pools
+remain separate goals, not claims of this slice.
+
+### Scoped concurrency acceptance
+
 **State:** the public APIs and production execution paths are implemented and
 validated in PR #20 for 0.405.0. The reflected-JSON reconciliation passes all 51
 combined-head integration gates and all 648 remote full-sweep checks, plus the

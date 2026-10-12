@@ -4,7 +4,7 @@
     "stdlib/prelude.gti": "a33aa3f09d625f30f05d937483d0db075649a2037e45e990ae628ce07f28e448",
     "stdlib/std/algorithm.gti": "c46dc1e269933a154b029b3dd3254aa6335e92cc270cdd17565dc5d369e6a655",
     "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
-    "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
+    "stdlib/std/atomic.gti": "c7edcd7882161c47b5a6de827025181621df547bfaaedbed5cbcafe9a7f89d2b",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
     "stdlib/std/chrono.gti": "cd8448851fa4e487b0c62c0db24d429d31d195863bc74a1290839c484470c75a",
@@ -250,6 +250,14 @@
       "id": "atomic-orders",
       "mode": "run",
       "source": "tests/fixtures/atomic_orders.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "atomic-wait",
+      "mode": "run",
+      "source": "tests/fixtures/atomic_wait.gti",
       "execution_profile": "concurrent",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
@@ -1660,7 +1668,10 @@
         "std::atomic::fetch_sub",
         "std::atomic::fetch_xor",
         "std::atomic::load",
+        "std::atomic::notify_all",
+        "std::atomic::notify_one",
         "std::atomic::store",
+        "std::atomic::wait",
         "std::atomic_compare_exchange_result::exchanged",
         "std::atomic_compare_exchange_result::observed",
         "std::memory_order_acq_rel::memory_order_acq_rel",
@@ -1669,7 +1680,7 @@
         "std::memory_order_release::memory_order_release",
         "std::memory_order_seq_cst::memory_order_seq_cst"
       ],
-      "case_ids": ["atomic", "atomic-fetch", "atomic-orders"],
+      "case_ids": ["atomic", "atomic-fetch", "atomic-orders", "atomic-wait"],
       "required_instantiations": ["bool", "every fixed-width signed and unsigned integer", "move construction", "every legal explicit load/store/exchange order", "all nine legal strong-CAS success/failure order pairs", "all five integer fetch families under every read-modify-write order", "narrow fixed-width fetch conversion", "checked fetch_add overflow before publication"],
       "evidence": ["docs/language/concurrency.md", "examples/076-scalar-atomics.gti", "stdlib/std/atomic.gti", "tests/atomic_tests.cpp", "tests/atomic_runtime_test.py", "tests/atomic_tsan_test.py", "tests/fixtures/atomic_fetch.gti", "tests/fixtures/atomic_fetch_overflow.gti", "tests/fixtures/atomic_orders.gti", "tests/fixtures/atomic_scalar.gti"]
     },

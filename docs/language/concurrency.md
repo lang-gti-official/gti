@@ -582,6 +582,50 @@ compare/exchange is the operation's linearization point. HIR/MIR verification
 therefore sees the same exact atomic identities and barriers as an explicitly
 written strong compare/exchange loop.
 
+## Safe Atomic Waiting
+
+`<std/atomic>` also supplies `wait(old)`, `notify_one()`, and `notify_all()` on
+every supported atomic scalar. These are safe shared-receiver operations in
+the concurrent profile, not async suspension or a worker pool:
+
+```gti
+// Consumer: avoid a load/notification race by waiting on the observed value.
+mut int32_t observed = completed.load(std::memory_order_acquire());
+while (observed != expected_count) {
+  completed.wait(observed, std::memory_order_acquire());
+  observed = completed.load(std::memory_order_acquire());
+}
+// Producer, after publishing one completion:
+// completed.fetch_add(1, std::memory_order_release());
+// completed.notify_all();
+```
+
+Wait repeatedly loads and compares against `old`. It returns only after
+observing a different value; internal spurious wakes do not become successful
+returns. A value already different before the call returns without requiring a
+notification. A blocked waiter needs a subsequent notification to ensure it
+rechecks a change. Store/exchange/fetch operations do **not** implicitly notify.
+`notify_one` unblocks at least one eligible blocked waiter, if any;
+`notify_all` unblocks all eligible blocked waiters. No notification credit is
+saved for future waits, and notification alone does not change the value.
+
+Wait's default loads are sequentially consistent. Explicit overloads accept
+`memory_order_relaxed`, `memory_order_acquire`, and `memory_order_seq_cst` only.
+An acquire observation of a release-published value has the ordinary atomic
+happens-before contract. Notification has no order argument and establishes
+no independent publication edge. Use the atomic value as state, not the
+notification as a retained event. A transient `old -> other -> old` change can
+be missed (ABA); a generation counter can represent transitions when needed,
+with wraparound handled by the application's protocol.
+
+The shared receiver loan keeps the atomic storage alive and unmoved during
+wait/notify, including across scoped borrowed tasks. No payload reference is
+exposed and no mutex guard is released. Deadlock freedom, fairness, deadlines,
+cancellation and lock freedom are not promised. Unrecoverable native waiting
+failures terminate rather than returning with a false observation or escaping
+as a native exception. The operations add no GTI per-wait allocation or extra
+per-object state; host parking implementation costs are platform-dependent.
+
 ## Mutexes And Scoped Guards
 
 `<std/mutex>` provides `std::mutex<T>` for an owned movable `T`. The mutex is
@@ -679,7 +723,8 @@ facility as part of safe GTI.
 ## Current Omissions
 
 The safe surface deliberately excludes weak compare/exchange, spurious
-failure, wait/notify, atomic references, pointer atomics, and fences. It also
+failure, timed/cancellable atomic waiting, atomic references, pointer atomics,
+and fences. It also
 has no safe scoped condition-variable wrapper, safe public manual-unlock API,
 or safe recursive/read-write mutex family. The unsafe `<std/cthread>` surface
 does provide manual unlock, recursive mutexes, and manual condition variables.

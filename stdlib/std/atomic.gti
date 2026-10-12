@@ -70,6 +70,16 @@ T atomic_load_relaxed<std::atomic_scalar T>(
     gti_internal::atomic_storage<T>& storage);
 T atomic_load_acquire<std::atomic_scalar T>(
     gti_internal::atomic_storage<T>& storage);
+void atomic_wait<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T old);
+void atomic_wait_relaxed<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T old);
+void atomic_wait_acquire<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage, T old);
+void atomic_notify_one<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage);
+void atomic_notify_all<std::atomic_scalar T>(
+    gti_internal::atomic_storage<T>& storage);
 void atomic_store<std::atomic_scalar T>(gti_internal::atomic_storage<T>& storage,
                                         T value);
 void atomic_store_relaxed<std::atomic_scalar T>(
@@ -240,6 +250,36 @@ public:
   /// Replaces the current value with sequentially consistent ordering.
   void store(T value) {
     gti_internal::atomic_store(this.storage, value);
+  }
+
+  /// Blocks until a load observes a value different from `old`. Notification
+  /// alone does not change the value or publish other data. A transient change
+  /// away from `old` and back may be missed; use a generation counter when needed.
+  void wait(T old) {
+    gti_internal::atomic_wait(this.storage, old);
+  }
+
+  void wait(T old, memory_order_relaxed order) {
+    gti_internal::atomic_wait_relaxed(this.storage, old);
+  }
+
+  void wait(T old, memory_order_acquire order) {
+    gti_internal::atomic_wait_acquire(this.storage, old);
+  }
+
+  void wait(T old, memory_order_seq_cst order) {
+    gti_internal::atomic_wait(this.storage, old);
+  }
+
+  /// Wakes at least one eligible blocked waiter, if present. No notification
+  /// credit is retained and a waiter rechecks its value before returning.
+  void notify_one() {
+    gti_internal::atomic_notify_one(this.storage);
+  }
+
+  /// Wakes all eligible blocked waiters, if present.
+  void notify_all() {
+    gti_internal::atomic_notify_all(this.storage);
   }
 
   /// Replaces the current value without creating a synchronizes-with edge.
