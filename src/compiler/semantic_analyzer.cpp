@@ -21,6 +21,11 @@ bool SemanticVisitor::check(const Program &program) {
   return impl->check(program);
 }
 
+void SemanticVisitor::requireFunctionBodies(
+    const std::unordered_set<const FunctionDecl *> &bodies) {
+  impl->requiredFunctionBodies = bodies;
+}
+
 bool SemanticVisitor::check(const Expr &expr) { return impl->check(expr); }
 
 bool SemanticVisitor::applyProgramRequest(const Program &program,

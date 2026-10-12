@@ -3140,6 +3140,9 @@ private:
     // reaches are the library's own `gti check` concern.
     frontendOptions.stopAfter = lang::FrontendPhase::Hir;
     frontendOptions.lowerEntryUnitOnly = true;
+    // Likewise, standard-library bodies nothing in the open file reaches are
+    // not analysed; their diagnostics are that library's `gti check` concern.
+    frontendOptions.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
     frontendOptions.workMetrics = &result.workMetrics;
     frontendOptions.cache = request.frontendSources.cache;
     frontendOptions.sourceGenerations = request.frontendSources.generations;
@@ -3499,6 +3502,7 @@ private:
                  // Completion is latency-critical and offers no diagnostics;
                  // the audit is background work (see `runAuditWorker`).
                  .rawPointerAudit = lang::RawPointerAuditMode::Off,
+                 .trustedBodies = lang::TrustedBodyAnalysis::Reachable,
                  .preludePaths = {standardLibrary.prelude},
                  .sourceOverrides = request.sourceOverrides,
                  .standardLibraryRoots = {standardLibrary.root},
@@ -4391,6 +4395,14 @@ private:
              metrics.semanticApplicationBodyMicroseconds)},
         {"semanticFinalizationMicroseconds",
          static_cast<std::int64_t>(metrics.semanticFinalizationMicroseconds)},
+        {"semanticDeferredBodies",
+         static_cast<std::int64_t>(metrics.semanticDeferredBodies)},
+        {"semanticAnalyzedDeferredBodies",
+         static_cast<std::int64_t>(metrics.semanticAnalyzedDeferredBodies)},
+        {"semanticDemandRounds",
+         static_cast<std::int64_t>(metrics.semanticDemandRounds)},
+        {"semanticDemandFallbacks",
+         static_cast<std::int64_t>(metrics.semanticDemandFallbacks)},
         {"hirMicroseconds", static_cast<std::int64_t>(metrics.hirMicroseconds)},
         {"semanticBorrowSummaryCandidateInspections",
          static_cast<std::int64_t>(
