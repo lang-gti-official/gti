@@ -6,6 +6,6 @@
   "minimum_sample_seconds": 0.10,
   "variants": [
     {"name": "gti", "kind": "gti", "source": "main.gti", "execution_profile": "concurrent"},
-    {"name": "cpp-semantic", "kind": "cpp", "source": "semantic.cpp"}
+    {"name": "cpp-semantic", "kind": "cpp", "source": "semantic.cpp", "execution_profile": null}
   ]
 }

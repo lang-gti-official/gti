@@ -7,8 +7,6 @@ requires one identical `GTI-BENCH-1` result record, and only then collects
 timings. Shared CI may validate builds and records, but must not enforce a wall
 time threshold.
 
-## Compiler latency
-
 `atomic-wait-ready` compares 50 million already-satisfied atomic waits plus
 one/all notifications against the same native atomic operations. It measures
 the no-parking fast path, not blocked wake latency, fairness or scheduler
@@ -16,6 +14,8 @@ throughput. The source's state and final observation are identical; thread
 handoff/broadcast correctness and TSan are covered separately by
 `tests/fixtures/atomic_wait.gti`. No GTI per-wait state/allocation is required;
 platform parking implementations may have their own process-global costs.
+
+## Compiler latency
 
 Use an optimized **host build** of GTI and matched native compiler, standard,
 optimization level, and strict floating-point policy. Compare equivalent work
