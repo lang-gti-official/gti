@@ -11,6 +11,7 @@
 
 #include <cassert>
 #include <chrono>
+#include <span>
 
 namespace lang {
 
@@ -194,6 +195,8 @@ public:
     [[nodiscard]] SemanticInstanceAnalysis finish() {
       visitor.instanceSymbolCeiling =
           visitor.semanticModel.database().symbolIdentityCeiling();
+      visitor.instanceLambdaCeiling =
+          std::max(visitor.instanceLambdaCeiling, visitor.nextLambdaId);
       SemanticInstanceAnalysis result{.model = std::move(visitor.semanticModel),
                                       .diagnostics =
                                           std::move(visitor.diagnostics)};
@@ -226,6 +229,88 @@ public:
   // Primary declaration IDs remain inherited; the base snapshot stays
   // immutable.
   SymbolId instanceSymbolCeiling = 0;
+  // Lambda identities issued by any instance delta so far. A late demand
+  // continues the base above it, so a base lambda never shares an identity
+  // with a concrete-only lambda of an existing delta.
+  LambdaId instanceLambdaCeiling = 0;
+
+  // ---- Late demand ------------------------------------------------------
+  // Reachable analysis finishes with compiler-trusted bodies that nothing it
+  // analysed demanded. Concrete discovery (HIR, through the public
+  // SemanticVisitor provider) can still select one. Rather than discarding
+  // the analysis and repeating it with that body required, analyzeLateDemand
+  // completes the body's primary analysis in the base model, exactly as the
+  // deferred-body drain would have, and finalizes precisely the bodies it
+  // analysed. Conditions under which that would not equal analysing the body
+  // in the pass make it refuse or fail, and the caller falls back to the
+  // bounded repeated analysis.
+  struct LateFinalizationScope {
+    const std::unordered_set<const FunctionDecl *> *functions = nullptr;
+    const std::unordered_set<const Call *> *calls = nullptr;
+    std::size_t forwardings = 0;
+    std::size_t cThreadCallUses = 0;
+    std::size_t unsafeBlockCandidates = 0;
+    std::size_t mutableLocalCandidates = 0;
+    std::size_t genericDefaultConstantUses = 0;
+    // Occurrence counts per source unit before the batch, and the units the
+    // batch extended.
+    std::unordered_map<SourceUnitId, std::size_t> occurrenceCounts;
+    std::unordered_set<SourceUnitId> units;
+    // Program-effect owners of the batch: its functions and the lambdas it
+    // created (identities from firstLambda on).
+    std::unordered_set<FunctionId> functionIds;
+    LambdaId firstLambda = 0;
+  };
+  // Set once the complete request (body phase and finalization) is done.
+  bool lateDemandReady = false;
+  // A late batch broke an equivalence condition after analysing; the
+  // analysis must be repeated with lateDemandedBodies required.
+  bool lateDemandFailed = false;
+  std::vector<const FunctionDecl *> lateDemandedBodies;
+  // Deferred declarations by position in deferredBodies.
+  std::unordered_map<const FunctionDecl *, std::size_t> deferredBodyIndex;
+  // Program-effect owners the initializer-effect validation visited.
+  std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
+      initializerEffectOwners;
+  // Bodies analysed by the current late batch, in analysis order.
+  std::vector<const FunctionDecl *> *lateAnalyzedBodies = nullptr;
+  const LateFinalizationScope *lateFinalization = nullptr;
+
+  bool analyzeLateDemand(std::span<const FunctionDecl *const> roots);
+  void finalizeLateDemand(const LateFinalizationScope &scope);
+  void drainDemandedDeferredBodies();
+  // A deferred trusted body that no analysis has demanded yet.
+  [[nodiscard]] bool pendingDeferredBody(const FunctionDecl *declaration) const;
+  // Finalization covers every analysed body, or one late batch.
+  [[nodiscard]] bool finalizesFunction(const FunctionInfo &function) const;
+  [[nodiscard]] bool finalizesCall(const Call *call) const;
+
+  // Runs one concrete instance analysis for an external (HIR) consumer. An
+  // instance that consulted a pending deferred function is analysed again
+  // after that function's late demand, so it never keeps a fact that a body
+  // analysed in the pass would have changed.
+  template <typename Analyze>
+  [[nodiscard]] SemanticInstanceAnalysis withLateDemand(Analyze analyze) {
+    if (!lateDemandReady || bodyPhaseActive || instanceAnalysisActive)
+      return analyze();
+    for (;;) {
+      std::unordered_set<FunctionId> consulted;
+      SemanticInstanceAnalysis result;
+      {
+        const FunctionDemandScope probe(semanticModel, &consulted);
+        result = analyze();
+      }
+      result.model.setFunctionDemandSink(nullptr);
+      std::vector<const FunctionDecl *> demanded;
+      for (const FunctionId id : consulted) {
+        const FunctionInfo *function = semanticModel.findFunction(id);
+        if (function != nullptr && pendingDeferredBody(function->declaration))
+          demanded.push_back(function->declaration);
+      }
+      if (demanded.empty() || !analyzeLateDemand(demanded))
+        return result;
+    }
+  }
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId functionId,
@@ -4931,6 +5016,8 @@ private:
       requestSession.heldDiagnostics;
   std::unordered_set<const FunctionDecl *> &lexicallyReachableFunctions =
       requestSession.lexicallyReachableFunctions;
+  // Analyses one deferred body in its own declaration context.
+  void analyzeDeferredBody(RequestSessionState::DeferredBody body);
 
   // Declaration-level lexical order. `beginDeclaration` gives a declaration
   // statement the next order and makes it current for the analysis of its

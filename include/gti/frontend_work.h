@@ -31,6 +31,11 @@ struct FrontendWorkMetrics {
   std::size_t semanticAnalyzedDeferredBodies = 0;
   std::size_t semanticDemandRounds = 0;
   std::size_t semanticDemandFallbacks = 0;
+  // Deferred bodies concrete discovery demanded after the pass, analysed in
+  // the same analysis (late demand), and the time that took. The time is
+  // part of semantic (and trusted-body) time, not HIR time.
+  std::size_t semanticLateDemandBodies = 0;
+  std::size_t semanticLateDemandMicroseconds = 0;
   std::size_t semanticApplicationBodyMicroseconds = 0;
   std::size_t semanticFinalizationMicroseconds = 0;
   std::size_t hirMicroseconds = 0;
@@ -60,6 +65,8 @@ struct FrontendWorkMetrics {
     semanticAnalyzedDeferredBodies = 0;
     semanticDemandRounds = 0;
     semanticDemandFallbacks = 0;
+    semanticLateDemandBodies = 0;
+    semanticLateDemandMicroseconds = 0;
     semanticApplicationBodyMicroseconds = 0;
     semanticFinalizationMicroseconds = 0;
     hirMicroseconds = 0;

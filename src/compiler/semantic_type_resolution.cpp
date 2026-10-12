@@ -5368,7 +5368,11 @@ auto SemanticVisitor::Impl::recordGenericDefaultConstant(
 }
 
 auto SemanticVisitor::Impl::recordGenericDefaultConstantUses() -> void {
-  for (const GenericDefaultConstantUse &use : genericDefaultConstantUses) {
+  for (std::size_t index = lateFinalization == nullptr
+                               ? 0
+                               : lateFinalization->genericDefaultConstantUses;
+       index < genericDefaultConstantUses.size(); ++index) {
+    const GenericDefaultConstantUse &use = genericDefaultConstantUses[index];
     const Symbol *symbol = nullptr;
     if (use.constant.internalLinkage) {
       const auto unit =

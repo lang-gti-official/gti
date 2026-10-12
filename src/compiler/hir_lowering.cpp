@@ -1894,9 +1894,19 @@ private:
     return result;
   }
 
+  // Concrete discovery needs the selected primary body's facts. Bounded
+  // analysis may have deferred that body: the provider completes it in the
+  // base model when it can (late demand), and otherwise HIR stays invalid and
+  // reports it as a semantic request for a fresh analysis. Late demand only
+  // appends records and fills the selected function's own facts; HIR holds
+  // base records through node-stable lookups, never across a provider call by
+  // vector position.
   bool requirePrimaryBody(const FunctionInfo &function) {
     const FunctionDecl *body = function.declaration;
     if (body == nullptr || body->body() == nullptr ||
+        baseModel->hasAnalyzedFunctionBody(*body))
+      return true;
+    if (instanceProvider->analyzeDemandedPrimaryBody(*body) &&
         baseModel->hasAnalyzedFunctionBody(*body))
       return true;
     auto &requests = output.requiredSemanticBodies;
