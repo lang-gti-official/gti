@@ -1899,6 +1899,15 @@ semantic data. Raw addresses and opaque results still receive no guessed
 checked-loan provenance; optional raw auditing retains separate origin
 evidence without manufacturing checked references or lifetime guarantees.
 
+A `SemanticPlace` root points at the `Symbol` stored in the current lexical
+scope stack, and an assignment resolves its target place before analysing the
+assigned value. Expression-level flow joins (`&&`, `||`, `?:`) and the
+`mergedValueStates` scratch restore operand states through
+`restoreScopeState`, which assigns each surviving binding in place instead of
+replacing the scope maps. A nested logical or conditional value therefore
+cannot free or re-key the root that the enclosing assignment's loan-conflict
+check, reinitialisation and ownership event still read.
+
 Plain member assignment records the same exact `Reinitialize` event as local
 and indexed assignment, including the field's previous availability. Checked
 arrow access retains the owner/dereference/field key; restoring the field can
