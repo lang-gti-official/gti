@@ -186,16 +186,16 @@ auto SemanticVisitor::Impl::callableParameterContract(
     return nullptr;
   }
   const auto parameter =
-      std::find_if(function->declaration->parameters().begin(),
-                   function->declaration->parameters().end(),
+      std::find_if(function->bodyDeclaration()->parameters().begin(),
+                   function->bodyDeclaration()->parameters().end(),
                    [&](const Parameter &candidate) {
                      return &candidate == symbol->parameterDeclaration;
                    });
-  if (parameter == function->declaration->parameters().end()) {
+  if (parameter == function->bodyDeclaration()->parameters().end()) {
     return nullptr;
   }
-  const std::size_t index = static_cast<std::size_t>(
-      std::distance(function->declaration->parameters().begin(), parameter));
+  const std::size_t index = static_cast<std::size_t>(std::distance(
+      function->bodyDeclaration()->parameters().begin(), parameter));
   const auto contract = std::find_if(
       function->callableParameters.begin(), function->callableParameters.end(),
       [index](const CallableParameterContract &candidate) {
@@ -384,15 +384,15 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
   }
 
   const auto found = std::find_if(
-      function->declaration->parameters().begin(),
-      function->declaration->parameters().end(),
+      function->bodyDeclaration()->parameters().begin(),
+      function->bodyDeclaration()->parameters().end(),
       [&](const Parameter &candidate) { return &candidate == parameter; });
-  if (found == function->declaration->parameters().end()) {
+  if (found == function->bodyDeclaration()->parameters().end()) {
     currentType = SemanticType::Unknown;
     return;
   }
   const std::size_t parameterIndex = static_cast<std::size_t>(
-      std::distance(function->declaration->parameters().begin(), found));
+      std::distance(function->bodyDeclaration()->parameters().begin(), found));
   const AccessMode access = parameter->mutability == Mutability::Mutable
                                 ? AccessMode::Mutable
                                 : AccessMode::ReadOnly;
@@ -2867,10 +2867,10 @@ auto SemanticVisitor::Impl::movedFunctionParameter(
   if (symbol == 0) {
     return std::nullopt;
   }
-  for (std::size_t index = 0; index < function.declaration->parameters().size();
-       ++index) {
-    const BindingInfo *binding =
-        semanticModel.findBinding(function.declaration->parameters()[index]);
+  for (std::size_t index = 0;
+       index < function.bodyDeclaration()->parameters().size(); ++index) {
+    const BindingInfo *binding = semanticModel.findBinding(
+        function.bodyDeclaration()->parameters()[index]);
     if (binding != nullptr && binding->symbol == symbol) {
       return index;
     }
@@ -2881,11 +2881,12 @@ auto SemanticVisitor::Impl::movedFunctionParameter(
 auto SemanticVisitor::Impl::exactMovedReturnParameter(
     const FunctionInfo &function) const -> std::optional<std::size_t> {
   if (function.declaration == nullptr ||
-      function.declaration->body() == nullptr) {
+      function.bodyDeclaration()->body() == nullptr) {
     return std::nullopt;
   }
   std::vector<const ExprPtr *> returns;
-  collectBorrowReturnExpressions(function.declaration->body().get(), returns);
+  collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
+                                 returns);
   if (returns.empty()) {
     return std::nullopt;
   }
@@ -2969,22 +2970,26 @@ auto SemanticVisitor::Impl::discoverOwnedCallableContracts() -> void {
   std::vector<PendingOwnedContract> pending;
   for (const auto &[_, function] : semanticModel.functions) {
     if (function.declaration == nullptr || function.ownerClass != 0 ||
-        function.declaration->body() == nullptr ||
+        function.bodyDeclaration()->body() == nullptr ||
         !finalizesFunction(function)) {
       continue;
     }
     const ReturnStmt *soleReturn =
-        function.declaration->body()->statements().size() == 1
-            ? stmtAs<ReturnStmt>(
-                  function.declaration->body()->statements().front().get())
+        function.bodyDeclaration()->body()->statements().size() == 1
+            ? stmtAs<ReturnStmt>(function.bodyDeclaration()
+                                     ->body()
+                                     ->statements()
+                                     .front()
+                                     .get())
             : nullptr;
     const std::optional<std::size_t> exactReturn =
         exactMovedReturnParameter(function);
     for (std::size_t index = 0;
          index < function.parameterTypes.size() &&
-         index < function.declaration->parameters().size();
+         index < function.bodyDeclaration()->parameters().size();
          ++index) {
-      const Parameter &parameter = function.declaration->parameters()[index];
+      const Parameter &parameter =
+          function.bodyDeclaration()->parameters()[index];
       const SemanticType &parameterType = function.parameterTypes[index];
       if (parameterType.kind != SemanticType::TypeParameter ||
           parameter.type.reference || parameter.pack) {
@@ -3026,14 +3031,14 @@ auto SemanticVisitor::Impl::discoverOwnedCallableContracts() -> void {
 
 auto SemanticVisitor::Impl::discoverOwnedCallableValueParameters() -> void {
   for (auto &[_, function] : semanticModel.functions) {
-    if (function.declaration == nullptr || !function.declaration->body() ||
-        !finalizesFunction(function))
+    if (function.declaration == nullptr ||
+        !function.bodyDeclaration()->body() || !finalizesFunction(function))
       continue;
     for (std::size_t index = 0; index < function.parameterTypes.size();
          ++index) {
-      if (index >= function.declaration->parameters().size())
+      if (index >= function.bodyDeclaration()->parameters().size())
         continue;
-      const auto &parameter = function.declaration->parameters()[index];
+      const auto &parameter = function.bodyDeclaration()->parameters()[index];
       const auto &type = function.parameterTypes[index];
       if ((type.kind != SemanticType::TypeParameter &&
            !(parameter.pack && type.kind == SemanticType::TypePack) &&
@@ -3159,7 +3164,7 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
       const std::size_t declarationIndex =
           target->parameterPack
               ? std::min(contract.parameterIndex,
-                         target->declaration->parameters().size() - 1)
+                         target->bodyDeclaration()->parameters().size() - 1)
               : contract.parameterIndex;
       const SemanticTypeTraits traits = typeTraits(concreteArgumentType);
       const ExpressionInfo *argumentInfo =
@@ -3180,7 +3185,8 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
                               "transfer-safe exact task whose return type "
                               "matches its transferable result."));
         diagnostic.related.push_back(
-            {tokenSpan(target->declaration->parameters()[declarationIndex]
+            {tokenSpan(target->bodyDeclaration()
+                           ->parameters()[declarationIndex]
                            .sourceAnchor()),
              "Managed task parameter declared here."});
         diagnostic.hints.emplace_back(
@@ -3212,7 +3218,8 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
               std::to_string(contract.parameterIndex + 1) + " " + failure +
               ".");
       diagnostic.related.push_back(
-          {tokenSpan(target->declaration->parameters()[declarationIndex]
+          {tokenSpan(target->bodyDeclaration()
+                         ->parameters()[declarationIndex]
                          .sourceAnchor()),
            "Exact owned callable parameter declared here."});
       diagnostic.hints.emplace_back(
@@ -3273,11 +3280,12 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
                     " cannot bind because the selected target parameter is "
                     "not proven confined or owned.");
       if (target != nullptr && target->declaration != nullptr &&
-          argument.parameterIndex < target->declaration->parameters().size()) {
+          argument.parameterIndex <
+              target->bodyDeclaration()->parameters().size()) {
         diagnostic.related.push_back(
-            {tokenSpan(
-                 target->declaration->parameters()[argument.parameterIndex]
-                     .name),
+            {tokenSpan(target->bodyDeclaration()
+                           ->parameters()[argument.parameterIndex]
+                           .name),
              "Selected generic parameter declared here."});
       }
       diagnostic.hints.emplace_back(
@@ -3328,8 +3336,10 @@ auto SemanticVisitor::Impl::validateConfinedCallableContracts() -> void {
         continue;
       }
       const Parameter *parameter =
-          contract.parameterIndex < function.declaration->parameters().size()
-              ? &function.declaration->parameters()[contract.parameterIndex]
+          contract.parameterIndex <
+                  function.bodyDeclaration()->parameters().size()
+              ? &function.bodyDeclaration()
+                     ->parameters()[contract.parameterIndex]
               : nullptr;
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2046", DiagnosticPhase::Semantics,
@@ -3380,7 +3390,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableContracts() -> void {
     const Parameter *sourceParameter =
         source->declaration != nullptr &&
                 forwarding.sourceParameterIndex <
-                    source->declaration->parameters().size()
+                    source->bodyDeclaration()->parameters().size()
             ? &source->declaration
                    ->parameters()[forwarding.sourceParameterIndex]
             : nullptr;
@@ -3489,7 +3499,7 @@ auto SemanticVisitor::Impl::validateOnceCallableForwardings() -> void {
     const Parameter *sourceParameter =
         source != nullptr && source->declaration != nullptr &&
                 forwarding.sourceParameterIndex <
-                    source->declaration->parameters().size()
+                    source->bodyDeclaration()->parameters().size()
             ? &source->declaration
                    ->parameters()[forwarding.sourceParameterIndex]
             : nullptr;
@@ -3497,7 +3507,7 @@ auto SemanticVisitor::Impl::validateOnceCallableForwardings() -> void {
     const Parameter *targetParameter =
         target != nullptr && target->declaration != nullptr &&
                 forwarding.targetParameterIndex <
-                    target->declaration->parameters().size()
+                    target->bodyDeclaration()->parameters().size()
             ? &target->declaration
                    ->parameters()[forwarding.targetParameterIndex]
             : nullptr;
@@ -3547,8 +3557,8 @@ auto SemanticVisitor::Impl::validateOnceCallableForwardings() -> void {
 auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
   std::vector<Diagnostic> useDiagnostics;
   for (const auto &[_, function] : semanticModel.functions) {
-    if (function.declaration == nullptr || !function.declaration->body() ||
-        !finalizesFunction(function)) {
+    if (function.declaration == nullptr ||
+        !function.bodyDeclaration()->body() || !finalizesFunction(function)) {
       continue;
     }
     for (const CallableParameterContract &contract :
@@ -3560,7 +3570,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
           !contract.signatures.empty();
       if (contract.boundary != CallableBoundary::Confined ||
           contract.parameterIndex >=
-              function.declaration->parameters().size()) {
+              function.bodyDeclaration()->parameters().size()) {
         continue;
       }
 
@@ -3573,7 +3583,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
       }
 
       const Parameter &parameter =
-          function.declaration->parameters()[contract.parameterIndex];
+          function.bodyDeclaration()->parameters()[contract.parameterIndex];
       const BindingInfo *binding = semanticModel.findBinding(parameter);
       if (binding == nullptr || binding->symbol == 0) {
         continue;
@@ -3615,7 +3625,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
       }
       if (exactReturnTransport) {
         std::vector<const ExprPtr *> returns;
-        collectBorrowReturnExpressions(function.declaration->body().get(),
+        collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
                                        returns);
         for (const ExprPtr *returned : returns) {
           if (returned == nullptr || !*returned ||
@@ -3800,8 +3810,8 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
             : index;
     const Parameter *parameter =
         candidate.declaration != nullptr &&
-                formalIndex < candidate.declaration->parameters().size()
-            ? &candidate.declaration->parameters()[formalIndex]
+                formalIndex < candidate.bodyDeclaration()->parameters().size()
+            ? &candidate.bodyDeclaration()->parameters()[formalIndex]
             : nullptr;
     const SemanticType *parameterType =
         formalIndex < candidate.parameterTypes.size()
@@ -3827,8 +3837,8 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
         !parameter->type.reference;
     if (instanceAnalysisActive) {
       if ((!byValueCallableBoundary && !borrowedCallableBoundary) ||
-          candidate.declaration == nullptr || !candidate.declaration->body() ||
-          targetContract == nullptr) {
+          candidate.declaration == nullptr ||
+          !candidate.bodyDeclaration()->body() || targetContract == nullptr) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2046", DiagnosticPhase::Semantics,
             expressionToken(arguments[index]),
@@ -3844,7 +3854,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
     } else if (lexicalClosure &&
                ((!byValueCallableBoundary && !borrowedCallableBoundary) ||
                 candidate.declaration == nullptr ||
-                !candidate.declaration->body())) {
+                !candidate.bodyDeclaration()->body())) {
       Diagnostic diagnostic =
           makeDiagnostic("GTI-S2046", DiagnosticPhase::Semantics,
                          expressionToken(arguments[index]),
@@ -4100,8 +4110,8 @@ auto SemanticVisitor::Impl::analyzeRawReferenceReturn(const ExprPtr &expression)
       function->declaration &&
       function->returnBorrowParameter < function->parameterTypes.size()) {
     const auto index = function->returnBorrowParameter;
-    const auto *binding =
-        semanticModel.findBinding(function->declaration->parameters()[index]);
+    const auto *binding = semanticModel.findBinding(
+        function->bodyDeclaration()->parameters()[index]);
     if (!binding ||
         function->parameterTypes[index].kind != SemanticType::Reference)
       return false;
@@ -6505,13 +6515,13 @@ auto SemanticVisitor::Impl::recordCallableForwardings(
                : type;
   };
   for (std::size_t index = 0; index < count; ++index) {
-    if (index >= targetInfo->declaration->parameters().size() ||
+    if (index >= targetInfo->bodyDeclaration()->parameters().size() ||
         callableType(targetInfo->parameterTypes[index]).kind !=
             SemanticType::TypeParameter) {
       continue;
     }
     const Parameter &targetParameter =
-        targetInfo->declaration->parameters()[index];
+        targetInfo->bodyDeclaration()->parameters()[index];
     if (targetParameter.pack) {
       continue;
     }
@@ -6524,16 +6534,16 @@ auto SemanticVisitor::Impl::recordCallableForwardings(
       continue;
     }
     const auto sourceParameter =
-        std::find_if(sourceInfo->declaration->parameters().begin(),
-                     sourceInfo->declaration->parameters().end(),
+        std::find_if(sourceInfo->bodyDeclaration()->parameters().begin(),
+                     sourceInfo->bodyDeclaration()->parameters().end(),
                      [&](const Parameter &candidate) {
                        return &candidate == symbol->parameterDeclaration;
                      });
-    if (sourceParameter == sourceInfo->declaration->parameters().end()) {
+    if (sourceParameter == sourceInfo->bodyDeclaration()->parameters().end()) {
       continue;
     }
     const std::size_t sourceIndex = static_cast<std::size_t>(std::distance(
-        sourceInfo->declaration->parameters().begin(), sourceParameter));
+        sourceInfo->bodyDeclaration()->parameters().begin(), sourceParameter));
     if (sourceIndex >= sourceInfo->parameterTypes.size() ||
         callableType(sourceInfo->parameterTypes[sourceIndex]).kind !=
             SemanticType::TypeParameter ||
@@ -6673,7 +6683,7 @@ auto SemanticVisitor::Impl::requireFunctionDefinition(
     const CallableCandidate &function, const Token &location) -> void {
   const FunctionDecl *declaration = function.declaration;
   if (!requireFunctionDefinitions || function.id == 0 ||
-      declaration == nullptr || declaration->body() != nullptr ||
+      declaration == nullptr || function.bodyDeclaration()->body() != nullptr ||
       declaration->runtimeBinding() ||
       function.record().linkage != LanguageLinkage::Gti ||
       function.record().intrinsic != IntrinsicKind::None ||

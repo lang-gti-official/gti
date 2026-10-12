@@ -90,6 +90,25 @@ silently reused from whichever domain loaded it first. Sharing is diagnosed
 when a replay selects different syntax. As of 0.393.0, different incoming
 flags alone are no longer diagnosed.
 
+## Revision: Optional Private Implementation Files (0.415.0)
+
+The initial interface-only boundary made a factory on an interface awkward:
+its body needed a concrete implementation which in turn imported the interface.
+GTI now allows an existing ordinary non-generic method to be defined with
+`ReturnType Owner::method(...) { ... }` in the same owning package. An optional
+`[module-implementations]` table attaches ordinary source files to a registered
+module. The loader activates them when that interface is reached; they import
+the interface without the interface importing them. Only the body needs the
+concrete types, while consumers keep `Window::Create()`.
+
+This revises the original source-organization restriction, not the ownership or
+linkage model. Most bodies can remain inline. There are no mandatory header
+pairs, binary modules, implicit directory scans, backend-defined symbol matching
+or consumer includes of private implementations. Semantic identity is shared
+by a declaration and its one matched definition; compiler-owned checks reject
+foreign definitions and mismatched signatures. Generic owners/methods and
+special members remain inline pending explicit identity/substitution support.
+
 ## Revision: Export Placement (0.397.6)
 
 `export` is written first, as in `export [[track_caller]] void f()`. Attribute

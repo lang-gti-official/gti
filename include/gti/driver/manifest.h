@@ -78,6 +78,8 @@ struct ProjectPackage {
   ProjectNativeSettings native;
   std::optional<ProjectBuildScript> buildScript;
   std::vector<std::pair<std::string, std::filesystem::path>> modules;
+  std::vector<std::pair<std::string, std::vector<std::filesystem::path>>>
+      moduleImplementations;
 };
 
 // A pinned git dependency source as spelled in the manifest: an exact URL
