@@ -29,6 +29,12 @@ SOURCES = (
     "tests/fixtures/uninitialized_carrier.gti",
 )
 
+# An auditing compilation analyzes every trusted body before the artifact
+# analysis, and examples/147 imports the whole standard library: its Warn
+# compilation takes about 95 s on an Apple M-series host and 185 s on an
+# idle 8-vCPU Linux runner, longer under a parallel suite.
+COMPILE_TIMEOUT = 1200
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -48,7 +54,7 @@ def main() -> None:
                      f"--raw-pointer-audit={'warn' if mode == 'warn-library' else mode}",
                      *(["--raw-pointer-audit-library-findings"]
                        if mode == "warn-library" else [])],
-                    capture_output=True, text=True, timeout=300)
+                    capture_output=True, text=True, timeout=COMPILE_TIMEOUT)
                 assert result.returncode == 0, (relative, mode, result.stderr)
                 assert "error[" not in result.stderr, (relative, mode, result.stderr)
                 emitted[mode] = output.read_bytes()
