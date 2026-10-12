@@ -118,7 +118,7 @@ machines. Nothing locks ordinary editing.
 | `finish <task> --body-file <text> [--pr-only]` | Publish the final PR description, mark ready, verify identities/protection, merge the exact head without bypasses and synchronize local main. PR-only stops ready for review. |
 | `sync <task>` | Confirm merged-head/merge-commit reachability, fast-forward primary main, preserving unrelated local edits, then push `main` and the tags to the `gitea` mirror remote and record the result. |
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
-| `abandon <task> --reason <text>` | Publish the final checkpoint and close its PR with a reason, preserving branch and worktree. |
+| `abandon <task> --reason <text>` | Publish the final checkpoint and close its PR with a reason, preserving branch and worktree. A task with no PR whose branch holds no commits beyond `origin/main` has nothing to preserve. Its clean worktree and branches are removed and the reason is recorded. |
 | `status [task]` | Read task records and current remote PR state. |
 | `protection [--configure]` | Audit, or establish the owner-approved GitHub branch protection for `main` (pull request required, up-to-date branch, administrators bound, no force pushes or deletion), retaining existing review/status requirements. |
 
@@ -453,6 +453,17 @@ worktrees should be archived with the app after preserving needed ignored data,
 then the helper can finish branch cleanup. A recovery snapshot retained by that
 archive remains accessible through the chat attachment. Unmerged abandoned work
 is retained indefinitely until a separate explicit disposition.
+
+A task can have no work at all: no PR, and local, remote and worktree tips
+already contained in `origin/main`. GitHub refuses a PR for such a branch, so
+`abandon` retires it directly instead.
+- Every check runs before the first removal. Uncommitted changes or ignored
+  files stop it, and primary `main` must contain the local branch.
+- It removes the worktree without force, deletes the remote branch with a
+  compare-and-delete lease and deletes the local branch with `git branch -d`.
+- It records the reason. A retry after an interruption skips the pieces already
+  removed.
+- Any unique commit, published or not, keeps the checkpoint-and-close path.
 
 Interrupted operations are retried using the same task. Task records survive
 merge rejection and sync failure. A confirmed remote merge resumes at sync;
