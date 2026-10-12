@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.418.0 — Enum-aware compile-time builders
+
+- Ordinary scoped enums now compose with mutable constexpr helpers, checked
+  references, passive records, fixed arrays and source-defined array accessors.
+  Enum constants, comparisons and switches execute verified MIR while retaining
+  their exact enum identity and underlying integer domain.
+- Example 142 builds a state sequence at compile time and checks runtime parity.
+  Existing step/depth limits still apply; payload enums, allocating values and
+  checked-integer `expected` mutation remain outside this slice.
+- Fix a native return-publication shortcut that could omit an enum switch's
+  subject load when the enclosing function returned the same enum type.
+
 ## 0.417.1 — Linux linking and sleep fixes
 
 - On Linux, native files and libraries passed after `--`, and project native

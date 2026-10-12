@@ -1606,12 +1606,18 @@ active cleanup, and host/runtime calls remain outside this constant-execution
 profile. Calls requiring these new mutation rules cannot retry an unsupported
 MIR operation in the compatibility AST evaluator.
 
-These new mutation rules require values supported by the MIR constant profile.
-Ordinary enum values and checked-integer `expected` results retain their older
-compatibility evaluation, but are not yet usable in mutable constexpr builders,
-including as fields. Migrating those values and operations to MIR is a
-prerequisite; admitting their declarations does not guarantee every call can
-execute as a required constant.
+Ordinary payload-free scoped enums participate in this MIR constant profile:
+enumerator construction, exact-type comparisons, enum `switch`, local/field/
+array assignment, value copies and checked references compose with mutable
+builders. Constants retain their enum declaration identity and exact signed or
+unsigned underlying domain; equal discriminants do not erase distinct types.
+This does not introduce integer-to-enum conversions or payload-enum execution.
+Checked-integer `expected` results retain their older compatibility evaluation
+and are not yet usable in mutable constexpr builders, including as fields.
+Their MIR value/operation migration remains a prerequisite.
+Checked enum references in this MIR profile designate local/parameter/receiver
+storage. It does not add general constant execution of references to global
+objects or change the existing compatibility evaluator's read-only calls.
 
 Completed free constexpr functions may also transform fully initialized passive
 structural records supplied by value: copy into a mutable local, mutate fields

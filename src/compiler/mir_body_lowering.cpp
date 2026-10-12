@@ -4056,8 +4056,12 @@ private:
               .value = mirValueFor(*value),
               .type = value->info.type};
     }
+    // Reading a resolved integral enumerator is an exact constant operation,
+    // not a read of runtime global storage. Keep explicit place formation for
+    // actual borrowing separate from value materialization.
     if (value->info.category == ValueCategory::Place &&
-        isPlaceExpression(value->kind)) {
+        isPlaceExpression(value->kind) &&
+        computeOperation(*value) != MirOperation::EnumConstant) {
       emitPlaceDependencies(id);
       if (emittedValues.contains(id)) {
         return valueOperand(id);
@@ -9072,7 +9076,8 @@ private:
       return;
     }
     if (value->info.category == ValueCategory::Place &&
-        isPlaceExpression(value->kind)) {
+        isPlaceExpression(value->kind) &&
+        computeOperation(*value) != MirOperation::EnumConstant) {
       (void)valueOperand(id);
       return;
     }
