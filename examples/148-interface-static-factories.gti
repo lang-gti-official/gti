@@ -1,0 +1,66 @@
+#include <std/memory>
+
+enum class window_backend { desktop, headless, unavailable };
+enum class window_errc { unsupported_backend };
+
+// A static factory belongs to the interface but is not an implementation
+// requirement. It needs no existing Window and does not dispatch virtually.
+interface Window {
+  static expected<std::unique_ptr<Window>, window_errc> Create(window_backend backend) {
+    if (backend == window_backend::desktop) {
+      return std::upcast_unique<Window, DesktopWindow>(std::make_unique<DesktopWindow>());
+    }
+    if (backend == window_backend::headless) {
+      return std::upcast_unique<Window, HeadlessWindow>(std::make_unique<HeadlessWindow>());
+    }
+    return unexpected(window_errc::unsupported_backend);
+  }
+
+  static int DefaultWidth() { return 800; }
+
+  // Instance members remain bodyless requirements on every implementation.
+  int Width();
+  int Updates();
+  void OnUpdate() mut;
+};
+
+class DesktopWindow : public Window {
+  mut int updates = 0;
+public:
+  DesktopWindow() {}
+  int Width() override { return Window::DefaultWidth(); }
+  int Updates() override { return this.updates; }
+  void OnUpdate() mut override { this.updates++; }
+};
+
+class HeadlessWindow : public Window {
+  mut int updates = 0;
+public:
+  HeadlessWindow() {}
+  int Width() override { return 320; }
+  int Updates() override { return this.updates; }
+  void OnUpdate() mut override { this.updates++; }
+};
+
+int main() {
+  auto desktop_result = Window::Create(window_backend::desktop);
+  if (!desktop_result) { return 1; }
+  mut std::unique_ptr<Window> desktop = std::move(desktop_result).value();
+
+  auto headless_result = Window::Create(window_backend::headless);
+  if (!headless_result) { return 2; }
+  mut std::unique_ptr<Window> headless = std::move(headless_result).value();
+
+  // The factory selects the concrete type; these calls dispatch on the owner.
+  desktop->OnUpdate();
+  desktop->OnUpdate();
+  headless->OnUpdate();
+  if (desktop->Width() != Window::DefaultWidth() || desktop->Updates() != 2) { return 3; }
+  if (headless->Width() != 320 || headless->Updates() != 1) { return 4; }
+
+  auto unavailable = Window::Create(window_backend::unavailable);
+  if (unavailable.has_value() || unavailable.error() != window_errc::unsupported_backend) { return 5; }
+
+  std::println("interface static factories work");
+  return 0;
+}

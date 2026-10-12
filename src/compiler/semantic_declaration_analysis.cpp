@@ -4881,6 +4881,7 @@ auto SemanticVisitor::Impl::buildInheritedMembers(
   }
 
   owner.abstract = owner.kind == ClassKind::Interface;
+  owner.polymorphic = owner.polymorphic || owner.kind == ClassKind::Interface;
   for (const auto &[name, member] : owner.members) {
     (void)name;
     if (member.symbol.type != SemanticType::Function) {
@@ -7818,12 +7819,6 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       continue;
     }
     if (const auto *specifier = stmtAs<AccessSpecifierDecl>(statement.get())) {
-      if (owner.kind == ClassKind::Interface) {
-        report(specifier->keyword(),
-               "Interface members are always public; access specifiers are "
-               "not permitted.",
-               "GTI-S2041");
-      }
       if (owner.kind == ClassKind::Union &&
           specifier->modifier() == AccessModifier::Private) {
         report(specifier->keyword(),
@@ -8140,9 +8135,10 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       memberScope.emplace_back(owner.name.lexeme);
       symbol = functionSymbol(*function, memberScope);
       symbol.staticMember = function->isStatic();
+      const bool interfaceContract =
+          owner.kind == ClassKind::Interface && !function->isStatic();
       const bool polymorphic = function->isVirtual() || function->isPure() ||
-                               function->isOverride() ||
-                               owner.kind == ClassKind::Interface;
+                               function->isOverride() || interfaceContract;
       if (polymorphic && function->isStatic()) {
         report(function->name(),
                "Static methods do not have a receiver and cannot be "
@@ -8166,7 +8162,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
         report(function->name(), "A non-pure virtual method requires a body.",
                "GTI-S2042");
       }
-      if (owner.kind == ClassKind::Interface) {
+      if (interfaceContract) {
         if (function->body()) {
           report(function->name(),
                  "Interface methods are pure contracts and cannot have a "
@@ -8256,11 +8252,11 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       overload.access = access;
       overload.staticMember = function != nullptr && function->isStatic();
       if (function != nullptr) {
+        const bool interfaceContract =
+            owner.kind == ClassKind::Interface && !function->isStatic();
         overload.virtualMethod = function->isVirtual() || function->isPure() ||
-                                 function->isOverride() ||
-                                 owner.kind == ClassKind::Interface;
-        overload.pureVirtual =
-            function->isPure() || owner.kind == ClassKind::Interface;
+                                 function->isOverride() || interfaceContract;
+        overload.pureVirtual = function->isPure() || interfaceContract;
         overload.overrideMethod = function->isOverride();
         if (overload.virtualMethod && !overload.overrideMethod &&
             overload.id != 0) {
