@@ -1646,8 +1646,8 @@ lambda-capture         = IDENTIFIER
    enclosing return type. A direct nested call used as an argument of another
    open callable can instead obtain its exact non-void result from concrete
    instantiation. A direct callable arm of an inferred conditional initializer
-   can likewise defer its result to concrete instantiation, where exact arm
-   agreement is required; reference, borrowed-state and lambda results remain excluded.
+   can likewise defer its result to concrete instantiation, where the existing
+   arm-compatibility rules apply; reference, borrowed-state and lambda results remain excluded.
    Concrete instantiation checks every invocation
    against the lambda or exact class `operator()` signature. A callable
    parameter declared without `mut` permits only repeatable read-callable

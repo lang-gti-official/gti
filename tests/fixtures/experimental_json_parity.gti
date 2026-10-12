@@ -1,0 +1,293 @@
+// std::experimental::json parity with std::json's codec uses: optionals and
+// null, string-keyed maps, exact number lexemes and range checks, strict
+// strings (UTF-8, escapes, surrogates), codec specializations, pretty
+// printing, structured errors with paths and locations, and decode limits.
+#include <std/experimental/json>
+#include <std/map>
+#include <std/optional>
+#include <std/string>
+#include <std/unordered_map>
+#include <std/vector>
+
+namespace ej = std::experimental::json;
+
+// A type with an invariant: encoded as a bare number of degrees.
+class temperature {
+  double degrees = 0.0;
+
+public:
+  temperature(double degrees) : degrees(degrees) {}
+  double value() { return this.degrees; }
+};
+
+class std::experimental::json::codec<temperature> {
+public:
+  expected<void, std::experimental::json::error> encode(temperature& value, mut std::string& out) {
+    double degrees = value.value();
+    mut auto text = std::experimental::json::encode(degrees);
+    if (!text) {
+      mut std::experimental::json::error failure = std::move(text).error();
+      return unexpected(std::move(failure));
+    }
+    out.append(text.value().view());
+    return;
+  }
+
+  expected<temperature, std::experimental::json::error> decode(std::string_view text) {
+    double degrees = ?std::experimental::json::decode<double>(text);
+    return temperature(degrees);
+  }
+};
+
+struct reading {
+  std::optional<int32_t> level = std::optional<int32_t>();
+  std::optional<std::string> note = std::optional<std::string>();
+  std::map<std::string, uint32_t> counts = std::map<std::string, uint32_t>();
+  std::unordered_map<std::string, bool> flags = std::unordered_map<std::string, bool>();
+  temperature warmth = temperature(double(0.0));
+  double ratio = 0.0;
+  int8_t small = 0;
+  uint8_t byte = 0;
+  int64_t wide = 0;
+};
+
+struct point {
+  int32_t x = 0;
+  int32_t y = 0;
+};
+
+struct nested {
+  std::vector<point> points = std::vector<point>();
+  std::string label = std::string("");
+};
+
+bool fails<T>(std::string_view text, ej::errc code) {
+  mut auto result = ej::decode<T>(text);
+  if (result) {
+    return false;
+  }
+  return result.error().code == code;
+}
+
+int main() {
+  // Optionals: present, null and absent; maps as objects with dynamic keys;
+  // a codec type; doubles with shortest round-trip text.
+  mut std::map<std::string, uint32_t> counts = std::map<std::string, uint32_t>();
+  [[discard]] counts.insert(std::string("a"), uint32_t(1));
+  [[discard]] counts.insert(std::string("b"), uint32_t(2));
+  mut std::unordered_map<std::string, bool> flags = std::unordered_map<std::string, bool>();
+  [[discard]] flags.insert(std::string("on"), true);
+  reading sample = {.level = std::optional<int32_t>(7),
+                    .counts = std::move(counts),
+                    .flags = std::move(flags),
+                    .warmth = temperature(double(21.5)),
+                    .ratio = double(1) / double(10),
+                    .small = int8_t(-128),
+                    .byte = uint8_t(255),
+                    .wide = int64_t(-9223372036854775807) - int64_t(1)};
+  mut auto encoded = ej::encode(sample);
+  if (!encoded) {
+    return 1;
+  }
+  std::string text = std::move(encoded).value();
+  if (text.view() != "{\"level\":7,\"note\":null,\"counts\":{\"a\":1,\"b\":2},\"flags\":{\"on\":true},\"warmth\":21.5,\"ratio\":0.1,\"small\":-128,\"byte\":255,\"wide\":-9223372036854775808}") {
+    std::print(text.view());
+    std::print("\n");
+    return 2;
+  }
+  mut auto decoded = ej::decode<reading>(text.view());
+  if (!decoded) {
+    std::print(decoded.error().description());
+    std::print("\n");
+    return 3;
+  }
+  reading back = std::move(decoded).value();
+  std::string key_b = std::string("b");
+  std::string key_on = std::string("on");
+  if (!back.level.has_value() || back.level.value() != 7 || back.note.has_value() ||
+      back.counts.size() != std::size_t(2) || back.counts.at(key_b) != 2 ||
+      back.flags.size() != std::size_t(1) || !back.flags.at(key_on) ||
+      back.warmth.value() < double(21.4) || back.warmth.value() > double(21.6) || back.ratio != double(1) / double(10) ||
+      back.small != -128 || back.byte != 255 || back.wide != int64_t(-9223372036854775807) - int64_t(1)) {
+    return 4;
+  }
+
+  // An absent optional member decodes as empty, like an explicit null.
+  mut auto sparse = ej::decode<reading>("{\"counts\":{},\"flags\":{},\"warmth\":0,\"ratio\":2.5e-1,\"small\":1,\"byte\":2,\"wide\":3}");
+  if (!sparse || sparse.value().level.has_value() || sparse.value().note.has_value() || sparse.value().ratio != double(1) / double(4)) {
+    return 5;
+  }
+
+  // Numbers: exact lexeme grammar and range checks per field type.
+  if (!fails<reading>("{\"counts\":{},\"flags\":{},\"warmth\":0,\"ratio\":1,\"small\":128,\"byte\":0,\"wide\":0}", ej::errc::number_out_of_range)) {
+    return 6;
+  }
+  if (!fails<reading>("{\"counts\":{},\"flags\":{},\"warmth\":0,\"ratio\":1,\"small\":0,\"byte\":256,\"wide\":0}", ej::errc::number_out_of_range)) {
+    return 7;
+  }
+  if (!fails<reading>("{\"counts\":{},\"flags\":{},\"warmth\":0,\"ratio\":1,\"small\":1.5,\"byte\":0,\"wide\":0}", ej::errc::type_mismatch)) {
+    return 8;
+  }
+  if (!fails<int32_t>("007", ej::errc::invalid_number) || !fails<int32_t>("1.", ej::errc::invalid_number) ||
+      !fails<int32_t>("-", ej::errc::invalid_number) || !fails<double>("1e", ej::errc::invalid_number)) {
+    return 9;
+  }
+  mut auto exponent = ej::decode<double>("-12.5E+1");
+  if (!exponent || exponent.value() != double(-125)) {
+    return 10;
+  }
+  mut auto widest = ej::decode<uint64_t>("18446744073709551615");
+  if (!widest || widest.value() != uint64_t(18446744073709551615) || !fails<uint64_t>("18446744073709551616", ej::errc::number_out_of_range)) {
+    return 11;
+  }
+
+  // Strings: escapes and surrogate pairs decode to UTF-8; raw control
+  // characters, lone surrogates and invalid UTF-8 are rejected; non-ASCII
+  // passes through both ways.
+  mut auto smile = ej::decode<std::string>("\"a\\ud83d\\ude00b\\u00e9\"");
+  if (!smile) {
+    return 12;
+  }
+  std::string smiled_text = std::move(smile).value();
+  std::string_view smiled = smiled_text.view();
+  if (smiled.size() != std::size_t(8) || uint8_t(smiled[std::size_t(1)]) != uint8_t(240) ||
+      uint8_t(smiled[std::size_t(4)]) != uint8_t(128) || uint8_t(smiled[std::size_t(6)]) != uint8_t(195)) {
+    return 13;
+  }
+  if (!fails<std::string>("\"\\ud83d\"", ej::errc::invalid_unicode) ||
+      !fails<std::string>("\"\\ud83dx\"", ej::errc::invalid_unicode) ||
+      !fails<std::string>("\"\\ude00\"", ej::errc::invalid_unicode) ||
+      !fails<std::string>("\"\\u12G4\"", ej::errc::invalid_escape)) {
+    return 14;
+  }
+  mut std::string raw = std::string("\"a");
+  raw.push_back(char(uint8_t(9)));
+  raw.push_back('"');
+  if (!fails<std::string>(raw.view(), ej::errc::unexpected_character)) {
+    return 15;
+  }
+  mut std::string broken = std::string("\"a");
+  broken.push_back(char(uint8_t(255)));
+  broken.push_back('"');
+  if (!fails<std::string>(broken.view(), ej::errc::invalid_unicode)) {
+    return 16;
+  }
+  mut std::string bad_owner = std::string("x");
+  bad_owner.push_back(char(uint8_t(200)));
+  mut auto rejected = ej::encode(bad_owner);
+  if (rejected || rejected.error().code != ej::errc::invalid_unicode || rejected.error().has_source_location()) {
+    return 17;
+  }
+  std::string accented = std::string("café \"q\"\t");
+  mut auto round = ej::encode(accented);
+  if (!round || round.value().view() != "\"café \\\"q\\\"\\t\"") {
+    return 18;
+  }
+
+  // Duplicate keys are rejected; unknown members are still skipped.
+  if (!fails<point>("{\"x\":1,\"x\":2,\"y\":3}", ej::errc::duplicate_key) ||
+      !fails<std::map<std::string, int32_t>>("{\"k\":1,\"k\":2}", ej::errc::duplicate_key)) {
+    return 19;
+  }
+  mut auto extra = ej::decode<point>("{\"x\":1,\"z\":[1,{\"q\":null}],\"y\":2}");
+  if (!extra || extra.value().x != 1 || extra.value().y != 2) {
+    return 20;
+  }
+
+  // Errors carry a JSON Pointer path and a one-based line and column.
+  mut auto deep = ej::decode<nested>("{\n  \"label\": \"l\",\n  \"points\": [{\"x\": 1, \"y\": 2}, {\"x\": \"no\", \"y\": 4}]\n}");
+  if (deep) {
+    return 21;
+  }
+  if (deep.error().code != ej::errc::invalid_number || deep.error().path.view() != "/points/1/x" ||
+      deep.error().line != std::size_t(3) || deep.error().column != std::size_t(38) ||
+      !deep.error().has_source_location()) {
+    std::print(deep.error().path.view());
+    std::print("\n");
+    return 22;
+  }
+  mut auto absent = ej::decode<nested>("{\"points\":[]}");
+  if (absent || absent.error().code != ej::errc::missing_field || absent.error().path.view() != "/label") {
+    return 23;
+  }
+  mut auto keyed = ej::decode<std::map<std::string, point>>("{\"a~b/c\":{\"x\":1}}");
+  if (keyed || keyed.error().code != ej::errc::missing_field || keyed.error().path.view() != "/a~0b~1c/y") {
+    return 24;
+  }
+
+  // Codec failures are rebased to the whole input.
+  mut auto warm = ej::decode<reading>("{\"counts\":{},\"flags\":{},\"warmth\":\"hot\",\"ratio\":1,\"small\":0,\"byte\":0,\"wide\":0}");
+  if (warm || warm.error().code != ej::errc::invalid_number || warm.error().offset != std::size_t(33) || warm.error().path.view() != "/warmth") {
+    if (!warm) {
+      std::print(warm.error().description());
+      std::print(" ");
+      std::print(warm.error().path.view());
+      std::print(" ");
+      std::print(std::to_string(float(warm.error().offset)).view());
+      std::print("\n");
+    }
+    return 25;
+  }
+
+  // Top-level containers and scalars.
+  std::vector<int32_t> numbers = {3, -4};
+  mut auto list = ej::encode(numbers);
+  if (!list || list.value().view() != "[3,-4]") {
+    return 26;
+  }
+  mut auto parsed_list = ej::decode<std::vector<std::vector<int32_t>>>(" [[1], [], [2, 3]] ");
+  if (!parsed_list || parsed_list.value().size() != std::size_t(3) || parsed_list.value()[std::size_t(2)][std::size_t(1)] != 3) {
+    return 27;
+  }
+  mut auto truth = ej::decode<bool>(" true ");
+  if (!truth || !truth.value() || !fails<bool>("True", ej::errc::type_mismatch)) {
+    return 28;
+  }
+
+  // Pretty printing changes whitespace only.
+  point first = {.x = 1, .y = 2};
+  mut std::vector<point> points = std::vector<point>();
+  points.push_back(first);
+  nested shape = {.points = std::move(points), .label = std::string("l")};
+  mut auto pretty = ej::encode_pretty(shape);
+  if (!pretty || pretty.value().view() != "{\n  \"points\": [\n    {\n      \"x\": 1,\n      \"y\": 2\n    }\n  ],\n  \"label\": \"l\"\n}") {
+    if (pretty) {
+      std::print(pretty.value().view());
+      std::print("\n");
+    }
+    return 29;
+  }
+  point origin{};
+  mut auto empty_pretty = ej::encode_pretty(origin, uint8_t(4));
+  if (!empty_pretty || empty_pretty.value().view() != "{\n    \"x\": 0,\n    \"y\": 0\n}") {
+    return 30;
+  }
+  nested bare{};
+  mut auto hollow = ej::encode_pretty(bare);
+  if (!hollow || hollow.value().view() != "{\n  \"points\": [],\n  \"label\": \"\"\n}") {
+    return 31;
+  }
+
+  // Limits: nesting depth and document size.
+  mut ej::decode_options limits{};
+  limits.set_max_depth(std::size_t(2));
+  mut auto too_deep = ej::decode<std::vector<std::vector<std::vector<int32_t>>>>("[[[1]]]", limits);
+  if (too_deep || too_deep.error().code != ej::errc::nesting_limit) {
+    return 32;
+  }
+  mut auto shallow = ej::decode<std::vector<std::vector<int32_t>>>("[[1]]", limits);
+  if (!shallow) {
+    return 33;
+  }
+  limits.set_max_document_bytes(std::size_t(4));
+  mut auto too_large = ej::decode<std::vector<int32_t>>("[1,2,3]", limits);
+  if (too_large || too_large.error().code != ej::errc::document_too_large) {
+    return 34;
+  }
+  if (!fails<point>("{\"x\":1,\"y\":2} x", ej::errc::trailing_characters) ||
+      !fails<point>("{\"x\":1,", ej::errc::unexpected_end) ||
+      !fails<point>("", ej::errc::unexpected_end)) {
+    return 35;
+  }
+  return 0;
+}
