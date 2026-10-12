@@ -4612,6 +4612,60 @@ int main() {
            "missing, mismatched, mutable, consuming, static and inaccessible "
            "members must fail the declared concept");
   }
+  // A dependent class receiver exposes its declared members through ordinary
+  // substitution, even when the required result names an enclosing
+  // parameter; exact equality still decides, before any instantiation.
+  const std::string dependentMember = R"(
+concept yields<S, R> = requires(S& source) { { source.read() } -> R; };
+void unwrap_into<S, T>(S& source, mut T& target) requires yields<S, T> {
+  target = source.read();
+}
+)";
+  const auto dependentReceiver = lang::Frontend().analyze(
+      "member-requirement-dependent.gti", dependentMember + R"(
+class Box<std::copyable T> {
+  T value;
+
+public:
+  Box(T initial) : value(initial) {}
+  T read() { return this.value; }
+};
+T relay<std::copyable T>(T value) {
+  Box<T> box = Box<T>(value);
+  mut T result = value;
+  unwrap_into(box, result);
+  return result;
+}
+int main() { return relay(7) - 7; }
+)",
+      {standardLibraryPrelude()});
+  for (const auto &diagnostic : dependentReceiver.diagnostics) {
+    std::cerr << "Dependent member requirement diagnostic: "
+              << diagnostic.message << '\n';
+  }
+  expect(dependentReceiver.canGenerateCode(),
+         "a dependent class receiver should prove an open exact member "
+         "result from its substituted declaration");
+  const auto closedResult = lang::Frontend().analyze(
+      "member-requirement-dependent-result.gti", dependentMember + R"(
+class Fixed<std::copyable T> {
+public:
+  Fixed() {}
+  int32_t read() { return 1; }
+};
+T relay<std::copyable T>(T value) {
+  Fixed<T> box = Fixed<T>();
+  mut T result = value;
+  unwrap_into(box, result);
+  return result;
+}
+int main() { return relay(7) - 7; }
+)",
+      {standardLibraryPrelude()});
+  expect(!closedResult.canGenerateCode() &&
+             hasDiagnostic(closedResult.diagnostics, "satisfy concept"),
+         "a dependent receiver whose member result differs from the open "
+         "required result must fail before instantiation");
   const auto unsafeMember = lang::Frontend().analyze(
       "member-requirement-unsafe.gti",
       "struct Item { unsafe Item snapshot() { "
@@ -6412,6 +6466,182 @@ int main() { return inspect(1, ambiguous()) ? 0 : 1; }
           "std::read_callable", "one exact public unary operator()",
           "a callable relation should reject an ambiguous exact readable "
           "signature");
+
+  // A dependent compound subject keeps its declaration inside a generic body:
+  // its public operator() is inspected through ordinary substitution.
+  const lang::FrontendResult dependent = lang::Frontend().analyze(
+      "dependent-callable-concepts.gti", R"(
+#include <std/functional>
+
+class less_of<std::totally_ordered T> {
+public:
+  less_of() {}
+  bool operator()(T& left, T& right) { return left < right; }
+};
+
+class equal_counter<std::totally_ordered T> {
+  mut int32_t calls;
+
+public:
+  equal_counter() : calls(0) {}
+  bool operator()(T& value) mut {
+    this.calls++;
+    return value == value;
+  }
+};
+
+class once_equal<std::totally_ordered T> {
+public:
+  once_equal() {}
+  bool operator()(T& value) && { return value == value; }
+};
+
+bool order<T, Compare>(T& left, T& right, mut Compare compare)
+  requires std::comparator<Compare, T> {
+  return compare(left, right);
+}
+
+bool read_value<T, Function>(T& value, Function function)
+  requires std::read_callable<Function, T, bool> {
+  return function(value);
+}
+
+bool read_twice<T, Function>(T& value, mut Function function)
+  requires std::predicate<Function, T> {
+  return function(value) && function(value);
+}
+
+bool read_once<T, Function>(T& value, Function function)
+  requires std::once_callable<Function, T, bool> {
+  return std::move(function)(value);
+}
+
+bool generic_checks<std::totally_ordered T>(T& low, T& high) {
+  return order(low, high, less_of<T>()) && !order(high, low, less_of<T>()) &&
+         order(low, high,
+               [](T& left, T& right) -> bool { return left < right; }) &&
+         read_value(low, [](T& value) -> bool { return value == value; }) &&
+         read_twice(low, equal_counter<T>()) &&
+         read_once(low, once_equal<T>());
+}
+
+int main() {
+  int32_t low = 1;
+  int32_t high = 2;
+  return generic_checks(low, high) ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  for (const lang::Diagnostic &diagnostic : dependent.diagnostics) {
+    std::cerr << "Unexpected dependent callable diagnostic: "
+              << diagnostic.message << '\n';
+  }
+  expect(dependent.canGenerateCode() &&
+             lang::verifyMirProgram(dependent.mir).valid(),
+         "a generic body should prove comparator, read, repeatable and "
+         "consuming callable relations for dependent class instances and "
+         "lambdas from their substituted operator() signatures");
+
+  const std::string dependentOrder = R"(
+bool order<T, Compare>(T& left, T& right, mut Compare compare)
+  requires std::comparator<Compare, T> {
+  return compare(left, right);
+}
+)";
+  rejects("dependent-callable-arity.gti", R"(
+#include <std/functional>
+class unary_of<std::totally_ordered T> {
+public:
+  unary_of() {}
+  bool operator()(T& value) { return value == value; }
+};
+)" + dependentOrder + R"(
+bool generic_order<std::totally_ordered T>(T& left, T& right) {
+  return order(left, right, unary_of<T>());
+}
+int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
+)",
+          "std::comparator", "one exact public binary operator()",
+          "a dependent unary target should not satisfy a binary comparator");
+
+  rejects("dependent-callable-result.gti", R"(
+#include <std/functional>
+class distance_of<std::totally_ordered T> {
+public:
+  distance_of() {}
+  int32_t operator()(T& left, T& right) { return 0; }
+};
+)" + dependentOrder + R"(
+bool generic_order<std::totally_ordered T>(T& left, T& right) {
+  return order(left, right, distance_of<T>());
+}
+int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
+)",
+          "std::comparator", "declared owned result",
+          "a dependent comparator should still require an exact bool result");
+
+  rejects("closed-callable-open-argument.gti", R"(
+#include <std/functional>
+class less_int {
+public:
+  less_int() {}
+  bool operator()(int32_t& left, int32_t& right) { return left < right; }
+};
+)" + dependentOrder + R"(
+bool generic_order<std::totally_ordered T>(T& left, T& right) {
+  return order(left, right, less_int());
+}
+int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
+)",
+          "std::comparator", "one exact public binary operator()",
+          "a closed signature should not prove a relation over an open "
+          "argument");
+
+  rejects("dependent-callable-receiver.gti", R"(
+#include <std/functional>
+class counting_less<std::totally_ordered T> {
+  mut int32_t calls;
+
+public:
+  counting_less() : calls(0) {}
+  bool operator()(T& left, T& right) mut {
+    this.calls++;
+    return left < right;
+  }
+};
+bool inspect<T, Compare>(T& left, T& right, Compare compare)
+  requires std::read_binary_callable<Compare, T, T, bool> {
+  return compare(left, right);
+}
+bool generic_order<std::totally_ordered T>(T& left, T& right) {
+  return inspect(left, right, counting_less<T>());
+}
+int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
+)",
+          "std::read_binary_callable", "receiver capability",
+          "a dependent mutable-only target should not satisfy a read-only "
+          "binary use site");
+
+  const lang::FrontendResult missingClassFact = lang::Frontend().analyze(
+      "dependent-callable-class-requirement.gti", R"(
+#include <std/functional>
+class less_of<std::totally_ordered T> {
+public:
+  less_of() {}
+  bool operator()(T& left, T& right) { return left < right; }
+};
+)" + dependentOrder + R"(
+bool generic_order<T>(T& left, T& right) {
+  return order(left, right, less_of<T>());
+}
+int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!missingClassFact.canGenerateCode() &&
+             hasDiagnostic(missingClassFact.diagnostics,
+                           "generic constraint 'std::totally_ordered'"),
+         "a dependent callable class should still require its own generic "
+         "constraints from the enclosing facts");
 
   const lang::FrontendResult privateBinding = lang::Frontend().analyze(
       "private-callable-intrinsic.gti", R"(

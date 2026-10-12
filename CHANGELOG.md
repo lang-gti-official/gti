@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.410.2 — Comparators built from generic classes
+
+- Inside a generic function, a callable built from the function's own type
+  parameters now satisfies callable concepts such as `std::comparator`,
+  `std::predicate` and `std::read_callable`. This covers a class instance such
+  as `less<T>()` and a lambda taking `T&`. For example,
+  `std::sort(values, less<T>())` now compiles inside a generic function.
+  Previously these calls were rejected with GTI-S2029 even though every
+  concrete instance satisfied the concept. The same applies to member
+  requirements on a generic class instance, such as a `Box<T>` whose `read()`
+  returns `T`.
+
 ## 0.410.1 — Faster `std::sort`
 
 - `std::sort` now uses introsort instead of heapsort. It partitions around a
