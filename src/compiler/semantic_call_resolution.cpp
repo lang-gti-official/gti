@@ -4514,7 +4514,7 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     return false;
   }
   if (function.ownerClass != 0 && function.access == AccessModifier::Private &&
-      currentClass != function.ownerClass) {
+      !isWithinClass(function.ownerClass)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, paren,
         "Method '" + function.declaration->name().lexeme + "' of '" +
@@ -6257,7 +6257,7 @@ auto SemanticVisitor::Impl::resolveOperator(
         return std::nullopt;
   }
   if (selected.access == AccessModifier::Private &&
-      currentClass != selected.ownerClass) {
+      !isWithinClass(selected.ownerClass)) {
     Diagnostic diagnostic =
         makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, token,
                        std::string(operatorSourceSpelling(kind)) + " of '" +

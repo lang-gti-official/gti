@@ -51,6 +51,23 @@ def main():
             ) and executed.stderr == "", executed
 
         negatives = {
+            "private_outer_member": (
+                "class C { static int code = 1; public: struct N {}; }; "
+                "int main() { return C::code; }",
+                "GTI-S2007", "is private",),
+            "private_outer_constructor": (
+                "class C { C(int value) {} public: struct N {}; }; "
+                "int main() { C value{1}; return 0; }",
+                "GTI-S2007", "Constructor",),
+            "no_reverse_private_access": (
+                "struct C { class N { int code = 1; }; "
+                "int read(N& value) { return value.code; } }; int main() { return 0; }",
+                "GTI-S2007", "is private",),
+            "no_sibling_private_access": (
+                "struct C { class A { int code = 1; }; "
+                "struct B { int read(A& value) { return value.code; } }; }; "
+                "int main() { return 0; }",
+                "GTI-S2007", "is private",),
             "generic_enclosing": (
                 "struct C<T> { struct N { T value; }; }; int main() { return 0; }",
                 "GTI-S2030", "generic enclosing types",),

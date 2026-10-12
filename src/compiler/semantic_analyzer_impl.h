@@ -5036,6 +5036,7 @@ private:
   void enterDeclarationContext(const std::vector<std::string> &namespaceScope,
                                SourceUnitId sourceUnit,
                                std::optional<ClassId> owner);
+  void addEnclosingClassStaticMembers(ClassId owner);
   void exitDeclarationContext(std::optional<ClassId> owner);
   SemanticType &currentType = requestSession.currentType;
   SemanticType &currentReturnType = requestSession.currentReturnType;

@@ -4078,7 +4078,7 @@ auto SemanticVisitor::Impl::appendSymbolCompletions(
         continue;
       }
       if (overload.access == AccessModifier::Private &&
-          currentClass != overload.ownerClass) {
+          !isWithinClass(overload.ownerClass)) {
         continue;
       }
       if (!mutableReceiver &&
@@ -4286,7 +4286,7 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
     for (const auto &[name, alias] : owner.typeAliases) {
       if (!seen.insert(name).second ||
           (alias.access == AccessModifier::Private &&
-           currentClass != alias.ownerClass) ||
+           !isWithinClass(alias.ownerClass)) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            (alias.compilerPrivate ||
             semanticModel.isCompilerPrivateType(alias.type)))) {
@@ -4435,7 +4435,7 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       const SemanticType selectedType =
           substituteType(alias.type, substitution);
       if ((alias.access == AccessModifier::Private &&
-           currentClass != alias.ownerClass) ||
+           !isWithinClass(alias.ownerClass)) ||
           (!specializedOwner && !classType.genericParameters.empty() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4464,7 +4464,7 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
           alias.resolution != TypeAliasResolution::Resolved ||
           !seenTypeAliases.insert(alias.declaration->name().lexeme).second ||
           (alias.access == AccessModifier::Private &&
-           currentClass != alias.ownerClass) ||
+           !isWithinClass(alias.ownerClass)) ||
           (!specializedOwner && !classType.genericParameters.empty() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4490,7 +4490,7 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       if (typeOnly || (specializedOwner && !ownerType) ||
           !member.symbol.staticMember ||
           (member.access == AccessModifier::Private &&
-           currentClass != member.symbol.ownerClass)) {
+           !isWithinClass(member.symbol.ownerClass))) {
         continue;
       }
       appendSymbolCompletions(
@@ -4524,7 +4524,7 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
           continue;
         }
         if (member.access == AccessModifier::Private &&
-            currentClass != member.symbol.ownerClass) {
+            !isWithinClass(member.symbol.ownerClass)) {
           continue;
         }
         const Symbol substituted = substituteSymbol(member.symbol, objectType);
@@ -6503,7 +6503,7 @@ auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
   }
   if (member->symbol.type != SemanticType::Function &&
       member->access == AccessModifier::Private &&
-      currentClass != member->symbol.ownerClass &&
+      !isWithinClass(member->symbol.ownerClass) &&
       !(analyzingReflectedFieldAccess &&
         classInfo(member->symbol.ownerClass).reflectPrivate)) {
     const ClassInfo &declaringOwner = classInfo(member->symbol.ownerClass);

@@ -7,7 +7,8 @@ classes/structs, recursive scopes, enclosing constructor recovery, qualified
 identity, private intermediate types/aliases, imported export visibility,
 shadowing, generic children and the explicit generic-owner boundary. Native
 checks cover C++20/C++23 at O0/O1/O3, out-of-order sibling layouts, pointer-only
-cycles, public inheritance with explicit base construction, borrowed access
+cycles across sibling and independent enclosing scopes, lexical private access
+without reverse/sibling privilege, public inheritance with explicit base construction, borrowed access
 before movement, and transfer/share independence from enclosing policy. They
 also cover C records, opaque pointers and callback signatures, ordinary moves,
 defined-failure cleanup, and the nested reflected-JSON example. The example
@@ -19,10 +20,12 @@ no outer object is constructed. An Apple Silicon O3 cost probe used identical
 20-million-iteration inline-record xorshift loops, changing only the record's
 lexical nesting. Both produced the same checksum, the same seven-instruction
 hot loop (no allocation/call), and 81,920-byte text/16,384-byte data segments.
-Files were 149,392/149,408 bytes (flat/nested). Nine interleaved process samples
-had 29.16/30.41 ms medians with substantial concurrent-host variation; these
+Files were 149,392/149,480 bytes (flat/nested). Fifteen interleaved process samples
+had 16.22/16.32 ms medians on a shared development host; these
 are not a speedup claim. Optimized compiler/native-build observations were
-2.02/1.82 s and 214,843,392/216,727,552 bytes maximum RSS. Nesting introduces
+1.21/1.35 s and 210,124,800/215,990,272 bytes maximum RSS. These are single
+build observations, not a statistically established compilation regression.
+Nesting introduces
 compile-time declaration/identity work, not per-value storage or a new runtime
 operation. These probe observations do not replace full regression gates.
 
