@@ -75,7 +75,7 @@
     "074-read-only-range-loans.gti": 92,
     "075-bounded-arena-pool.gti": 98,
     "076-scalar-atomics.gti": 48,
-    "077-callable-concepts.gti": 108,
+    "077-callable-concepts.gti": 113,
     "078-owning-payload-enums.gti": 11,
     "079-class-scoped-type-aliases.gti": 12,
     "080-function-items.gti": 98,
@@ -97,10 +97,10 @@
     "098-shared-ownership.gti": 119,
     "099-borrowed-expected.gti": 123,
     "100-owned-error-pipelines.gti": 308,
-    "101-owned-algorithm-results.gti": 267,
+    "101-owned-algorithm-results.gti": 272,
     "102-constexpr-frame-budget.gti": 40,
     "103-resource-exchange.gti": 112,
-    "104-move-only-ordering.gti": 203,
+    "104-move-only-ordering.gti": 208,
     "105-member-signature-contracts.gti": 16,
     "106-custom-formatters.gti": 178,
     "107-composable-io.gti": 235,
@@ -135,7 +135,7 @@
     "136-inline-closure-cells.gti": 120,
     "137-declared-attributes.gti": 192,
     "138-structural-construction.gti": 189,
-    "139-ordered-search.gti": 140,
+    "139-ordered-search.gti": 145,
     "140-environment-configuration.gti": 127,
     "141-reflected-json.gti": 500,
     "142-constexpr-builders.gti": 53,
@@ -144,5 +144,5 @@
     "145-live-slot-and-lane-iteration.gti": 291,
     "146-counted-text-view-iteration.gti": 126
   },
-  "total": 14912
+  "total": 14932
 }
