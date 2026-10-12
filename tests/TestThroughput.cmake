@@ -18,6 +18,8 @@ set(gti_heavy_case_suites
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
+    out_of_class_cleanup
+    implicit_receiver_owned_assignment_runtime
     aggregate_std_runtime
     operator_relay_runtime
     ordered_search_runtime
@@ -91,7 +93,6 @@ if(Python3_Interpreter_FOUND)
     storage_final_address_runtime string_operations_runtime string_ordering_runtime
     structural_relocation_runtime temporary_owner_borrow_runtime unordered_map
     interface_static_runtime
-    implicit_receiver_owned_assignment_runtime
     uninitialized_carrier_runtime
     stdlib_modules
     stdlib_surface

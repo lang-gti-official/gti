@@ -95,6 +95,7 @@ declaration            = conditional-declaration
                        | native-function-attributes function-declaration
                        | function-contract-attributes function-declaration
                        | [ runtime-binding ] function-declaration
+                       | out-of-class-method-definition
                        | static-variable-declaration
                        | variable-declaration
                        | empty-declaration ;
@@ -629,6 +630,16 @@ function-declaration   = [ unsafe-function-modifier ] [ "static" ]
                          ( block | ";" ) ;
 
 requires-clause        = "requires" constraint-expression ;
+
+out-of-class-method-definition
+                       = [ unsafe-function-modifier ] [ "constexpr" ]
+                         [ "mut" ] type qualified-name "::" IDENTIFIER
+                         parameter-clause [ "mut" | "&&" ] block ;
+(* An existing ordinary method of a non-generic class/struct, or a static
+   interface method, must match exactly. No new member is introduced. Access,
+   static/virtual/override, attributes and defaults stay on its declaration.
+   Generic methods/owners, constructors, destructors and operators remain
+   inline in this slice. *)
 
 (* A leading `mut` on a function declaration requires a reference return.
    A free/static borrowed return is accepted when every reachable return

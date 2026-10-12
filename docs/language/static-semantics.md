@@ -1048,6 +1048,39 @@ public:
 };
 ```
 
+### Optional out-of-class method definitions
+
+An ordinary named method may keep its signature in a non-generic class, struct
+or interface and put its body at namespace scope:
+
+```gti
+interface Factory { static int create(int value = 7); };
+int Factory::create(int result) { return result; }
+```
+
+The definition completes that exact method; it cannot introduce another member.
+Parameter types, return type, receiver qualifier (`mut` or `&&`), `constexpr`
+and `unsafe` must match. Parameter names may differ. Access, `static`, `virtual`,
+`override`, attributes, constraints and default arguments stay on the original
+declaration. A definition must be in the owner's namespace or an enclosing
+namespace and in the same package ownership domain. Duplicate/mismatched
+definitions and foreign-package definitions are errors (`GTI-S2120`).
+
+The body has ordinary member access, including private members and an implicit
+receiver for instance methods. Pure virtual/interface instance requirements
+cannot acquire bodies. Selected declarations still require definitions before
+artifact generation; non-pure virtual declarations also require bodies. A
+constexpr body must be available before a constant-evaluated call. Borrowed
+results, consuming receivers, unsafe obligations and deterministic cleanup
+retain their ordinary semantics, independent of the body's file.
+
+Generic owners/methods, constructors, destructors and operators keep their
+existing inline spelling for now. This is an optional source organization
+facility, not a separate-compilation or native linker contract. See
+[module registration](../architecture/build-and-driver.md#source-module-registration)
+for automatically loading a private factory implementation when its interface
+is imported. Example 150 and `examples/window-factory` demonstrate both forms.
+
 Virtual roots and overrides match parameter types, receiver access, operator
 identity, and return type exactly. A concretely bound owner pack is expanded
 before comparing parameter lists, so an ordinary zero-argument or multi-argument

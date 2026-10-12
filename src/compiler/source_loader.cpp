@@ -146,6 +146,63 @@ SourceGraph SourceLoader::load(
                entryStandardLibraryName ? SourceUnitRole::StandardLibrary
                                         : SourceUnitRole::Application);
 
+  // Complete the private implementation closure only after ordinary imports
+  // finish. A body can import its interface without creating an artificial
+  // interface -> implementation -> interface import cycle.
+  std::unordered_set<std::string> loadedImplementations;
+  for (std::size_t index = 0; index < graph.sourceUnits().size(); ++index) {
+    const auto moduleDeclaration = graph.sourceUnits()[index].moduleDeclaration;
+    const auto unitPath = graph.sourceUnits()[index].path;
+    if (!moduleDeclaration || !graph.sourceUnits()[index].packageIdentity)
+      continue;
+    const auto *package = packageForPath(unitPath);
+    if (package == nullptr)
+      continue;
+    const auto registered =
+        std::find_if(package->modules.begin(), package->modules.end(),
+                     [&](const auto &entry) {
+                       return entry.first == moduleDeclaration->lexeme &&
+                              canonicalPath(entry.second) == unitPath;
+                     });
+    if (registered == package->modules.end())
+      continue;
+    for (const auto &[name, paths] : package->moduleImplementations) {
+      if (name != registered->first)
+        continue;
+      for (const auto &path : paths) {
+        const auto canonical = canonicalPath(path);
+        if (packageForPath(canonical) != package ||
+            canonical.extension() != ".gti") {
+          report(
+              *moduleDeclaration,
+              "A module implementation must remain inside its owning package.",
+              "GTI-I0012");
+          continue;
+        }
+        if (!loadedImplementations.insert(canonical.string()).second)
+          continue;
+        auto savedFlags = activeFlags;
+        const auto savedDomain = configurationDomain;
+        activeFlags = initialFlags;
+        const auto existing = graph.sourceUnitForPath(canonical.string());
+        configurationDomain =
+            existing != 0 ? existing : graph.sourceUnits().size() + 1;
+        const auto implementation =
+            loadFile(canonical, false, false, &*moduleDeclaration);
+        activeFlags = std::move(savedFlags);
+        configurationDomain = savedDomain;
+        if (graph.findUnit(implementation)->moduleDeclaration) {
+          report(*moduleDeclaration,
+                 "A registered implementation is an ordinary source file, not "
+                 "another module interface.",
+                 "GTI-I0012");
+          continue;
+        }
+        graph.implementationRoots.push_back(implementation);
+      }
+    }
+  }
+
   for (const SourceUnit &unit : graph.sourceUnits()) {
     if (unit.prelude) {
       continue;

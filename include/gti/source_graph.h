@@ -108,6 +108,10 @@ struct PackageSourceRoot {
   std::vector<PackageSourceDependency> dependencies;
   // Public package-local module name -> absolute, contained interface path.
   std::vector<std::pair<std::string, std::filesystem::path>> modules;
+  // Private executable source roots loaded when the corresponding interface
+  // participates in this compilation. They never grant importer visibility.
+  std::vector<std::pair<std::string, std::vector<std::filesystem::path>>>
+      moduleImplementations;
 };
 
 class SourceGraph {
@@ -155,6 +159,7 @@ private:
   std::vector<SourceUnit> units;
   std::vector<SourceDependency> dependencies;
   std::vector<SourceUnitId> configuredPreludeRoots;
+  std::vector<SourceUnitId> implementationRoots;
   std::unordered_map<std::string, SourceUnitId> unitsByPath;
   SourceUnitId entry = 0;
 };

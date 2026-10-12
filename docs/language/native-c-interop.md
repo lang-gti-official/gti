@@ -429,7 +429,7 @@ that the non-null input remains readable and stable through its first NUL for
 the whole scan and copy. Dangling addresses, unreadable memory and missing
 terminators are unsafe precondition violations, not recoverable error values.
 Neither result retains the input address or its owner. Example
-[150](../../examples/150-c-string-import.gti) demonstrates both APIs.
+[151](../../examples/151-c-string-import.gti) demonstrates both APIs.
 
 `unsafe const uint8_t* std::c_string_bytes(c_string)` in `<std/memory>` exposes
 the same non-owning byte address, preserving null without scanning, allocating,

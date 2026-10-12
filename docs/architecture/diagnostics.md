@@ -310,6 +310,15 @@ the completed Q-FAIL-01 consumer is not proof of every proposed boundary.
 
 ## Production Rules
 
+`GTI-S2120` reports an invalid out-of-class method definition at the method
+name: absent/foreign owner, unmatched signature or receiver, duplicate body,
+pure/native/compiler-provided declaration, repeated declaration-only specifiers
+or defaults, or a currently unsupported generic owner/method. The related
+span identifies the original method or owner when one is known. The message
+states the violated rule; no speculative signature, ownership, access or
+default-argument edit is offered. Missing selected bodies retain `GTI-S2106`.
+The LSP publishes the same diagnostics, including unsaved implementation files.
+
 Registry authentication keeps driver-owned structured codes: `GTI-B1713` for
 server authentication/package-permission rejection, `GTI-B1724` for unavailable,
 denied or unsupported protected credential storage, and `GTI-B1725` for invalid

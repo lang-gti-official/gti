@@ -653,6 +653,12 @@ struct ConstantContract {
   int value;
   unsafe constexpr ConstantContract(int source) : value(source) {}
 };
+struct NativeFactory {
+  unsafe static ReadByte create(const int* address);
+};
+unsafe ReadByte NativeFactory::create(const int* pointer) {
+  unsafe { return ReadByte(pointer); }
+}
 )";
   const std::string source = declaration + R"(
 int main() {
@@ -662,7 +668,8 @@ int main() {
     auto other = Generic<int>(1);
     LocalGeneric local{1};
     ConstantContract constant{1};
-    return read.value + other.value == 42 ? 0 : 1;
+    auto split = NativeFactory::create(&value);
+    return read.value + other.value == 42 && split.value == 41 ? 0 : 1;
   }
 }
 )";
@@ -717,6 +724,10 @@ int main() {
   expect(zero.canGenerateCode(), "explicit zero-argument unsafe construction");
   expectRejected("struct Z { unsafe Z() {} }; int main() { Z z{}; return 0; }",
                  "GTI-S2055", "zero-argument constructor requires unsafe");
+  expectRejected(
+      declaration + "int main() { int value = 1; "
+                    "auto copy = NativeFactory::create(&value); return 0; }",
+      "GTI-S2055", "split factory bodies retain their unsafe caller contract");
   expectRejected(
       "struct Z { unsafe Z() {} }; struct Owner { Z z; }; int main() { Owner "
       "x{}; return 0; }",
