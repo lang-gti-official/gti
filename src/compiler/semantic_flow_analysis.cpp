@@ -3481,57 +3481,58 @@ auto SemanticVisitor::Impl::recordQualifiedPathUses(
   if (finalSegmentIsNamespace || path.segments.size() < 2) {
     return;
   }
-  const NamePath ownerPath(
-      std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
-  if (resolveTypeAliasPath(ownerPath, currentNamespace)) {
-    recordTypeUse(TypeRef(ownerPath));
-    return;
-  }
-  if (const std::optional<ClassId> classId =
-          resolveClassPath(ownerPath, currentNamespace)) {
-    const ClassInfo &owner = classInfo(*classId);
-    SymbolId symbol = symbolForDeclaration(owner.name);
-    if (symbol == 0) {
-      symbol = recordToolingSymbol(
-          owner.name,
-          owner.kind == ClassKind::Struct ? SymbolKind::Struct
-                                          : SymbolKind::Class,
-          qualifiedName(owner.namespaceScope, owner.name.lexeme),
-          SemanticType::classType(owner.id));
+  // Each written type qualifier has its own declaration identity. Recording
+  // only the immediate owner loses navigation and rename for Outer in
+  // Outer::Inner::Leaf, even though lookup selected all three types.
+  for (std::size_t index = resolvedSegments.size();
+       index + 1 < path.segments.size(); ++index) {
+    const NamePath ownerPath(std::vector<Token>(
+        path.segments.begin(), path.segments.begin() + index + 1));
+    SymbolId symbol = 0;
+    SemanticType ownerType;
+    if (const auto alias = resolveTypeAliasPath(ownerPath, currentNamespace)) {
+      symbol = symbolForDeclaration(alias->declaration->name());
+      ownerType = alias->type;
+      if (symbol == 0) {
+        symbol = recordToolingSymbol(alias->declaration->name(),
+                                     SymbolKind::TypeAlias,
+                                     alias->qualifiedName, ownerType);
+      }
+    } else if (const auto classId =
+                   resolveClassPath(ownerPath, currentNamespace)) {
+      const ClassInfo &owner = classInfo(*classId);
+      ownerType = SemanticType::classType(owner.id);
+      symbol = symbolForDeclaration(owner.name);
+      if (symbol == 0) {
+        symbol = recordToolingSymbol(
+            owner.name,
+            owner.kind == ClassKind::Struct ? SymbolKind::Struct
+                                            : SymbolKind::Class,
+            qualifiedName(owner.namespaceScope, owner.name.lexeme), ownerType);
+      }
+    } else if (const auto enumId = resolveEnumPath(ownerPath, currentNamespace);
+               enumId && *enumId != 0 && *enumId <= enums.size()) {
+      const EnumInfo &owner = enums[*enumId - 1];
+      ownerType = SemanticType::enumType(owner.id);
+      symbol = symbolForDeclaration(owner.name);
+      if (symbol == 0) {
+        symbol = recordToolingSymbol(
+            owner.name, SymbolKind::Enum,
+            qualifiedName(owner.namespaceScope, owner.name.lexeme), ownerType);
+      }
     }
-    semanticModel.recordOccurrence(
-        {.sourceUnit = currentSourceUnit,
-         .span = tokenSpan(ownerPath.last()),
-         .kind = SemanticOccurrenceKind::Symbol,
-         .symbol = symbol,
-         .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
-         .name = ownerPath.last().lexeme,
-         .type = SemanticType::classType(owner.id),
-         .traits = typeTraits(SemanticType::classType(owner.id))});
-    return;
+    if (symbol != 0) {
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(ownerPath.last()),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = symbol,
+           .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+           .name = ownerPath.last().lexeme,
+           .type = ownerType,
+           .traits = typeTraits(ownerType)});
+    }
   }
-  const std::optional<EnumId> enumId =
-      resolveEnumPath(ownerPath, currentNamespace);
-  if (!enumId || *enumId == 0 || *enumId > enums.size()) {
-    return;
-  }
-  const EnumInfo &owner = enums[*enumId - 1];
-  SymbolId symbol = symbolForDeclaration(owner.name);
-  if (symbol == 0) {
-    symbol = recordToolingSymbol(
-        owner.name, SymbolKind::Enum,
-        qualifiedName(owner.namespaceScope, owner.name.lexeme),
-        SemanticType::enumType(owner.id));
-  }
-  semanticModel.recordOccurrence(
-      {.sourceUnit = currentSourceUnit,
-       .span = tokenSpan(ownerPath.last()),
-       .kind = SemanticOccurrenceKind::Symbol,
-       .symbol = symbol,
-       .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
-       .name = ownerPath.last().lexeme,
-       .type = SemanticType::enumType(owner.id),
-       .traits = typeTraits(SemanticType::enumType(owner.id))});
 }
 
 auto SemanticVisitor::Impl::recordBindingOccurrence(
@@ -4098,7 +4099,7 @@ auto SemanticVisitor::Impl::appendSymbolCompletions(
         continue;
       }
       if (overload.access == AccessModifier::Private &&
-          currentClass != overload.ownerClass) {
+          !isWithinClass(overload.ownerClass)) {
         continue;
       }
       if (!mutableReceiver &&
@@ -4281,12 +4282,32 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
       }
     }
   }
-  if (currentClass) {
-    const ClassInfo &owner = classInfo(*currentClass);
+  for (ClassId ownerId = currentClass.value_or(0); ownerId != 0;
+       ownerId = classInfo(ownerId).enclosingClass) {
+    const ClassInfo &owner = classInfo(ownerId);
+    for (const auto &[name, nestedId] : owner.nestedTypes) {
+      const ClassInfo &nested = classInfo(nestedId);
+      if ((!isCompilerTrustedUnit(currentSourceUnit) &&
+           nested.compilerPrivate) ||
+          !seen.insert(name).second) {
+        continue;
+      }
+      context.candidates.push_back(
+          {.kind = nested.kind == ClassKind::Struct
+                       ? SemanticCompletionCandidateKind::Struct
+                       : SemanticCompletionCandidateKind::Class,
+           .name = name,
+           .qualifiedName = qualifiedName(nested.namespaceScope, name),
+           .type = SemanticType::classType(nested.id),
+           .scopeDistance = distance,
+           .classType = nested.id,
+           .symbol = symbolForDeclaration(nested.name),
+           .compilerPrivate = nested.compilerPrivate});
+    }
     for (const auto &[name, alias] : owner.typeAliases) {
       if (!seen.insert(name).second ||
           (alias.access == AccessModifier::Private &&
-           currentClass != alias.ownerClass) ||
+           !isWithinClass(alias.ownerClass)) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            (alias.compilerPrivate ||
             semanticModel.isCompilerPrivateType(alias.type)))) {
@@ -4312,6 +4333,18 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
     }
     appendNamespaceChildren(context.candidates, parent, distance, &seen);
   }
+  std::erase_if(context.candidates, [&](const auto &candidate) {
+    for (ClassId id = candidate.classType; id != 0;
+         id = classInfo(id).enclosingClass) {
+      const ClassInfo &nested = classInfo(id);
+      if (nested.enclosingClass != 0 &&
+          nested.enclosingAccess == AccessModifier::Private &&
+          !isWithinClass(nested.enclosingClass)) {
+        return true;
+      }
+    }
+    return false;
+  });
   semanticModel.recordCompletion(std::move(context));
 }
 
@@ -4376,6 +4409,37 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
   } else if (const std::optional<ClassId> owner = completionOwner) {
     context.kind = SemanticCompletionKind::Member;
     const ClassInfo &classType = classInfo(*owner);
+    for (ClassId id = *owner; id != 0; id = classInfo(id).enclosingClass) {
+      const ClassInfo &nested = classInfo(id);
+      if ((!isCompilerTrustedUnit(currentSourceUnit) &&
+           nested.compilerPrivate) ||
+          (nested.enclosingClass != 0 &&
+           nested.enclosingAccess == AccessModifier::Private &&
+           !isWithinClass(nested.enclosingClass))) {
+        semanticModel.recordCompletion(std::move(context));
+        return;
+      }
+    }
+    for (const auto &[name, nestedId] : classType.nestedTypes) {
+      const ClassInfo &nested = classInfo(nestedId);
+      if ((nested.enclosingAccess == AccessModifier::Private &&
+           !isWithinClass(*owner)) ||
+          (!isCompilerTrustedUnit(currentSourceUnit) &&
+           nested.compilerPrivate)) {
+        continue;
+      }
+      context.candidates.push_back(
+          {.kind = nested.kind == ClassKind::Struct
+                       ? SemanticCompletionCandidateKind::Struct
+                       : SemanticCompletionCandidateKind::Class,
+           .name = name,
+           .qualifiedName = qualifiedName(nested.namespaceScope, name),
+           .type = SemanticType::classType(nested.id),
+           .scopeDistance = 0,
+           .classType = nested.id,
+           .symbol = symbolForDeclaration(nested.name),
+           .compilerPrivate = nested.compilerPrivate});
+    }
     const GenericSubstitution substitution =
         specializedOwner ? classSubstitution(*specializedOwner)
                          : GenericSubstitution{};
@@ -4392,7 +4456,7 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       const SemanticType selectedType =
           substituteType(alias.type, substitution);
       if ((alias.access == AccessModifier::Private &&
-           currentClass != alias.ownerClass) ||
+           !isWithinClass(alias.ownerClass)) ||
           (!specializedOwner && !classType.genericParameters.empty() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4421,7 +4485,7 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
           alias.resolution != TypeAliasResolution::Resolved ||
           !seenTypeAliases.insert(alias.declaration->name().lexeme).second ||
           (alias.access == AccessModifier::Private &&
-           currentClass != alias.ownerClass) ||
+           !isWithinClass(alias.ownerClass)) ||
           (!specializedOwner && !classType.genericParameters.empty() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4447,7 +4511,7 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       if (typeOnly || (specializedOwner && !ownerType) ||
           !member.symbol.staticMember ||
           (member.access == AccessModifier::Private &&
-           currentClass != member.symbol.ownerClass)) {
+           !isWithinClass(member.symbol.ownerClass))) {
         continue;
       }
       appendSymbolCompletions(
@@ -4481,7 +4545,7 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
           continue;
         }
         if (member.access == AccessModifier::Private &&
-            currentClass != member.symbol.ownerClass) {
+            !isWithinClass(member.symbol.ownerClass)) {
           continue;
         }
         const Symbol substituted = substituteSymbol(member.symbol, objectType);
@@ -4601,6 +4665,15 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
   }
 
   const auto &symbols = currentNamespaceSymbols();
+  if (const auto id = resolveClassPath(NamePath(name), currentNamespace)) {
+    const auto &type = classInfo(*id);
+    if (type.enclosingClass != 0) {
+      const auto found =
+          symbols.find(qualifiedName(type.namespaceScope, type.name.lexeme));
+      if (found != symbols.end())
+        return &found->second;
+    }
+  }
   for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
     const auto found =
         symbols.find(qualifiedName(currentNamespace, depth - 1, name.lexeme));
@@ -4701,6 +4774,16 @@ auto SemanticVisitor::Impl::resolveQualified(const NamePath &path) const
     -> const Symbol * {
   if (path.segments.size() < 2) {
     return resolve(path.last());
+  }
+  if (const auto id = resolveClassPath(path, currentNamespace)) {
+    const auto &type = classInfo(*id);
+    if (type.enclosingClass != 0) {
+      const auto &symbols = currentNamespaceSymbols();
+      const auto found =
+          symbols.find(qualifiedName(type.namespaceScope, type.name.lexeme));
+      if (found != symbols.end())
+        return &found->second;
+    }
   }
 
   NamePath namespacePath(
@@ -5002,11 +5085,14 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
     return resolveMemberTypeAlias(owner, name);
   };
   if (path.segments.size() == 1) {
-    if (currentClass) {
+    for (ClassId owner = currentClass.value_or(0); owner != 0;
+         owner = classInfo(owner).enclosingClass) {
       if (const std::optional<ResolvedTypeAlias> alias =
-              member(*currentClass, path.last().lexeme)) {
+              member(owner, path.last().lexeme)) {
         return alias;
       }
+      if (classInfo(owner).nestedTypes.contains(path.last().lexeme))
+        return std::nullopt;
     }
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
       const auto found = visibleAliases.find(
@@ -5176,19 +5262,43 @@ auto SemanticVisitor::Impl::resolveClassPath(
     const NamePath &path, const std::vector<std::string> &fromScope) const
     -> std::optional<ClassId> {
   const auto &visibleClasses = currentClassIds();
-  if (path.segments.size() == 1) {
-    for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-      const auto found = visibleClasses.find(
-          qualifiedName(fromScope, depth - 1, path.last().lexeme));
-      if (found != visibleClasses.end()) {
+  if (currentClass) {
+    for (ClassId owner = *currentClass; owner != 0;
+         owner = classInfo(owner).enclosingClass) {
+      if (classInfo(owner).nestedTypes.empty())
+        continue;
+      auto scope = classInfo(owner).namespaceScope;
+      scope.push_back(classInfo(owner).name.lexeme);
+      const auto found =
+          visibleClasses.find(qualifiedName(scope, pathSpelling(path)));
+      if (found != visibleClasses.end())
         return found->second;
-      }
     }
+  }
+  for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+    const auto found = visibleClasses.find(
+        qualifiedName(fromScope, depth - 1, pathSpelling(path)));
+    if (found != visibleClasses.end())
+      return found->second;
+  }
+  if (path.segments.size() == 1) {
     return std::nullopt;
   }
 
   NamePath namespacePath(
       std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+  if (const auto owner = resolveClassPath(namespacePath, fromScope)) {
+    const auto nested = classInfo(*owner).nestedTypes.find(path.last().lexeme);
+    if (nested != classInfo(*owner).nestedTypes.end())
+      return nested->second;
+  }
+  if (const auto alias = resolveTypeAliasPath(namespacePath, fromScope);
+      alias && alias->type.kind == SemanticType::Class) {
+    const auto &owner = classInfo(alias->type.classId);
+    const auto nested = owner.nestedTypes.find(path.last().lexeme);
+    if (nested != owner.nestedTypes.end())
+      return nested->second;
+  }
   const std::optional<std::string> resolvedNamespace =
       resolveNamespacePath(namespacePath, fromScope);
   if (!resolvedNamespace) {
@@ -5203,14 +5313,13 @@ auto SemanticVisitor::Impl::resolveClassPath(
 auto SemanticVisitor::Impl::resolveClassPathGlobally(
     const NamePath &path, const std::vector<std::string> &fromScope) const
     -> std::optional<ClassId> {
+  for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+    const auto found =
+        classIds.find(qualifiedName(fromScope, depth - 1, pathSpelling(path)));
+    if (found != classIds.end())
+      return found->second;
+  }
   if (path.segments.size() == 1) {
-    for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-      const auto found = classIds.find(
-          qualifiedName(fromScope, depth - 1, path.last().lexeme));
-      if (found != classIds.end()) {
-        return found->second;
-      }
-    }
     return std::nullopt;
   }
   const NamePath namespacePath(
@@ -5229,6 +5338,13 @@ auto SemanticVisitor::Impl::resolveClassPathGlobally(
 auto SemanticVisitor::Impl::resolveEnumPath(
     const NamePath &path, const std::vector<std::string> &fromScope) const
     -> std::optional<EnumId> {
+  if (path.segments.size() == 1) {
+    for (ClassId owner = currentClass.value_or(0); owner != 0;
+         owner = classInfo(owner).enclosingClass) {
+      if (classInfo(owner).nestedTypes.contains(path.last().lexeme))
+        return std::nullopt;
+    }
+  }
   const auto &visibleEnums = currentEnumIds();
   const auto &visibleAliases = currentTypeAliasIds();
   const auto enumFromAlias =
@@ -6408,7 +6524,7 @@ auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
   }
   if (member->symbol.type != SemanticType::Function &&
       member->access == AccessModifier::Private &&
-      currentClass != member->symbol.ownerClass &&
+      !isWithinClass(member->symbol.ownerClass) &&
       !(analyzingReflectedFieldAccess &&
         classInfo(member->symbol.ownerClass).reflectPrivate)) {
     const ClassInfo &declaringOwner = classInfo(member->symbol.ownerClass);

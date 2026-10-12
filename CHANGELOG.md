@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.412.3 — Faster editor analysis with standard-library includes
+## 0.413.2 — Faster editor analysis with standard-library includes
 
 - The language server analyses each edit once again. When a generic call
   reached a standard-library body nothing else had needed, the server
@@ -18,6 +18,35 @@ for what minor and patch releases mean.
   analysis, so such an edit takes about 440 ms instead of about 1,180 ms
   (and less than the 605 ms before 0.411.0). Diagnostics are unchanged, and
   `gti build` benefits in the same way.
+
+## 0.413.1 — Failure checks stay off the fast path
+
+- Operations that can fail, such as checked arithmetic, bounds checks and
+  container growth, now keep their failure handling out of the fast path. The
+  native compiler treats every failure branch as unlikely, and a failure's
+  record is written by one out-of-line call. Short operations such as
+  `std::string::push_back` therefore inline into loops.
+- On the runtime probes, building a string one character at a time takes about
+  a third less time, sorting about 15% less, and hash-map lookups about 4%
+  less. Failure behaviour, messages and cleanup order are unchanged.
+- Moving cold code can shift where an unrelated hot loop lands in memory, so
+  some loops measure a few percent faster or slower. Two probes are about 10%
+  slower for that reason alone.
+
+## 0.413.0 — Named nested structs and classes
+
+- Non-generic classes and structs can define named child classes and structs,
+  including children with their own generic parameters. Qualified names such
+  as `Config::Network` retain ordinary access, ownership, cleanup and reflection
+  rules without capturing an outer object. Example 148 demonstrates a nested
+  configuration decoded and encoded with `<std/json>`.
+- Nested scopes have lexical access to enclosing private members, with an
+  explicit object required for instance members. Private constructors remain
+  inaccessible to outside source calls while authorized lifetime construction
+  now works through native helpers.
+- Definitions inside generic enclosing types, including exact specializations,
+  remain diagnosed until child identity can retain the enclosing specialization.
+  Anonymous records and nested interfaces/unions are not part of this release.
 
 ## 0.412.2 — Callable signature and exported return-type formatting
 
