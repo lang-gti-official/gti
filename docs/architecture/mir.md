@@ -2608,12 +2608,21 @@ target; targetless native defaults cannot satisfy a required generated schedule.
 Every selected base initializer's generated-default flag must match the selected
 constructor, including when the derived constructor is explicitly declared.
 Base-argument cleanup and borrow eligibility use concrete class and enum traits.
+An argument value can carry a transient dependency even when its passive
+parameter type carries no stored reference fields. Direct parameter forwarding
+retains that distinction: its entry-loan-backed load precedes `InitializeBase`,
+and the entry loan must remain live through the base call. Verification checks
+the exact formal, source place, load and unsuspended entry loan; an early loan
+endpoint cannot be hidden behind the loaded SSA value. The base itself still
+cannot retain borrowed state. This permits forwarding a dynamic text view into
+an owning base constructor without mistaking it for a borrowed base object.
 Interprocedural effect analysis follows
 the selected base constructor, so its allocation, memory, and other effects
 remain visible in the derived constructor's summary and to the optimizer.
 
 The C++ backend fuses observation-free scalar parameter/literal prefixes into
-the exact native base initializer, using its status overload when fallible,
+the exact native base initializer, including passive text-view parameter loads,
+using its status overload when fallible,
 and branches on the retained result before executing derived MIR. Checked
 arithmetic, scalar calls and control flow instead execute in an admitted
 pre-native-base partition of this same verified body. The immutable body plan
