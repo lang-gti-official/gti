@@ -1,0 +1,48 @@
+#include <std/array>
+#include <std/string>
+#include <std/vector>
+
+// Both ordinary nested records and source-defined array wrappers have the
+// same generated passive copy/destruction contract.
+struct Leaf {
+  mut int32_t number;
+  Leaf(int32_t input) : number(input) {}
+};
+struct Middle {
+  mut Leaf leaf;
+  Middle(Leaf input) : leaf(input) {}
+};
+struct Record {
+  mut Middle left;
+  mut Middle right;
+  Record(Middle first, Middle second) : left(first), right(second) {}
+};
+struct Wrapper {
+  Record item;
+  Wrapper(Record input) : item(input) {}
+};
+struct Bytes {
+  mut std::array<uint8_t, 16> data{};
+  Bytes() {}
+  Bytes(Bytes&) = default;
+  Bytes(Bytes&&) = default;
+};
+struct ByteWrapper {
+  Bytes item;
+  ByteWrapper(Bytes input) : item(input) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut Record source{Middle(Leaf(41)), Middle(Leaf(7))};
+  Wrapper copied{source};
+  source.left.leaf.number = 99;
+  if (copied.item.left.leaf.number != 41 || copied.item.right.leaf.number != 7) {
+    return 1;
+  }
+  mut Bytes bytes{};
+  bytes.data[std::size_t(3)] = uint8_t(23);
+  ByteWrapper copied_bytes{bytes};
+  bytes.data[std::size_t(3)] = uint8_t(55);
+  if (copied_bytes.item.data[std::size_t(3)] != uint8_t(23)) { return 2; }
+  return 0;
+}

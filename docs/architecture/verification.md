@@ -1,5 +1,38 @@
 # Compiler Verification
 
+## Mixed constructor parameter publication (#114)
+
+`mixed_constructor_parameter_runtime` composes two copied nested passive fields
+with an owning field in eight native modes, including disabled elision and
+sanitizers. Copy independence, later-argument failure, constructor failure and
+secondary cleanup failure retain exact observable order. The corresponding
+emitter test rejects reordered prefix loads/boundaries and a missing boundary;
+native prefix admission cannot bypass body-ordered owned-field cleanup.
+
+## Constructor base rollback failure-record selection (#101)
+
+`base_rollback_record_runtime` covers defaulted derived constructors whose
+fallible field initializer may roll back a non-failing or fallible base.
+C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan observations check normal virtual
+destruction, first field failure, secondary base-cleanup failure and primary
+destructor failure. The derived destructor never runs for failed construction;
+the completed base is cleaned exactly once. `testBaseRollbackFailureRecord`
+checks that only a fallible base uses the declared secondary record and rejects
+four mutations to the rollback cleanup/failure contract.
+
+## Consuming member results at owning expected return boundaries (#99)
+
+`expected_consuming_return_runtime` covers a user-defined owning class returned
+directly by a consuming source member into `expected`, and the motivating
+polymorphic owner factory. It runs C++20/C++23 at O0/O1/O3, disabled elision,
+and ASan/UBSan. Exact observations cover successful publication, callee failure,
+pending-result cleanup failure, secondary cleanup failure, ordinary expected
+errors, virtual dispatch and once-only concrete destruction. The text-emitter
+test `testExpectedConsumingMemberReturn` checks the exact concrete receiver
+capability and rejects five malformed receiver/activation schedules. This is
+representation admission for already-verified source calls, not a new language
+conversion or a special rule for `unique_ptr`.
+
 ## Allocation constructor defaults
 
 `allocation_default_argument_runtime` exercises passive and owning default
