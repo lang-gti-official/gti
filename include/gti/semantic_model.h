@@ -2221,6 +2221,14 @@ private:
   [[nodiscard]] std::size_t estimatedInstanceBytes() const;
   void noteBaseLambda(const LambdaInfo *lambda) const;
   void noteBaseSyntheticSyntax(bool used) const;
+  // Marks every synthesized syntax object this model holds now (generated
+  // constructors, constexpr-for expansions, expression aliases, implicit
+  // field-initializer anchors) as shared across snapshots: an analysis
+  // resumed from a preamble holds the preamble's objects, which every other
+  // analysis resumed from it holds too, so a delta that read them stays
+  // reusable (see SemanticPreamble).
+  void markSyntheticSyntaxStable();
+  [[nodiscard]] bool baseStableSyntheticSyntax(const void *object) const;
   void noteConstruction(const ConstructorDecl *declaration);
   [[nodiscard]] bool
   baseOwnsGeneratedConstructor(const ConstructorDecl *declaration) const;
@@ -2602,6 +2610,8 @@ private:
       frozenBaseAnchors;
   // Fields whose implicit initializer anchor outlives this snapshot.
   std::unordered_set<const VariableDecl *> sharedImplicitFieldInitializers;
+  // Synthesized syntax shared across snapshots; see markSyntheticSyntaxStable.
+  std::unordered_set<const void *> stableSyntheticSyntax;
   [[nodiscard]] const std::shared_ptr<const ExprPtr> *
   findImplicitFieldInitializer(const VariableDecl &field,
                                bool *shared = nullptr) const;

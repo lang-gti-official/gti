@@ -38,6 +38,16 @@ struct FrontendWorkMetrics {
   std::size_t semanticLateDemandMicroseconds = 0;
   std::size_t semanticApplicationBodyMicroseconds = 0;
   std::size_t semanticFinalizationMicroseconds = 0;
+  // Trusted prefix preamble (see SemanticPreambleCache): whether this
+  // analysis built one (and how long that took), whether it resumed from
+  // one (and how long adopting its state took), the trusted bodies the
+  // preamble holds and how many this analysis reached and reported.
+  std::size_t semanticPreambleBuilds = 0;
+  std::size_t semanticPreambleBuildMicroseconds = 0;
+  std::size_t semanticPreambleAdoptions = 0;
+  std::size_t semanticPreambleAdoptMicroseconds = 0;
+  std::size_t semanticPreambleBodies = 0;
+  std::size_t semanticPreambleReachedBodies = 0;
   std::size_t hirMicroseconds = 0;
   // Function instances HIR lowered, including any beyond the reachable prefix.
   std::size_t hirFunctionInstances = 0;
@@ -85,6 +95,12 @@ struct FrontendWorkMetrics {
     semanticLateDemandMicroseconds = 0;
     semanticApplicationBodyMicroseconds = 0;
     semanticFinalizationMicroseconds = 0;
+    semanticPreambleBuilds = 0;
+    semanticPreambleBuildMicroseconds = 0;
+    semanticPreambleAdoptions = 0;
+    semanticPreambleAdoptMicroseconds = 0;
+    semanticPreambleBodies = 0;
+    semanticPreambleReachedBodies = 0;
     hirMicroseconds = 0;
     hirFunctionInstances = 0;
     semanticInstanceReuseHits = 0;

@@ -13,6 +13,7 @@
 #include "gti/program_request.h"
 #include "gti/progress.h"
 #include "gti/semantic_model.h"
+#include "gti/semantic_preamble.h"
 #include "gti/source_graph.h"
 #include "gti/target.h"
 
@@ -99,6 +100,12 @@ struct FrontendOptions {
   // across snapshots (see InstanceAnalysisCache). Consulted only by
   // `Reachable` analysis; editor snapshots set it, builds and checks do not.
   std::shared_ptr<InstanceAnalysisCache> instanceCache;
+  // Analysed trusted prefixes shared across snapshots (see
+  // SemanticPreambleCache). With it set, and no raw-pointer audit, an
+  // analysis adopts the preamble of its program's leading compiler-trusted
+  // units (building it first when absent) and analyses only the rest.
+  // Editor snapshots set it; builds and checks do not.
+  std::shared_ptr<SemanticPreambleCache> preambleCache;
 };
 
 struct FrontendResult {
