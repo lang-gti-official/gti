@@ -1,0 +1,65 @@
+import std.memory;
+import std.string;
+import std.utility;
+import std.vector;
+
+mut int32_t base_divisor = 1;
+mut int32_t derived_divisor = 1;
+mut int32_t parameter_cleanup_divisor = 1;
+
+class Guard {
+  int32_t identity;
+public:
+  Guard(int32_t value) : identity(value) {}
+  ~Guard() { std::println(this.identity); }
+};
+
+struct Spec {
+  std::string title = std::string("editor");
+  std::unique_ptr<Guard> owner = std::make_unique<Guard>(7);
+  ~Spec() {
+    std::println(6);
+    int32_t checked = 1 / parameter_cleanup_divisor;
+  }
+};
+
+class Base {
+  std::string name;
+  std::unique_ptr<Guard> retained;
+public:
+  Base(std::string_view label) : name(std::string(label)), retained(std::make_unique<Guard>(1)) {
+    Guard inside = Guard(2);
+    int32_t checked = 6 / base_divisor;
+  }
+  ~Base() { std::println(3); }
+  virtual void Attach() mut = 0;
+};
+
+class Derived : public Base {
+  Spec spec;
+  int32_t identity;
+public:
+  Derived(Spec input, int32_t id) : Base("layer"), spec(std::move(input)), identity(id) {
+    Guard inside = Guard(4);
+    int32_t checked = 8 / derived_divisor;
+  }
+  ~Derived() { std::println(this.identity); }
+  void Attach() mut override { std::println(this.spec.title); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  base_divisor = argc == 2 || argc == 6 ? 0 : 1;
+  derived_divisor = argc == 3 || argc == 4 ? 0 : 1;
+  parameter_cleanup_divisor = argc == 4 || argc == 6 ? 0 : 1;
+  Guard outer = Guard(9);
+  Spec spec{};
+  if (argc == 5) {
+    mut Derived stack{std::move(spec), 5};
+    stack.Attach();
+  } else {
+    mut auto concrete = std::make_unique<Derived>(std::move(spec), 5);
+    mut auto erased = concrete.upcast<Base>();
+    erased->Attach();
+  }
+  return 0;
+}

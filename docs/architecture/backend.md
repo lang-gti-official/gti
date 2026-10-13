@@ -2175,6 +2175,22 @@ generated-base chains remain outside this generated-body slice and retain
 their existing structural construction representation or the separately
 verified declaration-field schedule described above.
 
+An abstract or polymorphic class with a declared destructor uses the same
+per-class construction guard as a non-polymorphic class. Its exact declared
+destructor identity, active-drop state and reverse declared-field schedule
+remain mandatory. The guard is disarmed until that class's constructor
+success; a failed base therefore does not execute its source destructor, while
+a completed base is cleaned exactly once if the derived construction fails.
+This fields-only witness does not authorize default construction of a
+state-bearing base or an abstract complete object. The selected base status
+constructor, its success activation and exact rollback obligation are still
+verified independently. Heap ownership, upcasting and stack construction use
+the same rule, with no new runtime metadata or successful-path allocation.
+Observation-free string-view literals may likewise feed
+the exact native base initializer. They retain the same MIR type, single-use
+argument, full-expression and borrow verification as other passive inputs;
+effectful producers still require a separately verified pre-base schedule.
+
 Checked/effectful scalar base arguments now execute through a pre-native-base
 partition of the same verified constructor MIR. The immutable body plan retains
 its exact CFG, stage, operands and scalar values/places crossing the boundary;
@@ -2336,6 +2352,20 @@ Ordinary native constructor overloads that publish fields from the same MIR
 body use the same proved private empty state as their failure-form overloads.
 They must not implicitly call a source default constructor before MIR field
 publication; that constructor may be deleted or have observable behavior.
+Body-ordered owned-parameter fields compose with an independently verified
+native base initializer. The base follows its exact selected status entry;
+the destination fields retain their private empty shells until MIR reaches
+their own `Move` and `Initialize`. An input parameter's original obligation
+therefore remains armed if base construction fails. Only successful field
+publication reparents it into field rollback. The field transfer, parameter
+cleanup and base success/rollback proofs are all required; this composition
+does not hoist an owning move across fallible base construction.
+An independently verified empty interface base contributes dispatch identity,
+not source storage, initialization or cleanup. Its structural proof remains
+shared between the private empty-field and empty-shell admission paths.
+That whole-shell proof still excludes state-bearing bases and non-generated
+interface lifecycle operations; it is distinct from the per-class destructor
+guard and independently selected state-bearing base schedule described above.
 A cleanup-free class field may have lexical lifetime without an active cleanup
 obligation. Such a field can accompany a guarded owner only when its concrete
 class has generated, observation-free destruction, no active cleanup state,
