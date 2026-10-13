@@ -1,5 +1,14 @@
 # Compiler Verification
 
+## Owning field replacement through checked references (#116)
+
+`reference_owned_field_replacement_runtime` exercises direct and nested owned
+fields through mutable reference parameters, successful replacement, failed
+construction, old-value cleanup failure and secondary staged-value failure.
+Eight native modes cover C++20/C++23, O0/O1/O3, no-elide and ASan/UBSan.
+`testReferenceOwnedFieldReplacement` rejects read-only reference or loan access,
+raw-pointer substitution, immutable fields and erased publication metadata.
+
 ## Virtual owning expected results (#109)
 
 `virtual_expected_owning_return_runtime` covers pure-virtual production of a

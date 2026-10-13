@@ -478,6 +478,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testReferenceOwnedFieldReplacement",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testDefaultedOwningBaseSchedule",
       "suite": "lifecycle"
     },

@@ -4469,6 +4469,85 @@ void testSourceDestructorOwningFieldCleanup() {
   }
 }
 
+void testReferenceOwnedFieldReplacement() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/reference_owned_field_replacement.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "reference field fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "reference field fixture must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  std::size_t selected = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *place =
+            instruction.destination
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            place == nullptr ||
+            place->root != lang::MirPlaceRootKind::Binding ||
+            place->projections.size() < 2 ||
+            place->projections.front().kind !=
+                lang::MirProjectionKind::Dereference)
+          continue;
+        ++selected;
+        const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                           function.id};
+        expect(lang::CppMirBodyEmitter(frontend.mir, map)
+                   .supportsFailureBodyText(address),
+               "checked reference grants exact direct and nested field "
+               "replacement");
+        for (int mutation = 0; mutation != 5; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(malformed, address);
+          if (mutation <= 1) {
+            for (auto &carrier : body->places)
+              if (carrier.root == lang::MirPlaceRootKind::Binding &&
+                  carrier.binding == place->binding &&
+                  carrier.projections.empty()) {
+                if (mutation == 0)
+                  carrier.type.referenceAccess = lang::AccessMode::ReadOnly;
+                else
+                  carrier.type = lang::SemanticType::rawPointerTo(
+                      carrier.type.arguments.front(),
+                      lang::AccessMode::Mutable);
+              }
+          } else if (mutation == 2) {
+            for (auto &loan : body->loans)
+              if (std::find(loan.carriers.begin(), loan.carriers.end(),
+                            place->binding) != loan.carriers.end())
+                loan.access = lang::AccessMode::ReadOnly;
+          } else if (mutation == 3) {
+            for (const auto &instance : malformed.classInstances())
+              for (auto &field : const_cast<lang::MirClassInstance &>(instance)
+                                     .declaredFields)
+                if (field.symbol == place->projections.back().field)
+                  field.access = lang::AccessMode::ReadOnly;
+          } else {
+            for (auto &changedBlock : body->blocks)
+              for (auto &changed : changedBlock.instructions)
+                if (changed.id == instruction.id)
+                  changed.lifecycle.clear();
+          }
+          expect(
+              !lang::verifyMirProgram(malformed).valid() ||
+                  !lang::CppMirBodyEmitter(malformed, map)
+                       .supportsFailureBodyText(address),
+              "replacement cannot forge checked reference access, raw pointer, "
+              "field mutability or publication");
+        }
+      }
+  expect(selected == 2,
+         "fixture includes direct and nested reference field writes");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "checked reference field replacement reaches native emission");
+}
+
 void testVirtualExpectedOwningResult() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/virtual_expected_owning_return.gti";
@@ -14166,6 +14245,7 @@ constexpr NamedTest kTests[] = {
     {"testOwningBaseConstructorStatus", testOwningBaseConstructorStatus},
     {"testBaseRollbackFailureRecord", testBaseRollbackFailureRecord},
     {"testVirtualExpectedOwningResult", testVirtualExpectedOwningResult},
+    {"testReferenceOwnedFieldReplacement", testReferenceOwnedFieldReplacement},
     {"testDefaultedOwningBaseSchedule", testDefaultedOwningBaseSchedule},
     {"testPassiveOwnedParameterConstructorFields",
      testPassiveOwnedParameterConstructorFields},
