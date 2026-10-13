@@ -2859,6 +2859,66 @@ int main() {
   }
 }
 
+void testConstructorBorrowedInputReborrowReplacement() {
+  const auto frontend =
+      analyzeWithStandardLibrary("constructor-input-reborrow.gti", R"(
+#include <std/string>
+struct Source {
+  std::string text{"new"};
+  std::string& get() { return this.text; }
+};
+struct Item {
+  mut std::string text;
+  Item(std::string_view input) : text(std::string(input)) {}
+};
+int main() {
+  Source source{};
+  mut Item target{"old"};
+  target = Item(source.get().view());
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(), "constructor input reborrow lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::HirFunctionInstanceId target = 0;
+  for (const auto &function : frontend.hir.functionInstances())
+    if (function.source && function.source->name().lexeme == "main")
+      target = function.id;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = target};
+  const auto *body = lang::findMirBody(frontend.mir, address);
+  expect(body && body->loans.size() == 2,
+         "constructor input retains receiver and view dependencies");
+  if (!body || body->loans.size() != 2)
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.supportsFailureBodyText(address),
+         "constructor input retires its readonly receiver chain");
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    auto forged = frontend.mir;
+    auto *changed = lang::findMirBody(forged, address);
+    auto parent = std::find_if(
+        changed->loans.begin(), changed->loans.end(), [](const auto &loan) {
+          return loan.kind == lang::MirLoanKind::CallResult;
+        });
+    if (parent == changed->loans.end()) {
+      expect(false, "input chain has an exact call-result parent");
+      return;
+    }
+    if (mutation == 0)
+      parent->access = lang::AccessMode::Mutable;
+    else if (mutation == 1)
+      parent->source = 0;
+    else
+      parent->kind = lang::MirLoanKind::Stored;
+    const lang::CppMirBodyEmitter forgedEmitter(forged, map);
+    expect(!forgedEmitter.supportsFailureBodyText(address),
+           "input retirement rejects changed parent access, source or kind");
+  }
+}
+
 void testPreparedConstructorReplacement() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/recursive_cleanup_failure.gti";
@@ -13875,6 +13935,8 @@ constexpr NamedTest kTests[] = {
      testConstructedPrvalueCheckedFieldReplacement},
     {"testConstructorBorrowedInputReplacement",
      testConstructorBorrowedInputReplacement},
+    {"testConstructorBorrowedInputReborrowReplacement",
+     testConstructorBorrowedInputReborrowReplacement},
     {"testNonFailingOwningDeclarationInitializer",
      testNonFailingOwningDeclarationInitializer},
     {"testGeneratedDeclarationFailureRollback",

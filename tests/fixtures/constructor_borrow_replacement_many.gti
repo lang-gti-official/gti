@@ -1,6 +1,7 @@
 #include <std/filesystem>
 #include <std/memory>
 #include <std/string>
+#include <std/vector>
 
 struct Pair {
   mut std::string first;
@@ -13,7 +14,7 @@ struct Holder {
   mut Pair value{"old", "old"};
 };
 
-int main() {
+int main(int argc, std::vector<std::string> args) {
   mut std::string first{"left"};
   mut std::string second{"right"};
   mut Pair direct{"old", "old"};
@@ -28,5 +29,12 @@ int main() {
   first.append("!");
   second.append("!");
   if (direct.first != "left" || holder->value.first != "right") return 4;
+  for (mut std::size_t index = 0; index < args.size(); index++) {
+    path = std::filesystem::path(args[index].view());
+  }
+  if (path.empty()) return 5;
+  direct = Pair(args[std::size_t(0)].view(), args[std::size_t(0)].view());
+  if (direct.first != args[std::size_t(0)] ||
+      direct.second != args[std::size_t(0)]) return 6;
   return 0;
 }

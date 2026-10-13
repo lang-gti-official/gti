@@ -3020,7 +3020,10 @@ dependency produced by an ordinary call. Its exact ordered argument stage,
 single consumer, type, read-only nonescaping dependency and producer identity
 tie that loan to the construction. After publication, the backend requires
 every such input dependency to retire exactly once before the moved-from
-staging shell is dropped. Destination-loan retirement remains independent.
+staging shell is dropped. A same-access nonescaping `CallResult` parent chain,
+such as a checked element followed by a borrowed view, retires child-to-parent
+using the same structural rule as destination reborrows. Destination-loan
+retirement remains independent.
 No unrelated instruction or loan ending is skipped; stored carriers, escaping
 or lifecycle-bound dependencies and extra argument uses are not admitted by
 this schedule. MIR remains authoritative for the complete loan interval and
