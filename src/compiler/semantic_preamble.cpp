@@ -6,6 +6,7 @@
 #include "semantic_analyzer_impl.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <mutex>
 
@@ -33,6 +34,15 @@ void SemanticVisitor::adoptPreamble(
     std::size_t prefixDeclarationCount) {
   impl->adoptedPreamble = std::move(preamble);
   impl->adoptedPrefixDeclarations = prefixDeclarationCount;
+}
+
+std::uint64_t semanticPreambleIdentity(const SemanticPreamble &preamble) {
+  return preamble.identity();
+}
+
+std::uint64_t SemanticPreamble::nextIdentity() {
+  static std::atomic<std::uint64_t> counter{0};
+  return ++counter;
 }
 
 // ---- Impl -------------------------------------------------------------------
@@ -99,6 +109,10 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
   // is analysed again only in the sense that reaching it reports it.
   for (const FunctionDecl *declaration : requestSession.preambleBodyOrder)
     semanticModel.forgetAnalyzedFunctionBody(*declaration);
+  // The preamble's synthesized syntax is the same object in every analysis
+  // resumed from it, so instance analyses that read it stay reusable while
+  // the instance cache generation names this preamble.
+  semanticModel.markSyntheticSyntaxStable();
 }
 
 auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {

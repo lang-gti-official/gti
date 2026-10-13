@@ -5481,9 +5481,17 @@ public:
   [[nodiscard]] std::size_t declarationCount() const {
     return prefix.declarations().size();
   }
+  // Distinct for every preamble ever built in this process, so reusable
+  // records that refer to a preamble's synthesized syntax are never served
+  // under another preamble of the same units.
+  [[nodiscard]] std::uint64_t identity() const { return identity_; }
 
   Program prefix;
   std::unique_ptr<SemanticVisitor::Impl> state;
+
+private:
+  std::uint64_t identity_ = nextIdentity();
+  static std::uint64_t nextIdentity();
 };
 
 } // namespace lang
