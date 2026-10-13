@@ -1,5 +1,27 @@
 # Compiler Verification
 
+## Owning field replacement through raw pointers (#122)
+
+`raw_owned_field_replacement_runtime` covers returned, direct, indexed and nested
+raw pointers to user-defined owning fields. Eight native modes check successful
+replacement, construction failure, old-value cleanup failure, secondary cleanup
+failure and a failing receiver call before replacement construction.
+`testRawOwnedFieldReplacement` mutates pointee access/type, raw projections,
+intermediate field mutability, publication and raw-memory/unsafe metadata.
+Source negatives retain explicit unsafe, mutable pointee and mutable field rules.
+Nested/indexed field stores preserve their underlying raw-operation marker even
+when their outer field selection has no additional unsafe syntax.
+
+## Getter-derived and independently owned carrier inputs (#123)
+
+The `getter_owned_dependencies` borrowing-composition case exercises a named
+borrowed object and temporary scoped workers combining shared getter results
+with distinct mutable local/owned-field outputs. It verifies exact input
+identity, access, parent and dependency mappings with malformed MIR, and keeps
+overlapping mutable outputs and writes during a retained borrow rejected.
+`shared_getter_worker_loans_runtime` runs sequential, concurrent, reordered and
+projected-input cases in C++20/23 at O0/O1/O3, no-elide and ASan/UBSan.
+
 ## Mixed constructor parameter publication (#114)
 
 `mixed_constructor_parameter_runtime` composes two copied nested passive fields

@@ -1549,7 +1549,14 @@ assignment. The remaining path uses the ordinary concrete field rows, checking
 every containing field's mutability. Such borrowed referents may be initially
 available on function entry and acquire no second drop obligation; replacement
 still destroys the old value and transfers the staged value exactly once.
-Raw pointers and read-only carriers do not gain this permission.
+Read-only carriers do not gain this permission. Raw pointers use their separate
+verified raw-place contract: the already-evaluated pointer (and optional index)
+must have mutable pointee access, and every subsequent field must resolve through
+the same concrete mutable field rows. This also admits owning replacement through
+a returned pointer or nested raw field path, without manufacturing a checked
+loan or a second drop obligation. MIR retains the unsafe store and raw-memory
+effects; construction, old-value cleanup, publication and staged-value failure
+cleanup use the existing replacement schedule unchanged.
 
 A virtual call returning an owning expected result uses the same exact binding
 or value-rooted publication slot as a static call. The selected virtual family

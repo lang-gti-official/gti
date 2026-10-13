@@ -2647,13 +2647,29 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
               const auto childPlace =
                   canonicalPlace(body, child, bindingLoans, inactive);
               const auto authority = dependencyAuthority(body, child);
+              const auto *sourcePlace = body.findPlace(child);
+              const bool independentOwnedInput =
+                  authority == 0 && sourcePlace != nullptr &&
+                  sourcePlace->root == MirPlaceRootKind::Binding &&
+                  childPlace.root == MirPlaceRootKind::Binding &&
+                  !childPlace.ambiguous && childPlace.throughLoan == 0 &&
+                  std::none_of(sourcePlace->projections.begin(),
+                               sourcePlace->projections.end(),
+                               [](const auto &projection) {
+                                 return projection.kind ==
+                                        MirProjectionKind::Dereference;
+                               });
               // Independent input references retain their own checked
               // authority. The production flow check below verifies its
               // liveness and access; it must not be contained in the first
-              // input's unrelated storage.
+              // input's unrelated storage. An owned local input has no parent
+              // loan: its exact source-call mapping and ordinary ownership
+              // checks establish that authority instead. The stored loan
+              // still protects this additional source for its entire lifetime.
               if (loan.kind == MirLoanKind::Stored && !loan.entry &&
-                  !loan.escapes && child != loan.source && authority != 0 &&
-                  authority != loan.parent)
+                  !loan.escapes && child != loan.source &&
+                  ((authority != 0 && authority != loan.parent) ||
+                   independentOwnedInput))
                 return false;
               return std::none_of(
                   parentSources.begin(), parentSources.end(),
@@ -9177,6 +9193,27 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   const auto validInstructionShape = [&](const MirInstruction &instruction) {
     if (instruction.tombstone) {
       return instruction == makeMirInstructionTombstone(instruction);
+    }
+    if (instruction.destination &&
+        (instruction.kind == MirInstructionKind::Assign ||
+         instruction.kind == MirInstructionKind::CleanupBeforeAssign)) {
+      const auto *destination = body.findPlace(*instruction.destination);
+      if (destination && destination->root == MirPlaceRootKind::Value &&
+          !destination->projections.empty() &&
+          (destination->projections.front().kind ==
+               MirProjectionKind::RawDereference ||
+           destination->projections.front().kind ==
+               MirProjectionKind::RawIndex)) {
+        if (!instruction.rawMemoryAccess)
+          return false;
+        if (instruction.kind == MirInstructionKind::Assign &&
+            instruction.unsafeOperation !=
+                UnsafeOperationKind::RawDereference &&
+            instruction.unsafeOperation != UnsafeOperationKind::RawIndex &&
+            instruction.unsafeOperation != UnsafeOperationKind::RawMember &&
+            instruction.unsafeOperation != UnsafeOperationKind::UnionMember)
+          return false;
+      }
     }
     if ((instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
          instruction.intrinsic == IntrinsicKind::CStringFromAddress) &&

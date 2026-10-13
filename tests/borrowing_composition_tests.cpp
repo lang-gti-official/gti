@@ -1102,6 +1102,98 @@ int main() {
          "compact input mutations exercised distinct external owners");
 }
 
+void checkGetterWithOwnedDependencies() {
+  const auto fixture = standardLibraryRoot().parent_path() /
+                       "tests/fixtures/shared_getter_worker_loans.gti";
+  std::ifstream input(fixture);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  lang::FrontendOptions options;
+  options.target.executionProfile = lang::ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
+  const auto analyze = [&](const std::string &text) {
+    return lang::Frontend(options).analyze(
+        fixture, text, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  };
+  const auto frontend = analyze(source);
+  expect(frontend.canGenerateCode(),
+         "getter authority composes with independent owned local dependencies");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  std::size_t tested = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &loan : function.body.loans) {
+      if (loan.kind != lang::MirLoanKind::Stored || loan.parent == 0 ||
+          loan.entry || loan.escapes || loan.additionalDependencies.size() != 1)
+        continue;
+      const auto *additional =
+          function.body.findPlace(loan.additionalDependencies.front().source);
+      if (!additional || additional->root != lang::MirPlaceRootKind::Binding ||
+          loan.additionalDependencies.front().access !=
+              lang::AccessMode::Mutable)
+        continue;
+      ++tested;
+      for (int mutation = 0; mutation != 6; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(
+            malformed, {lang::MirBodyKind::Function, function.id});
+        auto &changed = body->loans[loan.id - 1];
+        if (mutation == 0)
+          changed.additionalDependencies.front().source = changed.source;
+        else if (mutation == 1)
+          changed.additionalDependencies.front().access =
+              lang::AccessMode::ReadOnly;
+        else if (mutation == 2)
+          changed.additionalDependencies.clear();
+        else if (mutation == 3)
+          changed.parent = 0;
+        else if (mutation == 4)
+          body->loans[changed.parent - 1].access = lang::AccessMode::Mutable;
+        else
+          for (auto &place : body->places)
+            if (place.id == additional->id)
+              place.projections.push_back(
+                  {.kind = lang::MirProjectionKind::Dereference});
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "independent input cannot forge source, access, dependency, "
+               "parent or pointer authority: " +
+                   std::to_string(mutation));
+      }
+    }
+  }
+  expect(tested >= 3,
+         "named, temporary and projected owned inputs are checked");
+  auto overlapping = source;
+  const std::string distinct = "Task(owner.get(), second)";
+  const auto other = overlapping.find(distinct);
+  expect(other != std::string::npos,
+         "parallel output mutation finds its input");
+  if (other != std::string::npos)
+    overlapping.replace(other, distinct.size(), "Task(owner.get(), first)");
+  const auto alias = analyze(overlapping);
+  expect(!alias.semanticValid &&
+             std::none_of(alias.diagnostics.begin(), alias.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code == "GTI-B0001";
+                          }),
+         "shared getter does not permit overlapping mutable worker outputs");
+  auto ownerWrite = source;
+  const auto run = ownerWrite.find("    named();");
+  expect(run != std::string::npos, "owner write mutation finds retained use");
+  if (run != std::string::npos)
+    ownerWrite.insert(run, "    sequential = 9;\n");
+  const auto conflict = analyze(ownerWrite);
+  expect(!conflict.semanticValid && std::none_of(conflict.diagnostics.begin(),
+                                                 conflict.diagnostics.end(),
+                                                 [](const auto &diagnostic) {
+                                                   return diagnostic.code ==
+                                                          "GTI-B0001";
+                                                 }),
+         "independent local remains protected until the retained carrier ends");
+}
+
 void checkMixedOperatorOrigins() {
   const auto analyze = [](std::string_view body) {
     return lang::Frontend().analyze("mixed-operator.gti", R"(
@@ -1152,6 +1244,7 @@ constexpr NamedTest kTests[] = {
     {"generic_mixed_return_composition", checkGenericMixedReturnComposition},
     {"compact_input_composition", checkCompactInputComposition},
     {"mixed_operator_origins", checkMixedOperatorOrigins},
+    {"getter_owned_dependencies", checkGetterWithOwnedDependencies},
 };
 
 } // namespace

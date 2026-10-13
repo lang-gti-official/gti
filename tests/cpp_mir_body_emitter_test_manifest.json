@@ -486,6 +486,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testRawOwnedFieldReplacement",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testDefaultedOwningBaseSchedule",
       "suite": "lifecycle"
     },

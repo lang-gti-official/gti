@@ -488,6 +488,11 @@ set_tests_properties(out_of_class_performance PROPERTIES TIMEOUT 180)
 add_executable(gti_borrowing_composition_tests borrowing_composition_tests.cpp)
 target_link_libraries(gti_borrowing_composition_tests PRIVATE gti_cpp_backend)
 add_test(NAME borrowing_composition_pipeline COMMAND gti_borrowing_composition_tests)
+add_test(NAME shared_getter_worker_loans_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+    "${PROJECT_SOURCE_DIR}/tests/shared_getter_worker_loans_runtime_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(shared_getter_worker_loans_runtime PROPERTIES TIMEOUT 600)
 add_executable(gti_cleanup_bound_borrow_tests cleanup_bound_borrow_tests.cpp)
 target_link_libraries(gti_cleanup_bound_borrow_tests PRIVATE gti_compiler)
 add_test(NAME cleanup_bound_borrow COMMAND gti_cleanup_bound_borrow_tests)
@@ -998,6 +1003,11 @@ add_test(NAME reference_owned_field_replacement_runtime
                  "${PROJECT_SOURCE_DIR}/tests/reference_owned_field_replacement_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(reference_owned_field_replacement_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME raw_owned_field_replacement_runtime
+         COMMAND ${Python3_EXECUTABLE}
+                 "${PROJECT_SOURCE_DIR}/tests/raw_owned_field_replacement_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(raw_owned_field_replacement_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_temporary_observation_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_temporary_observation_runtime_test.py"
