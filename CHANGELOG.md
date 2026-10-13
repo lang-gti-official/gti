@@ -23,6 +23,13 @@ for what minor and patch releases mean.
   use the same selected GTI schedule, including generic bases, nonmoving fields,
   multilevel inheritance, and construction-failure cleanup (issue #98).
 
+## 0.424.3 — Consuming members returning expected payloads
+
+- Fix a backend internal compiler error when a consuming source member returns
+  an owning value directly into `expected`, including polymorphic owner
+  factories using `std::move(owner).upcast<Base>()`. Retain exact receiver,
+  pending-result publication and failure-cleanup checks (issue #99).
+
 ## 0.424.1 — Owning replacement and borrowed call composition
 
 - Fix an internal compiler error when a freshly constructed owning object
