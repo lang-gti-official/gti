@@ -11075,7 +11075,8 @@ verifyMirProgramContracts(const MirProgram &program) {
     for (const MirPlace &place : body.places) {
       const bool resolvedPackElement =
           (place.type.kind == SemanticType::Class ||
-           place.type.kind == SemanticType::Lambda) &&
+           place.type.kind == SemanticType::Lambda ||
+           place.type.kind == SemanticType::Enum) &&
           place.projections.size() == 1 &&
           place.projections.front().kind == MirProjectionKind::PackElement;
       if (!resolvedPackElement) {
@@ -11086,8 +11087,8 @@ verifyMirProgramContracts(const MirProgram &program) {
         result.errors.push_back(
             {.bodyKind = body.kind,
              .owner = owner,
-             .message = "concrete class pack element traits do not match its "
-                        "class instance"});
+             .message = "concrete pack element traits do not match its "
+                        "resolved type"});
       }
       if (place.traits.drop == DropKind::Lexical &&
           std::none_of(body.dropObligations.begin(), body.dropObligations.end(),

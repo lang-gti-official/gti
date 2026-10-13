@@ -365,6 +365,15 @@ from actual alternative fields; nominal generic metadata does not become a
 stored component. Missing exact rows remain invalid rather than granting a
 storage or capability exemption.
 
+Concrete parameter-pack elements retain the exact enum catalogue traits, just
+as nominal classes and lambdas retain their resolved traits. Body verification
+checks the pack root, element index, type, access and availability; program
+verification checks enum traits against the exact integral or payload enum row.
+Payload enum relocation and lifecycle facts must not fall back to the generic
+scalar-enum defaults. This also applies to enum pack places synthesized while
+lowering constructor arguments or loans. The existing semantic boundary for
+owning payload enums inside by-value packs remains unchanged.
+
 The combined serialization is `mir-v101`/`lowered-program-v17`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
