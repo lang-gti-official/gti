@@ -87,14 +87,103 @@ public:
               .detail = "Constant execution requires verified MIR: " +
                         verification.errors.front().message};
     }
+    for (const auto &argument : arguments) {
+      if (const auto failure = persistentValue(argument);
+          failure != ConstantEvaluationFailure::None)
+        return {.failure = failure,
+                .body = root,
+                .detail =
+                    "A constant request cannot import transient ownership."};
+    }
+    if (receiver) {
+      if (const auto failure = persistentValue(*receiver);
+          failure != ConstantEvaluationFailure::None)
+        return {.failure = failure, .body = root};
+    }
     auto result = root.kind == MirBodyKind::Constructor
                       ? construct(root.owner, arguments, 0)
                       : invoke(root.owner, arguments, 0, receiver);
+    const auto *function = root.kind == MirBodyKind::Function
+                               ? program.findFunctionInstance(root.owner)
+                               : nullptr;
+    const auto *constructor = root.kind == MirBodyKind::Constructor
+                                  ? program.findConstructorInstance(root.owner)
+                                  : nullptr;
+    const auto *owner =
+        constructor ? program.findClassInstance(constructor->owner) : nullptr;
+    const auto type = function ? observedType(function->returnType)
+                      : owner  ? owner->type
+                               : SemanticType::Unknown;
+    if (result && type != SemanticType::Void && !persistentType(type)) {
+      result.value.reset();
+      result.failure = ConstantEvaluationFailure::UnsupportedType;
+      result.detail = "An object requiring cleanup cannot escape constant "
+                      "execution; return a passive value instead.";
+    }
+    if (result && result.value) {
+      const auto failure = persistentValue(*result.value);
+      if (failure != ConstantEvaluationFailure::None) {
+        result.value.reset();
+        result.failure = failure;
+        result.detail =
+            "A constant result must not retain transient ownership.";
+      }
+    }
+    if (result &&
+        std::any_of(heap.begin(), heap.end(),
+                    [](const auto &allocation) { return allocation->live; })) {
+      result.value.reset();
+      result.voidResult = false;
+      result.failure = ConstantEvaluationFailure::UnsupportedExpression;
+      result.detail = "Every constant allocation must be destroyed before "
+                      "constant evaluation finishes.";
+    }
     result.steps = steps;
     return result;
   }
 
 private:
+  ConstantEvaluationFailure persistentValue(const ConstantValue &value,
+                                            std::size_t depth = 0) {
+    const auto *node = std::get_if<ConstantAggregateValue>(&value);
+    if (!node)
+      return ConstantEvaluationFailure::None;
+    if (depth >= limits.callDepth || !charge(1))
+      return ConstantEvaluationFailure::ResourceLimit;
+    if (!node->value ||
+        node->value->kind == ConstantAggregateKind::TransientOwner)
+      return ConstantEvaluationFailure::InvalidOperands;
+    for (const auto &item : node->value->elements)
+      if (const auto failure = persistentValue(item, depth + 1);
+          failure != ConstantEvaluationFailure::None)
+        return failure;
+    for (const auto &field : node->value->fields)
+      if (const auto failure = persistentValue(field.value, depth + 1);
+          failure != ConstantEvaluationFailure::None)
+        return failure;
+    return ConstantEvaluationFailure::None;
+  }
+
+  bool persistentType(const SemanticType &type, std::size_t depth = 0) const {
+    if (depth >= limits.callDepth || type.kind == SemanticType::UniqueOwner ||
+        type.kind == SemanticType::Reference)
+      return false;
+    if (type.kind == SemanticType::Class) {
+      const auto *instance = record(type);
+      if (!instance || instance->requiresActiveCleanup || instance->destructor)
+        return false;
+      return std::all_of(instance->declaredFields.begin(),
+                         instance->declaredFields.end(),
+                         [&](const auto &field) {
+                           return persistentType(field.type, depth + 1);
+                         });
+    }
+    return std::all_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const auto &argument) {
+                         return persistentType(argument, depth + 1);
+                       });
+  }
+
   const SemanticType &observedType(const SemanticType &type) const {
     return type.kind == SemanticType::Reference && type.arguments.size() == 1
                ? type.arguments.front()
@@ -123,6 +212,15 @@ private:
     }
     if (depth >= limits.callDepth)
       return false;
+    if (type.kind == SemanticType::UniqueOwner)
+      return type.arguments.size() == 1 &&
+             storageType(type.arguments[0], depth + 1);
+    if (type.kind == SemanticType::TypePack)
+      return type.concretePack &&
+             std::all_of(type.arguments.begin(), type.arguments.end(),
+                         [&](const auto &element) {
+                           return storageType(element, depth + 1);
+                         });
     if (type.kind == SemanticType::Expected)
       return type.arguments.size() == 2 &&
              (type.arguments[0] == SemanticType::Void ||
@@ -141,19 +239,31 @@ private:
         instance->compilerCapability != CompilerCapabilityTypeKind::None ||
         instance->kind == ClassKind::Union || instance->polymorphic ||
         !instance->bases.empty() || !instance->structuralBases.empty() ||
-        instance->requiresActiveCleanup || instance->destructor ||
-        instance->lifecycleBoundBorrowCarrier || !instance->traits.copyable ||
+        instance->lifecycleBoundBorrowCarrier ||
         instance->traits.containsBorrowedState)
       return false;
     return std::all_of(instance->declaredFields.begin(),
                        instance->declaredFields.end(),
                        [&](const MirClassFieldInfo &field) {
-                         return !field.requiresActiveCleanup &&
-                                storageType(field.type, depth + 1);
+                         return storageType(field.type, depth + 1);
                        });
   }
 
   struct Frame;
+  struct RetiredProjection {
+    MirPlaceRootKind root;
+    std::size_t cell;
+    std::size_t epoch;
+    std::vector<MirPlaceProjection> path;
+  };
+  struct Allocation {
+    SemanticType type;
+    std::optional<ConstantValue> value;
+    std::size_t epoch = 1;
+    bool live = true;
+    std::size_t units = 1;
+    std::vector<RetiredProjection> retired;
+  };
   // A checked reference designates an existing constant cell and a resolved
   // field/index path, never a target address. Frames live throughout nested
   // calls; an internal returned reference must designate an enclosing frame.
@@ -166,6 +276,7 @@ private:
     std::vector<MirPlaceProjection> path;
     const SemanticType *type = nullptr;
     AccessMode access = AccessMode::ReadOnly;
+    std::size_t allocation = 0;
   };
 
   struct Loan {
@@ -183,6 +294,8 @@ private:
     std::vector<std::optional<Location>> valueReferences;
     std::vector<std::size_t> placeEpochs;
     std::vector<std::size_t> valueEpochs;
+    std::vector<bool> liveDrops;
+    std::vector<RetiredProjection> retired;
     MirBlockId block = 0;
     MirInstructionId instruction = 0;
     std::optional<ConstantValue> receiver;
@@ -227,6 +340,8 @@ private:
   }
 
   std::optional<ConstantValue> &storage(const Location &location) {
+    if (location.allocation)
+      return heap[location.allocation - 1]->value;
     if (location.root == MirPlaceRootKind::This)
       return location.frame->receiver;
     if (location.root == MirPlaceRootKind::Value)
@@ -235,11 +350,24 @@ private:
   }
 
   std::size_t &epoch(const Location &location) {
+    if (location.allocation)
+      return heap[location.allocation - 1]->epoch;
     if (location.root == MirPlaceRootKind::This)
       return location.frame->receiverEpoch;
     if (location.root == MirPlaceRootKind::Value)
       return location.frame->valueEpochs[location.cell];
     return location.frame->placeEpochs[location.cell];
+  }
+
+  std::vector<RetiredProjection> &retired(const Location &location) {
+    return location.allocation ? heap[location.allocation - 1]->retired
+                               : location.frame->retired;
+  }
+
+  static bool pathPrefix(std::span<const MirPlaceProjection> left,
+                         std::span<const MirPlaceProjection> right) {
+    return left.size() <= right.size() &&
+           std::equal(left.begin(), left.end(), right.begin());
   }
 
   ConstantEvaluation locate(Frame &frame, MirPlaceId id, Location &location,
@@ -326,7 +454,29 @@ private:
       if (projection.kind == MirProjectionKind::Dereference && index == 0 &&
           binding && binding->type.kind == SemanticType::Reference)
         continue;
-      if (projection.kind == MirProjectionKind::Index) {
+      if (projection.kind == MirProjectionKind::Dereference && projectedType &&
+          projectedType->kind == SemanticType::UniqueOwner) {
+        location.type = projectedType;
+        const auto owner = readLocation(location);
+        if (!owner)
+          return owner;
+        Location target;
+        const auto object =
+            pointee(*owner.value, *projectedType, target, location.access);
+        if (!object)
+          return object;
+        location = std::move(target);
+        projectedType = location.type;
+        continue;
+      }
+      if (projection.kind == MirProjectionKind::PackElement) {
+        if (!projectedType || projectedType->kind != SemanticType::TypePack ||
+            !projectedType->concretePack || !projection.constantIndex ||
+            *projection.constantIndex >= projectedType->arguments.size())
+          return {.failure = ConstantEvaluationFailure::InvalidOperands};
+        projectedType = &projectedType->arguments[*projection.constantIndex];
+        projection.kind = MirProjectionKind::Index;
+      } else if (projection.kind == MirProjectionKind::Index) {
         if (!projectedType || projectedType->kind != SemanticType::Array ||
             projectedType->arguments.size() != 1)
           return {.failure = ConstantEvaluationFailure::UnsupportedType};
@@ -413,12 +563,129 @@ private:
     return true;
   }
 
+  ConstantValue ownerValue(const SemanticType &type, std::size_t allocation) {
+    return makeConstantAggregate(
+        {.kind = ConstantAggregateKind::TransientOwner,
+         .identity = allocation,
+         .exactType = std::make_shared<const SemanticType>(type)});
+  }
+
+  ConstantEvaluation convertValue(const ConstantValue &value,
+                                  const SemanticType &type) {
+    if (type.kind == SemanticType::TypePack) {
+      const auto *node = std::get_if<ConstantAggregateValue>(&value);
+      if (!node || !node->value || !node->value->exactType ||
+          *node->value->exactType != type || !type.concretePack ||
+          node->value->kind != ConstantAggregateKind::Array ||
+          node->value->elements.size() != type.arguments.size())
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      return {.value = value};
+    }
+    if (type.kind != SemanticType::UniqueOwner)
+      return convertConstantToType(value, type);
+    if (std::holds_alternative<NullConstant>(value))
+      return {.value = ownerValue(type, 0)};
+    const auto *node = std::get_if<ConstantAggregateValue>(&value);
+    if (!node || !node->value || !node->value->exactType ||
+        *node->value->exactType != type ||
+        node->value->kind != ConstantAggregateKind::TransientOwner ||
+        !node->value->elements.empty() || !node->value->fields.empty() ||
+        node->value->identity > heap.size())
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    if (node->value->identity && !heap[node->value->identity - 1]->live)
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    return {.value = value};
+  }
+
+  ConstantEvaluation allocate(const SemanticType &owner,
+                              std::optional<ConstantValue> value = {}) {
+    if (owner.kind != SemanticType::UniqueOwner || !storageType(owner))
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    if (!charge(1) || heap.size() >= limits.allocations)
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    std::size_t units = 0;
+    if (value) {
+      const auto failure = measureValue(*value, units);
+      if (failure != ConstantEvaluationFailure::None)
+        return {.failure = failure};
+    } else {
+      units = 1;
+    }
+    if (units > limits.heapUnits - std::min(heapUnits, limits.heapUnits))
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    heapUnits += units;
+    heap.push_back(
+        std::make_unique<Allocation>(Allocation{.type = owner.arguments[0],
+                                                .value = std::move(value),
+                                                .units = units}));
+    return {.value = ownerValue(owner, heap.size())};
+  }
+
+  ConstantEvaluationFailure measureValue(const ConstantValue &value,
+                                         std::size_t &units,
+                                         std::size_t depth = 0) {
+    if (depth >= limits.callDepth || !charge(1) || units >= limits.heapUnits)
+      return ConstantEvaluationFailure::ResourceLimit;
+    ++units;
+    if (const auto *text = std::get_if<std::string>(&value)) {
+      if (text->size() > limits.heapUnits - units)
+        return ConstantEvaluationFailure::ResourceLimit;
+      units += text->size();
+    } else if (const auto *node = std::get_if<ConstantAggregateValue>(&value)) {
+      if (!node->value)
+        return ConstantEvaluationFailure::InvalidOperands;
+      for (const auto &element : node->value->elements)
+        if (const auto failure = measureValue(element, units, depth + 1);
+            failure != ConstantEvaluationFailure::None)
+          return failure;
+      for (const auto &field : node->value->fields)
+        if (const auto failure = measureValue(field.value, units, depth + 1);
+            failure != ConstantEvaluationFailure::None)
+          return failure;
+    }
+    return ConstantEvaluationFailure::None;
+  }
+
+  ConstantEvaluation storeAllocation(std::size_t id, ConstantValue value) {
+    auto &allocation = *heap[id - 1];
+    std::size_t units = 0;
+    const auto failure = measureValue(value, units);
+    if (failure != ConstantEvaluationFailure::None)
+      return {.failure = failure};
+    const auto retained = heapUnits - allocation.units;
+    if (units > limits.heapUnits - std::min(retained, limits.heapUnits))
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    heapUnits = retained + units;
+    allocation.units = units;
+    allocation.value = value;
+    return {.value = std::move(value)};
+  }
+
+  ConstantEvaluation pointee(const ConstantValue &owner,
+                             const SemanticType &type, Location &location,
+                             AccessMode access) {
+    const auto checked = convertValue(owner, type);
+    if (!checked)
+      return checked;
+    const auto id =
+        std::get<ConstantAggregateValue>(*checked.value).value->identity;
+    if (!id || !heap[id - 1]->value)
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    location = {.epoch = heap[id - 1]->epoch,
+                .type = &heap[id - 1]->type,
+                .access = access,
+                .allocation = id};
+    return readLocation(location);
+  }
+
   ConstantEvaluation exactValue(const ConstantValue &value,
                                 const SemanticType &type) {
     if (!charge(1))
       return {.failure = ConstantEvaluationFailure::ResourceLimit};
-    const auto converted = convertConstantToType(value, type);
-    if (!converted || *converted.value != value)
+    const auto converted = convertValue(value, type);
+    if (!converted)
+      return converted;
+    if (*converted.value != value)
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
     if (const auto *enumerator = std::get_if<ConstantEnum>(&value)) {
       const auto *enumeration = program.findIntegralEnum(type);
@@ -433,7 +700,16 @@ private:
     const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
     if (!aggregate)
       return converted;
-    if (type.kind == SemanticType::Array) {
+    if (type.kind == SemanticType::UniqueOwner)
+      return converted;
+    if (type.kind == SemanticType::TypePack) {
+      for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+        const auto valid = exactValue(aggregate->value->elements[index],
+                                      type.arguments[index]);
+        if (!valid)
+          return valid;
+      }
+    } else if (type.kind == SemanticType::Array) {
       for (const auto &element : aggregate->value->elements) {
         const auto valid = exactValue(element, type.arguments[0]);
         if (!valid)
@@ -475,7 +751,7 @@ private:
                              const SemanticType &type, std::size_t offset,
                              const ConstantValue *replacement = nullptr) {
     if (offset == path.size()) {
-      return replacement ? convertConstantToType(*replacement, type)
+      return replacement ? convertValue(*replacement, type)
                          : ConstantEvaluation{.value = value};
     }
     if (!charge(1))
@@ -507,7 +783,10 @@ private:
     const auto index = projection.constantIndex;
     const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
     if (!aggregate || !aggregate->value ||
-        aggregate->value->kind != ConstantAggregateKind::Array)
+        (aggregate->value->kind != ConstantAggregateKind::Array &&
+         aggregate->value->kind != ConstantAggregateKind::ExpectedSuccess &&
+         aggregate->value->kind != ConstantAggregateKind::ExpectedError &&
+         aggregate->value->kind != ConstantAggregateKind::Unexpected))
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
     if (!index || *index >= aggregate->value->elements.size())
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
@@ -527,6 +806,13 @@ private:
     const auto &value = storage(location);
     if (location.epoch != epoch(location) || !value)
       return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    for (const auto &moved : retired(location)) {
+      if (moved.root == location.root && moved.cell == location.cell &&
+          moved.epoch == location.epoch &&
+          (pathPrefix(moved.path, location.path) ||
+           pathPrefix(location.path, moved.path)))
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    }
     return project(*value, location.path, *location.type, 0);
   }
 
@@ -538,24 +824,21 @@ private:
                : located;
   }
 
-  bool retirePlace(Frame &frame, MirPlaceId id) {
-    const auto *place = frame.body.findPlace(id);
-    if (!place || !place->projections.empty() || !storageType(place->type))
-      return false;
-    if (place->root == MirPlaceRootKind::Value && place->value != 0 &&
-        place->value < frame.values.size()) {
-      frame.values[place->value].reset();
-      ++frame.valueEpochs[place->value];
-      if (place->value < frame.valueReferences.size())
-        frame.valueReferences[place->value].reset();
-      return true;
+  ConstantEvaluation retirePlace(Frame &frame, MirPlaceId id) {
+    Location location;
+    const auto located = locate(frame, id, location);
+    if (located.failure != ConstantEvaluationFailure::None)
+      return located;
+    if (!location.path.empty()) {
+      if (!charge(location.path.size() + 1))
+        return {.failure = ConstantEvaluationFailure::ResourceLimit};
+      retired(location).push_back({location.root, location.cell, location.epoch,
+                                   std::move(location.path)});
+      return {};
     }
-    const auto storage = cell(frame, id);
-    if (!storage)
-      return false;
-    frame.places[storage].reset();
-    ++frame.placeEpochs[storage];
-    return true;
+    storage(location).reset();
+    ++epoch(location);
+    return {};
   }
 
   ConstantEvaluation writePlace(Frame &frame, MirPlaceId id,
@@ -593,16 +876,34 @@ private:
       return located;
     if (!initializing && location.access != AccessMode::Mutable)
       return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
+    return writeLocation(location, value, initializing);
+  }
+
+  ConstantEvaluation writeLocation(const Location &location,
+                                   const ConstantValue &value,
+                                   bool initializing = false) {
     auto &valueStorage = storage(location);
     if (location.epoch != epoch(location) ||
         (!location.path.empty() && !valueStorage))
       return {.failure = ConstantEvaluationFailure::NonConstantReference};
-    auto updated =
-        location.path.empty()
-            ? convertConstantToType(value, *location.type)
-            : project(*valueStorage, location.path, *location.type, 0, &value);
+    auto updated = location.path.empty() ? convertValue(value, *location.type)
+                                         : project(*valueStorage, location.path,
+                                                   *location.type, 0, &value);
     if (updated) {
-      valueStorage = std::move(updated.value);
+      if (location.allocation) {
+        updated =
+            storeAllocation(location.allocation, std::move(*updated.value));
+        if (!updated)
+          return updated;
+      } else {
+        valueStorage = std::move(updated.value);
+      }
+      auto &moved = retired(location);
+      std::erase_if(moved, [&](const auto &item) {
+        return item.root == location.root && item.cell == location.cell &&
+               item.epoch == location.epoch &&
+               pathPrefix(location.path, item.path);
+      });
       if (initializing && location.path.empty())
         ++epoch(location);
     }
@@ -637,6 +938,8 @@ private:
       return {.value = std::string{}};
     if (type == SemanticType::NullPtr)
       return {.value = NullConstant{}};
+    if (type.kind == SemanticType::UniqueOwner)
+      return {.value = ownerValue(type, 0)};
     return {.failure = ConstantEvaluationFailure::UnsupportedType};
   }
 
@@ -756,6 +1059,159 @@ private:
     return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
   }
 
+  MirConstantEvaluation destroy(const MirDropType &recipe, Location location,
+                                Frame &caller, std::size_t depth) {
+    if (!recipe.requiresActiveCleanup)
+      return {};
+    if (!charge(1) || depth >= limits.callDepth)
+      return fail(caller, ConstantEvaluationFailure::ResourceLimit);
+    if (!storageType(recipe.type) || recipe.polymorphicCleanup ||
+        recipe.recursiveCleanup || recipe.lambdaInstance)
+      return fail(caller, ConstantEvaluationFailure::UnsupportedType,
+                  "Cleanup is outside the constant execution profile.");
+    for (const auto &moved : retired(location))
+      if (moved.root == location.root && moved.cell == location.cell &&
+          moved.epoch == location.epoch &&
+          pathPrefix(moved.path, location.path))
+        return {};
+    location.access = AccessMode::Mutable;
+    if (recipe.type.kind == SemanticType::UniqueOwner) {
+      const auto value = readLocation(location);
+      if (!value)
+        return fail(caller, value.failure);
+      const auto checked = convertValue(*value.value, recipe.type);
+      if (!checked)
+        return fail(caller, checked.failure);
+      const auto id =
+          std::get<ConstantAggregateValue>(*checked.value).value->identity;
+      if (!id)
+        return {};
+      Location object;
+      const auto resolved =
+          pointee(*checked.value, recipe.type, object, AccessMode::Mutable);
+      if (!resolved)
+        return fail(caller, resolved.failure);
+      if (!recipe.aggregate.empty()) {
+        if (recipe.aggregate.size() != 1)
+          return fail(caller, ConstantEvaluationFailure::InvalidOperands);
+        auto result = destroy(recipe.aggregate[0], object, caller, depth + 1);
+        if (result.failure != ConstantEvaluationFailure::None)
+          return result;
+      } else if (recipe.destructor) {
+        const MirDropType leaf{.type = *object.type,
+                               .classInstance = recipe.uniquePointeeClass,
+                               .destructor = recipe.destructor,
+                               .requiresActiveCleanup = true};
+        auto result = destroy(leaf, object, caller, depth + 1);
+        if (result.failure != ConstantEvaluationFailure::None)
+          return result;
+      }
+      heap[id - 1]->live = false;
+      heap[id - 1]->value.reset();
+      heapUnits -= heap[id - 1]->units;
+      heap[id - 1]->units = 0;
+      ++heap[id - 1]->epoch;
+      return {};
+    }
+    if (recipe.type.kind == SemanticType::Array) {
+      if (!recipe.fixedArray || recipe.aggregate.size() != 1)
+        return fail(caller, ConstantEvaluationFailure::UnsupportedType);
+      for (std::size_t index = recipe.type.arrayLength; index != 0; --index) {
+        auto element = location;
+        element.path.push_back(
+            {.kind = MirProjectionKind::Index, .constantIndex = index - 1});
+        element.type = &recipe.aggregate[0].type;
+        auto result =
+            destroy(recipe.aggregate[0], std::move(element), caller, depth + 1);
+        if (result.failure != ConstantEvaluationFailure::None)
+          return result;
+      }
+      return {};
+    }
+    if (recipe.type.kind == SemanticType::Expected ||
+        recipe.type.kind == SemanticType::Unexpected) {
+      // State inspection does not read a payload already moved through an
+      // extraction. Its recursive cleanup checks the retired payload path.
+      const auto &backing = storage(location);
+      const auto value =
+          backing && location.epoch == epoch(location)
+              ? project(*backing, location.path, *location.type, 0)
+              : ConstantEvaluation{};
+      if (!value)
+        return fail(caller, value.failure);
+      const auto *node = std::get_if<ConstantAggregateValue>(&*value.value);
+      if (!node || !node->value)
+        return fail(caller, ConstantEvaluationFailure::InvalidOperands);
+      const std::size_t alternative =
+          node->value->kind == ConstantAggregateKind::ExpectedError ? 1 : 0;
+      if (alternative >= recipe.aggregate.size())
+        return fail(caller, ConstantEvaluationFailure::InvalidOperands);
+      if (!recipe.aggregate[alternative].requiresActiveCleanup)
+        return {};
+      location.path.push_back(
+          {.kind = MirProjectionKind::Index, .constantIndex = 0});
+      location.type = &recipe.aggregate[alternative].type;
+      return destroy(recipe.aggregate[alternative], std::move(location), caller,
+                     depth + 1);
+    }
+    if (recipe.type.kind != SemanticType::Class)
+      return fail(caller, ConstantEvaluationFailure::UnsupportedType);
+    if (recipe.destructor) {
+      const auto *destructor =
+          program.findDestructorInstance(*recipe.destructor);
+      const auto value = readLocation(location);
+      if (!destructor ||
+          destructor->definitionKind != MirDefinitionKind::Source || !value)
+        return fail(caller, ConstantEvaluationFailure::UnsupportedExpression,
+                    "Constant destruction requires an available source body.");
+      auto result = executeBody(destructor->body,
+                                {MirBodyKind::Destructor, destructor->id},
+                                SemanticType::Void, {}, {}, {}, depth + 1,
+                                value.value, {}, location, AccessMode::Mutable);
+      if (!result)
+        return result;
+    }
+    // The verifier owns the ordered, exact subobject recipe. Do not reconstruct
+    // field order or destructor selection from a native representation.
+    for (const auto &child : recipe.aggregate) {
+      if (!child.uniqueOwnerField || child.uniqueOwnerBase ||
+          child.captureIndex)
+        return fail(caller, ConstantEvaluationFailure::UnsupportedType);
+      auto field = location;
+      field.path.push_back(
+          {.kind = MirProjectionKind::Field, .field = child.uniqueOwnerField});
+      field.type = &child.type;
+      auto result = destroy(child, std::move(field), caller, depth + 1);
+      if (result.failure != ConstantEvaluationFailure::None)
+        return result;
+    }
+    return {};
+  }
+
+  void applyLifecycle(Frame &frame, std::span<const MirLifecycleEvent> events) {
+    for (const auto &event : events) {
+      switch (event.kind) {
+      case MirLifecycleEventKind::Initialize:
+      case MirLifecycleEventKind::Replace:
+        if (event.target)
+          frame.liveDrops[event.target] = true;
+        break;
+      case MirLifecycleEventKind::Move:
+      case MirLifecycleEventKind::Reparent:
+        if (event.source)
+          frame.liveDrops[event.source] = false;
+        if (event.target)
+          frame.liveDrops[event.target] = true;
+        break;
+      case MirLifecycleEventKind::TransferOut:
+      case MirLifecycleEventKind::Drop:
+        if (event.source)
+          frame.liveDrops[event.source] = false;
+        break;
+      }
+    }
+  }
+
   MirConstantEvaluation execute(Frame &frame, const MirInstruction &instruction,
                                 std::size_t depth) {
     // The ordinary verifier owns loan conflicts and endpoints. Execution
@@ -790,23 +1246,63 @@ private:
     if (instruction.kind == MirInstructionKind::Lifecycle) {
       return {};
     }
+    if (instruction.kind == MirInstructionKind::AllocateObject) {
+      if (!instruction.destination || !instruction.objectAllocation)
+        return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+      const auto owner = allocate(instruction.info.type);
+      if (!owner)
+        return fail(frame, owner.failure);
+      const auto stored =
+          writePlace(frame, *instruction.destination, *owner.value, true);
+      return stored ? MirConstantEvaluation{} : fail(frame, stored.failure);
+    }
     if (instruction.kind == MirInstructionKind::CleanupBeforeAssign) {
       if (!instruction.destination || !instruction.replacementCleanup ||
-          instruction.replacementCleanup->requiresActiveCleanup ||
           !storageType(instruction.replacementCleanup->type))
         return fail(frame, ConstantEvaluationFailure::UnsupportedType);
       // Verification pairs this passive preparation with its assignment.
       // Preserve the aggregate shell; the assignment replaces the value and
       // retires the applicable generation. Bounds are checked at preparation.
-      const auto before = readPlace(frame, *instruction.destination);
-      return before ? MirConstantEvaluation{} : fail(frame, before.failure);
+      Location location;
+      const auto located = locate(frame, *instruction.destination, location);
+      if (located.failure != ConstantEvaluationFailure::None)
+        return fail(frame, located.failure);
+      if (!instruction.replacementCleanup->requiresActiveCleanup) {
+        const auto checked = readLocation(location);
+        return checked ? MirConstantEvaluation{} : fail(frame, checked.failure);
+      }
+      return destroy(*instruction.replacementCleanup, std::move(location),
+                     frame, depth + 1);
     }
     if (instruction.kind == MirInstructionKind::Drop) {
-      // All admitted obligations have passive structural types. No user
-      // destructor or allocation is hidden by retiring their local storage.
+      for (const auto &event : instruction.lifecycle) {
+        if (event.kind != MirLifecycleEventKind::Drop || !event.source)
+          continue;
+        const auto *obligation = frame.body.findDropObligation(event.source);
+        if (!obligation)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        if (obligation->dropType.requiresActiveCleanup &&
+            !frame.liveDrops[event.source]) {
+          // Normal MIR may retire the shell of a moved parameter as well as
+          // conditionally guarded failure cleanup. Neither owns resources now.
+          return {};
+        }
+        // Retire the obligation before entering user cleanup, matching the
+        // ordinary MIR failure/lifetime contract.
+        frame.liveDrops[event.source] = false;
+        Location location;
+        const auto located = locate(frame, obligation->place, location);
+        if (located.failure != ConstantEvaluationFailure::None)
+          return fail(frame, located.failure);
+        auto result = destroy(obligation->dropType, std::move(location), frame,
+                              depth + 1);
+        if (result.failure != ConstantEvaluationFailure::None)
+          return result;
+      }
       if (instruction.destination) {
-        if (!retirePlace(frame, *instruction.destination))
-          return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
+        const auto retired = retirePlace(frame, *instruction.destination);
+        if (retired.failure != ConstantEvaluationFailure::None)
+          return fail(frame, retired.failure);
       }
       return {};
     }
@@ -942,8 +1438,8 @@ private:
               arguments.front(), constantIntegerDomain(instruction.info.type),
               semanticFloatFormat(instruction.info.type));
         } else {
-          evaluated = convertConstantToType(
-              arguments.front(), observedType(instruction.info.type));
+          evaluated = convertValue(arguments.front(),
+                                   observedType(instruction.info.type));
         }
         if (evaluated)
           evaluated =
@@ -987,9 +1483,13 @@ private:
       }
       break;
     }
-    case MirInstructionKind::Construct: {
-      if (!instruction.constructorTarget || instruction.objectAllocation ||
-          instruction.receiver)
+    case MirInstructionKind::Construct:
+    case MirInstructionKind::Call: {
+      if (instruction.kind == MirInstructionKind::Call &&
+          !(instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+            instruction.objectAllocation))
+        break;
+      if (!instruction.constructorTarget || instruction.receiver)
         return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
       const auto *callee =
           program.findConstructorInstance(*instruction.constructorTarget);
@@ -1015,14 +1515,86 @@ private:
                               depth + 1, origins);
       if (!result)
         return result;
-      evaluated.value = std::move(result.value);
+      if (instruction.objectAllocation) {
+        const auto *allocation =
+            frame.body.findDropObligation(instruction.objectAllocation);
+        const auto owner = allocation ? readPlace(frame, allocation->place)
+                                      : ConstantEvaluation{};
+        if (!owner)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        const auto checked = convertValue(*owner.value, instruction.info.type);
+        if (!checked)
+          return fail(frame, checked.failure);
+        const auto id =
+            std::get<ConstantAggregateValue>(*checked.value).value->identity;
+        if (!id || heap[id - 1]->value)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        const auto stored = storeAllocation(id, std::move(*result.value));
+        if (!stored)
+          return fail(frame, stored.failure);
+        evaluated.value = checked.value;
+      } else {
+        evaluated.value = std::move(result.value);
+      }
       break;
     }
-    case MirInstructionKind::Call:
-      if (instruction.receiver &&
-          (instruction.intrinsic == IntrinsicKind::ExpectedValue ||
-           instruction.intrinsic == IntrinsicKind::ExpectedError ||
-           instruction.intrinsic == IntrinsicKind::ExpectedValueOr)) {
+    default:
+      return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
+                  "Instruction is outside the constant MIR profile.");
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        !instruction.objectAllocation) {
+      if (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner) {
+        const auto &type = instruction.info.type;
+        if (type.kind != SemanticType::UniqueOwner ||
+            type.arguments.size() != 1 || arguments.size() > 1 ||
+            type.arguments[0].kind == SemanticType::Class)
+          return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
+        const auto value = arguments.empty()
+                               ? defaultValue(type.arguments[0])
+                               : convertValue(arguments[0], type.arguments[0]);
+        evaluated = value ? allocate(type, value.value) : value;
+      } else if (instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+                 instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) {
+        if (arguments.size() != 1)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        Location location;
+        evaluated = pointee(
+            arguments[0], observedType(instruction.operands[0].type), location,
+            instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut
+                ? AccessMode::Mutable
+                : AccessMode::ReadOnly);
+        if (evaluated)
+          reference = std::move(location);
+      } else if (instruction.intrinsic == IntrinsicKind::UniqueOwnerIsNull) {
+        if (arguments.size() != 1)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        const auto owner = convertValue(
+            arguments[0], observedType(instruction.operands[0].type));
+        if (!owner)
+          return fail(frame, owner.failure);
+        evaluated.value =
+            std::get<ConstantAggregateValue>(*owner.value).value->identity == 0;
+      } else if (instruction.intrinsic == IntrinsicKind::UniqueOwnerSwap) {
+        if (arguments.size() != 2)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        Location left, right;
+        const auto a = locateOperand(frame, instruction.operands[0], left);
+        const auto b = locateOperand(frame, instruction.operands[1], right);
+        if (a.failure != ConstantEvaluationFailure::None ||
+            b.failure != ConstantEvaluationFailure::None ||
+            left.access != AccessMode::Mutable ||
+            right.access != AccessMode::Mutable)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        const auto l = writeLocation(left, arguments[1]);
+        const auto r = l ? writeLocation(right, arguments[0]) : l;
+        if (!r)
+          return fail(frame, r.failure);
+        voidResult = true;
+      } else if (instruction.receiver &&
+                 (instruction.intrinsic == IntrinsicKind::ExpectedValue ||
+                  instruction.intrinsic == IntrinsicKind::ExpectedError ||
+                  instruction.intrinsic == IntrinsicKind::ExpectedValueOr)) {
         const auto result = operand(frame, *instruction.receiver);
         if (!result)
           return fail(frame, result.failure);
@@ -1046,6 +1618,20 @@ private:
           voidResult = true;
         } else {
           evaluated = constantResultPayload(*result.value, success);
+          if (evaluated &&
+              (instruction.loan ||
+               instruction.info.category == ValueCategory::Place ||
+               instruction.info.type.kind == SemanticType::Reference)) {
+            Location location;
+            const auto located =
+                locateOperand(frame, *instruction.receiver, location);
+            if (located.failure != ConstantEvaluationFailure::None)
+              return fail(frame, located.failure);
+            location.path.push_back(
+                {.kind = MirProjectionKind::Index, .constantIndex = 0});
+            location.type = &observedType(instruction.info.type);
+            reference = std::move(location);
+          }
         }
       } else if (const auto arithmetic =
                      integerArithmeticIntrinsic(instruction.intrinsic);
@@ -1161,11 +1747,6 @@ private:
         evaluated =
             convertConstantToType(arguments.front(), instruction.info.type);
       }
-      break;
-    default:
-      return fail(
-          frame, ConstantEvaluationFailure::UnsupportedExpression,
-          "Instruction is outside the passive-value constant MIR profile.");
     }
     if (!evaluated && !voidResult) {
       return fail(frame, evaluated.failure == ConstantEvaluationFailure::None
@@ -1202,8 +1783,9 @@ private:
     }
     for (const auto &input : instruction.operands) {
       if (input.kind == MirOperandKind::Move) {
-        if (!retirePlace(frame, input.place))
-          return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
+        const auto retired = retirePlace(frame, input.place);
+        if (retired.failure != ConstantEvaluationFailure::None)
+          return fail(frame, retired.failure);
       }
     }
     return {};
@@ -1347,6 +1929,7 @@ private:
         .loans = std::vector<std::optional<Loan>>(body.loans.size() + 1),
         .placeEpochs = std::vector<std::size_t>(body.places.size() + 1),
         .valueEpochs = std::vector<std::size_t>(body.values.size() + 1),
+        .liveDrops = std::vector<bool>(body.dropObligations.size() + 1),
         .block = body.entry,
         .receiver = std::move(receiver),
         .receiverOrigin = std::move(receiverOrigin),
@@ -1356,10 +1939,10 @@ private:
                   "The constexpr call depth exceeded the compiler limit.");
     }
     for (const auto &obligation : body.dropObligations) {
-      if (obligation.dropType.requiresActiveCleanup ||
-          !storageType(obligation.dropType.type)) {
+      frame.liveDrops[obligation.id] = obligation.initiallyActive;
+      if (!storageType(obligation.dropType.type)) {
         return fail(frame, ConstantEvaluationFailure::UnsupportedType,
-                    "Constant MIR excludes active cleanup.");
+                    "Constant MIR cannot execute this cleanup type.");
       }
     }
     for (const auto &loan : body.loans) {
@@ -1403,24 +1986,50 @@ private:
             frame, exact.failure,
             "Constant argument does not have the exact parameter type.");
       }
-      for (const auto &place : body.places) {
-        if (place.root == MirPlaceRootKind::Binding &&
-            place.projections.empty() &&
-            place.binding == parameterBindings[index]) {
-          const auto storage = cell(frame, place.id);
-          if (storage != 0) {
-            frame.places[storage] = arguments[index];
-            ++frame.placeEpochs[storage];
-            if (type.kind == SemanticType::Reference &&
-                index < argumentOrigins.size() && argumentOrigins[index]) {
-              if (frame.references.empty())
-                frame.references.resize(frame.places.size());
-              frame.references[storage] = argumentOrigins[index];
-            }
+    }
+    // Parameter types are concrete/expanded; bindings retain declaration
+    // arity. Bind each concrete pack exactly once, including an empty pack.
+    std::size_t argumentIndex = 0;
+    for (const auto binding : parameterBindings) {
+      const auto place = std::find_if(
+          body.places.begin(), body.places.end(), [&](const auto &item) {
+            return item.root == MirPlaceRootKind::Binding &&
+                   item.projections.empty() && item.binding == binding;
+          });
+      const bool pack = place != body.places.end() &&
+                        place->type.kind == SemanticType::TypePack;
+      const auto count = pack ? place->type.arguments.size() : 1;
+      if (count > arguments.size() - argumentIndex)
+        return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+      if (place != body.places.end()) {
+        const auto storage = cell(frame, place->id);
+        if (!storage)
+          return fail(frame, ConstantEvaluationFailure::UnsupportedType);
+        if (pack) {
+          if (!charge(count))
+            return fail(frame, ConstantEvaluationFailure::ResourceLimit);
+          ConstantAggregate value{
+              .kind = ConstantAggregateKind::Array,
+              .exactType = std::make_shared<const SemanticType>(place->type)};
+          value.elements.assign(arguments.begin() + argumentIndex,
+                                arguments.begin() + argumentIndex + count);
+          frame.places[storage] = makeConstantAggregate(std::move(value));
+        } else {
+          frame.places[storage] = arguments[argumentIndex];
+          if (place->type.kind == SemanticType::Reference &&
+              argumentIndex < argumentOrigins.size() &&
+              argumentOrigins[argumentIndex]) {
+            if (frame.references.empty())
+              frame.references.resize(frame.places.size());
+            frame.references[storage] = argumentOrigins[argumentIndex];
           }
         }
+        ++frame.placeEpochs[storage];
       }
+      argumentIndex += count;
     }
+    if (argumentIndex != arguments.size())
+      return fail(frame, ConstantEvaluationFailure::InvalidOperands);
     for (const auto &loan : body.loans) {
       if (!loan.entry)
         continue;
@@ -1433,7 +2042,9 @@ private:
         return fail(frame, value.failure);
       if (loan.access == AccessMode::Mutable &&
           location.access != AccessMode::Mutable)
-        return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        return fail(
+            frame, ConstantEvaluationFailure::InvalidOperands,
+            "Entry loan requests mutable access to a read-only origin.");
       location.access = loan.access;
       frame.loans[loan.id] = Loan{std::move(location), true};
     }
@@ -1447,6 +2058,7 @@ private:
         auto result = execute(frame, instruction, depth);
         if (result.failure != ConstantEvaluationFailure::None)
           return result;
+        applyLifecycle(frame, instruction.lifecycle);
       }
       frame.instruction = 0;
       if (steps++ >= limits.steps) {
@@ -1459,6 +2071,7 @@ private:
       case MirTerminatorKind::Invoke:
         // A failed scalar operation already returned a located constant
         // failure. Successful Invoke follows exactly the represented edge.
+        applyLifecycle(frame, terminator.successLifecycle);
         frame.block = terminator.target;
         break;
       case MirTerminatorKind::Branch: {
@@ -1553,7 +2166,7 @@ private:
           *referenceResult = std::move(location);
         }
         const auto converted =
-            convertConstantToType(*result.value, observedType(returnType));
+            convertValue(*result.value, observedType(returnType));
         return converted ? MirConstantEvaluation{.value = converted.value}
                          : fail(frame, converted.failure);
       }
@@ -1569,6 +2182,8 @@ private:
   const MirProgram &program;
   MirConstantLimits limits;
   std::size_t steps = 0;
+  std::vector<std::unique_ptr<Allocation>> heap;
+  std::size_t heapUnits = 0;
 };
 } // namespace
 
