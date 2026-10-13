@@ -21,5 +21,5 @@ if __name__ == "__main__":
                     ((), (0, "caller cleaned\n", "")),
                     (("missing", "result"), (0, "caller cleaned\n", "")),
                     (("failure",), (70, "caller cleaned\n",
-                     "expected_pointer_condition.gti:12: runtime error[GTI-R0002]: "
+                     "expected_pointer_condition.gti:13: runtime error[GTI-R0002]: "
                      "division_by_zero in integer_division\n"))]})
