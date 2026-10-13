@@ -17,6 +17,14 @@ for what minor and patch releases mean.
   exact field graph without adding native work or special library exceptions
   (issue #107).
 
+## 0.424.7 — Class-valued allocation defaults
+
+- Fix allocation of objects whose constructor has omitted class-valued
+  arguments, including `std::make_unique<Item>()` with `Item(Spec = Spec())`.
+  Defaults use ordinary ordered parameter preparation and exact cleanup on
+  successful construction, failed later arguments, and constructor failure
+  (issue #105).
+
 ## 0.424.6 — Prepared arguments from checked call results
 
 - Fix an internal compiler error when copying a checked class payload into a

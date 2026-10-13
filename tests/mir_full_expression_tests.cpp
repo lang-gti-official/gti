@@ -284,5 +284,84 @@ int main() { Explicit first{}; return 0; }
                  "owning default arguments\n";
     return 1;
   }
+
+  const auto allocationDefaults = lang::Frontend().analyze(
+      "/tmp/gti-allocation-default.gti", R"(
+#include <std/memory>
+struct Spec {
+  int count;
+  Spec(int value = 2) : count(value) {}
+};
+class Item {
+  int count;
+public:
+  Item(Spec spec = Spec()) : count(spec.count) {}
+};
+int main() { auto item = std::make_unique<Item>(); return 0; }
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  if (!allocationDefaults.canGenerateCode() ||
+      !lang::verifyMirProgram(allocationDefaults.mir).valid()) {
+    for (const auto &diagnostic : allocationDefaults.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    std::cerr << "allocation defaults must retain verified construction\n";
+    return 1;
+  }
+  bool plannedDefault = false;
+  for (const auto &function : allocationDefaults.hir.functionInstances())
+    for (const auto &value : function.body.values)
+      if (value.intrinsic == lang::IntrinsicKind::AllocateUniqueOwner &&
+          value.constructorTarget && value.parameterTypes.size() == 1)
+        plannedDefault = value.callPlan &&
+                         value.callPlan->arguments.size() == 1 &&
+                         value.callPlan->arguments.front().defaultArgument &&
+                         value.callPlan->arguments.front().kind ==
+                             lang::HirCallInputKind::MoveValue;
+  bool checkedAllocation = false;
+  for (const auto &function : allocationDefaults.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &call : block.instructions) {
+        if (call.intrinsic != lang::IntrinsicKind::AllocateUniqueOwner ||
+            !call.constructorTarget || call.operands.size() != 1)
+          continue;
+        const auto *argument = function.body.findValue(call.operands[0].value);
+        const lang::MirInstruction *stage = nullptr;
+        for (const auto &candidateBlock : function.body.blocks)
+          for (const auto &instruction : candidateBlock.instructions)
+            if (argument && instruction.id == argument->definition)
+              stage = &instruction;
+        if (!stage || stage->kind != lang::MirInstructionKind::CallInput ||
+            stage->callSite != call.callSite || !stage->defaultArgument ||
+            !stage->preparedParameterDrop || !stage->destination) {
+          std::cerr << "allocation default lacks its exact prepared owner\n";
+          return 1;
+        }
+        checkedAllocation = true;
+        for (int mutation = 0; mutation < 3; ++mutation) {
+          auto forged = allocationDefaults.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              forged.findFunctionInstance(function.id));
+          for (auto &changedBlock : changed->body.blocks)
+            for (auto &instruction : changedBlock.instructions)
+              if (instruction.id == stage->id) {
+                if (mutation == 0)
+                  instruction.callSite = 0;
+                if (mutation == 1)
+                  instruction.callInputIndex = 1;
+                if (mutation == 2)
+                  instruction.preparedParameterDrop.reset();
+              }
+          if (lang::verifyMirProgram(forged).valid()) {
+            std::cerr << "malformed allocation default stage accepted\n";
+            return 1;
+          }
+        }
+      }
+    }
+  }
+  if (!plannedDefault || !checkedAllocation) {
+    std::cerr << "allocation defaults must use the ordinary ordered plan\n";
+    return 1;
+  }
   return 0;
 }
