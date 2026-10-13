@@ -28816,8 +28816,9 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
   return true;
 }
 
-// A projected checked owner may retain a chain of call-result reborrows.
-// Retire precisely that child-to-parent chain before the moved-from RHS shell.
+// A projected checked owner or borrowed constructor input may retain a chain
+// of call-result reborrows. Retire precisely that child-to-parent chain with
+// unchanged access before the moved-from RHS shell.
 [[nodiscard]] bool advanceAssignmentLoanEnds(
     const MirBody &body, const MirLoan *ending, const MirBlock &block,
     std::vector<MirInstruction>::const_iterator &position) {
@@ -28838,7 +28839,7 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
       break;
     const MirLoan *parent = body.findLoan(ending->parent);
     if (parent == nullptr || parent->kind != MirLoanKind::CallResult ||
-        parent->access != AccessMode::Mutable || parent->escapes ||
+        parent->access != ending->access || parent->escapes ||
         !parent->carriers.empty() || parent->source != ending->source)
       return false;
     ending = parent;
@@ -28886,8 +28887,8 @@ constructorInputBorrowLoans(const MirBody &body,
         stage->preparedParameterDrop || !stage->lifecycle.empty() ||
         !stage->result || *stage->result != operand.value ||
         loan->access != AccessMode::ReadOnly || loan->entry || loan->escapes ||
-        loan->parent != 0 || !loan->carriers.empty() ||
-        loan->storedField != 0 || !loan->additionalDependencies.empty() ||
+        !loan->carriers.empty() || loan->storedField != 0 ||
+        !loan->additionalDependencies.empty() ||
         std::find(loans.begin(), loans.end(), loan->id) != loans.end())
       return std::nullopt;
     const auto inputUses = nonRootRecordUses(body, input->id);
