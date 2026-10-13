@@ -14,6 +14,7 @@
 #include <iostream>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -388,6 +389,59 @@ void checkLibraryOnlyOmission(const std::filesystem::path &root) {
          "a nested instance of the file's own type has an error");
 }
 
+// Registration publishes each declaration's visibility per consuming unit,
+// so a preamble is keyed by the whole include graph: two programs whose
+// trusted prefix is the same prelude but whose later units differ must not
+// share one (the second would not see the prelude's concepts from its own
+// standard-library units).
+void checkPreambleGraphs(const std::filesystem::path &root) {
+  const auto library = root / "tests/preamble-graph-lib.gti";
+  const auto first = root / "tests/preamble-graph-first.gti";
+  const auto second = root / "tests/preamble-graph-second.gti";
+  const std::string libraryText =
+      "int helper(int value) { return value + 1; }\n";
+  const std::unordered_map<std::string, std::string> overlays{
+      {library.string(), libraryText},
+      {first.string(), "#include \"preamble-graph-lib.gti\"\nint main() { "
+                       "return helper(0) - 1; }\n"},
+      {second.string(), "#include \"preamble-graph-lib.gti\"\n#include "
+                        "<std/memory>\nint main() { std::unique_ptr<int> "
+                        "owner = std::make_unique<int>(helper(1)); return "
+                        "*owner - 2; }\n"}};
+  auto preambles = std::make_shared<lang::SemanticPreambleCache>();
+  auto parses = std::make_shared<lang::FrontendCache>(lang::FrontendCacheLimits{
+      .maximumEntries = 1024, .maximumEstimatedBytes = 512U * 1024U * 1024U});
+  const auto run = [&](const std::filesystem::path &entry,
+                       lang::FrontendWorkMetrics &work) {
+    lang::FrontendOptions options;
+    options.stopAfter = lang::FrontendPhase::Hir;
+    options.analyzeRecoveredProgram = true;
+    options.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
+    options.lowerEntryUnitOnly = true;
+    options.lowerLibraryOnlyInstanceBodies = false;
+    options.preambleCache = preambles;
+    options.cache = parses;
+    options.workMetrics = &work;
+    return lang::Frontend(options).analyze(entry, std::nullopt,
+                                           {root / "stdlib/prelude.gti"},
+                                           overlays, {root / "stdlib"});
+  };
+  lang::FrontendWorkMetrics firstWork;
+  lang::FrontendWorkMetrics secondWork;
+  const lang::FrontendResult firstResult = run(first, firstWork);
+  const lang::FrontendResult secondResult = run(second, secondWork);
+  expect(firstResult.semanticValid && firstResult.hirValid,
+         "the first graph's program is valid");
+  if (!secondResult.semanticValid)
+    for (const auto &diagnostic : secondResult.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(secondResult.semanticValid && secondResult.hirValid,
+         "a program with another include graph does not share the preamble");
+  expect(firstWork.semanticPreambleBuilds == 1 &&
+             secondWork.semanticPreambleBuilds == 1,
+         "each include graph builds its own preamble");
+}
+
 void checkEntry(const std::filesystem::path &root,
                 const std::filesystem::path &entry) {
   const lang::FrontendResult complete =
@@ -503,6 +557,7 @@ int main(int argc, char *argv[]) {
                : std::filesystem::path(__FILE__).parent_path().parent_path());
   checkFixtures(root);
   checkLibraryOnlyOmission(root);
+  checkPreambleGraphs(root);
   std::vector<std::filesystem::path> entries;
   bool measure = false;
   if (argc > 2) {

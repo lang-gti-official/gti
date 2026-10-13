@@ -1391,9 +1391,12 @@ and an analysis with the raw-pointer audit enabled never uses it.
 - **Prefix.** The leading units of the compilation order that are
   compiler-trusted and not the entry unit; their declarations are a prefix of
   the program's declaration list. A `SemanticPreambleKey` names the analysis
-  configuration and every prefix unit by identity, path, digests and exact
-  parsed declarations, so a changed or re-parsed library unit selects another
-  preamble (the cache keeps a few, least recently used first).
+  configuration, every prefix unit by identity, path, digests and exact
+  parsed declarations, and the whole source graph by unit identity and
+  include edges (registration publishes each declaration's visibility per
+  consuming unit, so a program with other units cannot share the tables), so
+  a changed or re-parsed library unit, or another include graph, selects
+  another preamble (the cache keeps a few, least recently used first).
 - **Building.** `SemanticVisitor::buildPreamble` analyses the prefix
   declarations as a program of their own with complete trusted bodies, then
   freezes the analyzer: its session state (catalog, model, flow state,

@@ -25,8 +25,10 @@ class SemanticPreamble;
 [[nodiscard]] std::uint64_t semanticPreambleIdentity(const SemanticPreamble &);
 
 // Everything two programs must share for one preamble to serve both: the
-// analysis configuration and every prefix unit by identity, path, digests
-// and exact parsed declarations (shared through FrontendCache).
+// analysis configuration, every prefix unit by identity, path, digests and
+// exact parsed declarations (shared through FrontendCache), and the whole
+// source graph by unit identity and include edges, because registration
+// publishes a declaration's visibility per consuming unit.
 struct SemanticPreambleKey {
   struct Unit {
     SourceUnitId id = 0;
@@ -40,6 +42,9 @@ struct SemanticPreambleKey {
 
   std::string context;
   std::vector<Unit> units;
+  // Every unit of the graph in compilation order, and its include edges.
+  std::vector<std::pair<SourceUnitId, std::string>> graphUnits;
+  std::vector<std::pair<SourceUnitId, SourceUnitId>> graphEdges;
 
   friend bool operator==(const SemanticPreambleKey &,
                          const SemanticPreambleKey &) = default;
