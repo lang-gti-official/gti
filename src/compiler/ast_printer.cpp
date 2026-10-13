@@ -94,7 +94,8 @@ void AstPrinter::visitPlaceSetExpr(const PlaceSet &expr) {
 }
 
 void AstPrinter::visitGroupingExpr(const Grouping &expr) {
-  result = parenthesize("group", {expr.expression().get()});
+  result = parenthesize(expr.unsafeKeyword() ? "unsafe" : "group",
+                        {expr.expression().get()});
 }
 
 void AstPrinter::visitIndexExpr(const Index &expr) {

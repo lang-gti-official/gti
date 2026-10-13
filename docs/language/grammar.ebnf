@@ -1634,7 +1634,16 @@ primary-expression     = literal
                        | "this"
                        | "nullptr"
                        | pack-fold-expression
+                       | unsafe-expression
                        | "(" expression ")" ;
+
+unsafe-expression      = "unsafe" "{" expression "}" ;
+
+(* In expression position, a single operand has the ordinary grouping value,
+   place, borrowing and full-expression rules plus lexical unsafe permission.
+   No trailing semicolon, statements or local declarations occur inside it.
+   At statement start, unsafe-statement retains its block grammar. Lambda
+   bodies reset permission. See raw-pointers.md for the scope/cleanup contract. *)
 
 pack-fold-expression   = "(" assignment-expression "," "..." ")" ;
 

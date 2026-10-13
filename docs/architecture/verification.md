@@ -1,5 +1,27 @@
 # Compiler Verification
 
+## Value-producing unsafe expressions
+
+`unsafe_expression_contract` covers lexical permission on grouped expressions,
+exact generic and constructor selection, global/default/field contexts, fresh
+immovable initialization, constant eligibility, AST clone identity, formatted
+reanalysis, and erased-unsafe MIR mutation rejection. Negatives retain ordinary
+use-after-move, borrow/owner conflicts, reference access and lifetime checks;
+permission cannot escape into later operands/arguments or lambda bodies.
+
+`unsafe_expression_runtime` exercises scalar, reference, callable, move-only,
+conditional and Expected results with C++20/C++23 at O0/O1/O3 and O1 ASan/UBSan.
+`?` returns from the enclosing function with exactly-once local cleanup;
+defined failure destroys completed values in ordinary order. It also runs
+example 152 and the C-string constructor/factory client without an outer mutable
+placeholder. `unsafe_function_lsp` covers the new initializer spelling, inferred
+hover, keyword tokens, malformed-source recovery and UTF-16 warning ranges,
+including the absence of an invalid keyword-removal fix. Tree-sitter's
+`unsafe_expressions` corpus preserves the dedicated syntax node.
+
+These focused gates supplement, rather than replace, the complete compiler,
+example-census/native-oracle, installed-consumer and platform acceptance gates.
+
 ## Owned C-string imports and unsafe constructors (0.417.0)
 
 `unsafe_function_contract` covers unrelated ordinary, class-generic,
