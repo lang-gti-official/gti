@@ -9,11 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.424.4 — Raw-pointer owning field replacement
+## 0.424.4 — Raw field replacement and independent borrowing
 
 - Fix an internal compiler error replacing an owning field through a returned,
   direct, indexed or nested raw pointer. Preserve unsafe/raw-memory effects and
   exact construction, replacement and failure-cleanup ordering (issue #122).
+- Fix a MIR internal compiler error when a retained object combines a shared
+  getter result with an independent mutable local or owned-field input, including
+  scoped worker callbacks. Exact dependency identities, access, parent lifetime
+  and conflicting-output checks remain enforced without new runtime work
+  (issue #123).
 
 ## 0.424.3 — Constructor and owning argument composition
 
