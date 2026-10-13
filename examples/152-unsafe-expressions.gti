@@ -7,7 +7,7 @@ unsafe int read(const int* address) {
 
 int main() {
   mut std::string original{"callback text"};
-  c_string description = unsafe { original.c_string() };
+  c_string description = original.c_string();
 
   // The owned value is initialized directly in the surrounding scope.
   // No empty mutable binding or hidden function call is needed.
