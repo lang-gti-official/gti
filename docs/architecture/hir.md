@@ -124,6 +124,31 @@ never set this entry-only option; artifact builds use the separately described
 trusted-library scope, while `check` retains complete lowering. The scope is a
 seeding choice, not a semantic one: every lowered instance is lowered exactly as in complete
 lowering.
+
+### Library-only instance bodies
+
+`HirLoweringScope::omitLibraryOnlyBodies`, set by the frontend when
+`FrontendOptions::lowerLibraryOnlyInstanceBodies` is cleared, narrows what an
+entry-unit scope lowers. An instance is library-only when its declaration
+belongs to a compiler-trusted unit (`HirLoweringScope::trustedUnits`) and every
+class and function argument names only classes and enums of trusted units,
+with no lambda, function item, open parameter or symbolic value: the same
+eligibility semantic analysis uses to reuse instance analyses across
+snapshots. Such a function, constructor or destructor instance is processed
+as usual up to its body: its concrete instance analysis still runs, its
+diagnostics are reported and its signature facts are recorded, but no body is
+lowered, so the callee, constructor and class instances only that body would
+request are not discovered, and a non-generic library-only function needs no
+primary body (no late demand). `HirLoweringResult::omittedInstanceBodies`
+counts the omissions and `FrontendWorkMetrics::hirOmittedInstanceBodies`
+reports them. Class instances are never omitted: lowered bodies of the file's
+own instances reference their layout.
+
+The LSP clears the option because it never reads HIR bodies, only HIR's
+diagnostics. The contract follows from the scope rule above: an instance that
+only a library-only body would request is, like one that only unreached
+library code requests, the library's own `gti check` concern. `gti check` and
+builds keep every body.
 The frontend lowers the prefix to MIR. The lowered-program declaration
 inventory then omits a non-generic class, function, or constructor that has no
 instance. Generic declarations remain, because retained templates can name

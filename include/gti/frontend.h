@@ -79,6 +79,11 @@ struct FrontendOptions {
   // reaches. Editor snapshots set this; `gti check` and builds never do, so
   // their diagnostics remain complete. Meaningful only with `stopAfter == Hir`.
   bool lowerEntryUnitOnly = false;
+  // When false, HIR analyses but does not lower the bodies of library-only
+  // instances (compiler-trusted declarations whose arguments name only
+  // compiler-trusted types); see HirLoweringScope::omitLibraryOnlyBodies.
+  // Editor snapshots clear it because the LSP never reads HIR bodies.
+  bool lowerLibraryOnlyInstanceBodies = true;
   // Report raw-pointer audit findings located inside compiler-trusted units
   // (the prelude and the standard library) to an application. Off by default:
   // such a finding describes the library's own implementation, which the
