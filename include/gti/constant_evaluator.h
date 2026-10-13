@@ -59,6 +59,10 @@ enum class ConstantAggregateKind {
   ExpectedSuccess,
   ExpectedError,
   Unexpected,
+  // Executor-local symbolic ownership. Never accepted by constant conversion
+  // or publication; only the MIR evaluator may create/resolve these nodes.
+  // identity is a request-local allocation ID, not a host or target address.
+  TransientOwner,
 };
 
 struct ConstantAggregateField {

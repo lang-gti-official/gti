@@ -1537,7 +1537,7 @@ shared evaluation budget and can form array extents, value-generic arguments,
 static assertions, and compile-time branch conditions.
 
 A free function or method may be `constexpr` when its declaration has
-non-pack potentially supported value parameters (by value or read-only
+potentially supported value parameters, including concrete expanded packs (by value or read-only
 or mutable reference) and a potentially supported value, checked reference,
 or `void` result.
 A generic type parameter can stand for a supported type at the
@@ -1567,8 +1567,8 @@ verified MIR execution, not an AST operator-body fallback. Generic owners retain
 their concrete type/value arguments. For example, a source-defined math record
 can implement constexpr addition, and a read-only `std::array` can be indexed
 in a required constant expression. Reference results are observed values, not
-persistable constant references. Consuming operators, arrow operators,
-and contextual-bool operators remain excluded from constexpr declarations.
+persistable constant references. Arrow and contextual-bool operators may also
+be constexpr; consuming operators remain outside this profile.
 
 Completed free constexpr functions also support local fixed arrays of supported
 scalar elements (including nested arrays): default or explicit construction,
@@ -1601,8 +1601,8 @@ The source-defined mutable `std::array::at`, `front`, `back`, subscript, and
 `fill` members now use these same rules. Existing reflection's `constexpr for`
 and `get_mut` can compose with such helpers; reflection continues to expand and
 resolve fields before constant execution. No public library spelling grants
-permission to mutate. Stored-reference wrappers, raw addresses, allocation,
-active cleanup, and host/runtime calls remain outside this constant-execution
+permission to mutate. Stored-reference wrappers, raw addresses,
+and host/runtime calls remain outside this constant-execution
 profile. Calls requiring these new mutation rules cannot retry an unsupported
 MIR operation in the compatibility AST evaluator.
 
@@ -1620,8 +1620,9 @@ Only the active alternative is present. Inactive extraction is a constant
 evaluation diagnostic, while propagation preserves the exact error value and
 type. `value_or` evaluates its fallback eagerly, as at runtime. Checked-integer
 helpers use this same representation rather than a separate result evaluator.
-Borrowed expected payloads, owning alternatives and active cleanup remain
-outside the profile; this is not a general exception or panic interpreter.
+Owning alternatives may be transient within a constant request, with extraction
+and cleanup retaining the exact payload lifetime. Borrowed expected payloads
+remain outside the profile; this is not a general exception or panic interpreter.
 Checked enum references in this MIR profile designate local/parameter/receiver
 storage. It does not add general constant execution of references to global
 objects or change the existing compatibility evaluator's read-only calls.
@@ -1638,8 +1639,8 @@ the same initialization schedule; eligibility is never inferred from a generated
 native constructor.
 
 An ordinary constructor with a source body may be `constexpr`. The constructed
-class or struct must have no base, polymorphism, union state, stored reference,
-or active destructor, and every recursively reachable field must have a
+class or struct must have no base, polymorphism, union state or stored reference,
+and every recursively reachable field must have a
 supported constexpr value type for compile-time construction. Generic
 constructors and methods can also be instantiated with runtime-only
 field types for ordinary runtime use, under the same declaration-versus-call
@@ -1682,10 +1683,38 @@ from unrelated enums are not interchangeable. The backend may materialize a
 frontend-computed structural value, but it may not replay constructors or use
 native C++ constant evaluation to decide that value.
 
-Generic parameter packs, mutable or polymorphic
-instance calls, mutable or persistently stored references, allocation, payload enums, unions, inherited or
-cleanup-owning aggregates, and runtime/intrinsic/C calls are rejected until
-they have compiler-owned evaluation rules.
+### Transient allocation and destruction
+
+Completed constexpr bodies may create exclusive owners, transfer them between
+local bindings, parameters, fields and supported result alternatives, borrow
+their pointees, and replace or destroy them. `std::make_unique`, `unique_ptr`
+dereference/arrow, reset, swap, null comparison and contextual bool use the same
+source definitions and declaration-bound capabilities as runtime. An unrelated
+user-defined wrapper with owning fields follows the same rules.
+
+Source destructor bodies execute implicitly during canonical MIR cleanup;
+destructors do not need a new constexpr spelling. Executed operations must be
+constant-eligible, and ordinary function calls must select available constexpr
+definitions. Destruction follows verified reverse-order recipes and active
+ownership transfers, including early returns and moved result payloads. A
+defined failure rejects constant evaluation at the executing source operation;
+it does not resume, run native C++ unwinding, or produce a constant.
+
+Allocation identities are symbolic and confined to one evaluation request.
+All allocations must be reclaimed before the outer request completes. A helper
+may return an owner to another helper, but an allocation, ownership handle or
+active-cleanup object cannot become a persistent constexpr binding. Return a
+passive summary instead. The existing step/depth limits also cover destruction
+and heap operations. Each request allows at most 1024 allocation identities and
+65536 live logical storage units (one per value/aggregate node plus each text
+byte), independent of target layout. Exhaustion is a semantic diagnostic.
+
+Shared ownership, virtual/recursive owning destruction, raw-memory/provider
+allocation protocols, stored-reference carriers, payload enums, unions and
+inherited objects require further constant-execution profiles. They are not
+enabled by their public library names. These new lifetime operations never
+fall back to AST execution. Example 153 demonstrates transient scratch storage
+and runtime parity.
 
 ## 3.12 Compile-Time Iteration And Reflection
 
@@ -1936,9 +1965,9 @@ current implementation:
   closure movement, and explicit owned move-capture, including general pack
   template-shape composition, broader erased allocation, and general function-pointer values;
 - constexpr execution beyond the bounded concrete-generic, scoped-enum,
-  fixed-array, passive aggregate mutation, read-only reference and read-only
-  operator profiles: mutable reference/receiver execution, active cleanup,
-  allocation, payload enums, packs and polymorphism remain outside them;
+  fixed-array, result composition, checked reference/receiver mutation and
+  transient exclusive-allocation profiles: persistent allocation, raw/provider
+  storage, shared ownership, payload enums and polymorphism remain outside them;
 - audited expansion beyond the bounded scalar, counted-text-input,
   `[[c_abi]]` record, pointer-only `[[c_opaque]]` handle, recursive raw-pointer,
   pointer-plus-count, and exact registered callback C surface, including
