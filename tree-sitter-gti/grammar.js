@@ -1390,9 +1390,13 @@ module.exports = grammar({
         $.nullptr_literal,
         $.pack_fold_expression,
         $.parenthesized_expression,
+        $.unsafe_expression,
       ),
 
     parenthesized_expression: ($) => seq("(", $.expression, ")"),
+
+    unsafe_expression: ($) =>
+      seq("unsafe", "{", field("value", $.expression), "}"),
 
     unexpected_expression: ($) =>
       seq("unexpected", "(", field("error", $._expression_not_comma), ")"),

@@ -1,0 +1,69 @@
+#include <std/string>
+#include <std/vector>
+#include <std/memory>
+
+class Trace {
+  int id;
+public:
+  Trace(int n) : id(n) {}
+  ~Trace() { std::println(this.id); }
+  int value() { return this.id; }
+};
+
+struct Reading {
+  int value;
+  unsafe Reading(const int* p) : value(unsafe { *p }) {}
+};
+
+unsafe T foreign_identity<T>(T value) { return std::move(value); }
+T import_value<T>(T value) { return unsafe { foreign_identity(std::move(value)) }; }
+unsafe int read(const int* p) { return unsafe { *p }; }
+unsafe int fail(int divisor) {
+  Trace inner{3};
+  return 42 / divisor;
+}
+
+enum class error { missing };
+expected<int, error> maybe(bool ok) {
+  if (!ok) { return unexpected(error::missing); }
+  return 7;
+}
+expected<int, error> propagate(bool ok) {
+  Trace local{2};
+  // '?' still returns from propagate, not a compiler-generated function.
+  int result = unsafe { foreign_identity(?maybe(ok)) };
+  return result;
+}
+int add(int a, int b) { return a + b; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Trace outer{9};
+  mut int value = 21;
+  auto reading = unsafe { Reading(&value) };
+  if (reading.value != 21) { return 1; }
+  int doubled = add(unsafe { read(&value) }, unsafe { read(&value) });
+  if (doubled != 42) { return 2; }
+  mut auto& alias = unsafe { value };
+  alias = 20;
+  if (value != 20) { return 3; }
+  auto owner = unsafe { import_value(std::make_unique<Trace>(6)) };
+  if (owner->value() != 6) { return 4; }
+  auto good = propagate(true);
+  auto bad = propagate(false);
+  if (!good || good.value() != 7 || bad || bad.error() != error::missing) { return 5; }
+  mut std::string source{"callback text"};
+  c_string description = unsafe { source.c_string() };
+  auto text = unsafe { std::string(description) };
+  auto checked = unsafe { std::string::try_from_c_string(description) };
+  if (!checked || checked.value().view() != text.view()) { return 6; }
+  source.clear();
+  if (text.view() != "callback text") { return 7; }
+  auto nested = unsafe { unsafe { read(&value) } };
+  if (nested != 20) { return 8; }
+  auto choice = true ? unsafe { read(&value) } : unsafe { read(&value) };
+  if (choice != 20) { return 9; }
+  auto closure = unsafe { []() -> int { return unsafe { foreign_identity(8) }; } };
+  if (closure() != 8) { return 10; }
+  // Failure cleans the inner call, completed owners, then the outer scope.
+  return unsafe { fail(argc > 1 ? 0 : 2) } == 21 ? 0 : 11;
+}
