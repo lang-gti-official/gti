@@ -13,7 +13,9 @@ public:
       : target(std::move(target)),
         reachablePrefixRequested(scope.reachablePrefix),
         entryDeclarations(scope.entryDeclarations),
-        completeDeclarations(std::move(scope.completeDeclarations)) {}
+        completeDeclarations(std::move(scope.completeDeclarations)),
+        omitLibraryOnlyBodies(scope.omitLibraryOnlyBodies),
+        trustedUnits(scope.trustedUnits.begin(), scope.trustedUnits.end()) {}
 
   [[nodiscard]] HirLoweringResult lowerConstantFunction(
       const SemanticModel &semantics, SemanticInstanceProvider &provider,
@@ -1896,6 +1898,75 @@ private:
     return result;
   }
 
+  // Whether `type` names only compiler-trusted classes and enums (see
+  // `HirLoweringScope::omitLibraryOnlyBodies`). Mirrors the instance-reuse
+  // eligibility of semantic analysis: no lambda, function item, open
+  // parameter or symbolic value can appear.
+  [[nodiscard]] bool trustedOnlyType(const SemanticType &type) const {
+    if (type.genericParameterId != 0 || type.functionId != 0 ||
+        type.lambdaId != 0 || type.arrayLengthParameterId != 0)
+      return false;
+    switch (type.kind) {
+    case SemanticType::Unknown:
+    case SemanticType::TypeParameter:
+    case SemanticType::TypeName:
+    case SemanticType::FunctionItem:
+    case SemanticType::Lambda:
+      return false;
+    case SemanticType::TypePack:
+      if (!type.concretePack)
+        return false;
+      break;
+    case SemanticType::Class: {
+      const ClassTypeInfo *info = baseModel->findClassType(type.classId);
+      if (info == nullptr || !trustedUnits.contains(info->sourceUnit))
+        return false;
+      break;
+    }
+    case SemanticType::Enum: {
+      const EnumTypeInfo *info = baseModel->findEnumType(type.enumId);
+      if (info == nullptr || !trustedUnits.contains(info->sourceUnit))
+        return false;
+      break;
+    }
+    default:
+      break;
+    }
+    if (!trustedOnlyValues(type.valueArguments))
+      return false;
+    return std::all_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const SemanticType &argument) {
+                         return trustedOnlyType(argument);
+                       });
+  }
+
+  [[nodiscard]] static bool
+  trustedOnlyValues(const std::vector<CompileTimeValue> &values) {
+    return std::all_of(values.begin(), values.end(), [](const auto &value) {
+      return value.kind == CompileTimeValue::UInt64 && !value.expression;
+    });
+  }
+
+  // Whether an instance of a declaration from `unit` with these arguments is
+  // library-only, so its body is omitted under `omitLibraryOnlyBodies`.
+  [[nodiscard]] bool
+  omitInstanceBody(SourceUnitId unit,
+                   const std::vector<SemanticType> &classTypeArguments,
+                   const std::vector<CompileTimeValue> &classValueArguments,
+                   const std::vector<SemanticType> &typeArguments,
+                   const std::vector<CompileTimeValue> &valueArguments) const {
+    if (!omitLibraryOnlyBodies || !trustedUnits.contains(unit))
+      return false;
+    if (!trustedOnlyValues(classValueArguments) ||
+        !trustedOnlyValues(valueArguments))
+      return false;
+    for (const auto *types : {&classTypeArguments, &typeArguments})
+      for (const SemanticType &type : *types)
+        if (!trustedOnlyType(type))
+          return false;
+    return true;
+  }
+
   // Concrete discovery needs the selected primary body's facts. Bounded
   // analysis may have deferred that body: the provider completes it in the
   // base model when it can (late demand), and otherwise HIR stays invalid and
@@ -1924,8 +1995,6 @@ private:
     if (declaration == nullptr || declaration->declaration == nullptr) {
       return;
     }
-    if (!requirePrimaryBody(*declaration))
-      return;
     std::vector<SemanticType> classArguments;
     std::vector<CompileTimeValue> classValueArguments;
     if (snapshot.owner) {
@@ -1934,6 +2003,13 @@ private:
       classArguments = owner.typeArguments;
       classValueArguments = owner.valueArguments;
     }
+    // An omitted body needs no primary facts of its own; a concrete instance
+    // analysis below still requires them before it runs.
+    const bool omitBody = omitInstanceBody(
+        declaration->sourceUnit, classArguments, classValueArguments,
+        snapshot.typeArguments, snapshot.valueArguments);
+    if (!omitBody && !requirePrimaryBody(*declaration))
+      return;
     const SemanticType enclosingReceiverType = currentReceiverType;
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
     const std::string enclosingSourceFunctionName = currentSourceFunctionName;
@@ -1989,6 +2065,14 @@ private:
           concrete->returnBorrowPlace;
       output.program.functions[index].ownedPointeeProjection =
           concrete->ownedPointeeProjection;
+    }
+
+    if (omitBody) {
+      ++output.omittedInstanceBodies;
+      currentReceiverType = enclosingReceiverType;
+      currentReceiverAccess = enclosingReceiverAccess;
+      currentSourceFunctionName = enclosingSourceFunctionName;
+      return;
     }
 
     lambdaTargets.clear();
@@ -2150,6 +2234,18 @@ private:
                                   : ensureConstructorAnalysis(snapshot.id);
     if (analysis == nullptr && !snapshot.generatedDefault) {
       lifecycleValid = false;
+      currentReceiverType = enclosingReceiverType;
+      currentReceiverAccess = enclosingReceiverAccess;
+      currentSourceFunctionName = enclosingSourceFunctionName;
+      return;
+    }
+    // A generated default constructor's initializers are verified against
+    // its owner's fields (verifyHirProgramPlans), so it is always lowered.
+    if (!snapshot.generatedDefault && ownerInfo != nullptr &&
+        omitInstanceBody(ownerInfo->sourceUnit, classArguments,
+                         classValueArguments, snapshot.typeArguments,
+                         snapshot.valueArguments)) {
+      ++output.omittedInstanceBodies;
       currentReceiverType = enclosingReceiverType;
       currentReceiverAccess = enclosingReceiverAccess;
       currentSourceFunctionName = enclosingSourceFunctionName;
@@ -2417,6 +2513,15 @@ private:
       appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt,
                                 discoveryOrigin);
       model = &analysis.model;
+    }
+    if (ownerInfo != nullptr &&
+        omitInstanceBody(ownerInfo->sourceUnit, owner.typeArguments,
+                         owner.valueArguments, {}, {})) {
+      ++output.omittedInstanceBodies;
+      currentReceiverType = enclosingReceiverType;
+      currentReceiverAccess = enclosingReceiverAccess;
+      currentSourceFunctionName = enclosingSourceFunctionName;
+      return;
     }
 
     lambdaTargets.clear();
@@ -6431,6 +6536,10 @@ private:
   // `HirLoweringScope`.
   std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
       completeDeclarations;
+  // Library-only instance bodies are analysed but not lowered; see
+  // `HirLoweringScope::omitLibraryOnlyBodies`.
+  bool omitLibraryOnlyBodies = false;
+  std::unordered_set<SourceUnitId> trustedUnits;
   SemanticInstanceProvider *instanceProvider = nullptr;
   const SemanticModel *baseModel = nullptr;
   HirLoweringResult output;

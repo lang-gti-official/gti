@@ -890,6 +890,9 @@ struct HirLoweringResult {
   // Discovery stopped at these unchecked primary bodies. This is not usable
   // HIR: the frontend must obtain their semantic facts and lower again.
   std::vector<const FunctionDecl *> requiredSemanticBodies;
+  // Function, constructor and destructor instances whose bodies were omitted
+  // under `HirLoweringScope::omitLibraryOnlyBodies`.
+  std::size_t omittedInstanceBodies = 0;
 
   [[nodiscard]] bool valid() const {
     return requiredSemanticBodies.empty() &&
@@ -909,11 +912,21 @@ struct HirLoweringResult {
 // top-level declarations, only those ranges are lowered completely after the
 // prefix closes. Any other declaration is lowered only if the prefix reaches
 // it, so its concrete-instance diagnostics are reported only then.
+// With `omitLibraryOnlyBodies`, a function, constructor or destructor
+// instance is library-only when its declaration belongs to one of
+// `trustedUnits` and every class and function argument names only classes
+// and enums of those units (no lambda, function item, open parameter or
+// symbolic value). Such an instance is still analysed, so the diagnostics its
+// own analysis reports are kept, but its body is not lowered: instances that
+// only its body would request are not discovered and a primary body only it
+// needs is not demanded. The LSP sets it because it never reads HIR bodies.
 struct HirLoweringScope {
   bool reachablePrefix = false;
   std::optional<std::pair<std::size_t, std::size_t>> entryDeclarations;
   std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
       completeDeclarations;
+  bool omitLibraryOnlyBodies = false;
+  std::vector<SourceUnitId> trustedUnits;
 };
 
 class HirLowerer {
