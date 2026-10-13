@@ -4639,6 +4639,19 @@ void testRawOwnedFieldReplacement() {
                  "and publication: " +
                      std::to_string(mutation));
         }
+        auto malformedCleanup = frontend.mir;
+        auto *cleanupBody = lang::findMirBody(malformedCleanup, address);
+        bool changedCleanup = false;
+        for (auto &cleanupBlock : cleanupBody->blocks)
+          for (auto &cleanup : cleanupBlock.instructions)
+            if (cleanup.kind == lang::MirInstructionKind::CleanupBeforeAssign &&
+                cleanup.destination == place->id) {
+              cleanup.rawMemoryAccess = false;
+              changedCleanup = true;
+            }
+        expect(changedCleanup &&
+                   !lang::verifyMirProgram(malformedCleanup).valid(),
+               "old-value cleanup retains its raw-memory effect");
       }
   expect(selected == 4,
          "fixture has returned, nested, direct and indexed raw fields");
