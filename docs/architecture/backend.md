@@ -2360,6 +2360,12 @@ therefore remains armed if base construction fails. Only successful field
 publication reparents it into field rollback. The field transfer, parameter
 cleanup and base success/rollback proofs are all required; this composition
 does not hoist an owning move across fallible base construction.
+An independently verified empty interface base contributes dispatch identity,
+not source storage, initialization or cleanup. Its structural proof remains
+shared between the private empty-field and empty-shell admission paths.
+That whole-shell proof still excludes state-bearing bases and non-generated
+interface lifecycle operations; it is distinct from the per-class destructor
+guard and independently selected state-bearing base schedule described above.
 A cleanup-free class field may have lexical lifetime without an active cleanup
 obligation. Such a field can accompany a guarded owner only when its concrete
 class has generated, observation-free destruction, no active cleanup state,

@@ -13678,6 +13678,36 @@ optionalStorageOwnerEmptyState(const MirProgram &program,
 
 enum class EmptyFieldUse { Construction, Assignment };
 
+// Interface-only bases contribute dispatch identity but no source storage or
+// cleanup. Reuse this exact proof for empty native shells and for disarming a
+// declared destructor during failed construction. Stateful bases require their
+// own verified rollback schedule; polymorphism alone is not such state.
+[[nodiscard]] bool emptyInterfaceBaseSurface(const MirProgram &program,
+                                             const MirClassInstance &instance) {
+  return (!instance.polymorphic || !instance.bases.empty()) &&
+         instance.bases == instance.structuralBases &&
+         std::all_of(instance.bases.begin(), instance.bases.end(),
+                     [&](const HirBaseInstance &base) {
+                       const auto *interface =
+                           program.findClassInstance(base.instance);
+                       return base.interface && interface != nullptr &&
+                              interface->type == base.type &&
+                              interface->kind == ClassKind::Interface &&
+                              interface->declaredFields.empty() &&
+                              interface->fields.empty() &&
+                              interface->fieldDropOrder.empty() &&
+                              !interface->destructor &&
+                              !interface->requiresActiveCleanup &&
+                              !interface->requiresActiveDropState &&
+                              interface->bases.empty() &&
+                              interface->structuralBases.empty() &&
+                              interface->defaultConstructor ==
+                                  SpecialMemberStatus::Generated &&
+                              interface->destructorStatus ==
+                                  SpecialMemberStatus::Generated;
+                     });
+}
+
 [[nodiscard]] bool uninitializedStorageType(const MirProgram &program,
                                             const SemanticType &type) {
   const auto *owner = uniqueClassInstanceForType(program, type);
@@ -13755,29 +13785,7 @@ enum class EmptyFieldUse { Construction, Assignment };
   // is safe in the private tag constructor; state-bearing or source-defined
   // base initialization remains outside this representation.
   const bool emptyInterfaceBases =
-      instance != nullptr &&
-      (!instance->polymorphic || !instance->bases.empty()) &&
-      instance->bases == instance->structuralBases &&
-      std::all_of(instance->bases.begin(), instance->bases.end(),
-                  [&](const HirBaseInstance &base) {
-                    const auto *interface =
-                        program.findClassInstance(base.instance);
-                    return base.interface && interface != nullptr &&
-                           interface->type == base.type &&
-                           interface->kind == ClassKind::Interface &&
-                           interface->declaredFields.empty() &&
-                           interface->fields.empty() &&
-                           interface->fieldDropOrder.empty() &&
-                           !interface->destructor &&
-                           !interface->requiresActiveCleanup &&
-                           !interface->requiresActiveDropState &&
-                           interface->bases.empty() &&
-                           interface->structuralBases.empty() &&
-                           interface->defaultConstructor ==
-                               SpecialMemberStatus::Generated &&
-                           interface->destructorStatus ==
-                               SpecialMemberStatus::Generated;
-                  });
+      instance != nullptr && emptyInterfaceBaseSurface(program, *instance);
   if (instance == nullptr || instance->declaration == 0 || instance->abstract ||
       instance->cAbiRecord || instance->unionLayout || !emptyInterfaceBases ||
       (use == EmptyFieldUse::Assignment &&
@@ -13861,32 +13869,7 @@ enum class EmptyFieldUse { Construction, Assignment };
 [[nodiscard]] bool
 failureConstructorEmptyStateConstructible(const MirProgram &program,
                                           const MirClassInstance &instance) {
-  const bool emptyInterfaceBases = (!instance.polymorphic ||
-                                    !instance.bases.empty()) &&
-                                   instance.bases == instance.structuralBases &&
-                                   std::all_of(instance.bases.begin(),
-                                               instance.bases.end(),
-                                               [&](const HirBaseInstance
-                                                       &base) {
-                                                 const auto *interface =
-                                                     program.findClassInstance(
-                                                         base.instance);
-                                                 return base.interface && interface != nullptr &&
-                           interface->type == base.type &&
-                           interface->kind == ClassKind::Interface &&
-                           interface->declaredFields.empty() &&
-                           interface->fields.empty() &&
-                           interface->fieldDropOrder.empty() &&
-                           !interface->destructor &&
-                           !interface->requiresActiveCleanup &&
-                           !interface->requiresActiveDropState &&
-                           interface->bases.empty() &&
-                           interface->structuralBases.empty() &&
-                           interface->defaultConstructor ==
-                               SpecialMemberStatus::Generated &&
-                           interface->destructorStatus ==
-                               SpecialMemberStatus::Generated;
-                                               });
+  const bool emptyInterfaceBases = emptyInterfaceBaseSurface(program, instance);
   if (instance.declaration == 0 || instance.abstract || instance.cAbiRecord ||
       instance.unionLayout || !emptyInterfaceBases ||
       (instance.destructor
