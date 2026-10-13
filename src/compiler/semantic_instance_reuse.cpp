@@ -406,6 +406,15 @@ SemanticVisitor::Impl::reuseInstance(const InstanceAnalysisKey &key) {
   // and analyse again; the stored delta is that second analysis.
   if (!pending.empty() && !analyzeLateDemand(pending))
     return reject();
+  // A reused delta consulted the same preamble bodies the fresh analysis did;
+  // reaching them reports what they held back, exactly as then.
+  if (adoptedPreamble != nullptr) {
+    std::unordered_set<FunctionId> consulted;
+    for (const auto &[id, declaration] : entry->consulted)
+      consulted.insert(id);
+    if (reachConsultedPreambleBodies(consulted))
+      return reject();
+  }
   SemanticInstanceAnalysis result{.model = entry->model, .diagnostics = {}};
   result.model.rebaseReusedInstance(semanticModel);
   return result;

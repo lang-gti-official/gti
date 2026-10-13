@@ -36,6 +36,19 @@ for what minor and patch releases mean.
   3,320. Each return still destroys exactly the owners live at it, in the same
   order, with the same failure behavior and diagnostics.
 
+## 0.423.0 — Editor analyses the standard-library prefix once
+
+- `gti_lsp` now analyses the standard-library units a file includes once per
+  include graph (a trusted prefix preamble) and resumes every later snapshot
+  of that file from a copy of that analysis, registering and analysing only
+  the file's own declarations. Standard-library bodies are analysed in the
+  preamble but reported only when the file reaches them, so diagnostics,
+  hover, definition and semantic tokens are unchanged. A file with eight
+  standard-library includes analyses in about 80 ms per edit instead of 250;
+  the first snapshot of a new include graph pays about 360 ms to build the
+  preamble. The frontend trace reports preamble builds, adoptions and
+  reached bodies. `gti check` and builds are unaffected.
+
 ## 0.421.0 — Editor omits library-only instance bodies
 
 - Editor snapshots no longer lower the HIR bodies of library-only concrete
