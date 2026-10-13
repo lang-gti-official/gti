@@ -10291,7 +10291,10 @@ private:
   // scalar success value or `unexpected(error)` with a scalar error.
   [[nodiscard]] std::optional<SharedExitCarrier>
   sharedValueCarrier(const HirValue &value) const {
-    if (value.dropObligation || value.neverReturns) {
+    // A substituted program constant has exactly one MIR materialization,
+    // so the tail's reload cannot name it: such an exit keeps its own cleanup.
+    if (value.dropObligation || value.neverReturns ||
+        value.programConstantSubstitution) {
       return std::nullopt;
     }
     const SemanticType &returned = output.returnType;
@@ -10301,7 +10304,8 @@ private:
       const HirValue *error = value.operands.size() == 1
                                   ? findValue(value.operands.front())
                                   : nullptr;
-      if (error == nullptr || error->dropObligation || !expected ||
+      if (error == nullptr || error->dropObligation ||
+          error->programConstantSubstitution || !expected ||
           value.info.type.kind != SemanticType::Unexpected ||
           value.info.type.arguments.size() != 1 ||
           value.info.type.arguments.front() != returned.arguments[1] ||
