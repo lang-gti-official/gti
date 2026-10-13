@@ -5186,7 +5186,10 @@ record and void results, exact error propagation, checked arithmetic, field and
 array replacement, constructor reference writes, selected declaration defaults,
 omitted arguments and generated defaults. The native matrix includes
 O0/O1/O2/O3 under C++20/C++23, with result constants nested inside ordinary
-records. Example 142 adds recoverable configuration and cursor-based constructor
+records and other results. The MIR regression requires a nested passive result
+call's failure edge and rejects its deletion: returning a recoverable result
+does not erase the separate defined-runtime-failure channel.
+Example 142 adds recoverable configuration and cursor-based constructor
 composition. Shape-corrupted constants, inactive extraction, eager fallbacks,
 runtime-only defaults, stored references and active cleanup have negative
 coverage; every interrupted result-execution step preserves the resource-limit
