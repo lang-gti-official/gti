@@ -26,7 +26,7 @@
     "stdlib/std/json.gti": "0baff47898a7646937e3fff4e8425d1a3b51b80b92fd1160653e765bc001b82d",
     "stdlib/std/list.gti": "b670d0cf766d8bfae1cc32c51517510bcd434dc834ed31d8f8a46ff59da800e0",
     "stdlib/std/map.gti": "24bf0e1e969a92e4d6df567d6b13e1e5e2519e3bf2f80c225ca5937dcfeba3cf",
-    "stdlib/std/memory.gti": "c506361652bdee8778e952db68f7db2ec558d9734298234bba296210e277ef1a",
+    "stdlib/std/memory.gti": "6d013f19f4f7ad14060d546fbd9f5724d3325dd271be4d4b6e45533b34b1ce8b",
     "stdlib/std/meta.gti": "a153608856dee42b8a5e72d66b6af77167b0e226c6893147158a130400a26a3e",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
@@ -1416,6 +1416,13 @@
       "id": "unique-ptr",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_unique_ptr.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "unique-ptr-constexpr",
+      "mode": "run",
+      "source": "tests/fixtures/constexpr_allocation.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -2832,11 +2839,12 @@
         "std::unique_ptr::operator->",
         "std::unique_ptr::operator==nullptr",
         "std::unique_ptr::operator=nullptr",
-        "std::unique_ptr::reset"
+        "std::unique_ptr::reset",
+        "std::unique_ptr::swap"
       ],
-      "case_ids": ["unique-ptr"],
-      "required_instantiations": ["std::unique_ptr<Value>"],
-      "evidence": ["tests/fixtures/stdlib_surface_unique_ptr.gti", "stdlib/std/memory.gti"]
+      "case_ids": ["unique-ptr", "unique-ptr-constexpr"],
+      "required_instantiations": ["std::unique_ptr<Value>", "transient constexpr scalar and destructor-bearing owners"],
+      "evidence": ["tests/fixtures/stdlib_surface_unique_ptr.gti", "tests/fixtures/constexpr_allocation.gti", "examples/153-constexpr-allocation.gti", "stdlib/std/memory.gti"]
     },
     {
       "id": "memory.unique-ptr-upcast",
