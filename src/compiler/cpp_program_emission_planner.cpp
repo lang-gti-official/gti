@@ -7959,6 +7959,25 @@ public:
       writeIndent();
       emitNativeCallbackAdapterSignature(callback, false);
       output << ";\n";
+      if (callback.adapter.cThreadCallback ==
+          CThreadCallbackKind::ThreadConfined) {
+        const auto id = callback.adapter.id;
+        output
+            << "static std::atomic<uint64_t> __gti_callback_owner_" << id
+            << "{0};\n"
+            << "static auto __gti_bind_native_callback_" << id
+            << "() noexcept {\n"
+            << "  const auto owner = ::gti_rt_confined_callback_thread_v1();\n"
+            << "  uint64_t expected = 0;\n"
+            << "  if (__gti_callback_owner_" << id
+            << ".load(std::memory_order_relaxed) != owner && "
+               "!__gti_callback_owner_"
+            << id
+            << ".compare_exchange_strong(expected, owner, "
+               "std::memory_order_relaxed) && expected != owner) "
+               "std::terminate();\n"
+            << "  return &__gti_native_callback_" << id << ";\n}\n";
+      }
       emitted = true;
     }
     if (emitted) {
@@ -7999,6 +8018,16 @@ public:
         case CThreadCallbackKind::OnceInitializer:
           symbol = entering ? "gti_rt_once_enter_v1" : "gti_rt_once_leave_v1";
           break;
+        case CThreadCallbackKind::ThreadConfined:
+          writeIndent();
+          if (entering) {
+            output
+                << "::gti_rt_confined_callback_enter_v1(__gti_callback_owner_"
+                << adapter.id << ".load(std::memory_order_relaxed));\n";
+          } else {
+            output << "::gti_rt_confined_callback_leave_v1();\n";
+          }
+          return;
         }
         if (symbol == nullptr) {
           throw std::logic_error("invalid callback entry policy");

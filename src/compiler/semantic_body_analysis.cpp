@@ -2800,6 +2800,24 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   std::unordered_set<std::string> functionAttributeNames;
   for (const auto &contract : stmt.functionAttributes()) {
     const Token &attribute = contract.name;
+    if (attribute.lexeme == "thread_confined_callback") {
+      if (!functionAttributeNames.insert(attribute.lexeme).second) {
+        reportContract(
+            attribute,
+            "Duplicate function attribute 'thread_confined_callback'.");
+      } else if (contract.argument || functionInfo == nullptr ||
+                 functionInfo->ownerClass != 0 || isEntryPoint ||
+                 !functionInfo->genericParameters.empty() ||
+                 functionInfo->parameterPack || functionInfo->requiresUnsafe ||
+                 functionInfo->tracksCaller || stmt.hasCLinkage() ||
+                 stmt.runtimeBinding() || !stmt.body() || stmt.operatorName()) {
+        reportContract(attribute, "A thread_confined_callback contract "
+                                  "requires a defined, non-generic, "
+                                  "safe namespace-scope GTI function without "
+                                  "caller tracking or attribute arguments.");
+      }
+      continue;
+    }
     if (attribute.lexeme == "discardable") {
       if (!functionAttributeNames.insert(attribute.lexeme).second) {
         reportContract(attribute,

@@ -11612,7 +11612,9 @@ verifyMirProgramContracts(const MirProgram &program) {
         !adapter.catchesNativeExceptions ||
         adapter.cThreadCallback !=
             (program.executionProfile() == ExecutionProfile::Concurrent
-                 ? adapter.type.cThreadCallbackKind()
+                 ? (target->threadConfinedCallback
+                        ? CThreadCallbackKind::ThreadConfined
+                        : adapter.type.cThreadCallbackKind())
                  : CThreadCallbackKind::None) ||
         (program.executionProfile() == ExecutionProfile::Concurrent &&
          adapter.cThreadCallback == CThreadCallbackKind::None)) {

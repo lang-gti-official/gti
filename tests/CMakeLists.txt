@@ -1808,6 +1808,11 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/cthread_once_test.py"
                    "$<TARGET_FILE:gti>" "${CMAKE_CXX_COMPILER}")
   set_tests_properties(cthread_once_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME thread_confined_callback_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/thread_confined_callback_test.py"
+                   "$<TARGET_FILE:gti>" "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(thread_confined_callback_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME cthread_create_join_runtime
            COMMAND "${Python3_EXECUTABLE}"
                    "${PROJECT_SOURCE_DIR}/tests/cthread_create_join_test.py"

@@ -3456,6 +3456,15 @@ call conservative effects: it is not speculatable, removable, or reorderable.
 This metadata does not introduce general MIR pack iteration or ask a backend to
 perform semantic instantiation.
 
+Program v103 adds the resolved `threadConfinedCallback` declaration fact and
+`ThreadConfined` adapter policy. It represents first-use binding in the existing
+`NativeCallback` instruction, not an AST-only emission path. The program-aware
+effect query preserves passive legacy pointer formation, but thread-confined
+conversion is runtime-invoking, potentially trapping, non-removable and
+non-speculatable. The context-free query conservatively permits binding effects.
+MIR verifies adapter policy against its target's declaration fact, and detached
+LoweredProgram v19 also verifies that fact against its declaration row.
+
 Native callback conversion has one program-level representation contract.
 Each `MirNativeCallbackAdapter` copies the exact HIR adapter identity and adds
 the concrete target's defined-failure effect, the
@@ -3464,7 +3473,8 @@ exceptions. The producing MIR value references that row. Verification rejects
 a missing, stale, reordered, owner/member, external, signature-mismatched, or
 unsupported concurrent GTI adapter before a backend sees it. The exact
 C-thread entry additionally retains `CThreadCallbackKind`: `ThreadEntry` for
-`int32_t(void*)`, `OnceInitializer` for `void()`, and `None` outside the concurrent
+`int32_t(void*)`, `OnceInitializer` for `void()`, `ThreadConfined` for an explicit
+source contract independently of native signature, and `None` outside the concurrent
 profile. HIR/MIR reject missing, swapped, or forged roles. The
 backend consumes the role to enter/leave the exact registered runtime callback around
 the verified target invocation, retaining the existing terminating failure

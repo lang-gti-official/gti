@@ -631,6 +631,7 @@ private:
          .neverReturns = declaration.neverReturns,
          .tracksCaller = declaration.tracksCaller,
          .cThreadOperation = declaration.cThreadOperation,
+         .threadConfinedCallback = declaration.threadConfinedCallback,
          .processMemoryOperation = declaration.processMemoryOperation,
          .linkage = declaration.linkage,
          .externalSymbol = declaration.externalSymbol,

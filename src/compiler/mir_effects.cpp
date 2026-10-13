@@ -100,8 +100,12 @@ constexpr auto operationEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.mayTrap = true, .targetDependent = true},
     harmless(), // ExpectedHasValue
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
-    harmless(), // NativeCallback
-    harmless(), // FunctionItem
+    // Without a program row, conservatively retain a possible thread binding.
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true}, // NativeCallback
+    harmless(),                       // FunctionItem
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
     MirEffectTraits{.copiesValue = true}, // PayloadExtract
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
@@ -1021,7 +1025,7 @@ namespace {
 [[nodiscard]] MirEffectTraits finishInstructionEffects(
     const MirInstruction &instruction, MirEffectTraits result,
     bool structuralValueTransfer = false, bool structuralConstruction = false,
-    bool exactConstructor = false) {
+    bool exactConstructor = false, bool passiveNativeCallback = false) {
   if (instruction.tombstone) {
     return harmless();
   }
@@ -1046,7 +1050,8 @@ namespace {
   } else if (result == MirEffectTraits{}) {
     result = effects(instruction.kind);
   }
-  result = merge(result, mir_detail::rawPointerConversion(instruction)
+  result = merge(result, (passiveNativeCallback ||
+                          mir_detail::rawPointerConversion(instruction))
                              ? harmless()
                              : effects(instruction.operation));
   result = merge(result, effects(instruction.synchronization.kind));
@@ -2060,6 +2065,15 @@ namespace {
 std::optional<MirEffectTraits>
 structuralInstructionEffects(const MirProgram &program,
                              const MirInstruction &instruction) {
+  if (instruction.operation == MirOperation::NativeCallback &&
+      instruction.nativeCallbackAdapter) {
+    const auto *adapter =
+        program.findNativeCallbackAdapter(*instruction.nativeCallbackAdapter);
+    if (adapter &&
+        adapter->cThreadCallback != CThreadCallbackKind::ThreadConfined)
+      return finishInstructionEffects(instruction, {}, false, false, false,
+                                      true);
+  }
   if (isMirStructuralFinalAddressConstruction(program, instruction))
     return finishInstructionEffects(instruction, {}, false, true);
   if (isMirStructuralValueDrop(program, instruction))

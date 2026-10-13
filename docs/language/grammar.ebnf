@@ -113,7 +113,7 @@ function-contract-attributes = function-contract-attribute
                               { function-contract-attribute } ;
 function-contract-attribute = "[[" function-contract-name
                               { "," function-contract-name } "]]" ;
-function-contract-name = "noreturn" | "track_caller" | "discardable"
+function-contract-name = "noreturn" | "track_caller" | "discardable" | "thread_confined_callback"
                        | "borrowed_from" "(" ( IDENTIFIER | "this" ) ")" ;
 (* noreturn/track_caller: defined, non-polymorphic GTI functions only, except trusted compiler
    intrinsic declarations; operator annotations are rejected semantically.

@@ -631,6 +631,12 @@ linkage, parameters, result, and every value-to-adapter reference. This makes
 callback reachability a concrete-instance edge rather than a backend lookup by
 function spelling.
 
+Explicit `threadConfinedCallback` function facts come from semantic declaration
+contracts. In the concurrent profile they select the adapter's `ThreadConfined`
+entry policy before HIR; HIR verifies the target fact against the semantic
+declaration and the conversion against the exact adapter. Signature-derived
+registered worker/once policies remain distinct when no contract is present.
+
 Native value invocation is a separate `HirValueKind::Call` family. Semantics
 records `ResolvedCallInfo::nativeCalleeType` and any enclosing generic callable
 boundary; HIR preserves that exact signature without manufacturing a selected
