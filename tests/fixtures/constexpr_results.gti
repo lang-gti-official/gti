@@ -30,6 +30,15 @@ constexpr int consume_result(expected<int, parse_error> input) {
   return input.value_or(11);
 }
 
+constexpr expected<int, std::string_view> text_error(bool valid) {
+  if (valid) { return 9; }
+  return unexpected("invalid");
+}
+
+constexpr expected<expected<int, std::string_view>, int> nested_text(bool valid) {
+  return text_error(valid);
+}
+
 struct Reading {
   mut expected<int, parse_error> result;
   constexpr Reading(std::string_view input) : result(twice(input)) {}
@@ -135,6 +144,8 @@ static_assert(!nested_result(true).value().has_value());
 static_assert(nested_result(true).value().error() == parse_error::empty);
 static_assert(nested_result(false).error() == parse_error::invalid);
 static_assert(consume_result(twice("7")) == 14);
+static_assert(nested_text(true).value().value() == 9);
+static_assert(nested_text(false).value().error() == "invalid");
 static_assert(area == 48);
 static_assert(snapshots == 18);
 static_assert(twice("").error() == parse_error::empty);
@@ -156,6 +167,8 @@ constexpr Defaults default_object = Defaults();
 static_assert(default_object.reading.value() == 14);
 
 int main() {
+  if (nested_text(true).value().value() != 9 ||
+      nested_text(false).value().error() != "invalid") { return 20; }
   if (Reading("7").get() != accepted) { return 1; }
   if (Reading("").get() != rejected) { return 2; }
   if (Dimensions(2).area() != area) { return 3; }
