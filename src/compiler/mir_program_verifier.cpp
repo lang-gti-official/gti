@@ -4853,6 +4853,34 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
       continue;
     }
     if (!block.terminator.returnLoan) {
+      // A dependency summary bounds the lifetime of dependent alternatives;
+      // it does not give a static text literal a fictitious owner. Require
+      // its exact literal producer rather than trusting an erased loan or a
+      // cleared value-level borrowed-state flag.
+      const auto *returned =
+          block.terminator.value &&
+                  block.terminator.value->kind == MirOperandKind::Value
+              ? body.findValue(block.terminator.value->value)
+              : nullptr;
+      const auto *literal =
+          returned ? linearDefinition(body, returned->id) : nullptr;
+      const bool independentTextLiteral =
+          instance.returnBorrowAccess == AccessMode::ReadOnly && returned &&
+          !returned->info.traits.containsBorrowedState && literal &&
+          literal->kind == MirInstructionKind::Compute &&
+          literal->operation == MirOperation::Literal && literal->literal &&
+          ((instance.returnType.kind == SemanticType::StringView &&
+            returned->info.type == instance.returnType &&
+            std::holds_alternative<std::string>(*literal->literal)) ||
+           (instance.returnType.kind == SemanticType::CString &&
+            returned->info.type.kind == SemanticType::NullPtr &&
+            std::holds_alternative<std::nullptr_t>(*literal->literal))) &&
+          literal->result == returned->id &&
+          literal->info.type == returned->info.type &&
+          !literal->info.traits.containsBorrowedState && !literal->loan &&
+          literal->operands.empty() && !literal->destination &&
+          !literal->receiver && literal->lifecycle.empty() &&
+          literal->definedFailure.empty() && literal->localFailureSites.empty();
       const bool fallibleBorrowErrorReturn =
           instance.returnType.kind == SemanticType::Expected &&
           instance.returnType.arguments.size() == 2 &&
@@ -4866,7 +4894,7 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           block.terminator.value->type.arguments.size() == 1 &&
           block.terminator.value->type.arguments.front() ==
               instance.returnType.arguments.back();
-      if (fallibleBorrowErrorReturn) {
+      if (fallibleBorrowErrorReturn || independentTextLiteral) {
         continue;
       }
       return verificationFailure(
@@ -11075,7 +11103,8 @@ verifyMirProgramContracts(const MirProgram &program) {
     for (const MirPlace &place : body.places) {
       const bool resolvedPackElement =
           (place.type.kind == SemanticType::Class ||
-           place.type.kind == SemanticType::Lambda) &&
+           place.type.kind == SemanticType::Lambda ||
+           place.type.kind == SemanticType::Enum) &&
           place.projections.size() == 1 &&
           place.projections.front().kind == MirProjectionKind::PackElement;
       if (!resolvedPackElement) {
@@ -11086,8 +11115,8 @@ verifyMirProgramContracts(const MirProgram &program) {
         result.errors.push_back(
             {.bodyKind = body.kind,
              .owner = owner,
-             .message = "concrete class pack element traits do not match its "
-                        "class instance"});
+             .message = "concrete pack element traits do not match its "
+                        "resolved type"});
       }
       if (place.traits.drop == DropKind::Lexical &&
           std::none_of(body.dropObligations.begin(), body.dropObligations.end(),

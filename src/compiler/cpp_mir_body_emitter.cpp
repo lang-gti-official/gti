@@ -1792,6 +1792,8 @@ cppMirEnumBoundaryRow(const MirProgram &program,
   return representation &&
          (*representation == CppMirTypeRepresentationKind::Scalar ||
           *representation == CppMirTypeRepresentationKind::StringView ||
+          *representation == CppMirTypeRepresentationKind::RawPointer ||
+          *representation == CppMirTypeRepresentationKind::NullPointer ||
           *representation == CppMirTypeRepresentationKind::Void ||
           (*representation == CppMirTypeRepresentationKind::Enum &&
            program.findPayloadEnum(type) == nullptr));
@@ -4775,7 +4777,7 @@ expectedPayloadExtractionPlace(const MirBody &body, MirValueId valueId) {
 expectedOwnedClassExtractionDestination(const MirBody &body,
                                         MirValueId valueId);
 
-struct OwnedExpectedClassExtractionProducer {
+struct OwnedExpectedExtractionProducer {
   const MirValue *value = nullptr;
   const MirInstruction *call = nullptr;
   const MirInstruction *receiverProducer = nullptr;
@@ -4790,8 +4792,11 @@ struct OwnedExpectedClassExtractionProducer {
   }
 };
 
-[[nodiscard]] OwnedExpectedClassExtractionProducer
+[[nodiscard]] OwnedExpectedExtractionProducer
 ownedExpectedClassExtractionProducer(const MirBody &body, MirValueId valueId);
+
+[[nodiscard]] OwnedExpectedExtractionProducer
+ownedExpectedExtractionProducer(const MirBody &body, MirValueId valueId);
 
 [[nodiscard]] const MirBlock *
 passiveResultReturnBlock(const MirBody &body, const MirValue &value,
@@ -5651,7 +5656,7 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
       // Its receiver capability is checked by call admission; it does not
       // change the exact result-slot/consumer proof below.
       producer->intrinsic == IntrinsicKind::None;
-  const OwnedExpectedClassExtractionProducer ownedExpectedProducer =
+  const OwnedExpectedExtractionProducer ownedExpectedProducer =
       ownedExpectedClassExtractionProducer(body, sourceId);
   const bool ownedExpectedCallProducer = ownedExpectedProducer.call == producer;
   const bool cleanupFreeExpectedCallProducer =
@@ -19489,13 +19494,13 @@ expectedConditionalArmSlot(const MirProgram &program, const MirBody &body,
   return nullptr;
 }
 
-[[nodiscard]] OwnedExpectedClassExtractionProducer
-ownedExpectedClassExtractionProducer(const MirBody &body, MirValueId valueId) {
+[[nodiscard]] OwnedExpectedExtractionProducer
+ownedExpectedExtractionProducer(const MirBody &body, MirValueId valueId) {
   const MirValue *value = body.findValue(valueId);
-  // Most values in aggregate-heavy bodies are scalar elements. Reject those
-  // before looking up an instruction or scanning lifetime obligations.
-  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
-      value->info.category != ValueCategory::Value ||
+  // The payload representation is not part of the ownership witness. The
+  // class-publication wrapper below retains its early class-only filter;
+  // other clients must still prove this exact active result and shell.
+  if (value == nullptr || value->info.category != ValueCategory::Value ||
       !value->info.traits.movable) {
     return {};
   }
@@ -19636,6 +19641,14 @@ ownedExpectedClassExtractionProducer(const MirBody &body, MirValueId valueId) {
           .receiverSlot = receiverSlot,
           .valueDrop = valueDrop,
           .receiverDrop = receiverDrop};
+}
+
+[[nodiscard]] OwnedExpectedExtractionProducer
+ownedExpectedClassExtractionProducer(const MirBody &body, MirValueId valueId) {
+  const auto *value = body.findValue(valueId);
+  return value != nullptr && value->info.type.kind == SemanticType::Class
+             ? ownedExpectedExtractionProducer(body, valueId)
+             : OwnedExpectedExtractionProducer{};
 }
 
 struct CleanupFreeExpectedReceiver {
@@ -20377,7 +20390,7 @@ directExpectedClassExtractionForReceiver(const MirProgram &program,
 [[nodiscard]] const MirPlace *
 expectedOwnedClassExtractionDestination(const MirBody &body,
                                         MirValueId valueId) {
-  const OwnedExpectedClassExtractionProducer producer =
+  const OwnedExpectedExtractionProducer producer =
       ownedExpectedClassExtractionProducer(body, valueId);
   if (!producer) {
     return nullptr;
@@ -20595,18 +20608,15 @@ expectedOwnedClassExtractionReceiverSlot(const MirBody &body,
   }
   const MirPlace *found = nullptr;
   for (const MirValueId candidate : receiverResultCandidates(body, valueId)) {
-    const OwnedExpectedClassExtractionProducer producer =
+    const OwnedExpectedExtractionProducer producer =
         ownedExpectedClassExtractionProducer(body, candidate);
     if (!producer) {
       continue;
     }
-    const StagedClassResult staged =
-        stagedClassResultForSource(body, candidate);
-    const bool bindingDestination =
-        expectedOwnedClassExtractionDestination(body, candidate) != nullptr;
-    const bool preparedDestination = staged.producer == producer.call;
-    if ((!bindingDestination && !preparedDestination) ||
-        !producer.call->receiver ||
+    // Receiver storage follows its own exact move/call and drop witness.
+    // The extracted result's separate publication proof selects its storage;
+    // it may replace an existing object as well as initialize a binding.
+    if (!producer.call->receiver ||
         producer.call->receiver->kind != MirOperandKind::Value ||
         producer.call->receiver->value != valueId) {
       continue;
@@ -20626,7 +20636,7 @@ expectedOwnedClassExtractionReceiverSlot(const MirBody &body,
 [[nodiscard]] const MirPlace *
 ownedExpectedStagedSourceMetadataPlace(const MirBody &body,
                                        MirValueId valueId) {
-  const OwnedExpectedClassExtractionProducer producer =
+  const OwnedExpectedExtractionProducer producer =
       ownedExpectedClassExtractionProducer(body, valueId);
   const StagedClassResult staged = stagedClassResultForSource(body, valueId);
   if (!producer || staged.producer != producer.call ||
@@ -22051,7 +22061,10 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       executableUses.size() > 1 ||
       (fieldViews != 0 && !executableUses.empty()) ||
       // Other extraction destinations keep their own publication routes.
-      (ownedExtractionProducer && fieldViews == 0)) {
+      // One assignment uses the same exact Replace/drop proof as an ordinary
+      // class-returning call below, including failure of old-value cleanup.
+      (ownedExtractionProducer && fieldViews == 0 &&
+       executableUses.size() != 1)) {
     return {};
   }
 
@@ -22249,6 +22262,25 @@ valueRootedClassCallResultSlot(const MirProgram &program,
                                               .destroy = destroy,
                                               .slot = slot,
                                               .drop = drop};
+}
+
+// Extraction owns the same result slot regardless of whether it initializes
+// a binding or replaces an existing object. Reuse the general call-result
+// publication witness for replacement rather than inventing an Expected-only
+// cleanup schedule.
+[[nodiscard]] const MirPlace *
+ownedExpectedExtractionStorage(const MirProgram &program,
+                               const CppMirBodyEmissionMap &representations,
+                               const MirBody &body, MirValueId valueId) {
+  if (const auto *destination =
+          expectedOwnedClassExtractionDestination(body, valueId))
+    return destination;
+  const auto producer = ownedExpectedClassExtractionProducer(body, valueId);
+  if (!producer)
+    return nullptr;
+  const auto result =
+      valueRootedClassCallResultSlot(program, representations, body, valueId);
+  return result.producer == producer.call ? result.slot : nullptr;
 }
 
 // An owned class result constructed directly into a conditional temporary,
@@ -28765,8 +28797,9 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
 }
 
 // A checked field store evaluates its RHS before the exclusive destination
-// access. Preserve that exact receiver stage and call, then continue only on
-// its Invoke success edge. Both moved and constructed RHS slots use this
+// access. Preserve that exact receiver stage and call, continuing on its
+// Invoke success edge when the call can fail, or immediately after an exact
+// non-failing call. Both moved and constructed RHS slots use this
 // schedule; neither may move construction past destination evaluation.
 [[nodiscard]] bool advanceCheckedAssignmentReceiver(
     const MirBody &body, const MirLoan &loan, const MirBlock *&block,
@@ -28777,8 +28810,13 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
   const MirInstruction &input = *position++;
   if (position == block->instructions.end() ||
       producedCallResultLoan(body, *position) != &loan ||
-      input.callSite != position->callSite ||
-      std::next(position) != block->instructions.end() ||
+      input.callSite != position->callSite)
+    return false;
+  if (position->definedFailure.empty() && position->localFailureSites.empty()) {
+    ++position;
+    return true;
+  }
+  if (std::next(position) != block->instructions.end() ||
       block->terminator.kind != MirTerminatorKind::Invoke ||
       block->terminator.invokeInstruction != position->id)
     return false;
@@ -28789,8 +28827,9 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
   return true;
 }
 
-// A projected checked owner may retain a chain of call-result reborrows.
-// Retire precisely that child-to-parent chain before the moved-from RHS shell.
+// A projected checked owner or borrowed constructor input may retain a chain
+// of call-result reborrows. Retire precisely that child-to-parent chain with
+// unchanged access before the moved-from RHS shell.
 [[nodiscard]] bool advanceAssignmentLoanEnds(
     const MirBody &body, const MirLoan *ending, const MirBlock &block,
     std::vector<MirInstruction>::const_iterator &position) {
@@ -28811,12 +28850,69 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
       break;
     const MirLoan *parent = body.findLoan(ending->parent);
     if (parent == nullptr || parent->kind != MirLoanKind::CallResult ||
-        parent->access != AccessMode::Mutable || parent->escapes ||
+        parent->access != ending->access || parent->escapes ||
         !parent->carriers.empty() || parent->source != ending->source)
       return false;
     ending = parent;
   }
   return true;
+}
+
+// A constructor can consume a temporary borrowed call result without retaining
+// it. Its ordered input stage identifies the exact stored dependency; retiring
+// that loan after publication does not retire the newly constructed owner.
+// Keep this separate from destination reborrow retirement and never skip an
+// unrelated EndBorrow merely because it has no native instruction.
+[[nodiscard]] std::optional<std::vector<MirLoanId>>
+constructorInputBorrowLoans(const MirBody &body,
+                            const MirInstruction &constructor) {
+  std::vector<MirLoanId> loans;
+  for (std::size_t index = 0; index < constructor.operands.size(); ++index) {
+    const auto &operand = constructor.operands[index];
+    const auto *value = operand.kind == MirOperandKind::Value
+                            ? body.findValue(operand.value)
+                            : nullptr;
+    const auto *stage =
+        value ? findInstruction(body, value->definition) : nullptr;
+    if (!stage || stage->kind != MirInstructionKind::CallInput ||
+        stage->operands.size() != 1 ||
+        stage->operands.front().kind != MirOperandKind::Value)
+      continue;
+    const auto *input = body.findValue(stage->operands.front().value);
+    const auto *call =
+        input ? findInstruction(body, input->definition) : nullptr;
+    const auto *loan =
+        call && call->loan ? body.findLoan(*call->loan) : nullptr;
+    if (!loan)
+      continue;
+    if (call->kind != MirInstructionKind::Call || call->loan != loan->id ||
+        loan->kind != MirLoanKind::Stored || call->hirValue == 0 ||
+        loan->producedBy != call->hirValue || loan->lifecycleBound ||
+        loan->storedDependency != 0 || !call->result ||
+        *call->result != input->id || stage->callSite != constructor.callSite ||
+        stage->callInputRole != MirCallInputRole::Argument ||
+        stage->callInputIndex != index ||
+        stage->callInputKind != HirCallInputKind::Value ||
+        stage->info.type != operand.type || input->info.type != operand.type ||
+        stage->destination || stage->receiver || stage->loan ||
+        stage->preparedParameterDrop || !stage->lifecycle.empty() ||
+        !stage->result || *stage->result != operand.value ||
+        loan->access != AccessMode::ReadOnly || loan->entry || loan->escapes ||
+        !loan->carriers.empty() || loan->storedField != 0 ||
+        !loan->additionalDependencies.empty() ||
+        std::find(loans.begin(), loans.end(), loan->id) != loans.end())
+      return std::nullopt;
+    const auto inputUses = nonRootRecordUses(body, input->id);
+    const auto stageUses = nonRootRecordUses(body, operand.value);
+    if (inputUses.size() != 1 || stageUses.size() != 1 ||
+        inputUses.front().kind != MirValueUseKind::InstructionOperand ||
+        inputUses.front().instruction != stage->id ||
+        stageUses.front().kind != MirValueUseKind::InstructionOperand ||
+        stageUses.front().instruction != constructor.id)
+      return std::nullopt;
+    loans.push_back(loan->id);
+  }
+  return loans;
 }
 
 // Moving a field out through one mutable call-result loan may stage the
@@ -29899,6 +29995,23 @@ valueRootedClassPrvalueAssignmentSlot(
     if (destinationLoan != nullptr &&
         !advanceAssignmentLoanEnds(body, destinationLoan, *publicationBlock,
                                    destroyPosition))
+      return {};
+    const auto inputLoans = constructorInputBorrowLoans(body, *producer);
+    if (!inputLoans)
+      return {};
+    std::unordered_set<MirLoanId> retiredInputs;
+    while (destroyPosition != publicationBlock->instructions.end() &&
+           destroyPosition->kind == MirInstructionKind::EndBorrow) {
+      if (!destroyPosition->loan ||
+          std::find(inputLoans->begin(), inputLoans->end(),
+                    *destroyPosition->loan) == inputLoans->end() ||
+          !retiredInputs.insert(*destroyPosition->loan).second ||
+          !advanceAssignmentLoanEnds(body,
+                                     body.findLoan(*destroyPosition->loan),
+                                     *publicationBlock, destroyPosition))
+        return {};
+    }
+    if (retiredInputs.size() != inputLoans->size())
       return {};
     if (destroyPosition == publicationBlock->instructions.end() ||
         destroyPosition->id != destroy->id) {
@@ -42923,9 +43036,10 @@ private:
         return;
       }
       const MirPlace *ownedExtraction =
-          instruction.result ? expectedOwnedClassExtractionDestination(
-                                   facts.body, *instruction.result)
-                             : nullptr;
+          instruction.result
+              ? ownedExpectedExtractionStorage(program, representations,
+                                               facts.body, *instruction.result)
+              : nullptr;
       const StagedClassResult stagedExtraction =
           instruction.result
               ? stagedClassResultForSource(facts.body, *instruction.result)
@@ -43110,9 +43224,10 @@ private:
       const MirOperand &receiverBorrow =
           staged != nullptr ? staged->operands.front() : *instruction.receiver;
       const MirPlace *ownedExtraction =
-          instruction.result ? expectedOwnedClassExtractionDestination(
-                                   facts.body, *instruction.result)
-                             : nullptr;
+          instruction.result
+              ? ownedExpectedExtractionStorage(program, representations,
+                                               facts.body, *instruction.result)
+              : nullptr;
       const StagedClassResult stagedExtraction =
           instruction.result
               ? stagedClassResultForSource(facts.body, *instruction.result)
@@ -53938,6 +54053,72 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             place) {
       return false;
     }
+    // An independently owned Expected extraction can precede a later
+    // conditional argument. Its shell and prepared payload keep their exact
+    // MIR activation/cleanup schedule; neither changes the borrowed address.
+    // Share the extraction witness with class publication, then prove the
+    // prepared argument's sole handoff across every normal/failure edge.
+    std::unordered_set<MirInstructionId> ownedExtractionInputs;
+    for (const auto &operand : consumer->operands) {
+      const auto *input = definitionFor(body, operand);
+      if (!input || input->kind != MirInstructionKind::CallInput ||
+          !input->result || input->callSite != consumer->callSite ||
+          input->callInputRole != MirCallInputRole::Argument ||
+          input->callInputKind != HirCallInputKind::MoveValue ||
+          input->callInputIndex >= consumer->operands.size() ||
+          consumer->operands[input->callInputIndex].value != *input->result ||
+          input->operands.size() != 1 ||
+          input->operands.front().kind != MirOperandKind::Value ||
+          !input->destination || !input->preparedParameterDrop ||
+          input->lifecycle.size() != 1 || input->loan || input->receiver ||
+          input->rawMemoryAccess ||
+          input->unsafeOperation != UnsafeOperationKind::None ||
+          !input->definedFailure.empty() || !input->localFailureSites.empty())
+        continue;
+      const auto extraction =
+          ownedExpectedExtractionProducer(body, input->operands.front().value);
+      if (!extraction || extraction.value->info.traits.containsBorrowedState ||
+          extraction.receiverProducer->kind != MirInstructionKind::Move ||
+          extraction.call->loan || extraction.receiverProducer->loan ||
+          extraction.call->rawMemoryAccess ||
+          extraction.receiverProducer->rawMemoryAccess ||
+          extraction.call->unsafeOperation != UnsafeOperationKind::None ||
+          extraction.receiverProducer->unsafeOperation !=
+              UnsafeOperationKind::None ||
+          !invokePairedInstruction(body, extraction.call->id))
+        continue;
+      const auto *source =
+          body.findPlace(extraction.receiverProducer->operands.front().place);
+      const auto *slot = body.findPlace(*input->destination);
+      const auto *drop = body.findDropObligation(*input->preparedParameterDrop);
+      const auto *record = body.findValue(*input->result);
+      const auto extractedUses = nonRootRecordUses(body, extraction.value->id);
+      const auto preparedUses = nonRootRecordUses(body, *input->result);
+      const auto &transfer = input->lifecycle.front();
+      if (!source || sameMirPlaceRoot(*source, *place) || !slot || !drop ||
+          !record || slot->root != MirPlaceRootKind::Temporary ||
+          !slot->projections.empty() ||
+          slot->type != extraction.value->info.type ||
+          input->info.type != slot->type || drop->place != slot->id ||
+          drop->dropType.type != slot->type || drop->initiallyActive ||
+          drop->kind != MirDropObligationKind::PreparedParameter ||
+          transfer.kind != MirLifecycleEventKind::Reparent ||
+          transfer.source != extraction.valueDrop->id ||
+          transfer.target != drop->id || transfer.conditional ||
+          transfer.failureCleanup || extractedUses.size() != 1 ||
+          extractedUses.front().instruction != input->id ||
+          extractedUses.front().kind != MirValueUseKind::InstructionOperand ||
+          preparedUses.size() != 1 ||
+          preparedUses.front().instruction != consumer->id ||
+          preparedUses.front().kind != MirValueUseKind::InstructionOperand ||
+          !ownedArgumentReachesConsumer(body, record->definitionBlock,
+                                        input->id, record->id, *slot, *drop,
+                                        consumer))
+        continue;
+      ownedExtractionInputs.insert(extraction.receiverProducer->id);
+      ownedExtractionInputs.insert(extraction.call->id);
+      ownedExtractionInputs.insert(input->id);
+    }
     std::vector<ConditionalClassBindingJoin> conditionalArguments;
     for (const MirOperand &operand : consumer->operands) {
       if (operand.kind != MirOperandKind::Value ||
@@ -54009,6 +54190,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           complete.insert(blockId);
           return true;
         }
+        if (ownedExtractionInputs.contains(instruction.id))
+          continue;
         // Another argument may stage a stable borrow before the conditional
         // expression. It publishes no runtime operation and cannot invalidate
         // this address. Require the same exact invocation and sole use rather
@@ -56882,9 +57065,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                                  ? staged->operands.front()
                                                  : *instruction.receiver;
           const MirPlace *ownedExtraction =
-              instruction.result ? expectedOwnedClassExtractionDestination(
-                                       body, *instruction.result)
-                                 : nullptr;
+              instruction.result
+                  ? ownedExpectedExtractionStorage(program_, representations_,
+                                                   body, *instruction.result)
+                  : nullptr;
           const DirectExpectedClassExtraction directExtraction =
               instruction.result ? directExpectedClassExtraction(
                                        program_, body, *instruction.result)

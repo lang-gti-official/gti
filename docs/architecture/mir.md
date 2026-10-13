@@ -111,7 +111,7 @@ field/index projection composition, field mutation, and returned values. Their
 exact class instance supplies field-symbol/type identity; external constant
 arguments are checked recursively for complete, exactly typed fields. Passive
 drop bookkeeping retires local storage without invoking hidden user code;
-active cleanup remains ineligible. Source constructors with explicit semantic
+active cleanup uses the transient lifetime profile below. Source constructors with explicit semantic
 constexpr eligibility execute the same MIR body and produce one fully initialized
 receiver. Each field must have one explicit, non-reference initialization stage;
 trivial fixed-array fields now retain their exact `Initialize` write as well as
@@ -151,7 +151,7 @@ consume the shared budget. A `void` call completes as a unit result without
 manufacturing a scalar constant. At the external service boundary a reference
 result is its observed value and a mutable input is isolated executor storage.
 Only a leading checked reference-binding dereference is transparent; arbitrary
-pointer projections, stored-reference carriers, allocation, and runtime calls remain
+pointer projections, stored-reference carriers and runtime calls remain
 ineligible. Untaken runtime-only
 calls do not execute. Rewritten/tombstoned instructions and optimizer-produced
 control flow cannot determine constant eligibility.
@@ -175,8 +175,34 @@ Constructor reference inputs use the same location transport as function
 inputs, preserving source/access/epoch and writes through mutable arguments.
 Generated defaults are structurally eligible, not implicitly source-marked
 constexpr. The selected initializer inventory and each exact field write are
-still verified; stored borrows, active cleanup and unrepresented in-place
+still verified; stored borrows and unrepresented in-place
 constructor targets are not silently executed.
+
+Transient exclusive allocation uses the ordinary `AllocateObject` followed by
+selected construction, or the scalar allocation intrinsic. The request-local
+heap assigns monotonic typed identities, not target addresses. Pointee loans
+retain allocation identity, access, projection and generation; reset/replacement
+cannot leave a live checked reference to freed storage. Projected movement
+retires the exact path while preserving the surrounding object shell. Result
+extraction retains its payload origin so propagation neither drops a moved
+payload twice nor hides it in a copied SSA value.
+
+Initialize/Move/Reparent/TransferOut/Drop lifecycle events drive active cleanup.
+`MirDropType` supplies exact destructor identity and ordered subobject recipes;
+execution does not rediscover cleanup from C++ representations or public names.
+Source destructors execute their verified body, then the remaining subobjects.
+An executed failure ends the constant request immediately and retains its body,
+instruction and source identity; no resulting constant or heap is published.
+
+Concrete pack roots remain grouped binding cells, while concrete call signatures
+are expanded. The executor maps declaration bindings to those exact elements,
+including empty packs, without changing MIR's call-input evaluation order.
+Transient owner nodes are accepted only inside this executor. Inputs and final
+results are recursively checked to reject imported or escaping owner identities;
+active-cleanup result types and leaked live allocations are also rejected.
+Allocation identities and live logical heap size have separate deterministic
+bounds in addition to shared execution/depth limits. These profiles do not
+extend the AST compatibility execution path.
 
 The service returns `ConstantValue` or a failure carrying the concrete body
 address, block, and instruction identity, including constructor failures.
@@ -364,6 +390,15 @@ provide the authoritative ownership, borrowing and concurrency facts folded
 from actual alternative fields; nominal generic metadata does not become a
 stored component. Missing exact rows remain invalid rather than granting a
 storage or capability exemption.
+
+Concrete parameter-pack elements retain the exact enum catalogue traits, just
+as nominal classes and lambdas retain their resolved traits. Body verification
+checks the pack root, element index, type, access and availability; program
+verification checks enum traits against the exact integral or payload enum row.
+Payload enum relocation and lifecycle facts must not fall back to the generic
+scalar-enum defaults. This also applies to enum pack places synthesized while
+lowering constructor arguments or loans. The existing semantic boundary for
+owning payload enums inside by-value packs remains unchanged.
 
 The combined serialization is `mir-v101`/`lowered-program-v17`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
@@ -1485,6 +1520,16 @@ alternative. A direct local success initialization consumes one exact Loan
 operand whose place names the runtime `T` and whose loan names the protected
 owner. Verification admits only the read-only specialization, exact types,
 one carrier, non-widened access, and immediate source-loan retirement.
+
+A dynamic-text return summary is an upper bound on dependent alternatives,
+not a requirement to invent an owner for static storage. A read-only summarized
+function may return a literal-backed text view or a null C-string alternative
+without an escaping loan. Program verification independently requires the exact
+typed string/null literal producer, with no borrowed state, input operands,
+loan, side effects or lifecycle events. Clearing a borrowed-state flag or a
+return loan does not establish that witness. All dynamic alternatives still
+publish and verify their exact escaping loan, and callers conservatively retain
+the function's owner dependency regardless of the runtime branch.
 The success loan always uses read-only access, including when the enclosing
 method has a mutable receiver. A by-value nominal carrier parameter can provide
 that success through its one exact designated reference path; the Return
@@ -1888,9 +1933,13 @@ A `MirBody` owns:
   nested operation is either a local `Compute`/`Load` detector or a static
   direct `Call` propagation with no local site, nested owning-parameter
   transfer, or active-drop result. A passive `Expected<T, E>` call result whose
-  success payload is scalar, void or an enum is also eligible, including before
+  success payload is scalar, void, an enum, a text view, a raw pointer, or a
+  recursively passive expected value is also eligible, including before
   a contextual condition conversion: its transformed value out-parameter
-  publishes only on success and carries no MIR drop to arm.
+  publishes only on success and carries no MIR drop to arm. A raw pointer
+  payload does not suppress a callee's defined-failure channel; this preserves
+  failure routing without establishing pointee validity or changing unsafe
+  obligations.
   Every eligible operation has no destination, loan, state-changing ownership
   event, reference result, or active-drop result and occurs in a
   failure-control-flow body. The operation is the final instruction in an
@@ -2584,6 +2633,18 @@ and the constructor result's own publication remain independently checked.
 Emission preserves the MIR argument order and only retires the moved-from
 native shell at the consuming operation; it does not defer argument evaluation
 into a C++ call expression.
+
+A borrowed method receiver also remains staged when an earlier argument
+extracts an owning Expected payload and a later argument introduces conditional
+control flow. The extraction shares the existing shell-move and success-only
+activation witness; its prepared payload must have one unconditional reparent
+and one consuming argument, with the same owned-argument CFG cleanup proof.
+The moved shell's source must be distinct from the receiver's storage root.
+Only those exact extraction/preparation instructions extend the stable-address
+proof; arbitrary calls, overlapping storage and borrowed payloads do not. Class
+and other owning value representations use the same lifecycle facts. No
+extraction, receiver evaluation or cleanup is moved into a native argument
+expression, and no new runtime bookkeeping is introduced.
 
 The base-subobject family uses one `InitializeBase` after its exact typed
 argument values. A fallible selected constructor has an `Invoke`; a

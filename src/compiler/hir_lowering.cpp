@@ -40,29 +40,29 @@ public:
         return std::move(output);
       }
       for (const auto &parameter : owner->genericParameters) {
-        if (parameter.pack ||
-            (parameter.value ? !substitution.values.contains(parameter.id)
-                             : !substitution.types.contains(parameter.id))) {
+        if (parameter.value ? !substitution.values.contains(parameter.id)
+                            : !substitution.types.contains(parameter.id)) {
           output.program.valid_ = false;
           return std::move(output);
         }
         if (parameter.value)
           ownerValues.push_back(substitution.values.at(parameter.id));
         else
-          ownerTypes.push_back(substitution.types.at(parameter.id));
+          SemanticType::appendExpandedArgument(
+              ownerTypes, substitution.types.at(parameter.id));
       }
     }
     for (const auto &parameter : function->genericParameters) {
-      if (parameter.pack ||
-          (parameter.value ? !substitution.values.contains(parameter.id)
-                           : !substitution.types.contains(parameter.id))) {
+      if (parameter.value ? !substitution.values.contains(parameter.id)
+                          : !substitution.types.contains(parameter.id)) {
         output.program.valid_ = false;
         return std::move(output);
       }
       if (parameter.value)
         values.push_back(substitution.values.at(parameter.id));
       else
-        types.push_back(substitution.types.at(parameter.id));
+        SemanticType::appendExpandedArgument(
+            types, substitution.types.at(parameter.id));
     }
     auto parameters = function->parameterTypes;
     for (auto &type : parameters)
@@ -179,10 +179,9 @@ private:
   HirLoweringResult finishConstant() {
     ensurePlaceDomain(output.program.moduleBody);
     processPendingInstances();
-    output.program.valid_ =
-        output.requiredSemanticBodies.empty() &&
-        !hasErrorDiagnostics(output.diagnostics) && lifecycleValid &&
-        output.program.destructors.empty() && output.program.lambdas.empty();
+    output.program.valid_ = output.requiredSemanticBodies.empty() &&
+                            !hasErrorDiagnostics(output.diagnostics) &&
+                            lifecycleValid && output.program.lambdas.empty();
     return std::move(output);
   }
 
@@ -416,14 +415,13 @@ private:
         baseModel->findClassLifecycle(*declaration->declaration);
     const bool lifecycleBoundBorrowCarrier =
         instanceProvider->lifecycleBoundBorrowCarrierFor(resolvedType);
-    // This staged family admits passive structural values, not arbitrary
-    // class capabilities or executable lifecycle bodies. The ordinary class
-    // catalog still owns exact substituted fields and initializer metadata.
+    // Lifecycle-bearing structural values may execute transiently. The
+    // constant executor checks their concrete operations and cleanup recipes;
+    // staging never turns arbitrary runtime capabilities into constant ones.
     if (constantClosure &&
         (declaration->kind == ClassKind::Union || declaration->polymorphic ||
          !declaration->bases.empty() || lifecycleBoundBorrowCarrier ||
-         declaration->compilerCapability != CompilerCapabilityTypeKind::None ||
-         instanceProvider->requiresActiveCleanupFor(resolvedType))) {
+         declaration->compilerCapability != CompilerCapabilityTypeKind::None)) {
       lifecycleValid = false;
       return std::nullopt;
     }
@@ -3935,6 +3933,30 @@ private:
       return std::nullopt;
     }
 
+    // A selected raw member call borrows its pointee, not the pointer value
+    // or the member-access expression's function type. Preserve that exact
+    // source identity so MIR can evaluate the pointer once before arguments.
+    if (input->kind == HirValueKind::MemberAccess &&
+        input->unsafeOperation == UnsafeOperationKind::RawMember &&
+        input->info.category != ValueCategory::Place &&
+        input->operands.size() == 1 &&
+        (receiverMode == CallReceiverMode::ReadOnlyPlace ||
+         receiverMode == CallReceiverMode::MutablePlace)) {
+      const HirValue *pointer = body.findValue(input->operands.front());
+      if (pointer == nullptr ||
+          pointer->info.type.kind != SemanticType::RawPointer ||
+          pointer->info.type.arguments.size() != 1) {
+        return std::nullopt;
+      }
+      return HirCallReceiver{
+          .value = source,
+          .kind = receiverMode == CallReceiverMode::MutablePlace
+                      ? HirCallInputKind::MutableBorrow
+                      : HirCallInputKind::ReadBorrow,
+          .type = pointer->info.type.arguments.front(),
+      };
+    }
+
     HirCallInputKind kind = HirCallInputKind::Value;
     const bool temporaryReceiver =
         receiverMode == CallReceiverMode::FreshTemporaryRead ||
@@ -6285,9 +6307,10 @@ private:
                                      : body.findValue(value.operands.front());
         if (callee != nullptr && callee->kind == HirValueKind::MemberAccess &&
             !callee->operands.empty()) {
-          supportedReceiver =
-              callee->unsafeOperation != UnsafeOperationKind::RawMember;
-          callReceiver = callee->operands.front();
+          callReceiver =
+              callee->unsafeOperation == UnsafeOperationKind::RawMember
+                  ? callee->id
+                  : callee->operands.front();
         } else {
           callReceiver = value.receiver;
         }

@@ -8421,7 +8421,7 @@ consumer, and release refreshes remain outstanding for the full campaign.
   defaults retain exact identity through the same frontend-owned constant
   model. The remaining AST interpreter is a compatibility path for unmigrated
   profiles, not the intended endpoint for future execution facilities.
-- **Implemented scope:** The existing evaluator admits concrete non-pack type
+- **Implemented scope:** The existing evaluator admits concrete type/pack
   and `uint64_t` value-generic calls, exact scoped enums, concrete fixed arrays,
   fully initialized structural class/struct values, ordinary constexpr
   constructors, and read-only or mutable instance methods. Constants retain exact
@@ -8588,10 +8588,18 @@ consumer, and release refreshes remain outstanding for the full campaign.
   construction. Unsupported result-bearing execution fails closed without an
   AST fallback. Native C++20 non-literal result storage remains const; GTI
   evaluation does not depend on native constexpr acceptance.
-- **Remaining scope:** Stored references, allocation,
+- **Transient allocation/destruction:** Exclusive object allocation, source
+  destructors, canonical drop recipes, concrete pack bindings and arrow/bool
+  observers now execute verified MIR. Symbolic heap identities and exact loan
+  origins remain request-local; all allocation is reclaimed before publishing
+  a passive result. Example 153 demonstrates scratch allocation and destruction.
+  Independent step/depth, allocation-count and live-storage bounds fail closed.
+  No AST allocation/destructor interpreter or public-name exceptions are added.
+- **Remaining scope:** Stored references, shared/virtual/recursive owning
+  cleanup, raw-memory/provider allocation protocols,
   in-place constructor targets without an explicit canonical field-write schedule,
-  payload enums, unions, inherited or cleanup-owning aggregates, generic packs,
-  arrow/contextual-bool operators, consuming receivers, and polymorphism remain
+  payload enums, unions, inherited aggregates,
+  consuming receivers, and polymorphism remain
   excluded. Do not widen exact qualified specialization into partial specialization as a
   side effect.
 - **Initial exit gate:** met by positive/negative identity and limit tests plus
