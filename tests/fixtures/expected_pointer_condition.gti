@@ -1,0 +1,28 @@
+#include <std/print>
+
+enum class lookup_error { missing };
+
+class Scope {
+public:
+  Scope() {}
+  ~Scope() { std::println("caller cleaned"); }
+};
+
+expected<const int*, lookup_error> find(const int* pointer, int divisor, bool missing) {
+  int checked = 12 / divisor;
+  if (missing) { return unexpected(lookup_error::missing); }
+  return pointer;
+}
+
+int main(int argc) {
+  Scope scope{};
+  int value = 7;
+  int divisor = argc == 2 ? 0 : 1;
+  bool missing = argc == 3;
+  // An ordinary expected error is not a defined runtime failure. The
+  // success-only condition conversion must distinguish those two channels.
+  if (find(&value, divisor, missing)) {
+    return missing ? 1 : 0;
+  }
+  return missing ? 0 : 2;
+}

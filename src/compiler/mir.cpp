@@ -6700,7 +6700,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   if (instruction.successResultDrop) {
     return instruction.info.traits.drop == DropKind::Lexical;
   }
-  // Expected<scalar, E> crosses the transformed failure boundary through a
+  // Expected<passive, E> crosses the transformed failure boundary through a
   // value out-parameter. It therefore has no semantic result drop to arm:
   // the callee publishes only on its successful Invoke edge, after which the
   // value can feed either a direct return or another cleanup-free expression.
@@ -6714,6 +6714,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
                                          const SemanticType &type) -> bool {
     switch (type.kind) {
     case SemanticType::StringView:
+    case SemanticType::RawPointer:
       return true;
     case SemanticType::Expected:
       return type.arguments.size() == 2 && self(self, type.arguments.front()) &&
