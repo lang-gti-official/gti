@@ -5181,6 +5181,17 @@ the authority for a constant result. Existing read-only calls on named
 enumerators remain covered; general global-object borrowing is not added to
 the executor's checked local-origin profile.
 
+`testConstexprResults` and `constexpr_results_runtime` exercise passive scalar,
+record and void results, exact error propagation, checked arithmetic, field and
+array replacement, constructor reference writes, selected declaration defaults,
+omitted arguments and generated defaults. The native matrix includes
+O0/O1/O2/O3 under C++20/C++23, with result constants nested inside ordinary
+records. Example 142 adds recoverable configuration and cursor-based constructor
+composition. Shape-corrupted constants, inactive extraction, eager fallbacks,
+runtime-only defaults, stored references and active cleanup have negative
+coverage; every interrupted result-execution step preserves the resource-limit
+failure. LSP analysis uses the same constant defaults/reference/result rules.
+
 `testConstexprMutation`, `constexpr_mutation_runtime` and
 `constexpr_builders_example` cover mutable reference forwarding, `void` calls,
 constructor-body edits, mutable methods/subscript/call operators, isolated

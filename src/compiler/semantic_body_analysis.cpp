@@ -10480,8 +10480,15 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
     return true;
   }
   if (type.kind == SemanticType::Expected && type.arguments.size() == 2) {
-    return constantIntegerDomain(type.arguments[0]).has_value() &&
-           type.arguments[1].kind == SemanticType::Enum;
+    return (type.arguments[0] == SemanticType::Void ||
+            isSupportedConstexprType(type.arguments[0], allowDependent,
+                                     visiting)) &&
+           isSupportedConstexprType(type.arguments[1], allowDependent,
+                                    visiting);
+  }
+  if (type.kind == SemanticType::Unexpected && type.arguments.size() == 1) {
+    return isSupportedConstexprType(type.arguments[0], allowDependent,
+                                    visiting);
   }
   if (constantIntegerDomain(type).has_value() ||
       semanticFloatFormat(type).has_value() || type == SemanticType::Bool ||
@@ -10632,7 +10639,8 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
            "A constexpr function must return void or a supported value: a "
            "fixed-width integer, float, double, bool, char, string_view, "
            "nullptr_t, scoped enum, fixed array, structural aggregate, or "
-           "checked-integer expected result, or a checked reference to a "
+           "expected result with supported alternatives, or a checked "
+           "reference to a "
            "supported value.");
   }
   for (const Parameter &parameter : function.parameters()) {
@@ -10680,13 +10688,18 @@ auto SemanticVisitor::Impl::validateConstexprConstructor(
   }
   for (const Parameter &parameter : constructor.parameters()) {
     const SemanticType parameterType = typeOf(parameter);
-    if (parameter.pack || parameter.type.reference ||
+    const SemanticType &observed =
+        parameterType.kind == SemanticType::Reference &&
+                parameterType.arguments.size() == 1
+            ? parameterType.arguments[0]
+            : parameterType;
+    if (parameter.pack ||
         (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
-         !isSupportedConstexprType(parameterType, true))) {
+         !isSupportedConstexprType(observed, true))) {
       reject(parameter.name.lexeme.empty() ? parameter.type.name.last()
                                            : parameter.name,
-             "Constexpr constructor parameters must be non-pack, by-value "
-             "supported values.");
+             "Constexpr constructor parameters must be non-pack supported "
+             "values or checked references to supported values.");
     }
   }
   return valid;
@@ -10820,6 +10833,12 @@ auto SemanticVisitor::Impl::defaultConstexprValue(
   if (context.work->steps++ >= constexprExpressionStepLimit) {
     return {.failure = ConstantEvaluationFailure::ResourceLimit};
   }
+  if (type.kind == SemanticType::Expected && type.arguments.size() == 2) {
+    if (type.arguments[0] == SemanticType::Void)
+      return makeConstantResult(type, true);
+    const auto value = defaultConstexprValue(type.arguments[0], context);
+    return value ? makeConstantResult(type, true, value.value) : value;
+  }
   if (const std::optional<CheckedIntegerDomain> domain =
           constantIntegerDomain(type)) {
     return {.value = ConstantValue{makeConstantInteger({}, *domain)}};
@@ -10899,8 +10918,24 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
     return evaluateConstexprExpression(explicitArguments.front(), context);
   }
   const ConstructorDecl *declaration = resolved.declaration;
-  if (resolved.generatedDefault || declaration == nullptr ||
-      !declaration->isConstexpr() ||
+  if (resolved.generatedDefault) {
+    auto concrete = resolved;
+    concrete.constructedType = constexprType(resolved.constructedType, context);
+    if (!explicitArguments.empty() ||
+        !isSupportedConstexprType(concrete.constructedType))
+      return constexprFailure(callSite,
+                              ConstantEvaluationFailure::UnsupportedType);
+    if (auto staged = executeStagedConstexpr(
+            concrete, {}, classSubstitution(concrete.constructedType), {},
+            callSite, context))
+      return *staged ? constexprSuccess(source, *staged->value, context)
+                     : std::move(*staged);
+    return constexprFailure(callSite,
+                            ConstantEvaluationFailure::UnsupportedExpression,
+                            "Generated constant construction requires an "
+                            "available verified MIR field schedule.");
+  }
+  if (declaration == nullptr || !declaration->isConstexpr() ||
       !constexprConstructorsAnalyzed.contains(declaration)) {
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
@@ -10962,8 +10997,10 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
     }
     const SemanticType parameterType =
         constexprType(resolved.parameterTypes[index], context);
-    ConstantEvaluation converted =
-        convertConstantToType(*argument.value, parameterType);
+    ConstantEvaluation converted = convertConstantToType(
+        *argument.value, parameterType.kind == SemanticType::Reference
+                             ? parameterType.arguments[0]
+                             : parameterType);
     if (!converted) {
       return constexprFailure(expressionToken(*argumentExpressions[index]),
                               converted.failure);
@@ -10996,11 +11033,30 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
     value = constexprValue(value, context);
   for (auto &type : concrete.parameterTypes)
     type = constexprType(type, context);
+  const bool referenceInputs =
+      std::any_of(concrete.parameterTypes.begin(),
+                  concrete.parameterTypes.end(), [](const SemanticType &type) {
+                    return type.kind == SemanticType::Reference;
+                  });
+  if (context.callDepth != 0 &&
+      std::any_of(concrete.parameterTypes.begin(),
+                  concrete.parameterTypes.end(), [](const SemanticType &type) {
+                    return type.kind == SemanticType::Reference &&
+                           type.referenceAccess == AccessMode::Mutable;
+                  }))
+    return constexprFailure(callSite,
+                            ConstantEvaluationFailure::UnsupportedExpression,
+                            "Mutable constructor arguments require their "
+                            "enclosing body to execute as verified MIR.");
   if (auto staged = executeStagedConstexpr(concrete, arguments, substitution,
                                            {}, callSite, context)) {
     return *staged ? constexprSuccess(source, *staged->value, context)
                    : std::move(*staged);
   }
+  if (referenceInputs)
+    return constexprFailure(
+        callSite, ConstantEvaluationFailure::UnsupportedExpression,
+        "Constexpr constructor references require verified MIR execution.");
 
   const std::size_t enclosingScopeCount = context.scopes.size();
   const std::size_t enclosingSubstitutionCount = context.substitutions.size();
@@ -11134,6 +11190,15 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
 
   const SemanticType sourceType =
       constexprType(semanticModel.typeOf(source), context);
+  if (const auto *unexpected = exprAs<Unexpected>(&source)) {
+    const auto error =
+        evaluateConstexprExpression(unexpected->error(), context);
+    if (!error)
+      return error;
+    const auto result = makeConstantResult(sourceType, false, error.value);
+    return result ? constexprSuccess(source, *result.value, context)
+                  : constexprFailure(expressionToken(source), result.failure);
+  }
   if (const ResolvedOperatorInfo *operation =
           semanticModel.findOperator(source)) {
     // Selection belongs to ordinary semantics. Normalize only the source
@@ -11536,6 +11601,12 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
                                            initializer->arguments(),
                                            initializer->brace(), context);
     }
+    if (initializer->arguments().empty() &&
+        sourceType.kind == SemanticType::Expected) {
+      const auto result = defaultConstexprValue(sourceType, context);
+      return result ? constexprSuccess(source, *result.value, context)
+                    : constexprFailure(initializer->brace(), result.failure);
+    }
     if (initializer->arguments().size() != 1) {
       return constexprFailure(initializer->brace(),
                               ConstantEvaluationFailure::UnsupportedExpression);
@@ -11566,37 +11637,39 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
         if (!object) {
           return object;
         }
-        const auto *checked =
-            std::get_if<ConstantCheckedIntegerResult>(&*object.value);
-        if (checked == nullptr) {
-          return constexprFailure(
-              member->name(), ConstantEvaluationFailure::UnsupportedType,
-              "Only checked-integer expected results are supported in "
-              "constexpr observers.");
+        const auto *selected = semanticModel.findCall(*call);
+        const auto intrinsic =
+            selected ? selected->intrinsic : IntrinsicKind::None;
+        const auto state = constantResultHasValue(*object.value);
+        if (!state)
+          return constexprFailure(member->name(), state.failure);
+        if (intrinsic == IntrinsicKind::ExpectedHasValue &&
+            call->arguments().empty())
+          return constexprSuccess(source, *state.value, context);
+        if ((intrinsic == IntrinsicKind::ExpectedValue ||
+             intrinsic == IntrinsicKind::ExpectedError) &&
+            call->arguments().empty()) {
+          const auto payload = constantResultPayload(
+              *object.value, intrinsic == IntrinsicKind::ExpectedValue);
+          return payload ? constexprSuccess(source, *payload.value, context)
+                         : constexprFailure(
+                               member->name(), payload.failure,
+                               "Constant evaluation cannot extract the "
+                               "inactive or void result alternative.");
         }
-        if (member->name().lexeme == "has_value" && call->arguments().empty()) {
-          return constexprSuccess(source, checked->value.has_value(), context);
-        }
-        if (member->name().lexeme == "value" && call->arguments().empty()) {
-          if (!checked->value) {
-            return constexprFailure(
-                member->name(), ConstantEvaluationFailure::InvalidOperands,
-                "A failed checked-integer result has no value.");
-          }
-          return constexprSuccess(source, *checked->value, context);
-        }
-        if (member->name().lexeme == "value_or" &&
+        if (intrinsic == IntrinsicKind::ExpectedValueOr &&
             call->arguments().size() == 1) {
-          if (checked->value) {
-            return constexprSuccess(source, *checked->value, context);
-          }
+          // Ordinary call arguments are eager even when the success is used.
           ConstexprEvaluation fallback =
               evaluateConstexprExpression(call->arguments().front(), context);
           if (!fallback) {
             return fallback;
           }
           const ConstantEvaluation converted =
-              convertConstantToType(*fallback.value, objectType.arguments[0]);
+              std::get<bool>(*state.value)
+                  ? constantResultPayload(*object.value, true)
+                  : convertConstantToType(*fallback.value,
+                                          objectType.arguments[0]);
           return converted ? constexprSuccess(source, *converted.value, context)
                            : constexprFailure(
                                  expressionToken(call->arguments().front()),
@@ -11605,7 +11678,7 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
         return constexprFailure(
             member->name(), ConstantEvaluationFailure::UnsupportedExpression,
             "The bounded constexpr evaluator supports has_value(), "
-            "value(), and value_or() for checked-integer results.");
+            "value(), error(), and value_or() for passive results.");
       }
     }
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
@@ -11707,17 +11780,32 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
           return constexprFailure(call->paren(),
                                   ConstantEvaluationFailure::InvalidOperands);
         }
-        ConstantCheckedIntegerResult result{.domain = *domain};
+        ConstantEvaluation result;
         if (const auto *integer =
                 std::get_if<CheckedIntegerValue>(&*evaluated)) {
-          result.value = makeConstantInteger(*integer, *domain);
+          result = makeConstantResult(resolved->returnType, true,
+                                      makeConstantInteger(*integer, *domain));
         } else if (std::get<CheckedIntegerFailure>(*evaluated) !=
                    CheckedIntegerFailure::Overflow) {
           return constexprFailure(call->paren(),
                                   ConstantEvaluationFailure::InvalidOperands);
+        } else {
+          const auto &errorType = resolved->returnType.arguments[1];
+          const auto *enumeration =
+              semanticModel.findEnumType(errorType.enumId);
+          const auto errorDomain =
+              enumeration ? constantIntegerDomain(enumeration->underlyingType)
+                          : std::nullopt;
+          if (!errorDomain)
+            return constexprFailure(call->paren(),
+                                    ConstantEvaluationFailure::InvalidOperands);
+          result = makeConstantResult(
+              resolved->returnType, false,
+              ConstantEnum{.enumId = errorType.enumId,
+                           .value = makeConstantInteger({}, *errorDomain)});
         }
-        return constexprSuccess(source, ConstantValue{std::move(result)},
-                                context);
+        return result ? constexprSuccess(source, *result.value, context)
+                      : constexprFailure(call->paren(), result.failure);
       }
       const std::optional<CheckedIntegerValue> evaluated =
           evaluateDefinedIntegerBinary(arithmetic->operation, operands[0],
@@ -12450,13 +12538,14 @@ auto SemanticVisitor::Impl::constexprBindingValue(
     valid = false;
   }
   if (!isSupportedConstexprType(type)) {
-    report(*declaration.constexprKeyword(),
-           "The bounded constexpr evaluator supports fixed-width integers, "
-           "float, double, bool, char, string_view, and nullptr_t values, "
-           "plus scoped enums, concrete fixed arrays, structural "
-           "aggregates, and checked-integer expected results; type '" +
-               typeSpelling(type) + "' is not supported yet.",
-           "GTI-S2057");
+    report(
+        *declaration.constexprKeyword(),
+        "The bounded constexpr evaluator supports fixed-width integers, "
+        "float, double, bool, char, string_view, and nullptr_t values, "
+        "plus scoped enums, concrete fixed arrays, structural "
+        "aggregates, and expected results with supported alternatives; type '" +
+            typeSpelling(type) + "' is not supported yet.",
+        "GTI-S2057");
     valid = false;
   }
   if (!valid) {

@@ -2288,8 +2288,11 @@ An AST compatibility caller cannot independently stage a mutable callee: its
 snapshots do not retain writable origins. The enclosing body must run as MIR.
 Existing reflection expansion
 and metadata resolution precede this service and are not reimplemented here.
-Constructor reference parameters, declaration-default/in-place constructor
-schedules and stored-reference carriers retain their earlier boundaries.
+Constructor reference parameters preserve those same origins. Selected
+declaration defaults, explicit nested source constructions and generated default
+constructors now stage their canonical field initialization schedules. Stored
+references and initialization targets without that explicit MIR schedule remain
+outside constant execution.
 
 Ordinary scoped enums use the canonical MIR integral-enum catalog and
 `EnumConstant` operation. The executor reconstructs a nominal `ConstantEnum`
@@ -2298,8 +2301,12 @@ against that domain, and compares enum switch labels through the shared
 constant comparison kernel. No native enum representation or public library
 name supplies authority. These passive values use the same checked locations,
 aggregate copies, constructor/method calls and shared budgets as scalar
-builders. Payload-enum and checked-integer Expected execution are separate
-remaining profiles; they are not admitted by the integral-enum catalog.
+builders. Passive Expected/Unexpected composition uses exact typed aggregate
+constants and the canonical result operations, including prefix propagation,
+void success and checked-integer results. Small early expression kernels share
+result construction/observation with MIR; completed result-bearing bodies
+cannot fall back to AST execution. Payload-enum execution remains a separate
+profile; it is not admitted by the integral-enum catalog.
 
 ## Boundaries
 

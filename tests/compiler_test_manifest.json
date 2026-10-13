@@ -650,6 +650,10 @@
       "suite": "constexpr"
     },
     {
+      "name": "testConstexprResults",
+      "suite": "constexpr"
+    },
+    {
       "name": "testConstexprEnumBuilders",
       "suite": "constexpr"
     },

@@ -118,8 +118,8 @@ trivial fixed-array fields now retain their exact `Initialize` write as well as
 the constructor-stage boundary. Failure-effect proofs require that exact write
 for both passive scalar and fixed-array fields; computing an aggregate value
 without publishing it into the field is not proof of a completed constructor.
-Declaration defaults and nested initializer
-constructor targets remain outside this executor profile. Before execution,
+Declaration defaults and nested source construction expressions lower to this
+same selected schedule; generated default constructors execute it too. Before execution,
 the profile checks that every explicit field has its exact MIR initialization
 write; a declaration-only initializer must not become a spurious
 uninitialized-constant failure. Read-only and mutable constexpr
@@ -161,11 +161,22 @@ and exact underlying integer domain. `EnumConstant`, exact-type comparisons and
 enumerator switch labels execute here, including enum locals, record fields and
 array elements in mutable builders. Value reads of resolved enumerators lower
 to constants; explicit place formation and source borrowing rules are unchanged.
-Checked-integer `expected` values and operations have not yet migrated to this
-executor. They retain compatibility evaluation where previously supported, but
-cannot participate in the mutation-capable MIR profile, including as aggregate
-fields. This is a representation/operation prerequisite, not permission for
-mutable calls to retry the copy-based AST interpreter.
+Passive Expected/Unexpected values share the immutable typed aggregate
+representation: exact wrapper type, active state and one exact payload (none
+for void success). Construction, state tests, extraction, eager `value_or`,
+propagation and replacement execute canonical MIR operations. Checked integer
+intrinsics reuse the existing checked arithmetic kernels and construct this
+same result, including the exact error-enum identity. The checked-only constant
+representation is removed. Recursive payload validation and copying consume
+the shared budget. Inactive extraction fails at its instruction; unsupported
+result operations cannot retry the AST interpreter.
+
+Constructor reference inputs use the same location transport as function
+inputs, preserving source/access/epoch and writes through mutable arguments.
+Generated defaults are structurally eligible, not implicitly source-marked
+constexpr. The selected initializer inventory and each exact field write are
+still verified; stored borrows, active cleanup and unrepresented in-place
+constructor targets are not silently executed.
 
 The service returns `ConstantValue` or a failure carrying the concrete body
 address, block, and instruction identity, including constructor failures.

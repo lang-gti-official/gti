@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.420.0 — Compile-time result and constructor composition
+
+- Passive `expected<T, E>` values (including void success) now compose in
+  constexpr helpers: construction, state checks, observers, prefix propagation,
+  fields, arrays and assignment execute verified MIR. Checked-integer results
+  use the same exact active-alternative representation.
+- Constructor reference parameters retain their live origins, including writes
+  through mutable arguments. Selected declaration defaults, nested constructions,
+  default arguments and generated default constructors use the ordinary MIR
+  initialization schedule. Example 142 demonstrates the combined facilities.
+- Preserve C++20 materialization of constants containing result fields without
+  depending on native constexpr support. Fix passive result-array lowering and
+  read-only method observations of passive temporary fields/result payloads.
+- Allocation, stored borrows, active cleanup and runtime-only operations remain
+  outside constant execution; inactive result extraction and resource exhaustion
+  are source diagnostics, not native compiler failures.
+
 ## 0.418.0 — Enum-aware compile-time builders
 
 - Ordinary scoped enums now compose with mutable constexpr helpers, checked
