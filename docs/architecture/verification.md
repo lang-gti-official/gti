@@ -1371,7 +1371,7 @@ cleanup; `mir_shared_failure_cleanup` bounds both.
   mutations. `shared_failure_cleanup_runtime` is a differential runtime matrix
   over 33 phases in 9 modes, including ASan/UBSan.
 
-## Shared normal-exit cleanup (0.420.1)
+## Shared normal-exit cleanup (0.421.1)
 
 Function and lambda bodies now share the cleanup of normal exits that return
 nothing, a scalar or a scalar error; see
