@@ -790,6 +790,7 @@ private:
             .requiresUnsafe = info->requiresUnsafe,
             .neverReturns = info->neverReturns,
             .tracksCaller = info->tracksCaller,
+            .threadConfinedCallback = info->threadConfinedCallback,
             .cThreadOperation = info->cThreadOperation,
             .processMemoryOperation = info->processMemoryOperation,
             .virtualMethod = info->virtualMethod,
@@ -1053,6 +1054,7 @@ private:
         source.requiresUnsafe != lowered.requiresUnsafe ||
         source.neverReturns != lowered.neverReturns ||
         source.tracksCaller != lowered.tracksCaller ||
+        source.threadConfinedCallback != lowered.threadConfinedCallback ||
         source.cThreadOperation != lowered.cThreadOperation ||
         (info != nullptr &&
          source.cThreadOperation != info->cThreadOperation) ||
@@ -1062,6 +1064,8 @@ private:
         (info != nullptr && source.requiresUnsafe != info->requiresUnsafe) ||
         (info != nullptr && source.neverReturns != info->neverReturns) ||
         (info != nullptr && source.tracksCaller != info->tracksCaller) ||
+        (info != nullptr &&
+         source.threadConfinedCallback != info->threadConfinedCallback) ||
         source.linkage != lowered.linkage ||
         source.externalSymbol != lowered.externalSymbol ||
         source.body.placeDomain != lowered.body.placeDomain ||

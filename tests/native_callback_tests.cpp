@@ -49,6 +49,7 @@ analyze(std::string_view name, std::string source,
   lang::FrontendOptions options;
   if (profile) {
     options.target.executionProfile = *profile;
+    options.target.runtimeCapabilities.threads = true;
   }
   const std::filesystem::path standardLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
@@ -564,6 +565,85 @@ void testFormatterSurface() {
          "native function types");
 }
 
+void testThreadConfinedCallbacks() {
+  const std::string source = R"(
+#include <std/cthread>
+using Transform = (int32_t) -> int32_t;
+[[thread_confined_callback]] int32_t transform(int32_t value) { return value; }
+int main() {
+  Transform first = transform;
+  Transform second = transform;
+  unsafe { return first(second(0)); }
+}
+)";
+  auto frontend =
+      analyze("confined.gti", source, lang::ExecutionProfile::Concurrent);
+  if (!frontend.canGenerateCode())
+    printDiagnostics(frontend);
+  expect(frontend.canGenerateCode(),
+         "explicit confined native callbacks compile concurrently");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(frontend.mir.requiresCThreadRuntime() &&
+             frontend.mir.nativeCallbackAdapters().size() == 1 &&
+             frontend.mir.nativeCallbackAdapters().front().cThreadCallback ==
+                 lang::CThreadCallbackKind::ThreadConfined,
+         "exact callback identity retains explicit entry policy and service "
+         "requirement");
+  auto bad = frontend.mir;
+  const_cast<lang::MirNativeCallbackAdapter &>(
+      bad.nativeCallbackAdapters().front())
+      .cThreadCallback = lang::CThreadCallbackKind::ThreadEntry;
+  expect(!lang::verifyMirProgram(bad).valid(), "forged entry role is rejected");
+  bad = frontend.mir;
+  const_cast<lang::MirFunctionInstance *>(
+      bad.findFunctionInstance(bad.nativeCallbackAdapters().front().target))
+      ->threadConfinedCallback = false;
+  expect(!lang::verifyMirProgram(bad).valid(),
+         "target and adapter confinement must agree");
+  bool checkedEffect = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.operation != lang::MirOperation::NativeCallback)
+          continue;
+        const auto effects = lang::effects(frontend.mir, instruction);
+        expect(effects.invokesRuntime && effects.mayTrap &&
+                   !effects.removableWhenUnused && !effects.speculatable &&
+                   !effects.reorderable,
+               "registration cannot be removed, speculated or reordered");
+        checkedEffect = true;
+      }
+    }
+  }
+  expect(checkedEffect, "thread binding retains an executable MIR conversion");
+  const auto cpp = gti_test::emitCpp(frontend, lang::CppStandard::Cpp23,
+                                     frontend.mir.target())
+                       .contents;
+  expect(cpp.find("__gti_bind_native_callback_") != std::string::npos &&
+             cpp.find("gti_rt_confined_callback_enter_v1") != std::string::npos,
+         "production MIR emission consumes thread binding and entry policy");
+  expect(analyze("confined-single.gti", source).canGenerateCode(),
+         "contract remains usable in single-threaded consumers");
+  const auto formatted = lang::Formatter().format(source);
+  expect(lang::Formatter().format(formatted) == formatted &&
+             analyze("formatted-confined.gti", formatted,
+                     lang::ExecutionProfile::Concurrent)
+                 .canGenerateCode(),
+         "formatter preserves explicit confinement");
+  for (const std::string invalid :
+       {"[[thread_confined_callback]] unsafe void f() {}",
+        "[[thread_confined_callback]] void f<T>() {}",
+        "[[thread_confined_callback, track_caller]] void f() {}",
+        "[[thread_confined_callback, thread_confined_callback]] void f() {}",
+        "class C { public: [[thread_confined_callback]] static void f() {} };",
+        "[[thread_confined_callback]] int main() { return 0; }"}) {
+    const auto rejected = analyze("bad-confined.gti", invalid);
+    expect(!rejected.canGenerateCode() && hasCode(rejected, "GTI-S2099"),
+           "invalid confinement contract gets source diagnostic: " + invalid);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -575,6 +655,7 @@ int main() {
   testConcreteFailureOverlay();
   testNativeViewReturnBoundary();
   testFormatterSurface();
+  testThreadConfinedCallbacks();
   if (failures != 0) {
     std::cerr << failures << " native callback test(s) failed\n";
     return 1;

@@ -2,7 +2,7 @@
 Terminal and caller-tracked functions
 ==================
 
-[[noreturn, track_caller]] void stop() { while (true) {} }
+[[noreturn, track_caller, thread_confined_callback]] void stop() { while (true) {} }
 [[track_caller]] [[noreturn]] void forward<T>(T value) { stop(); }
 struct Guard {
   [[track_caller]] void check() { stop(); }

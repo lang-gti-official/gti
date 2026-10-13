@@ -36692,8 +36692,17 @@ private:
         throw std::logic_error(
             "verified MIR native callback lost its adapter identity");
       }
-      output << "(&::__gti_program::__gti_native_callback_"
-             << *instruction.nativeCallbackAdapter << ");\n";
+      const auto *adapter =
+          program.findNativeCallbackAdapter(*instruction.nativeCallbackAdapter);
+      if (adapter == nullptr)
+        throw std::logic_error("missing verified callback row");
+      if (adapter->cThreadCallback == CThreadCallbackKind::ThreadConfined) {
+        output << "::__gti_program::__gti_bind_native_callback_" << adapter->id
+               << "();\n";
+      } else {
+        output << "(&::__gti_program::__gti_native_callback_" << adapter->id
+               << ");\n";
+      }
       return;
     }
     if (instruction.operation == MirOperation::FunctionItem) {

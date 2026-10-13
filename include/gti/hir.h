@@ -580,6 +580,7 @@ struct HirFunctionInstance {
   bool neverReturns = false;
   bool tracksCaller = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
+  bool threadConfinedCallback = false;
   ProcessMemoryRuntimeOperation processMemoryOperation =
       ProcessMemoryRuntimeOperation::None;
   LanguageLinkage linkage = LanguageLinkage::Gti;

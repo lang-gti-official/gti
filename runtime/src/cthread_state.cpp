@@ -26,7 +26,7 @@ struct Worker {
 
 struct Runtime {
   std::mutex mutex;
-  RuntimePhase phase = RuntimePhase::Uninitialized;
+  std::atomic<RuntimePhase> phase{RuntimePhase::Uninitialized};
   std::thread::id owner;
   std::unordered_map<CThreadHandle, std::unique_ptr<Worker>> workers;
 };
@@ -49,6 +49,8 @@ struct OnceInvocation {
 };
 thread_local OnceInvocation *onceInvocation = nullptr;
 thread_local std::uint64_t managedDepth = 0;
+thread_local std::uint64_t confinedDepth = 0;
+thread_local bool initialRuntimeThread = false;
 thread_local CThreadHandle currentHandle = 0;
 std::atomic<CThreadHandle> nextHandle{1};
 std::atomic<CThreadTestFault> testFault{CThreadTestFault::None};
@@ -113,6 +115,8 @@ void leaveCThreadManagedScope() noexcept {
 }
 
 bool terminalCThreadCallbackActive() noexcept {
+  if (confinedDepth != 0)
+    return true;
   if (attachment.phase == EntryPhase::Entered) {
     return true;
   }
@@ -192,6 +196,7 @@ CThreadStatus beginCThreadRuntime() noexcept {
   }
   state.phase = RuntimePhase::Running;
   state.owner = std::this_thread::get_id();
+  initialRuntimeThread = true;
   return CThreadStatus::Success;
 }
 
@@ -208,6 +213,7 @@ CThreadStatus shutdownCThreadRuntime() noexcept {
     return CThreadStatus::Busy;
   }
   state.phase = RuntimePhase::Stopped;
+  initialRuntimeThread = false;
   return CThreadStatus::Success;
 }
 
@@ -326,7 +332,42 @@ void setCThreadTestFault(CThreadTestFault fault) noexcept {
   testFault.store(fault, std::memory_order_release);
 }
 
+CThreadHandle confinedCallbackThread() noexcept {
+  const auto phase = runtime().phase.load(std::memory_order_relaxed);
+  if ((phase != RuntimePhase::Running && phase != RuntimePhase::Stopping) ||
+      (!initialRuntimeThread && managedDepth == 0 &&
+       (attachment.worker == nullptr ||
+        attachment.phase != EntryPhase::Entered))) {
+    std::terminate();
+  }
+  return currentCThread();
+}
+
+void enterConfinedCallback(CThreadHandle owner) noexcept {
+  if (owner == 0 || owner != confinedCallbackThread() ||
+      confinedDepth == std::numeric_limits<std::uint64_t>::max()) {
+    std::terminate();
+  }
+  ++confinedDepth;
+}
+
+void leaveConfinedCallback() noexcept {
+  if (confinedDepth == 0)
+    std::terminate();
+  --confinedDepth;
+}
+
 } // namespace gti::runtime::detail
+
+extern "C" uint64_t gti_rt_confined_callback_thread_v1(void) {
+  return gti::runtime::detail::confinedCallbackThread();
+}
+extern "C" void gti_rt_confined_callback_enter_v1(uint64_t owner) {
+  gti::runtime::detail::enterConfinedCallback(owner);
+}
+extern "C" void gti_rt_confined_callback_leave_v1(void) {
+  gti::runtime::detail::leaveConfinedCallback();
+}
 
 extern "C" uint64_t gti_rt_cthread_current_v1(void) {
   return gti::runtime::detail::currentCThread();

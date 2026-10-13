@@ -463,7 +463,7 @@ void writeCppSupportPreamble(std::ostream &output,
   if (usesManagedThreads) {
     output << "#include <tuple>\n";
   }
-  if (usesAtomics) {
+  if (usesAtomics || features.cThreads) {
     output << "#include <atomic>\n";
   }
   if (usesMutexes) {

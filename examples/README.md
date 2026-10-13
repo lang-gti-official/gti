@@ -1,5 +1,10 @@
 # GTI examples
 
+[`076-scalar-atomics.gti`](076-scalar-atomics.gti) also demonstrates an explicit
+`[[thread_confined_callback]]` native event hook alongside managed workers.
+Build with `--execution-profile concurrent`; native invocation stays `unsafe`,
+and the callback must remain on the thread that first converted it.
+
 [`127-operator-and-value-transport.gti`](127-operator-and-value-transport.gti)
 demonstrates an overloaded operator on a range element's field, a read-only
 view relayed through an indexed receiver and observed directly from that call,

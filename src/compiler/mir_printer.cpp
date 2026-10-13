@@ -270,7 +270,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v102 valid=" << program.valid() << '\n';
+    output << "mir-v103 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -637,6 +637,7 @@ public:
              << " requires-unsafe=" << instance.requiresUnsafe
              << " noreturn=" << instance.neverReturns
              << " track-caller=" << instance.tracksCaller
+             << " thread-confined-callback=" << instance.threadConfinedCallback
              << " cthread-operation="
              << static_cast<unsigned>(instance.cThreadOperation)
              << " process-memory-operation="

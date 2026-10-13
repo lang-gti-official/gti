@@ -684,6 +684,10 @@ obligations remain with the unsafe binding or wrapper.
 Generated callback adapters already have failure firewalls and bounded runtime
 entry. Registered `<std/cthread>` workers and once callbacks have their exact
 implemented entry contract in [Concurrency](../language/concurrency.md).
+Explicit `[[thread_confined_callback]]` adapters extend that boundary to existing
+attached GTI threads, with first-conversion binding and wrong-thread termination.
+This revises the earlier single-thread-only general adapter restriction; it
+does not implement a general native-call classification or foreign attachment.
 General foreign-thread registration/attachment remains future work and must
 satisfy all of these rules:
 
