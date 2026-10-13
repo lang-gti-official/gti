@@ -8,6 +8,18 @@ sanitizers. Copy independence, later-argument failure, constructor failure and
 secondary cleanup failure retain exact observable order. The corresponding
 emitter test rejects reordered prefix loads/boundaries and a missing boundary;
 native prefix admission cannot bypass body-ordered owned-field cleanup.
+## Owning field replacement through checked references (#116)
+
+`reference_owned_field_replacement_runtime` exercises direct and nested owned
+fields through mutable reference parameters, successful replacement, failed
+construction, old-value cleanup failure and secondary staged-value failure.
+Repeated scalar writes and member reads use occurrence-local places for the
+same reference before and after replacement; their exact carrier and referent
+type must agree without requiring one globally unique dereference-place ID.
+Eight native modes cover C++20/C++23, O0/O1/O3, no-elide and ASan/UBSan.
+`testReferenceOwnedFieldReplacement` rejects read-only reference or loan access,
+raw-pointer substitution, immutable intermediate/leaf fields, inconsistent
+referent prefixes and erased publication metadata.
 
 ## Virtual owning expected results (#109)
 
