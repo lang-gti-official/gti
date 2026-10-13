@@ -8,6 +8,7 @@ sanitizers. Copy independence, later-argument failure, constructor failure and
 secondary cleanup failure retain exact observable order. The corresponding
 emitter test rejects reordered prefix loads/boundaries and a missing boundary;
 native prefix admission cannot bypass body-ordered owned-field cleanup.
+
 ## Owning field replacement through checked references (#116)
 
 `reference_owned_field_replacement_runtime` exercises direct and nested owned
