@@ -20,6 +20,7 @@ def main():
     strong = repository / "tests/fixtures/base_constructor_stages.gti"
     effectful = repository / "tests/fixtures/effectful_base_arguments.gti"
     checked = repository / "tests/fixtures/checked_base_arguments.gti"
+    forwarded = repository / "tests/fixtures/forwarded_base_view.gti"
     success = "1\n5\n2\n3\n6\n16\n13\n12\n15\n11\n"
     sources = [
         (reproducer / "a45-base-state-rollback-unsupported.gti", "2\n"),
@@ -32,6 +33,7 @@ def main():
         (effectful, "9\n1\n2\n30\n40\n50\n150\n140\n130\n109\n"),
         (repository / "tests/fixtures/generated_abstract_base.gti", ""),
         (repository / "examples/005-objects.gti", "objects use explicit construction\n"),
+        (forwarded, "derived\nforwarded\nderived\nheap\n"),
     ]
     failures = [
         (1, "1\n5\n11\n", "GTI-R0002", 27),
@@ -43,6 +45,13 @@ def main():
     def verify(executable, expected, source):
         result = run([str(executable)])
         assert result.stdout == expected and result.stderr == "", result
+        if source == forwarded:
+            for args, output, line in ((["base"], "", 10),
+                                       (["derived", "failure"], "forwarded\n", 19)):
+                result = run([str(executable), *args], 70)
+                assert result.stdout == output, result
+                assert f"forwarded_base_view.gti:{line}: runtime error[GTI-R0002]" in result.stderr, result
+            return
         if source == checked:
             result = run([str(executable), "overflow"], 70)
             assert result.stdout == "", result
@@ -85,7 +94,10 @@ def main():
         run([str(compiler), str(effectful), "-O1", "--progress", "never", "-o", str(executable),
              "--", "-fsanitize=address,undefined", "-fno-elide-constructors"])
         verify(executable, sources[7][1], effectful)
-    print("base constructor stage: 60 native cases, 48 failures and 9 sanitizer runs passed")
+        run([str(compiler), str(forwarded), "-O1", "--progress", "never", "-o", str(executable),
+             "--", "-fsanitize=address,undefined", "-fno-elide-constructors"])
+        verify(executable, sources[-1][1], forwarded)
+    print("base constructor stage: 66 native cases, 60 failures and 12 sanitizer runs passed")
 
 
 if __name__ == "__main__":
