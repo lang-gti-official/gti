@@ -11408,6 +11408,72 @@ void testPassiveClassFieldRollback() {
   expect(checked == 1, "rollback fixture must exercise one guarded owner");
 }
 
+void testNestedPassiveParameterCopies() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/nested_passive_parameter_copy.gti";
+  std::ifstream input(fixture);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "nested passive copy fixture must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  std::size_t checked = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+    const auto *info =
+        owner == nullptr ? nullptr
+                         : frontend.semantics.findClassType(owner->declaration);
+    if (!info || !info->declaration ||
+        info->declaration->name().lexeme != "Wrapper")
+      continue;
+    ++checked;
+    const auto bindings =
+        lang::cppMirCopyParameterFieldBindings(frontend.mir, constructor);
+    expect(bindings && bindings->size() == 1,
+           "nested passive field needs one exact copied parameter binding");
+    const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                       constructor.id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.supportsFailureBodyText(address) ||
+               emitter.supportsBodyText(address),
+           "nested generated passive copy must compose through class fields");
+    for (int mutation = 0; mutation != 6; ++mutation) {
+      auto malformed = frontend.mir;
+      auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+          malformed.classInstances());
+      bool changed = false;
+      for (auto &type : classes) {
+        const auto *selected =
+            frontend.semantics.findClassType(type.declaration);
+        if (!selected || !selected->declaration ||
+            selected->declaration->name().lexeme != "Leaf")
+          continue;
+        changed = true;
+        if (mutation == 0)
+          type.copyConstructor = lang::SpecialMemberStatus::Deleted;
+        if (mutation == 1)
+          type.destructorStatus = lang::SpecialMemberStatus::Declared;
+        if (mutation == 2)
+          type.requiresActiveCleanup = true;
+        if (mutation == 3)
+          type.requiresActiveDropState = true;
+        if (mutation == 4)
+          type.traits.copyable = false;
+        if (mutation == 5)
+          type.declaredFields.front().type = type.type;
+      }
+      expect(changed, "nested proof mutation must reach the leaf record");
+      const auto rejected =
+          lang::cppMirCopyParameterFieldBindings(malformed, constructor);
+      expect(!rejected || rejected->empty(),
+             "a nested non-passive or non-generated copy must not use the "
+             "passive parameter field route");
+    }
+  }
+  expect(checked == 1, "exactly one nested wrapper constructor must be tested");
+}
+
 void testBoundPassiveClassFieldRollback() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constructor_bound_passive_field_rollback.gti";
@@ -14098,6 +14164,7 @@ constexpr NamedTest kTests[] = {
      testSelectedConstructorDefaultSchedule},
     {"testOwnedPrologueFormalEntryLoanEnd",
      testOwnedPrologueFormalEntryLoanEnd},
+    {"testNestedPassiveParameterCopies", testNestedPassiveParameterCopies},
 };
 
 } // namespace

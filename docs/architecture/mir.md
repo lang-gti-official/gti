@@ -912,6 +912,16 @@ and failure cleanup; the later copy/borrow retains only its own staging and
 ownership events. Unexecuted place selection checks remain on their owning
 operation, including the existing checked array-address prefix schedule.
 
+The backend's passive generated-class representation proof composes through
+nested concrete record and fixed-array fields. Every visited record must retain
+generated destruction and no active cleanup/drop state; copy publication also
+requires generated, available copying at every nested record. User destruction,
+borrowed fields, state-bearing bases and non-passive storage do not become
+passive merely because an enclosing type has a generated special member.
+The exact constructor parameter-to-field schedule remains unchanged. Recursive
+proof state rejects cycles and memoizes shared nested records, while the
+existing scalar/array-leaf path requires no proof-state allocation.
+
 MIR independently checks the selected target, typed inputs, dominance, failure
 sites and cleanup transfers. The object-lifetime operation's effects compose
 with the selected constructor's effects, and the original failure record drives

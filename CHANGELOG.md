@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.424.8 — Nested passive parameter field copies
+
+- Fix an internal compiler error when a by-value parameter containing nested
+  passive records is copied into a constructor field, including array wrappers.
+  The representation proof composes generated copy/destruction through the
+  exact field graph without adding native work or special library exceptions
+  (issue #107).
+
 ## 0.424.6 — Prepared arguments from checked call results
 
 - Fix an internal compiler error when copying a checked class payload into a

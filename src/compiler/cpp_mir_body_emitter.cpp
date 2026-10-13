@@ -15801,54 +15801,82 @@ lifecycleGuardedGeneratedMoveClass(const MirProgram &program,
 // copied. Interface bases add representation but no owned state; every field
 // must still be passive and destruction must be generated and observation-free.
 [[nodiscard]] const MirClassInstance *
+passiveGeneratedClass(const MirProgram &program, const SemanticType &type,
+                      bool requireCopy) {
+  // Generated destruction/copy composes through passive fields. Memoize exact
+  // concrete instances, with a pending false entry rejecting cyclic graphs;
+  // neither nested class spelling nor an array wrapper changes this proof.
+  std::unordered_map<const MirClassInstance *, bool> admitted;
+  const auto classify =
+      [&](const auto &self,
+          const SemanticType &candidate) -> const MirClassInstance * {
+    const auto *instance = uniqueClassInstanceForType(program, candidate);
+    if (instance == nullptr ||
+        (requireCopy &&
+         (instance->copyConstructor != SpecialMemberStatus::Generated ||
+          !instance->traits.copyable)))
+      return nullptr;
+    if (const auto *native = passiveCAbiRecordInstance(program, candidate))
+      return native;
+    if (const auto found = admitted.find(instance); found != admitted.end())
+      return found->second ? instance : nullptr;
+    if (instance->abstract || instance->unionLayout ||
+        instance->destructor.has_value() ||
+        instance->destructorStatus != SpecialMemberStatus::Generated ||
+        instance->requiresActiveDropState || instance->requiresActiveCleanup ||
+        instance->bases != instance->structuralBases ||
+        classHasStateBearingBase(*instance))
+      return nullptr;
+    bool tracked = false;
+    const auto passiveFieldType = [&](const auto &fieldSelf,
+                                      const SemanticType &fieldType) -> bool {
+      if (fieldType.kind == SemanticType::Array)
+        return fieldType.arrayLengthParameterId == 0 &&
+               fieldType.arrayLength != 0 && fieldType.arguments.size() == 1 &&
+               fieldSelf(fieldSelf, fieldType.arguments.front());
+      if (fieldType.kind == SemanticType::Class) {
+        // The existing scalar/array-leaf fast path allocates no proof state.
+        if (!tracked) {
+          admitted.emplace(instance, false);
+          tracked = true;
+        }
+        return self(self, fieldType) != nullptr;
+      }
+      const auto representation = expectedTypeRepresentation(fieldType);
+      return representation &&
+             (*representation == CppMirTypeRepresentationKind::Scalar ||
+              *representation == CppMirTypeRepresentationKind::Enum ||
+              *representation == CppMirTypeRepresentationKind::RawPointer ||
+              *representation == CppMirTypeRepresentationKind::NullPointer);
+    };
+    const bool passive = std::all_of(
+        instance->declaredFields.begin(), instance->declaredFields.end(),
+        [&](const MirClassFieldInfo &field) {
+          return field.field != 0 && field.symbol != 0 &&
+                 !field.requiresActiveCleanup &&
+                 (field.dropKind == DropKind::Trivial ||
+                  field.type.kind == SemanticType::Class ||
+                  field.type.kind == SemanticType::Array) &&
+                 passiveFieldType(passiveFieldType, field.type);
+        });
+    if (tracked)
+      admitted[instance] = passive;
+    return passive ? instance : nullptr;
+  };
+  return classify(classify, type);
+}
+
+[[nodiscard]] const MirClassInstance *
 passiveGeneratedDestructorClass(const MirProgram &program,
                                 const SemanticType &type) {
-  if (const auto *native = passiveCAbiRecordInstance(program, type))
-    return native;
-  const auto passiveFieldType = [](const auto &self,
-                                   const SemanticType &fieldType) -> bool {
-    if (fieldType.kind == SemanticType::Array) {
-      return fieldType.arrayLengthParameterId == 0 &&
-             fieldType.arrayLength != 0 && fieldType.arguments.size() == 1 &&
-             self(self, fieldType.arguments.front());
-    }
-    const auto representation = expectedTypeRepresentation(fieldType);
-    return representation &&
-           (*representation == CppMirTypeRepresentationKind::Scalar ||
-            *representation == CppMirTypeRepresentationKind::Enum ||
-            *representation == CppMirTypeRepresentationKind::RawPointer ||
-            *representation == CppMirTypeRepresentationKind::NullPointer);
-  };
-  const MirClassInstance *instance = uniqueClassInstanceForType(program, type);
-  if (instance == nullptr || instance->abstract || instance->unionLayout ||
-      instance->destructor.has_value() ||
-      instance->destructorStatus != SpecialMemberStatus::Generated ||
-      instance->requiresActiveDropState || instance->requiresActiveCleanup ||
-      instance->bases != instance->structuralBases ||
-      classHasStateBearingBase(*instance) ||
-      !std::all_of(instance->declaredFields.begin(),
-                   instance->declaredFields.end(),
-                   [&](const MirClassFieldInfo &field) {
-                     return field.field != 0 && field.symbol != 0 &&
-                            field.dropKind == DropKind::Trivial &&
-                            !field.requiresActiveCleanup &&
-                            passiveFieldType(passiveFieldType, field.type);
-                   })) {
-    return nullptr;
-  }
-  return instance;
+  return passiveGeneratedClass(program, type, false);
 }
 
 // Native parameter-to-field copying additionally requires an exact generated
 // copy. Do not impose this requirement on a Drop that executes no copy.
 [[nodiscard]] const MirClassInstance *
 passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type) {
-  const auto *instance = passiveGeneratedDestructorClass(program, type);
-  return instance != nullptr &&
-                 instance->copyConstructor == SpecialMemberStatus::Generated &&
-                 instance->traits.copyable
-             ? instance
-             : nullptr;
+  return passiveGeneratedClass(program, type, true);
 }
 
 [[nodiscard]] bool
