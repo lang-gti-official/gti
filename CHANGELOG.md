@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.424.3 — Consuming members returning expected payloads
+
+- Fix a backend internal compiler error when a consuming source member returns
+  an owning value directly into `expected`, including polymorphic owner
+  factories using `std::move(owner).upcast<Base>()`. Retain exact receiver,
+  pending-result publication and failure-cleanup checks (issue #99).
+
 ## 0.424.0 — Transient compile-time ownership
 
 - Constant execution supports transient exclusive allocations and deterministic
