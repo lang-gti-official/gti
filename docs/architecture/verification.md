@@ -11,6 +11,7 @@ intermediate field mutability, publication and raw-memory/unsafe metadata.
 Source negatives retain explicit unsafe, mutable pointee and mutable field rules.
 Nested/indexed field stores preserve their underlying raw-operation marker even
 when their outer field selection has no additional unsafe syntax.
+
 ## Getter-derived and independently owned carrier inputs (#123)
 
 The `getter_owned_dependencies` borrowing-composition case exercises a named
