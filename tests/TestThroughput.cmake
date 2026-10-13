@@ -44,6 +44,8 @@ if(Python3_Interpreter_FOUND)
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
     dormant_capability_runtime
     expected_class_argument_runtime expected_class_assignment_runtime
+    expected_boundary_replacement_runtime
+    raw_receiver_owned_argument_runtime
     expected_cleanup_free_copy_runtime expected_cleanup_free_move_runtime
     expected_call_reassignment_runtime expected_lambda_class_argument_runtime
     expected_member_argument_runtime
