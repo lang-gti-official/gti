@@ -2361,6 +2361,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_allocation.gti"
+            --ownership-checks
   )
   add_test(
     NAME constexpr_allocation_example
@@ -2368,6 +2369,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/examples/153-constexpr-allocation.gti"
+            --ownership-checks
   )
   add_test(
     NAME constexpr_enum_builders_runtime
