@@ -216,23 +216,23 @@ class unique_ptr<T> {
   mut gti_internal::unique_owner<T> owner = nullptr;
 
 public:
-  unique_ptr(nullptr_t empty) : owner(nullptr) {}
+  constexpr unique_ptr(nullptr_t empty) : owner(nullptr) {}
 
-  unique_ptr(gti_internal::unique_owner<T> value)
+  constexpr unique_ptr(gti_internal::unique_owner<T> value)
       : owner(std::move(value)) {}
 
-  void reset() mut {
+  constexpr void reset() mut {
     // Detach before cleanup. The local owns destruction and propagates any
     // failure through ordinary MIR scope cleanup; the receiver stays empty.
     unique_ptr<T> previous = unique_ptr<T>(std::move(this.owner));
     this.owner = nullptr;
   }
 
-  void operator=(nullptr_t empty) mut {
+  constexpr void operator=(nullptr_t empty) mut {
     this.reset();
   }
 
-  void swap(mut unique_ptr<T>& other) mut {
+  constexpr void swap(mut unique_ptr<T>& other) mut {
     gti_internal::unique_owner_swap(this.owner, other.owner);
   }
 
@@ -243,37 +243,37 @@ public:
     return unique_ptr<Base>(std::move(converted));
   }
 
-  T& operator*() {
+  constexpr T& operator*() {
     return gti_internal::unique_owner_borrow(this.owner);
   }
 
-  mut T& operator*() mut {
+  constexpr mut T& operator*() mut {
     return gti_internal::unique_owner_borrow_mut(this.owner);
   }
 
-  T& operator->() {
+  constexpr T& operator->() {
     return gti_internal::unique_owner_borrow(this.owner);
   }
 
-  mut T& operator->() mut {
+  constexpr mut T& operator->() mut {
     return gti_internal::unique_owner_borrow_mut(this.owner);
   }
 
-  operator bool() {
+  constexpr operator bool() {
     return !gti_internal::unique_owner_is_null(this.owner);
   }
 
-  bool operator==(nullptr_t other) {
+  constexpr bool operator==(nullptr_t other) {
     return gti_internal::unique_owner_is_null(this.owner);
   }
 
-  bool operator!=(nullptr_t other) {
+  constexpr bool operator!=(nullptr_t other) {
     return !gti_internal::unique_owner_is_null(this.owner);
   }
 };
 
 /// Allocates a `T` from `args` and returns its exclusive owner.
-unique_ptr<T> make_unique<T, Args...>(Args... args) {
+constexpr unique_ptr<T> make_unique<T, Args...>(Args... args) {
   return unique_ptr<T>(gti_internal::allocate_unique_owner<T>(args...));
 }
 

@@ -29,6 +29,21 @@ result activation, missing/conditional replacement transfer, and missing
 old-value cleanup. The receiver envelope and extracted payload keep independent
 MIR drop identities; accepting a new consumer does not relax those obligations.
 
+## Transient constexpr allocation and destruction
+
+`compiler_constexpr` includes direct canonical-MIR and required semantic-query
+coverage for exclusive scalar/class allocation, nested source-defined owners,
+destructors, moves, reset/swap, expected propagation and concrete pack entry
+calls. It checks allocation/step/live-storage bounds, escaped or imported owner
+rejection, ordinary runtime eligibility and destructor source diagnostics.
+`constexpr_allocation_runtime` and `constexpr_allocation_example` compare all
+four optimization levels in C++20/C++23; example 153 must also enter both corpus
+censuses. The constexpr aggregate LSP slice verifies destructor diagnostics and
+ordinary constexpr conversion syntax; Tree-sitter and formatter checks retain
+that spelling. Acceptance additionally requires the broad optimized suite,
+native portability and sanitizer ownership checks. Focused passes alone are
+not a substitute for those integration gates.
+
 ## Value-producing unsafe expressions
 
 `unsafe_expression_contract` covers lexical permission on grouped expressions,

@@ -1,0 +1,42 @@
+#include <std/memory>
+
+struct curve_summary {
+  int total;
+  int peak;
+  constexpr curve_summary(int total, int peak) : total(total), peak(peak) {}
+};
+
+// Ordinary source-defined construction, mutation and destruction run through
+// GTI's verified MIR, both at compile time and at runtime.
+struct scratch_curve {
+  mut int samples[4] = {};
+
+  constexpr scratch_curve(int step) {
+    for (mut int i = 0; i < 4; i++) {
+      this.samples[i] = (i + 1) * step;
+    }
+  }
+
+  ~scratch_curve() { this.samples[0] = 0; }
+
+  constexpr curve_summary summarize() {
+    mut int total = 0;
+    for (mut int i = 0; i < 4; i++) { total += this.samples[i]; }
+    return curve_summary(total, this.samples[3]);
+  }
+};
+
+constexpr curve_summary prepare_curve(int step) {
+  auto scratch = std::make_unique<scratch_curve>(step);
+  // Only the passive result escapes. The transient pointee is destroyed and
+  // its allocation reclaimed before this constant request finishes.
+  return scratch->summarize();
+}
+
+constexpr curve_summary configured = prepare_curve(3);
+static_assert(configured.total == 30 && configured.peak == 12);
+
+int main() {
+  auto runtime = prepare_curve(3);
+  return runtime.total == configured.total && runtime.peak == configured.peak ? 0 : 1;
+}
