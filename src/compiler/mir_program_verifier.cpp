@@ -13395,6 +13395,59 @@ verifyMirProgramContracts(const MirProgram &program) {
           bool exactArguments =
               instruction.operands.size() == initializer.arguments.size() &&
               instruction.parameterTypes.size() == initializer.arguments.size();
+          const auto liveForwardedBorrow = [&](const MirValue &value) {
+            if (!value.info.traits.containsBorrowedState)
+              return true;
+            // The bounded passive forwarding form observes a formal whose
+            // entry loan is live through this call. A value-level dependency
+            // is not borrowed state retained by the constructed base. Do not
+            // admit arbitrary borrowed SSA values merely because their type
+            // is passive: retain an independently checkable lifetime witness.
+            const auto *load = linearDefinition(instance.body, value.id);
+            const auto *source =
+                load && load->kind == MirInstructionKind::Load &&
+                        load->operands.size() == 1 &&
+                        load->operands.front().kind == MirOperandKind::Copy
+                    ? instance.body.findPlace(load->operands.front().place)
+                    : nullptr;
+            if (block.id != instance.body.entry ||
+                value.definitionBlock != block.id || !source ||
+                source->root != MirPlaceRootKind::Binding ||
+                !source->projections.empty() || !source->initiallyAvailable ||
+                source->type != value.info.type ||
+                std::find(instance.parameterBindings.begin(),
+                          instance.parameterBindings.end(),
+                          source->binding) == instance.parameterBindings.end())
+              return false;
+            const auto loan = std::find_if(
+                instance.body.loans.begin(), instance.body.loans.end(),
+                [&](const MirLoan &candidate) {
+                  return candidate.entry && candidate.parent == 0 &&
+                         candidate.source == source->id &&
+                         candidate.access == AccessMode::ReadOnly &&
+                         std::find(candidate.carriers.begin(),
+                                   candidate.carriers.end(),
+                                   source->binding) != candidate.carriers.end();
+                });
+            if (loan == instance.body.loans.end())
+              return false;
+            bool loaded = false;
+            for (const auto &prefix : block.instructions) {
+              if (&prefix == &instruction)
+                return loaded;
+              if (&prefix == load)
+                loaded = true;
+              if (prefix.kind == MirInstructionKind::EndBorrow &&
+                  prefix.loan == loan->id)
+                return false;
+              if (prefix.loan) {
+                const auto *child = instance.body.findLoan(*prefix.loan);
+                if (child && child->parent == loan->id)
+                  return false;
+              }
+            }
+            return false;
+          };
           for (std::size_t index = 0;
                exactArguments && index < initializer.arguments.size();
                ++index) {
@@ -13407,7 +13460,7 @@ verifyMirProgramContracts(const MirProgram &program) {
                 value->sourceValue == initializer.arguments[index] &&
                 value->info.type == operand.type &&
                 value->info.traits.drop == DropKind::Trivial &&
-                !value->info.traits.containsBorrowedState &&
+                liveForwardedBorrow(*value) &&
                 value->info.type.kind != SemanticType::Reference &&
                 operand.type == instruction.parameterTypes[index] &&
                 baseConstructor != nullptr &&
