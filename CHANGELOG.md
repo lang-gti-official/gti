@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.419.1 — Shared cleanup for early returns
+## 0.420.1 — Shared cleanup for early returns
 
 - Functions and lambdas that return nothing, a scalar or a scalar error from
   several places now share the cleanup each return performs, instead of
@@ -18,6 +18,20 @@ for what minor and patch releases mean.
   times owners: with 80 owners, its exit cleanup holds 80 drops instead of
   3,320. Each return still destroys exactly the owners live at it, in the same
   order, with the same failure behavior and diagnostics.
+
+## 0.420.0 — Faster editor feedback for library-heavy files
+
+- `gti_lsp` reuses concrete instance analyses of standard-library generics
+  whose arguments are standard-library types (for example
+  `std::vector<std::string>` members) from the previous snapshot instead of
+  repeating them on every edit. Each reuse is validated against the current
+  snapshot; anything that changed is analysed again, so diagnostics, hover,
+  definition and semantic tokens are unchanged. Editing a standard-library
+  file invalidates every reused analysis.
+- The editor's parsed-source cache is now large enough to keep a file's whole
+  standard-library include graph. A file with eight standard-library includes
+  previously reloaded, re-lexed and re-parsed the library on every edit.
+- `gti check` and builds are unaffected.
 
 ## 0.418.0 — Enum-aware compile-time builders
 

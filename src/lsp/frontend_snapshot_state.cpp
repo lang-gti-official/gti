@@ -4,8 +4,11 @@
 
 namespace lang::lsp {
 
-FrontendSnapshotState::FrontendSnapshotState(FrontendCacheLimits limits)
-    : sharedCache(std::make_shared<FrontendCache>(limits)) {}
+FrontendSnapshotState::FrontendSnapshotState(
+    FrontendCacheLimits limits, InstanceAnalysisCacheLimits instanceLimits)
+    : sharedCache(std::make_shared<FrontendCache>(limits)),
+      sharedInstanceCache(
+          std::make_shared<InstanceAnalysisCache>(instanceLimits)) {}
 
 std::uint64_t
 FrontendSnapshotState::invalidate(std::string_view canonicalPath) {
@@ -17,7 +20,10 @@ FrontendSnapshotState::invalidate(std::string_view canonicalPath) {
 
 FrontendSourceSnapshot FrontendSnapshotState::capture() const {
   const std::lock_guard lock(mutex);
-  return {.cache = sharedCache, .generations = generations, .digests = digests};
+  return {.cache = sharedCache,
+          .instanceCache = sharedInstanceCache,
+          .generations = generations,
+          .digests = digests};
 }
 
 bool FrontendSnapshotState::publish(std::string_view canonicalPath,
@@ -54,6 +60,11 @@ FrontendSnapshotState::digest(std::string_view canonicalPath) const {
 
 std::shared_ptr<FrontendCache> FrontendSnapshotState::cache() const {
   return sharedCache;
+}
+
+std::shared_ptr<InstanceAnalysisCache>
+FrontendSnapshotState::instanceCache() const {
+  return sharedInstanceCache;
 }
 
 } // namespace lang::lsp
