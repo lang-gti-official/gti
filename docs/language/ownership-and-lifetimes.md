@@ -2013,6 +2013,13 @@ that the selected call actually returns a borrow from that source. Merely
 calling a method on an owner does not prove this. Local owners, by-value owning
 parameters, and fresh temporary owners cannot supply an escaping view.
 
+A relay may also return a string literal on another path, for example
+`if (empty) { return ""; }` before returning an owner's view. A `c_string`
+relay may similarly return `nullptr`. These lifetime-independent alternatives
+need no escaping loan inside the function; the dynamic alternatives still
+require the declared owner. Callers conservatively retain the summarized owner
+dependency for the whole result, even when a literal/null branch executes.
+
 The receiver path may include indexing, including an overloaded subscript:
 `return records[index].text();` can relay the enclosing receiver's dependency
 when resolved body analysis proves that the selected element and text accessor
