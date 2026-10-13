@@ -265,7 +265,7 @@ SemanticDatabase::findSymbol(SymbolId id) const {
     return nullptr;
   }
   if (base != nullptr && id <= baseSymbolCount) {
-    return base->findSymbol(id);
+    return base->findSymbol(noteBaseSymbol(id));
   }
   const SymbolId local = id - baseSymbolCount;
   if (local > symbolRecords.size())
@@ -367,6 +367,48 @@ void SemanticDatabase::clear() {
   occurrencesByUnit.clear();
   base = nullptr;
   baseSymbolCount = 0;
+  baseSymbolReads.reset();
+  frozenBaseSymbols.clear();
+}
+
+SymbolId SemanticDatabase::noteBaseSymbol(SymbolId id) const {
+  if (baseSymbolReads && id != 0 && id <= baseSymbolCount)
+    baseSymbolReads->insert(id);
+  return id;
+}
+
+bool SemanticDatabase::freezeBaseSymbolReads() {
+  if (!baseSymbolReads || base == nullptr)
+    return false;
+  std::vector<SymbolId> ids(baseSymbolReads->begin(), baseSymbolReads->end());
+  baseSymbolReads.reset();
+  std::sort(ids.begin(), ids.end());
+  frozenBaseSymbols.clear();
+  frozenBaseSymbols.reserve(ids.size());
+  for (const SymbolId id : ids) {
+    const SymbolRecord *record = base->findSymbol(id);
+    if (record == nullptr)
+      return false;
+    frozenBaseSymbols.push_back(
+        {id, DeclarationKey{record->sourceUnit, record->nameSpan.start,
+                            record->nameSpan.end,
+                            record->generated ? record->name : std::string{},
+                            record->expansion}});
+  }
+  return true;
+}
+
+bool SemanticDatabase::baseSymbolReadsMatch(
+    const SemanticDatabase &candidate) const {
+  for (const auto &[id, key] : frozenBaseSymbols) {
+    const SymbolRecord *record = candidate.findSymbol(id);
+    if (record == nullptr || record->sourceUnit != key.sourceUnit ||
+        record->nameSpan.start != key.start ||
+        record->nameSpan.end != key.end || record->expansion != key.expansion ||
+        (record->generated ? record->name : std::string{}) != key.generatedName)
+      return false;
+  }
+  return true;
 }
 
 // Turns this database into an instance-analysis delta over baseDatabase:
@@ -440,7 +482,7 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
       // The declaration already has a base identity; instance analysis
       // reuses it and skips base-record enrichment (the delta is
       // discarded after lowering, so enrichment would be invisible).
-      return inherited;
+      return noteBaseSymbol(inherited);
     }
   }
 
@@ -473,8 +515,8 @@ void SemanticDatabase::setSymbolDocumentation(
     return found->second;
   }
   return base == nullptr ? 0
-                         : base->symbolForDeclaration(sourceUnit, span,
-                                                      generatedName, expansion);
+                         : noteBaseSymbol(base->symbolForDeclaration(
+                               sourceUnit, span, generatedName, expansion));
 }
 
 void SemanticDatabase::record(SemanticOccurrence occurrence) {
@@ -639,7 +681,11 @@ SemanticModel::findPlace(const Expr &expression) const {
   if (found != places.end()) {
     return &found->second;
   }
-  return base == nullptr ? nullptr : base->findPlace(expression);
+  const PlaceKey *inherited =
+      base == nullptr ? nullptr : base->findPlace(expression);
+  if (inherited != nullptr)
+    (void)semanticDatabase.noteBaseSymbol(inherited->root);
+  return inherited;
 }
 
 [[nodiscard]] const OwnershipEvent *
@@ -833,7 +879,11 @@ SemanticModel::findBinding(const VariableDecl &declaration) const {
   if (found != variableBindings.end()) {
     return &found->second;
   }
-  return base == nullptr ? nullptr : base->findBinding(declaration);
+  const BindingInfo *inherited =
+      base == nullptr ? nullptr : base->findBinding(declaration);
+  if (inherited != nullptr)
+    (void)semanticDatabase.noteBaseSymbol(inherited->symbol);
+  return inherited;
 }
 
 const ExprPtr &
@@ -841,10 +891,44 @@ SemanticModel::implicitFieldInitializer(const VariableDecl &field) const {
   const auto found = implicitFieldInitializers.find(&field);
   if (found != implicitFieldInitializers.end())
     return *found->second;
-  if (base != nullptr)
-    return base->implicitFieldInitializer(field);
+  if (base != nullptr) {
+    bool shared = false;
+    if (const auto *inherited =
+            base->findImplicitFieldInitializer(field, &shared)) {
+      // A snapshot-owned anchor is recreated at another address by the next
+      // snapshot; a shared one is validated when a delta is reused.
+      if (reuseJournal && shared)
+        reuseJournal->sharedAnchors.insert(&field);
+      else
+        noteBaseSyntheticSyntax(true);
+      return **inherited;
+    }
+  }
   static const ExprPtr absent;
   return absent;
+}
+
+const std::shared_ptr<const ExprPtr> *
+SemanticModel::findImplicitFieldInitializer(const VariableDecl &field,
+                                            bool *shared) const {
+  for (const SemanticModel *model = this; model != nullptr;
+       model = model->base) {
+    const auto found = model->implicitFieldInitializers.find(&field);
+    if (found != model->implicitFieldInitializers.end()) {
+      if (shared != nullptr)
+        *shared = model->sharedImplicitFieldInitializers.contains(&field);
+      return &found->second;
+    }
+  }
+  return nullptr;
+}
+
+void SemanticModel::retainImplicitFieldInitializer(
+    const VariableDecl &field, std::shared_ptr<const ExprPtr> anchor) {
+  if (implicitFieldInitializer(field) || anchor == nullptr || !*anchor)
+    return;
+  implicitFieldInitializers.emplace(&field, std::move(anchor));
+  sharedImplicitFieldInitializers.insert(&field);
 }
 
 void SemanticModel::retainImplicitFieldInitializer(const VariableDecl &field) {
@@ -873,7 +957,11 @@ SemanticModel::findBinding(const Parameter &parameter) const {
   if (found != parameterBindings.end()) {
     return &found->second;
   }
-  return base == nullptr ? nullptr : base->findBinding(parameter);
+  const BindingInfo *inherited =
+      base == nullptr ? nullptr : base->findBinding(parameter);
+  if (inherited != nullptr)
+    (void)semanticDatabase.noteBaseSymbol(inherited->symbol);
+  return inherited;
 }
 
 [[nodiscard]] std::size_t SemanticModel::bindingCount() const {
@@ -937,7 +1025,10 @@ SemanticModel::findConstexprForExpansion(
   if (found != constexprForExpansions.end()) {
     return found->second ? &*found->second : nullptr;
   }
-  return base == nullptr ? nullptr : base->findConstexprForExpansion(statement);
+  const ConstexprForExpansion *inherited =
+      base == nullptr ? nullptr : base->findConstexprForExpansion(statement);
+  noteBaseSyntheticSyntax(inherited != nullptr);
+  return inherited;
 }
 
 [[nodiscard]] const std::vector<ResolvedDeclarationAttribute> *
@@ -956,7 +1047,10 @@ SemanticModel::findExpressionAlias(const Expr &expression) const {
   if (found != expressionAliases.end()) {
     return found->second.get();
   }
-  return base == nullptr ? nullptr : base->findExpressionAlias(expression);
+  const Expr *inherited =
+      base == nullptr ? nullptr : base->findExpressionAlias(expression);
+  noteBaseSyntheticSyntax(inherited != nullptr);
+  return inherited;
 }
 
 [[nodiscard]] std::optional<StaticAssertResult>
@@ -1036,7 +1130,10 @@ SemanticModel::findLambda(const Lambda &declaration) const {
   if (found != lambdas.end()) {
     return &found->second;
   }
-  return base == nullptr ? nullptr : base->findLambda(declaration);
+  const LambdaInfo *inherited =
+      base == nullptr ? nullptr : base->findLambda(declaration);
+  noteBaseLambda(inherited);
+  return inherited;
 }
 
 [[nodiscard]] const LambdaInfo *SemanticModel::findLambda(LambdaId id) const {
@@ -1044,7 +1141,10 @@ SemanticModel::findLambda(const Lambda &declaration) const {
   if (found != lambdasById.end() && found->second != nullptr) {
     return findLambda(*found->second);
   }
-  return base == nullptr ? nullptr : base->findLambda(id);
+  const LambdaInfo *inherited =
+      base == nullptr ? nullptr : base->findLambda(id);
+  noteBaseLambda(inherited);
+  return inherited;
 }
 
 [[nodiscard]] std::vector<LambdaCaptureLink>
@@ -1505,7 +1605,9 @@ SemanticModel::findResolvedSymbol(const Expr &expression) const {
   if (found != resolvedSymbols.end()) {
     return found->second;
   }
-  return base == nullptr ? 0 : base->findResolvedSymbol(expression);
+  return base == nullptr ? 0
+                         : semanticDatabase.noteBaseSymbol(
+                               base->findResolvedSymbol(expression));
 }
 
 [[nodiscard]] std::size_t SemanticModel::functionCount() const {
@@ -1720,6 +1822,7 @@ void SemanticModel::clear() {
   contextualIntegerOperands.clear();
   classLifecycles.clear();
   implicitFieldInitializers.clear();
+  sharedImplicitFieldInitializers.clear();
   designatedConstructors.clear();
   constructions.clear();
   collections.clear();
@@ -1730,6 +1833,9 @@ void SemanticModel::clear() {
   executionProfile_ = ExecutionProfile::SingleThreaded;
   placeSnapshot_ = 0;
   base = nullptr;
+  reuseJournal.reset();
+  frozenBaseLambdas.clear();
+  frozenBaseAnchors.clear();
 }
 
 void SemanticModel::setExecutionProfile(ExecutionProfile profile) {
@@ -1794,6 +1900,133 @@ void SemanticModel::rebase(const SemanticModel *baseModel) {
   base = baseModel;
   semanticDatabase.rebase(baseModel == nullptr ? nullptr
                                                : &baseModel->semanticDatabase);
+}
+
+void SemanticModel::beginInstanceReuseJournal() {
+  reuseJournal.emplace();
+  frozenBaseLambdas.clear();
+  semanticDatabase.baseSymbolReads.emplace();
+  semanticDatabase.frozenBaseSymbols.clear();
+}
+
+void SemanticModel::endInstanceReuseJournal() {
+  reuseJournal.reset();
+  semanticDatabase.baseSymbolReads.reset();
+}
+
+void SemanticModel::noteBaseLambda(const LambdaInfo *lambda) const {
+  if (reuseJournal && lambda != nullptr)
+    reuseJournal->lambdas.insert(lambda->id);
+}
+
+void SemanticModel::noteBaseSyntheticSyntax(bool used) const {
+  if (reuseJournal && used)
+    reuseJournal->baseSyntheticSyntax = true;
+}
+
+bool SemanticModel::baseOwnsGeneratedConstructor(
+    const ConstructorDecl *declaration) const {
+  for (const SemanticModel *model = base; model != nullptr;
+       model = model->base) {
+    for (const auto &generated : model->designatedConstructors)
+      if (generated.get() == declaration)
+        return true;
+  }
+  return false;
+}
+
+void SemanticModel::noteConstruction(const ConstructorDecl *declaration) {
+  if (reuseJournal && declaration != nullptr &&
+      baseOwnsGeneratedConstructor(declaration))
+    reuseJournal->baseSyntheticSyntax = true;
+}
+
+bool SemanticModel::freezeInstanceReuseJournal() {
+  if (!reuseJournal || base == nullptr)
+    return false;
+  const bool synthetic = reuseJournal->baseSyntheticSyntax;
+  std::vector<LambdaId> lambdaIds(reuseJournal->lambdas.begin(),
+                                  reuseJournal->lambdas.end());
+  const std::vector<const VariableDecl *> anchors(
+      reuseJournal->sharedAnchors.begin(), reuseJournal->sharedAnchors.end());
+  reuseJournal.reset();
+  if (synthetic)
+    return false;
+  frozenBaseAnchors.clear();
+  for (const VariableDecl *field : anchors) {
+    const auto *anchor = base->findImplicitFieldInitializer(*field);
+    if (anchor == nullptr)
+      return false;
+    // Holding the anchor keeps its address from denoting anything else.
+    frozenBaseAnchors.emplace_back(field, *anchor);
+  }
+  std::sort(lambdaIds.begin(), lambdaIds.end());
+  frozenBaseLambdas.clear();
+  for (const LambdaId id : lambdaIds) {
+    const LambdaInfo *lambda = base->findLambda(id);
+    if (lambda == nullptr || lambda->declaration == nullptr)
+      return false;
+    frozenBaseLambdas.emplace_back(id, lambda->declaration);
+    for (const LambdaCaptureInfo &capture : lambda->captures) {
+      (void)semanticDatabase.noteBaseSymbol(capture.sourceSymbol);
+      (void)semanticDatabase.noteBaseSymbol(capture.bindingSymbol);
+    }
+  }
+  return semanticDatabase.freezeBaseSymbolReads();
+}
+
+bool SemanticModel::instanceReuseJournalMatches(
+    const SemanticModel &candidate) const {
+  for (const auto &[id, declaration] : frozenBaseLambdas) {
+    const LambdaInfo *lambda = candidate.findLambda(id);
+    if (lambda == nullptr || lambda->declaration != declaration)
+      return false;
+  }
+  for (const auto &[field, anchor] : frozenBaseAnchors) {
+    const auto *current = candidate.findImplicitFieldInitializer(*field);
+    if (current == nullptr || current->get() != anchor.get())
+      return false;
+  }
+  return semanticDatabase.baseSymbolReadsMatch(candidate.semanticDatabase);
+}
+
+void SemanticModel::rebaseReusedInstance(const SemanticModel &baseModel) {
+  rebase(&baseModel);
+  reuseJournal.reset();
+  semanticDatabase.baseSymbolReads.reset();
+  callJournal = nullptr;
+  functionDemandSink = nullptr;
+  executionProfile_ = baseModel.executionProfile();
+  placeSnapshot_ = baseModel.placeSnapshot();
+  programKind_ = baseModel.programKind();
+  embeddingPlan_ = baseModel.embeddingPlan();
+}
+
+std::size_t SemanticModel::estimatedInstanceBytes() const {
+  std::size_t occurrences = 0;
+  for (const auto &[_, unit] : semanticDatabase.occurrencesByUnit)
+    occurrences += unit.size();
+  // Records hold nested types and vectors whose allocator footprint is not
+  // exposed; charge a deliberately generous per-record estimate so the LRU
+  // bound is conservative rather than byte-exact.
+  return sizeof(SemanticModel) + expressions.size() * 256 +
+         (calls.size() + constructions.size() + operators.size() +
+          projectionOperators.size() + contextualConversions.size()) *
+             768 +
+         (variableBindings.size() + parameterBindings.size()) * 256 +
+         (places.size() + ownershipEvents.size() + constants.size()) * 160 +
+         (functions.size() + lambdas.size() + classLifecycles.size()) * 1024 +
+         (statementFullExpressions.size() + constructorFullExpressions.size() +
+          fullExpressionOrder.size()) *
+             96 +
+         retainedLoans.size() * 256 +
+         semanticDatabase.symbolRecords.size() * 384 + occurrences * 256 +
+         (resolvedSymbols.size() + definedFailures.size() +
+          placeSelections.size() + implicitReturnMoves.size()) *
+             96 +
+         (frozenBaseLambdas.size() +
+          semanticDatabase.frozenBaseSymbols.size()) *
+             64;
 }
 
 // Copies a base function record into the delta so record mutators can
@@ -2412,16 +2645,19 @@ void SemanticModel::record(const ClassDecl &declaration,
 
 void SemanticModel::record(const Expr &expression,
                            ResolvedConstructionInfo info) {
+  noteConstruction(info.declaration);
   constructions.insert_or_assign(&expression, std::move(info));
 }
 
 void SemanticModel::recordArrayElementConstruction(
     const ArrayInitializer &initializer, ResolvedConstructionInfo info) {
+  noteConstruction(info.declaration);
   arrayElementConstructions.insert_or_assign(&initializer, std::move(info));
 }
 
 void SemanticModel::record(const ConstructorInitializer &initializer,
                            ResolvedConstructorInitializerInfo info) {
+  noteConstruction(info.declaration);
   constructorInitializers.insert_or_assign(&initializer, std::move(info));
 }
 
@@ -2468,6 +2704,9 @@ void SemanticModel::adoptExpansionArena(
 }
 
 void SemanticModel::recordOccurrence(SemanticOccurrence occurrence) {
+  noteConstruction(occurrence.constructor);
+  if (occurrence.selectedConstruction)
+    noteConstruction(occurrence.selectedConstruction->declaration);
   semanticDatabase.record(std::move(occurrence));
 }
 

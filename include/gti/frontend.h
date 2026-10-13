@@ -7,6 +7,7 @@
 #include "gti/frontend_work.h"
 #include "gti/hir.h"
 #include "gti/include_suggestions.h"
+#include "gti/instance_analysis_cache.h"
 #include "gti/mir.h"
 #include "gti/parser.h"
 #include "gti/program_request.h"
@@ -89,6 +90,10 @@ struct FrontendOptions {
   // TrustedBodyAnalysis. `Deferred` is a test mode; artifacts and editor
   // snapshots may use `Reachable`. Full checks retain `Complete`.
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
+  // Concrete instance analyses of compiler-trusted declarations shared
+  // across snapshots (see InstanceAnalysisCache). Consulted only by
+  // `Reachable` analysis; editor snapshots set it, builds and checks do not.
+  std::shared_ptr<InstanceAnalysisCache> instanceCache;
 };
 
 struct FrontendResult {
