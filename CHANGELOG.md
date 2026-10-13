@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.424.5 — Non-failing base rollback
+
+- Fix invalid generated native code when a failed derived constructor rolls
+  back a base whose destructor cannot fail. Such cleanup no longer references
+  an absent secondary failure record; fallible base cleanup retains its exact
+  failure and termination behavior (issue #101).
+
 ## 0.424.0 — Transient compile-time ownership
 
 - Constant execution supports transient exclusive allocations and deterministic
