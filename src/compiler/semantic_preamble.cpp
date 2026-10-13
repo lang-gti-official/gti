@@ -350,7 +350,8 @@ void SemanticPreambleCache::store(
     if (entry.key == key)
       return true;
     if (entry.key.context != key.context ||
-        entry.key.units.size() != key.units.size())
+        entry.key.units.size() != key.units.size() ||
+        entry.key.graphUnits != key.graphUnits)
       return false;
     for (std::size_t index = 0; index < key.units.size(); ++index)
       if (entry.key.units[index].path != key.units[index].path)

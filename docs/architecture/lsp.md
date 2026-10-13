@@ -711,8 +711,8 @@ analysing only the file's own declarations (see "Trusted Prefix Preamble" in
 include graph pays for the build; a changed or re-parsed library unit selects
 a new preamble. The trace reports `preambleBuilds`,
 `preambleBuildMicroseconds`, `preambleAdoptions`,
-`preambleAdoptMicroseconds`, `preambleBodies`, `preambleReachedBodies` and
-the cache's occupancy. The background raw-pointer audit never uses a
+`preambleAdoptMicroseconds`, `preambleBodies`, `preambleReachedBodies`, the
+cache's occupancy and, for every analysis, `includeSuggestionsRequested`. The background raw-pointer audit never uses a
 preamble.
 
 Before analysis and completion, the LSP asks the driver for immutable

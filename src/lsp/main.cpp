@@ -3715,9 +3715,12 @@ private:
             const std::lock_guard lock(stateMutex);
             retained = retainedFrontendCountLocked();
           }
-          recordFrontendWork("analysis", request.uri, request.generation,
-                             guarded.analysis->frontendElapsedMicroseconds,
-                             guarded.analysis->workMetrics, retained);
+          recordFrontendWork(
+              "analysis", request.uri, request.generation,
+              guarded.analysis->frontendElapsedMicroseconds,
+              guarded.analysis->workMetrics, retained,
+              guarded.analysis->frontend != nullptr &&
+                  guarded.analysis->frontend->includeSuggestionsRequested);
         }
         try {
           publishAnalysis(request, std::move(*guarded.analysis));
@@ -4370,7 +4373,8 @@ private:
       std::string_view kind, std::string_view uri, std::uint64_t generation,
       std::uint64_t elapsedMicroseconds,
       const lang::FrontendWorkMetrics &metrics,
-      std::optional<std::size_t> retainedFrontends = std::nullopt) const {
+      std::optional<std::size_t> retainedFrontends = std::nullopt,
+      bool includeSuggestionsRequested = false) const {
     if (!frontendTracePath) {
       return;
     }
@@ -4423,6 +4427,7 @@ private:
         {"hirMicroseconds", static_cast<std::int64_t>(metrics.hirMicroseconds)},
         {"hirFunctionInstances",
          static_cast<std::int64_t>(metrics.hirFunctionInstances)},
+        {"includeSuggestionsRequested", includeSuggestionsRequested},
         {"preambleBuilds",
          static_cast<std::int64_t>(metrics.semanticPreambleBuilds)},
         {"preambleBuildMicroseconds",

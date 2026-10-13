@@ -490,6 +490,11 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       key.units.push_back(std::move(identity));
       preambleDeclarations = unit->declarationStart + unit->declarationCount;
     }
+    for (const SourceUnitId unitId : result.sourceGraph.compilationOrder())
+      if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId))
+        key.graphUnits.emplace_back(unitId, unit->path.string());
+    for (const SourceDependency &edge : result.sourceGraph.dependencyEdges())
+      key.graphEdges.emplace_back(edge.source, edge.target);
     if (!key.units.empty()) {
       preamble = options.preambleCache->lookup(key);
       if (preamble == nullptr) {
