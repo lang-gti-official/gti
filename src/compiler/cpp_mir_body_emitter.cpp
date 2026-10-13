@@ -21552,6 +21552,13 @@ transformedFailureCallee(const MirProgram &program,
   // or another owning object. Reuse that exact mutable-reference proof, then
   // check the entire remaining field path with the ordinary owner/field rows.
   const MirPlace *referenceRoot = nullptr;
+  // A raw projection already names the evaluated pointer (and optional index).
+  // Its unsafe/effect contract is verified in MIR. The pointer's pointee
+  // access, not the carrier value's access, governs mutation of the reached
+  // record.
+  const auto rawRoot = rawMemoryPlaceAccess(body, destination);
+  if (rawRoot && rawRoot->pointerType.pointerAccess != AccessMode::Mutable)
+    return false;
   if (destination.root == MirPlaceRootKind::Binding &&
       destination.projections.size() > 1 &&
       destination.projections.front().kind == MirProjectionKind::Dereference) {
@@ -21575,9 +21582,10 @@ transformedFailureCallee(const MirProgram &program,
        body.kind != MirBodyKind::Constructor) ||
       (destination.root != MirPlaceRootKind::This &&
        destination.root != MirPlaceRootKind::Binding &&
-       destination.root != MirPlaceRootKind::Loan) ||
+       destination.root != MirPlaceRootKind::Loan && !rawRoot) ||
       destination.projections.empty() || destination.type != value.info.type ||
-      (destination.initiallyAvailable && referenceRoot == nullptr) ||
+      (destination.initiallyAvailable && referenceRoot == nullptr &&
+       !rawRoot) ||
       destination.traits.drop != DropKind::Lexical ||
       !destination.traits.movable || destination.traits.copyable ||
       !value.info.traits.movable || value.info.traits.copyable) {
@@ -21609,7 +21617,9 @@ transformedFailureCallee(const MirProgram &program,
   }
   if (constructor != nullptr)
     receiverOwner = program.findClassInstance(constructor->owner);
-  if (referenceRoot != nullptr) {
+  if (rawRoot) {
+    receiverOwner = uniqueClassInstanceForType(program, rawRoot->pointeeType);
+  } else if (referenceRoot != nullptr) {
     receiverOwner = uniqueClassInstanceForType(program, referenceRoot->type);
   } else if (destination.root != MirPlaceRootKind::This) {
     const MirPlace *root = nullptr;
@@ -21640,7 +21650,7 @@ transformedFailureCallee(const MirProgram &program,
   ResolvedMirField resolved;
   SemanticType currentType =
       receiverOwner == nullptr ? SemanticType::Unknown : receiverOwner->type;
-  for (std::size_t index = referenceRoot == nullptr ? 0 : 1;
+  for (std::size_t index = referenceRoot == nullptr && !rawRoot ? 0 : 1;
        index < destination.projections.size(); ++index) {
     const MirPlaceProjection &projection = destination.projections[index];
     if (projection.kind != MirProjectionKind::Field) {
