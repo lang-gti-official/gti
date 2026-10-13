@@ -1,0 +1,49 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+#include <std/format>
+
+mut int cleanup_mode = 0;
+class Probe {
+public:
+  int identity;
+  Probe(int value) : identity(value) {}
+  ~Probe() {
+    std::println("{}", this.identity);
+    if ((this.identity == 1 && cleanup_mode >= 1) ||
+        (this.identity == 2 && cleanup_mode >= 2)) {
+      int divisor = 0;
+      int checked = 1 / divisor;
+    }
+  }
+};
+struct Item {
+  mut std::unique_ptr<Probe> owner;
+  Item(int value) : owner(std::make_unique<Probe>(value)) {}
+};
+struct Spec {
+  mut Item item{1};
+  mut std::string name{"old"};
+};
+class Config {
+  mut Spec spec{};
+public:
+  Config() = default;
+  mut Spec& Get() mut { return this.spec; }
+};
+class Owner {
+  mut Config config{};
+public:
+  Owner() = default;
+  mut Config& Get() mut { return this.config; }
+};
+int main(int argc, std::vector<std::string> args) {
+  Probe outer{9};
+  mut Owner owner{};
+  owner.Get().Get().name = std::string("new");
+  if (owner.Get().Get().name.view() != "new") { return 1; }
+  if (args.size() == std::size_t(2)) { cleanup_mode = 1; }
+  if (args.size() == std::size_t(3)) { cleanup_mode = 2; }
+  owner.Get().Get().item = Item(2);
+  return 0;
+}

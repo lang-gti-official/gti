@@ -1792,6 +1792,8 @@ cppMirEnumBoundaryRow(const MirProgram &program,
   return representation &&
          (*representation == CppMirTypeRepresentationKind::Scalar ||
           *representation == CppMirTypeRepresentationKind::StringView ||
+          *representation == CppMirTypeRepresentationKind::RawPointer ||
+          *representation == CppMirTypeRepresentationKind::NullPointer ||
           *representation == CppMirTypeRepresentationKind::Void ||
           (*representation == CppMirTypeRepresentationKind::Enum &&
            program.findPayloadEnum(type) == nullptr));
@@ -20600,13 +20602,10 @@ expectedOwnedClassExtractionReceiverSlot(const MirBody &body,
     if (!producer) {
       continue;
     }
-    const StagedClassResult staged =
-        stagedClassResultForSource(body, candidate);
-    const bool bindingDestination =
-        expectedOwnedClassExtractionDestination(body, candidate) != nullptr;
-    const bool preparedDestination = staged.producer == producer.call;
-    if ((!bindingDestination && !preparedDestination) ||
-        !producer.call->receiver ||
+    // Receiver storage follows its own exact move/call and drop witness.
+    // The extracted result's separate publication proof selects its storage;
+    // it may replace an existing object as well as initialize a binding.
+    if (!producer.call->receiver ||
         producer.call->receiver->kind != MirOperandKind::Value ||
         producer.call->receiver->value != valueId) {
       continue;
@@ -22051,7 +22050,10 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       executableUses.size() > 1 ||
       (fieldViews != 0 && !executableUses.empty()) ||
       // Other extraction destinations keep their own publication routes.
-      (ownedExtractionProducer && fieldViews == 0)) {
+      // One assignment uses the same exact Replace/drop proof as an ordinary
+      // class-returning call below, including failure of old-value cleanup.
+      (ownedExtractionProducer && fieldViews == 0 &&
+       executableUses.size() != 1)) {
     return {};
   }
 
@@ -22249,6 +22251,25 @@ valueRootedClassCallResultSlot(const MirProgram &program,
                                               .destroy = destroy,
                                               .slot = slot,
                                               .drop = drop};
+}
+
+// Extraction owns the same result slot regardless of whether it initializes
+// a binding or replaces an existing object. Reuse the general call-result
+// publication witness for replacement rather than inventing an Expected-only
+// cleanup schedule.
+[[nodiscard]] const MirPlace *
+ownedExpectedExtractionStorage(const MirProgram &program,
+                               const CppMirBodyEmissionMap &representations,
+                               const MirBody &body, MirValueId valueId) {
+  if (const auto *destination =
+          expectedOwnedClassExtractionDestination(body, valueId))
+    return destination;
+  const auto producer = ownedExpectedClassExtractionProducer(body, valueId);
+  if (!producer)
+    return nullptr;
+  const auto result =
+      valueRootedClassCallResultSlot(program, representations, body, valueId);
+  return result.producer == producer.call ? result.slot : nullptr;
 }
 
 // An owned class result constructed directly into a conditional temporary,
@@ -23577,9 +23598,12 @@ expectedPayloadReturnSlot(const MirProgram &program,
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
       producer->dispatch == CallDispatch::Static && producer->functionTarget &&
       !producer->constructorTarget && !producer->bodyTarget &&
-      !producer->lambdaTarget && !producer->callableInvocation &&
-      producer->intrinsic == IntrinsicKind::None &&
+      !producer->lambdaTarget && producer->intrinsic == IntrinsicKind::None &&
       producer->localFailureSites.empty() && callee != nullptr &&
+      (!producer->callableInvocation ||
+       (callee->owner && producer->receiver &&
+        *producer->callableInvocation ==
+            callableInvocationCapability(callee->receiverMutability))) &&
       callee->returnType == value->info.type &&
       callee->parameterTypes == producer->parameterTypes &&
       (callee->mayRaiseDefinedFailure ? producer->definedFailure.propagation ==
@@ -28765,8 +28789,9 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
 }
 
 // A checked field store evaluates its RHS before the exclusive destination
-// access. Preserve that exact receiver stage and call, then continue only on
-// its Invoke success edge. Both moved and constructed RHS slots use this
+// access. Preserve that exact receiver stage and call, continuing on its
+// Invoke success edge when the call can fail, or immediately after an exact
+// non-failing call. Both moved and constructed RHS slots use this
 // schedule; neither may move construction past destination evaluation.
 [[nodiscard]] bool advanceCheckedAssignmentReceiver(
     const MirBody &body, const MirLoan &loan, const MirBlock *&block,
@@ -28777,8 +28802,13 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
   const MirInstruction &input = *position++;
   if (position == block->instructions.end() ||
       producedCallResultLoan(body, *position) != &loan ||
-      input.callSite != position->callSite ||
-      std::next(position) != block->instructions.end() ||
+      input.callSite != position->callSite)
+    return false;
+  if (position->definedFailure.empty() && position->localFailureSites.empty()) {
+    ++position;
+    return true;
+  }
+  if (std::next(position) != block->instructions.end() ||
       block->terminator.kind != MirTerminatorKind::Invoke ||
       block->terminator.invokeInstruction != position->id)
     return false;
@@ -28789,8 +28819,9 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
   return true;
 }
 
-// A projected checked owner may retain a chain of call-result reborrows.
-// Retire precisely that child-to-parent chain before the moved-from RHS shell.
+// A projected checked owner or borrowed constructor input may retain a chain
+// of call-result reborrows. Retire precisely that child-to-parent chain with
+// unchanged access before the moved-from RHS shell.
 [[nodiscard]] bool advanceAssignmentLoanEnds(
     const MirBody &body, const MirLoan *ending, const MirBlock &block,
     std::vector<MirInstruction>::const_iterator &position) {
@@ -28811,12 +28842,69 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
       break;
     const MirLoan *parent = body.findLoan(ending->parent);
     if (parent == nullptr || parent->kind != MirLoanKind::CallResult ||
-        parent->access != AccessMode::Mutable || parent->escapes ||
+        parent->access != ending->access || parent->escapes ||
         !parent->carriers.empty() || parent->source != ending->source)
       return false;
     ending = parent;
   }
   return true;
+}
+
+// A constructor can consume a temporary borrowed call result without retaining
+// it. Its ordered input stage identifies the exact stored dependency; retiring
+// that loan after publication does not retire the newly constructed owner.
+// Keep this separate from destination reborrow retirement and never skip an
+// unrelated EndBorrow merely because it has no native instruction.
+[[nodiscard]] std::optional<std::vector<MirLoanId>>
+constructorInputBorrowLoans(const MirBody &body,
+                            const MirInstruction &constructor) {
+  std::vector<MirLoanId> loans;
+  for (std::size_t index = 0; index < constructor.operands.size(); ++index) {
+    const auto &operand = constructor.operands[index];
+    const auto *value = operand.kind == MirOperandKind::Value
+                            ? body.findValue(operand.value)
+                            : nullptr;
+    const auto *stage =
+        value ? findInstruction(body, value->definition) : nullptr;
+    if (!stage || stage->kind != MirInstructionKind::CallInput ||
+        stage->operands.size() != 1 ||
+        stage->operands.front().kind != MirOperandKind::Value)
+      continue;
+    const auto *input = body.findValue(stage->operands.front().value);
+    const auto *call =
+        input ? findInstruction(body, input->definition) : nullptr;
+    const auto *loan =
+        call && call->loan ? body.findLoan(*call->loan) : nullptr;
+    if (!loan)
+      continue;
+    if (call->kind != MirInstructionKind::Call || call->loan != loan->id ||
+        loan->kind != MirLoanKind::Stored || call->hirValue == 0 ||
+        loan->producedBy != call->hirValue || loan->lifecycleBound ||
+        loan->storedDependency != 0 || !call->result ||
+        *call->result != input->id || stage->callSite != constructor.callSite ||
+        stage->callInputRole != MirCallInputRole::Argument ||
+        stage->callInputIndex != index ||
+        stage->callInputKind != HirCallInputKind::Value ||
+        stage->info.type != operand.type || input->info.type != operand.type ||
+        stage->destination || stage->receiver || stage->loan ||
+        stage->preparedParameterDrop || !stage->lifecycle.empty() ||
+        !stage->result || *stage->result != operand.value ||
+        loan->access != AccessMode::ReadOnly || loan->entry || loan->escapes ||
+        !loan->carriers.empty() || loan->storedField != 0 ||
+        !loan->additionalDependencies.empty() ||
+        std::find(loans.begin(), loans.end(), loan->id) != loans.end())
+      return std::nullopt;
+    const auto inputUses = nonRootRecordUses(body, input->id);
+    const auto stageUses = nonRootRecordUses(body, operand.value);
+    if (inputUses.size() != 1 || stageUses.size() != 1 ||
+        inputUses.front().kind != MirValueUseKind::InstructionOperand ||
+        inputUses.front().instruction != stage->id ||
+        stageUses.front().kind != MirValueUseKind::InstructionOperand ||
+        stageUses.front().instruction != constructor.id)
+      return std::nullopt;
+    loans.push_back(loan->id);
+  }
+  return loans;
 }
 
 // Moving a field out through one mutable call-result loan may stage the
@@ -29899,6 +29987,23 @@ valueRootedClassPrvalueAssignmentSlot(
     if (destinationLoan != nullptr &&
         !advanceAssignmentLoanEnds(body, destinationLoan, *publicationBlock,
                                    destroyPosition))
+      return {};
+    const auto inputLoans = constructorInputBorrowLoans(body, *producer);
+    if (!inputLoans)
+      return {};
+    std::unordered_set<MirLoanId> retiredInputs;
+    while (destroyPosition != publicationBlock->instructions.end() &&
+           destroyPosition->kind == MirInstructionKind::EndBorrow) {
+      if (!destroyPosition->loan ||
+          std::find(inputLoans->begin(), inputLoans->end(),
+                    *destroyPosition->loan) == inputLoans->end() ||
+          !retiredInputs.insert(*destroyPosition->loan).second ||
+          !advanceAssignmentLoanEnds(body,
+                                     body.findLoan(*destroyPosition->loan),
+                                     *publicationBlock, destroyPosition))
+        return {};
+    }
+    if (retiredInputs.size() != inputLoans->size())
       return {};
     if (destroyPosition == publicationBlock->instructions.end() ||
         destroyPosition->id != destroy->id) {
@@ -39752,12 +39857,16 @@ private:
           facts.body.findDropObligation(instruction.lifecycle.front().source);
       if (failureForm && drop != nullptr &&
           drop->dropType.requiresActiveCleanup) {
-        if (!instruction.definedFailure.empty())
+        const bool fallible = !instruction.definedFailure.empty();
+        if (fallible)
           output << "__gti_mir_drop_success_" << instruction.id << " = ";
         output << "(*this)." << typeSpelling(drop->dropType.type)
                << "::template __gti_mir_unique_cleanup_failure<"
-               << *drop->dropType.classInstance
-               << ">(&__gti_mir_cleanup_failure_record, true);\n";
+               << *drop->dropType.classInstance << ">(";
+        // Only a fallible cleanup owns a secondary failure record. A proved
+        // non-failing base cleanup must not reference that absent local.
+        output << (fallible ? "&__gti_mir_cleanup_failure_record" : "nullptr")
+               << ", true);\n";
         return;
       }
       output << "// GTI MIR base rollback ends with unpublished object "
@@ -42923,9 +43032,10 @@ private:
         return;
       }
       const MirPlace *ownedExtraction =
-          instruction.result ? expectedOwnedClassExtractionDestination(
-                                   facts.body, *instruction.result)
-                             : nullptr;
+          instruction.result
+              ? ownedExpectedExtractionStorage(program, representations,
+                                               facts.body, *instruction.result)
+              : nullptr;
       const StagedClassResult stagedExtraction =
           instruction.result
               ? stagedClassResultForSource(facts.body, *instruction.result)
@@ -43110,9 +43220,10 @@ private:
       const MirOperand &receiverBorrow =
           staged != nullptr ? staged->operands.front() : *instruction.receiver;
       const MirPlace *ownedExtraction =
-          instruction.result ? expectedOwnedClassExtractionDestination(
-                                   facts.body, *instruction.result)
-                             : nullptr;
+          instruction.result
+              ? ownedExpectedExtractionStorage(program, representations,
+                                               facts.body, *instruction.result)
+              : nullptr;
       const StagedClassResult stagedExtraction =
           instruction.result
               ? stagedClassResultForSource(facts.body, *instruction.result)
@@ -56882,9 +56993,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                                  ? staged->operands.front()
                                                  : *instruction.receiver;
           const MirPlace *ownedExtraction =
-              instruction.result ? expectedOwnedClassExtractionDestination(
-                                       body, *instruction.result)
-                                 : nullptr;
+              instruction.result
+                  ? ownedExpectedExtractionStorage(program_, representations_,
+                                                   body, *instruction.result)
+                  : nullptr;
           const DirectExpectedClassExtraction directExtraction =
               instruction.result ? directExpectedClassExtraction(
                                        program_, body, *instruction.result)

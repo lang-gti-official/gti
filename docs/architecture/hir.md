@@ -353,18 +353,19 @@ value. Literal-dependent range decisions remain in semantic contextual typing.
 Owning expected initialization preserves the payload and completed wrapper as
 distinct lifetime identities for MIR transfer and rollback.
 
-The existing bounded generated-derived family also has explicit body-local
-execution: a nongeneric derived class with no instance fields,
-whose nongeneric state-bearing base selects an exact zero-parameter source
-constructor. `ClassLifecycleInfo::generatedDefaultBaseConstructor` supplies the
-semantic selection. HIR discovers that base and records a source-free
-`generatedDefault` constructor instance, with zero declaration identity and
-one exact base initializer. It does not fabricate an AST constructor. HIR
-verification binds the empty generated body, concrete owner/base identity and
-constructor target to semantics, and rejects erasure of the target/failure
-propagation together. Empty generated defaults and other unselected shapes keep
-their existing route. Once every selected constructor owns a declaration default,
-the backend emits no duplicate native in-class initializer for that field.
+Generated base and field construction share one semantic schedule obligation,
+`ClassLifecycleInfo::generatedDefaultInitializers`. A fieldless derived owner
+still selects this schedule when it has a state-bearing base: that base may
+itself have a generated constructor and owning declaration defaults. HIR
+discovers each exact concrete base, including generic and multilevel chains,
+and records a source-free `generatedDefault` constructor with zero declaration
+identity. It does not fabricate an AST constructor or infer native defaultability.
+Verification binds the base identity, selected target/generated status, and
+ordered field initializers to semantics. A required base schedule cannot lose
+its constructor target. This subsumes the older nongeneric base-only selection;
+empty owners without a state-bearing base or fields retain their existing route.
+The backend emits no duplicate native in-class initializer for a field owned by
+the selected constructor schedule.
 
 Struct designated construction is resolved in semantics to a compiler-owned,
 full-field construction declaration that is not a source-callable overload.
@@ -816,6 +817,17 @@ the full-expression materialization instead of synthesizing an ownership move.
 Conditional receivers retain their existing join slot. `std::move(this)` has
 an ordinary Move value with an exact whole-This ownership event; HIR does not
 infer it from a returned name or from the selected backend.
+An ordinary method selected through a raw pointer uses the same ordered plan.
+Its receiver stage names the checked raw-member expression and the pointee
+type, with the semantic read-only or mutable receiver mode. MIR evaluates the
+pointer once, projects the existing raw-dereference place, and stages that
+receiver before arguments. Owning arguments therefore retain their ordinary
+prepared-parameter transfer and failure cleanup even when their producer is a
+fallible consuming extraction. The plan neither creates a checked lifetime for
+the raw pointee nor changes the lexical unsafe permission or caller obligations.
+Both the receiver stage and consuming call retain the raw-memory effect. A
+declared-unsafe method additionally retains its own call obligation; staging
+does not replace that contract with receiver permission.
 An exact immediate nominal or stored-lambda field invocation authorized by
 semantics inside consuming `this` instead uses `RetainedReceiver`. Its Move-shaped HIR value
 records `retainedReceiverProjection` and creates no new drop obligation;
