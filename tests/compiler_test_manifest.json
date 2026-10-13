@@ -650,11 +650,11 @@
       "suite": "constexpr"
     },
     {
-      "name": "testConstexprResults",
+      "name": "testConstexprEnumBuilders",
       "suite": "constexpr"
     },
     {
-      "name": "testConstexprEnumBuilders",
+      "name": "testConstexprResults",
       "suite": "constexpr"
     },
     {
