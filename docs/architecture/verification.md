@@ -70,6 +70,13 @@ remove or conditionalize the owning parameter transfer. The native matrix also
 checks one- and two-element packs before passive defaults and observable owned
 default cleanup after later-argument and constructor failures (issue #110).
 
+`declaration_owned_defaults_runtime` checks out-of-line static and instance
+definitions whose API declaration supplies omitted arguments. Eight native
+modes preserve owning-default evaluation order and cleanup after later-default
+or function-body failure. `mir_full_expression` rejects foreign declaration
+expression identities, substituted selected targets and duplicate suffixes;
+an ill-typed declaration default remains a semantic error (issue #119).
+
 ## Defaulted owning base construction
 
 `generated_base_constructor_runtime` covers defaulted multilevel owning bases,

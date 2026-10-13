@@ -1,0 +1,39 @@
+#include <std/string>
+#include <std/vector>
+
+mut int stage = 0;
+int first() { std::println(1); return 4; }
+int later() {
+  int divisor = stage == 1 ? 0 : 1;
+  return 7 / divisor;
+}
+class Payload {
+public:
+  Payload() { std::println(2); }
+  Payload(Payload&) = delete;
+  Payload(Payload&&) = default;
+  ~Payload() { std::println(5); }
+};
+class Factory {
+public:
+  static int Create(int initial = first(), Payload input = Payload(), int last = later());
+  int Read(int value = 7);
+};
+int Factory::Create(int renamed, Payload owned, int tail) {
+  std::println(3);
+  int divisor = stage == 2 ? 0 : 1;
+  return renamed + tail + 1 / divisor;
+}
+int Factory::Read(int renamed) { return renamed; }
+class Guard {
+public:
+  Guard() = default;
+  ~Guard() { std::println(9); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Guard guard{};
+  Factory factory{};
+  if (factory.Read() != 7) { return 1; }
+  return Factory::Create() == 12 ? 0 : 1;
+}
