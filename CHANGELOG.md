@@ -9,35 +9,27 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.423.8 — Borrowed inputs during owning replacement
+## 0.423.8 — Owning replacement and borrowed call composition
 
 - Fix an internal compiler error when a freshly constructed owning object
   replaces an existing value using a temporary borrowed constructor argument,
   such as `target = Item(source.view())`. Exact input-loan retirement and
   constructor/replacement cleanup remain checked. Covers issue #93.
 
-## 0.423.7 — Ordered owning arguments through raw receivers
-
 - Fix a backend internal compiler error when consuming owning expected payloads
   directly into methods reached through raw pointers. Raw pointee receivers now
   use the ordinary receiver-first call-input plan, preserving argument ownership
   and failure cleanup without changing unsafe obligations (issue #92).
-
-## 0.423.6 — Static alternatives in borrowed returns
 
 - Fix an internal compiler error when a borrowed text return also has a string
   literal or null C-string return path. Static alternatives are independently
   verified without weakening the lifetime checks on dynamic results. Covers
   the editor preview fallback in issue #89.
 
-## 0.423.5 — Temporary expected pointer failure routing
-
 - Fix an internal compiler error when a fallible call returning an expected
   raw-pointer payload is used directly as a condition. Preserve the callee's
   defined-failure channel and caller cleanup before observing the result;
   ordinary expected errors remain ordinary values (issue #86).
-
-## 0.423.4 — Expected pointer and owning payload composition
 
 - Fix backend internal compiler errors when returning passive pointer payloads
   in `expected`, including null and read-only pointers, without changing raw
