@@ -1,5 +1,23 @@
 # Compiler Verification
 
+## Expected pointer boundaries and owning field replacement
+
+`expected_boundary_replacement_runtime` exercises pointer-valued expected
+results through indexed owning fields and virtual dispatch, read-only and null
+pointer transport, and consuming value/error replacement of an existing class
+field. An unrelated source-defined owning record makes destruction observable.
+Both C++ standards run at O0/O1/O3, with additional no-elide and ASan/UBSan modes.
+The oracle distinguishes successful replacement, wrong-state extraction,
+old-value cleanup failure, and a secondary failure while retiring the held RHS.
+The same fixture retains the original source-defined string replacement client.
+The getter fixture also replaces fresh owning values through nested non-failing
+mutable-reference getters, with the same primary/secondary cleanup oracles.
+
+`testExpectedClassReplacementSources` includes all three fixtures and rejects forged
+result activation, missing/conditional replacement transfer, and missing
+old-value cleanup. The receiver envelope and extracted payload keep independent
+MIR drop identities; accepting a new consumer does not relax those obligations.
+
 ## Value-producing unsafe expressions
 
 `unsafe_expression_contract` covers lexical permission on grouped expressions,

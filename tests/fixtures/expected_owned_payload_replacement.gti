@@ -1,0 +1,65 @@
+#include <std/memory>
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+#include <std/format>
+#include <std/panic>
+
+mut int cleanup_mode = 0;
+class Probe {
+public:
+  int identity;
+  Probe(int value) : identity(value) {}
+  ~Probe() {
+    std::println("{}", this.identity);
+    if ((this.identity == 1 && cleanup_mode >= 1) ||
+        (this.identity == 2 && cleanup_mode >= 2)) {
+      int divisor = 0;
+      int checked = 1 / divisor;
+    }
+  }
+};
+struct Item {
+  mut std::unique_ptr<Probe> owner;
+  Item(int value) : owner(std::make_unique<Probe>(value)) {}
+};
+expected<Item, Item> Make(bool ok) {
+  if (ok) { return Item(2); }
+  return unexpected(Item(3));
+}
+expected<std::string, int> Read() { return std::string("text"); }
+class Viewer {
+  mut Item item{1};
+  mut std::string content{"old"};
+public:
+  Viewer() = default;
+  void Value(bool ok) mut {
+    mut auto result = Make(ok);
+    this.item = std::move(result).value();
+  }
+  void Error(bool ok) mut {
+    mut auto result = Make(ok);
+    this.item = std::move(result).error();
+  }
+  void Text() mut {
+    mut auto result = Read();
+    this.content = std::move(result).value();
+    if (this.content.try_c_string() == nullptr || this.content.view() != "text") {
+      std::panic("bad replacement");
+    }
+  }
+};
+int main(int argc, std::vector<std::string> args) {
+  Probe outer{9};
+  mut Viewer viewer{};
+  viewer.Text();
+  if (args.size() == std::size_t(2)) { viewer.Error(false); }
+  else if (args.size() == std::size_t(3)) { viewer.Value(false); }
+  else if (args.size() == std::size_t(4)) { viewer.Error(true); }
+  else {
+    if (args.size() == std::size_t(5)) { cleanup_mode = 1; }
+    if (args.size() == std::size_t(6)) { cleanup_mode = 2; }
+    viewer.Value(true);
+  }
+  return 0;
+}
