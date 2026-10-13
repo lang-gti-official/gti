@@ -2,6 +2,15 @@
 
 ## Expected pointer boundaries and owning field replacement
 
+`raw_receiver_owned_argument_runtime` runs raw-pointee receiver calls with
+owning user-defined argument records across C++20/C++23 at O0/O1/O3, disabled
+copy elision, and ASan/UBSan. Observable traces cover read-only and mutable
+receivers, consuming value/error payload extraction, receiver evaluation,
+wrong-state extraction, later-argument failure and callee failure, with
+exactly-once payload cleanup. `testOrderedRawReceiverInputs` checks the exact
+HIR pointee identity/access mode and MIR receiver stages; mutated call-site
+identities must fail verification.
+
 `expected_boundary_replacement_runtime` exercises pointer-valued expected
 results through indexed owning fields and virtual dispatch, read-only and null
 pointer transport, and consuming value/error replacement of an existing class

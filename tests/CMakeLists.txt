@@ -1884,6 +1884,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(expected_boundary_replacement_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME raw_receiver_owned_argument_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/raw_receiver_owned_argument_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(raw_receiver_owned_argument_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME unique_pointee_cleanup_failure_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/unique_pointee_cleanup_failure_test.py"
