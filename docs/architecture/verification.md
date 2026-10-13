@@ -24,6 +24,17 @@ capability and rejects five malformed receiver/activation schedules. This is
 representation admission for already-verified source calls, not a new language
 conversion or a special rule for `unique_ptr`.
 
+## Allocation constructor defaults
+
+`allocation_default_argument_runtime` exercises passive and owning default
+constructor arguments through unique allocation in eight native modes, including
+disabled copy elision and sanitizers. It retains explicit-pack and stack
+controls, and checks observable parameter/caller cleanup after later-default
+and constructor-body failure. `mir_full_expression` checks the default's HIR
+plan and exact MIR prepared parameter, rejecting missing call identity, wrong
+parameter index and erased cleanup identity. A nonempty source pack followed
+by omitted constructor defaults remains tracked separately as issue #110.
+
 ## Defaulted owning base construction
 
 `generated_base_constructor_runtime` covers defaulted multilevel owning bases,
