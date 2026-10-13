@@ -28827,8 +28827,9 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
   return true;
 }
 
-// A projected checked owner may retain a chain of call-result reborrows.
-// Retire precisely that child-to-parent chain before the moved-from RHS shell.
+// A projected checked owner or borrowed constructor input may retain a chain
+// of call-result reborrows. Retire precisely that child-to-parent chain with
+// unchanged access before the moved-from RHS shell.
 [[nodiscard]] bool advanceAssignmentLoanEnds(
     const MirBody &body, const MirLoan *ending, const MirBlock &block,
     std::vector<MirInstruction>::const_iterator &position) {
@@ -28849,12 +28850,69 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
       break;
     const MirLoan *parent = body.findLoan(ending->parent);
     if (parent == nullptr || parent->kind != MirLoanKind::CallResult ||
-        parent->access != AccessMode::Mutable || parent->escapes ||
+        parent->access != ending->access || parent->escapes ||
         !parent->carriers.empty() || parent->source != ending->source)
       return false;
     ending = parent;
   }
   return true;
+}
+
+// A constructor can consume a temporary borrowed call result without retaining
+// it. Its ordered input stage identifies the exact stored dependency; retiring
+// that loan after publication does not retire the newly constructed owner.
+// Keep this separate from destination reborrow retirement and never skip an
+// unrelated EndBorrow merely because it has no native instruction.
+[[nodiscard]] std::optional<std::vector<MirLoanId>>
+constructorInputBorrowLoans(const MirBody &body,
+                            const MirInstruction &constructor) {
+  std::vector<MirLoanId> loans;
+  for (std::size_t index = 0; index < constructor.operands.size(); ++index) {
+    const auto &operand = constructor.operands[index];
+    const auto *value = operand.kind == MirOperandKind::Value
+                            ? body.findValue(operand.value)
+                            : nullptr;
+    const auto *stage =
+        value ? findInstruction(body, value->definition) : nullptr;
+    if (!stage || stage->kind != MirInstructionKind::CallInput ||
+        stage->operands.size() != 1 ||
+        stage->operands.front().kind != MirOperandKind::Value)
+      continue;
+    const auto *input = body.findValue(stage->operands.front().value);
+    const auto *call =
+        input ? findInstruction(body, input->definition) : nullptr;
+    const auto *loan =
+        call && call->loan ? body.findLoan(*call->loan) : nullptr;
+    if (!loan)
+      continue;
+    if (call->kind != MirInstructionKind::Call || call->loan != loan->id ||
+        loan->kind != MirLoanKind::Stored || call->hirValue == 0 ||
+        loan->producedBy != call->hirValue || loan->lifecycleBound ||
+        loan->storedDependency != 0 || !call->result ||
+        *call->result != input->id || stage->callSite != constructor.callSite ||
+        stage->callInputRole != MirCallInputRole::Argument ||
+        stage->callInputIndex != index ||
+        stage->callInputKind != HirCallInputKind::Value ||
+        stage->info.type != operand.type || input->info.type != operand.type ||
+        stage->destination || stage->receiver || stage->loan ||
+        stage->preparedParameterDrop || !stage->lifecycle.empty() ||
+        !stage->result || *stage->result != operand.value ||
+        loan->access != AccessMode::ReadOnly || loan->entry || loan->escapes ||
+        !loan->carriers.empty() || loan->storedField != 0 ||
+        !loan->additionalDependencies.empty() ||
+        std::find(loans.begin(), loans.end(), loan->id) != loans.end())
+      return std::nullopt;
+    const auto inputUses = nonRootRecordUses(body, input->id);
+    const auto stageUses = nonRootRecordUses(body, operand.value);
+    if (inputUses.size() != 1 || stageUses.size() != 1 ||
+        inputUses.front().kind != MirValueUseKind::InstructionOperand ||
+        inputUses.front().instruction != stage->id ||
+        stageUses.front().kind != MirValueUseKind::InstructionOperand ||
+        stageUses.front().instruction != constructor.id)
+      return std::nullopt;
+    loans.push_back(loan->id);
+  }
+  return loans;
 }
 
 // Moving a field out through one mutable call-result loan may stage the
@@ -29937,6 +29995,23 @@ valueRootedClassPrvalueAssignmentSlot(
     if (destinationLoan != nullptr &&
         !advanceAssignmentLoanEnds(body, destinationLoan, *publicationBlock,
                                    destroyPosition))
+      return {};
+    const auto inputLoans = constructorInputBorrowLoans(body, *producer);
+    if (!inputLoans)
+      return {};
+    std::unordered_set<MirLoanId> retiredInputs;
+    while (destroyPosition != publicationBlock->instructions.end() &&
+           destroyPosition->kind == MirInstructionKind::EndBorrow) {
+      if (!destroyPosition->loan ||
+          std::find(inputLoans->begin(), inputLoans->end(),
+                    *destroyPosition->loan) == inputLoans->end() ||
+          !retiredInputs.insert(*destroyPosition->loan).second ||
+          !advanceAssignmentLoanEnds(body,
+                                     body.findLoan(*destroyPosition->loan),
+                                     *publicationBlock, destroyPosition))
+        return {};
+    }
+    if (retiredInputs.size() != inputLoans->size())
       return {};
     if (destroyPosition == publicationBlock->instructions.end() ||
         destroyPosition->id != destroy->id) {

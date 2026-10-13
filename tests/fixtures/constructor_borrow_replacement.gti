@@ -1,0 +1,49 @@
+#include <std/string>
+#include <std/vector>
+
+mut int32_t phase = 0;
+mut int32_t zero = 0;
+
+struct Trace {
+  ~Trace() { std::println(9); }
+};
+
+struct Item {
+  mut std::string text;
+  int32_t id;
+  Item(std::string_view value, int32_t identity)
+      : text(std::string(value)), id(identity) {
+    if (id == 2 && phase == 1) {
+      int32_t constructor_failure = 11 / zero;
+    }
+  }
+  ~Item() {
+    std::println(id);
+    if (id == 1 && (phase == 2 || phase == 4)) {
+      int32_t old_cleanup_failure = 13 / zero;
+    }
+    if (id == 2 && phase == 4) {
+      int32_t staged_cleanup_failure = 17 / zero;
+    }
+  }
+};
+
+int run() {
+  Trace trace{};
+  mut std::string source{"new"};
+  mut Item target{"old", 1};
+  target = Item(source.view(), 2);
+  // The argument's temporary loan has ended, but both owners remain live.
+  source.append("!");
+  if (target.text != "new" || source != "new!") return 1;
+  if (phase == 3) {
+    int32_t after_commit_failure = 19 / zero;
+  }
+  std::println(99);
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  return run();
+}

@@ -2938,10 +2938,31 @@ private:
                                       MirProjectionKind::RawIndex;
                          });
     };
+    const auto rawReceiver = [&]() {
+      if (!instruction.receiver)
+        return false;
+      if (instruction.receiver->place != 0)
+        return rawPlace(instruction.receiver->place);
+      if (instruction.kind != MirInstructionKind::Call ||
+          instruction.receiver->kind != MirOperandKind::Value)
+        return false;
+      const MirValue *value = output.findValue(instruction.receiver->value);
+      const MirBlock *block =
+          value == nullptr ? nullptr : output.findBlock(value->definitionBlock);
+      if (block == nullptr)
+        return false;
+      for (const auto &stage : block->instructions)
+        if (stage.id == value->definition &&
+            stage.kind == MirInstructionKind::CallInput &&
+            stage.callSite == instruction.callSite &&
+            stage.callInputRole == MirCallInputRole::Receiver &&
+            stage.operands.size() == 1)
+          return rawPlace(stage.operands.front().place);
+      return false;
+    };
     instruction.rawMemoryAccess =
         (instruction.destination && rawPlace(*instruction.destination)) ||
-        (instruction.receiver && instruction.receiver->place != 0 &&
-         rawPlace(instruction.receiver->place)) ||
+        rawReceiver() ||
         std::any_of(instruction.operands.begin(), instruction.operands.end(),
                     [&](const MirOperand &operand) {
                       return operand.kind != MirOperandKind::Address &&
@@ -6050,7 +6071,9 @@ private:
       } else {
         call.receiver = std::move(operand);
       }
-      if (const HirValue *source = findValue(*receiver);
+    }
+    if (sourceReceiverValue) {
+      if (const HirValue *source = findValue(*sourceReceiverValue);
           source != nullptr &&
           source->unsafeOperation == UnsafeOperationKind::RawMember &&
           source->info.category != ValueCategory::Place) {
