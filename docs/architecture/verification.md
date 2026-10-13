@@ -9,7 +9,9 @@ receivers, consuming value/error payload extraction, receiver evaluation,
 wrong-state extraction, later-argument failure and callee failure, with
 exactly-once payload cleanup. `testOrderedRawReceiverInputs` checks the exact
 HIR pointee identity/access mode and MIR receiver stages; mutated call-site
-identities must fail verification.
+identities and erased unsafe/memory effects on either the stage or call must
+fail verification. The runtime fixture also invokes a declared-unsafe method
+through a raw receiver, preserving both independent obligations.
 
 `expected_boundary_replacement_runtime` exercises pointer-valued expected
 results through indexed owning fields and virtual dispatch, read-only and null
