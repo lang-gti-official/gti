@@ -4401,20 +4401,25 @@ void testOwningBaseConstructorStatus() {
         }
       }
       const auto *entry = constructor.body.findBlock(constructor.body.entry);
-      if (!entry || entry->instructions.empty() ||
-          entry->instructions.front().kind !=
-              lang::MirInstructionKind::InitializeBase)
+      if (!entry)
+        continue;
+      const auto stageIt = std::find_if(
+          entry->instructions.begin(), entry->instructions.end(),
+          [](const auto &instruction) {
+            return instruction.kind == lang::MirInstructionKind::InitializeBase;
+          });
+      if (stageIt == entry->instructions.end())
         continue;
       ++selected;
-      const auto &stage = entry->instructions.front();
+      const auto &stage = *stageIt;
       const auto bindings = lang::cppMirBaseParameterInitializerBindings(
           frontend.mir, constructor);
       expect(bindings && bindings->size() == 1 &&
-                 bindings->front().parameters.empty() &&
                  bindings->front().constructor == stage.constructorTarget &&
                  bindings->front().initializer + 1 ==
                      stage.constructorInitializer,
-             "zero-argument base initialization must retain its exact native "
+             "zero-argument, literal or parameter base initialization retains "
+             "its exact native "
              "binding");
       for (const auto standard :
            {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
@@ -4447,10 +4452,12 @@ void testOwningBaseConstructorStatus() {
             const_cast<std::vector<lang::MirConstructorInstance> &>(
                 malformed.constructorInstances());
         for (auto &candidate : constructors) {
-          if (candidate.id == constructor.id)
-            candidate.body.blocks[candidate.body.entry - 1]
-                .instructions.front()
-                .successResultDrop.reset();
+          if (candidate.id == constructor.id) {
+            for (auto &instruction :
+                 candidate.body.blocks[candidate.body.entry - 1].instructions)
+              if (instruction.id == stage.id)
+                instruction.successResultDrop.reset();
+          }
         }
         expect(!lang::CppMirBodyEmitter(malformed, map)
                     .supportsFailureBodyText(address),
@@ -4476,7 +4483,7 @@ void testOwningBaseConstructorStatus() {
       }
     }
     expect(selected == 1,
-           "the fixture must exercise exactly one owning-base stage");
+           "the fixture must exercise every selected owning-base stage");
   }
 }
 

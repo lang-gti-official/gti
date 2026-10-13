@@ -47920,7 +47920,8 @@ cppMirBaseParameterInitializerBindings(
             definition->operands.empty() && !definition->destination &&
             !definition->receiver && definition->definedFailure.empty() &&
             definition->lifecycle.empty() &&
-            scalarArgumentType(candidate.info.type) &&
+            (scalarArgumentType(candidate.info.type) ||
+             candidate.info.type.kind == SemanticType::StringView) &&
             target->parameterTypes[argumentIndex] == candidate.info.type &&
             onlyBaseArgumentUses(candidate.id, argumentIndex)) {
           if (value != nullptr)

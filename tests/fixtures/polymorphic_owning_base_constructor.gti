@@ -17,7 +17,7 @@ class Base {
   std::string name;
   std::unique_ptr<Guard> retained;
 public:
-  Base() : name(std::string("layer")), retained(std::make_unique<Guard>(1)) {
+  Base(std::string_view label) : name(std::string(label)), retained(std::make_unique<Guard>(1)) {
     Guard inside = Guard(2);
     std::println(6 / base_divisor);
   }
@@ -31,7 +31,7 @@ public:
 class Derived : public Base {
   std::string title;
 public:
-  Derived() : Base(), title(std::string("editor")) {
+  Derived() : Base("layer"), title(std::string("editor")) {
     Guard inside = Guard(4);
     std::println(8 / derived_divisor);
   }
