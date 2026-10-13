@@ -76,22 +76,56 @@ lowerUnionLayout(const HirClassInstance &instance) {
 
 } // namespace
 
+thread_local bool MirLowerer::shareExitCleanup_ = true;
+thread_local MirCleanupSharingStatistics MirLowerer::cleanupSharingStatistics_;
+
+void MirLowerer::setShareExitCleanup(bool enabled) {
+  shareExitCleanup_ = enabled;
+}
+
+bool MirLowerer::shareExitCleanup() { return shareExitCleanup_; }
+
+const MirCleanupSharingStatistics &MirLowerer::cleanupSharingStatistics() {
+  return cleanupSharingStatistics_;
+}
+
+void MirLowerer::resetCleanupSharingStatistics() {
+  cleanupSharingStatistics_ = {};
+}
+
 MirLoweringResult
 MirLowerer::lower(const HirProgram &source,
                   const FailureMetadata &failureMetadata) const {
   MirLoweringResult result = lowerVerified(source, failureMetadata);
-  if (result.valid() || !shareFailureCleanup_) {
+  if (result.valid()) {
     return result;
   }
-  // Program verification also reads each body's lowered failure cleanup.
-  // Should a shared cleanup schedule ever fail it, lower the program again
-  // with one cleanup chain per failure edge, the established form.
-  struct UnsharedCleanup {
-    UnsharedCleanup() { shareFailureCleanup_ = false; }
-    ~UnsharedCleanup() { shareFailureCleanup_ = true; }
-    UnsharedCleanup(const UnsharedCleanup &) = delete;
-    UnsharedCleanup &operator=(const UnsharedCleanup &) = delete;
-  } unshared;
+  // Program verification also reads each body's lowered cleanup. Should a
+  // shared schedule ever fail it, lower the program again in its established
+  // forms: first with every normal exit destroying its own owners, then with
+  // one cleanup chain per failure edge as well.
+  struct Unshared {
+    bool &flag;
+    const bool previous;
+    explicit Unshared(bool &flag) : flag(flag), previous(flag) { flag = false; }
+    ~Unshared() { flag = previous; }
+    Unshared(const Unshared &) = delete;
+    Unshared &operator=(const Unshared &) = delete;
+  };
+  if (shareExitCleanup_) {
+    ++cleanupSharingStatistics_.exitSharingProgramFallbacks;
+    const Unshared unsharedExits(shareExitCleanup_);
+    result = lowerVerified(source, failureMetadata);
+    if (result.valid() || !shareFailureCleanup_) {
+      return result;
+    }
+    const Unshared unsharedFailureCleanup(shareFailureCleanup_);
+    return lowerVerified(source, failureMetadata);
+  }
+  if (!shareFailureCleanup_) {
+    return result;
+  }
+  const Unshared unsharedFailureCleanup(shareFailureCleanup_);
   return lowerVerified(source, failureMetadata);
 }
 
