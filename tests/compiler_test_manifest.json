@@ -774,6 +774,10 @@
       "suite": "e2e"
     },
     {
+      "name": "testOrderedRawReceiverInputs",
+      "suite": "e2e"
+    },
+    {
       "name": "testOrderedClassValueCallInputs",
       "suite": "e2e"
     },

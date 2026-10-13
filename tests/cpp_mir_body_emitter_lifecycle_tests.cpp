@@ -2773,6 +2773,152 @@ int main() {
   }
 }
 
+void testConstructorBorrowedInputReplacement() {
+  const auto frontend =
+      analyzeWithStandardLibrary("constructor-input-loan.gti", R"(
+#include <std/string>
+struct Item {
+  mut std::string text;
+  Item(std::string_view input) : text(std::string(input)) {}
+};
+int main() {
+  std::string source{"new"};
+  mut Item target{"old"};
+  target = Item(source.view());
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(), "borrowed constructor replacement lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::HirFunctionInstanceId target = 0;
+  for (const auto &function : frontend.hir.functionInstances())
+    if (function.source && function.source->name().lexeme == "main")
+      target = function.id;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = target};
+  const auto *body = lang::findMirBody(frontend.mir, address);
+  expect(body && body->loans.size() == 1,
+         "replacement retains exactly the temporary input loan");
+  if (!body || body->loans.size() != 1)
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.supportsFailureBodyText(address),
+         "owning prvalue replacement retires the constructor's input loan");
+  lang::MirInstructionId endId = 0, dropId = 0;
+  for (const auto &block : body->blocks) {
+    if (block.activeFailure != 0)
+      continue;
+    for (std::size_t index = 0; index + 1 < block.instructions.size(); ++index)
+      if (block.instructions[index].kind ==
+              lang::MirInstructionKind::EndBorrow &&
+          block.instructions[index + 1].kind ==
+              lang::MirInstructionKind::Drop) {
+        endId = block.instructions[index].id;
+        dropId = block.instructions[index + 1].id;
+      }
+  }
+  expect(endId && dropId, "input retirement precedes moved-from shell cleanup");
+  if (!endId || !dropId)
+    return;
+  constexpr std::array<std::string_view, 6> reasons = {
+      "missing constructor-input retirement rejects",
+      "constructor-input retirement after shell cleanup rejects",
+      "unrelated input loan provenance rejects",
+      "escaping input loan cannot be retired as a temporary",
+      "effectful retirement rejects",
+      "missing moved-from shell cleanup rejects"};
+  for (int mutation = 0; mutation < 6; ++mutation) {
+    auto forged = frontend.mir;
+    auto *changedBody = lang::findMirBody(forged, address);
+    if (mutation == 2)
+      changedBody->loans.front().producedBy = 0;
+    if (mutation == 3)
+      changedBody->loans.front().escapes = true;
+    for (auto &block : changedBody->blocks) {
+      auto end =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const auto &i) { return i.id == endId; });
+      auto drop =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const auto &i) { return i.id == dropId; });
+      if (end == block.instructions.end())
+        continue;
+      if (mutation == 0)
+        block.instructions.erase(end);
+      else if (mutation == 1 && drop != block.instructions.end())
+        std::iter_swap(end, drop);
+      else if (mutation == 4)
+        end->fullExpressionEnd = 999;
+      else if (mutation == 5 && drop != block.instructions.end())
+        block.instructions.erase(drop);
+    }
+    const lang::CppMirBodyEmitter forgedEmitter(forged, map);
+    expect(!forgedEmitter.supportsFailureBodyText(address), reasons[mutation]);
+  }
+}
+
+void testConstructorBorrowedInputReborrowReplacement() {
+  const auto frontend =
+      analyzeWithStandardLibrary("constructor-input-reborrow.gti", R"(
+#include <std/string>
+struct Source {
+  std::string text{"new"};
+  std::string& get() { return this.text; }
+};
+struct Item {
+  mut std::string text;
+  Item(std::string_view input) : text(std::string(input)) {}
+};
+int main() {
+  Source source{};
+  mut Item target{"old"};
+  target = Item(source.get().view());
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(), "constructor input reborrow lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::HirFunctionInstanceId target = 0;
+  for (const auto &function : frontend.hir.functionInstances())
+    if (function.source && function.source->name().lexeme == "main")
+      target = function.id;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = target};
+  const auto *body = lang::findMirBody(frontend.mir, address);
+  expect(body && body->loans.size() == 2,
+         "constructor input retains receiver and view dependencies");
+  if (!body || body->loans.size() != 2)
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.supportsFailureBodyText(address),
+         "constructor input retires its readonly receiver chain");
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    auto forged = frontend.mir;
+    auto *changed = lang::findMirBody(forged, address);
+    auto parent = std::find_if(
+        changed->loans.begin(), changed->loans.end(), [](const auto &loan) {
+          return loan.kind == lang::MirLoanKind::CallResult;
+        });
+    if (parent == changed->loans.end()) {
+      expect(false, "input chain has an exact call-result parent");
+      return;
+    }
+    if (mutation == 0)
+      parent->access = lang::AccessMode::Mutable;
+    else if (mutation == 1)
+      parent->source = 0;
+    else
+      parent->kind = lang::MirLoanKind::Stored;
+    const lang::CppMirBodyEmitter forgedEmitter(forged, map);
+    expect(!forgedEmitter.supportsFailureBodyText(address),
+           "input retirement rejects changed parent access, source or kind");
+  }
+}
+
 void testPreparedConstructorReplacement() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/recursive_cleanup_failure.gti";
@@ -4323,6 +4469,145 @@ void testSourceDestructorOwningFieldCleanup() {
   }
 }
 
+void testVirtualExpectedOwningResult() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/virtual_expected_owning_return.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "virtual expected fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "virtual expected fixture must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  std::size_t selected = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            instruction.dispatch != lang::CallDispatch::Virtual ||
+            instruction.info.type.kind != lang::SemanticType::Expected)
+          continue;
+        ++selected;
+        const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                           function.id};
+        expect(lang::CppMirBodyEmitter(frontend.mir, map)
+                   .supportsFailureBodyText(address),
+               "named and fresh virtual expected results have exact slots");
+        for (int mutation = 0; mutation != 5; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(malformed, address);
+          for (auto &changedBlock : body->blocks)
+            for (auto &changed : changedBlock.instructions)
+              if (changed.id == instruction.id) {
+                switch (mutation) {
+                case 0:
+                  changed.dispatchOwner = lang::SemanticType::Void;
+                  break;
+                case 1:
+                  changed.definedFailure.propagation =
+                      lang::FailurePropagationKind::DirectCall;
+                  break;
+                case 2:
+                  changed.receiver.reset();
+                  break;
+                case 3:
+                  changed.successResultDrop.reset();
+                  break;
+                case 4:
+                  changedBlock.terminator.successLifecycle.clear();
+                  break;
+                }
+              }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "virtual publication rejects forged dispatch, receiver and "
+                 "success activation");
+        }
+      }
+  expect(selected == 2, "fixture has named and fresh virtual owning results");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "virtual owning expected publication reaches native emission");
+}
+
+void testBaseRollbackFailureRecord() {
+  for (const auto name :
+       {"nonfallible_base_rollback", "fallible_base_rollback"}) {
+    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures" / (std::string(name) + ".gti");
+    std::ifstream input(fixture);
+    expect(input.good(), "base rollback fixture must exist");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+    expect(frontend.canGenerateCode(), "base rollback fixture must verify");
+    if (!frontend.canGenerateCode())
+      continue;
+    const auto optimized = lang::OptimizationPipeline().run(
+        {.hir = frontend.hir,
+         .mir = frontend.mir,
+         .level = lang::OptimizationLevel::O0});
+    expect(optimized.valid(), "base rollback normalization must verify");
+    const auto &program = optimized.mir;
+    const bool fallible = std::string_view(name) == "fallible_base_rollback";
+    std::size_t selected = 0;
+    for (const auto &constructor : program.constructorInstances()) {
+      for (const auto &block : constructor.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Drop ||
+              !instruction.destination || instruction.lifecycle.size() != 1 ||
+              !instruction.lifecycle.front().failureCleanup)
+            continue;
+          const auto *place =
+              constructor.body.findPlace(*instruction.destination);
+          if (!place || place->root != lang::MirPlaceRootKind::This ||
+              place->projections.size() != 1 ||
+              place->projections.front().kind != lang::MirProjectionKind::Base)
+            continue;
+          ++selected;
+          expect(instruction.definedFailure.empty() != fallible,
+                 "rollback failure capability comes from the selected base");
+          const lang::MirBodyAddress address{
+              .kind = lang::MirBodyKind::Constructor, .owner = constructor.id};
+          const lang::CppMirBodyEmissionMap map(buildRows(frontend, program));
+          const lang::CppMirBodyEmitter emitter(program, map);
+          expect(
+              emitter.supportsFailureBodyText(address),
+              "both rollback capabilities have complete constructor emission");
+          if (!emitter.supportsFailureBodyText(address))
+            continue;
+          const auto text =
+              emitter.emitFailureBodyText(address, "base-record-v1", 1);
+          expect(text.text.find(
+                     fallible ? ">(&__gti_mir_cleanup_failure_record, true);"
+                              : ">(nullptr, true);") != std::string::npos,
+                 "only fallible base rollback receives a secondary record");
+          expect((text.text.find("::gti_failure_record_v2 "
+                                 "__gti_mir_cleanup_failure_record{};") !=
+                  std::string::npos) == fallible,
+                 "secondary record allocation agrees with rollback capability");
+          for (int mutation = 0; mutation != 2; ++mutation) {
+            auto malformed = program;
+            auto *body = lang::findMirBody(malformed, address);
+            for (auto &changedBlock : body->blocks)
+              for (auto &changed : changedBlock.instructions)
+                if (changed.id == instruction.id) {
+                  if (mutation == 0)
+                    changed.lifecycle.front().failureCleanup = false;
+                  else if (fallible)
+                    changed.definedFailure = {};
+                  else
+                    changed.definedFailure.propagation =
+                        lang::FailurePropagationKind::Destructor;
+                }
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "base rollback cannot forge cleanup kind or failure "
+                   "capability");
+          }
+        }
+    }
+    expect(selected == 1, "fixture contains one exact base rollback operation");
+  }
+}
+
 void testOwningBaseConstructorStatus() {
   for (const auto fixtureName :
        {"inherited_unique_allocation.gti", "generated_base_constructor.gti",
@@ -4343,17 +4628,13 @@ void testOwningBaseConstructorStatus() {
       if (!generated.generatedDefault)
         continue;
       const auto &owner = frontend.hir.classInstances()[generated.owner - 1];
-      const auto *lifecycle =
-          owner.source == nullptr
-              ? nullptr
-              : frontend.semantics.findClassLifecycle(*owner.source);
-      if (lifecycle && lifecycle->generatedDefaultFieldInitializers)
+      if (!owner.fields.empty())
         continue;
       expect(
           generated.declaration == 0 && generated.source == nullptr &&
               generated.initializers.size() == 1,
           "generated construction needs a selected body without synthetic AST");
-      for (int mutation = 0; mutation != 7; ++mutation) {
+      for (int mutation = 0; mutation != 8; ++mutation) {
         auto malformed = frontend.hir;
         auto *changed = const_cast<lang::HirConstructorInstance *>(
             malformed.findConstructorInstance(generated.id));
@@ -4369,8 +4650,12 @@ void testOwningBaseConstructorStatus() {
           changed->body.roots.push_back(999999);
         else if (mutation == 5)
           changed->owner = 999999;
-        else
+        else if (mutation == 6)
           changed->declaration = 999999;
+        else {
+          changed->initializers.front().constructorTarget.reset();
+          changed->initializers.front().generatedDefault = true;
+        }
         expect(
             !lang::verifyHirProgramPlans(frontend.semantics, malformed).valid(),
             "generated construction must retain its exact semantic selection");
@@ -4562,6 +4847,63 @@ void testOwningBaseConstructorStatus() {
     }
     expect(selected == 1,
            "the fixture must exercise every selected owning-base stage");
+  }
+}
+
+void testDefaultedOwningBaseSchedule() {
+  for (const auto name : {"defaulted_owning_base_constructor.gti",
+                          "defaulted_base_composition.gti"}) {
+    const auto fixture =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures" / name;
+    std::ifstream input(fixture);
+    const std::string source{std::istreambuf_iterator<char>(input),
+                             std::istreambuf_iterator<char>()};
+    const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+    expect(frontend.canGenerateCode(), "defaulted owning base must verify");
+    if (!frontend.canGenerateCode())
+      continue;
+    std::size_t selected = 0;
+    for (const auto &constructor : frontend.hir.constructorInstances()) {
+      if (!constructor.generatedDefault || constructor.initializers.empty() ||
+          constructor.initializers.front().kind !=
+              lang::ConstructorInitializerTargetKind::Base)
+        continue;
+      const auto &base = constructor.initializers.front();
+      const auto *target =
+          base.constructorTarget
+              ? frontend.hir.findConstructorInstance(*base.constructorTarget)
+              : nullptr;
+      expect(
+          target && target->generatedDefault && base.generatedDefault,
+          "defaulted inheritance must select the base's executable schedule");
+      if (!target)
+        continue;
+      ++selected;
+      for (int mutation = 0; mutation != 5; ++mutation) {
+        auto malformed = frontend.hir;
+        auto *changed = const_cast<lang::HirConstructorInstance *>(
+            malformed.findConstructorInstance(constructor.id));
+        auto &initializer = changed->initializers.front();
+        if (mutation == 0)
+          initializer.constructorTarget.reset();
+        else if (mutation == 1)
+          initializer.generatedDefault = false;
+        else if (mutation == 2)
+          initializer.base = constructor.owner;
+        else if (mutation == 3)
+          initializer.constructorTarget = constructor.id;
+        else
+          changed->initializers.clear();
+        expect(
+            !lang::verifyHirProgramPlans(frontend.semantics, malformed).valid(),
+            "defaulted base scheduling must reject missing or forged "
+            "selection");
+      }
+    }
+    expect(selected >= 2,
+           "the fixture must cover multiple selected base edges");
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "verified generated bases must have a native representation");
   }
 }
 
@@ -13787,6 +14129,10 @@ constexpr NamedTest kTests[] = {
     {"testPreparedConstructorReplacement", testPreparedConstructorReplacement},
     {"testConstructedPrvalueCheckedFieldReplacement",
      testConstructedPrvalueCheckedFieldReplacement},
+    {"testConstructorBorrowedInputReplacement",
+     testConstructorBorrowedInputReplacement},
+    {"testConstructorBorrowedInputReborrowReplacement",
+     testConstructorBorrowedInputReborrowReplacement},
     {"testNonFailingOwningDeclarationInitializer",
      testNonFailingOwningDeclarationInitializer},
     {"testGeneratedDeclarationFailureRollback",
@@ -13818,6 +14164,9 @@ constexpr NamedTest kTests[] = {
     {"testSourceDestructorOwningFieldCleanup",
      testSourceDestructorOwningFieldCleanup},
     {"testOwningBaseConstructorStatus", testOwningBaseConstructorStatus},
+    {"testBaseRollbackFailureRecord", testBaseRollbackFailureRecord},
+    {"testVirtualExpectedOwningResult", testVirtualExpectedOwningResult},
+    {"testDefaultedOwningBaseSchedule", testDefaultedOwningBaseSchedule},
     {"testPassiveOwnedParameterConstructorFields",
      testPassiveOwnedParameterConstructorFields},
     {"testBodyOrderedPassivePolicyConstructor",

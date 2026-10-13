@@ -724,8 +724,7 @@ private:
                 semantics_.findClassLifecycle(*declaration)) {
           payload.defaultConstructor = lifecycle->defaultConstructor;
           payload.generatedDefaultRequiresSchedule =
-              lifecycle->generatedDefaultFieldInitializers ||
-              lifecycle->generatedDefaultBaseConstructor != 0;
+              lifecycle->generatedDefaultInitializers;
           payload.copyConstructor = lifecycle->copyConstructor;
           payload.moveConstructor = lifecycle->moveConstructor;
           payload.copyAssignment = lifecycle->copyAssignment;
