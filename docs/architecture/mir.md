@@ -2084,15 +2084,93 @@ so no boundary spans a join.
 constructor, field-initializer, static-field-initializer, destructor and
 module bodies; the generated hosted-startup body; and edges whose remaining
 steps are all private. These are lowering scopes, not language restrictions.
-The normal path is unchanged: each return still destroys its own live owners.
-A body with an early return after every owner therefore still has normal exit
-code that grows with returns times owners.
+Normal exits share their own cleanup separately; see
+[shared normal-exit cleanup](#shared-normal-exit-cleanup).
 
 **Fallback.** If a body's shared schedule ever fails body verification,
 lowering emits that body with one chain per failure edge. If a program lowered
 with shared cleanup fails program verification, the program is lowered again
 unshared. The corpus differential in
 [verification](verification.md#shared-failure-cleanup-0402-2) triggers
+neither.
+
+### Shared normal-exit cleanup
+
+Function and lambda bodies also share the cleanup of their normal exits:
+each `return`, each `?` propagation and a void body's end. An exit drops the
+owners live at it, newest first, and ends the loans its scopes hold. A body
+with an early return after each owner used to emit returns times owners
+drops. Exits now share that work, and normal exit code grows with distinct
+exit states. With the synthetic early return after each of 80 owners, the
+body's normal drops fall from 3,320 to 80 and its blocks from 7,440 to 1,040.
+
+**Representation.**
+- `walkScopeExit` is the one definition of the scope-exit sequence. An
+  ordinary exit emits it as it walks. A shared exit walks it twice: first over
+  a copy of the scope state to plan, then again to emit, so the plan cannot
+  diverge from the emitted steps.
+- Each unit of a shared exit is either a scope's loan ends or one drop with
+  the loan ends that follow it. It begins a block, a *rung*, registered under
+  the exit's remaining state: the carrier, plus the places still to drop and
+  the loans still to end in each scope with work left. A later exit that
+  reaches a registered state jumps to that rung and stops. Exits therefore
+  form ladders whose rungs every passing exit shares.
+- The remaining state determines every step the walk still emits, including
+  the planned failure cleanup of each fallible drop. Everything else that
+  emission reads is fixed by the eligibility rules below. So an exit that
+  enters a rung also shares the rung's Invoke, failure record and planned
+  cleanup.
+- A returned value travels in a `Temporary` *carrier*, one per value type. An
+  exit initializes the carrier before its own full-expression cleanup, and the
+  ladder's tail loads it and returns it. An `unexpected(error)` exit, including
+  a `?` propagation, carries only the error, and the tail rebuilds the
+  `Unexpected` value. An `Unexpected` value is spelled only at its consuming
+  return, so it cannot occupy a place. Success and error values use separate
+  ladders.
+- The tail serves every exit that reaches it. Its reload, rebuilt
+  `Unexpected` value and `Return` therefore name no source location, like
+  shared failure cleanup. Debug information maps them to generated code
+  rather than to the first exit that emitted them. Each exit's carrier store
+  keeps its own source location.
+
+**Eligible exits.** An exit shares only when all of these hold:
+- the body has at least two exits;
+- no temporary, pending owning result, return loan or constructor-published
+  loan is live when cleanup begins;
+- it shares at least one drop;
+- it returns nothing, or a value of block-parameter type: a scalar, enumeration
+  or pointer, either the return type or the success type `T` of
+  `expected<T, E>`, or such an `E` through `unexpected`.
+
+Owning, class and borrowed results keep their own cleanup, because the C++
+backend publishes them through proofs over their exact producers. So do
+`main`'s implicit zero return, single-exit bodies, and every body kind outside
+function and lambda bodies. A drop is shared only when its failure
+propagation is its destructor's own summary. A drop proved to retire a
+moved-from shell depends on the path back to the move, so it and every unit
+before it stay private to the exit. These are lowering scopes, not language
+restrictions.
+
+**Verified contract.** No new verifier rule is needed. Every joined path must
+satisfy the existing ones:
+- The lifecycle dataflow joins obligation states at a rung. Exits sharing a
+  rung have the same drops left, so each obligation the rung drops is active
+  on every entering path. An exit entering a rung it does not match makes a
+  drop's conditionality disagree with its path, and is rejected.
+- Loan flow must be equal on every edge into a block, and exits sharing a rung
+  have the same loans left.
+- Each rung closes its own cleanup boundary. A fallible drop's boundary is in
+  its Invoke continuation, before the jump to the next rung, so no boundary
+  spans a join.
+- A carrier is read only as a definitely initialized scalar place, so an exit
+  that skips its store is rejected.
+
+**Fallback.** If a body that shares exits fails verification, lowering emits
+that body again with every exit destroying its own owners. If the program
+fails program verification, it is lowered again without shared exits, then
+also without shared failure cleanup. Lowering counts each fallback
+(`MirLowerer::cleanupSharingStatistics`). The corpus differential in
+[verification](verification.md#shared-normal-exit-cleanup-04191) triggers
 neither.
 
 Program verification also requires each function, constructor, destructor and
