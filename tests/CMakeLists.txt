@@ -968,6 +968,11 @@ add_test(NAME expected_constructor_return_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_constructor_return_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_constructor_return_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME mixed_constructor_parameter_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/mixed_constructor_parameter_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(mixed_constructor_parameter_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_consuming_return_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_consuming_return_runtime_test.py"

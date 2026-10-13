@@ -14744,11 +14744,11 @@ failureConstructorPassiveBoundField(const MirProgram &program,
 [[nodiscard]] const MirInstruction *
 storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
 
-// Hoisting a passive copied carrier is safe only for this complete first-field
+// Hoisting passive copied fields is safe only for this complete first-field
 // prefix. The shared copy query proves the exact formal, Load, Initialize and
-// full-expression identity; the publication query proves its external loan.
+// full-expression identity; borrowed carriers additionally prove their loan.
 // No later constructor work is moved before this prefix or treated as inert.
-[[nodiscard]] bool failureConstructorCopiedBoundFieldPrefix(
+[[nodiscard]] bool failureConstructorCopiedFieldPrefix(
     const MirProgram &program, const MirConstructorInstance &constructor,
     const MirClassInstance &owner,
     const CppMirCopyParameterFieldBinding &binding) {
@@ -14766,18 +14766,28 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
   // Several passive copies can be native initializers only when they form
   // one contiguous declaration-ordered prologue. A later field must never
   // leap over an intervening computation or failure boundary.
+  std::size_t offset = 0;
   for (std::size_t index = 0; index <= binding.initializer; ++index) {
     const auto copy = std::find_if(
         copies->begin(), copies->end(),
         [&](const auto &candidate) { return candidate.initializer == index; });
-    const auto offset = index * 5;
     if (copy == copies->end() ||
         copy->field != owner.declaredFields[index].symbol ||
-        !failureConstructorPassiveBoundField(program,
-                                             owner.declaredFields[index]) ||
-        entry->instructions.size() < offset + 5 ||
+        entry->instructions.size() < offset + 3 ||
         entry->instructions[offset].id != copy->loadInstruction ||
-        entry->instructions[offset + 1].id != copy->initializeInstruction ||
+        entry->instructions[offset + 1].id != copy->initializeInstruction)
+      return false;
+    const auto &field = owner.declaredFields[index];
+    const auto *passive = passiveGeneratedCopyClass(program, field.type);
+    if (passive && !passive->traits.containsBorrowedState &&
+        !field.requiresActiveCleanup) {
+      if (entry->instructions[offset + 2].id != copy->boundaryInstruction)
+        return false;
+      offset += 3;
+      continue;
+    }
+    if (!failureConstructorPassiveBoundField(program, field) ||
+        entry->instructions.size() < offset + 5 ||
         entry->instructions[offset + 4].id != copy->boundaryInstruction)
       return false;
     const auto &publication = entry->instructions[offset + 2];
@@ -14793,6 +14803,7 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
         retire.destination || retire.receiver || !retire.operands.empty() ||
         !retire.lifecycle.empty() || !retire.definedFailure.empty())
       return false;
+    offset += 5;
   }
   return true;
 }
@@ -15122,7 +15133,11 @@ failureConstructorBoundaryEligible(const MirProgram &program,
       // Base and field proofs compose; neither can replace the other.
       emptyStateFields && storedReferences && storedReferences->empty() &&
       baseParameters && passiveBases && copiedParameters &&
-      copiedParameters->empty() &&
+      std::all_of(copiedParameters->begin(), copiedParameters->end(),
+                  [&](const auto &binding) {
+                    return failureConstructorCopiedFieldPrefix(
+                        program, constructor, *owner, binding);
+                  }) &&
       bodyStagedOwnedParameterFieldInitializers(program, constructor);
   const bool bodyStagedOptionalParameter =
       storedReferences && storedReferences->empty() && baseParameters &&
@@ -15189,7 +15204,7 @@ failureConstructorBoundaryEligible(const MirProgram &program,
            std::any_of(copiedParameters->begin(), copiedParameters->end(),
                        [&](const auto &binding) {
                          return binding.field == field.symbol &&
-                                failureConstructorCopiedBoundFieldPrefix(
+                                failureConstructorCopiedFieldPrefix(
                                     program, constructor, *owner, binding);
                        })) ||
           std::any_of(constructedFields.begin(), constructedFields.end(),

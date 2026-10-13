@@ -2524,15 +2524,21 @@ do not use this passive route.
 
 An exact by-value parameter copy may also publish one field through the native
 member-initializer list when the copied class has generated copy/destruction,
-only passive scalar or enum state, no state-bearing base, and no active cleanup.
+only recursively passive scalar, enum, array or generated-record state, no
+state-bearing base, and no active cleanup.
 This MIR shape carries one reachable parameter `Load`, one matching initializer
 metadata row, an exact field `Initialize`, and one full-expression boundary;
 the copied parameter's native scope destruction represents its trivial MIR
 drop. The scalar copy route, including passive raw-pointer value copies,
 requires the same explicit `Load`/`Initialize` pair. Copying a raw pointer
 introduces no dereference, loan, or ownership authority. Custom lifecycle,
-extra uses, forged ownership, ambiguous fields, and mixed initializer schedules
-fail closed.
+extra uses, forged ownership and ambiguous fields fail closed. Several such
+copies may precede body-staged owned fields when their exact Load/Initialize/
+boundary triples form a contiguous declaration-ordered entry prefix. Borrowed
+carriers retain their additional publication/loan-end witness. The prefix may
+not cross base construction, computations, later owned publication or failure
+edges. Native initialization realizes only that proved prefix; subsequent owned
+fields remain empty until their original MIR publication and rollback execute.
 
 A shared-reference carrier with generated, observation-free destruction may
 retain its bound native shell during constructor rollback. This is not an
