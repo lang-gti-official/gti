@@ -4295,7 +4295,8 @@ void testOwningBaseConstructorStatus() {
   for (const auto fixtureName :
        {"inherited_unique_allocation.gti", "generated_base_constructor.gti",
         "generated_base_owner_constructor.gti",
-        "polymorphic_owning_base_constructor.gti"}) {
+        "polymorphic_owning_base_constructor.gti",
+        "owning_parameter_base_constructor.gti"}) {
     const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                          "fixtures" / fixtureName;
     std::ifstream input(fixture);
@@ -4376,6 +4377,51 @@ void testOwningBaseConstructorStatus() {
         expect(emitter.supportsFailureBodyText(address),
                "an abstract or concrete polymorphic owner retains guarded "
                "source cleanup during status construction");
+        for (const auto &initializer : constructor.initializers) {
+          if (!initializer.ownedParameter)
+            continue;
+          for (int mutation = 0; mutation != 3; ++mutation) {
+            auto forged = frontend.mir;
+            auto *changed = const_cast<lang::MirConstructorInstance *>(
+                forged.findConstructorInstance(constructor.id));
+            bool mutated = false;
+            for (auto &block : changed->body.blocks) {
+              for (auto &instruction : block.instructions) {
+                if (mutation == 0 &&
+                    instruction.kind == lang::MirInstructionKind::Move &&
+                    instruction.info.type == initializer.targetType &&
+                    instruction.ownership) {
+                  instruction.ownership->after =
+                      lang::OwnershipStateSet::Available;
+                  mutated = true;
+                }
+                if (mutation == 1 &&
+                    instruction.kind == lang::MirInstructionKind::Initialize &&
+                    instruction.info.type == initializer.targetType &&
+                    !instruction.lifecycle.empty()) {
+                  instruction.lifecycle.clear();
+                  mutated = true;
+                }
+              }
+            }
+            if (mutation == 2) {
+              for (auto &drop : changed->body.dropObligations) {
+                if (drop.kind == lang::MirDropObligationKind::Binding &&
+                    drop.binding ==
+                        constructor
+                            .parameterBindings[*initializer.ownedParameter]) {
+                  drop.initiallyActive = false;
+                  mutated = true;
+                }
+              }
+            }
+            expect(mutated && !lang::verifyMirProgram(forged).valid() &&
+                       !lang::CppMirBodyEmitter(forged, map)
+                            .supportsFailureBodyText(address),
+                   "base-plus-owned-field composition must preserve input "
+                   "ownership, publication reparenting and parameter cleanup");
+          }
+        }
         const auto text =
             emitter.emitFailureBodyText(address, "guarded-owning-base-v1", 1);
         const auto guard = "(*this).__gti_lifecycle_active_" +
