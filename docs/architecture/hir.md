@@ -657,6 +657,13 @@ The backend consumes the verified MIR group, not these HIR records alone.
 
 ## Executable Values
 
+An unsafe expression is the same grouping value after frontend permission
+checking. Exact unsafe operations on its operand retain their ordinary
+semantic/HIR/MIR markers and verifier requirements. Class/Expected fresh-result
+aliases and callable environment identity therefore follow the rules below;
+the unsafe wrapper creates no additional object, drop obligation, runtime
+instruction or backend-specific lowering path.
+
 Same-type fresh-result construction, and grouping or a builtin comma whose
 value is a class or Expected object, are non-executing source aliases. A comma
 denotes its right operand; its left operand becomes the first of the

@@ -2893,8 +2893,11 @@ private:
           check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
 
       const Expr *ungrouped = expr.get();
-      while (const auto *group = exprAs<Grouping>(ungrouped))
+      while (const auto *group = exprAs<Grouping>(ungrouped)) {
+        if (group->unsafeKeyword())
+          break;
         ungrouped = group->expression().get();
+      }
       const auto *unaryTarget = exprAs<Unary>(ungrouped);
       if (exprAs<Variable>(ungrouped) || exprAs<QualifiedName>(ungrouped) ||
           exprAs<Get>(ungrouped) || exprAs<Index>(ungrouped) ||
@@ -3259,6 +3262,15 @@ private:
   }
 
   ExprPtr primary() {
+    if (match({TokenKind::UNSAFE})) {
+      Token keyword = previous();
+      consume(TokenKind::LEFT_BRACE, "Expect '{' after 'unsafe'.");
+      ExprPtr value = expression();
+      consume(
+          TokenKind::RIGHT_BRACE,
+          "Expect '}' after the unsafe expression (without a trailing ';').");
+      return std::make_unique<Grouping>(std::move(value), std::move(keyword));
+    }
     if (match({TokenKind::REQUIRES})) {
       return memberRequirement(previous());
     }

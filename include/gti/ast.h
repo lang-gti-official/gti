@@ -1252,7 +1252,12 @@ private:
 
 class Grouping final : public ExprOfKind<ExprKind::Grouping> {
 public:
-  explicit Grouping(ExprPtr expression) : expression_(std::move(expression)) {}
+  // Both spellings group one expression. Unsafe grouping adds lexical
+  // permission only; it does not introduce storage or a function boundary.
+  explicit Grouping(ExprPtr expression,
+                    std::optional<Token> unsafeKeyword = std::nullopt)
+      : expression_(std::move(expression)),
+        unsafeKeyword_(std::move(unsafeKeyword)) {}
   Grouping(Grouping &&) = default;
   Grouping(const Grouping &) = delete;
   Grouping &operator=(Grouping &&) = default;
@@ -1264,10 +1269,14 @@ public:
   }
 
   [[nodiscard]] const ExprPtr &expression() const { return expression_; }
+  [[nodiscard]] const std::optional<Token> &unsafeKeyword() const {
+    return unsafeKeyword_;
+  }
   ExprPtr takeExpression() { return std::move(expression_); }
 
 private:
   ExprPtr expression_;
+  std::optional<Token> unsafeKeyword_;
 };
 
 class Index final : public ExprOfKind<ExprKind::Index> {
