@@ -2336,6 +2336,16 @@ Ordinary native constructor overloads that publish fields from the same MIR
 body use the same proved private empty state as their failure-form overloads.
 They must not implicitly call a source default constructor before MIR field
 publication; that constructor may be deleted or have observable behavior.
+A concrete owner with a declared destructor may use its disarmed construction
+guard when all of its polymorphic bases are independently verified empty
+interfaces. Those bases contribute dispatch identity, not source storage,
+initialization, or cleanup. The same structural proof is shared with private
+empty-shell admission; polymorphism alone must not reject a valid constructor.
+MIR still supplies the exact reverse field rollback schedule, and the source
+destructor becomes active only after successful construction. Failed
+construction therefore cleans up completed fields without invoking the
+incomplete object's destructor. Stateful bases and interface records with
+non-generated lifecycle operations are not admitted by this proof.
 A cleanup-free class field may have lexical lifetime without an active cleanup
 obligation. Such a field can accompany a guarded owner only when its concrete
 class has generated, observation-free destruction, no active cleanup state,
