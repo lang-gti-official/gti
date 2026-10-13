@@ -17,6 +17,8 @@ for what minor and patch releases mean.
 - Allow consuming an owning `expected` value or error directly into an existing
   object. Reuse the ordinary replacement lifetime slot and preserve old-value,
   wrong-state and secondary-failure cleanup (issues #84 and #85).
+- Fix owning field replacement through non-failing reference-returning getters,
+  including nested getters, without requiring a spurious failure edge (#88).
 
 ## 0.423.1 — Interface owner constructor cleanup
 
