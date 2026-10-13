@@ -1371,6 +1371,66 @@ cleanup; `mir_shared_failure_cleanup` bounds both.
   mutations. `shared_failure_cleanup_runtime` is a differential runtime matrix
   over 33 phases in 9 modes, including ASan/UBSan.
 
+## Shared normal-exit cleanup (0.420.1)
+
+Function and lambda bodies now share the cleanup of normal exits that return
+nothing, a scalar or a scalar error; see
+[MIR](mir.md#shared-normal-exit-cleanup). The figures compare main `0abd4bc7`
+with the candidate built on it. Both are Release builds: compiler and corpus
+figures are from the Mac mini, and the GCC figures from the M-series laptop.
+
+The early-return variant of the synthetic bodies above (`run` at `-O0`). Each
+cell is MIR blocks / normal drops / returns / failure records:
+
+| Owners | Before | After |
+| ---: | --- | --- |
+| 10 | 230 / 65 / 11 / 104 | 130 / 10 / 1 / 49 |
+| 20 | 660 / 230 / 21 / 309 | 260 / 20 / 1 / 99 |
+| 40 | 2,120 / 860 / 41 / 1,019 | 520 / 40 / 1 / 199 |
+| 80 | 7,440 / 3,320 / 81 / 3,639 | 1,040 / 80 / 1 / 399 |
+
+Normal exit cleanup is one drop per owner, and every exit ends in one return.
+
+The single 100-line `exercise` body that
+`tests/fixtures/filesystem_operations.gti` had before it was split into
+phases on 2026-10-12:
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| `exercise`, lines of C++ | 17,087 | 6,879 |
+| its labels / fallible drops | 2,065 / 734 | 801 / 79 |
+| whole program, `--emit-cpp` | 2,245,888 bytes | 1,719,481 bytes |
+| GCC 15 `-O1 -fsanitize=address` compile of that C++ | killed at 1,200 s | 389 s |
+
+Thirteen of its 16 remaining returns are exits before any owner exists, which
+have nothing to drop and return directly. The other three are ladder tails.
+GCC's sanitized cost still grows faster than the body, so long bodies remain
+slower to build sanitized than short ones. Across other programs:
+`stdlib_surface_json` emits 4,754,934 → 4,639,107 bytes, and example 147
+1,802,807 → 1,799,654.
+
+**Evidence.**
+- **Corpus differential.** Both compilers built the 1,650 programs of
+  `examples/`, `tests/fixtures/` and `tests/coverage/` with `--emit-cpp`,
+  retrying 56 threaded programs with `--execution-profile concurrent`. Exit
+  codes and diagnostics are identical for every program both trees contain;
+  the one difference is this change's new fixture, which the baseline tree
+  lacks. 1,345 programs compile. An instrumented candidate counted 1,002
+  programs and 13,808 bodies whose exits joined, across lowering rounds, and
+  neither the body nor the program fallback ever ran. Generated C++ over the
+  corpus fell from 895.7 MB to 887.6 MB. 774 programs emit less, by up to 17%
+  (`restoring_exchange_shapes`) or 527 KB (`json_parity`). 236 programs emit
+  up to 0.9% more: bodies with several exits that never join still get a
+  block per cleanup step and a carrier store and load.
+- **Runtime controls.** The 14 runtime-audit probes and the storage probe were
+  built at `-O2` by both compilers, with loops aligned to 64 bytes. Their
+  output and binary sizes are identical, and minimum times over 9 interleaved
+  samples are within noise (ratios 0.981 to 1.005).
+- **New tests.** `mir_shared_failure_cleanup` adds scaling, exit-kind and
+  private-exit structure, program-constant exits and four verifier mutations.
+  `shared_exit_cleanup_runtime` runs 25 phases in 9 modes, including
+  ASan/UBSan.
+
 The command contracts, test ownership and development/completion guidance below
 describe how to verify current work. Delivery sections retain dated, exact-head
 acceptance and candidate evidence: an earlier "remaining" failure is not a live
