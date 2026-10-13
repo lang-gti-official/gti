@@ -4481,9 +4481,15 @@ void testBaseRollbackFailureRecord() {
     expect(frontend.canGenerateCode(), "base rollback fixture must verify");
     if (!frontend.canGenerateCode())
       continue;
+    const auto optimized = lang::OptimizationPipeline().run(
+        {.hir = frontend.hir,
+         .mir = frontend.mir,
+         .level = lang::OptimizationLevel::O0});
+    expect(optimized.valid(), "base rollback normalization must verify");
+    const auto &program = optimized.mir;
     const bool fallible = std::string_view(name) == "fallible_base_rollback";
     std::size_t selected = 0;
-    for (const auto &constructor : frontend.mir.constructorInstances()) {
+    for (const auto &constructor : program.constructorInstances()) {
       for (const auto &block : constructor.body.blocks)
         for (const auto &instruction : block.instructions) {
           if (instruction.kind != lang::MirInstructionKind::Drop ||
@@ -4501,9 +4507,8 @@ void testBaseRollbackFailureRecord() {
                  "rollback failure capability comes from the selected base");
           const lang::MirBodyAddress address{
               .kind = lang::MirBodyKind::Constructor, .owner = constructor.id};
-          const lang::CppMirBodyEmissionMap map(
-              buildRows(frontend, frontend.mir));
-          const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+          const lang::CppMirBodyEmissionMap map(buildRows(frontend, program));
+          const lang::CppMirBodyEmitter emitter(program, map);
           expect(
               emitter.supportsFailureBodyText(address),
               "both rollback capabilities have complete constructor emission");
@@ -4520,7 +4525,7 @@ void testBaseRollbackFailureRecord() {
                   std::string::npos) == fallible,
                  "secondary record allocation agrees with rollback capability");
           for (int mutation = 0; mutation != 2; ++mutation) {
-            auto malformed = frontend.mir;
+            auto malformed = program;
             auto *body = lang::findMirBody(malformed, address);
             for (auto &changedBlock : body->blocks)
               for (auto &changed : changedBlock.instructions)
