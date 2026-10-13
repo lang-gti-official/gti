@@ -1,0 +1,46 @@
+#include <std/memory>
+#include <std/vector>
+enum Error { Missing };
+class Widget {
+public:
+  Widget() = default;
+  virtual int Read() { return 7; }
+};
+struct Entry {
+  mut std::unique_ptr<Widget> owner;
+  Entry(std::unique_ptr<Widget> value) : owner(std::move(value)) {}
+};
+class Registry {
+  mut std::vector<Entry> entries{};
+public:
+  Registry() = default;
+  void Add() mut { [[discard]] this.entries.emplace_back(std::make_unique<Widget>()); }
+  expected<Widget*, Error> Find() mut {
+    if (!this.entries.empty()) { return &*this.entries[std::size_t(0)].owner; }
+    return unexpected(Error::Missing);
+  }
+};
+expected<const int*, Error> Observe(const int* value, int divisor) {
+  int checked = 1 / divisor;
+  return value;
+}
+int main() {
+  mut Registry registry{};
+  auto missing = registry.Find();
+  if (missing) { return 1; }
+  registry.Add();
+  auto found = registry.Find();
+  if (!found) { return 2; }
+  int number = 11;
+  auto pointer = Observe(&number, 1);
+  auto null_pointer = Observe(nullptr, 1);
+  if (!pointer || !null_pointer || null_pointer.value() != nullptr) {
+    return 3;
+  }
+  unsafe {
+    if (*pointer.value() != 11 || found.value()->Read() != 7) {
+      return 4;
+    }
+  }
+  return 0;
+}
