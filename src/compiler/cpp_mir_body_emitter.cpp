@@ -47784,6 +47784,7 @@ cppMirBaseParameterInitializerBindings(
     case SemanticType::Char:
     case SemanticType::Enum:
     case SemanticType::NullPtr:
+    case SemanticType::StringView:
       return true;
     default:
       return false;
