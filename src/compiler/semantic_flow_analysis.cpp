@@ -2774,24 +2774,31 @@ auto SemanticVisitor::Impl::finalizeAdvisoryDiagnostics() -> void {
   if (hadError() || instanceAnalysisActive) {
     return;
   }
-  std::unordered_set<const BlockStmt *> reportedUnsafeBlocks;
+  std::unordered_set<const Token *> reportedUnsafeBlocks;
   const auto &unsafeCandidates = requestSession.unsafeBlockCandidates;
   for (std::size_t index = lateFinalization == nullptr
                                ? 0
                                : lateFinalization->unsafeBlockCandidates;
        index < unsafeCandidates.size(); ++index) {
     const auto &candidate = unsafeCandidates[index];
-    if (requestSession.usedUnsafeBlocks.contains(candidate.block) ||
+    if (requestSession.usedUnsafeBlocks.contains(candidate.keyword) ||
         requestSession.deferredFlowOwners.contains(candidate.owner) ||
-        !reportedUnsafeBlocks.insert(candidate.block).second) {
+        !reportedUnsafeBlocks.insert(candidate.keyword).second) {
       continue;
     }
-    Diagnostic diagnostic =
-        makeDiagnostic(DiagnosticId::UnnecessaryUnsafeBlock, candidate.keyword);
+    Diagnostic diagnostic = makeDiagnostic(DiagnosticId::UnnecessaryUnsafeBlock,
+                                           *candidate.keyword);
     diagnostic.tags.push_back(DiagnosticTag::Unnecessary);
-    diagnostic.fixes.push_back({.span = tokenSpan(candidate.keyword),
-                                .replacement = "",
-                                .message = "Remove unnecessary 'unsafe'"});
+    // Deleting just the keyword from an expression would leave invalid
+    // brace syntax. The existing statement-only fix remains safe.
+    if (candidate.expression) {
+      diagnostic.hints.emplace_back(
+          "Replace the unnecessary unsafe expression with parentheses.");
+    } else {
+      diagnostic.fixes.push_back({.span = tokenSpan(*candidate.keyword),
+                                  .replacement = "",
+                                  .message = "Remove unnecessary 'unsafe'"});
+    }
     diagnostics.emplace_back(std::move(diagnostic));
   }
   const auto &mutableCandidates = requestSession.mutableLocalCandidates;

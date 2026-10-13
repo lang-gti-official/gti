@@ -233,7 +233,8 @@ private:
     }
     case ExprKind::Grouping: {
       const auto &node = static_cast<const Grouping &>(expression);
-      return std::make_unique<Grouping>(expr(node.expression()));
+      return std::make_unique<Grouping>(expr(node.expression()),
+                                        tok(node.unsafeKeyword()));
     }
     case ExprKind::Index: {
       const auto &node = static_cast<const Index &>(expression);

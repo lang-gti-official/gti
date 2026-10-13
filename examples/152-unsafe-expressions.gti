@@ -1,0 +1,23 @@
+#include <std/string>
+
+// A caller obligation on an unrelated, ordinary user-defined operation.
+unsafe int read(const int* address) {
+  return unsafe { *address };
+}
+
+int main() {
+  mut std::string original{"callback text"};
+  c_string description = original.c_string();
+
+  // The owned value is initialized directly in the surrounding scope.
+  // No empty mutable binding or hidden function call is needed.
+  auto text = unsafe { std::string(description) };
+  auto attempted = unsafe { std::string::try_from_c_string(description) };
+  if (!attempted || attempted.value().view() != text.view()) { return 1; }
+  original.clear();
+  std::println(text.view());
+
+  int number = 42;
+  auto answer = unsafe { read(&number) };
+  return answer == 42 ? 0 : 2;
+}

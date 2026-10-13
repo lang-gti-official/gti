@@ -1102,6 +1102,15 @@ add_executable(gti_unsafe_function_tests
 target_link_libraries(gti_unsafe_function_tests PRIVATE gti_cpp_backend)
 add_test(NAME unsafe_function_contract COMMAND gti_unsafe_function_tests)
 
+add_executable(gti_unsafe_expression_tests unsafe_expression_tests.cpp)
+target_link_libraries(gti_unsafe_expression_tests PRIVATE gti_cpp_backend)
+add_test(NAME unsafe_expression_contract COMMAND gti_unsafe_expression_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME unsafe_expression_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/unsafe_expression_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(unsafe_expression_runtime PROPERTIES TIMEOUT 900)
+endif()
+
 add_executable(gti_runtime_object_layout_tests runtime_object_layout_tests.cpp)
 target_link_libraries(gti_runtime_object_layout_tests PRIVATE gti_cpp_backend)
 add_test(NAME runtime_object_layout_contract COMMAND gti_runtime_object_layout_tests)
