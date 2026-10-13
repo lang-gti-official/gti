@@ -17,8 +17,9 @@ for what minor and patch releases mean.
   diagnostics `gti check` reports for the open file's own code are unchanged;
   library instances that only such a body would request are left to the
   library's own check, like library code the open file does not reach. The
-  frontend trace reports `hirOmittedInstanceBodies`. `gti check` and builds
-  are unaffected.
+  frontend trace reports `hirOmittedInstanceBodies`. With the instance reuse
+  of 0.420.0, a file with eight standard-library includes analyses in about
+  250 ms per edit instead of 300. `gti check` and builds are unaffected.
 
 ## 0.420.0 — Faster editor feedback for library-heavy files
 

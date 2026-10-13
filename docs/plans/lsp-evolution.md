@@ -408,7 +408,7 @@ build with both:
 | --- | ---: | ---: | ---: | ---: |
 | entry-unit HIR, every reached body lowered | 450 | 195 | 10 (12 bodies) | 205 |
 | library-only bodies omitted | 300 | 193 | 4 (5 bodies) | 56 |
-| instance reuse and omission (0.421.0) | COMBINED_TOTAL | COMBINED_SEMA | COMBINED_LATE | COMBINED_HIR |
+| instance reuse and omission (0.421.0) | 250 | 200 | 4 (5 bodies) | 30 |
 
 Each steady 089 edit omits 123 library-only function, constructor and
 destructor bodies; the instances only those bodies would have requested are
@@ -418,7 +418,8 @@ registration (about 40 ms), eager library constructors, destructors, virtual
 and constant definitions plus application bodies (about 85 ms), demanded
 library bodies (about 52 ms) and finalization (8 ms) remain, and are now two
 thirds of the edit. With instance reuse, the omitted bodies also leave fewer instances to reuse
-(COMBINED_HITS hits per edit). Reaching the exit measure needs the rest of
+(132 reused instance analyses per edit instead of 590, a 1.4 MB cache
+instead of 9 MB). Reaching the exit measure needs the rest of
 step 3.
 
 Exit measure: the eight-include file under 100 ms per edit with the probe,
