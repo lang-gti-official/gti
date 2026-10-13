@@ -6,6 +6,7 @@
 
 namespace lang {
 
+class InstanceAnalysisCache;
 class SourceManager;
 
 // Narrow mutable capability used only by HIR's concrete-instance discovery.
@@ -83,6 +84,15 @@ public:
   SemanticVisitor &operator=(SemanticVisitor &&) noexcept;
 
   bool check(const Program &program);
+  // Lets bounded (Reachable) analysis reuse concrete instance analyses of
+  // compiler-trusted declarations from earlier snapshots that shared `cache`
+  // (see InstanceAnalysisCache). `context` identifies the frontend
+  // configuration the caller analyses under. Set before check().
+  void useInstanceAnalysisCache(std::shared_ptr<InstanceAnalysisCache> cache,
+                                std::string context);
+  // Offers this analysis's reusable instance analyses to the cache. Call
+  // once HIR is final, never for an analysis that will be repeated.
+  void publishInstanceAnalyses();
   // Select additional primary bodies for the next check, after HIR discovery.
   // AST identities must belong to that same parsed program.
   void

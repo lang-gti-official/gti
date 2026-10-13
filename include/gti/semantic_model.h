@@ -1548,6 +1548,12 @@ public:
   // Identity ceiling, including the reserved prefix of an instance delta.
   [[nodiscard]] SymbolId symbolIdentityCeiling() const;
 
+  // An instance delta's own identities are (instanceIdentityFloor(),
+  // symbolIdentityCeiling()]; every lower identity belongs to its base.
+  [[nodiscard]] SymbolId instanceIdentityFloor() const {
+    return baseSymbolCount;
+  }
+
   [[nodiscard]] const SymbolRecord *findSymbol(SymbolId id) const;
 
   [[nodiscard]] std::vector<const SemanticOccurrence *>
@@ -1631,6 +1637,15 @@ private:
   // Instance-delta base; see beginInstanceDelta.
   const SemanticDatabase *base = nullptr;
   SymbolId baseSymbolCount = 0;
+  // Instance reuse journal (see SemanticModel::beginInstanceReuseJournal):
+  // every base identity this delta resolved or read while it was analysed,
+  // and, once frozen, the declaration each one denoted in that base.
+  [[nodiscard]] SymbolId noteBaseSymbol(SymbolId id) const;
+  [[nodiscard]] bool freezeBaseSymbolReads();
+  [[nodiscard]] bool
+  baseSymbolReadsMatch(const SemanticDatabase &candidate) const;
+  mutable std::optional<std::unordered_set<SymbolId>> baseSymbolReads;
+  std::vector<std::pair<SymbolId, DeclarationKey>> frozenBaseSymbols;
   // Occurrence recording is editor-tooling work; see
   // SemanticModel::setToolingOccurrencesEnabled.
   bool toolingOccurrences = true;
@@ -1810,6 +1825,11 @@ public:
   [[nodiscard]] const ExprPtr &
   resolvedFieldInitializer(const VariableDecl &field) const;
   void retainImplicitFieldInitializer(const VariableDecl &field);
+  // Retains a caller-supplied anchor that outlives this snapshot (see
+  // InstanceAnalysisCache::implicitFieldInitializer); it must be a
+  // source-free empty construction of `field`.
+  void retainImplicitFieldInitializer(const VariableDecl &field,
+                                      std::shared_ptr<const ExprPtr> anchor);
   [[nodiscard]] const SemanticAnalysisSeal &analysisSeal() const;
 
   [[nodiscard]] ExecutionProfile executionProfile() const;
@@ -2178,6 +2198,33 @@ private:
   // its model after each instance analysis; the delta must follow it).
   void rebase(const SemanticModel *baseModel);
 
+  // ---- Instance reuse (InstanceAnalysisCache) -----------------------------
+  // A delta that may be reused by a later snapshot journals what it read from
+  // its base: base symbol and lambda identities (the body-local ones are
+  // assigned in analysis order, so another snapshot can number them
+  // differently) and any base-owned synthesized syntax (designated
+  // constructors, implicit field initializers, constexpr-for expansions,
+  // expression aliases), which another snapshot recreates at new addresses.
+  void beginInstanceReuseJournal();
+  // Stops journaling (the analysis handed to HIR keeps reading its base).
+  void endInstanceReuseJournal();
+  // Resolves the journal against the base the delta was analysed over and
+  // detaches the delta from it. False when the delta cannot be reused.
+  [[nodiscard]] bool freezeInstanceReuseJournal();
+  // Whether every journaled base identity denotes the same declaration in
+  // `candidate` as in the base the delta was analysed over.
+  [[nodiscard]] bool
+  instanceReuseJournalMatches(const SemanticModel &candidate) const;
+  // Points a reused delta at another snapshot's base and adopts that base's
+  // request-wide facts, exactly as beginInstanceDelta would have.
+  void rebaseReusedInstance(const SemanticModel &baseModel);
+  [[nodiscard]] std::size_t estimatedInstanceBytes() const;
+  void noteBaseLambda(const LambdaInfo *lambda) const;
+  void noteBaseSyntheticSyntax(bool used) const;
+  void noteConstruction(const ConstructorDecl *declaration);
+  [[nodiscard]] bool
+  baseOwnsGeneratedConstructor(const ConstructorDecl *declaration) const;
+
   // Copies a base function record into the delta so record mutators can
   // update it locally. Returns the local entry, or functions.end() when the
   // declaration is unknown to both the delta and the base.
@@ -2544,6 +2591,20 @@ private:
   std::unordered_set<const FunctionDecl *> analyzedFunctionBodies;
   mutable std::unordered_set<FunctionId> *functionDemandSink = nullptr;
   std::unordered_set<const Call *> *callJournal = nullptr;
+  struct InstanceReuseJournal {
+    std::unordered_set<LambdaId> lambdas;
+    std::unordered_set<const VariableDecl *> sharedAnchors;
+    bool baseSyntheticSyntax = false;
+  };
+  mutable std::optional<InstanceReuseJournal> reuseJournal;
+  std::vector<std::pair<LambdaId, const Lambda *>> frozenBaseLambdas;
+  std::vector<std::pair<const VariableDecl *, std::shared_ptr<const ExprPtr>>>
+      frozenBaseAnchors;
+  // Fields whose implicit initializer anchor outlives this snapshot.
+  std::unordered_set<const VariableDecl *> sharedImplicitFieldInitializers;
+  [[nodiscard]] const std::shared_ptr<const ExprPtr> *
+  findImplicitFieldInitializer(const VariableDecl &field,
+                               bool *shared = nullptr) const;
 };
 
 class SemanticTypePrinter {
