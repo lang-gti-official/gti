@@ -1485,6 +1485,16 @@ alternative. A direct local success initialization consumes one exact Loan
 operand whose place names the runtime `T` and whose loan names the protected
 owner. Verification admits only the read-only specialization, exact types,
 one carrier, non-widened access, and immediate source-loan retirement.
+
+A dynamic-text return summary is an upper bound on dependent alternatives,
+not a requirement to invent an owner for static storage. A read-only summarized
+function may return a literal-backed text view or a null C-string alternative
+without an escaping loan. Program verification independently requires the exact
+typed string/null literal producer, with no borrowed state, input operands,
+loan, side effects or lifecycle events. Clearing a borrowed-state flag or a
+return loan does not establish that witness. All dynamic alternatives still
+publish and verify their exact escaping loan, and callers conservatively retain
+the function's owner dependency regardless of the runtime branch.
 The success loan always uses read-only access, including when the enclosing
 method has a mutable receiver. A by-value nominal carrier parameter can provide
 that success through its one exact designated reference path; the Return
