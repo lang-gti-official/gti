@@ -43540,14 +43540,11 @@ private:
                  << ", __gti_mir_failure_record";
         }
         output << ");\n";
-        for (const auto &operand : instruction.operands) {
-          const auto *stage =
-              materializedConstructorArgumentStage(facts.body, operand.value);
-          if (stage) {
-            writeIndent();
-            output << "__gti_mir_p_" << *stage->destination << ".destroy();\n";
-          }
-        }
+        // Allocation consumes the same prepared arguments as a source call.
+        // Retire their moved-from representation shells on either constructor
+        // outcome, before following the selected success/failure edge.
+        retireConsumedClassResultStages();
+        retireConsumedPayloadEnumArguments();
         if (transformed != nullptr) {
           writeIndent();
           output << "if (__gti_mir_construct_success_" << instruction.id

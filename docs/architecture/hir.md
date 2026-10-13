@@ -772,6 +772,13 @@ ordered call plan. Constructor-initializer records retain both the complete
 lowered argument vector and `explicitArgumentCount`, including implicit base
 construction through a constructor callable with zero explicit arguments.
 Neither HIR nor a backend relies on native C++ defaults.
+Allocation of a selected ordinary constructor uses this same plan when its
+arguments are concrete values, including when an empty forwarded pack leaves
+only omitted defaults. Argument copy/move roles and default provenance come
+from the selected constructor contract. MIR prepares those parameters before
+allocating object storage; backend allocation emission uses the shared
+consumed-argument retirement rule on both constructor outcomes. Concrete pack
+expansion retains its existing explicit staging route.
 
 A class binding initialized from an exact `nullptr_t` constructor remains one
 ordinary construction in HIR. The source literal owns the constructed value;

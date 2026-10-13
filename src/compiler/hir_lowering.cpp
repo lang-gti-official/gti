@@ -3905,7 +3905,8 @@ private:
                               std::size_t explicitArgumentCount) const {
     if (!constructor.constructorTarget ||
         constructor.constructorKind != ConstructorKind::Ordinary ||
-        constructor.intrinsic != IntrinsicKind::None) {
+        (constructor.intrinsic != IntrinsicKind::None &&
+         constructor.intrinsic != IntrinsicKind::AllocateUniqueOwner)) {
       return std::nullopt;
     }
     return orderedArguments(arguments, parameterTypes, body,
@@ -6429,15 +6430,23 @@ private:
     }
     if (model.findConstruction(*raw) != nullptr && value.constructorTarget &&
         value.constructorKind == ConstructorKind::Ordinary &&
-        value.intrinsic == IntrinsicKind::None &&
+        (value.intrinsic == IntrinsicKind::None ||
+         value.intrinsic == IntrinsicKind::AllocateUniqueOwner) &&
         !value.parameterTypes.empty() &&
         value.parameterTypes.size() <= value.operands.size()) {
+      // Allocation selects the same concrete constructor as direct syntax.
+      // In particular, an empty forwarded pack can leave only expanded
+      // defaults: those still need ordinary parameter staging before storage
+      // allocation. Nonempty packs retain their shared MIR expansion route.
       std::vector<HirValueId> arguments(
           value.operands.end() -
               static_cast<std::ptrdiff_t>(value.parameterTypes.size()),
           value.operands.end());
       const std::size_t explicitArgumentCount =
-          exprAs<Call>(raw) != nullptr ? exprAs<Call>(raw)->arguments().size()
+          value.intrinsic == IntrinsicKind::AllocateUniqueOwner
+              ? value.parameterTypes.size() -
+                    model.findConstruction(*raw)->defaultArguments.size()
+          : exprAs<Call>(raw) != nullptr ? exprAs<Call>(raw)->arguments().size()
           : exprAs<DirectInitializer>(raw) != nullptr &&
                   exprAs<DirectInitializer>(raw)->designators().empty()
               ? exprAs<DirectInitializer>(raw)->arguments().size()
