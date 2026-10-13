@@ -2899,6 +2899,18 @@ the checked-array and checked-reference replacement extensions below, non-field 
 conditional lifecycle events, incomplete
 borrow endings, or additional consumers fail closed.
 
+A consuming owning `Expected` value/error extraction
+uses that same call-result slot and exact `Replace`/shell-drop witness. Its
+receiver envelope has a separately proved moved-value/drop lifetime; choosing
+the payload's destination cannot invent or suppress receiver cleanup. A failed
+state check leaves the old destination untouched, and failed old-value cleanup
+retains the active extracted payload for MIR's failure cleanup.
+
+For passive result trees, raw and native function pointers, C-string addresses,
+and null pointers use the same ordinary by-value boundary as scalars and views.
+This is representation transport, not pointee validity or ownership authority;
+semantic lifetime checks and unsafe dereference obligations remain unchanged.
+
 For complete represented cleanup families, `CleanupBeforeAssign` drains the
 old contents through the MIR-selected helper before the paired `Assign` moves
 the held replacement. Lifetime-slot values are accessed as live objects, not

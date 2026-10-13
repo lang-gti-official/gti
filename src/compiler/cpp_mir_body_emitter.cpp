@@ -1792,6 +1792,8 @@ cppMirEnumBoundaryRow(const MirProgram &program,
   return representation &&
          (*representation == CppMirTypeRepresentationKind::Scalar ||
           *representation == CppMirTypeRepresentationKind::StringView ||
+          *representation == CppMirTypeRepresentationKind::RawPointer ||
+          *representation == CppMirTypeRepresentationKind::NullPointer ||
           *representation == CppMirTypeRepresentationKind::Void ||
           (*representation == CppMirTypeRepresentationKind::Enum &&
            program.findPayloadEnum(type) == nullptr));
@@ -20594,13 +20596,10 @@ expectedOwnedClassExtractionReceiverSlot(const MirBody &body,
     if (!producer) {
       continue;
     }
-    const StagedClassResult staged =
-        stagedClassResultForSource(body, candidate);
-    const bool bindingDestination =
-        expectedOwnedClassExtractionDestination(body, candidate) != nullptr;
-    const bool preparedDestination = staged.producer == producer.call;
-    if ((!bindingDestination && !preparedDestination) ||
-        !producer.call->receiver ||
+    // Receiver storage follows its own exact move/call and drop witness.
+    // The extracted result's separate publication proof selects its storage;
+    // it may replace an existing object as well as initialize a binding.
+    if (!producer.call->receiver ||
         producer.call->receiver->kind != MirOperandKind::Value ||
         producer.call->receiver->value != valueId) {
       continue;
@@ -22045,7 +22044,10 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       executableUses.size() > 1 ||
       (fieldViews != 0 && !executableUses.empty()) ||
       // Other extraction destinations keep their own publication routes.
-      (ownedExtractionProducer && fieldViews == 0)) {
+      // One assignment uses the same exact Replace/drop proof as an ordinary
+      // class-returning call below, including failure of old-value cleanup.
+      (ownedExtractionProducer && fieldViews == 0 &&
+       executableUses.size() != 1)) {
     return {};
   }
 
@@ -22243,6 +22245,25 @@ valueRootedClassCallResultSlot(const MirProgram &program,
                                               .destroy = destroy,
                                               .slot = slot,
                                               .drop = drop};
+}
+
+// Extraction owns the same result slot regardless of whether it initializes
+// a binding or replaces an existing object. Reuse the general call-result
+// publication witness for replacement rather than inventing an Expected-only
+// cleanup schedule.
+[[nodiscard]] const MirPlace *
+ownedExpectedExtractionStorage(const MirProgram &program,
+                               const CppMirBodyEmissionMap &representations,
+                               const MirBody &body, MirValueId valueId) {
+  if (const auto *destination =
+          expectedOwnedClassExtractionDestination(body, valueId))
+    return destination;
+  const auto producer = ownedExpectedClassExtractionProducer(body, valueId);
+  if (!producer)
+    return nullptr;
+  const auto result =
+      valueRootedClassCallResultSlot(program, representations, body, valueId);
+  return result.producer == producer.call ? result.slot : nullptr;
 }
 
 // An owned class result constructed directly into a conditional temporary,
@@ -42917,9 +42938,10 @@ private:
         return;
       }
       const MirPlace *ownedExtraction =
-          instruction.result ? expectedOwnedClassExtractionDestination(
-                                   facts.body, *instruction.result)
-                             : nullptr;
+          instruction.result
+              ? ownedExpectedExtractionStorage(program, representations,
+                                               facts.body, *instruction.result)
+              : nullptr;
       const StagedClassResult stagedExtraction =
           instruction.result
               ? stagedClassResultForSource(facts.body, *instruction.result)
@@ -43104,9 +43126,10 @@ private:
       const MirOperand &receiverBorrow =
           staged != nullptr ? staged->operands.front() : *instruction.receiver;
       const MirPlace *ownedExtraction =
-          instruction.result ? expectedOwnedClassExtractionDestination(
-                                   facts.body, *instruction.result)
-                             : nullptr;
+          instruction.result
+              ? ownedExpectedExtractionStorage(program, representations,
+                                               facts.body, *instruction.result)
+              : nullptr;
       const StagedClassResult stagedExtraction =
           instruction.result
               ? stagedClassResultForSource(facts.body, *instruction.result)
@@ -56875,9 +56898,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                                  ? staged->operands.front()
                                                  : *instruction.receiver;
           const MirPlace *ownedExtraction =
-              instruction.result ? expectedOwnedClassExtractionDestination(
-                                       body, *instruction.result)
-                                 : nullptr;
+              instruction.result
+                  ? ownedExpectedExtractionStorage(program_, representations_,
+                                                   body, *instruction.result)
+                  : nullptr;
           const DirectExpectedClassExtraction directExtraction =
               instruction.result ? directExpectedClassExtraction(
                                        program_, body, *instruction.result)
