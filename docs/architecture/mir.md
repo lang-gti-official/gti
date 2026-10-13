@@ -2170,7 +2170,7 @@ that body again with every exit destroying its own owners. If the program
 fails program verification, it is lowered again without shared exits, then
 also without shared failure cleanup. Lowering counts each fallback
 (`MirLowerer::cleanupSharingStatistics`). The corpus differential in
-[verification](verification.md#shared-normal-exit-cleanup-04201) triggers
+[verification](verification.md#shared-normal-exit-cleanup-04211) triggers
 neither.
 
 Program verification also requires each function, constructor, destructor and
