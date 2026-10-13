@@ -344,8 +344,8 @@ void owner_states<T>() {
                                       lang::MirBodyKind::Function &&
                                   error.owner == function.id &&
                                   error.message ==
-                                      "concrete class pack element traits do "
-                                      "not match its class instance";
+                                      "concrete pack element traits do not "
+                                      "match its resolved type";
                          }),
                  "MIR rejects forged transport capability grants and erasures");
         }
