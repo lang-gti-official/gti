@@ -14950,12 +14950,16 @@ failureConstructorDisarmsDeclaredDestructor(const MirProgram &program,
   // field state before the caller ends the native object lifetime. The concrete
   // owner must seal that same reverse field schedule. The proof is structural:
   // no source-library type name is recognized here.
+  // Abstractness and virtual dispatch do not change this per-class guard.
+  // This witness covers only declared fields and the owner's destructor;
+  // failureConstructorBoundaryEligible independently verifies the selected
+  // base construction, success activation and rollback. In particular it is
+  // not an empty-state constructor witness for the whole object or its bases.
   const MirDestructorInstance *destructor =
       owner.destructor ? program.findDestructorInstance(*owner.destructor)
                        : nullptr;
   if (owner.declaration == 0 || destructor == nullptr ||
-      !nativeDestructorCompositionCovered(program, owner, *destructor) ||
-      owner.abstract || owner.polymorphic) {
+      !nativeDestructorCompositionCovered(program, owner, *destructor)) {
     return false;
   }
   return std::all_of(

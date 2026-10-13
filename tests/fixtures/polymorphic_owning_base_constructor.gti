@@ -1,0 +1,57 @@
+import std.memory;
+import std.string;
+import std.vector;
+
+mut int32_t base_divisor = 1;
+mut int32_t derived_divisor = 1;
+mut int32_t cleanup_divisor = 1;
+
+class Guard {
+  int32_t identity;
+public:
+  Guard(int32_t value) : identity(value) {}
+  ~Guard() { std::println(this.identity); }
+};
+
+class Base {
+  std::string name;
+  std::unique_ptr<Guard> retained;
+public:
+  Base() : name(std::string("layer")), retained(std::make_unique<Guard>(1)) {
+    Guard inside = Guard(2);
+    std::println(6 / base_divisor);
+  }
+  ~Base() {
+    std::println(3);
+    int32_t checked = 6 / cleanup_divisor;
+  }
+  virtual void Attach() mut = 0;
+};
+
+class Derived : public Base {
+  std::string title;
+public:
+  Derived() : Base(), title(std::string("editor")) {
+    Guard inside = Guard(4);
+    std::println(8 / derived_divisor);
+  }
+  ~Derived() { std::println(5); }
+  void Attach() mut override { std::println(this.title); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  base_divisor = argc == 2 ? 0 : 1;
+  derived_divisor = argc >= 3 ? 0 : 1;
+  cleanup_divisor = argc == 4 ? 0 : 1;
+  Guard outer = Guard(9);
+  if (argc == 5) {
+    derived_divisor = 1;
+    mut Derived stack{};
+    stack.Attach();
+  } else {
+    mut auto concrete = std::make_unique<Derived>();
+    mut auto erased = concrete.upcast<Base>();
+    erased->Attach();
+  }
+  return 0;
+}

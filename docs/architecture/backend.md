@@ -2175,6 +2175,18 @@ generated-base chains remain outside this generated-body slice and retain
 their existing structural construction representation or the separately
 verified declaration-field schedule described above.
 
+An abstract or polymorphic class with a declared destructor uses the same
+per-class construction guard as a non-polymorphic class. Its exact declared
+destructor identity, active-drop state and reverse declared-field schedule
+remain mandatory. The guard is disarmed until that class's constructor
+success; a failed base therefore does not execute its source destructor, while
+a completed base is cleaned exactly once if the derived construction fails.
+This fields-only witness does not authorize default construction of a
+state-bearing base or an abstract complete object. The selected base status
+constructor, its success activation and exact rollback obligation are still
+verified independently. Heap ownership, upcasting and stack construction use
+the same rule, with no new runtime metadata or successful-path allocation.
+
 Checked/effectful scalar base arguments now execute through a pre-native-base
 partition of the same verified constructor MIR. The immutable body plan retains
 its exact CFG, stage, operands and scalar values/places crossing the boundary;

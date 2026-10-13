@@ -4062,6 +4062,24 @@ and formatter LSP checks with checkout resource overrides cleared. The active
 user installation is unchanged. This is local macOS arm64 evidence, not a
 claim of Linux/Windows execution or asynchronous Gitea release completion.
 
+## Polymorphic owning-base construction (#76)
+
+The lifecycle structural gate includes `polymorphic_owning_base_constructor`:
+an abstract base owns a string and a unique owner, the concrete derived class
+owns another string, and both declare destructors. Heap construction followed
+by upcasting and stack construction must preserve each class's independent
+construction guard. Forged active-drop state, destructor lifecycle status and
+reverse field schedules are rejected, alongside the existing base identity,
+success-activation and rollback mutations.
+
+`generated_base_constructor_runtime` runs this case in the existing eight
+C++20/C++23, O0/O1/O3, no-elide and ASan/UBSan modes. It checks success through
+both ownership forms, failure during base construction, failure after base
+completion and a secondary failure in base cleanup. The expected output proves
+that failed constructors do not execute their own source destructor, completed
+base cleanup occurs once, caller cleanup follows, and secondary failure retains
+the original primary failure identity.
+
 ## Chip8 aggregate admission and generated base construction
 
 `testLargeScalarAggregateAdmission` admits a 1,024-element scalar initializer
