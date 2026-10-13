@@ -3230,6 +3230,76 @@ int main() {
 // #225: copies, Unexpected values and payloads raised GTI-B0001, a move
 // assigned to the lifetime slot itself, and owning results raised GTI-B0001.)
 void testExpectedClassReplacementSources() {
+  for (const std::string_view name :
+       {"expected_pointer_boundary", "expected_owned_payload_replacement"}) {
+    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                         ("fixtures/" + std::string(name) + ".gti");
+    std::ifstream input(fixture);
+    expect(input.good(), "Expected boundary regression fixture must exist");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+    expect(frontend.canGenerateCode(),
+           "pointer boundaries and owning payload replacement must verify");
+    if (!frontend.canGenerateCode())
+      continue;
+    const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+    expect(lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+           "Expected operations must compose with existing field storage");
+    std::size_t checked = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      for (const auto &block : function.body.blocks) {
+        for (const auto &call : block.instructions) {
+          if (call.kind != lang::MirInstructionKind::Call || !call.result ||
+              call.info.type.kind != lang::SemanticType::Class ||
+              (call.intrinsic != lang::IntrinsicKind::ExpectedValue &&
+               call.intrinsic != lang::IntrinsicKind::ExpectedError) ||
+              !call.successResultDrop)
+            continue;
+          const lang::MirInstruction *assignment = nullptr;
+          for (const auto &consumerBlock : function.body.blocks)
+            for (const auto &consumer : consumerBlock.instructions)
+              if (consumer.kind == lang::MirInstructionKind::Assign &&
+                  consumer.operands.size() == 1 &&
+                  consumer.operands.front().kind ==
+                      lang::MirOperandKind::Value &&
+                  consumer.operands.front().value == *call.result)
+                assignment = &consumer;
+          if (!assignment)
+            continue;
+          ++checked;
+          for (int mutation = 0; mutation != 4; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            for (auto &changedBlock : changed->body.blocks)
+              for (auto &instruction : changedBlock.instructions) {
+                if (instruction.id == call.id && mutation == 0)
+                  instruction.successResultDrop.reset();
+                if (instruction.id == assignment->id && mutation == 1)
+                  instruction.lifecycle.clear();
+                if (instruction.id == assignment->id && mutation == 2)
+                  instruction.lifecycle.front().conditional = true;
+                if (instruction.id == assignment->replacementPair &&
+                    mutation == 3)
+                  instruction.replacementCleanup.reset();
+              }
+            const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                               function.id};
+            expect(
+                !lang::verifyMirProgram(malformed).valid(),
+                "activation, transfer and old-value cleanup are MIR authority");
+            expect(!lang::CppMirBodyEmitter(malformed, map)
+                        .supportsFailureBodyText(address),
+                   "replacement rejects missing or conditional lifetime "
+                   "witnesses");
+          }
+        }
+      }
+    }
+    if (name == "expected_owned_payload_replacement")
+      expect(checked == 3, "value, error and source-defined string payloads "
+                           "exercise replacement");
+  }
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-expected-class-replacement-sources.gti", R"gti(
 #include <std/utility>
