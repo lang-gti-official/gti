@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.424.4 — Independent borrowed input composition
+
+- Fix a MIR internal compiler error when a retained object combines a shared
+  getter result with an independent mutable local or owned-field input, including
+  scoped worker callbacks. Exact dependency identities, access, parent lifetime
+  and conflicting-output checks remain enforced without new runtime work
+  (issue #123).
+
 ## 0.424.3 — Constructor and owning argument composition
 
 - Preserve declaration-owned default arguments for out-of-line static and

@@ -1,0 +1,60 @@
+#include <std/memory>
+#include <std/thread>
+
+class Reading {
+  int number;
+public:
+  Reading(int number) : number(number) {}
+  int value() { return this.number; }
+};
+class Owner {
+  mut std::unique_ptr<Reading> reading = std::make_unique<Reading>(7);
+public:
+  Reading& get() { return *this.reading; }
+};
+class Task {
+  Reading& reading;
+  mut int& output;
+public:
+  Task(Reading& reading, mut int& output)
+      : reading(reading), output(output) {}
+  void operator()() mut {
+    for (mut int i = 0; i < 100; i++) {
+      this.output += this.reading.value();
+    }
+  }
+};
+class ReversedTask {
+  mut int& output;
+  Reading& reading;
+public:
+  ReversedTask(mut int& output, Reading& reading)
+      : output(output), reading(reading) {}
+  void operator()() mut { this.output = this.reading.value(); }
+};
+struct Outputs { mut int first = 0; mut int second = 0; };
+
+int main() {
+  Owner owner{};
+  mut int sequential = 0;
+  {
+    mut Task named{owner.get(), sequential};
+    named();
+  }
+  if (sequential != 700) { return 1; }
+  sequential = 0;
+  mut int first = 0;
+  mut int second = 0;
+  if (!std::parallel_invoke(Task(owner.get(), first),
+                            Task(owner.get(), second))) { return 2; }
+  if (first != 700 || second != 700) { return 3; }
+  first = 0;
+  second = 0;
+  if (!std::parallel_invoke(ReversedTask(first, owner.get()),
+                            ReversedTask(second, owner.get()))) { return 4; }
+  if (first != 7 || second != 7) { return 5; }
+  mut Outputs projected{};
+  if (!std::parallel_invoke(Task(owner.get(), projected.first),
+                            Task(owner.get(), projected.second))) { return 6; }
+  return projected.first == 700 && projected.second == 700 ? 0 : 7;
+}

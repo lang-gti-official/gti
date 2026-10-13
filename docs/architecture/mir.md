@@ -483,6 +483,15 @@ Whole-carrier access and owned-field projections still retain the physical
 loan, and a direct reborrow without the explicit stored-dependency edge keeps
 its immediate parent. Verification rejects ending the external entry before
 its forwarded fields, even when the physical reference has already ended.
+An additional input can also borrow an independently owned local, without an
+incoming loan. A non-escaping stored result may combine that direct binding or
+owned-field source with a primary getter-result parent; the local is not required
+to lie inside the getter's protected storage. This containment distinction
+requires an unambiguous binding-rooted source without dereference or inherited
+loan authority. Exact call/constructor field mappings still establish the input
+identity and permission; ordinary ownership, conflicting-access and scoped-task
+checks protect it until the carrier ends. Borrowed or pointer-derived inputs do
+not acquire owned-local authority through this rule.
 Cleanup-bound nominal carriers are classified from concrete borrowed-state and
 active-cleanup facts, independently of the trusted mutex capability. Exact
 by-value entries own a binding drop; owning call/constructor publications own
