@@ -1,0 +1,51 @@
+#include <std/deque>
+#include <std/memory>
+#include <std/string>
+
+class Queue {
+  mut std::deque<std::string> values{};
+public:
+  Queue() = default;
+  Queue(Queue&) = delete;
+  Queue(Queue&&) = delete;
+  bool empty() { return this.values.empty(); }
+};
+
+class Base {
+  mut Queue queue{};
+public:
+  Base() = default;
+  Base(Base&) = delete;
+  Base(Base&&) = delete;
+  ~Base() {}
+  bool empty() { return this.queue.empty(); }
+};
+
+class Derived : public Base {
+public:
+  Derived() = default;
+};
+
+class Box<std::default_initializable T> {
+  T value = T();
+public:
+  Box() = default;
+};
+
+class StringBox : public Box<std::string> {
+public:
+  StringBox() = default;
+};
+
+class Wrapper<std::default_initializable T> : public Box<T> {
+public:
+  Wrapper() = default;
+};
+
+int main() {
+  Derived stack{};
+  auto heap = std::make_unique<Derived>();
+  StringBox specialized{};
+  Wrapper<std::string> generic{};
+  return stack.empty() && heap->empty() ? 0 : 1;
+}

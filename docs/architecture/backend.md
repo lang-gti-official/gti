@@ -1083,6 +1083,11 @@ The producer may activate its Value obligation directly after a failure-free
 constructor, or on the success edge of a fallible call. Both forms keep the
 payload in its local slot while later parameter cleanup runs; a failure-free
 constructor does not justify publishing early across a fallible destructor.
+Ordinary source member calls, including consuming (`&&`) receivers, use this
+same payload-return proof. A recorded invocation capability must agree with
+the selected concrete member's receiver mutability and retain an actual
+receiver; it is not grounds for rejecting an otherwise valid owning return.
+No special rule is attached to ownership-wrapper conversions or upcasts.
 
 A failure-free source call returning a complete owning Expected likewise uses
 the existing exact returned-call-result slot proof. Its value activation and
@@ -2168,7 +2173,11 @@ The C++ plan emits this body's admitted status constructor instead of a native
 `= default` operation that would call a missing ordinary base entry. Trivial
 and cleanup-owning bases use the same `InitializeBase` publication contract;
 the rollback record retains the base's exact cleanup requirement. No terminal
-adapter or native exception supplies the failure path. A source destructor
+adapter or native exception supplies the failure path. A base cleanup that
+cannot raise a defined failure is emitted with a null failure-record
+argument. Only a fallible base rollback consumes the body's secondary cleanup
+record and its paired failure edge; a non-failing rollback neither allocates
+nor references that optional record. A source destructor
 does not prevent this base-only generated schedule. Derived instance fields,
 generic owners/bases, constructor default arguments and
 generated-base chains remain outside this generated-body slice and retain
@@ -2919,6 +2928,25 @@ the checked-array and checked-reference replacement extensions below, non-field 
 conditional lifecycle events, incomplete
 borrow endings, or additional consumers fail closed.
 
+A consuming owning `Expected` value/error extraction
+uses that same call-result slot and exact `Replace`/shell-drop witness. Its
+receiver envelope has a separately proved moved-value/drop lifetime; choosing
+the payload's destination cannot invent or suppress receiver cleanup. A failed
+state check leaves the old destination untouched, and failed old-value cleanup
+retains the active extracted payload for MIR's failure cleanup.
+
+For a constructed or moved RHS replacing a field through a returned mutable
+reference, the exact receiver stage may be an ordinary non-failing call or a
+checked call with an Invoke success edge. Both preserve the MIR order: RHS
+construction, destination evaluation, old-value cleanup, publication, loan
+retirement, then staging-shell destruction. A getter does not acquire a
+synthetic failure edge just to satisfy the representation schedule.
+
+For passive result trees, raw and native function pointers, C-string addresses,
+and null pointers use the same ordinary by-value boundary as scalars and views.
+This is representation transport, not pointee validity or ownership authority;
+semantic lifetime checks and unsafe dereference obligations remain unchanged.
+
 For complete represented cleanup families, `CleanupBeforeAssign` drains the
 old contents through the MIR-selected helper before the paired `Assign` moves
 the held replacement. Lifetime-slot values are accessed as live objects, not
@@ -2995,6 +3023,21 @@ at invocation. The backend matches every such unconditional `TransferOut` to
 its exact argument index, call site, type, prepared slot and obligation, once
 each. Those input handoffs neither activate the result early nor discharge its
 replacement-failure cleanup.
+
+A borrowed by-value constructor input may instead retain a temporary stored
+dependency produced by an ordinary call. Its exact ordered argument stage,
+single consumer, type, read-only nonescaping dependency and producer identity
+tie that loan to the construction. After publication, the backend requires
+every such input dependency to retire exactly once before the moved-from
+staging shell is dropped. A same-access nonescaping `CallResult` parent chain,
+such as a checked element followed by a borrowed view, retires child-to-parent
+using the same structural rule as destination reborrows. Destination-loan
+retirement remains independent.
+No unrelated instruction or loan ending is skipped; stored carriers, escaping
+or lifecycle-bound dependencies and extra argument uses are not admitted by
+this schedule. MIR remains authoritative for the complete loan interval and
+all constructor/replacement failure edges. This preserves ordinary owning
+construction from views without naming a library constructor or view type.
 
 A later terminal argument can prevent the enclosing invocation entirely.
 The backend reuses MIR's full-expression/CFG proof for a zero-use prepared
