@@ -2589,6 +2589,18 @@ Emission preserves the MIR argument order and only retires the moved-from
 native shell at the consuming operation; it does not defer argument evaluation
 into a C++ call expression.
 
+A borrowed method receiver also remains staged when an earlier argument
+extracts an owning Expected payload and a later argument introduces conditional
+control flow. The extraction shares the existing shell-move and success-only
+activation witness; its prepared payload must have one unconditional reparent
+and one consuming argument, with the same owned-argument CFG cleanup proof.
+The moved shell's source must be distinct from the receiver's storage root.
+Only those exact extraction/preparation instructions extend the stable-address
+proof; arbitrary calls, overlapping storage and borrowed payloads do not. Class
+and other owning value representations use the same lifecycle facts. No
+extraction, receiver evaluation or cleanup is moved into a native argument
+expression, and no new runtime bookkeeping is introduced.
+
 The base-subobject family uses one `InitializeBase` after its exact typed
 argument values. A fallible selected constructor has an `Invoke`; a
 failure-free constructor or passive generated default arms the rollback token
