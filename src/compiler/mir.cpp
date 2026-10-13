@@ -6713,6 +6713,8 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   const auto passiveExpectedPayload = [](const auto &self,
                                          const SemanticType &type) -> bool {
     switch (type.kind) {
+    case SemanticType::StringView:
+      return true;
     case SemanticType::Expected:
       return type.arguments.size() == 2 && self(self, type.arguments.front()) &&
              type.arguments.back() != SemanticType::Void &&
