@@ -1,0 +1,63 @@
+#include <std/format>
+#include <std/string>
+#include <std/vector>
+
+struct Item {
+  int32_t number;
+  Item(int32_t value) : number(value) {}
+  Item(Item&) = default;
+  Item(Item&&) = default;
+};
+
+struct Box {
+  Item item;
+  int32_t total;
+  Box(Item input, int32_t after)
+      : item(input), total(input.number + after) {}
+};
+
+struct Guard {
+  ~Guard() { std::println("cleanup"); }
+};
+
+expected<Item, int32_t> parse(bool valid) {
+  if (!valid) { return unexpected(int32_t(7)); }
+  return Item(41);
+}
+
+expected<Box, int32_t> wrap(bool valid) {
+  auto parsed = parse(valid);
+  if (!parsed) { return unexpected(parsed.error()); }
+  return Box(parsed.value(), 1);
+}
+
+expected<Box, int32_t> wrap_error() {
+  expected<int32_t, Item> parsed = unexpected(Item(8));
+  return Box(parsed.error(), 2);
+}
+
+int32_t observe(Item& item) { return item.number; }
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) {
+    Guard guard{};
+    auto parsed = parse(false);
+    Box failing{parsed.value(), 1};
+    return failing.total;
+  }
+  if (argc == 3) {
+    Guard guard{};
+    auto parsed = parse(true);
+    Box failing{parsed.value(), 2147483647};
+    return failing.total;
+  }
+  auto valid = wrap(true);
+  if (!valid || valid.value().total != 42) { return 1; }
+  auto invalid = wrap(false);
+  if (invalid || invalid.error() != 7) { return 2; }
+  auto error = wrap_error();
+  if (!error || error.value().total != 10) { return 3; }
+  auto parsed = parse(true);
+  if (observe(parsed.value()) != 41) { return 4; }
+  return 0;
+}

@@ -5714,7 +5714,14 @@ private:
     // The source selection has already completed at its checked AddressOf
     // prefix, before this prepared copy/borrow is published. Do not attach
     // that same selection failure to a second operation with no Invoke edge.
-    if (materializesCheckedPlace) {
+    // A call-like place is already materialized by emitPlaceDependencies.
+    // Its own instruction/Invoke performed the check before this stage copies
+    // or borrows the resulting place. Local effects belong to that producer,
+    // not a second check attached to the prepared argument.
+    const bool evaluatedCallPlace = sourceValueInfo != nullptr &&
+                                    isCallLike(*sourceValueInfo) &&
+                                    emittedValues.contains(sourceValue);
+    if (materializesCheckedPlace && !evaluatedCallPlace) {
       input.definedFailure = localDefinedFailure(sourceValueInfo);
       if (checkedPlacePrefixes.contains(sourceValue)) {
         // Membership is recorded only after emitting this exact Index's
