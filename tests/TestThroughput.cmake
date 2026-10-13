@@ -80,6 +80,7 @@ if(Python3_Interpreter_FOUND)
     programmable_allocators_runtime prvalue_direct_initialization_runtime
     raw_owner_witness_runtime raw_pointer_conversion_runtime
     reference_class_assignment_runtime
+    constructor_borrow_replacement_runtime
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
     retained_owner_member_pack_runtime shared_accessor_range_runtime
     shared_ownership_runtime shared_ownership_threads scoped_parallel_threads
