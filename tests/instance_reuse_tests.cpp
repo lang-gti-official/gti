@@ -18,11 +18,13 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <unistd.h>
@@ -102,7 +104,73 @@ std::string diagnosticKey(const lang::Diagnostic &diagnostic) {
   return result;
 }
 
-// Everything a snapshot exposes downstream of semantic analysis.
+using ConcreteSymbols = std::unordered_map<lang::SymbolId, lang::SymbolId>;
+
+// Cached concrete-only locals retain their original disjoint identity ranges.
+// Bind them to the program-wide HIR binding identity, never independently per
+// MIR body or merely by source spelling (generic instances can share both).
+ConcreteSymbols concreteSymbols(const lang::FrontendResult &result) {
+  std::unordered_set<lang::SymbolId> concrete;
+  for (const auto &symbol : result.hir.instanceSymbols())
+    concrete.insert(symbol.id);
+  ConcreteSymbols names;
+  ConcreteSymbols owners;
+  const auto bindings = [&](const lang::HirBody &body) {
+    for (const auto &binding : body.bindings) {
+      if (!concrete.contains(binding.info.symbol))
+        continue;
+      const auto canonical =
+          std::numeric_limits<lang::SymbolId>::max() - binding.id;
+      const auto [found, inserted] =
+          names.emplace(binding.info.symbol, canonical);
+      expect(inserted || found->second == canonical,
+             "one concrete symbol has one program-wide binding identity");
+      const auto [owner, unique] =
+          owners.emplace(canonical, binding.info.symbol);
+      expect(unique || owner->second == binding.info.symbol,
+             "distinct concrete symbols cannot share a canonical binding");
+      expect(!concrete.contains(canonical) &&
+                 !result.semantics.database().findSymbol(canonical),
+             "canonical test identities cannot collide with source symbols");
+    }
+  };
+  bindings(result.hir.module());
+  for (const auto &owner : result.hir.classInstances()) {
+    bindings(owner.fieldInitializers);
+    bindings(owner.staticFieldInitializers);
+  }
+  for (const auto &function : result.hir.functionInstances())
+    bindings(function.body);
+  for (const auto &constructor : result.hir.constructorInstances())
+    bindings(constructor.body);
+  for (const auto &destructor : result.hir.destructorInstances())
+    bindings(destructor.body);
+  for (const auto &lambda : result.hir.lambdaInstances())
+    bindings(lambda.body);
+  return names;
+}
+
+void canonicalizeLocalSymbols(lang::MirBody &body,
+                              const ConcreteSymbols &names) {
+  const auto rename = [&](lang::SymbolId &symbol) {
+    if (const auto found = names.find(symbol); found != names.end())
+      symbol = found->second;
+  };
+  // Change typed local-symbol positions only. Binding, place, loan, instance,
+  // parameter, literal, field and base-declaration identities remain exact.
+  for (auto &place : body.places) {
+    rename(place.symbol);
+    if (place.key)
+      rename(place.key->root);
+  }
+  for (auto &block : body.blocks)
+    for (auto &instruction : block.instructions)
+      if (instruction.ownership)
+        rename(instruction.ownership->place.root);
+}
+
+// Everything a snapshot exposes downstream of semantic analysis, modulo the
+// explicitly request-local concrete-symbol allocation ranges.
 std::string outcome(const lang::FrontendResult &result) {
   std::ostringstream text;
   text << "semantic=" << result.semanticValid << " hir=" << result.hirValid
@@ -116,17 +184,68 @@ std::string outcome(const lang::FrontendResult &result) {
   // Concrete-only symbol identities are request-local: a reused delta keeps
   // the range it was first analysed with, so only the declarations (and, by
   // HIR verification, their distinctness) must agree.
+  const auto names = concreteSymbols(result);
   std::vector<std::string> symbols;
-  for (const lang::SymbolRecord &symbol : result.hir.instanceSymbols())
-    symbols.push_back(std::to_string(symbol.sourceUnit) + ':' +
-                      std::to_string(symbol.nameSpan.start) + ' ' +
-                      symbol.qualifiedName);
+  for (const lang::SymbolRecord &symbol : result.hir.instanceSymbols()) {
+    const auto found = names.find(symbol.id);
+    symbols.push_back(
+        (found == names.end() ? "unbound" : std::to_string(found->second)) +
+        ':' + std::to_string(symbol.sourceUnit) + ':' +
+        std::to_string(symbol.nameSpan.start) + ' ' + symbol.qualifiedName);
+  }
   std::sort(symbols.begin(), symbols.end());
   for (const std::string &symbol : symbols)
     text << "  symbol " << symbol << '\n';
-  if (result.mirValid)
-    lang::MirPrinter().print(result.mir, text);
+  if (result.mirValid) {
+    auto canonical = result.mir;
+    for (const auto address : lang::enumerateMirBodyAddresses(canonical))
+      canonicalizeLocalSymbols(*lang::findMirBody(canonical, address), names);
+    lang::MirPrinter().print(canonical, text);
+  }
   return text.str();
+}
+
+void checkConcreteSymbolComparison() {
+  lang::MirBody original;
+  original.places = {{.id = 1,
+                      .binding = 1,
+                      .symbol = 100,
+                      .key = lang::PlaceKey{.root = 100}},
+                     {.id = 2,
+                      .binding = 2,
+                      .symbol = 101,
+                      .key = lang::PlaceKey{.root = 101}}};
+  original.blocks = {
+      {.id = 1,
+       .instructions = {{.id = 1,
+                         .ownership = lang::OwnershipEvent{
+                             .place = lang::PlaceKey{.root = 100}}}}}};
+  auto renamed = original;
+  renamed.places[0].symbol = renamed.places[0].key->root = 900;
+  renamed.places[1].symbol = renamed.places[1].key->root = 901;
+  renamed.blocks[0].instructions[0].ownership->place.root = 900;
+  // The third identity belongs to another body in the same program. The one
+  // global bijection must not make an accidental cross-body reference local.
+  const ConcreteSymbols fresh{{100, 1000}, {101, 1001}, {102, 1002}};
+  const ConcreteSymbols warm{{900, 1000}, {901, 1001}, {902, 1002}};
+  canonicalizeLocalSymbols(original, fresh);
+  auto equivalent = renamed;
+  canonicalizeLocalSymbols(equivalent, warm);
+  expect(equivalent == original, "consistent concrete alpha-renaming agrees");
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto malformed = renamed;
+    if (mutation == 0)
+      malformed.blocks[0].instructions[0].ownership->place.root = 901;
+    if (mutation == 1)
+      malformed.places[1].symbol = 900;
+    if (mutation == 2)
+      malformed.places[0].key->root = 902;
+    if (mutation == 3)
+      malformed.places[0].binding = 900;
+    canonicalizeLocalSymbols(malformed, warm);
+    expect(malformed != original, "normalization preserves swapped, aliased, "
+                                  "foreign and non-symbol differences");
+  }
 }
 
 void compare(const std::string &label, const std::string &expected,
@@ -402,6 +521,7 @@ void checkCorpusEntry(const std::filesystem::path &root,
 } // namespace
 
 int main(int argc, char *argv[]) {
+  checkConcreteSymbolComparison();
   const std::filesystem::path root =
       argc > 1 ? std::filesystem::path(argv[1])
                : std::filesystem::path(__FILE__).parent_path().parent_path();
