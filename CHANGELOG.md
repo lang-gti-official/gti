@@ -23,6 +23,13 @@ for what minor and patch releases mean.
   bound compile-time work. Shared ownership, virtual destruction, raw-memory
   allocation protocols and stored-reference carriers remain outside the slice.
 
+## 0.423.2 — Payload enum parameter packs
+
+- Preserve concrete enum traits when forwarding parameter packs, fixing an
+  internal compiler error in owner construction and deque insertion with
+  payload enums. Enum values, generic identities, and owner cleanup retain
+  their existing language behavior. This fixes issue #73.
+
 ## 0.423.1 — Interface owner constructor cleanup
 
 - Fix a backend internal compiler error when a concrete interface implementer
