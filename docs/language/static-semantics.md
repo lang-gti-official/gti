@@ -1612,9 +1612,16 @@ array assignment, value copies and checked references compose with mutable
 builders. Constants retain their enum declaration identity and exact signed or
 unsigned underlying domain; equal discriminants do not erase distinct types.
 This does not introduce integer-to-enum conversions or payload-enum execution.
-Checked-integer `expected` results retain their older compatibility evaluation
-and are not yet usable in mutable constexpr builders, including as fields.
-Their MIR value/operation migration remains a prerequisite.
+`expected<T, E>` and `unexpected<E>` compose when their concrete alternatives
+are supported passive constant types; `T` may also be `void`. Success and error
+construction, state tests, `.value()`, `.error()`, `.value_or()`, prefix `?`,
+value copies, assignment, fields and fixed arrays use the verified MIR profile.
+Only the active alternative is present. Inactive extraction is a constant
+evaluation diagnostic, while propagation preserves the exact error value and
+type. `value_or` evaluates its fallback eagerly, as at runtime. Checked-integer
+helpers use this same representation rather than a separate result evaluator.
+Borrowed expected payloads, owning alternatives and active cleanup remain
+outside the profile; this is not a general exception or panic interpreter.
 Checked enum references in this MIR profile designate local/parameter/receiver
 storage. It does not add general constant execution of references to global
 objects or change the existing compatibility evaluator's read-only calls.
@@ -1625,9 +1632,9 @@ structural records supplied by value: copy into a mutable local, mutate fields
 The same no-base, no-polymorphism, no-stored-borrow, no-active-cleanup boundaries
 apply. Field selection uses exact declaration identity, not field spelling or
 native layout. Completed function closures also execute explicitly constexpr
-constructors with explicit field initializers and read-only or mutable constexpr methods
-through MIR. Other already-admitted constructor forms retain the earlier
-evaluator during migration; eligibility is never inferred from a generated
+constructors with selected field initializers and read-only or mutable constexpr
+methods through MIR. Declaration defaults and nested source constructions use
+the same initialization schedule; eligibility is never inferred from a generated
 native constructor.
 
 An ordinary constructor with a source body may be `constexpr`. The constructed
@@ -1639,13 +1646,15 @@ field types for ordinary runtime use, under the same declaration-versus-call
 distinction. Each field must be fully initialized by its
 declaration or one exact constructor initializer before the body runs. The
 verified-MIR profile permits local computation and checked mutation of mutable
-fields after explicit field initialization, including loops and pure helper
-calls. Declaration-default and nested in-place initializer schedules still
-retain their earlier migration boundary; they are not admitted by the new
-receiver-mutation profile. A control transfer out of the constructor remains
+fields after initialization, including loops and pure helper calls. An explicit
+member initializer overrides its declaration default: the unused default is
+not executed. Generated default constructors are eligible when the ordinary
+selected field schedule is itself eligible. Constructor parameters may be
+checked read-only or mutable references, and default arguments retain ordinary
+call semantics. Mutable reference writes affect the caller's live origin; they
+cannot be implemented by copying argument values. A control transfer out of the constructor remains
 invalid. A constexpr instance method may subsequently observe or, with a
-mutable receiver, edit the exact stored fields. Constructor reference
-parameters, special-member policies,
+mutable receiver, edit the exact stored fields. New special-member policies,
 generic packs, and polymorphic dispatch remain outside this subset.
 
 `if constexpr (condition)` requires the frontend to compute one `bool`. Only

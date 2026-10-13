@@ -932,6 +932,18 @@ programConstantMatchesType(const ConstantValue &constant,
                                element, type.arguments.front(), program);
                          });
     }
+    if (type.kind == SemanticType::Expected ||
+        type.kind == SemanticType::Unexpected) {
+      const auto validated = convertConstantToType(constant, type);
+      if (!validated || *validated.value != constant)
+        return false;
+      const auto &node = *aggregate->value;
+      if (node.elements.empty())
+        return true;
+      const bool error = node.kind == ConstantAggregateKind::ExpectedError;
+      return programConstantMatchesType(node.elements[0],
+                                        type.arguments[error ? 1 : 0], program);
+    }
     if (type.kind != SemanticType::Class || type.classId == 0 ||
         aggregate->value->kind != ConstantAggregateKind::Object ||
         aggregate->value->identity != type.classId) {
@@ -6693,12 +6705,20 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   // the callee publishes only on its successful Invoke edge, after which the
   // value can feed either a direct return or another cleanup-free expression.
   // An enum payload is the same passive value; a cleanup-owning payload enum
-  // would instead carry the result drop handled above. Keep this aligned with
-  // the backend boundary, which admits scalar, void and passive enum Expected
-  // payloads here; Expected<Class, E> uses the explicit placement-result
-  // contract below instead.
-  const auto passiveExpectedPayload = [](const SemanticType &type) {
+  // would instead carry the result drop handled above. Nested result values
+  // need exactly the same success-only publication and
+  // failure routing. This is an IR control-flow requirement, not proof that a
+  // backend may copy or default-construct any particular representation.
+  // Expected<Class, E> uses the explicit placement-result contract below.
+  const auto passiveExpectedPayload = [](const auto &self,
+                                         const SemanticType &type) -> bool {
     switch (type.kind) {
+    case SemanticType::StringView:
+      return true;
+    case SemanticType::Expected:
+      return type.arguments.size() == 2 && self(self, type.arguments.front()) &&
+             type.arguments.back() != SemanticType::Void &&
+             self(self, type.arguments.back());
     case SemanticType::Enum:
     case SemanticType::Void:
     case SemanticType::Int8:
@@ -6721,7 +6741,8 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   if (instruction.kind == MirInstructionKind::Call && instruction.result &&
       instruction.info.type.kind == SemanticType::Expected &&
       instruction.info.type.arguments.size() == 2 &&
-      passiveExpectedPayload(instruction.info.type.arguments.front()) &&
+      passiveExpectedPayload(passiveExpectedPayload,
+                             instruction.info.type.arguments.front()) &&
       instruction.info.traits.drop == DropKind::Lexical) {
     return true;
   }
@@ -8694,8 +8715,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   for (const MirProgramConstantSubstitution &substitution :
        body.programConstantSubstitutions) {
     if (substitution.hirValue == 0 ||
-        std::holds_alternative<ConstantCheckedIntegerResult>(
-            substitution.constant) ||
         !expectedProgramConstants
              .emplace(substitution.hirValue, &substitution.constant)
              .second) {
