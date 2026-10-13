@@ -219,9 +219,11 @@ lexical fallbacks are acceptable only when clearly less authoritative.
 
 Status: measured 2026-10-13; editor-scoped HIR, the background raw-pointer
 audit, demand-driven trusted-body analysis (single analysis per edit) and the
-omission of library-only instance bodies from editor HIR are implemented.
-Broader semantic reuse remains proposed; the eight-include file still exceeds
-the exit measure (see "Measured After Library-Only Body Omission"). This is the
+first slice of step 3, cross-snapshot reuse of library-only concrete instance
+analyses, and the omission of library-only instance bodies from editor HIR
+are implemented. Registration and primary body reuse remain proposed; the
+eight-include file still exceeds the exit measure (see "Measured After
+Library-Only Body Omission"). This is the
 compiler-side half of editor responsiveness. The protocol-side half (edit-time
 publication, adaptive debounce, refresh policy) is implemented and described
 in the architecture document.
@@ -325,8 +327,25 @@ layer.
    registration and body facts would be cached per unit, keyed by the unit's
    content digest and its dependency digests, with identities that survive
    across snapshots. This is the largest change because `SemanticModel`
-   identities are snapshot-local today, and it should not be started until
-   the cheaper steps have been measured.
+   identities are snapshot-local today.
+
+   *Concrete instance reuse — implemented in 0.420.0.* After late demand,
+   HIR's concrete instance reanalysis was the largest per-edit phase, and
+   most of it re-derived library instances whose arguments name only library
+   types. The LSP now owns an `InstanceAnalysisCache` beside its parse cache;
+   bounded analysis reuses such instance deltas when the trusted units'
+   syntax, the analysis configuration and the trusted registration identities
+   are unchanged, after validating each delta's journaled body-local
+   identities, consulted functions and identity range (see "Instance Reuse
+   Across Snapshots" in
+   [semantic-analysis.md](../architecture/semantic-analysis.md)). The same
+   measurement found the editor parse cache too small for the eight-include
+   graph: every edit reloaded, re-lexed and re-parsed the library and so
+   presented fresh syntax identities. The editor now uses a 512 MiB estimate
+   bound. Registration (about 45 ms) and primary body analysis (about 150 ms)
+   are the remaining per-edit semantic work; reusing them needs identities
+   that survive across snapshots, which remains the larger part of this
+   step.
 4. **Completion scope.** Completion still runs its own frontend analysis per
    request, now with the same trusted-body scope reduction. Consider answering from
    the root's current snapshot when the completion marker does not change
@@ -355,15 +374,41 @@ bodies (about 75 ms), demanded library bodies (about 57 ms), finalization
 for 478 function instances. Reaching the exit measure needs step 3 or a
 cheaper concrete-instance analysis; neither is a demand problem.
 
+### Measured After Instance Reuse
+
+Same message-flow probe, Release `gti_lsp`, arm64 macOS, 2026-10-13, two
+alternating rounds per build on a loaded host (load average about 11);
+steady edits, milliseconds per edit:
+
+| Phase | before (0.418.0) | after (0.420.0) |
+| --- | ---: | ---: |
+| 089 total | 470 | 298 |
+| source load / lex / parse | 27 / 12 / 12 | 15 / 0.2 / 0.2 |
+| semantic (registration 44, bodies 150, finalization 9, late demand 12) | 213 | 218 |
+| HIR | 215 | 61 |
+| └ reuse lookup, validation and copy | n/a | 6 |
+| `network.gti` (transit-planner) total | 115-142 | 96-103 |
+
+Each steady 089 edit reuses 590 instance analyses (function, constructor,
+destructor and field-initializer instances) with no misses or rejections;
+75 instances of the file's own types stay ineligible and are analysed every
+time. The first analysis stores 590 entries (511 distinct keys, about 9 MB
+estimated). `network.gti` reuses 29. Peak server memory over the probe rose
+from about 355 MB to 440 MB, mostly the retained parsed library. Diagnostics
+for both files remain identical to `gti check`.
+
 ### Measured After Library-Only Body Omission
 
 Same message-flow probe, Release `gti_lsp`, arm64 macOS, 2026-10-13; steady
-edits, milliseconds per edit, the omission build against the same main:
+edits, milliseconds per edit. The first two rows compare the omission build
+against the same main before instance reuse; the last row is the reconciled
+build with both:
 
 | Build | 089 total | semantic | late demand | HIR |
 | --- | ---: | ---: | ---: | ---: |
 | entry-unit HIR, every reached body lowered | 450 | 195 | 10 (12 bodies) | 205 |
-| library-only bodies omitted (0.421.0) | 300 | 193 | 4 (5 bodies) | 56 |
+| library-only bodies omitted | 300 | 193 | 4 (5 bodies) | 56 |
+| instance reuse and omission (0.421.0) | COMBINED_TOTAL | COMBINED_SEMA | COMBINED_LATE | COMBINED_HIR |
 
 Each steady 089 edit omits 123 library-only function, constructor and
 destructor bodies; the instances only those bodies would have requested are
@@ -372,7 +417,9 @@ library instances the file requests directly. Semantic time is unchanged:
 registration (about 40 ms), eager library constructors, destructors, virtual
 and constant definitions plus application bodies (about 85 ms), demanded
 library bodies (about 52 ms) and finalization (8 ms) remain, and are now two
-thirds of the edit. Reaching the exit measure needs step 3.
+thirds of the edit. With instance reuse, the omitted bodies also leave fewer instances to reuse
+(COMBINED_HITS hits per edit). Reaching the exit measure needs the rest of
+step 3.
 
 Exit measure: the eight-include file under 100 ms per edit with the probe,
 semantic diagnostics for the open file identical to `gti check` on its
