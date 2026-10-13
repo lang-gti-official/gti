@@ -28,18 +28,6 @@ struct NullConstant {
   friend bool operator==(NullConstant, NullConstant) = default;
 };
 
-// The bounded constexpr representation for the public checked-integer result
-// family. An empty value denotes arithmetic_errc::result_out_of_range. The
-// source-level error type remains part of SemanticType rather than this
-// language-neutral value record.
-struct ConstantCheckedIntegerResult {
-  CheckedIntegerDomain domain;
-  std::optional<ConstantInteger> value;
-
-  friend bool operator==(const ConstantCheckedIntegerResult &,
-                         const ConstantCheckedIntegerResult &) = default;
-};
-
 // Scoped enumerators retain their nominal owner.  The underlying integer is
 // still available for backend materialization, but two unrelated enum types
 // never become the same constant merely because their discriminants match.
@@ -63,12 +51,14 @@ struct ConstantAggregateValue {
 
 using ConstantValue =
     std::variant<ConstantInteger, BinaryFloat, CharacterLiteral, std::string,
-                 bool, NullConstant, ConstantCheckedIntegerResult, ConstantEnum,
-                 ConstantAggregateValue>;
+                 bool, NullConstant, ConstantEnum, ConstantAggregateValue>;
 
 enum class ConstantAggregateKind {
   Array,
   Object,
+  ExpectedSuccess,
+  ExpectedError,
+  Unexpected,
 };
 
 struct ConstantAggregateField {
@@ -131,6 +121,16 @@ struct ConstantEvaluation {
 
 [[nodiscard]] ConstantEvaluation
 convertConstantToType(const ConstantValue &value, const SemanticType &target);
+
+// Result constants retain the complete nominal types and only their active
+// alternative. Void success has no payload; no reference identity is stored.
+[[nodiscard]] ConstantEvaluation
+makeConstantResult(const SemanticType &type, bool success,
+                   std::optional<ConstantValue> payload = {});
+[[nodiscard]] ConstantEvaluation
+constantResultHasValue(const ConstantValue &value);
+[[nodiscard]] ConstantEvaluation
+constantResultPayload(const ConstantValue &value, bool success);
 
 [[nodiscard]] ConstantInteger makeConstantInteger(CheckedIntegerValue value,
                                                   CheckedIntegerDomain domain);

@@ -1,5 +1,6 @@
 #include "gti/semantic_core.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -8,17 +9,65 @@
 
 namespace lang {
 
+ConstantEvaluation constantResultHasValue(const ConstantValue &value) {
+  if (const auto *node = std::get_if<ConstantAggregateValue>(&value);
+      node && node->value && node->value->exactType &&
+      node->value->exactType->kind == SemanticType::Expected &&
+      (node->value->kind == ConstantAggregateKind::ExpectedSuccess ||
+       node->value->kind == ConstantAggregateKind::ExpectedError) &&
+      convertConstantToType(value, *node->value->exactType))
+    return {.value =
+                node->value->kind == ConstantAggregateKind::ExpectedSuccess};
+  return {.failure = ConstantEvaluationFailure::InvalidOperands};
+}
+
+ConstantEvaluation constantResultPayload(const ConstantValue &value,
+                                         bool success) {
+  const auto state = constantResultHasValue(value);
+  if (!state || std::get<bool>(*state.value) != success)
+    return {.failure = ConstantEvaluationFailure::InvalidOperands};
+  if (const auto *node = std::get_if<ConstantAggregateValue>(&value);
+      node && node->value && node->value->elements.size() == 1)
+    return {.value = node->value->elements.front()};
+  return {.failure = ConstantEvaluationFailure::InvalidOperands};
+}
+
+ConstantEvaluation makeConstantResult(const SemanticType &type, bool success,
+                                      std::optional<ConstantValue> payload) {
+  const bool expected = type.kind == SemanticType::Expected;
+  if ((expected && type.arguments.size() != 2) ||
+      (!expected && (type.kind != SemanticType::Unexpected || success ||
+                     type.arguments.size() != 1)))
+    return {.failure = ConstantEvaluationFailure::UnsupportedType};
+  if (type.arguments.back() == SemanticType::Void ||
+      std::any_of(type.arguments.begin(), type.arguments.end(),
+                  [](const auto &argument) {
+                    return argument.kind == SemanticType::Reference;
+                  }))
+    return {.failure = ConstantEvaluationFailure::UnsupportedType};
+  const auto &alternative = type.arguments[expected && !success ? 1 : 0];
+  if (alternative.kind == SemanticType::Reference ||
+      (alternative == SemanticType::Void) != !payload.has_value())
+    return {.failure = ConstantEvaluationFailure::InvalidOperands};
+  ConstantAggregate result{
+      .kind = !expected ? ConstantAggregateKind::Unexpected
+              : success ? ConstantAggregateKind::ExpectedSuccess
+                        : ConstantAggregateKind::ExpectedError,
+      .exactType = std::make_shared<const SemanticType>(type)};
+  if (payload) {
+    auto converted = convertConstantToType(*payload, alternative);
+    if (!converted)
+      return converted;
+    result.elements.push_back(std::move(*converted.value));
+  }
+  return {.value = makeConstantAggregate(std::move(result))};
+}
+
 ConstantEvaluation convertConstantToType(const ConstantValue &value,
                                          const SemanticType &target) {
-  if (const auto *checked = std::get_if<ConstantCheckedIntegerResult>(&value)) {
-    if (target.kind == SemanticType::Expected && target.arguments.size() == 2 &&
-        constantIntegerDomain(target.arguments[0]) == checked->domain &&
-        target.arguments[1].kind == SemanticType::Enum) {
-      return {.value = value};
-    }
-    return {.failure = ConstantEvaluationFailure::UnsupportedType};
-  }
   if (const auto *enumerator = std::get_if<ConstantEnum>(&value)) {
+    if (target.kind == SemanticType::Expected && target.arguments.size() == 2)
+      return makeConstantResult(target, true, value);
     return target.kind == SemanticType::Enum && target.enumId != 0 &&
                    target.enumId == enumerator->enumId
                ? ConstantEvaluation{.value = value}
@@ -26,9 +75,46 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
                      .failure = ConstantEvaluationFailure::UnsupportedType};
   }
   if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&value)) {
+    if (target.kind == SemanticType::Expected && target.arguments.size() == 2 &&
+        aggregate->value && aggregate->value->exactType &&
+        aggregate->value->kind == ConstantAggregateKind::Unexpected &&
+        aggregate->value->exactType->kind == SemanticType::Unexpected &&
+        aggregate->value->exactType->arguments.size() == 1 &&
+        aggregate->value->exactType->arguments[0] == target.arguments[1] &&
+        aggregate->value->elements.size() == 1 &&
+        convertConstantToType(value, *aggregate->value->exactType))
+      return makeConstantResult(target, false, aggregate->value->elements[0]);
+    if (target.kind == SemanticType::Expected && target.arguments.size() == 2 &&
+        aggregate->value && aggregate->value->exactType &&
+        *aggregate->value->exactType == target.arguments[0])
+      return makeConstantResult(target, true, value);
     if (aggregate->value == nullptr || aggregate->value->exactType == nullptr ||
         *aggregate->value->exactType != target) {
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    }
+    if (target.kind == SemanticType::Expected ||
+        target.kind == SemanticType::Unexpected) {
+      const auto &node = *aggregate->value;
+      const bool success = node.kind == ConstantAggregateKind::ExpectedSuccess;
+      const bool expected = target.kind == SemanticType::Expected;
+      if (node.identity != 0 || !node.fields.empty() ||
+          (expected ? target.arguments.size() != 2 ||
+                          (!success &&
+                           node.kind != ConstantAggregateKind::ExpectedError)
+                    : target.arguments.size() != 1 ||
+                          node.kind != ConstantAggregateKind::Unexpected))
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      const auto &alternative = target.arguments[expected && !success ? 1 : 0];
+      if (target.arguments.back() == SemanticType::Void ||
+          std::any_of(target.arguments.begin(), target.arguments.end(),
+                      [](const auto &argument) {
+                        return argument.kind == SemanticType::Reference;
+                      }) ||
+          node.elements.size() != (alternative == SemanticType::Void ? 0u : 1u))
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      // Like arrays/records, recursive exactness belongs to the budgeted
+      // verifier/executor. Conversion preserves this immutable exact node.
+      return {.value = value};
     }
     if (target.kind == SemanticType::Array &&
         aggregate->value->kind == ConstantAggregateKind::Array &&
@@ -42,6 +128,8 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
     }
     return {.failure = ConstantEvaluationFailure::UnsupportedType};
   }
+  if (target.kind == SemanticType::Expected && target.arguments.size() == 2)
+    return makeConstantResult(target, true, value);
   if (target == SemanticType::UInt8) {
     if (const auto *character = std::get_if<CharacterLiteral>(&value)) {
       return {.value = ConstantValue{

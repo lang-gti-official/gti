@@ -2073,6 +2073,34 @@ public:
     emitSemanticType(storage.type);
   }
 
+  // GTI has already computed these values. Native constexpr is only a
+  // representation qualifier: C++20 expected-lite is non-literal, including
+  // when nested in an array or source-defined record. Keep such storage const
+  // without asking the native compiler to repeat constant evaluation.
+  [[nodiscard]] bool nativeConstantStorage(const SemanticType &type,
+                                           std::size_t depth = 0) const {
+    if (standard != CppStandard::Cpp20)
+      return true;
+    if (depth > 128 || type.kind == SemanticType::Expected ||
+        type.kind == SemanticType::Unexpected)
+      return false;
+    if (type.kind == SemanticType::Class) {
+      const auto found = std::find_if(
+          mir.classInstances().begin(), mir.classInstances().end(),
+          [&](const auto &instance) { return instance.type == type; });
+      if (found == mir.classInstances().end())
+        return false;
+      return std::all_of(found->declaredFields.begin(),
+                         found->declaredFields.end(), [&](const auto &field) {
+                           return nativeConstantStorage(field.type, depth + 1);
+                         });
+    }
+    return std::all_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const auto &argument) {
+                         return nativeConstantStorage(argument, depth + 1);
+                       });
+  }
+
   void emitLoweredStorageType(const LoweredStorageDeclaration &storage,
                               bool declarationOnly) {
     const bool runtime = loweredRuntimeProgramStorage(storage);
@@ -2080,9 +2108,7 @@ public:
     const bool moveOnly =
         isMoveOnlyOwner(storage.traits) || containsTypeParameter(storage.type);
     const bool representationConstexpr =
-        storage.constexprStorage &&
-        !(standard == CppStandard::Cpp20 &&
-          storage.type.kind == SemanticType::Expected);
+        storage.constexprStorage && nativeConstantStorage(storage.type);
     if (representationConstexpr && !runtime) {
       output << (declarationOnly ? "const " : "constexpr ");
     } else if (!runtime && (storage.constexprStorage ||
@@ -2266,9 +2292,7 @@ public:
     const bool moveOnly =
         isMoveOnlyOwner(storage.traits) || containsTypeParameter(storage.type);
     const bool representationConstexpr =
-        storage.constexprStorage &&
-        !(standard == CppStandard::Cpp20 &&
-          storage.type.kind == SemanticType::Expected);
+        storage.constexprStorage && nativeConstantStorage(storage.type);
 
     writeIndent();
     if (!insideClass && storage.internalLinkage) {
@@ -3778,7 +3802,10 @@ public:
     writeIndent();
     output << "struct __gti_constexpr_value_tag_v1 {};\n";
     writeIndent();
-    output << "constexpr " << classRow.name << "(__gti_constexpr_value_tag_v1";
+    const bool nativeConstexpr = nativeConstantStorage(exactType);
+    if (nativeConstexpr)
+      output << "constexpr ";
+    output << classRow.name << "(__gti_constexpr_value_tag_v1";
     for (std::size_t index = 0; index < fields.size(); ++index) {
       output << ", ";
       emitSemanticType(fieldType(*fields[index]));
@@ -3798,8 +3825,8 @@ public:
     output << " {}\n";
     emitAccess(AccessModifier::Public);
     writeIndent();
-    output << "static constexpr " << classRow.name
-           << " __gti_constexpr_value_v1(";
+    output << (nativeConstexpr ? "static constexpr " : "static ")
+           << classRow.name << " __gti_constexpr_value_v1(";
     for (std::size_t index = 0; index < fields.size(); ++index) {
       if (index != 0) {
         output << ", ";
@@ -9122,6 +9149,33 @@ public:
         throw std::logic_error(
             "aggregate constant differs from its exact semantic type");
       }
+      if (type->kind == SemanticType::Expected ||
+          type->kind == SemanticType::Unexpected) {
+        const auto checked = convertConstantToType(constant, *type);
+        if (!checked || *checked.value != constant)
+          throw std::logic_error(
+              "result constant differs from its exact active alternative");
+        const auto &node = *aggregate->value;
+        const bool expected = type->kind == SemanticType::Expected;
+        const bool success =
+            node.kind == ConstantAggregateKind::ExpectedSuccess;
+        if (expected) {
+          emitSemanticType(*type);
+          output << '{';
+        }
+        if (!success)
+          output << (standard == CppStandard::Cpp23
+                         ? "std::unexpected("
+                         : "::nonstd::make_unexpected(");
+        if (!node.elements.empty())
+          emitConstant(node.elements[0],
+                       &type->arguments[expected && !success ? 1 : 0]);
+        if (!success)
+          output << ')';
+        if (expected)
+          output << '}';
+        return;
+      }
       if (aggregate->value->kind == ConstantAggregateKind::Array) {
         if (type->kind != SemanticType::Array || type->arguments.size() != 1 ||
             type->arrayLengthParameterId != 0 ||
@@ -9182,28 +9236,6 @@ public:
         emitConstant(field.value, &fieldType);
       }
       output << ')';
-    } else if (const auto *checked =
-                   std::get_if<ConstantCheckedIntegerResult>(&constant)) {
-      if (type == nullptr || type->kind != SemanticType::Expected ||
-          type->arguments.size() != 2 ||
-          constantIntegerDomain(type->arguments[0]) != checked->domain ||
-          type->arguments[1].kind != SemanticType::Enum) {
-        throw std::logic_error(
-            "checked-integer constant requires its exact expected type");
-      }
-      emitSemanticType(*type);
-      output << '{';
-      if (checked->value) {
-        emitConstant(ConstantValue{*checked->value}, &type->arguments[0]);
-      } else {
-        output << (standard == CppStandard::Cpp23
-                       ? "std::unexpected("
-                       : "::nonstd::make_unexpected(");
-        output << "static_cast<";
-        emitSemanticType(type->arguments[1]);
-        output << ">(0))";
-      }
-      output << '}';
     } else {
       output << "nullptr";
     }

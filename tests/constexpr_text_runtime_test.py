@@ -12,7 +12,7 @@ def main() -> int:
     source = pathlib.Path(sys.argv[2]).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-constexpr-text-") as temporary:
         root = pathlib.Path(temporary)
-        for optimization in ("O0", "O1", "O3"):
+        for optimization in ("O0", "O1", "O2", "O3"):
             for standard in ("c++20", "c++23"):
                 executable = root / f"text-{optimization}-{standard}"
                 for command in (

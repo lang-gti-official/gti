@@ -3,8 +3,8 @@
 namespace lang {
 
 auto SemanticVisitor::Impl::canDataInitializeProgramConstant(
-    const ConstantValue &value) -> bool {
-  return !std::holds_alternative<ConstantCheckedIntegerResult>(value);
+    const ConstantValue &) -> bool {
+  return true;
 }
 
 auto SemanticVisitor::Impl::recordProgramStorageEffect(

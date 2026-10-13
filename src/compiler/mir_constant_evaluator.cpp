@@ -123,6 +123,14 @@ private:
     }
     if (depth >= limits.callDepth)
       return false;
+    if (type.kind == SemanticType::Expected)
+      return type.arguments.size() == 2 &&
+             (type.arguments[0] == SemanticType::Void ||
+              storageType(type.arguments[0], depth + 1)) &&
+             storageType(type.arguments[1], depth + 1);
+    if (type.kind == SemanticType::Unexpected)
+      return type.arguments.size() == 1 &&
+             storageType(type.arguments[0], depth + 1);
     if (type.kind == SemanticType::Array)
       return type.arguments.size() == 1 && type.arrayLengthParameterId == 0 &&
              storageType(type.arguments[0], depth + 1);
@@ -431,6 +439,15 @@ private:
         if (!valid)
           return valid;
       }
+    } else if (type.kind == SemanticType::Expected ||
+               type.kind == SemanticType::Unexpected) {
+      if (!aggregate->value->elements.empty()) {
+        const bool error =
+            aggregate->value->kind == ConstantAggregateKind::ExpectedError;
+        const auto payload = exactValue(aggregate->value->elements[0],
+                                        type.arguments[error ? 1 : 0]);
+        return payload ? converted : payload;
+      }
     } else if (const auto *instance = record(type)) {
       if (aggregate->value->fields.size() != instance->declaredFields.size())
         return {.failure = ConstantEvaluationFailure::InvalidOperands};
@@ -601,6 +618,12 @@ private:
       return arrayValue(type, {});
     if (type.kind == SemanticType::Enum)
       return enumValue(type, {});
+    if (type.kind == SemanticType::Expected && type.arguments.size() == 2) {
+      if (type.arguments[0] == SemanticType::Void)
+        return makeConstantResult(type, true);
+      auto payload = defaultValue(type.arguments[0]);
+      return payload ? makeConstantResult(type, true, payload.value) : payload;
+    }
     if (const auto domain = constantIntegerDomain(type))
       return {.value = makeConstantInteger({}, *domain)};
     if (const auto format = semanticFloatFormat(type))
@@ -696,6 +719,15 @@ private:
     if (instruction.operation == MirOperation::Aggregate &&
         type.kind == SemanticType::Array)
       return arrayValue(type, values);
+    if (instruction.operation == MirOperation::Aggregate &&
+        type.kind == SemanticType::Expected && values.empty())
+      return defaultValue(type);
+    if (instruction.operation == MirOperation::Unexpected && values.size() == 1)
+      return makeConstantResult(type, false, values[0]);
+    if (instruction.operation == MirOperation::ExpectedHasValue &&
+        values.size() == 1) {
+      return constantResultHasValue(values[0]);
+    }
     if (instruction.operation == MirOperation::Literal && instruction.literal) {
       return evaluateConstantLiteral(*instruction.literal,
                                      constantIntegerDomain(type));
@@ -757,6 +789,17 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Lifecycle) {
       return {};
+    }
+    if (instruction.kind == MirInstructionKind::CleanupBeforeAssign) {
+      if (!instruction.destination || !instruction.replacementCleanup ||
+          instruction.replacementCleanup->requiresActiveCleanup ||
+          !storageType(instruction.replacementCleanup->type))
+        return fail(frame, ConstantEvaluationFailure::UnsupportedType);
+      // Verification pairs this passive preparation with its assignment.
+      // Preserve the aggregate shell; the assignment replaces the value and
+      // retires the applicable generation. Bounds are checked at preparation.
+      const auto before = readPlace(frame, *instruction.destination);
+      return before ? MirConstantEvaluation{} : fail(frame, before.failure);
     }
     if (instruction.kind == MirInstructionKind::Drop) {
       // All admitted obligations have passive structural types. No user
@@ -948,17 +991,101 @@ private:
       if (!instruction.constructorTarget || instruction.objectAllocation ||
           instruction.receiver)
         return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
-      auto result =
-          construct(*instruction.constructorTarget, arguments, depth + 1);
+      const auto *callee =
+          program.findConstructorInstance(*instruction.constructorTarget);
+      if (!callee || callee->parameterTypes.size() != arguments.size())
+        return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+      std::vector<std::optional<Location>> origins(arguments.size());
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
+        const auto &type = callee->parameterTypes[index];
+        if (type.kind != SemanticType::Reference)
+          continue;
+        Location location;
+        const auto located =
+            locateOperand(frame, instruction.operands[index], location);
+        if (located.failure != ConstantEvaluationFailure::None)
+          return fail(frame, located.failure);
+        if (type.referenceAccess == AccessMode::Mutable &&
+            location.access != AccessMode::Mutable)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        location.access = type.referenceAccess;
+        origins[index] = std::move(location);
+      }
+      auto result = construct(*instruction.constructorTarget, arguments,
+                              depth + 1, origins);
       if (!result)
         return result;
       evaluated.value = std::move(result.value);
       break;
     }
     case MirInstructionKind::Call:
-      if (instruction.intrinsic == IntrinsicKind::ArraySize &&
-          instruction.receiver && arguments.empty() &&
-          instruction.receiver->type.kind == SemanticType::Array) {
+      if (instruction.receiver &&
+          (instruction.intrinsic == IntrinsicKind::ExpectedValue ||
+           instruction.intrinsic == IntrinsicKind::ExpectedError ||
+           instruction.intrinsic == IntrinsicKind::ExpectedValueOr)) {
+        const auto result = operand(frame, *instruction.receiver);
+        if (!result)
+          return fail(frame, result.failure);
+        const auto state = constantResultHasValue(*result.value);
+        if (!state)
+          return fail(frame, state.failure);
+        const bool success = std::get<bool>(*state.value);
+        if (instruction.intrinsic == IntrinsicKind::ExpectedValueOr) {
+          if (arguments.size() != 1)
+            return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+          evaluated = success ? constantResultPayload(*result.value, true)
+                              : convertConstantToType(arguments[0],
+                                                      instruction.info.type);
+        } else if (!arguments.empty() ||
+                   success != (instruction.intrinsic ==
+                               IntrinsicKind::ExpectedValue)) {
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands,
+                      "Constant evaluation cannot extract the inactive result "
+                      "alternative.");
+        } else if (instruction.info.type == SemanticType::Void) {
+          voidResult = true;
+        } else {
+          evaluated = constantResultPayload(*result.value, success);
+        }
+      } else if (const auto arithmetic =
+                     integerArithmeticIntrinsic(instruction.intrinsic);
+                 arithmetic && !instruction.receiver && arguments.size() == 2) {
+        const bool checked =
+            arithmetic->mode == IntegerArithmeticMode::CheckedResult;
+        const auto &type = instruction.info.type;
+        const auto domain =
+            constantIntegerDomain(checked ? type.arguments[0] : type);
+        const auto *left = std::get_if<ConstantInteger>(&arguments[0]);
+        const auto *right = std::get_if<ConstantInteger>(&arguments[1]);
+        if (!domain || !left || !right || left->domain != *domain ||
+            right->domain != *domain)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        if (checked) {
+          const auto value = evaluateCheckedIntegerBinary(
+              arithmetic->operation, checkedIntegerValue(*left),
+              checkedIntegerValue(*right), *domain);
+          if (!value)
+            return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+          if (const auto *integer = std::get_if<CheckedIntegerValue>(&*value)) {
+            evaluated = makeConstantResult(
+                type, true, makeConstantInteger(*integer, *domain));
+          } else if (std::get<CheckedIntegerFailure>(*value) ==
+                     CheckedIntegerFailure::Overflow) {
+            const auto error = enumValue(type.arguments[1], {});
+            if (!error)
+              return fail(frame, error.failure);
+            evaluated = makeConstantResult(type, false, error.value);
+          }
+        } else {
+          const auto value = evaluateDefinedIntegerBinary(
+              arithmetic->operation, checkedIntegerValue(*left),
+              checkedIntegerValue(*right), *domain, arithmetic->mode);
+          if (value)
+            evaluated.value = makeConstantInteger(*value, *domain);
+        }
+      } else if (instruction.intrinsic == IntrinsicKind::ArraySize &&
+                 instruction.receiver && arguments.empty() &&
+                 instruction.receiver->type.kind == SemanticType::Array) {
         // Observe the represented receiver, not merely a type spelling: a
         // runtime/uninitialized array is not a constant by virtue of its size.
         const auto array = operand(frame, *instruction.receiver);
@@ -1128,13 +1255,17 @@ private:
         referenceResult);
   }
 
-  MirConstantEvaluation construct(HirConstructorInstanceId id,
-                                  std::span<const ConstantValue> arguments,
-                                  std::size_t depth) {
+  MirConstantEvaluation
+  construct(HirConstructorInstanceId id,
+            std::span<const ConstantValue> arguments, std::size_t depth,
+            std::span<const std::optional<Location>> origins = {}) {
     const auto *constructor = program.findConstructorInstance(id);
     const auto *owner =
         constructor ? program.findClassInstance(constructor->owner) : nullptr;
-    if (!constructor || !owner || !constructor->constexprConstructor ||
+    if (!constructor || !owner ||
+        (!constructor->constexprConstructor &&
+         !constructor->generatedDefault) ||
+        constructor->requiresUnsafe ||
         constructor->definitionKind != MirDefinitionKind::Source ||
         !storageType(owner->type) ||
         arguments.size() != constructor->parameterTypes.size())
@@ -1191,7 +1322,7 @@ private:
     return executeBody(constructor->body, {MirBodyKind::Constructor, id},
                        owner->type, constructor->parameterTypes,
                        constructor->parameterBindings, arguments, depth,
-                       makeConstantAggregate(std::move(receiver)), {}, {},
+                       makeConstantAggregate(std::move(receiver)), origins, {},
                        AccessMode::Mutable);
   }
 
@@ -1393,6 +1524,12 @@ private:
         }
         if (returnType == SemanticType::Void)
           return {.voidResult = true};
+        if (!terminator.value && returnType.kind == SemanticType::Expected &&
+            returnType.arguments.size() == 2 &&
+            returnType.arguments[0] == SemanticType::Void) {
+          const auto success = makeConstantResult(returnType, true);
+          return {.value = success.value, .failure = success.failure};
+        }
         const auto result = terminator.value ? operand(frame, *terminator.value)
                                              : ConstantEvaluation{};
         if (!result)

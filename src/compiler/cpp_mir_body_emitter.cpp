@@ -1776,6 +1776,27 @@ cppMirEnumBoundaryRow(const MirProgram &program,
   return true;
 }
 
+// Scalar/view result trees have ordinary by-value carriers: every leaf is
+// passive and no constructor or allocation can be hidden by copying an
+// intermediate result. Counted views keep their already-verified source loan;
+// representation copying does not extend it. Keep class alternatives on their
+// distinct lifetime-slot path.
+[[nodiscard]] bool passiveResultValueRepresentation(const MirProgram &program,
+                                                    const SemanticType &type) {
+  if (type.kind == SemanticType::Expected)
+    return type.arguments.size() == 2 &&
+           passiveResultValueRepresentation(program, type.arguments[0]) &&
+           type.arguments[1] != SemanticType::Void &&
+           passiveResultValueRepresentation(program, type.arguments[1]);
+  const auto representation = cppMirExpectedTypeRepresentation(type);
+  return representation &&
+         (*representation == CppMirTypeRepresentationKind::Scalar ||
+          *representation == CppMirTypeRepresentationKind::StringView ||
+          *representation == CppMirTypeRepresentationKind::Void ||
+          (*representation == CppMirTypeRepresentationKind::Enum &&
+           program.findPayloadEnum(type) == nullptr));
+}
+
 // An Expected result whose success alternative is passive publishes by value
 // through the transformed body's ordinary typed out-parameter: the caller
 // declares the boundary value-initialized and the Return assigns it. Scalar,
@@ -1790,14 +1811,15 @@ cppMirEnumBoundaryRow(const MirProgram &program,
   const SemanticType &success = type.arguments.front();
   const std::optional<CppMirTypeRepresentationKind> successKind =
       cppMirExpectedTypeRepresentation(success);
-  return successKind &&
-         (*successKind == CppMirTypeRepresentationKind::Scalar ||
-          *successKind == CppMirTypeRepresentationKind::Void ||
-          (success.kind == SemanticType::Reference &&
-           success.referenceAccess == AccessMode::ReadOnly &&
-           success.arguments.size() == 1) ||
-          (*successKind == CppMirTypeRepresentationKind::Enum &&
-           cppMirEnumBoundaryRow(program, representations, success)));
+  return passiveResultValueRepresentation(program, type) ||
+         (successKind &&
+          (*successKind == CppMirTypeRepresentationKind::Scalar ||
+           *successKind == CppMirTypeRepresentationKind::Void ||
+           (success.kind == SemanticType::Reference &&
+            success.referenceAccess == AccessMode::ReadOnly &&
+            success.arguments.size() == 1) ||
+           (*successKind == CppMirTypeRepresentationKind::Enum &&
+            cppMirEnumBoundaryRow(program, representations, success))));
 }
 
 // A cleanup-owning payload enum crosses the transformed failure ABI through
@@ -10032,6 +10054,21 @@ uniqueClassInstanceForType(const MirProgram &program, const SemanticType &type);
   const SemanticType &element = type.arguments.front();
   if (element.kind == SemanticType::Array)
     return cleanupFreeCopyableFixedArray(program, element);
+  if (element.kind == SemanticType::Expected && element.arguments.size() == 2) {
+    // These alternatives have neither custom lifecycle nor borrowed payloads.
+    // Their wrapper's lexical drop classification does not imply active
+    // cleanup.
+    return std::all_of(
+        element.arguments.begin(), element.arguments.end(),
+        [&](const SemanticType &alternative) {
+          return alternative == SemanticType::Void ||
+                 alternative == SemanticType::Bool ||
+                 alternative == SemanticType::Char ||
+                 constantIntegerDomain(alternative).has_value() ||
+                 semanticFloatFormat(alternative).has_value() ||
+                 program.findIntegralEnum(alternative) != nullptr;
+        });
+  }
   const MirClassInstance *owner = uniqueClassInstanceForType(program, element);
   return owner != nullptr && owner->traits.copyable && owner->traits.movable &&
          !owner->traits.containsBorrowedState &&
@@ -19677,15 +19714,13 @@ cleanupFreeExpectedReceiver(const MirBody &body, const MirInstruction &call) {
 
 [[nodiscard]] bool scalarExpectedExtraction(const MirProgram &program,
                                             const MirInstruction &call) {
-  const auto representation = expectedTypeRepresentation(call.info.type);
   if (call.kind != MirInstructionKind::Call || !call.result ||
       call.info.category != ValueCategory::Value ||
-      call.info.traits.drop != DropKind::Trivial ||
+      (call.info.traits.drop != DropKind::Trivial &&
+       call.info.type.kind != SemanticType::Expected) ||
       !call.info.traits.copyable || call.info.traits.containsBorrowedState ||
-      !representation ||
-      (*representation != CppMirTypeRepresentationKind::Scalar &&
-       (*representation != CppMirTypeRepresentationKind::Enum ||
-        program.findPayloadEnum(call.info.type) != nullptr)) ||
+      call.info.type == SemanticType::Void ||
+      !passiveResultValueRepresentation(program, call.info.type) ||
       call.destination || call.successResultDrop ||
       call.successResultDestination || !call.receiver ||
       call.receiver->kind != MirOperandKind::Value ||
@@ -19731,18 +19766,7 @@ directExpectedScalarExtraction(const MirProgram &program, const MirBody &body,
          receiver->info.category == ValueCategory::Value &&
          uniqueValueDrop(body, receiver->id, receiver->info.type) == nullptr &&
          !receiver->info.traits.containsBorrowedState &&
-         std::all_of(
-             receiver->info.type.arguments.begin(),
-             receiver->info.type.arguments.end(),
-             [&](const SemanticType &type) {
-               const auto representation = expectedTypeRepresentation(type);
-               return representation &&
-                      (*representation ==
-                           CppMirTypeRepresentationKind::Scalar ||
-                       *representation == CppMirTypeRepresentationKind::Void ||
-                       (*representation == CppMirTypeRepresentationKind::Enum &&
-                        program.findPayloadEnum(type) == nullptr));
-             });
+         passiveResultValueRepresentation(program, receiver->info.type);
 }
 
 // A counted text view is an ordinary by-value SSA descriptor. Its verified
@@ -20036,8 +20060,8 @@ directExpectedClassExtraction(const MirProgram &program, const MirBody &body,
   }
   const MirInstruction *call = findInstruction(body, value->definition);
   if (call == nullptr || call->kind != MirInstructionKind::Call ||
-      call->result != valueId || call->destination || call->successResultDrop ||
-      !call->receiver || !call->operands.empty() || call->functionTarget ||
+      call->result != valueId || call->destination || !call->receiver ||
+      !call->operands.empty() || call->functionTarget ||
       call->constructorTarget || call->lambdaTarget || call->bodyTarget ||
       call->callableInvocation || !call->callableArguments.empty() ||
       (call->intrinsic != IntrinsicKind::ExpectedValue &&
@@ -20130,6 +20154,29 @@ directExpectedClassExtraction(const MirProgram &program, const MirBody &body,
             .receiverSource = receiverSource,
             .receiverTemporary = receiverTemporary,
             .unexpectedReturn = true};
+  }
+  if (call->successResultDrop) {
+    // An immediate receiver observation already owns a MIR temporary and
+    // schedules its drop at the full-expression boundary. Publish the
+    // extracted payload there; do not invent another receiver lifetime or
+    // default-construct the payload before the checked extraction succeeds.
+    if (copying || call->successResultDestination)
+      return {};
+    for (const auto &block : body.blocks) {
+      for (const auto &consumer : block.instructions) {
+        const auto receiver = directTemporaryReceiver(body, consumer);
+        if (receiver.producer == call && receiver.drop &&
+            receiver.drop->id == *call->successResultDrop &&
+            !receiver.drop->dropType.requiresActiveCleanup)
+          return {.value = value,
+                  .call = call,
+                  .receiverMove = receiverMove,
+                  .receiverSource = receiverSource,
+                  .receiverTemporary = receiverTemporary,
+                  .destination = receiver.slot};
+      }
+    }
+    return {};
   }
   if (!copying && !call->successResultDestination) {
     const auto staged = stagedClassResultForSource(body, valueId);
@@ -30127,6 +30174,7 @@ struct ClassSsaLifetimeSlot {
   const MirInstruction *consumer = nullptr;
   const MirBlock *returnBlock = nullptr;
   ClassSsaSlotConsumerKind consumerKind = ClassSsaSlotConsumerKind::None;
+  const MirInstruction *observingCall = nullptr;
 
   [[nodiscard]] explicit operator bool() const { return value != nullptr; }
 };
@@ -31066,9 +31114,11 @@ classSsaLifetimeSlot(const MirProgram &program,
                                  projection->projections, 0,
                                  projection->type) &&
         ((!directConstructionProducer && movable) ||
+         projection->type.kind == SemanticType::Class ||
          expectedTypeRepresentation(projection->type) ==
              CppMirTypeRepresentationKind::Scalar);
     const MirInstruction *consumer = nullptr;
+    const MirInstruction *observingCall = nullptr;
     if (exactProjection) {
       if (std::any_of(body.loans.begin(), body.loans.end(),
                       [&](const MirLoan &loan) {
@@ -31105,11 +31155,45 @@ classSsaLifetimeSlot(const MirProgram &program,
               operandUses == 0) {
             continue;
           }
+          const bool fieldCopy =
+              instruction.kind == MirInstructionKind::Load &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::Copy;
+          const bool receiverStage =
+              instruction.kind == MirInstructionKind::CallInput &&
+              instruction.callInputRole == MirCallInputRole::Receiver &&
+              instruction.callInputKind == HirCallInputKind::ReadBorrow &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::BorrowRead &&
+              instruction.result &&
+              projection->type.kind == SemanticType::Class;
+          if (receiverStage) {
+            const auto uses = body.usesOf(*instruction.result);
+            const auto *call =
+                uses.size() == 1 && uses.front().kind ==
+                                        MirValueUseKind::InstructionReceiver
+                    ? findInstruction(body, uses.front().instruction)
+                    : nullptr;
+            const auto *target =
+                call && call->functionTarget
+                    ? program.findFunctionInstance(*call->functionTarget)
+                    : nullptr;
+            if (!call || call->kind != MirInstructionKind::Call ||
+                call->callSite != instruction.callSite ||
+                call->intrinsic != IntrinsicKind::None || !target ||
+                target->receiverMutability != ReceiverMutability::ReadOnly ||
+                target->returnType.kind == SemanticType::Reference ||
+                call->info.traits.containsBorrowedState || call->loan ||
+                classInstance->requiresActiveDropState ||
+                classInstance->traits.containsBorrowedState ||
+                value->info.traits.containsBorrowedState)
+              return {};
+            observingCall = call;
+          }
           if (consumer != nullptr || destinationUse || successDestinationUse ||
               receiverUse || operandUses != 1 ||
-              instruction.kind != MirInstructionKind::Load ||
+              (!fieldCopy && !receiverStage) ||
               instruction.operands.size() != 1 ||
-              instruction.operands.front().kind != MirOperandKind::Copy ||
               instruction.operands.front().place != projection->id ||
               !instruction.result || instruction.receiver ||
               instruction.destination ||
@@ -31126,7 +31210,7 @@ classSsaLifetimeSlot(const MirProgram &program,
     if (consumer != nullptr) {
       const MirValue *loaded =
           consumer->result ? body.findValue(*consumer->result) : nullptr;
-      if ((directConstructionProducer || !movable) &&
+      if (!observingCall && (directConstructionProducer || !movable) &&
           (loaded == nullptr || loaded->info.type != projection->type ||
            classInstance->requiresActiveDropState ||
            classInstance->traits.containsBorrowedState ||
@@ -31140,7 +31224,8 @@ classSsaLifetimeSlot(const MirProgram &program,
       return {.value = value,
               .producer = producer,
               .consumer = consumer,
-              .consumerKind = ClassSsaSlotConsumerKind::FieldRead};
+              .consumerKind = ClassSsaSlotConsumerKind::FieldRead,
+              .observingCall = observingCall};
     }
   }
 
@@ -41585,6 +41670,22 @@ private:
     };
     const auto retireConsumedClassResultStages = [&] {
       retireConsumedArguments(false);
+      const auto *stage =
+          instruction.receiver
+              ? borrowStagedCallInput(facts.body, *instruction.receiver)
+              : nullptr;
+      const auto *place =
+          stage ? facts.body.findPlace(stage->operands.front().place) : nullptr;
+      if (place && place->root == MirPlaceRootKind::Value) {
+        const auto slot = classSsaLifetimeSlot(program, representations,
+                                               facts.body, place->value);
+        if (slot.observingCall == &instruction) {
+          writeIndent();
+          output << "__gti_mir_v_" << place->value
+                 << ".destroy(); // end observed passive receiver "
+                    "representation\n";
+        }
+      }
     };
     const auto retireConsumedPayloadEnumArguments = [&] {
       retireConsumedArguments(true);

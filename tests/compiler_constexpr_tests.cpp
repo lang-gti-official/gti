@@ -2642,24 +2642,22 @@ int main() { Table table = build(4); return table.total() + array_work(4) - 68; 
   const auto constructorUnsupported = lang::Frontend().analyze(
       "constexpr-mutation-constructor-invalid.gti", R"(
 #include <std/numeric>
+int runtime_only(int value) { return value + 1; }
 struct Item {
   mut int value;
   constexpr Item(int seed) : value(seed) {
     this.value++;
-    this.value = std::wrapping_add(this.value, 1);
+    this.value = runtime_only(this.value);
   }
 };
 constexpr Item constant = Item(3);
 int main() { return 0; }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(
-      !constructorUnsupported.canGenerateCode() &&
-          hasDiagnosticCode(constructorUnsupported.diagnostics, "GTI-S2057") &&
-          hasDiagnostic(constructorUnsupported.diagnostics,
-                        "requires the verified MIR execution profile"),
-      "constructor-body mutation cannot fall back to a value-copy AST "
-      "interpretation after an unsupported operation");
+  expect(!constructorUnsupported.canGenerateCode() &&
+             hasDiagnosticCode(constructorUnsupported.diagnostics, "GTI-S2057"),
+         "constructor-body mutation cannot fall back to a value-copy AST "
+         "interpretation after an unsupported operation");
 
   const std::string enclosing = R"(
 constexpr int write(mut int& value) { value++; return value; }
@@ -2689,6 +2687,198 @@ int main() { return result - 2; }
              hasDiagnostic(withoutStagingSource, "AST compatibility frame"),
          "a source-less compatibility caller cannot stage an isolated mutable "
          "callee and silently lose its writes");
+}
+
+void testConstexprResults() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/constexpr_results.gti";
+  std::ifstream input(fixture);
+  const std::string source((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+  const auto runtimeSource =
+      source.substr(0, source.find("constexpr int accepted")) +
+      "int main() { return 0; }";
+  const auto runtime = lang::Frontend().analyze(fixture, runtimeSource,
+                                                {standardLibraryPrelude()}, {},
+                                                {standardLibraryRoot()});
+  expect(runtime.canGenerateCode(),
+         "result fixture lowers independently of constant uses");
+  for (const auto &function : runtime.hir.functionInstances()) {
+    if (!function.source ||
+        (function.source->name().lexeme != "after_validation" &&
+         function.source->name().lexeme != "result_array"))
+      continue;
+    const std::vector<lang::ConstantValue> args =
+        function.parameterTypes.empty()
+            ? std::vector<lang::ConstantValue>{}
+            : std::vector<lang::ConstantValue>{true};
+    const auto execution =
+        lang::evaluateMirConstantFunction(runtime.mir, function.id, args);
+    expect(bool(execution),
+           "result composition executes canonical MIR independently");
+    if (!execution) {
+      std::cerr << "direct " << function.source->name().lexeme << " failure "
+                << int(execution.failure) << " body "
+                << int(execution.body.kind) << ":" << execution.body.owner
+                << " instruction " << execution.instruction << " "
+                << execution.detail << '\n';
+      if (const auto *body = lang::findMirBody(runtime.mir, execution.body))
+        for (const auto &block : body->blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.id == execution.instruction)
+              std::cerr << "instruction kind " << int(instruction.kind)
+                        << " operation " << int(instruction.operation)
+                        << " type " << int(instruction.info.type.kind) << '\n';
+    }
+  }
+  lang::FrontendWorkMetrics metrics;
+  const auto result = lang::Frontend({.workMetrics = &metrics})
+                          .analyze(fixture, source, {standardLibraryPrelude()},
+                                   {}, {standardLibraryRoot()});
+  for (const auto &d : result.diagnostics)
+    std::cerr << d.primary.line << ": " << d.code << ": " << d.message << '\n';
+  expect(!source.empty() && result.canGenerateCode() &&
+             metrics.constexprMirExecutions >= 5,
+         "results, field defaults and constructor reference arguments compose "
+         "through MIR");
+  if (!result.canGenerateCode())
+    return;
+  const auto functionId = [&](std::string_view name) {
+    for (const auto &function : result.hir.functionInstances())
+      if (function.source && function.source->name().lexeme == name)
+        return function.id;
+    return lang::HirFunctionInstanceId{0};
+  };
+  const auto work = functionId("result_array");
+  bool checkedNestedFailureEdge = false;
+  for (const auto &function : result.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.functionTarget != functionId("nested_result"))
+          continue;
+        expect(lang::requiresMirFailureControlFlow(
+                   instruction, lang::MirFailureControlFlowPosition::None) &&
+                   block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block.terminator.invokeInstruction == instruction.id,
+               "nested passive result calls require success-only publication "
+               "and an explicit failure edge");
+        auto malformed = result.mir;
+        auto *caller = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &terminator = caller->body.blocks[block.id - 1].terminator;
+        terminator.kind = lang::MirTerminatorKind::Goto;
+        terminator.invokeInstruction = 0;
+        terminator.failureRecord = 0;
+        terminator.elseTarget = 0;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "verification rejects deleting a nested result call's "
+               "defined-failure edge");
+        checkedNestedFailureEdge = true;
+      }
+    }
+  }
+  expect(checkedNestedFailureEdge,
+         "result fixture exercises runtime nested-result call routing");
+  const auto evaluated =
+      lang::evaluateMirConstantFunction(result.mir, work, {});
+  expect(evaluated &&
+             std::get<lang::ConstantInteger>(*evaluated.value).magnitude == 28,
+         "result assignment preserves each array element's independent state");
+  for (std::size_t budget = 0; evaluated && budget < evaluated.steps;
+       ++budget) {
+    const auto limited = lang::evaluateMirConstantFunction(result.mir, work, {},
+                                                           {.steps = budget});
+    expect(!limited && limited.failure ==
+                           lang::ConstantEvaluationFailure::ResourceLimit,
+           "result state, payload conversion and replacement all share the "
+           "step budget");
+  }
+  const std::array<lang::ConstantValue, 1> no{false};
+  const auto propagated = lang::evaluateMirConstantFunction(
+      result.mir, functionId("after_validation"), no);
+  expect(propagated && lang::constantResultHasValue(*propagated.value).value ==
+                           lang::ConstantValue{false},
+         "void propagation returns the original exact error alternative");
+  if (propagated) {
+    const auto *wrapped =
+        std::get_if<lang::ConstantAggregateValue>(&*propagated.value);
+    expect(wrapped && wrapped->value,
+           "result constants use the shared typed aggregate representation");
+    if (wrapped && wrapped->value) {
+      const auto consume = functionId("consume_result");
+      const std::array<lang::ConstantValue, 1> valid{*propagated.value};
+      const auto observed =
+          lang::evaluateMirConstantFunction(result.mir, consume, valid);
+      expect(observed &&
+                 std::get<lang::ConstantInteger>(*observed.value).magnitude ==
+                     11,
+             "an externally supplied exact error result is observed by value");
+      for (int corruption = 0; corruption < 3; ++corruption) {
+        auto malformed = *wrapped->value;
+        auto error = std::get<lang::ConstantEnum>(malformed.elements.front());
+        if (corruption == 0)
+          error.enumId = 0;
+        if (corruption == 1)
+          error.value.domain.width = 64;
+        malformed.elements.front() = corruption == 2
+                                         ? lang::ConstantValue{true}
+                                         : lang::ConstantValue{error};
+        const std::array<lang::ConstantValue, 1> invalid{
+            lang::makeConstantAggregate(std::move(malformed))};
+        expect(!lang::evaluateMirConstantFunction(result.mir, consume, invalid),
+               "result payload identity and integer domain are independently "
+               "validated");
+      }
+      for (int corruption = 0; corruption < 6; ++corruption) {
+        auto malformed = *wrapped->value;
+        if (corruption == 0)
+          malformed.identity = 1;
+        if (corruption == 1)
+          malformed.kind = lang::ConstantAggregateKind::Object;
+        if (corruption == 2)
+          malformed.elements.clear();
+        if (corruption == 3)
+          malformed.elements.push_back(true);
+        if (corruption == 4)
+          malformed.fields.push_back({1, true});
+        if (corruption == 5)
+          malformed.exactType.reset();
+        const auto forged = lang::makeConstantAggregate(std::move(malformed));
+        expect(
+            !lang::convertConstantToType(forged, *wrapped->value->exactType),
+            "malformed result state, payload count and identity fail closed");
+      }
+    }
+  }
+  const std::string prefix =
+      "enum class E { invalid }; "
+      "constexpr expected<int, E> fail() { return unexpected(E::invalid); } "
+      "constexpr expected<int, E> succeed() { return 7; } "
+      "constexpr int divide(int denominator) { return 1 / denominator; } ";
+  for (const auto &body :
+       {"constexpr int bad = fail().value();",
+        "constexpr E bad = succeed().error();",
+        "constexpr int eager() { return succeed().value_or(divide(0)); } "
+        "constexpr int bad = eager();",
+        "int runtime() { return 3; } struct P { int x = runtime(); }; "
+        "constexpr P bad = P();",
+        "struct P { int x; constexpr P(mut int& value) : x(value) { value += "
+        "1; } }; constexpr P bad = P(3);",
+        "struct P { int& x; constexpr P(int& value) : x(value) {} };",
+        "struct P { int x = 1; ~P() {} }; constexpr P bad = P();"}) {
+    const auto invalid = lang::Frontend().analyze(
+        "constexpr-results-invalid.gti",
+        prefix + body + " int main() { return 0; }", {standardLibraryPrelude()},
+        {}, {standardLibraryRoot()});
+    expect(!invalid.canGenerateCode() &&
+               std::any_of(invalid.diagnostics.begin(),
+                           invalid.diagnostics.end(),
+                           [](const auto &d) {
+                             return d.phase == lang::DiagnosticPhase::Semantics;
+                           }),
+           "results and constructors preserve constant eligibility: " +
+               std::string(body));
+  }
 }
 
 void testConstexprEnumBuilders() {
@@ -3046,7 +3236,8 @@ void testConstexprLibrary() {
          "chrono constants, signed boundary decomposition and exact distinct "
          "time-point observers execute staged MIR, not native constexpr");
   for (const std::string source :
-       {"constexpr auto value = std::chrono::system_clock::now();",
+       {"constexpr expected<std::chrono::system_time_point, "
+        "std::chrono::clock_errc> value = std::chrono::system_clock::now();",
         "constexpr int budget() { mut int total = 0; "
         "for (mut int i = 0; i < 5000; i++) { "
         "std::chrono::nanoseconds n{int64_t(i)}; total += int(n.count()); } "
@@ -5200,6 +5391,7 @@ constexpr NamedTest kTests[] = {
     {"testConstexprReadOnlyReferences", testConstexprReadOnlyReferences},
     {"testConstexprMutation", testConstexprMutation},
     {"testConstexprEnumBuilders", testConstexprEnumBuilders},
+    {"testConstexprResults", testConstexprResults},
     {"testStaticAssertions", testStaticAssertions},
     {"testStaticStorageAndMembers", testStaticStorageAndMembers},
     {"testConcurrentGlobalPolicy", testConcurrentGlobalPolicy},

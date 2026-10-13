@@ -2071,8 +2071,8 @@
       }
     },
     "142-constexpr-builders.gti": {
-      "declarations": 843,
-      "bodies": 63,
+      "declarations": 853,
+      "bodies": 71,
       "generated_items": 31,
       "generated_kinds": {
         "program_initialization": 0,
@@ -2237,8 +2237,8 @@
     }
   },
   "totals": {
-    "declarations": 106369,
-    "bodies": 16370,
+    "declarations": 106379,
+    "bodies": 16378,
     "generated_items": 10094
   }
 }
