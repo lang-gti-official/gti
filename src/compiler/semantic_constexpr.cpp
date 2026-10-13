@@ -131,7 +131,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   if ((function &&
        (info == nullptr || !constexprDefinitionsAnalyzed.contains(*function) ||
         !declaredBeforeCurrent(*function))) ||
-      (construction &&
+      (construction && !construction->generatedDefault &&
        (!constexprConstructorsAnalyzed.contains(construction->declaration) ||
         !declaredBeforeCurrent(construction->declaration)))) {
     return std::nullopt;
@@ -234,7 +234,15 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   MirBodyAddress root;
   if (construction) {
     for (const auto &candidate : hir.program.constructorInstances()) {
-      if (candidate.declaration == construction->constructor) {
+      const auto *owner =
+          candidate.owner &&
+                  candidate.owner <= hir.program.classInstances().size()
+              ? &hir.program.classInstances()[candidate.owner - 1]
+              : nullptr;
+      if (candidate.declaration == construction->constructor && owner &&
+          owner->type == construction->constructedType &&
+          candidate.typeArguments == construction->typeArguments &&
+          candidate.valueArguments == construction->valueArguments) {
         root = {MirBodyKind::Constructor, candidate.id};
         break;
       }
@@ -262,45 +270,59 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
         body.loans.begin(), body.loans.end(),
         [](const auto &loan) { return loan.access == AccessMode::Mutable; });
   };
+  const auto resultValues = [](const MirBody &body) {
+    return std::any_of(
+        body.values.begin(), body.values.end(), [](const auto &value) {
+          return value.info.type.kind == SemanticType::Expected ||
+                 value.info.type.kind == SemanticType::Unexpected;
+        });
+  };
   const bool requiresMir =
-      std::any_of(mir.program.functionInstances().begin(),
-                  mir.program.functionInstances().end(),
-                  [&](const auto &function) {
-                    const auto mutableReference = [](const SemanticType &type) {
-                      return type.kind == SemanticType::Reference &&
-                             type.referenceAccess == AccessMode::Mutable;
-                    };
-                    return function.constexprFunction &&
-                           function.definitionKind ==
-                               MirDefinitionKind::Source &&
-                           (function.receiverMutability ==
-                                ReceiverMutability::Mutable ||
-                            function.returnType == SemanticType::Void ||
-                            mutableReference(function.returnType) ||
-                            std::any_of(function.parameterTypes.begin(),
-                                        function.parameterTypes.end(),
-                                        mutableReference) ||
-                            mutableLoans(function.body));
-                  }) ||
-      std::any_of(mir.program.constructorInstances().begin(),
-                  mir.program.constructorInstances().end(),
-                  [&](const auto &constructor) {
-                    if (mutableLoans(constructor.body))
-                      return true;
-                    for (const auto &block : constructor.body.blocks) {
-                      for (const auto &instruction : block.instructions) {
-                        if ((instruction.kind == MirInstructionKind::Assign ||
-                             instruction.kind == MirInstructionKind::Modify) &&
-                            instruction.destination) {
-                          const auto *place = constructor.body.findPlace(
-                              *instruction.destination);
-                          if (place && place->root == MirPlaceRootKind::This)
-                            return true;
-                        }
-                      }
-                    }
-                    return false;
-                  });
+      std::any_of(
+          mir.program.functionInstances().begin(),
+          mir.program.functionInstances().end(),
+          [&](const auto &function) {
+            const auto mutableReference = [](const SemanticType &type) {
+              return type.kind == SemanticType::Reference &&
+                     type.referenceAccess == AccessMode::Mutable;
+            };
+            return function.constexprFunction &&
+                   function.definitionKind == MirDefinitionKind::Source &&
+                   (function.receiverMutability ==
+                        ReceiverMutability::Mutable ||
+                    function.returnType == SemanticType::Void ||
+                    mutableReference(function.returnType) ||
+                    std::any_of(function.parameterTypes.begin(),
+                                function.parameterTypes.end(),
+                                mutableReference) ||
+                    mutableLoans(function.body) || resultValues(function.body));
+          }) ||
+      std::any_of(
+          mir.program.constructorInstances().begin(),
+          mir.program.constructorInstances().end(),
+          [&](const auto &constructor) {
+            if (mutableLoans(constructor.body) ||
+                resultValues(constructor.body) ||
+                std::any_of(constructor.parameterTypes.begin(),
+                            constructor.parameterTypes.end(),
+                            [](const auto &type) {
+                              return type.kind == SemanticType::Reference;
+                            }))
+              return true;
+            for (const auto &block : constructor.body.blocks) {
+              for (const auto &instruction : block.instructions) {
+                if ((instruction.kind == MirInstructionKind::Assign ||
+                     instruction.kind == MirInstructionKind::Modify) &&
+                    instruction.destination) {
+                  const auto *place =
+                      constructor.body.findPlace(*instruction.destination);
+                  if (place && place->root == MirPlaceRootKind::This)
+                    return true;
+                }
+              }
+            }
+            return false;
+          });
   // Until the ordinary MIR profile covers aggregates/references and every
   // existing statement, retain the legacy driver's admitted subset. Work
   // already executed still consumes the shared budget; arithmetic and resource

@@ -198,7 +198,12 @@ constantInteger(const lang::FrontendResult &result, std::string_view name) {
                             : std::optional<lang::ConstantInteger>{*integer};
 }
 
-std::optional<lang::ConstantCheckedIntegerResult>
+struct CheckedConstant {
+  lang::CheckedIntegerDomain domain;
+  std::optional<lang::ConstantInteger> value;
+};
+
+std::optional<CheckedConstant>
 constantCheckedResult(const lang::FrontendResult &result,
                       std::string_view name) {
   const lang::VariableDecl *variable =
@@ -208,12 +213,21 @@ constantCheckedResult(const lang::FrontendResult &result,
   }
   const std::optional<lang::ConstantValue> constant =
       result.semantics.findConstant(*variable->initializer());
-  const auto *checked =
-      constant ? std::get_if<lang::ConstantCheckedIntegerResult>(&*constant)
-               : nullptr;
-  return checked == nullptr
-             ? std::nullopt
-             : std::optional<lang::ConstantCheckedIntegerResult>{*checked};
+  const auto *node = constant
+                         ? std::get_if<lang::ConstantAggregateValue>(&*constant)
+                         : nullptr;
+  if (!node || !node->value || !node->value->exactType ||
+      node->value->exactType->kind != lang::SemanticType::Expected)
+    return std::nullopt;
+  const auto domain =
+      lang::constantIntegerDomain(node->value->exactType->arguments[0]);
+  if (!domain)
+    return std::nullopt;
+  const auto payload = lang::constantResultPayload(*constant, true);
+  return CheckedConstant{
+      *domain,
+      payload ? std::optional{std::get<lang::ConstantInteger>(*payload.value)}
+              : std::nullopt};
 }
 
 void printDiagnostics(const lang::FrontendResult &result) {
@@ -294,9 +308,9 @@ int main() {
       constantInteger(result, "wrap_u64");
   const std::optional<lang::ConstantInteger> saturated =
       constantInteger(result, "sat_add");
-  const std::optional<lang::ConstantCheckedIntegerResult> checkedFit =
+  const std::optional<CheckedConstant> checkedFit =
       constantCheckedResult(result, "checked_fit");
-  const std::optional<lang::ConstantCheckedIntegerResult> checkedOverflow =
+  const std::optional<CheckedConstant> checkedOverflow =
       constantCheckedResult(result, "checked_overflow");
   const std::optional<lang::ConstantInteger> checkedRecovered =
       constantInteger(result, "checked_recovered");
@@ -405,7 +419,7 @@ int after = 42;
       result.diagnostics.begin(), result.diagnostics.end(),
       [&](const lang::Diagnostic &candidate) {
         return candidate.code == "GTI-S2057" &&
-               candidate.message.find("failed checked-integer result") !=
+               candidate.message.find("inactive or void result alternative") !=
                    std::string::npos;
       });
   expect(!result.canGenerateCode() && diagnostic != result.diagnostics.end(),

@@ -320,17 +320,6 @@ private:
                    << ':' << constantValue.domain.signedValue;
           } else if constexpr (std::is_same_v<Value, NullConstant>) {
             output << "null";
-          } else if constexpr (std::is_same_v<Value,
-                                              ConstantCheckedIntegerResult>) {
-            output << "checked:"
-                   << static_cast<unsigned int>(constantValue.domain.width)
-                   << ':' << constantValue.domain.signedValue << ':';
-            if (constantValue.value) {
-              output << constantValue.value->negative << ':'
-                     << constantValue.value->magnitude;
-            } else {
-              output << '-';
-            }
           } else if constexpr (std::is_same_v<Value, ConstantEnum>) {
             output << "enum:" << constantValue.enumId << ':'
                    << constantValue.value.negative << ':'

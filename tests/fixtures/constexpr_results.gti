@@ -1,0 +1,155 @@
+#include <std/numeric>
+#include <std/array>
+
+enum class parse_error { empty, invalid };
+
+struct Dimensions {
+  mut int width = 3;
+  mut int height = 4;
+  constexpr Dimensions(int scale) { this.width *= scale; this.height *= scale; }
+  constexpr int area() { return this.width * this.height; }
+};
+
+constexpr expected<int, parse_error> parse_digit(std::string_view text) {
+  if (text.empty()) { return unexpected(parse_error::empty); }
+  if (text[0] == '7') { return 7; }
+  return unexpected(parse_error::invalid);
+}
+
+constexpr expected<int, parse_error> twice(std::string_view text) {
+  int digit = ?parse_digit(text);
+  return digit * 2;
+}
+
+struct Reading {
+  mut expected<int, parse_error> result;
+  constexpr Reading(std::string_view input) : result(twice(input)) {}
+  constexpr int get() { return this.result.value_or(9); }
+};
+
+struct Snapshot {
+  int value;
+  constexpr Snapshot(mut int& source) : value(source) { source += 1; }
+};
+
+constexpr int snapshot_value() {
+  mut int source = 5;
+  Snapshot first = Snapshot(source);
+  Snapshot second = Snapshot(source);
+  return first.value + second.value + source;
+}
+
+struct Report {
+  int code;
+  constexpr Report(int input) : code(input) {}
+};
+
+constexpr expected<Dimensions, Report> dimensions(bool valid) {
+  if (!valid) { return unexpected(Report(19)); }
+  return Dimensions(2);
+}
+
+constexpr expected<void, parse_error> validate(bool valid) {
+  if (!valid) { return unexpected(parse_error::invalid); }
+  return;
+}
+
+constexpr expected<int, parse_error> after_validation(bool valid) {
+  ?validate(valid);
+  return 25;
+}
+
+constexpr int result_array() {
+  mut expected<int, parse_error> results[2] = {twice("7"), twice("")};
+  results[1] = twice("7");
+  return results[0].value() + results[1].value();
+}
+
+struct Nested {
+  Dimensions dimensions;
+  constexpr Nested(int scale) : dimensions(Dimensions(scale)) {}
+};
+
+struct ReadSnapshot {
+  int value;
+  constexpr ReadSnapshot(int& source) : value(source) {}
+};
+
+struct Adjusted {
+  int value;
+  constexpr Adjusted(mut int& source, int amount = 2) : value(source) { source += amount; }
+};
+
+constexpr int constructor_defaults() {
+  mut int source = 3;
+  Adjusted first = Adjusted(source);
+  Adjusted second = Adjusted(source, 4);
+  return first.value + second.value + source;
+}
+
+constexpr int invalid_default(int divisor) { return 1 / divisor; }
+struct Selected {
+  int value = invalid_default(0);
+  constexpr Selected(int input) : value(input) {}
+};
+
+struct Defaults {
+  Dimensions dimensions = Dimensions(2);
+  expected<int, parse_error> reading = twice("7");
+};
+
+constexpr int defaults_value() {
+  Defaults value = Defaults();
+  return value.dimensions.area() + value.reading.value();
+}
+
+constexpr int read_snapshot() {
+  int source = 9;
+  ReadSnapshot snapshot = ReadSnapshot(source);
+  return snapshot.value;
+}
+
+constexpr int checked_sum(bool overflow) {
+  mut auto result = std::checked_add(int8_t(overflow ? 127 : 5), int8_t(1));
+  if (!result) { return 71; }
+  return int(result.value());
+}
+
+constexpr int accepted = Reading("7").get();
+constexpr int rejected = Reading("").get();
+constexpr int area = Dimensions(2).area();
+constexpr int snapshots = snapshot_value();
+static_assert(accepted == 14);
+static_assert(rejected == 9);
+static_assert(area == 48);
+static_assert(snapshots == 18);
+static_assert(twice("").error() == parse_error::empty);
+constexpr expected<Dimensions, Report> good = dimensions(true);
+constexpr expected<Dimensions, Report> bad = dimensions(false);
+static_assert(good.value().area() == 48);
+static_assert(bad.error().code == 19);
+static_assert(after_validation(true).value() == 25);
+static_assert(!after_validation(false).has_value());
+static_assert(result_array() == 28);
+static_assert(Nested(2).dimensions.area() == 48);
+static_assert(read_snapshot() == 9);
+static_assert(constructor_defaults() == 17);
+static_assert(Selected(12).value == 12);
+static_assert(checked_sum(false) == 6);
+static_assert(checked_sum(true) == 71);
+static_assert(defaults_value() == 62);
+constexpr Defaults default_object = Defaults();
+static_assert(default_object.reading.value() == 14);
+
+int main() {
+  if (Reading("7").get() != accepted) { return 1; }
+  if (Reading("").get() != rejected) { return 2; }
+  if (Dimensions(2).area() != area) { return 3; }
+  if (snapshot_value() != snapshots) { return 4; }
+  if (dimensions(true).value().area() != 48 || dimensions(false).error().code != 19) { return 5; }
+  if (after_validation(true).value() != 25 || after_validation(false).has_value()) { return 6; }
+  if (result_array() != 28 || Nested(2).dimensions.area() != 48) { return 7; }
+  if (read_snapshot() != 9 || checked_sum(true) != 71 || checked_sum(false) != 6) { return 8; }
+  if (constructor_defaults() != 17 || defaults_value() != 62 || Selected(12).value != 12) { return 9; }
+  return 0;
+}

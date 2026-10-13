@@ -66,6 +66,38 @@ constexpr std::array<phase, 3> prepare_phases(phase first) {
   }
   return result;
 }
+
+enum class config_error { invalid_budget };
+
+// The ordinary recoverable result composes at either execution time. Prefix
+// ? returns the exact error; it does not panic or invent a default payload.
+constexpr expected<int, config_error> checked_budget(int requested) {
+  if (requested < 1) { return unexpected(config_error::invalid_budget); }
+  return requested;
+}
+
+constexpr expected<budgets, config_error> configure(int requested) {
+  int base = ?checked_budget(requested);
+  return prepare_budgets(base);
+}
+
+struct slot {
+  int id;
+  // Reference parameters retain their origin, so construction updates the
+  // caller's cursor. An omitted argument uses its ordinary default.
+  constexpr slot(mut int& cursor, int stride = 1) : id(cursor) { cursor += stride; }
+};
+
+struct defaults {
+  expected<budgets, config_error> limits = configure(6);
+};
+
+constexpr int reserve_slots() {
+  mut int cursor = 0;
+  slot first = slot(cursor);
+  slot second = slot(cursor, 2);
+  return first.id + second.id + cursor;
+}
 }
 
 constexpr engine::budgets limits = engine::prepare_budgets(6);
@@ -75,6 +107,10 @@ static_assert(limits.draw_calls == 9 && limits.particles == 13);
 static_assert(curve.front() == 3 && curve.back() == 8);
 static_assert(phases.front() == engine::phase::idle);
 static_assert(phases.back() == engine::phase::running);
+constexpr engine::defaults configuration = engine::defaults();
+static_assert(configuration.limits.value().draw_calls == 9);
+static_assert(engine::configure(0).error() == engine::config_error::invalid_budget);
+static_assert(engine::reserve_slots() == 4);
 
 // Constants are immutable. A reference cannot be retained as a constexpr
 // binding or escape its owner. Allocation, active cleanup and host I/O are not
@@ -89,6 +125,9 @@ int main() {
   for (mut std::size_t index = 0; index < phases.size(); index++) {
     if (runtime_phases[index] != phases[index]) { return 3; }
   }
+  auto runtime_configuration = engine::configure(6);
+  if (!runtime_configuration || runtime_configuration.value().draw_calls != 9 ||
+      engine::reserve_slots() != 4) { return 4; }
   return runtime_limits.draw_calls == limits.draw_calls &&
          runtime_limits.particles == limits.particles ? 0 : 2;
 }

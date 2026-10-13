@@ -89,9 +89,7 @@ public:
     for (const HirValue &value : source.values) {
       values.emplace(value.id, &value);
       if (value.programConstantSubstitution) {
-        if (!value.constant ||
-            std::holds_alternative<ConstantCheckedIntegerResult>(
-                *value.constant)) {
+        if (!value.constant) {
           valid = false;
         } else {
           output.programConstantSubstitutions.push_back(

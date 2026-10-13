@@ -932,6 +932,18 @@ programConstantMatchesType(const ConstantValue &constant,
                                element, type.arguments.front(), program);
                          });
     }
+    if (type.kind == SemanticType::Expected ||
+        type.kind == SemanticType::Unexpected) {
+      const auto validated = convertConstantToType(constant, type);
+      if (!validated || *validated.value != constant)
+        return false;
+      const auto &node = *aggregate->value;
+      if (node.elements.empty())
+        return true;
+      const bool error = node.kind == ConstantAggregateKind::ExpectedError;
+      return programConstantMatchesType(node.elements[0],
+                                        type.arguments[error ? 1 : 0], program);
+    }
     if (type.kind != SemanticType::Class || type.classId == 0 ||
         aggregate->value->kind != ConstantAggregateKind::Object ||
         aggregate->value->identity != type.classId) {
@@ -8694,8 +8706,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   for (const MirProgramConstantSubstitution &substitution :
        body.programConstantSubstitutions) {
     if (substitution.hirValue == 0 ||
-        std::holds_alternative<ConstantCheckedIntegerResult>(
-            substitution.constant) ||
         !expectedProgramConstants
              .emplace(substitution.hirValue, &substitution.constant)
              .second) {

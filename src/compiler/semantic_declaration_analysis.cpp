@@ -8995,8 +8995,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
 
 auto SemanticVisitor::Impl::canMaterializeProgramConstant(
     const ConstantValue &value) -> bool {
-  return !std::holds_alternative<ConstantCheckedIntegerResult>(value) &&
-         !std::holds_alternative<ConstantAggregateValue>(value);
+  return !std::holds_alternative<ConstantAggregateValue>(value);
 }
 
 } // namespace lang

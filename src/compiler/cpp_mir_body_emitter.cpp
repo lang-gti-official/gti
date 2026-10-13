@@ -10032,6 +10032,21 @@ uniqueClassInstanceForType(const MirProgram &program, const SemanticType &type);
   const SemanticType &element = type.arguments.front();
   if (element.kind == SemanticType::Array)
     return cleanupFreeCopyableFixedArray(program, element);
+  if (element.kind == SemanticType::Expected && element.arguments.size() == 2) {
+    // These alternatives have neither custom lifecycle nor borrowed payloads.
+    // Their wrapper's lexical drop classification does not imply active
+    // cleanup.
+    return std::all_of(
+        element.arguments.begin(), element.arguments.end(),
+        [&](const SemanticType &alternative) {
+          return alternative == SemanticType::Void ||
+                 alternative == SemanticType::Bool ||
+                 alternative == SemanticType::Char ||
+                 constantIntegerDomain(alternative).has_value() ||
+                 semanticFloatFormat(alternative).has_value() ||
+                 program.findIntegralEnum(alternative) != nullptr;
+        });
+  }
   const MirClassInstance *owner = uniqueClassInstanceForType(program, element);
   return owner != nullptr && owner->traits.copyable && owner->traits.movable &&
          !owner->traits.containsBorrowedState &&
@@ -20036,8 +20051,8 @@ directExpectedClassExtraction(const MirProgram &program, const MirBody &body,
   }
   const MirInstruction *call = findInstruction(body, value->definition);
   if (call == nullptr || call->kind != MirInstructionKind::Call ||
-      call->result != valueId || call->destination || call->successResultDrop ||
-      !call->receiver || !call->operands.empty() || call->functionTarget ||
+      call->result != valueId || call->destination || !call->receiver ||
+      !call->operands.empty() || call->functionTarget ||
       call->constructorTarget || call->lambdaTarget || call->bodyTarget ||
       call->callableInvocation || !call->callableArguments.empty() ||
       (call->intrinsic != IntrinsicKind::ExpectedValue &&
@@ -20130,6 +20145,29 @@ directExpectedClassExtraction(const MirProgram &program, const MirBody &body,
             .receiverSource = receiverSource,
             .receiverTemporary = receiverTemporary,
             .unexpectedReturn = true};
+  }
+  if (call->successResultDrop) {
+    // An immediate receiver observation already owns a MIR temporary and
+    // schedules its drop at the full-expression boundary. Publish the
+    // extracted payload there; do not invent another receiver lifetime or
+    // default-construct the payload before the checked extraction succeeds.
+    if (copying || call->successResultDestination)
+      return {};
+    for (const auto &block : body.blocks) {
+      for (const auto &consumer : block.instructions) {
+        const auto receiver = directTemporaryReceiver(body, consumer);
+        if (receiver.producer == call && receiver.drop &&
+            receiver.drop->id == *call->successResultDrop &&
+            !receiver.drop->dropType.requiresActiveCleanup)
+          return {.value = value,
+                  .call = call,
+                  .receiverMove = receiverMove,
+                  .receiverSource = receiverSource,
+                  .receiverTemporary = receiverTemporary,
+                  .destination = receiver.slot};
+      }
+    }
+    return {};
   }
   if (!copying && !call->successResultDestination) {
     const auto staged = stagedClassResultForSource(body, valueId);
@@ -30127,6 +30165,7 @@ struct ClassSsaLifetimeSlot {
   const MirInstruction *consumer = nullptr;
   const MirBlock *returnBlock = nullptr;
   ClassSsaSlotConsumerKind consumerKind = ClassSsaSlotConsumerKind::None;
+  const MirInstruction *observingCall = nullptr;
 
   [[nodiscard]] explicit operator bool() const { return value != nullptr; }
 };
@@ -31066,9 +31105,11 @@ classSsaLifetimeSlot(const MirProgram &program,
                                  projection->projections, 0,
                                  projection->type) &&
         ((!directConstructionProducer && movable) ||
+         projection->type.kind == SemanticType::Class ||
          expectedTypeRepresentation(projection->type) ==
              CppMirTypeRepresentationKind::Scalar);
     const MirInstruction *consumer = nullptr;
+    const MirInstruction *observingCall = nullptr;
     if (exactProjection) {
       if (std::any_of(body.loans.begin(), body.loans.end(),
                       [&](const MirLoan &loan) {
@@ -31105,11 +31146,45 @@ classSsaLifetimeSlot(const MirProgram &program,
               operandUses == 0) {
             continue;
           }
+          const bool fieldCopy =
+              instruction.kind == MirInstructionKind::Load &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::Copy;
+          const bool receiverStage =
+              instruction.kind == MirInstructionKind::CallInput &&
+              instruction.callInputRole == MirCallInputRole::Receiver &&
+              instruction.callInputKind == HirCallInputKind::ReadBorrow &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::BorrowRead &&
+              instruction.result &&
+              projection->type.kind == SemanticType::Class;
+          if (receiverStage) {
+            const auto uses = body.usesOf(*instruction.result);
+            const auto *call =
+                uses.size() == 1 && uses.front().kind ==
+                                        MirValueUseKind::InstructionReceiver
+                    ? findInstruction(body, uses.front().instruction)
+                    : nullptr;
+            const auto *target =
+                call && call->functionTarget
+                    ? program.findFunctionInstance(*call->functionTarget)
+                    : nullptr;
+            if (!call || call->kind != MirInstructionKind::Call ||
+                call->callSite != instruction.callSite ||
+                call->intrinsic != IntrinsicKind::None || !target ||
+                target->receiverMutability != ReceiverMutability::ReadOnly ||
+                target->returnType.kind == SemanticType::Reference ||
+                call->info.traits.containsBorrowedState || call->loan ||
+                classInstance->requiresActiveDropState ||
+                classInstance->traits.containsBorrowedState ||
+                value->info.traits.containsBorrowedState)
+              return {};
+            observingCall = call;
+          }
           if (consumer != nullptr || destinationUse || successDestinationUse ||
               receiverUse || operandUses != 1 ||
-              instruction.kind != MirInstructionKind::Load ||
+              (!fieldCopy && !receiverStage) ||
               instruction.operands.size() != 1 ||
-              instruction.operands.front().kind != MirOperandKind::Copy ||
               instruction.operands.front().place != projection->id ||
               !instruction.result || instruction.receiver ||
               instruction.destination ||
@@ -31126,7 +31201,7 @@ classSsaLifetimeSlot(const MirProgram &program,
     if (consumer != nullptr) {
       const MirValue *loaded =
           consumer->result ? body.findValue(*consumer->result) : nullptr;
-      if ((directConstructionProducer || !movable) &&
+      if (!observingCall && (directConstructionProducer || !movable) &&
           (loaded == nullptr || loaded->info.type != projection->type ||
            classInstance->requiresActiveDropState ||
            classInstance->traits.containsBorrowedState ||
@@ -31140,7 +31215,8 @@ classSsaLifetimeSlot(const MirProgram &program,
       return {.value = value,
               .producer = producer,
               .consumer = consumer,
-              .consumerKind = ClassSsaSlotConsumerKind::FieldRead};
+              .consumerKind = ClassSsaSlotConsumerKind::FieldRead,
+              .observingCall = observingCall};
     }
   }
 
@@ -41585,6 +41661,22 @@ private:
     };
     const auto retireConsumedClassResultStages = [&] {
       retireConsumedArguments(false);
+      const auto *stage =
+          instruction.receiver
+              ? borrowStagedCallInput(facts.body, *instruction.receiver)
+              : nullptr;
+      const auto *place =
+          stage ? facts.body.findPlace(stage->operands.front().place) : nullptr;
+      if (place && place->root == MirPlaceRootKind::Value) {
+        const auto slot = classSsaLifetimeSlot(program, representations,
+                                               facts.body, place->value);
+        if (slot.observingCall == &instruction) {
+          writeIndent();
+          output << "__gti_mir_v_" << place->value
+                 << ".destroy(); // end observed passive receiver "
+                    "representation\n";
+        }
+      }
     };
     const auto retireConsumedPayloadEnumArguments = [&] {
       retireConsumedArguments(true);

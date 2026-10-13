@@ -719,7 +719,7 @@ private:
             : baseModel->findConstructor(*construction.declaration);
     const bool constant =
         declaration != nullptr && declaration->constexprConstructor;
-    if (constantClosure &&
+    if (constantClosure && !construction.generatedDefault &&
         (!constant ||
          std::find(constantConstructors.begin(), constantConstructors.end(),
                    construction.constructor) == constantConstructors.end())) {

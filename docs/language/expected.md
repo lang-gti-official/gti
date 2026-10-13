@@ -5,6 +5,15 @@ types carry no recoverable error alternative, although execution may still
 raise a defined runtime failure. GTI does not provide exception handling or
 implicit error conversion.
 
+Results also compose in `constexpr` functions when both alternatives are
+supported passive constant values (`T` may be `void`). The same construction,
+state checks, observers, prefix `?`, assignment and field/array operations run
+through verified MIR. Inactive `.value()`/`.error()` extraction is diagnosed at
+compile time; `.value_or(fallback)` still evaluates the fallback eagerly.
+Borrowed payloads, owning alternatives and active cleanup are not part of this
+constant-execution profile. See [constant expressions](static-semantics.md#312-constant-expressions)
+and [the runnable builder example](../../examples/142-constexpr-builders.gti).
+
 ```gti
 expected<int, std::string_view> load(bool fail) {
   if (fail) {
