@@ -397,11 +397,26 @@ int main() {
                                           instruction.localFailureSites.empty();
         }
         if (instruction.kind == lang::MirInstructionKind::Call &&
-            instruction.receiver && instruction.receiver->place != 0) {
+            instruction.receiver &&
+            instruction.receiver->kind == lang::MirOperandKind::Value) {
+          const lang::MirInstruction *stage = nullptr;
+          for (const auto &stageBlock : body->blocks)
+            for (const auto &candidate : stageBlock.instructions)
+              if (candidate.result == instruction.receiver->value &&
+                  candidate.kind == lang::MirInstructionKind::CallInput &&
+                  candidate.callSite == instruction.callSite &&
+                  candidate.callInputRole == lang::MirCallInputRole::Receiver &&
+                  candidate.operands.size() == 1)
+                stage = &candidate;
           const lang::MirPlace *receiver =
-              body->findPlace(instruction.receiver->place);
+              stage == nullptr ? nullptr
+                               : body->findPlace(stage->operands.front().place);
           rawMethodReceiver |=
               receiver != nullptr &&
+              (stage->operands.front().kind ==
+                   lang::MirOperandKind::BorrowRead ||
+               stage->operands.front().kind ==
+                   lang::MirOperandKind::BorrowWrite) &&
               instruction.unsafeOperation ==
                   lang::UnsafeOperationKind::RawMember &&
               instruction.rawMemoryAccess &&
