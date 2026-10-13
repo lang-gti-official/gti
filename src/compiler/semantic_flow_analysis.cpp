@@ -1986,9 +1986,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         owner == nullptr || owner->declaration == nullptr
             ? nullptr
             : semanticModel.findClassLifecycle(*owner->declaration);
-    return lifecycle != nullptr &&
-           (lifecycle->generatedDefaultBaseConstructor != 0 ||
-            lifecycle->generatedDefaultFieldInitializers);
+    return lifecycle != nullptr && lifecycle->generatedDefaultInitializers;
   };
 
   if (const ResolvedOperatorInfo *resolved = semanticModel.findOperator(expr)) {

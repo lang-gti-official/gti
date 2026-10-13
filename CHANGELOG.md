@@ -25,6 +25,27 @@ for what minor and patch releases mean.
   the resulting copied or borrowed argument no longer duplicates that failure
   metadata onto a second operation (issue #104).
 
+## 0.424.5 — Non-failing base rollback
+
+- Fix invalid generated native code when a failed derived constructor rolls
+  back a base whose destructor cannot fail. Such cleanup no longer references
+  an absent secondary failure record; fallible base cleanup retains its exact
+  failure and termination behavior (issue #101).
+
+## 0.424.4 — Defaulted owning base construction
+
+- Fix native compilation/link failures when defaulted derived constructors
+  inherit owning fields through defaulted bases. Base and field initialization
+  use the same selected GTI schedule, including generic bases, nonmoving fields,
+  multilevel inheritance, and construction-failure cleanup (issue #98).
+
+## 0.424.3 — Consuming members returning expected payloads
+
+- Fix a backend internal compiler error when a consuming source member returns
+  an owning value directly into `expected`, including polymorphic owner
+  factories using `std::move(owner).upcast<Base>()`. Retain exact receiver,
+  pending-result publication and failure-cleanup checks (issue #99).
+
 ## 0.424.2 — Owned extraction and conditional method arguments
 
 - Fix an internal compiler error when an owning Expected payload is passed to
