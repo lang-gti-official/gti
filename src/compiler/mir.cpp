@@ -9194,7 +9194,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             instruction.unsafeOperation !=
                 UnsafeOperationKind::RawDereference &&
             instruction.unsafeOperation != UnsafeOperationKind::RawIndex &&
-            instruction.unsafeOperation != UnsafeOperationKind::RawMember)
+            instruction.unsafeOperation != UnsafeOperationKind::RawMember &&
+            instruction.unsafeOperation != UnsafeOperationKind::UnionMember)
           return false;
       }
     }
