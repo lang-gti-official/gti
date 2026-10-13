@@ -423,6 +423,15 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                        return !candidate.interface;
                                      });
       if (base != owner->bases.end()) {
+        const auto *baseOwner =
+            base->instance != 0 &&
+                    base->instance <= program.classInstances().size()
+                ? &program.classInstances()[base->instance - 1]
+                : nullptr;
+        const auto *baseLifecycle =
+            baseOwner != nullptr && baseOwner->source != nullptr
+                ? semantics.findClassLifecycle(*baseOwner->source)
+                : nullptr;
         const auto *initializer = instance.initializers.empty()
                                       ? nullptr
                                       : &instance.initializers.front();
@@ -441,7 +450,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                  initializer->base == base->instance &&
                  initializer->field == 0 &&
                  initializer->explicitArgumentCount == 0 &&
-                 !initializer->storesReference && !initializer->ownedParameter;
+                 !initializer->storesReference &&
+                 !initializer->ownedParameter && baseLifecycle != nullptr &&
+                 initializer->generatedDefault ==
+                     (baseLifecycle->defaultConstructor ==
+                      SpecialMemberStatus::Generated);
         if (initializer != nullptr && target != nullptr)
           exact &=
               target->owner == base->instance &&
