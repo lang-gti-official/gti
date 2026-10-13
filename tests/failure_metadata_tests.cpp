@@ -401,6 +401,16 @@ int nested_expected_condition(mut int value) {
   return 0;
 }
 
+expected<const int*, int> produce_pointer(const int* address, mut int value) {
+  int checked = value + 1;
+  return address;
+}
+
+int pointer_expected_condition(mut int value) {
+  if (!produce_pointer(&value, value)) { return 1; }
+  return 0;
+}
+
 int direct_result(mut int value) {
   expected<int, int> result = produce_expected(value);
   expected<int, int> spare = produce_expected(value);
@@ -848,85 +858,89 @@ int main() { return caller(1); }
          "a direct-initialization call result should publish only into its "
          "exact binding on the invoke success edge");
 
-  const lang::MirBody *nestedExpectedCondition =
-      functionBody(frontend, "nested_expected_condition");
-  const lang::MirInstruction *nestedExpectedCall = nullptr;
-  const lang::MirFailureRecord *nestedExpectedRecord = nullptr;
-  const lang::MirInstruction *nestedExpectedHasValue = nullptr;
-  if (nestedExpectedCondition != nullptr) {
-    for (const lang::MirBlock &block : nestedExpectedCondition->blocks) {
-      for (const lang::MirInstruction &instruction : block.instructions) {
-        if (instruction.kind == lang::MirInstructionKind::Call &&
-            instruction.info.type.kind == lang::SemanticType::Expected &&
-            instruction.definedFailure.propagation ==
-                lang::FailurePropagationKind::DirectCall) {
-          nestedExpectedCall = &instruction;
+  for (const char *conditionName :
+       {"nested_expected_condition", "pointer_expected_condition"}) {
+    const lang::MirBody *nestedExpectedCondition =
+        functionBody(frontend, conditionName);
+    const lang::MirInstruction *nestedExpectedCall = nullptr;
+    const lang::MirFailureRecord *nestedExpectedRecord = nullptr;
+    const lang::MirInstruction *nestedExpectedHasValue = nullptr;
+    if (nestedExpectedCondition != nullptr) {
+      for (const lang::MirBlock &block : nestedExpectedCondition->blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.info.type.kind == lang::SemanticType::Expected &&
+              instruction.definedFailure.propagation ==
+                  lang::FailurePropagationKind::DirectCall) {
+            nestedExpectedCall = &instruction;
+          }
         }
       }
-    }
-    if (nestedExpectedCall != nullptr && nestedExpectedCall->result) {
-      const auto record = std::find_if(
-          nestedExpectedCondition->failureRecords.begin(),
-          nestedExpectedCondition->failureRecords.end(),
-          [&](const lang::MirFailureRecord &candidate) {
-            return candidate.producerInstruction == nestedExpectedCall->id;
-          });
-      if (record != nestedExpectedCondition->failureRecords.end()) {
-        nestedExpectedRecord = &*record;
-        const lang::MirBlock *producer =
-            nestedExpectedCondition->findBlock(record->producerBlock);
-        const lang::MirBlock *normal = producer == nullptr
-                                           ? nullptr
-                                           : nestedExpectedCondition->findBlock(
-                                                 producer->terminator.target);
-        if (normal != nullptr) {
-          const auto conversion = std::find_if(
-              normal->instructions.begin(), normal->instructions.end(),
-              [&](const lang::MirInstruction &instruction) {
-                return instruction.kind == lang::MirInstructionKind::Compute &&
-                       instruction.operation ==
-                           lang::MirOperation::ExpectedHasValue &&
-                       instruction.operands.size() == 1 &&
-                       instruction.operands.front().kind ==
-                           lang::MirOperandKind::Value &&
-                       instruction.operands.front().value ==
-                           *nestedExpectedCall->result;
-              });
-          if (conversion != normal->instructions.end()) {
-            nestedExpectedHasValue = &*conversion;
+      if (nestedExpectedCall != nullptr && nestedExpectedCall->result) {
+        const auto record = std::find_if(
+            nestedExpectedCondition->failureRecords.begin(),
+            nestedExpectedCondition->failureRecords.end(),
+            [&](const lang::MirFailureRecord &candidate) {
+              return candidate.producerInstruction == nestedExpectedCall->id;
+            });
+        if (record != nestedExpectedCondition->failureRecords.end()) {
+          nestedExpectedRecord = &*record;
+          const lang::MirBlock *producer =
+              nestedExpectedCondition->findBlock(record->producerBlock);
+          const lang::MirBlock *normal =
+              producer == nullptr ? nullptr
+                                  : nestedExpectedCondition->findBlock(
+                                        producer->terminator.target);
+          if (normal != nullptr) {
+            const auto conversion = std::find_if(
+                normal->instructions.begin(), normal->instructions.end(),
+                [&](const lang::MirInstruction &instruction) {
+                  return instruction.kind ==
+                             lang::MirInstructionKind::Compute &&
+                         instruction.operation ==
+                             lang::MirOperation::ExpectedHasValue &&
+                         instruction.operands.size() == 1 &&
+                         instruction.operands.front().kind ==
+                             lang::MirOperandKind::Value &&
+                         instruction.operands.front().value ==
+                             *nestedExpectedCall->result;
+                });
+            if (conversion != normal->instructions.end()) {
+              nestedExpectedHasValue = &*conversion;
+            }
           }
         }
       }
     }
+    const lang::MirBlock *nestedExpectedProducer =
+        nestedExpectedCondition == nullptr || nestedExpectedRecord == nullptr
+            ? nullptr
+            : nestedExpectedCondition->findBlock(
+                  nestedExpectedRecord->producerBlock);
+    const lang::MirBlock *nestedExpectedFailure =
+        nestedExpectedCondition == nullptr || nestedExpectedRecord == nullptr
+            ? nullptr
+            : nestedExpectedCondition->findBlock(
+                  nestedExpectedRecord->parameterBlock);
+    expect(nestedExpectedCall != nullptr && nestedExpectedRecord != nullptr &&
+               nestedExpectedProducer != nullptr &&
+               nestedExpectedFailure != nullptr &&
+               nestedExpectedHasValue != nullptr &&
+               nestedExpectedCall->lifecycle.empty() &&
+               !nestedExpectedCall->successResultDrop &&
+               nestedExpectedProducer->terminator.kind ==
+                   lang::MirTerminatorKind::Invoke &&
+               nestedExpectedProducer->terminator.invokeInstruction ==
+                   nestedExpectedCall->id &&
+               nestedExpectedProducer->terminator.failureRecord ==
+                   nestedExpectedRecord->id &&
+               nestedExpectedFailure->terminator.kind ==
+                   lang::MirTerminatorKind::PropagateFailure &&
+               nestedExpectedFailure->terminator.failureRecord ==
+                   nestedExpectedRecord->id,
+           "a fallible Expected<passive, E> call nested in a condition should "
+           "route failure before its normal-path contextual conversion");
   }
-  const lang::MirBlock *nestedExpectedProducer =
-      nestedExpectedCondition == nullptr || nestedExpectedRecord == nullptr
-          ? nullptr
-          : nestedExpectedCondition->findBlock(
-                nestedExpectedRecord->producerBlock);
-  const lang::MirBlock *nestedExpectedFailure =
-      nestedExpectedCondition == nullptr || nestedExpectedRecord == nullptr
-          ? nullptr
-          : nestedExpectedCondition->findBlock(
-                nestedExpectedRecord->parameterBlock);
-  expect(nestedExpectedCall != nullptr && nestedExpectedRecord != nullptr &&
-             nestedExpectedProducer != nullptr &&
-             nestedExpectedFailure != nullptr &&
-             nestedExpectedHasValue != nullptr &&
-             nestedExpectedCall->lifecycle.empty() &&
-             !nestedExpectedCall->successResultDrop &&
-             nestedExpectedProducer->terminator.kind ==
-                 lang::MirTerminatorKind::Invoke &&
-             nestedExpectedProducer->terminator.invokeInstruction ==
-                 nestedExpectedCall->id &&
-             nestedExpectedProducer->terminator.failureRecord ==
-                 nestedExpectedRecord->id &&
-             nestedExpectedFailure->terminator.kind ==
-                 lang::MirTerminatorKind::PropagateFailure &&
-             nestedExpectedFailure->terminator.failureRecord ==
-                 nestedExpectedRecord->id,
-         "a fallible Expected<scalar, E> call nested in a condition should "
-         "route failure before its normal-path contextual conversion");
 
   const std::optional<lang::HirFunctionInstanceId> directResultId =
       functionInstance(frontend, "direct_result");
@@ -996,41 +1010,45 @@ int main() { return caller(1); }
              hasVerificationError(missingInvokeResult, "one invoke"),
          "MIR verification should reject a removed failure invoke");
 
-  const std::optional<lang::HirFunctionInstanceId> nestedExpectedConditionId =
-      functionInstance(frontend, "nested_expected_condition");
-  lang::MirProgram missingNestedExpectedInvoke = frontend.mir;
-  lang::MirBody *missingNestedExpectedInvokeBody =
-      nestedExpectedConditionId ? functionBody(missingNestedExpectedInvoke,
-                                               *nestedExpectedConditionId)
-                                : nullptr;
-  bool removedNestedExpectedInvoke = false;
-  if (missingNestedExpectedInvokeBody != nullptr) {
-    for (const lang::MirFailureRecord &record :
-         missingNestedExpectedInvokeBody->failureRecords) {
-      lang::MirBlock &producer =
-          missingNestedExpectedInvokeBody->blocks[record.producerBlock - 1];
-      if (producer.instructions.empty() ||
-          producer.instructions.back().kind != lang::MirInstructionKind::Call ||
-          producer.instructions.back().info.type.kind !=
-              lang::SemanticType::Expected) {
-        continue;
+  for (const char *conditionName :
+       {"nested_expected_condition", "pointer_expected_condition"}) {
+    const std::optional<lang::HirFunctionInstanceId> nestedExpectedConditionId =
+        functionInstance(frontend, conditionName);
+    lang::MirProgram missingNestedExpectedInvoke = frontend.mir;
+    lang::MirBody *missingNestedExpectedInvokeBody =
+        nestedExpectedConditionId ? functionBody(missingNestedExpectedInvoke,
+                                                 *nestedExpectedConditionId)
+                                  : nullptr;
+    bool removedNestedExpectedInvoke = false;
+    if (missingNestedExpectedInvokeBody != nullptr) {
+      for (const lang::MirFailureRecord &record :
+           missingNestedExpectedInvokeBody->failureRecords) {
+        lang::MirBlock &producer =
+            missingNestedExpectedInvokeBody->blocks[record.producerBlock - 1];
+        if (producer.instructions.empty() ||
+            producer.instructions.back().kind !=
+                lang::MirInstructionKind::Call ||
+            producer.instructions.back().info.type.kind !=
+                lang::SemanticType::Expected) {
+          continue;
+        }
+        producer.terminator = {.kind = lang::MirTerminatorKind::Goto,
+                               .target = producer.terminator.target};
+        removedNestedExpectedInvoke = true;
+        break;
       }
-      producer.terminator = {.kind = lang::MirTerminatorKind::Goto,
-                             .target = producer.terminator.target};
-      removedNestedExpectedInvoke = true;
-      break;
+      lang::rebuildMirReachability(*missingNestedExpectedInvokeBody);
+      (void)lang::rebuildMirValueUses(*missingNestedExpectedInvokeBody);
     }
-    lang::rebuildMirReachability(*missingNestedExpectedInvokeBody);
-    (void)lang::rebuildMirValueUses(*missingNestedExpectedInvokeBody);
+    const lang::MirVerificationResult missingNestedExpectedInvokeResult =
+        lang::verifyMirProgram(missingNestedExpectedInvoke);
+    expect(removedNestedExpectedInvoke &&
+               !missingNestedExpectedInvokeResult.valid() &&
+               hasVerificationError(missingNestedExpectedInvokeResult,
+                                    "one invoke"),
+           "MIR verification should reject a nested Expected condition whose "
+           "fallible call loses its invoke edge");
   }
-  const lang::MirVerificationResult missingNestedExpectedInvokeResult =
-      lang::verifyMirProgram(missingNestedExpectedInvoke);
-  expect(
-      removedNestedExpectedInvoke &&
-          !missingNestedExpectedInvokeResult.valid() &&
-          hasVerificationError(missingNestedExpectedInvokeResult, "one invoke"),
-      "MIR verification should reject a nested Expected condition whose "
-      "fallible call loses its invoke edge");
 
   lang::MirProgram rewrittenRecord = frontend.mir;
   lang::MirBody *rewrittenRecordLeaf = functionBody(rewrittenRecord, *leafId);

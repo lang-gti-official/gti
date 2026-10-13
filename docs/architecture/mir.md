@@ -1898,9 +1898,13 @@ A `MirBody` owns:
   nested operation is either a local `Compute`/`Load` detector or a static
   direct `Call` propagation with no local site, nested owning-parameter
   transfer, or active-drop result. A passive `Expected<T, E>` call result whose
-  success payload is scalar, void or an enum is also eligible, including before
+  success payload is scalar, void, an enum, a text view, a raw pointer, or a
+  recursively passive expected value is also eligible, including before
   a contextual condition conversion: its transformed value out-parameter
-  publishes only on success and carries no MIR drop to arm.
+  publishes only on success and carries no MIR drop to arm. A raw pointer
+  payload does not suppress a callee's defined-failure channel; this preserves
+  failure routing without establishing pointee validity or changing unsafe
+  obligations.
   Every eligible operation has no destination, loan, state-changing ownership
   event, reference result, or active-drop result and occurs in a
   failure-control-flow body. The operation is the final instruction in an
