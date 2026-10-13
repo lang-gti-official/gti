@@ -1295,6 +1295,13 @@ private:
 
   [[nodiscard]] SemanticTypeTraits
   resolvedTraits(const SemanticType &type) const {
+    if (type.kind == SemanticType::Enum) {
+      const auto enumeration = std::find_if(
+          program.enumDeclarations().begin(), program.enumDeclarations().end(),
+          [&](const HirEnum &candidate) { return candidate.type == type; });
+      if (enumeration != program.enumDeclarations().end())
+        return enumeration->traits;
+    }
     if (type.kind == SemanticType::Lambda) {
       const auto lambda = std::find_if(
           program.lambdaInstances().begin(), program.lambdaInstances().end(),
