@@ -54,6 +54,9 @@ struct FrontendWorkMetrics {
   // Time spent looking up, validating and copying reusable entries (part of
   // HIR time, like the analyses they replace).
   std::size_t semanticInstanceReuseMicroseconds = 0;
+  // Instance bodies HIR omitted as library-only; see
+  // FrontendOptions::lowerLibraryOnlyInstanceBodies.
+  std::size_t hirOmittedInstanceBodies = 0;
   std::size_t semanticBorrowSummaryCandidateInspections = 0;
   std::size_t semanticBorrowSummaryFunctions = 0;
   std::size_t constexprMirExecutions = 0;
@@ -90,6 +93,7 @@ struct FrontendWorkMetrics {
     semanticInstanceReuseIneligible = 0;
     semanticInstanceReuseStores = 0;
     semanticInstanceReuseMicroseconds = 0;
+    hirOmittedInstanceBodies = 0;
     semanticBorrowSummaryCandidateInspections = 0;
     semanticBorrowSummaryFunctions = 0;
     constexprMirExecutions = 0;
