@@ -3065,6 +3065,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(polymorphic_owner_cleanup_runtime PROPERTIES TIMEOUT 180)
   add_test(
+    NAME polymorphic_constructor_rollback_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/polymorphic_constructor_rollback_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(polymorphic_constructor_rollback_runtime PROPERTIES TIMEOUT 180)
+  add_test(
     NAME interface_static_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/interface_static_runtime_test.py"
