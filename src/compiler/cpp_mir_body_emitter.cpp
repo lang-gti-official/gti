@@ -21493,13 +21493,34 @@ transformedFailureCallee(const MirProgram &program,
     return moveOnlyOwnedFieldDestination(program, representations, body, value,
                                          projected);
   }
+  // A reference parameter borrows an already-live record; its leading
+  // Dereference is the checked carrier boundary, not a raw-pointer operation
+  // or another owning object. Reuse that exact mutable-reference proof, then
+  // check the entire remaining field path with the ordinary owner/field rows.
+  const MirPlace *referenceRoot = nullptr;
+  if (destination.root == MirPlaceRootKind::Binding &&
+      destination.projections.size() > 1 &&
+      destination.projections.front().kind == MirProjectionKind::Dereference) {
+    for (const MirPlace &candidate : body.places) {
+      if (candidate.root != destination.root ||
+          candidate.binding != destination.binding ||
+          candidate.symbol != destination.symbol ||
+          candidate.projections.size() != 1 ||
+          candidate.projections.front() != destination.projections.front())
+        continue;
+      if (referenceRoot != nullptr ||
+          !exactMutableReferenceDestination(body, candidate))
+        return false;
+      referenceRoot = &candidate;
+    }
+  }
   if ((body.kind != MirBodyKind::Function &&
        body.kind != MirBodyKind::Constructor) ||
       (destination.root != MirPlaceRootKind::This &&
        destination.root != MirPlaceRootKind::Binding &&
        destination.root != MirPlaceRootKind::Loan) ||
       destination.projections.empty() || destination.type != value.info.type ||
-      destination.initiallyAvailable ||
+      (destination.initiallyAvailable && referenceRoot == nullptr) ||
       destination.traits.drop != DropKind::Lexical ||
       !destination.traits.movable || destination.traits.copyable ||
       !value.info.traits.movable || value.info.traits.copyable) {
@@ -21531,7 +21552,9 @@ transformedFailureCallee(const MirProgram &program,
   }
   if (constructor != nullptr)
     receiverOwner = program.findClassInstance(constructor->owner);
-  if (destination.root != MirPlaceRootKind::This) {
+  if (referenceRoot != nullptr) {
+    receiverOwner = uniqueClassInstanceForType(program, referenceRoot->type);
+  } else if (destination.root != MirPlaceRootKind::This) {
     const MirPlace *root = nullptr;
     for (const MirPlace &candidate : body.places) {
       if (candidate.root != destination.root ||
@@ -21560,7 +21583,9 @@ transformedFailureCallee(const MirProgram &program,
   ResolvedMirField resolved;
   SemanticType currentType =
       receiverOwner == nullptr ? SemanticType::Unknown : receiverOwner->type;
-  for (const MirPlaceProjection &projection : destination.projections) {
+  for (std::size_t index = referenceRoot == nullptr ? 0 : 1;
+       index < destination.projections.size(); ++index) {
+    const MirPlaceProjection &projection = destination.projections[index];
     if (projection.kind != MirProjectionKind::Field) {
       return false;
     }

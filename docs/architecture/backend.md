@@ -1542,6 +1542,15 @@ source calls publish only on their MIR success edge.
 The field load retires the passive shell before slot reuse, including in loops.
 Transfer consumers still require movability independently.
 
+A constructed or returned owning value may replace a field reached through a
+checked mutable reference parameter. Its leading dereference must resolve to
+the exact reference carrier and mutable loan already admitted for whole-referent
+assignment. The remaining path uses the ordinary concrete field rows, checking
+every containing field's mutability. Such borrowed referents may be initially
+available on function entry and acquire no second drop obligation; replacement
+still destroys the old value and transfers the staged value exactly once.
+Raw pointers and read-only carriers do not gain this permission.
+
 A virtual call returning an owning expected result uses the same exact binding
 or value-rooted publication slot as a static call. The selected virtual family
 supplies the checked failure contract, including a pure-virtual declaration
