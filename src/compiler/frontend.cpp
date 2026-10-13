@@ -552,6 +552,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                      entry->declarationCount};
         }
       }
+      if (!options.lowerLibraryOnlyInstanceBodies) {
+        scope.omitLibraryOnlyBodies = true;
+        for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
+          if (result.sourceGraph.isCompilerTrusted(unit.id))
+            scope.trustedUnits.push_back(unit.id);
+      }
       return HirLowerer(options.target, scope)
           .lower(result.program, semantic.model(), semantic);
     }();
@@ -568,6 +574,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
           elapsed > lateDemand ? elapsed - lateDemand : 0;
       options.workMetrics->hirFunctionInstances =
           hir.program.functionInstances().size();
+      options.workMetrics->hirOmittedInstanceBodies = hir.omittedInstanceBodies;
     }
     // Late demand may report diagnostics in the bodies it analysed.
     const auto &semanticErrors = semantic.errors();

@@ -649,15 +649,22 @@ symbolic semantics made valid editor snapshots omit diagnostics that
 `static_assert` declarations. It also sets `lowerEntryUnitOnly`: lowering
 seeds the program roots and the open file's own declarations and discovers
 only what they reach, instead of every declaration in every loaded unit.
-Instance diagnostics for the open file's code, including library bodies it
-instantiates, are therefore identical to `gti check`; an instance that only
-unreached library code requests is not reported in the editor, because it is
-that library's own `gti check` concern and the complete lowering cost about
-a third of every keystroke. The LSP does not query HIR, and it does not
-build failure metadata or MIR. It releases the HIR program as soon as the
-analysis returns, once HIR's diagnostics are in the result, so retained
-snapshots hold syntax, semantics, and source identity only. Code generation
-remains disabled.
+Instance diagnostics for the open file's code, including the library
+instances it requests, are therefore identical to `gti check`; an instance
+that only unreached library code requests is not reported in the editor,
+because it is that library's own `gti check` concern and the complete
+lowering cost about a third of every keystroke. The LSP does not query HIR,
+and it does not build failure metadata or MIR, so it also clears
+`lowerLibraryOnlyInstanceBodies`: a library-only instance (a compiler-trusted
+declaration whose arguments name only compiler-trusted types) is analysed and
+its own diagnostics are reported, but its body is not lowered. Instances that
+only such a body would request, such as a library class instantiated inside
+a library-only function, are left to the library's check by the same rule
+(see "Library-only instance bodies" in [hir.md](hir.md)). An instance of the
+open file's own types is lowered completely and reaches what `gti check`
+reaches. It releases the HIR program as soon as the analysis returns, once
+HIR's diagnostics are in the result, so retained snapshots hold syntax,
+semantics, and source identity only. Code generation remains disabled.
 
 Editor analysis and completion also set `trustedBodies = Reachable`:
 standard-library (compiler-trusted) function bodies are analysed only when
