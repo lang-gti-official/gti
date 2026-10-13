@@ -2335,6 +2335,94 @@ void testConditionalOwningArgumentReceiverAdmission() {
   }
 }
 
+void testConditionalExpectedArgumentReceiverAdmission() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/conditional_expected_argument_receiver.gti";
+  std::ifstream input(path);
+  expect(input.good(), "the expected argument fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(), "expected argument frontend must succeed");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+         "owning expected extraction before conditional member arguments must "
+         "emit");
+  const lang::MirFunctionInstance *entry = nullptr;
+  for (const auto &function : frontend.mir.functionInstances())
+    if (function.entryKind != lang::ProgramEntryKind::None)
+      entry = &function;
+  expect(entry != nullptr, "expected fixture must have an entry body");
+  if (!entry)
+    return;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  std::vector<lang::MirInstructionId> stages;
+  for (const auto &block : entry->body.blocks) {
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::CallInput ||
+          instruction.callInputKind != lang::HirCallInputKind::MoveValue ||
+          !instruction.preparedParameterDrop ||
+          instruction.operands.size() != 1)
+        continue;
+      const auto *value =
+          entry->body.findValue(instruction.operands.front().value);
+      const auto *producer =
+          value ? findPreflightInstruction(entry->body, value->definition)
+                : nullptr;
+      if (producer && producer->intrinsic == lang::IntrinsicKind::ExpectedValue)
+        stages.push_back(instruction.id);
+    }
+  }
+  expect(stages.size() == 2,
+         "unique-owner and user class payloads must both be covered");
+  const auto forge = [&](const auto &mutation) {
+    auto forged = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    for (auto &function : functions) {
+      if (function.id != entry->id)
+        continue;
+      mutation(function.body);
+      expect(lang::rebuildMirValueUses(function.body),
+             "mutation must rebuild its use index");
+    }
+    return !lang::CppMirBodyEmitter(forged, map)
+                .supportsFailureBodyText(address);
+  };
+  for (auto id : stages) {
+    expect(forge([&](lang::MirBody &body) {
+             ++findPreflightInstruction(body, id)->callSite;
+           }),
+           "an extracted owner prepared for another call must be rejected");
+    expect(forge([&](lang::MirBody &body) {
+             findPreflightInstruction(body, id)->lifecycle.front().conditional =
+                 true;
+           }),
+           "conditional ownership transfer must not erase receiver staging");
+    expect(forge([&](lang::MirBody &body) {
+             const auto *stage = findPreflightInstruction(body, id);
+             const auto *value = body.findValue(stage->operands.front().value);
+             findPreflightInstruction(body, value->definition)
+                 ->successResultDrop.reset();
+           }),
+           "missing extraction activation must not erase receiver staging");
+    expect(forge([&](lang::MirBody &body) {
+             const auto *stage = findPreflightInstruction(body, id);
+             for (auto &block : body.blocks)
+               for (auto &instruction : block.instructions)
+                 if (instruction.kind == lang::MirInstructionKind::Drop &&
+                     instruction.lifecycle.size() == 1 &&
+                     instruction.lifecycle.front().source ==
+                         *stage->preparedParameterDrop &&
+                     instruction.lifecycle.front().failureCleanup)
+                   instruction.lifecycle.front().conditional = true;
+           }),
+           "a conditional failure cleanup cannot protect a prepared owner");
+  }
+}
+
 void testProgramPlanValidationIsOperationScoped() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-operation-scoped-validation.gti", R"(
@@ -5982,6 +6070,8 @@ constexpr NamedTest kTests[] = {
     {"testLambdaOwningTransportAdmission", testLambdaOwningTransportAdmission},
     {"testConditionalOwningArgumentReceiverAdmission",
      testConditionalOwningArgumentReceiverAdmission},
+    {"testConditionalExpectedArgumentReceiverAdmission",
+     testConditionalExpectedArgumentReceiverAdmission},
     {"testFreshClassPayloadOperandStaging",
      testFreshClassPayloadOperandStaging},
     {"testDischargedCompoundOperatorVocabulary",
