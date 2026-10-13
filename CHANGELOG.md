@@ -30,6 +30,13 @@ for what minor and patch releases mean.
   verified without weakening the lifetime checks on dynamic results. Covers
   the editor preview fallback in issue #89.
 
+## 0.423.5 — Temporary expected pointer failure routing
+
+- Fix an internal compiler error when a fallible call returning an expected
+  raw-pointer payload is used directly as a condition. Preserve the callee's
+  defined-failure channel and caller cleanup before observing the result;
+  ordinary expected errors remain ordinary values (issue #86).
+
 ## 0.423.4 — Expected pointer and owning payload composition
 
 - Fix backend internal compiler errors when returning passive pointer payloads
