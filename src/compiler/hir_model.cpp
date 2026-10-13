@@ -630,8 +630,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                      value.functionTarget
                          ? program.findFunctionInstance(*value.functionTarget)
                          : nullptr;
-                 target && target->source)
-          parameters = &target->source->parameters();
+                 target) {
+          // The canonical declaration owns defaults; source may instead be
+          // an out-of-line executable definition that omits those defaults.
+          const auto *declaration = semantics.findFunction(target->declaration);
+          if (declaration && declaration->declaration)
+            parameters = &declaration->declaration->parameters();
+        }
         bool exact = parameters &&
                      value.defaultArguments.size() <= parameters->size() &&
                      value.defaultArguments.size() <= value.operands.size();
