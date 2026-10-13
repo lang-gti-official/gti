@@ -4495,7 +4495,7 @@ void testOwningBaseConstructorStatus() {
           generated.declaration == 0 && generated.source == nullptr &&
               generated.initializers.size() == 1,
           "generated construction needs a selected body without synthetic AST");
-      for (int mutation = 0; mutation != 7; ++mutation) {
+      for (int mutation = 0; mutation != 8; ++mutation) {
         auto malformed = frontend.hir;
         auto *changed = const_cast<lang::HirConstructorInstance *>(
             malformed.findConstructorInstance(generated.id));
@@ -4511,8 +4511,12 @@ void testOwningBaseConstructorStatus() {
           changed->body.roots.push_back(999999);
         else if (mutation == 5)
           changed->owner = 999999;
-        else
+        else if (mutation == 6)
           changed->declaration = 999999;
+        else {
+          changed->initializers.front().constructorTarget.reset();
+          changed->initializers.front().generatedDefault = true;
+        }
         expect(
             !lang::verifyHirProgramPlans(frontend.semantics, malformed).valid(),
             "generated construction must retain its exact semantic selection");
