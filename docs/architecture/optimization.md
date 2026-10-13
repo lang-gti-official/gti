@@ -400,7 +400,22 @@ The admitted operations are deliberately narrow:
 - checked integer add, subtract, multiply, and unary negate whose complete
   operand intervals prove the result remains in the declared GTI domain; and
 - public logical-size checks whose integer intervals prove
-  `0 <= index < size`; and
+  `0 <= index < size`;
+- public logical-size checks of an unsigned index that a dominating comparison
+  orders strictly below the size. A comparison of two values of one integer
+  domain records an order on each edge it takes, for `<`, `<=`, `>` and `>=`
+  alike. An order relates immutable MIR values, so no write retires it;
+  redefining either value in a later loop iteration does, and a join keeps
+  only the orders that every incoming path establishes, strict only when all
+  of them are. A check matches an order of its own domain when its operands
+  denote the same current scalars: one value through inert staging or an
+  identity, loads of one place that no possibly aliasing write or barrier has
+  retired, or one still-current owned field. The size may instead be a checked
+  addition of a proved nonnegative amount to the ordered size, because that
+  addition either produced the larger value or failed before the check. A
+  state keeps at most 64 orders. This is RT-5's body-local slice: the
+  comparison and the check share a body, so a caller's loop condition does not
+  reach the check inside an indexing accessor it calls; and
 - integer remainder whose divisor is an exact nonzero value. The proof removes
   only the zero-divisor outcome; the C++ backend still uses a GTI-owned helper
   so signed-minimum remainder `-1` retains GTI's defined zero result instead of
