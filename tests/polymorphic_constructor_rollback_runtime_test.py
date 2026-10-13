@@ -25,6 +25,12 @@ def main():
     expected = [(0, "12\n3\n2\n9\n", ""),
                 (70, "2\n9\n", failure),
                 (70, "2\n", secondary)]
+    context_expected = [(0, "11\n1\n99\n", ""),
+                        (0, "11\n99\n1\n", ""),
+                        (0, "11\n1\n99\n", ""),
+                        (0, "11\n1\n12\n2\n99\n", ""),
+                        (0, "1\n99\n", ""),
+                        (0, "11\n1\n2\n99\n", "")]
     modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
              for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
     modes += [("no-elide", ["--std", "c++23", "-O0"],
@@ -43,7 +49,7 @@ def main():
                 built = subprocess.run(command, capture_output=True, text=True,
                                        timeout=120, env=environment)
                 assert built.returncode == 0, (command, built.stdout, built.stderr)
-                cases = expected if source == rollback else [(0, "", "")]
+                cases = expected if source == rollback else context_expected
                 for count, wanted in enumerate(cases):
                     run = subprocess.run([str(binary), *(["fail"] * count)],
                                          capture_output=True, text=True,
