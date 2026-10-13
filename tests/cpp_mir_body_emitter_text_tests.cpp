@@ -3627,13 +3627,6 @@ int main() {
          "local");
 }
 
-// A construction consuming a cleanup-free Expected<Class, E> argument may
-// publish its own result through its consuming Return or into a constructor
-// field. The success class has no default constructor: a failure-free
-// producer constructs the staged slot, the construction moves its wrapper and
-// the slot retires right after. A cleanup-owning payload keeps MIR's
-// value-rooted transfer slot. (Regression: the former gti-lang-official issue
-// #6 emitted a default-constructed std::expected<Item, E> local.)
 void testExpectedConsumingMemberReturn() {
   const auto frontend = analyzeWithStandardLibrary(
       "cpp-mir-expected-consuming-member-return.gti", R"(
@@ -3671,12 +3664,12 @@ int main() { auto result = Make(1); return result ? 0 : 1; }
             instruction.callableInvocation ==
                 lang::CallableInvocationCapability::Once &&
             instruction.successResultDrop) {
-          address = {.kind = lang::MirBodyKind::Function,
-                     .owner = function.id};
+          address = {.kind = lang::MirBodyKind::Function, .owner = function.id};
           producer = instruction.id;
         }
   }
-  expect(producer != 0, "the payload producer retains its consuming capability");
+  expect(producer != 0,
+         "the payload producer retains its consuming capability");
   if (producer == 0)
     return;
   const lang::CppMirBodyEmissionMap map(
@@ -3692,7 +3685,8 @@ int main() { auto result = Make(1); return result ? 0 : 1; }
       for (auto &instruction : block.instructions)
         if (instruction.id == producer) {
           if (mutation == 0)
-            instruction.callableInvocation = lang::CallableInvocationCapability::Read;
+            instruction.callableInvocation =
+                lang::CallableInvocationCapability::Read;
           else if (mutation == 1)
             instruction.callableInvocation.reset();
           else if (mutation == 2)
@@ -3703,7 +3697,8 @@ int main() { auto result = Make(1); return result ? 0 : 1; }
             instruction.successResultDrop = 0;
         }
     expect(!lang::verifyMirProgram(malformed).valid(),
-           "a changed consuming receiver or payload activation fails MIR verification " +
+           "a changed consuming receiver or payload activation fails MIR "
+           "verification " +
                std::to_string(mutation));
     const lang::CppMirBodyEmitter rejected(malformed, map);
     expect(!rejected.analyze(address).ready() ||
@@ -3713,6 +3708,13 @@ int main() { auto result = Make(1); return result ? 0 : 1; }
   }
 }
 
+// A construction consuming a cleanup-free Expected<Class, E> argument may
+// publish its own result through its consuming Return or into a constructor
+// field. The success class has no default constructor: a failure-free
+// producer constructs the staged slot, the construction moves its wrapper and
+// the slot retires right after. A cleanup-owning payload keeps MIR's
+// value-rooted transfer slot. (Regression: the former gti-lang-official issue
+// #6 emitted a default-constructed std::expected<Item, E> local.)
 void testExpectedClassArgumentReturnedConstruction() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-expected-class-returned-construction.gti", R"(
