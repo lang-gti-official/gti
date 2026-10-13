@@ -4504,7 +4504,7 @@ void testReferenceOwnedFieldReplacement() {
                    .supportsFailureBodyText(address),
                "checked reference grants exact direct and nested field "
                "replacement");
-        for (int mutation = 0; mutation != 6; ++mutation) {
+        for (int mutation = 0; mutation != 7; ++mutation) {
           auto malformed = frontend.mir;
           auto *body = lang::findMirBody(malformed, address);
           if (mutation <= 1) {
@@ -4532,6 +4532,16 @@ void testReferenceOwnedFieldReplacement() {
                                          ? place->projections.back().field
                                          : place->projections[1].field))
                   field.access = lang::AccessMode::ReadOnly;
+          } else if (mutation == 6) {
+            for (auto &prefix : body->places)
+              if (prefix.root == lang::MirPlaceRootKind::Binding &&
+                  prefix.binding == place->binding &&
+                  prefix.projections.size() == 1 &&
+                  prefix.projections.front().kind ==
+                      lang::MirProjectionKind::Dereference) {
+                prefix.type = lang::SemanticType::Void;
+                break;
+              }
           } else {
             for (auto &changedBlock : body->blocks)
               for (auto &changed : changedBlock.instructions)

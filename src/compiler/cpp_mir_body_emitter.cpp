@@ -21508,8 +21508,12 @@ transformedFailureCallee(const MirProgram &program,
           candidate.projections.size() != 1 ||
           candidate.projections.front() != destination.projections.front())
         continue;
-      if (referenceRoot != nullptr ||
-          !exactMutableReferenceDestination(body, candidate))
+      // Each source occurrence can have a distinct place ID for the same
+      // checked referent. Require the same referent type and carrier proof
+      // for every occurrence, not a globally unique occurrence-local ID.
+      if (!exactMutableReferenceDestination(body, candidate) ||
+          (referenceRoot != nullptr &&
+           referenceRoot->type != candidate.type))
         return false;
       referenceRoot = &candidate;
     }

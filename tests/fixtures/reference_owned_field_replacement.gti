@@ -21,13 +21,17 @@ public:
   }
   bool Valid() { return this.id == 2 && this.text.view() == "new"; }
 };
-struct Result { mut Payload message{1, "old"}; };
+struct Result { mut bool changed = false; mut Payload message{1, "old"}; };
 struct Nested { mut Result inner{}; };
 void Set(mut Result& result, std::string_view text) {
+  result.changed = true;
   result.message = Payload(2, text);
+  if (!result.message.Valid()) { std::println(999); }
 }
 void SetNested(mut Nested& result, std::string_view text) {
+  result.inner.changed = true;
   result.inner.message = Payload(2, text);
+  if (!result.inner.message.Valid()) { std::println(999); }
 }
 class Outer {
 public:
