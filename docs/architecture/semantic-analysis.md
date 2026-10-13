@@ -585,7 +585,9 @@ fixed point, in their original declaration contexts. Declaration registration,
 all application/package bodies, entry-file bodies, constant definitions and
 virtual/interface instance methods remain checked. Ordinary static interface
 helpers follow the same demand rules as other static functions. Constructors and destructors are not
-deferred. There is no cross-snapshot semantic cache.
+deferred. The only cross-snapshot semantic reuse is the bounded reuse of
+concrete instance analyses described under "Instance Reuse Across Snapshots";
+primary analysis always runs in full.
 
 Concrete generic instantiation may select another primary function body that
 nothing analysed demanded, typically a library body reached only through a
@@ -1360,6 +1362,77 @@ is not restored with body-local counters. Thus distinct concrete-only locals
 cannot collide even when instances have identical source names or different
 types. These delta symbol records remain concrete and are handed to HIR without
 mutating the immutable primary snapshot. Discarded arms are still unanalyzed.
+
+### Instance Reuse Across Snapshots
+
+An editor snapshot re-derives the same library instances on every keystroke:
+`std::vector<std::string>` members or formatting internals have unchanged
+inputs whenever the standard library is unchanged. A frontend caller may pass
+an `InstanceAnalysisCache` (`include/gti/instance_analysis_cache.h`) through
+`FrontendOptions::instanceCache`; bounded (`Reachable`) analysis then reuses
+its own earlier instance deltas instead of repeating them. Complete analysis
+(`gti check`) and artifact builds do not set it, so their behaviour is
+unchanged. The semantic analyzer gains no second analysis path: a reused
+delta is exactly what `InstanceAnalysisScope` produced in an earlier
+snapshot, and every request still flows through the same provider calls.
+
+- **Eligibility.** The declaration (function, constructor, destructor or class
+  field initializers) is compiler-trusted, and every class/function type and
+  value argument names only compiler-trusted classes and enums (no lambda,
+  function item, open parameter or symbolic value). Designated constructors are
+  ineligible because their syntax is generated per snapshot.
+- **Generation.** Entries belong to a generation keyed by the frontend cache
+  context and analyzer configuration, every compiler-trusted unit by identity,
+  path and digests together with the exact parsed declaration trees the parse
+  cache shared (the generation retains them, so an AST address can never be
+  reused by another allocation while an entry lives), and a fingerprint of the
+  trusted declaration identities registration assigned: symbols up to the
+  registration ceiling, functions, classes and their constructors and
+  destructors, enums, concepts, type aliases, generic parameters,
+  default-argument effect owners, and every exact class specialization
+  wherever it is declared. Registration numbers declarations in program order,
+  so an application unit ordered before a library unit can renumber library
+  declarations; the fingerprint then selects another generation. Within a
+  generation, keys use snapshot ids directly.
+- **Journal.** While a reusable candidate is analysed, its delta journals what
+  it read from the base: base symbol identities (by id or by declaration
+  span, from bindings, places and resolved symbols), base lambda identities,
+  and any base-owned synthesized syntax. Body-local identities are assigned in
+  demand order, so an edit that adds a local before a library call renumbers
+  them; on reuse each journaled identity must still denote the same
+  declaration, otherwise the entry is rejected and the instance analysed
+  afresh. A delta that read snapshot-owned synthesized syntax (a designated
+  constructor, a constexpr-for expansion or expression alias of the base) is
+  never stored. Implicit field-initializer anchors of trusted fields are
+  instead shared through the cache: an anchor holds only its field's name
+  token, so every snapshot presenting that field receives the same anchor and
+  HIR's identity check against the base anchor still holds.
+- **Identities.** A delta's concrete-only symbols keep the range they were
+  first allocated. Reuse requires that range to lie above the current base and
+  apart from every other delta of the request, then reserves it, so later
+  instance analyses and late demand continue above it exactly as
+  `instanceSymbolCeiling` already guarantees. A delta that allocated lambda,
+  function, constructor or generic-parameter identities is not stored.
+- **Consulted facts.** The functions whose facts the analysis read (the late
+  demand probe) are stored with the entry and must denote the same
+  declarations; any still pending in the current snapshot are late-demanded
+  before reuse, exactly as the fresh analysis would have done before analysing
+  again. A stored delta never consulted a non-trusted function.
+- **Results.** Only diagnostic-free analyses are stored, so a reuse reports
+  nothing a fresh analysis would have reported. Entries are published to the
+  cache only once HIR is final; an analysis that is repeated with required
+  bodies, or whose late demand failed, stores nothing. A reused delta is
+  rebased onto the current base, adopting its request-wide facts (place
+  snapshot, execution profile, program kind and embedding plan).
+
+The cache is bounded by entries, estimated bytes and generations (LRU), and a
+generation whose units have the same paths but other syntax supersedes the
+earlier one. `FrontendWorkMetrics` reports reuse hits, misses (with rejected
+entries), ineligible requests, stores and the time spent validating and
+copying entries. The `instance_reuse` test analyses every example fresh and
+then twice through one cache and requires identical diagnostics, HIR inventory
+and MIR, and its fixtures cover edited bodies, changed declarations, an
+edited library unit and complete analysis.
 
 A complete-range requirement is checked symbolically before its concrete
 iterator and sentinel types exist. The primary analysis therefore uses private

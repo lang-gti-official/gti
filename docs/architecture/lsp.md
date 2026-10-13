@@ -69,9 +69,12 @@ HIR/MIR, source graph, source text, and diagnostics together. The LSP retains a
 `shared_ptr<const FrontendResult>` in each `AnalysisSnapshot`. This keeps AST
 pointers and snapshot-scoped symbol IDs valid while a request reads them.
 Compatible snapshots may share immutable parsed statement trees through the
-frontend cache, but every snapshot constructs a fresh semantic model and
+frontend cache, and every snapshot constructs a fresh semantic model and
 database. Symbol IDs, semantic records, and pointers into one semantic model
-are never cache values.
+are never cache values, with one bounded exception: concrete instance deltas
+of compiler-trusted declarations with library-only arguments, which a later
+snapshot reuses only after validating every identity they carry (see
+"Reusable frontend work").
 
 `LanguageQueries` is declared in `include/gti/language_queries.h`; reusable
 hover, completion, definition, and signature rendering compile in
@@ -557,8 +560,14 @@ compiler work.
 
 ### Reusable frontend work
 
-The process-local frontend cache is a thread-safe LRU bounded by both 256 rows
-and 64 MiB of conservatively estimated input/tree storage. Lexical rows retain
+The process-local frontend cache is a thread-safe LRU. The compiler's generic
+bound is 256 rows and 64 MiB of conservatively estimated input/tree storage;
+the editor's `FrontendSnapshotState` uses 1,024 rows and 512 MiB
+(`editorFrontendCacheLimits`), because the lexical and parsed rows of one
+eight-include standard-library graph already exceed 64 MiB by that estimate.
+With the generic bound such a file evicted its own rows on every edit, reloaded,
+re-lexed and re-parsed the whole library, and could reuse no instance
+analysis. Lexical rows retain
 exact source text, tokens, and lexer diagnostics. Parsed rows retain immutable
 statement trees and parser diagnostics. A key includes canonical source path,
 that source's generation, stable exact-content digest, exact post-directive
@@ -583,13 +592,29 @@ identities.
 This is deliberately not a semantic snapshot cache. Semantic analysis runs over
 the compatible loaded declarations; HIR performs the root/entry-scoped concrete
 discovery described below. Both produce fresh snapshot-local identities and
-records. The benchmark exposes exact loaded,
+records, except that `FrontendSnapshotState` also owns a process-wide
+`InstanceAnalysisCache` passed as `FrontendOptions::instanceCache`. Concrete
+instance analyses of compiler-trusted declarations whose arguments name only
+compiler-trusted types are stored once HIR is final and reused by later
+snapshots of the same library generation: the same trusted parsed syntax,
+analysis configuration and trusted registration identities. A reused delta's
+journaled base identities, consulted functions and identity range are
+validated first, and a failure simply analyses the instance again (see
+"Instance Reuse Across Snapshots" in
+[semantic-analysis.md](semantic-analysis.md)). Editing a library unit, or
+reparsing it, selects another generation, which supersedes the old one. The
+cache is bounded by 8,192 entries, 192 MiB of estimated delta storage and four
+generations. Completion stops before HIR and does not use it. The benchmark exposes exact loaded,
 lexed, parsed, semantically analysed, and cache-hit unit lists plus phase times
 through the opt-in `GTI_LSP_FRONTEND_TRACE` stream. Each record also carries a
 monotonic `finishedMicroseconds` time since server start, so concurrent work
 can be ordered, and analysis records carry `retainedFrontends`, the number of
 published snapshots still holding a whole-program result. The same report records the configured cache limits and
-observed estimated occupancy.
+observed estimated occupancy. Analysis records also carry
+`hirFunctionInstances`, the instance-reuse counts (`instanceReuseHits`,
+`instanceReuseMisses`, `instanceReuseRejected`, `instanceReuseIneligible`,
+`instanceReuseStores`), `instanceReuseMicroseconds`, and the instance cache's
+occupancy (`instanceCache`).
 
 Analysis and completion have separate bounded worker queues. This keeps the
 JSON loop responsive and lets newer completion/analysis work supersede older
@@ -960,9 +985,11 @@ function-local names: identities visible outside the entry document's
   frontend-input identity/cache seam is extracted; broader state extraction
   should follow a concrete testability or feature need.
 - Semantic analysis of loaded declarations and root/entry-scoped HIR discovery
-  repeat on every accepted edit. Neither is a reusable semantic checkpoint;
-  durable symbol identity is not implemented. Trace evidence, not the old
-  complete-HIR baseline, should select the next repeated-edit optimization.
+  repeat on every accepted edit. Only library-only concrete instance analyses
+  are reused across snapshots; registration and primary body analysis are not
+  a reusable semantic checkpoint, and durable symbol identity is not
+  implemented. Trace evidence, not the old complete-HIR baseline, should select
+  the next repeated-edit optimization.
 - Project analysis follows the package containing the opened document and the
   driver's default or explicitly selected profile on the host platform. Unique entry roots and
   single-target packages infer their target defines; shared/ambiguous sources
@@ -985,5 +1012,6 @@ spelling/expansion locations, background index shards, remote indexes,
 clangd-style full semantic translation-unit AST caches, or one worker per
 translation unit. The analysis pool is a fixed, small set of interchangeable
 workers, not a per-document scheduler. Its bounded exact-content parsed-unit reuse is narrower and
-contains no semantic records. Preserve the boundaries that allow measured
+contains no semantic records; the bounded instance reuse keeps only validated
+library-only instance deltas, never a translation unit's semantic model. Preserve the boundaries that allow measured
 evolution without importing those systems preemptively.
