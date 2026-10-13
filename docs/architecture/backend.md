@@ -1542,6 +1542,14 @@ source calls publish only on their MIR success edge.
 The field load retires the passive shell before slot reuse, including in loops.
 Transfer consumers still require movability independently.
 
+A virtual call returning an owning expected result uses the same exact binding
+or value-rooted publication slot as a static call. The selected virtual family
+supplies the checked failure contract, including a pure-virtual declaration
+target; a concrete source body on that target is not required. The fresh
+expected receiver shell retains its own success activation and once-only drop
+when a caller immediately extracts its payload. Dispatch identity, receiver,
+signature, Invoke and publication transfers remain independently verified.
+
 A failure-free source call has no Invoke edge: MIR activates its result's
 value obligation with the call's own final `Initialize` event, after any
 by-value input it consumed has transferred out. Every result slot that a

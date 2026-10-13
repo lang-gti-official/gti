@@ -1,5 +1,14 @@
 # Compiler Verification
 
+## Virtual owning expected results (#109)
+
+`virtual_expected_owning_return_runtime` covers pure-virtual production of a
+user-defined owning payload, named and fresh consuming extraction, ordinary
+expected errors, producer failure and secondary caller-cleanup failure. The
+eight-mode matrix includes C++20/C++23, O0/O1/O3, disabled elision and ASan/UBSan.
+`testVirtualExpectedOwningResult` checks both publication schedules and rejects
+forged virtual owner/propagation/receiver and missing result activation.
+
 ## Constructor base rollback failure-record selection (#101)
 
 `base_rollback_record_runtime` covers defaulted derived constructors whose
