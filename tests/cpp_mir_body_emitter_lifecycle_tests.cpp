@@ -4491,7 +4491,9 @@ void testReferenceOwnedFieldReplacement() {
         if (instruction.kind != lang::MirInstructionKind::Assign ||
             place == nullptr ||
             place->root != lang::MirPlaceRootKind::Binding ||
-            place->projections.size() < 2 ||
+            place->type.kind != lang::SemanticType::Class ||
+            place->traits.drop != lang::DropKind::Lexical ||
+            place->traits.copyable || place->projections.size() < 2 ||
             place->projections.front().kind !=
                 lang::MirProjectionKind::Dereference)
           continue;
@@ -4502,7 +4504,7 @@ void testReferenceOwnedFieldReplacement() {
                    .supportsFailureBodyText(address),
                "checked reference grants exact direct and nested field "
                "replacement");
-        for (int mutation = 0; mutation != 5; ++mutation) {
+        for (int mutation = 0; mutation != 6; ++mutation) {
           auto malformed = frontend.mir;
           auto *body = lang::findMirBody(malformed, address);
           if (mutation <= 1) {
@@ -4522,11 +4524,13 @@ void testReferenceOwnedFieldReplacement() {
               if (std::find(loan.carriers.begin(), loan.carriers.end(),
                             place->binding) != loan.carriers.end())
                 loan.access = lang::AccessMode::ReadOnly;
-          } else if (mutation == 3) {
+          } else if (mutation == 3 || mutation == 5) {
             for (const auto &instance : malformed.classInstances())
               for (auto &field : const_cast<lang::MirClassInstance &>(instance)
                                      .declaredFields)
-                if (field.symbol == place->projections.back().field)
+                if (field.symbol == (mutation == 3
+                                         ? place->projections.back().field
+                                         : place->projections[1].field))
                   field.access = lang::AccessMode::ReadOnly;
           } else {
             for (auto &changedBlock : body->blocks)
@@ -4539,7 +4543,8 @@ void testReferenceOwnedFieldReplacement() {
                   !lang::CppMirBodyEmitter(malformed, map)
                        .supportsFailureBodyText(address),
               "replacement cannot forge checked reference access, raw pointer, "
-              "field mutability or publication");
+              "field mutability or publication: " +
+                  std::to_string(mutation));
         }
       }
   expect(selected == 2,
