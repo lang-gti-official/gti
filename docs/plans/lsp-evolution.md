@@ -440,17 +440,18 @@ edits, milliseconds per edit, with instance reuse and body omission:
 | Build | 089 total | load | semantic | HIR |
 | --- | ---: | ---: | ---: | ---: |
 | instance reuse and omission (0.421.0) | 250 | 15 | 200 | 30 |
-| trusted prefix preamble (0.423.0) | 81 | 8 | 31 | 39 |
+| trusted prefix preamble (0.423.0) | 78 | 8 | 31 | 28 |
 
 The preamble of 089's eight includes is built once in about 360 ms (its
 1,254 held-back bodies included). Each later edit adopts it in about 17 ms
 (the copy of the analyzer state), registers the file's own declarations in
 under 2 ms, analyses its bodies in about 11 ms, reaches 180 held-back bodies
-and finalizes in under 1 ms. HIR rose from 30 to 39 ms because 48 instance
-analyses that read syntax the preamble synthesized (generated constructors,
-`constexpr for` expansions) are not stored for reuse yet; that syntax is
-stable across snapshots now, so the journal rule can be relaxed. The exit
-measure is met.
+and finalizes in under 1 ms. Syntax the preamble synthesized (generated
+constructors, `constexpr for` expansions, expression aliases, field
+initializer anchors) is the same object in every resumed snapshot, so the
+instance-reuse journal treats it as stable and every one of the 132 reusable
+instance analyses is reused. The exit measure is met; the adoption copy is
+the largest remaining semantic cost.
 
 Exit measure: the eight-include file under 100 ms per edit with the probe,
 semantic diagnostics for the open file identical to `gti check` on its

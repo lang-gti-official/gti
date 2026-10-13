@@ -1430,7 +1430,13 @@ and an analysis with the raw-pointer audit enabled never uses it.
 - **Identity.** Registration of the prefix is literally the preamble's, so
   trusted declaration identities, the instance-reuse registration fingerprint
   and symbol identities below the prefix ceiling are the same in every
-  resumed analysis; the rest of the program registers above them.
+  resumed analysis; the rest of the program registers above them. The syntax
+  the preamble synthesized (generated constructors, `constexpr for`
+  expansions, expression aliases, implicit field-initializer anchors) is the
+  same object in every resumed analysis, so the instance-reuse journal treats
+  it as stable rather than snapshot-owned; the instance cache's generation
+  context names the preamble's process-unique identity, so such entries are
+  never served under another preamble of the same units.
 
 `FrontendWorkMetrics` reports preamble builds and adoptions with their time,
 the held-back bodies and how many were reached. The `trusted_body_analysis`

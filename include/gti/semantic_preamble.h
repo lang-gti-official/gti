@@ -20,6 +20,9 @@ namespace lang {
 // FrontendOptions::preambleCache. See "Trusted Prefix Preamble" in
 // docs/architecture/semantic-analysis.md.
 class SemanticPreamble;
+// Distinct for every preamble built in this process; reusable records that
+// refer to a preamble's synthesized syntax are keyed by it.
+[[nodiscard]] std::uint64_t semanticPreambleIdentity(const SemanticPreamble &);
 
 // Everything two programs must share for one preamble to serve both: the
 // analysis configuration and every prefix unit by identity, path, digests

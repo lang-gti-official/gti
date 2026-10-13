@@ -539,8 +539,13 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     }
     if (options.instanceCache != nullptr &&
         trustedBodies == TrustedBodyAnalysis::Reachable)
-      semantic.useInstanceAnalysisCache(options.instanceCache,
-                                        cacheContext(options));
+      semantic.useInstanceAnalysisCache(
+          options.instanceCache,
+          cacheContext(options) +
+              (preamble == nullptr
+                   ? std::string{}
+                   : "\npreamble:" +
+                         std::to_string(semanticPreambleIdentity(*preamble))));
     if (options.workMetrics != nullptr && attempt == 0) {
       for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
         if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId)) {
