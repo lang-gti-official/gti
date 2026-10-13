@@ -15,6 +15,48 @@ that spelling. Acceptance additionally requires the broad optimized suite,
 native portability and sanitizer ownership checks. Focused passes alone are
 not a substitute for those integration gates.
 
+## Consuming member results at owning expected return boundaries (#99)
+
+`expected_consuming_return_runtime` covers a user-defined owning class returned
+directly by a consuming source member into `expected`, and the motivating
+polymorphic owner factory. It runs C++20/C++23 at O0/O1/O3, disabled elision,
+and ASan/UBSan. Exact observations cover successful publication, callee failure,
+pending-result cleanup failure, secondary cleanup failure, ordinary expected
+errors, virtual dispatch and once-only concrete destruction. The text-emitter
+test `testExpectedConsumingMemberReturn` checks the exact concrete receiver
+capability and rejects five malformed receiver/activation schedules. This is
+representation admission for already-verified source calls, not a new language
+conversion or a special rule for `unique_ptr`.
+
+## Expected pointer boundaries and owning field replacement
+
+`raw_receiver_owned_argument_runtime` runs raw-pointee receiver calls with
+owning user-defined argument records across C++20/C++23 at O0/O1/O3, disabled
+copy elision, and ASan/UBSan. Observable traces cover read-only and mutable
+receivers, consuming value/error payload extraction, receiver evaluation,
+wrong-state extraction, later-argument failure and callee failure, with
+exactly-once payload cleanup. `testOrderedRawReceiverInputs` checks the exact
+HIR pointee identity/access mode and MIR receiver stages; mutated call-site
+identities and erased unsafe/memory effects on either the stage or call must
+fail verification. The runtime fixture also invokes a declared-unsafe method
+through a raw receiver, preserving both independent obligations.
+
+`expected_boundary_replacement_runtime` exercises pointer-valued expected
+results through indexed owning fields and virtual dispatch, read-only and null
+pointer transport, and consuming value/error replacement of an existing class
+field. An unrelated source-defined owning record makes destruction observable.
+Both C++ standards run at O0/O1/O3, with additional no-elide and ASan/UBSan modes.
+The oracle distinguishes successful replacement, wrong-state extraction,
+old-value cleanup failure, and a secondary failure while retiring the held RHS.
+The same fixture retains the original source-defined string replacement client.
+The getter fixture also replaces fresh owning values through nested non-failing
+mutable-reference getters, with the same primary/secondary cleanup oracles.
+
+`testExpectedClassReplacementSources` includes all three fixtures and rejects forged
+result activation, missing/conditional replacement transfer, and missing
+old-value cleanup. The receiver envelope and extracted payload keep independent
+MIR drop identities; accepting a new consumer does not relax those obligations.
+
 ## Value-producing unsafe expressions
 
 `unsafe_expression_contract` covers lexical permission on grouped expressions,
@@ -5461,6 +5503,15 @@ SIMD: fixed-array and scalar-field structs, repeated self-read replacement,
 exact constructor counts, immutable-binding rejection, and first-failure
 propagation with enclosing cleanup at O0/O3 under C++20/C++23. These regressions
 ensure native representation staging does not introduce hidden construction.
+`constructor_borrow_replacement_runtime` exercises an unrelated owning class
+constructed from a temporary borrowed view during replacement, including
+source mutation after retirement, constructor failure, old-value cleanup
+failure, failure after commit and secondary cleanup failure. Its eight native
+modes include disabled elision and ASan/UBSan. The lifecycle emitter gate
+independently rejects missing or late input retirement, unrelated provenance,
+escaping dependencies, effectful retirement and missing staging-shell cleanup.
+Readonly receiver chains additionally cover indexed argv views and reject
+changed parent access, source or kind without losing child-to-parent ordering.
 On arm64 and x86-64 the SIMD runtime gate disables native
 automatic loop/SLP vectorization and checks that packed arithmetic exists only
 in the native-capability path. The scalar reference must contain no packed
@@ -7495,6 +7546,13 @@ forgeries independently in MIR and C++ admission, while
 `borrow_origin_runtime` retains the original missing-key runtime failure and
 tests populated nested storage and unrelated user-defined accessors across
 all eight native modes.
+
+The static-return alternative regression in these same gates covers receiver
+and parameter text relays with literal/null branches, plus an unsafe raw-receiver
+relay used by editor previews. It rejects missing or forged literal witnesses,
+cleared dynamic-return loans, and local-owner escapes; native C++20/C++23
+O0/O1/O3, disabled elision and ASan/UBSan exercise both alternatives without
+adding runtime lifetime state.
 
 ### Operator-place composition focused gates
 

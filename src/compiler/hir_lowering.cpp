@@ -3933,6 +3933,30 @@ private:
       return std::nullopt;
     }
 
+    // A selected raw member call borrows its pointee, not the pointer value
+    // or the member-access expression's function type. Preserve that exact
+    // source identity so MIR can evaluate the pointer once before arguments.
+    if (input->kind == HirValueKind::MemberAccess &&
+        input->unsafeOperation == UnsafeOperationKind::RawMember &&
+        input->info.category != ValueCategory::Place &&
+        input->operands.size() == 1 &&
+        (receiverMode == CallReceiverMode::ReadOnlyPlace ||
+         receiverMode == CallReceiverMode::MutablePlace)) {
+      const HirValue *pointer = body.findValue(input->operands.front());
+      if (pointer == nullptr ||
+          pointer->info.type.kind != SemanticType::RawPointer ||
+          pointer->info.type.arguments.size() != 1) {
+        return std::nullopt;
+      }
+      return HirCallReceiver{
+          .value = source,
+          .kind = receiverMode == CallReceiverMode::MutablePlace
+                      ? HirCallInputKind::MutableBorrow
+                      : HirCallInputKind::ReadBorrow,
+          .type = pointer->info.type.arguments.front(),
+      };
+    }
+
     HirCallInputKind kind = HirCallInputKind::Value;
     const bool temporaryReceiver =
         receiverMode == CallReceiverMode::FreshTemporaryRead ||
@@ -6283,9 +6307,10 @@ private:
                                      : body.findValue(value.operands.front());
         if (callee != nullptr && callee->kind == HirValueKind::MemberAccess &&
             !callee->operands.empty()) {
-          supportedReceiver =
-              callee->unsafeOperation != UnsafeOperationKind::RawMember;
-          callReceiver = callee->operands.front();
+          callReceiver =
+              callee->unsafeOperation == UnsafeOperationKind::RawMember
+                  ? callee->id
+                  : callee->operands.front();
         } else {
           callReceiver = value.receiver;
         }

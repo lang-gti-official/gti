@@ -2,6 +2,93 @@
 #include "gti/mir_lowering.h"
 
 namespace {
+void checkStaticReturnAlternatives() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrow_static_return_alternative.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "static text and null alternatives compose with borrowed returns");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "mixed static and dependent return MIR verifies");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "mixed return alternatives reach the production backend");
+  std::size_t literals = 0;
+  std::size_t dependent = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.returnBorrowOrigin == lang::BorrowOriginKind::None)
+      continue;
+    for (const auto &block : function.body.blocks) {
+      if (block.terminator.kind != lang::MirTerminatorKind::Return ||
+          !block.terminator.value ||
+          block.terminator.value->kind != lang::MirOperandKind::Value)
+        continue;
+      const auto *value =
+          function.body.findValue(block.terminator.value->value);
+      if (!value)
+        continue;
+      if (block.terminator.returnLoan) {
+        ++dependent;
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        for (auto &candidate : changed->body.blocks)
+          if (candidate.id == block.id)
+            candidate.terminator.returnLoan.reset();
+        for (auto &candidate : changed->body.values)
+          if (candidate.id == value->id)
+            candidate.info.traits.containsBorrowedState = false;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "clearing borrowed metadata cannot replace an escaping loan");
+      } else {
+        ++literals;
+        for (unsigned mutation = 0; mutation < 3; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          for (auto &candidateBlock : changed->body.blocks)
+            for (auto &candidate : candidateBlock.instructions)
+              if (candidate.id == value->definition) {
+                if (mutation == 0)
+                  candidate.literal.reset();
+                if (mutation == 1)
+                  candidate.literal = std::uint64_t(0);
+                if (mutation == 2)
+                  candidate.info.traits.containsBorrowedState = true;
+              }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "ownerless returns require an exact static literal witness");
+        }
+      }
+    }
+  }
+  expect(literals >= 5 && dependent >= 5,
+         "receiver, parameter and unsafe raw relay alternatives are exercised");
+  const auto invalid =
+      analyzeWithStandardLibrary("invalid-static-return-alternative.gti", R"gti(
+#include <std/string>
+std::string_view Dangling(bool empty) {
+  if (empty) { return ""; }
+  std::string local{"expired"};
+  return local.view();
+}
+int main() { return 0; }
+)gti");
+  expect(!invalid.semanticValid && !invalid.canGenerateCode(),
+         "a static alternative does not permit returning a local borrow");
+  expect(std::none_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code.starts_with("GTI-B");
+                      }),
+         "invalid mixed return fails in semantics, not MIR/backend");
+}
+
 void checkReferents() {
   const auto root = std::filesystem::path(__FILE__).parent_path();
   for (const auto &relative :
@@ -554,6 +641,7 @@ void checkNestedReadonlyReferences() {
 
 int main() {
   checkReferents();
+  checkStaticReturnAlternatives();
   checkInvalidEscapes();
   checkProjectedParameterOrigins();
   checkDirectProjectedReturnOrigins();

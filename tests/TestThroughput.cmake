@@ -44,11 +44,13 @@ if(Python3_Interpreter_FOUND)
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
     dormant_capability_runtime
     expected_class_argument_runtime expected_class_assignment_runtime
+    expected_boundary_replacement_runtime
+    raw_receiver_owned_argument_runtime
     expected_cleanup_free_copy_runtime expected_cleanup_free_move_runtime
     expected_call_reassignment_runtime expected_lambda_class_argument_runtime
     expected_member_argument_runtime
     expected_conditional_assignment_runtime expected_conditional_arms_runtime
-    expected_class_return_runtime expected_constructor_return_runtime
+    expected_class_return_runtime expected_constructor_return_runtime expected_consuming_return_runtime
     expected_field_and_join_runtime expected_scoped_return_runtime
     expected_temporary_observation_runtime
     expected_filesystem_prerequisites_runtime expected_passive_publication_runtime
@@ -80,6 +82,7 @@ if(Python3_Interpreter_FOUND)
     programmable_allocators_runtime prvalue_direct_initialization_runtime
     raw_owner_witness_runtime raw_pointer_conversion_runtime
     reference_class_assignment_runtime
+    constructor_borrow_replacement_runtime
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
     retained_owner_member_pack_runtime shared_accessor_range_runtime
     shared_ownership_runtime shared_ownership_threads scoped_parallel_threads
