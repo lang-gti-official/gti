@@ -8933,28 +8933,66 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   };
   const auto validRawMemberCallReceiver =
       [&](const MirInstruction &instruction) {
-        if (instruction.kind != MirInstructionKind::Call ||
-            instruction.unsafeOperation != UnsafeOperationKind::RawMember) {
+        if (instruction.kind != MirInstructionKind::Call) {
           return true;
         }
-        if (!instruction.rawMemoryAccess || !instruction.receiver ||
-            instruction.receiver->place == 0 ||
-            instruction.receiver->type.kind != SemanticType::Class) {
-          return false;
+        const bool rawCall =
+            instruction.unsafeOperation == UnsafeOperationKind::RawMember;
+        if (!instruction.receiver)
+          return !rawCall;
+        const MirOperand *receiver = &*instruction.receiver;
+        const MirInstruction *stage = nullptr;
+        if (receiver->kind == MirOperandKind::Value) {
+          const MirValue *value = body.findValue(receiver->value);
+          const MirBlock *block = value == nullptr
+                                      ? nullptr
+                                      : body.findBlock(value->definitionBlock);
+          if (block == nullptr)
+            return !rawCall;
+          for (const auto &candidate : block->instructions)
+            if (candidate.id == value->definition)
+              stage = &candidate;
+          if (stage == nullptr ||
+              stage->kind != MirInstructionKind::CallInput ||
+              stage->callSite != instruction.callSite ||
+              stage->callInputRole != MirCallInputRole::Receiver ||
+              stage->operands.size() != 1)
+            return !rawCall;
+          receiver = &stage->operands.front();
         }
-        const MirPlace *place = body.findPlace(instruction.receiver->place);
-        if (place == nullptr || place->root != MirPlaceRootKind::Value ||
-            place->projections.size() != 1 ||
-            place->projections.front().kind !=
-                MirProjectionKind::RawDereference ||
-            place->type != instruction.receiver->type) {
+        const MirPlace *place = body.findPlace(receiver->place);
+        const bool rawPointee = place != nullptr &&
+                                place->root == MirPlaceRootKind::Value &&
+                                place->projections.size() == 1 &&
+                                place->projections.front().kind ==
+                                    MirProjectionKind::RawDereference;
+        const bool rawStage =
+            rawPointee && stage != nullptr &&
+            stage->unsafeOperation == UnsafeOperationKind::RawMember;
+        if (!rawCall && !rawStage)
+          return true;
+        // A declared-unsafe method retains its independently verified caller
+        // contract on the call; the stage still owns raw-pointee selection.
+        if (!rawCall && instruction.unsafeOperation !=
+                            UnsafeOperationKind::DeclaredUnsafeCall)
+          return false;
+        if (!instruction.rawMemoryAccess || !rawPointee ||
+            instruction.receiver->type.kind != SemanticType::Class ||
+            (stage != nullptr &&
+             (!stage->rawMemoryAccess ||
+              stage->unsafeOperation != UnsafeOperationKind::RawMember)))
+          return false;
+        if (receiver->kind != MirOperandKind::BorrowRead &&
+            receiver->kind != MirOperandKind::BorrowWrite)
+          return false;
+        if (place->type != instruction.receiver->type) {
           return false;
         }
         const MirValue *pointer = body.findValue(place->value);
         return pointer != nullptr && validRawPointer(pointer->info.type) &&
                pointer->info.type.arguments.front() == place->type &&
                pointer->info.type.pointerAccess == place->access &&
-               (instruction.receiver->kind != MirOperandKind::BorrowWrite ||
+               (receiver->kind != MirOperandKind::BorrowWrite ||
                 place->access == AccessMode::Mutable);
       };
   const auto validCompute = [&](const MirInstruction &instruction) {
