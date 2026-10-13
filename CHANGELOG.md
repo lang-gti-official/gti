@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.421.1 — Shared cleanup for early returns
+
+- Functions and lambdas that return nothing, a scalar or a scalar error from
+  several places now share the cleanup each return performs, instead of
+  repeating it at every return. Generated code for a body with an early return
+  after each of its owners now grows with the owners rather than with returns
+  times owners: with 80 owners, its exit cleanup holds 80 drops instead of
+  3,320. Each return still destroys exactly the owners live at it, in the same
+  order, with the same failure behavior and diagnostics.
+
 ## 0.421.0 — Editor omits library-only instance bodies
 
 - Editor snapshots no longer lower the HIR bodies of library-only concrete
