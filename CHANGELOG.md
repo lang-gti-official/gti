@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.424.0 — Transient compile-time ownership
+
+- Constant execution supports transient exclusive allocations and deterministic
+  source-defined destruction, using the same verified MIR lifecycle as runtime.
+  `std::make_unique`, dereference, reset, swap and ownership transport can be
+  used inside constexpr helpers; every allocation must be reclaimed before
+  the outer request completes. Example 153 returns a passive summary from an
+  allocated scratch object.
+- Concrete parameter packs and `constexpr operator bool()` compose with this
+  profile. Symbolic allocation identities never become native pointers or
+  persistent constants, and execution, allocation and live-storage budgets
+  bound compile-time work. Shared ownership, virtual destruction, raw-memory
+  allocation protocols and stored-reference carriers remain outside the slice.
+
 ## 0.423.8 — Owning replacement and borrowed call composition
 
 - Fix an internal compiler error when a freshly constructed owning object
