@@ -545,8 +545,12 @@ private:
     std::vector<SemanticType> parameterTypes;
     for (const auto argument : initializer.arguments) {
       const HirValue *value = findValue(argument);
+      // A transient dependency on an incoming parameter is not borrowed
+      // state stored in the base. Preserve the value's loan metadata while
+      // classifying the parameter using the same concrete type contract as
+      // program verification; the selected base itself cannot retain borrows.
       if (value == nullptr || value->info.traits.drop != DropKind::Trivial ||
-          value->info.traits.containsBorrowedState ||
+          resolvedTraits(value->info.type).containsBorrowedState ||
           value->info.type.kind == SemanticType::Reference)
         return;
       arguments.push_back(valueOperand(argument));
