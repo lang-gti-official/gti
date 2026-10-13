@@ -1,0 +1,76 @@
+#include <std/string>
+#include <std/vector>
+
+mut int stage = 0;
+class Payload {
+  int id;
+  std::string text;
+public:
+  Payload(int id, std::string_view text) : id(id), text(std::string(text)) {
+    std::println(id * 10);
+    int divisor = id == 2 && stage == 1 ? 0 : 1;
+    int checked = 1 / divisor;
+  }
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() {
+    std::println(this.id * 10 + 1);
+    int divisor = (this.id == 1 && (stage == 2 || stage == 3)) ||
+                  (this.id == 2 && stage == 3) ? 0 : 1;
+    int checked = 2 / divisor;
+  }
+  bool Valid() { return this.id == 2 && this.text.view() == "new"; }
+};
+struct Result { mut bool changed = false; mut Payload message{1, "old"}; };
+struct Nested { mut Result inner{}; };
+Result* Get(Result* result) {
+  int divisor = stage == 5 ? 0 : 1;
+  int checked = 3 / divisor;
+  return result;
+}
+Nested* GetNested(Nested* result) { return result; }
+void Set(Result* result, std::string_view text) {
+  unsafe {
+    result->changed = true;
+    Get(result)->message = Payload(2, text);
+    if (!Get(result)->message.Valid()) { std::println(999); }
+  }
+}
+void SetNested(Nested* result, std::string_view text) {
+  unsafe {
+    GetNested(result)->inner.changed = true;
+    GetNested(result)->inner.message = Payload(2, text);
+    if (!GetNested(result)->inner.message.Valid()) { std::println(999); }
+  }
+}
+void SetIndexed(Result* result, std::string_view text) {
+  unsafe { result[0].message = Payload(2, text); }
+}
+void SetDirect(Result* result, std::string_view text) {
+  unsafe { result->message = Payload(2, text); }
+}
+class Outer {
+public:
+  Outer() = default;
+  ~Outer() { std::println(90); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Outer outer{};
+  if (stage == 4) {
+    mut Nested result{};
+    SetNested(&result, "new");
+    return result.inner.message.Valid() ? 0 : 1;
+  }
+  mut Result result{};
+  if (stage == 6) {
+    SetIndexed(&result, "new");
+    return result.message.Valid() ? 0 : 1;
+  }
+  if (stage == 7) {
+    SetDirect(&result, "new");
+    return result.message.Valid() ? 0 : 1;
+  }
+  Set(&result, "new");
+  return result.message.Valid() ? 0 : 1;
+}

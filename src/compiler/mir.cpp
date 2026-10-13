@@ -9178,6 +9178,26 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     if (instruction.tombstone) {
       return instruction == makeMirInstructionTombstone(instruction);
     }
+    if (instruction.destination &&
+        (instruction.kind == MirInstructionKind::Assign ||
+         instruction.kind == MirInstructionKind::CleanupBeforeAssign)) {
+      const auto *destination = body.findPlace(*instruction.destination);
+      if (destination && destination->root == MirPlaceRootKind::Value &&
+          !destination->projections.empty() &&
+          (destination->projections.front().kind ==
+               MirProjectionKind::RawDereference ||
+           destination->projections.front().kind ==
+               MirProjectionKind::RawIndex)) {
+        if (!instruction.rawMemoryAccess)
+          return false;
+        if (instruction.kind == MirInstructionKind::Assign &&
+            instruction.unsafeOperation !=
+                UnsafeOperationKind::RawDereference &&
+            instruction.unsafeOperation != UnsafeOperationKind::RawIndex &&
+            instruction.unsafeOperation != UnsafeOperationKind::RawMember)
+          return false;
+      }
+    }
     if ((instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
          instruction.intrinsic == IntrinsicKind::CStringFromAddress) &&
         !mir_detail::textAddressResultLoan(body, instruction))

@@ -2975,6 +2975,27 @@ private:
                       return operand.kind != MirOperandKind::Address &&
                              operand.place != 0 && rawPlace(operand.place);
                     });
+    // An outer field selection has no new unsafe syntax of its own, but a
+    // store through its raw prefix still executes that checked source access.
+    // Preserve its operation marker alongside the raw-memory effect rather
+    // than losing it on `pointer->inner.field` or `pointer[index].field`.
+    if (instruction.kind == MirInstructionKind::Assign &&
+        instruction.destination && rawPlace(*instruction.destination) &&
+        instruction.unsafeOperation == UnsafeOperationKind::None) {
+      const auto *destination = output.findPlace(*instruction.destination);
+      const auto raw = std::find_if(
+          destination->projections.begin(), destination->projections.end(),
+          [](const MirPlaceProjection &projection) {
+            return projection.kind == MirProjectionKind::RawDereference ||
+                   projection.kind == MirProjectionKind::RawIndex;
+          });
+      instruction.unsafeOperation =
+          raw->kind == MirProjectionKind::RawIndex
+              ? UnsafeOperationKind::RawIndex
+              : (std::next(raw) == destination->projections.end()
+                     ? UnsafeOperationKind::RawDereference
+                     : UnsafeOperationKind::RawMember);
+    }
     instruction.id = nextInstruction++;
     const MirInstructionId id = instruction.id;
     if (instruction.result) {

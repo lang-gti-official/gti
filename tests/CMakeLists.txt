@@ -998,6 +998,11 @@ add_test(NAME reference_owned_field_replacement_runtime
                  "${PROJECT_SOURCE_DIR}/tests/reference_owned_field_replacement_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(reference_owned_field_replacement_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME raw_owned_field_replacement_runtime
+         COMMAND ${Python3_EXECUTABLE}
+                 "${PROJECT_SOURCE_DIR}/tests/raw_owned_field_replacement_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(raw_owned_field_replacement_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_temporary_observation_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_temporary_observation_runtime_test.py"
