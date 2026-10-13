@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.423.4 — Static alternatives in borrowed returns
+
+- Fix an internal compiler error when a borrowed text return also has a string
+  literal or null C-string return path. Static alternatives are independently
+  verified without weakening the lifetime checks on dynamic results. Covers
+  the editor preview fallback in issue #89.
+
 ## 0.423.3 — Forwarded base constructor views
 
 - Fix an internal compiler error when a constructor forwards an incoming

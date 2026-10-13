@@ -7481,6 +7481,13 @@ forgeries independently in MIR and C++ admission, while
 tests populated nested storage and unrelated user-defined accessors across
 all eight native modes.
 
+The static-return alternative regression in these same gates covers receiver
+and parameter text relays with literal/null branches, plus an unsafe raw-receiver
+relay used by editor previews. It rejects missing or forged literal witnesses,
+cleared dynamic-return loans, and local-owner escapes; native C++20/C++23
+O0/O1/O3, disabled elision and ASan/UBSan exercise both alternatives without
+adding runtime lifetime state.
+
 ### Operator-place composition focused gates
 
 `operator_place_composition_pipeline` covers exact projection-call preservation,
