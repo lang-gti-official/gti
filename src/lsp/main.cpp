@@ -3145,6 +3145,9 @@ private:
     frontendOptions.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
     frontendOptions.workMetrics = &result.workMetrics;
     frontendOptions.cache = request.frontendSources.cache;
+    // Library-only concrete instance analyses are reused across snapshots;
+    // see InstanceAnalysisCache.
+    frontendOptions.instanceCache = request.frontendSources.instanceCache;
     frontendOptions.sourceGenerations = request.frontendSources.generations;
     frontendOptions.sourceDigests = request.frontendSources.digests;
     frontendOptions.target = project.configuration.target();
@@ -4408,6 +4411,20 @@ private:
         {"semanticLateDemandMicroseconds",
          static_cast<std::int64_t>(metrics.semanticLateDemandMicroseconds)},
         {"hirMicroseconds", static_cast<std::int64_t>(metrics.hirMicroseconds)},
+        {"hirFunctionInstances",
+         static_cast<std::int64_t>(metrics.hirFunctionInstances)},
+        {"instanceReuseHits",
+         static_cast<std::int64_t>(metrics.semanticInstanceReuseHits)},
+        {"instanceReuseMisses",
+         static_cast<std::int64_t>(metrics.semanticInstanceReuseMisses)},
+        {"instanceReuseRejected",
+         static_cast<std::int64_t>(metrics.semanticInstanceReuseRejected)},
+        {"instanceReuseIneligible",
+         static_cast<std::int64_t>(metrics.semanticInstanceReuseIneligible)},
+        {"instanceReuseStores",
+         static_cast<std::int64_t>(metrics.semanticInstanceReuseStores)},
+        {"instanceReuseMicroseconds",
+         static_cast<std::int64_t>(metrics.semanticInstanceReuseMicroseconds)},
         {"semanticBorrowSummaryCandidateInspections",
          static_cast<std::int64_t>(
              metrics.semanticBorrowSummaryCandidateInspections)},
@@ -4431,6 +4448,18 @@ private:
          static_cast<std::int64_t>(cacheStats.limits.maximumEntries)},
         {"maximumEstimatedBytes",
          static_cast<std::int64_t>(cacheStats.limits.maximumEstimatedBytes)}};
+    const lang::InstanceAnalysisCacheStats instanceStats =
+        frontendSnapshots.instanceCache()->stats();
+    record["instanceCache"] = JsonObject{
+        {"entries", static_cast<std::int64_t>(instanceStats.entries)},
+        {"estimatedBytes",
+         static_cast<std::int64_t>(instanceStats.estimatedBytes)},
+        {"generations", static_cast<std::int64_t>(instanceStats.generations)},
+        {"maximumEntries",
+         static_cast<std::int64_t>(instanceStats.limits.maximumEntries)},
+        {"maximumEstimatedBytes",
+         static_cast<std::int64_t>(
+             instanceStats.limits.maximumEstimatedBytes)}};
     if (retainedFrontends) {
       record["retainedFrontends"] =
           static_cast<std::int64_t>(*retainedFrontends);

@@ -38,6 +38,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   lateDemandReady = false;
   lateDemandFailed = false;
   lateDemandedBodies.clear();
+  resetInstanceReuse();
   deferredBodyIndex.clear();
   initializerEffectOwners.clear();
   lateAnalyzedBodies = nullptr;
@@ -124,6 +125,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
 
 auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   resetRequestState(&program);
+  analyzedProgram = &program;
   validateModuleExports(program.declarations());
 
   const auto registrationStart = std::chrono::steady_clock::now();
@@ -184,6 +186,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   validateTypeAliasConstraints();
   registerDesignatedConstructors();
   catalog.seal();
+  registrationSymbolCeiling = semanticModel.database().symbolIdentityCeiling();
   valueFlow.beginBody(catalog);
   if (workMetrics != nullptr) {
     workMetrics->semanticRegistrationMicroseconds += static_cast<std::size_t>(
