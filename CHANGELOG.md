@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.424.7 — Class-valued allocation defaults
+## 0.424.3 — Constructor and owning argument composition
 
 - Fix allocation of objects whose constructor has omitted class-valued
   arguments, including `std::make_unique<Item>()` with `Item(Spec = Spec())`.
@@ -21,12 +21,17 @@ for what minor and patch releases mean.
   for `Item(int, Spec = Spec())`. Written arguments still run before defaults,
   with the same checked parameter transfer and failure cleanup (issue #110).
 
-## 0.424.4 — Defaulted owning base construction
-
 - Fix native compilation/link failures when defaulted derived constructors
   inherit owning fields through defaulted bases. Base and field initialization
   use the same selected GTI schedule, including generic bases, nonmoving fields,
   multilevel inheritance, and construction-failure cleanup (issue #98).
+
+## 0.424.2 — Owned extraction and conditional method arguments
+
+- Fix an internal compiler error when an owning Expected payload is passed to
+  a method before a later conditional argument. Preserve receiver identity,
+  extraction order and exact cleanup on wrong-state or later-argument failure,
+  for both user-defined class and unique-owner payloads (issue #96).
 
 ## 0.424.1 — Owning replacement and borrowed call composition
 

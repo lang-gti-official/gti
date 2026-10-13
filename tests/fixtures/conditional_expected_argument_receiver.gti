@@ -1,0 +1,40 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  Token(Token&& other) = default;
+  ~Token() { std::println(this.identity); }
+};
+
+struct Receiver {
+  mut int total = 0;
+  void owner(std::unique_ptr<Token> token, int value) mut {
+    this.total += value;
+    std::println("owner accepted");
+  }
+  void object(Token token, int value) mut {
+    this.total += value;
+    std::println("object accepted");
+  }
+};
+
+expected<std::unique_ptr<Token>, int> make_owner(bool missing) {
+  if (missing) { return unexpected(1); }
+  return std::make_unique<Token>(10);
+}
+
+int later(int divisor) { return 12 / divisor; }
+
+int main(int argc, std::vector<std::string> argv) {
+  mut Receiver receiver{};
+  expected<std::unique_ptr<Token>, int> owned = make_owner(argc == 3);
+  receiver.owner(std::move(owned).value(), later(argc == 2 ? 0 : 1));
+  expected<Token, int> object = Token(20);
+  receiver.object(std::move(object).value(), later(argc == 4 ? 0 : 2));
+  std::println(receiver.total);
+  return 0;
+}

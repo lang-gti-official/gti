@@ -98,6 +98,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testConditionalExpectedArgumentReceiverAdmission",
+      "suite": "preflight"
+    },
+    {
       "name": "testFreshClassPayloadOperandStaging",
       "suite": "preflight"
     },
