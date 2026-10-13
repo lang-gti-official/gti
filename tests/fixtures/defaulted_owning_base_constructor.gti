@@ -1,0 +1,40 @@
+#include <std/string>
+#include <std/vector>
+
+mut int32_t divisor = 1;
+
+class Guard {
+  int32_t identity;
+public:
+  Guard(int32_t value) : identity(value) {}
+  ~Guard() { std::println(this.identity); }
+};
+
+class Reading {
+  Guard retained = Guard(1);
+  std::string label = std::string("reading");
+  int32_t value = 7 / divisor;
+public:
+  Reading() = default;
+  ~Reading() { std::println(2); }
+  int32_t read() { return this.value; }
+};
+
+class Sensor : public Reading {
+public:
+  Sensor() = default;
+  ~Sensor() { std::println(3); }
+};
+
+class Device : public Sensor {
+public:
+  Device() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  divisor = argc == 1 ? 1 : 0;
+  Guard outer = Guard(9);
+  Device sensor{};
+  std::println(sensor.read());
+  return 0;
+}

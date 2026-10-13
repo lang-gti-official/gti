@@ -9,6 +9,63 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.424.3 — Constructor and owning argument composition
+
+- Preserve declaration-owned default arguments for out-of-line static and
+  instance method definitions, including owning defaults and renamed body
+  parameters. Exact selected declaration provenance remains verified (issue #119).
+
+- Fix owning-field replacement through a checked mutable reference, including
+  repeated direct and nested uses of that reference. Preserve its exact carrier,
+  pointee type and loan through replacement and cleanup (issue #116).
+
+- Fix an internal compiler error when extracting an owning expected payload
+  returned by virtual dispatch. Exact virtual-family identity, pending-result
+  publication and caller cleanup remain checked for named and temporary results
+  (issue #109).
+
+- Fix a backend internal compiler error when a declaration-ordered prefix of
+  copied passive record fields precedes moved owning fields. Exact parameter
+  and field publication order, later-argument failure, constructor rollback and
+  secondary cleanup behavior remain verified (issue #114).
+
+- Fix an internal compiler error when a by-value parameter containing nested
+  passive records is copied into a constructor field, including array wrappers.
+  The representation proof composes generated copy/destruction through the
+  exact field graph without adding native work or special library exceptions
+  (issue #107).
+
+- Fix allocation of objects whose constructor has omitted class-valued
+  arguments, including `std::make_unique<Item>()` with `Item(Spec = Spec())`.
+  Defaults use ordinary ordered parameter preparation and exact cleanup on
+  successful construction, failed later arguments, and constructor failure
+  (issue #105).
+- Fix an internal compiler error when a nonempty forwarded constructor argument
+  pack is followed by omitted defaults, including `std::make_unique<Item>(3)`
+  for `Item(int, Spec = Spec())`. Written arguments still run before defaults,
+  with the same checked parameter transfer and failure cleanup (issue #110).
+
+- Fix an internal compiler error when copying a checked class payload into a
+  constructor argument, including constructing a returned Expected payload.
+  The checked producer retains its original failure edge and cleanup; preparing
+  the resulting copied or borrowed argument no longer duplicates that failure
+  metadata onto a second operation (issue #104).
+
+- Fix invalid generated native code when a failed derived constructor rolls
+  back a base whose destructor cannot fail. Such cleanup no longer references
+  an absent secondary failure record; fallible base cleanup retains its exact
+  failure and termination behavior (issue #101).
+
+- Fix native compilation/link failures when defaulted derived constructors
+  inherit owning fields through defaulted bases. Base and field initialization
+  use the same selected GTI schedule, including generic bases, nonmoving fields,
+  multilevel inheritance, and construction-failure cleanup (issue #98).
+
+- Fix a backend internal compiler error when a consuming source member returns
+  an owning value directly into `expected`, including polymorphic owner
+  factories using `std::move(owner).upcast<Base>()`. Retain exact receiver,
+  pending-result publication and failure-cleanup checks (issue #99).
+
 ## 0.424.2 — Owned extraction and conditional method arguments
 
 - Fix an internal compiler error when an owning Expected payload is passed to

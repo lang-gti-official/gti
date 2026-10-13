@@ -477,9 +477,7 @@ private:
                                    ? SpecialMemberStatus::Deleted
                                    : lifecycle->defaultConstructor,
          .generatedDefaultRequiresSchedule =
-             lifecycle != nullptr &&
-             (lifecycle->generatedDefaultFieldInitializers ||
-              lifecycle->generatedDefaultBaseConstructor != 0),
+             lifecycle != nullptr && lifecycle->generatedDefaultInitializers,
          .copyConstructor =
              lifecycle == nullptr
                  ? SpecialMemberStatus::Deleted
@@ -735,10 +733,9 @@ private:
         ownerType != nullptr && ownerType->declaration != nullptr
             ? baseModel->findClassLifecycle(*ownerType->declaration)
             : nullptr;
-    const bool generatedBody =
-        construction.generatedDefault && ownerLifecycle != nullptr &&
-        (ownerLifecycle->generatedDefaultBaseConstructor != 0 ||
-         ownerLifecycle->generatedDefaultFieldInitializers);
+    const bool generatedBody = construction.generatedDefault &&
+                               ownerLifecycle != nullptr &&
+                               ownerLifecycle->generatedDefaultInitializers;
     if (!owner || construction.kind != ConstructorKind::Ordinary ||
         (!generatedBody && (construction.generatedDefault ||
                             construction.declaration == nullptr ||
@@ -3908,7 +3905,8 @@ private:
                               std::size_t explicitArgumentCount) const {
     if (!constructor.constructorTarget ||
         constructor.constructorKind != ConstructorKind::Ordinary ||
-        constructor.intrinsic != IntrinsicKind::None) {
+        (constructor.intrinsic != IntrinsicKind::None &&
+         constructor.intrinsic != IntrinsicKind::AllocateUniqueOwner)) {
       return std::nullopt;
     }
     return orderedArguments(arguments, parameterTypes, body,
@@ -6000,6 +5998,7 @@ private:
                     defaultArgument, defaultModel, targetClassArguments,
                     targetClassValueArguments, body, sourceLocationAt(*call))) {
               value.operands.push_back(*lowered);
+              value.defaultArguments.push_back(*lowered);
             }
           }
         }
@@ -6127,6 +6126,7 @@ private:
                     defaultArgument, defaultModel, targetClassArguments,
                     targetClassValueArguments, body, sourceLocationAt(*raw))) {
               value.operands.push_back(*lowered);
+              value.defaultArguments.push_back(*lowered);
             }
           }
         }
@@ -6432,15 +6432,23 @@ private:
     }
     if (model.findConstruction(*raw) != nullptr && value.constructorTarget &&
         value.constructorKind == ConstructorKind::Ordinary &&
-        value.intrinsic == IntrinsicKind::None &&
+        (value.intrinsic == IntrinsicKind::None ||
+         value.intrinsic == IntrinsicKind::AllocateUniqueOwner) &&
         !value.parameterTypes.empty() &&
         value.parameterTypes.size() <= value.operands.size()) {
+      // Allocation selects the same concrete constructor as direct syntax.
+      // In particular, an empty forwarded pack can leave only expanded
+      // defaults: those still need ordinary parameter staging before storage
+      // allocation. Nonempty packs retain their shared MIR expansion route.
       std::vector<HirValueId> arguments(
           value.operands.end() -
               static_cast<std::ptrdiff_t>(value.parameterTypes.size()),
           value.operands.end());
       const std::size_t explicitArgumentCount =
-          exprAs<Call>(raw) != nullptr ? exprAs<Call>(raw)->arguments().size()
+          value.intrinsic == IntrinsicKind::AllocateUniqueOwner
+              ? value.parameterTypes.size() -
+                    model.findConstruction(*raw)->defaultArguments.size()
+          : exprAs<Call>(raw) != nullptr ? exprAs<Call>(raw)->arguments().size()
           : exprAs<DirectInitializer>(raw) != nullptr &&
                   exprAs<DirectInitializer>(raw)->designators().empty()
               ? exprAs<DirectInitializer>(raw)->arguments().size()

@@ -1517,7 +1517,11 @@ earlier one. `FrontendWorkMetrics` reports reuse hits, misses (with rejected
 entries), ineligible requests, stores and the time spent validating and
 copying entries. The `instance_reuse` test analyses every example fresh and
 then twice through one cache and requires identical diagnostics, HIR inventory
-and MIR, and its fixtures cover edited bodies, changed declarations, an
+and MIR modulo a single program-wide alpha-renaming of concrete-only local
+symbols, keyed by exact HIR binding identity. Base symbols, fields, all non-symbol
+identities and every instruction/loan/cleanup fact remain exact; swapped,
+aliased or cross-body references are not equivalent. Its fixtures cover edited
+bodies, changed declarations, an
 edited library unit and complete analysis.
 
 A complete-range requirement is checked symbolically before its concrete

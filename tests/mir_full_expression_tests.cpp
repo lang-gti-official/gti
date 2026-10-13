@@ -284,5 +284,269 @@ int main() { Explicit first{}; return 0; }
                  "owning default arguments\n";
     return 1;
   }
+
+  const auto allocationDefaults = lang::Frontend().analyze(
+      "/tmp/gti-allocation-default.gti", R"(
+#include <std/memory>
+struct Spec {
+  int count;
+  Spec(int value = 2) : count(value) {}
+};
+class Item {
+  int count;
+public:
+  Item(Spec spec = Spec()) : count(spec.count) {}
+};
+int main() { auto item = std::make_unique<Item>(); return 0; }
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  if (!allocationDefaults.canGenerateCode() ||
+      !lang::verifyMirProgram(allocationDefaults.mir).valid()) {
+    for (const auto &diagnostic : allocationDefaults.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    std::cerr << "allocation defaults must retain verified construction\n";
+    return 1;
+  }
+  bool plannedDefault = false;
+  for (const auto &function : allocationDefaults.hir.functionInstances())
+    for (const auto &value : function.body.values)
+      if (value.intrinsic == lang::IntrinsicKind::AllocateUniqueOwner &&
+          value.constructorTarget && value.parameterTypes.size() == 1)
+        plannedDefault = value.callPlan &&
+                         value.callPlan->arguments.size() == 1 &&
+                         value.callPlan->arguments.front().defaultArgument &&
+                         value.callPlan->arguments.front().kind ==
+                             lang::HirCallInputKind::MoveValue;
+  bool checkedAllocation = false;
+  for (const auto &function : allocationDefaults.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &call : block.instructions) {
+        if (call.intrinsic != lang::IntrinsicKind::AllocateUniqueOwner ||
+            !call.constructorTarget || call.operands.size() != 1)
+          continue;
+        const auto *argument = function.body.findValue(call.operands[0].value);
+        const lang::MirInstruction *stage = nullptr;
+        for (const auto &candidateBlock : function.body.blocks)
+          for (const auto &instruction : candidateBlock.instructions)
+            if (argument && instruction.id == argument->definition)
+              stage = &instruction;
+        if (!stage || stage->kind != lang::MirInstructionKind::CallInput ||
+            stage->callSite != call.callSite || !stage->defaultArgument ||
+            !stage->preparedParameterDrop || !stage->destination) {
+          std::cerr << "allocation default lacks its exact prepared owner\n";
+          return 1;
+        }
+        checkedAllocation = true;
+        for (int mutation = 0; mutation < 3; ++mutation) {
+          auto forged = allocationDefaults.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              forged.findFunctionInstance(function.id));
+          for (auto &changedBlock : changed->body.blocks)
+            for (auto &instruction : changedBlock.instructions)
+              if (instruction.id == stage->id) {
+                if (mutation == 0)
+                  instruction.callSite = 0;
+                if (mutation == 1)
+                  instruction.callInputIndex = 1;
+                if (mutation == 2)
+                  instruction.preparedParameterDrop.reset();
+              }
+          if (lang::verifyMirProgram(forged).valid()) {
+            std::cerr << "malformed allocation default stage accepted\n";
+            return 1;
+          }
+        }
+      }
+    }
+  }
+  if (!plannedDefault || !checkedAllocation) {
+    std::cerr << "allocation defaults must use the ordinary ordered plan\n";
+    return 1;
+  }
+  const auto packDefaults = lang::Frontend().analyze(
+      "/tmp/gti-pack-default.gti", R"(
+#include <std/memory>
+struct Spec {
+  int count;
+  Spec(int value = 2) : count(value) {}
+};
+class Item {
+  int count;
+public:
+  Item(int first, int second, Spec spec = Spec())
+      : count(first + second + spec.count) {}
+};
+int main() { auto item = std::make_unique<Item>(3, 4); return 0; }
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  if (!packDefaults.canGenerateCode() ||
+      !lang::verifyMirProgram(packDefaults.mir).valid()) {
+    for (const auto &diagnostic : packDefaults.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return 1;
+  }
+  bool checkedSuffix = false;
+  for (const auto &function : packDefaults.hir.functionInstances()) {
+    for (const auto &value : function.body.values) {
+      if (value.intrinsic != lang::IntrinsicKind::AllocateUniqueOwner ||
+          value.parameterTypes.size() != 3)
+        continue;
+      checkedSuffix = value.defaultArguments.size() == 1;
+      for (int mutation = 0; mutation < 3; ++mutation) {
+        auto forged = packDefaults.hir;
+        auto *changed = const_cast<lang::HirFunctionInstance *>(
+            forged.findFunctionInstance(function.id));
+        for (auto &input : changed->body.values)
+          if (input.id == value.id) {
+            if (mutation == 0)
+              input.defaultArguments.clear();
+            if (mutation == 1)
+              input.defaultArguments[0] = input.operands.front();
+            if (mutation == 2)
+              input.defaultArguments.push_back(input.defaultArguments[0]);
+          }
+        if (lang::verifyHirProgramPlans(packDefaults.semantics, forged)
+                .valid()) {
+          std::cerr << "malformed declaration default suffix accepted\n";
+          return 1;
+        }
+      }
+    }
+  }
+  bool checkedFlattened = false;
+  for (const auto &function : packDefaults.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &call : block.instructions) {
+        if (call.intrinsic != lang::IntrinsicKind::AllocateUniqueOwner ||
+            call.operands.size() != 3)
+          continue;
+        checkedFlattened = true;
+        for (std::size_t index = 0; index < 3; ++index) {
+          const auto *argument =
+              function.body.findValue(call.operands[index].value);
+          const lang::MirInstruction *stage = nullptr;
+          for (const auto &candidateBlock : function.body.blocks)
+            for (const auto &input : candidateBlock.instructions)
+              if (argument && input.id == argument->definition)
+                stage = &input;
+          if (!stage || stage->kind != lang::MirInstructionKind::CallInput ||
+              stage->callInputIndex != index ||
+              stage->defaultArgument != (index == 2)) {
+            std::cerr << "pack/default parameter indices or provenance lost\n";
+            return 1;
+          }
+        }
+        for (bool conditional : {false, true}) {
+          auto forged = packDefaults.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              forged.findFunctionInstance(function.id));
+          bool altered = false;
+          for (auto &changedBlock : changed->body.blocks)
+            for (auto &input : changedBlock.instructions)
+              if (input.id == call.id)
+                for (auto event = input.lifecycle.begin();
+                     event != input.lifecycle.end(); ++event)
+                  if (event->kind == lang::MirLifecycleEventKind::TransferOut) {
+                    if (conditional)
+                      event->conditional = true;
+                    else
+                      input.lifecycle.erase(event);
+                    altered = true;
+                    break;
+                  }
+          if (!altered || lang::verifyMirProgram(forged).valid()) {
+            std::cerr << "pack/default prepared transfer lost verification\n";
+            return 1;
+          }
+        }
+      }
+  if (!checkedSuffix || !checkedFlattened) {
+    std::cerr << "pack/default fixture lost its selected allocation\n";
+    return 1;
+  }
+  const auto declarationDefaults =
+      lang::Frontend().analyze("/tmp/gti-declaration-default.gti", R"(
+class Runner {
+public:
+  static int Create(int count = 3);
+  int Run(int count = 7);
+};
+int Runner::Create(int renamed) { return renamed; }
+int Runner::Run(int renamed) { return renamed; }
+int main() { Runner runner{}; return Runner::Create() + runner.Run(); }
+)");
+  if (!declarationDefaults.canGenerateCode()) {
+    for (const auto &diagnostic : declarationDefaults.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return 1;
+  }
+  std::size_t checkedDeclarations = 0;
+  for (const auto &function : declarationDefaults.hir.functionInstances()) {
+    for (const auto &value : function.body.values) {
+      if (value.defaultArguments.empty() || !value.functionTarget)
+        continue;
+      const auto *target =
+          declarationDefaults.hir.findFunctionInstance(*value.functionTarget);
+      const auto *api =
+          declarationDefaults.semantics.findFunction(target->declaration);
+      if (!api || !api->declaration || !api->definition ||
+          target->source != api->definition ||
+          target->source->parameters().front().defaultArgument ||
+          !api->declaration->parameters().front().defaultArgument) {
+        std::cerr << "default contract must belong to API, not body syntax\n";
+        return 1;
+      }
+      ++checkedDeclarations;
+      const lang::HirFunctionInstance *other = nullptr;
+      for (const auto &candidate :
+           declarationDefaults.hir.functionInstances()) {
+        const auto *otherApi =
+            declarationDefaults.semantics.findFunction(candidate.declaration);
+        if (candidate.id != target->id && otherApi && otherApi->definition &&
+            otherApi->declaration->parameters().size() == 1 &&
+            otherApi->declaration->parameters().front().defaultArgument)
+          other = &candidate;
+      }
+      if (!other)
+        return 1;
+      const auto *otherApi =
+          declarationDefaults.semantics.findFunction(other->declaration);
+      for (int mutation = 0; mutation != 3; ++mutation) {
+        auto forged = declarationDefaults.hir;
+        auto *changed = const_cast<lang::HirFunctionInstance *>(
+            forged.findFunctionInstance(function.id));
+        for (auto &input : changed->body.values) {
+          if (mutation == 0 && input.id == value.defaultArguments.front())
+            input.source = otherApi->declaration->parameters()
+                               .front()
+                               .defaultArgument->expression.get();
+          if (mutation == 1 && input.id == value.id)
+            input.functionTarget = other->id;
+          if (mutation == 2 && input.id == value.id)
+            input.defaultArguments.push_back(input.defaultArguments.front());
+        }
+        if (lang::verifyHirProgramPlans(declarationDefaults.semantics, forged)
+                .valid()) {
+          std::cerr << "foreign or malformed declaration default accepted\n";
+          return 1;
+        }
+      }
+    }
+  }
+  if (checkedDeclarations != 2) {
+    std::cerr
+        << "static and instance defaults must retain exact declarations\n";
+    return 1;
+  }
+  const auto invalidDefault =
+      lang::Frontend().analyze("/tmp/gti-invalid-declaration-default.gti", R"(
+class Runner { public: int Run(int count = "bad"); };
+int Runner::Run(int renamed) { return renamed; }
+int main() { Runner runner{}; return runner.Run(); }
+)");
+  if (invalidDefault.canGenerateCode()) {
+    std::cerr << "a declaration default must retain semantic type checking\n";
+    return 1;
+  }
   return 0;
 }

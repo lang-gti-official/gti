@@ -1,0 +1,43 @@
+#include <std/memory>
+
+enum Error { Invalid, Failed };
+mut int destructions = 0;
+
+class Buffer {
+public:
+  Buffer() = default;
+  ~Buffer() {}
+  virtual int Size() = 0;
+  static expected<std::unique_ptr<Buffer>, Error> Create(int size);
+};
+
+class ConcreteBuffer : public Buffer {
+  mut int size = 0;
+public:
+  ConcreteBuffer() = default;
+  ~ConcreteBuffer() { destructions += 1; }
+  bool Init(int value) mut { this.size = value; return value > 0; }
+  int Size() override { return this.size; }
+};
+
+expected<std::unique_ptr<Buffer>, Error> Buffer::Create(int size) {
+  if (size == 0) { return unexpected(Error::Invalid); }
+  mut auto result = std::make_unique<ConcreteBuffer>();
+  if (!result->Init(size)) { return unexpected(Error::Failed); }
+  return std::move(result).upcast<Buffer>();
+}
+
+int main() {
+  {
+    mut auto made = Buffer::Create(7);
+    if (!made) { return 1; }
+    auto value = std::move(made).value();
+    if (value->Size() != 7) { return 2; }
+  }
+  if (destructions != 1) { return 3; }
+  auto invalid = Buffer::Create(0);
+  if (invalid || invalid.error() != Error::Invalid) { return 4; }
+  auto failed = Buffer::Create(-1);
+  if (failed || failed.error() != Error::Failed) { return 5; }
+  return destructions - 2;
+}

@@ -1083,6 +1083,11 @@ The producer may activate its Value obligation directly after a failure-free
 constructor, or on the success edge of a fallible call. Both forms keep the
 payload in its local slot while later parameter cleanup runs; a failure-free
 constructor does not justify publishing early across a fallible destructor.
+Ordinary source member calls, including consuming (`&&`) receivers, use this
+same payload-return proof. A recorded invocation capability must agree with
+the selected concrete member's receiver mutability and retain an actual
+receiver; it is not grounds for rejecting an otherwise valid owning return.
+No special rule is attached to ownership-wrapper conversions or upcasts.
 
 A failure-free source call returning a complete owning Expected likewise uses
 the existing exact returned-call-result slot proof. Its value activation and
@@ -1536,6 +1541,23 @@ this representation-only slot. Constructors construct in place; status-returning
 source calls publish only on their MIR success edge.
 The field load retires the passive shell before slot reuse, including in loops.
 Transfer consumers still require movability independently.
+
+A constructed or returned owning value may replace a field reached through a
+checked mutable reference parameter. Its leading dereference must resolve to
+the exact reference carrier and mutable loan already admitted for whole-referent
+assignment. The remaining path uses the ordinary concrete field rows, checking
+every containing field's mutability. Such borrowed referents may be initially
+available on function entry and acquire no second drop obligation; replacement
+still destroys the old value and transfers the staged value exactly once.
+Raw pointers and read-only carriers do not gain this permission.
+
+A virtual call returning an owning expected result uses the same exact binding
+or value-rooted publication slot as a static call. The selected virtual family
+supplies the checked failure contract, including a pure-virtual declaration
+target; a concrete source body on that target is not required. The fresh
+expected receiver shell retains its own success activation and once-only drop
+when a caller immediately extracts its payload. Dispatch identity, receiver,
+signature, Invoke and publication transfers remain independently verified.
 
 A failure-free source call has no Invoke edge: MIR activates its result's
 value obligation with the call's own final `Initialize` event, after any
@@ -2168,7 +2190,11 @@ The C++ plan emits this body's admitted status constructor instead of a native
 `= default` operation that would call a missing ordinary base entry. Trivial
 and cleanup-owning bases use the same `InitializeBase` publication contract;
 the rollback record retains the base's exact cleanup requirement. No terminal
-adapter or native exception supplies the failure path. A source destructor
+adapter or native exception supplies the failure path. A base cleanup that
+cannot raise a defined failure is emitted with a null failure-record
+argument. Only a fallible base rollback consumes the body's secondary cleanup
+record and its paired failure edge; a non-failing rollback neither allocates
+nor references that optional record. A source destructor
 does not prevent this base-only generated schedule. Derived instance fields,
 generic owners/bases, constructor default arguments and
 generated-base chains remain outside this generated-body slice and retain
@@ -2515,15 +2541,21 @@ do not use this passive route.
 
 An exact by-value parameter copy may also publish one field through the native
 member-initializer list when the copied class has generated copy/destruction,
-only passive scalar or enum state, no state-bearing base, and no active cleanup.
+only recursively passive scalar, enum, array or generated-record state, no
+state-bearing base, and no active cleanup.
 This MIR shape carries one reachable parameter `Load`, one matching initializer
 metadata row, an exact field `Initialize`, and one full-expression boundary;
 the copied parameter's native scope destruction represents its trivial MIR
 drop. The scalar copy route, including passive raw-pointer value copies,
 requires the same explicit `Load`/`Initialize` pair. Copying a raw pointer
 introduces no dereference, loan, or ownership authority. Custom lifecycle,
-extra uses, forged ownership, ambiguous fields, and mixed initializer schedules
-fail closed.
+extra uses, forged ownership and ambiguous fields fail closed. Several such
+copies may precede body-staged owned fields when their exact Load/Initialize/
+boundary triples form a contiguous declaration-ordered entry prefix. Borrowed
+carriers retain their additional publication/loan-end witness. The prefix may
+not cross base construction, computations, later owned publication or failure
+edges. Native initialization realizes only that proved prefix; subsequent owned
+fields remain empty until their original MIR publication and rollback execute.
 
 A shared-reference carrier with generated, observation-free destruction may
 retain its bound native shell during constructor rollback. This is not an

@@ -1,5 +1,93 @@
 # Compiler Verification
 
+## Mixed constructor parameter publication (#114)
+
+`mixed_constructor_parameter_runtime` composes two copied nested passive fields
+with an owning field in eight native modes, including disabled elision and
+sanitizers. Copy independence, later-argument failure, constructor failure and
+secondary cleanup failure retain exact observable order. The corresponding
+emitter test rejects reordered prefix loads/boundaries and a missing boundary;
+native prefix admission cannot bypass body-ordered owned-field cleanup.
+
+## Owning field replacement through checked references (#116)
+
+`reference_owned_field_replacement_runtime` exercises direct and nested owned
+fields through mutable reference parameters, successful replacement, failed
+construction, old-value cleanup failure and secondary staged-value failure.
+Repeated scalar writes and member reads use occurrence-local places for the
+same reference before and after replacement; their exact carrier and referent
+type must agree without requiring one globally unique dereference-place ID.
+Eight native modes cover C++20/C++23, O0/O1/O3, no-elide and ASan/UBSan.
+`testReferenceOwnedFieldReplacement` rejects read-only reference or loan access,
+raw-pointer substitution, immutable intermediate/leaf fields, inconsistent
+referent prefixes and erased publication metadata.
+
+## Virtual owning expected results (#109)
+
+`virtual_expected_owning_return_runtime` covers pure-virtual production of a
+user-defined owning payload, named and fresh consuming extraction, ordinary
+expected errors, producer failure and secondary caller-cleanup failure. The
+eight-mode matrix includes C++20/C++23, O0/O1/O3, disabled elision and ASan/UBSan.
+`testVirtualExpectedOwningResult` checks both publication schedules and rejects
+forged virtual owner/propagation/receiver and missing result activation.
+
+## Constructor base rollback failure-record selection (#101)
+
+`base_rollback_record_runtime` covers defaulted derived constructors whose
+fallible field initializer may roll back a non-failing or fallible base.
+C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan observations check normal virtual
+destruction, first field failure, secondary base-cleanup failure and primary
+destructor failure. The derived destructor never runs for failed construction;
+the completed base is cleaned exactly once. `testBaseRollbackFailureRecord`
+checks that only a fallible base uses the declared secondary record and rejects
+four mutations to the rollback cleanup/failure contract.
+
+## Consuming member results at owning expected return boundaries (#99)
+
+`expected_consuming_return_runtime` covers a user-defined owning class returned
+directly by a consuming source member into `expected`, and the motivating
+polymorphic owner factory. It runs C++20/C++23 at O0/O1/O3, disabled elision,
+and ASan/UBSan. Exact observations cover successful publication, callee failure,
+pending-result cleanup failure, secondary cleanup failure, ordinary expected
+errors, virtual dispatch and once-only concrete destruction. The text-emitter
+test `testExpectedConsumingMemberReturn` checks the exact concrete receiver
+capability and rejects five malformed receiver/activation schedules. This is
+representation admission for already-verified source calls, not a new language
+conversion or a special rule for `unique_ptr`.
+
+## Allocation constructor defaults
+
+`allocation_default_argument_runtime` exercises passive and owning default
+constructor arguments through unique allocation in eight native modes, including
+disabled copy elision and sanitizers. It retains explicit-pack and stack
+controls, and checks observable parameter/caller cleanup after later-default
+and constructor-body failure. `mir_full_expression` checks the default's HIR
+plan and exact MIR prepared parameter, rejecting missing call identity, wrong
+parameter index and erased cleanup identity. Nonempty packs followed by selected
+constructor defaults retain their exact HIR suffix and flattened MIR parameter
+indices. Additional mutations erase, substitute or duplicate that suffix and
+remove or conditionalize the owning parameter transfer. The native matrix also
+checks one- and two-element packs before passive defaults and observable owned
+default cleanup after later-argument and constructor failures (issue #110).
+
+`declaration_owned_defaults_runtime` checks out-of-line static and instance
+definitions whose API declaration supplies omitted arguments. Eight native
+modes preserve owning-default evaluation order and cleanup after later-default
+or function-body failure. `mir_full_expression` rejects foreign declaration
+expression identities, substituted selected targets and duplicate suffixes;
+an ill-typed declaration default remains a semantic error (issue #119).
+
+## Defaulted owning base construction
+
+`generated_base_constructor_runtime` covers defaulted multilevel owning bases,
+nonmoving nested owners, generic base/derived instances, stack and unique-owner
+construction, and exact cleanup after base-field initialization failure. The
+eight-mode native matrix includes C++20/C++23, O0/O1/O3, disabled elision and
+ASan/UBSan. `testDefaultedOwningBaseSchedule` verifies the concrete HIR base
+schedule and rejects erased targets, wrong generated status, self-base/target
+identities and omitted initialization edges. Existing base-constructor HIR/MIR
+mutations remain active after unifying base-only and field-default schedules.
+
 ## Expected pointer boundaries and owning field replacement
 
 `raw_receiver_owned_argument_runtime` runs raw-pointee receiver calls with
