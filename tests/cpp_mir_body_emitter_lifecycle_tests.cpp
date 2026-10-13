@@ -4294,7 +4294,8 @@ void testSourceDestructorOwningFieldCleanup() {
 void testOwningBaseConstructorStatus() {
   for (const auto fixtureName :
        {"inherited_unique_allocation.gti", "generated_base_constructor.gti",
-        "generated_base_owner_constructor.gti"}) {
+        "generated_base_owner_constructor.gti",
+        "polymorphic_owning_base_constructor.gti"}) {
     const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                          "fixtures" / fixtureName;
     std::ifstream input(fixture);
@@ -4363,6 +4364,42 @@ void testOwningBaseConstructorStatus() {
     }
     std::size_t selected = 0;
     for (const auto &constructor : frontend.mir.constructorInstances()) {
+      const auto *constructorOwner =
+          frontend.mir.findClassInstance(constructor.owner);
+      if (constructorOwner && constructorOwner->polymorphic &&
+          constructorOwner->destructor) {
+        const lang::CppMirBodyEmissionMap map(
+            buildRows(frontend, frontend.mir));
+        const lang::MirBodyAddress address{
+            .kind = lang::MirBodyKind::Constructor, .owner = constructor.id};
+        const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+        expect(emitter.supportsFailureBodyText(address),
+               "an abstract or concrete polymorphic owner retains guarded "
+               "source cleanup during status construction");
+        const auto text =
+            emitter.emitFailureBodyText(address, "guarded-owning-base-v1", 1);
+        const auto guard = "(*this).__gti_lifecycle_active_" +
+                           std::to_string(constructorOwner->declaration);
+        expect(text.emitted() &&
+                   text.text.find(guard + " = false;") != std::string::npos &&
+                   text.text.find(guard + " = true;") != std::string::npos,
+               "each declaring class disarms its own destructor until success");
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto forged = frontend.mir;
+          auto *changed = const_cast<lang::MirClassInstance *>(
+              forged.findClassInstance(constructor.owner));
+          if (mutation == 0)
+            changed->requiresActiveDropState = false;
+          else if (mutation == 1)
+            changed->destructorStatus = lang::SpecialMemberStatus::Generated;
+          else
+            changed->fieldDropOrder.clear();
+          expect(!lang::CppMirBodyEmitter(forged, map)
+                      .supportsFailureBodyText(address),
+                 "polymorphic rollback must retain its guard, declared "
+                 "destructor identity and exact reverse field cleanup");
+        }
+      }
       const auto *entry = constructor.body.findBlock(constructor.body.entry);
       if (!entry || entry->instructions.empty() ||
           entry->instructions.front().kind !=
