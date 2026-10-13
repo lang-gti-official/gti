@@ -1064,10 +1064,10 @@ void testFixtureSharesExits() {
   }
 }
 
-void testProgramConstantExitsShare() {
-  // Returning a program constant from several exits shares their cleanup
-  // like any scalar. The shared tail's reload names no source value, so the
-  // verifier never takes it for a substituted constant lowered as a load.
+void testProgramConstantExitsStayPrivate() {
+  // A substituted program constant has exactly one MIR materialization, so
+  // an exit returning one keeps its own cleanup instead of a shared tail's
+  // reload. The body's other exits still share, and nothing falls back.
   lang::MirLowerer::resetCleanupSharingStatistics();
   const auto frontend = analyze("shared-exit-constant.gti", R"(
 constexpr int32_t limit = 7;
@@ -1080,6 +1080,7 @@ public:
 int32_t clamp(int32_t p) {
   Guard a = Guard(1);
   if (p > limit) { return limit; }
+  if (p < 0) { return 0; }
   Guard b = Guard(2);
   if (p == limit) { return limit; }
   return p;
@@ -1093,9 +1094,11 @@ int main() { return clamp(3) - 3; }
     return;
   }
   expectNoExitSharingFallback("program-constant exits");
+  expect(lang::MirLowerer::cleanupSharingStatistics().exitSharingBodies > 0,
+         "clamp's other exits share cleanup");
   const lang::MirBody *body = functionBody(frontend, "clamp");
-  expect(body != nullptr && returnTerminators(*body) == 1,
-         "clamp's exits share one return");
+  expect(body != nullptr && returnTerminators(*body) == 3,
+         "clamp keeps a return per constant exit and one shared return");
 }
 
 } // namespace
@@ -1112,7 +1115,7 @@ int main() {
   testSharedExitVerifierContract();
   testSharedLoanEndsVerifierContract();
   testFixtureSharesExits();
-  testProgramConstantExitsShare();
+  testProgramConstantExitsStayPrivate();
   if (!passed) {
     return 1;
   }
