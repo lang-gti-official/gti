@@ -1605,7 +1605,8 @@ private:
   [[nodiscard]] bool
   isSupportedConstexprType(const SemanticType &type,
                            bool allowDependent = false,
-                           std::vector<SemanticType> *visiting = nullptr) const;
+                           std::vector<SemanticType> *visiting = nullptr,
+                           bool transient = false) const;
 
   bool validateConstexprFunction(const FunctionDecl &function,
                                  bool methodDeclaration,
