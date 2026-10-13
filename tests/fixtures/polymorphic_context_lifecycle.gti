@@ -1,0 +1,70 @@
+import std.memory;
+import std.utility;
+import std.string;
+import std.vector;
+enum Error { Failed };
+interface Context { expected<void, Error> Init() mut; void SwapBuffers(); };
+class ConcreteContext : public Context {
+  int identity;
+  bool fail;
+public:
+  ConcreteContext(int identity, bool fail) : identity(identity), fail(fail) {}
+  ~ConcreteContext() { std::println(this.identity); }
+  expected<void, Error> Init() mut override {
+    if (this.fail) { return unexpected(Error::Failed); }
+    return;
+  }
+  void SwapBuffers() override { std::println(10 + this.identity); }
+};
+interface WindowBase { expected<void, Error> Init() mut; expected<void, Error> Shutdown() mut; void OnUpdate(); };
+class Window : public WindowBase {
+  mut std::unique_ptr<Context> context = nullptr;
+  mut int nextIdentity = 1;
+  mut bool failNext = false;
+public:
+  Window() = default;
+  ~Window() { std::println(99); [[discard]] this.Shutdown(); }
+  void FailNext() mut { this.failNext = true; }
+  expected<void, Error> Init() mut override {
+    int identity = this.nextIdentity;
+    this.nextIdentity += 1;
+    mut auto concrete = std::make_unique<ConcreteContext>(identity, this.failNext);
+    auto result = concrete->Init();
+    if (!result) { [[discard]] this.Shutdown(); return unexpected(Error::Failed); }
+    this.context = concrete.upcast<Context>();
+    return;
+  }
+  expected<void, Error> Shutdown() mut override { this.context.reset(); return; }
+  void OnUpdate() override { if (this.context) { this.context->SwapBuffers(); } }
+};
+int main(int argc, std::vector<std::string> argv) {
+  mut Window window{};
+  if (argc == 5) {
+    window.FailNext();
+    auto failed = window.Init();
+    return failed ? 3 : 0;
+  }
+  auto initialized = window.Init();
+  if (!initialized) { return 1; }
+  window.OnUpdate();
+  // Destructor-only cleanup must keep both the outer object and the exact
+  // concrete context armed, even though the handle is interface-typed.
+  if (argc == 2) { return 0; }
+  if (argc == 4) {
+    auto replaced = window.Init();
+    if (!replaced) { return 4; }
+    window.OnUpdate();
+  }
+  if (argc == 6) {
+    window.FailNext();
+    auto failed = window.Init();
+    return failed ? 5 : 0;
+  }
+  auto stopped = window.Shutdown();
+  if (!stopped) { return 2; }
+  if (argc == 3) {
+    auto repeated = window.Shutdown();
+    if (!repeated) { return 6; }
+  }
+  return 0;
+}
