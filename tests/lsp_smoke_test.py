@@ -9801,10 +9801,14 @@ def test_preamble_across_snapshots(executable, root):
             library_source + "\nnamespace std { int edited_unit() { return 1; } }\n",
             expect_clean=False,
         )
+        # Opening the library re-analyses its dependant; that analysis or the
+        # next edit builds the new preamble, and the latest one adopts it.
         session.send(full_change(uri, 4, edited))
-        fourth = wait_for_analyses(4)[-1]
-        assert fourth["preambleBuilds"] == 1, fourth
-        assert fourth["preambleCache"]["entries"] >= 1, fourth
+        publication_for(session, uri, 4)
+        later = wait_for_analyses(4)[3:]
+        assert any(record["preambleBuilds"] == 1 for record in later), later
+        assert later[-1]["preambleAdoptions"] == 1, later[-1]
+        assert later[-1]["preambleCache"]["entries"] >= 1, later[-1]
         assert queries() == (tokens, hover, definition)
     finally:
         session.close()
