@@ -2996,6 +2996,18 @@ its exact argument index, call site, type, prepared slot and obligation, once
 each. Those input handoffs neither activate the result early nor discharge its
 replacement-failure cleanup.
 
+A borrowed by-value constructor input may instead retain a temporary stored
+dependency produced by an ordinary call. Its exact ordered argument stage,
+single consumer, type, read-only nonescaping dependency and producer identity
+tie that loan to the construction. After publication, the backend requires
+every such input dependency to retire exactly once before the moved-from
+staging shell is dropped. Destination-loan retirement remains independent.
+No unrelated instruction or loan ending is skipped; stored carriers, escaping
+or lifecycle-bound dependencies and extra argument uses are not admitted by
+this schedule. MIR remains authoritative for the complete loan interval and
+all constructor/replacement failure edges. This preserves ordinary owning
+construction from views without naming a library constructor or view type.
+
 A later terminal argument can prevent the enclosing invocation entirely.
 The backend reuses MIR's full-expression/CFG proof for a zero-use prepared
 input, then independently checks that every intervening failure edge destroys

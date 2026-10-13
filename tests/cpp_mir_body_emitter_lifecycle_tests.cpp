@@ -2773,6 +2773,92 @@ int main() {
   }
 }
 
+void testConstructorBorrowedInputReplacement() {
+  const auto frontend =
+      analyzeWithStandardLibrary("constructor-input-loan.gti", R"(
+#include <std/string>
+struct Item {
+  mut std::string text;
+  Item(std::string_view input) : text(std::string(input)) {}
+};
+int main() {
+  std::string source{"new"};
+  mut Item target{"old"};
+  target = Item(source.view());
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(), "borrowed constructor replacement lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::HirFunctionInstanceId target = 0;
+  for (const auto &function : frontend.hir.functionInstances())
+    if (function.source && function.source->name().lexeme == "main")
+      target = function.id;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = target};
+  const auto *body = lang::findMirBody(frontend.mir, address);
+  expect(body && body->loans.size() == 1,
+         "replacement retains exactly the temporary input loan");
+  if (!body || body->loans.size() != 1)
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.supportsFailureBodyText(address),
+         "owning prvalue replacement retires the constructor's input loan");
+  lang::MirInstructionId endId = 0, dropId = 0;
+  for (const auto &block : body->blocks) {
+    if (block.activeFailure != 0)
+      continue;
+    for (std::size_t index = 0; index + 1 < block.instructions.size(); ++index)
+      if (block.instructions[index].kind ==
+              lang::MirInstructionKind::EndBorrow &&
+          block.instructions[index + 1].kind ==
+              lang::MirInstructionKind::Drop) {
+        endId = block.instructions[index].id;
+        dropId = block.instructions[index + 1].id;
+      }
+  }
+  expect(endId && dropId, "input retirement precedes moved-from shell cleanup");
+  if (!endId || !dropId)
+    return;
+  constexpr std::array<std::string_view, 6> reasons = {
+      "missing constructor-input retirement rejects",
+      "constructor-input retirement after shell cleanup rejects",
+      "unrelated input loan provenance rejects",
+      "escaping input loan cannot be retired as a temporary",
+      "effectful retirement rejects",
+      "missing moved-from shell cleanup rejects"};
+  for (int mutation = 0; mutation < 6; ++mutation) {
+    auto forged = frontend.mir;
+    auto *changedBody = lang::findMirBody(forged, address);
+    if (mutation == 2)
+      changedBody->loans.front().producedBy = 0;
+    if (mutation == 3)
+      changedBody->loans.front().escapes = true;
+    for (auto &block : changedBody->blocks) {
+      auto end =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const auto &i) { return i.id == endId; });
+      auto drop =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const auto &i) { return i.id == dropId; });
+      if (end == block.instructions.end())
+        continue;
+      if (mutation == 0)
+        block.instructions.erase(end);
+      else if (mutation == 1 && drop != block.instructions.end())
+        std::iter_swap(end, drop);
+      else if (mutation == 4)
+        end->fullExpressionEnd = 999;
+      else if (mutation == 5 && drop != block.instructions.end())
+        block.instructions.erase(drop);
+    }
+    const lang::CppMirBodyEmitter forgedEmitter(forged, map);
+    expect(!forgedEmitter.supportsFailureBodyText(address), reasons[mutation]);
+  }
+}
+
 void testPreparedConstructorReplacement() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/recursive_cleanup_failure.gti";
@@ -13787,6 +13873,8 @@ constexpr NamedTest kTests[] = {
     {"testPreparedConstructorReplacement", testPreparedConstructorReplacement},
     {"testConstructedPrvalueCheckedFieldReplacement",
      testConstructedPrvalueCheckedFieldReplacement},
+    {"testConstructorBorrowedInputReplacement",
+     testConstructorBorrowedInputReplacement},
     {"testNonFailingOwningDeclarationInitializer",
      testNonFailingOwningDeclarationInitializer},
     {"testGeneratedDeclarationFailureRollback",

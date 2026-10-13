@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.423.8 — Borrowed inputs during owning replacement
+
+- Fix an internal compiler error when a freshly constructed owning object
+  replaces an existing value using a temporary borrowed constructor argument,
+  such as `target = Item(source.view())`. Exact input-loan retirement and
+  constructor/replacement cleanup remain checked. Covers issue #93.
+
 ## 0.423.3 — Forwarded base constructor views
 
 - Fix an internal compiler error when a constructor forwards an incoming
