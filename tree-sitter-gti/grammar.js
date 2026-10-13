@@ -655,6 +655,7 @@ module.exports = grammar({
         ),
         seq(
           optional(field("virtual", "virtual")),
+          optional(field("constant", "constexpr")),
           "operator",
           field("conversion_type", "bool"),
           field("parameters", $.parameter_clause),
