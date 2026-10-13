@@ -9,12 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.423.3 — Payload enum parameter packs
+## 0.423.4 — Payload enum parameter packs
 
 - Preserve concrete enum traits when forwarding parameter packs, fixing an
   internal compiler error in owner construction and deque insertion with
   payload enums. Enum values, generic identities, and owner cleanup retain
   their existing language behavior. This fixes issue #73.
+
+## 0.423.3 — Forwarded base constructor views
+
+- Fix an internal compiler error when a constructor forwards an incoming
+  string view to an owning base constructor. The temporary argument dependency
+  remains checked through base construction, with exact cleanup on base or
+  derived construction failure. Covers issue #80.
 
 ## 0.423.2 — Owning base and field constructor composition
 
