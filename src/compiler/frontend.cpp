@@ -478,6 +478,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         trustedBodies);
     SemanticVisitor &semantic = *semanticOwner;
     semantic.requireFunctionBodies(requiredBodies);
+    if (options.instanceCache != nullptr &&
+        trustedBodies == TrustedBodyAnalysis::Reachable)
+      semantic.useInstanceAnalysisCache(options.instanceCache,
+                                        cacheContext(options));
     if (options.workMetrics != nullptr && attempt == 0) {
       for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
         if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId)) {
@@ -585,8 +589,11 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       for (const FunctionDecl *body : semantic.lateDemandedBodies())
         hir.requiredSemanticBodies.push_back(body);
     }
-    if (hir.requiredSemanticBodies.empty())
+    if (hir.requiredSemanticBodies.empty()) {
+      // Final HIR: only now may its instance analyses serve later snapshots.
+      semantic.publishInstanceAnalyses();
       break;
+    }
     // Bound repeated registration/instantiation work. Complete checking is a
     // conservative fallback, not permission to emit an unchecked body.
     if (trustedBodies == TrustedBodyAnalysis::Complete)

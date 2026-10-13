@@ -41,6 +41,19 @@ struct FrontendWorkMetrics {
   std::size_t hirMicroseconds = 0;
   // Function instances HIR lowered, including any beyond the reachable prefix.
   std::size_t hirFunctionInstances = 0;
+  // Concrete instance analyses with an InstanceAnalysisCache: reused from an
+  // earlier snapshot (hits), analysed because no reusable entry existed or an
+  // entry failed validation (misses; `rejected` counts the latter), not
+  // eligible for reuse (an argument names a non-trusted type, or the
+  // declaration is not compiler-trusted), and entries this analysis stored.
+  std::size_t semanticInstanceReuseHits = 0;
+  std::size_t semanticInstanceReuseMisses = 0;
+  std::size_t semanticInstanceReuseRejected = 0;
+  std::size_t semanticInstanceReuseIneligible = 0;
+  std::size_t semanticInstanceReuseStores = 0;
+  // Time spent looking up, validating and copying reusable entries (part of
+  // HIR time, like the analyses they replace).
+  std::size_t semanticInstanceReuseMicroseconds = 0;
   // Instance bodies HIR omitted as library-only; see
   // FrontendOptions::lowerLibraryOnlyInstanceBodies.
   std::size_t hirOmittedInstanceBodies = 0;
@@ -74,6 +87,12 @@ struct FrontendWorkMetrics {
     semanticFinalizationMicroseconds = 0;
     hirMicroseconds = 0;
     hirFunctionInstances = 0;
+    semanticInstanceReuseHits = 0;
+    semanticInstanceReuseMisses = 0;
+    semanticInstanceReuseRejected = 0;
+    semanticInstanceReuseIneligible = 0;
+    semanticInstanceReuseStores = 0;
+    semanticInstanceReuseMicroseconds = 0;
     hirOmittedInstanceBodies = 0;
     semanticBorrowSummaryCandidateInspections = 0;
     semanticBorrowSummaryFunctions = 0;

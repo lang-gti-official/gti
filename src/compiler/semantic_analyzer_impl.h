@@ -5,6 +5,7 @@
 #include "diagnostic_registry.h"
 #include "gti/ast_clone.h"
 #include "gti/frontend_work.h"
+#include "gti/instance_analysis_cache.h"
 #include "gti/standard_library.h"
 #include "semantic_diagnostics.h"
 #include "semantic_spelling.h"
@@ -185,6 +186,8 @@ public:
       visitor.catalog.assertUnchangedSinceSeal();
       visitor.semanticModel.beginInstanceDelta(baseModel,
                                                visitor.instanceSymbolCeiling);
+      if (visitor.journalNextInstance)
+        visitor.semanticModel.beginInstanceReuseJournal();
       visitor.diagnostics.clear();
     }
 
@@ -197,6 +200,13 @@ public:
           visitor.semanticModel.database().symbolIdentityCeiling();
       visitor.instanceLambdaCeiling =
           std::max(visitor.instanceLambdaCeiling, visitor.nextLambdaId);
+      // A reusable delta must not carry an identity another snapshot could
+      // assign to something else; these counters restart for every instance.
+      visitor.lastInstanceAllocatedIdentities =
+          visitor.nextGenericParameterId != savedGenericParameterId ||
+          visitor.nextConstructorId != savedConstructorId ||
+          visitor.nextFunctionId != savedFunctionId ||
+          visitor.nextLambdaId != savedLambdaId;
       SemanticInstanceAnalysis result{.model = std::move(visitor.semanticModel),
                                       .diagnostics =
                                           std::move(visitor.diagnostics)};
@@ -289,8 +299,12 @@ public:
   // instance that consulted a pending deferred function is analysed again
   // after that function's late demand, so it never keeps a fact that a body
   // analysed in the pass would have changed.
+  // `finalConsulted`, when given, receives the functions the returned
+  // analysis consulted.
   template <typename Analyze>
-  [[nodiscard]] SemanticInstanceAnalysis withLateDemand(Analyze analyze) {
+  [[nodiscard]] SemanticInstanceAnalysis
+  withLateDemand(Analyze analyze,
+                 std::unordered_set<FunctionId> *finalConsulted = nullptr) {
     if (!lateDemandReady || bodyPhaseActive || instanceAnalysisActive)
       return analyze();
     for (;;) {
@@ -307,9 +321,87 @@ public:
         if (function != nullptr && pendingDeferredBody(function->declaration))
           demanded.push_back(function->declaration);
       }
-      if (demanded.empty() || !analyzeLateDemand(demanded))
+      if (demanded.empty() || !analyzeLateDemand(demanded)) {
+        if (finalConsulted != nullptr)
+          *finalConsulted = std::move(consulted);
         return result;
+      }
     }
+  }
+
+  // ---- Instance reuse ---------------------------------------------------
+  // Bounded (Reachable) analysis may reuse a concrete instance analysis of an
+  // earlier snapshot through an InstanceAnalysisCache owned by the frontend
+  // caller. Only instances of compiler-trusted declarations whose arguments
+  // name only compiler-trusted types qualify, and only within a generation
+  // whose trusted units and registration identities are identical. A reused
+  // delta must also pass its own journal: every base identity it read still
+  // denotes the same declaration, its own identity range is free, and every
+  // function it consulted is analysed (pending ones are late-demanded first,
+  // exactly as a fresh analysis would). Reuse never replaces analysis with a
+  // second path: the delta is this analyzer's own earlier output.
+  std::shared_ptr<InstanceAnalysisCache> instanceCache;
+  std::string instanceCacheContext;
+  enum class InstanceReuseState { Unprepared, Active, Unavailable };
+  InstanceReuseState instanceReuseState = InstanceReuseState::Unprepared;
+  InstanceAnalysisCache::Generation instanceGeneration;
+  const Program *analyzedProgram = nullptr;
+  // Symbol identities registration assigned (stage 1-7); body analysis
+  // continues above it.
+  SymbolId registrationSymbolCeiling = 0;
+  bool journalNextInstance = false;
+  bool lastInstanceAllocatedIdentities = false;
+  // Instance-delta identity ranges (first, last) live in this request.
+  std::vector<std::pair<SymbolId, SymbolId>> instanceSymbolRanges;
+  std::vector<std::pair<InstanceAnalysisKey, InstanceAnalysisCacheEntry>>
+      pendingInstanceEntries;
+
+  void resetInstanceReuse();
+  [[nodiscard]] bool prepareInstanceReuse();
+  [[nodiscard]] std::uint64_t trustedRegistrationFingerprint() const;
+  [[nodiscard]] bool trustedUnit(SourceUnitId unit) const;
+  [[nodiscard]] bool reusableInstanceType(const SemanticType &type) const;
+  [[nodiscard]] bool reusableInstanceKey(const InstanceAnalysisKey &key);
+  [[nodiscard]] const Stmt *
+  instanceDeclarationSyntax(const InstanceAnalysisKey &key) const;
+  [[nodiscard]] const ConstructorInfo *
+  constructorInfoById(ConstructorId id, bool *generated = nullptr) const;
+  [[nodiscard]] bool instanceRangeFree(const SemanticModel &delta) const;
+  void reserveInstanceRange(const SemanticModel &delta);
+  [[nodiscard]] std::optional<SemanticInstanceAnalysis>
+  reuseInstance(const InstanceAnalysisKey &key);
+  void retainInstance(InstanceAnalysisKey key,
+                      SemanticInstanceAnalysis &analysis,
+                      const std::unordered_set<FunctionId> &consulted);
+  void publishInstanceAnalyses();
+
+  template <typename Analyze>
+  [[nodiscard]] SemanticInstanceAnalysis
+  analyzeReusableInstance(InstanceAnalysisKey key, Analyze analyze) {
+    if (!lateDemandReady || bodyPhaseActive || instanceAnalysisActive ||
+        !prepareInstanceReuse())
+      return withLateDemand(analyze);
+    if (!reusableInstanceKey(key)) {
+      if (workMetrics != nullptr)
+        ++workMetrics->semanticInstanceReuseIneligible;
+      SemanticInstanceAnalysis result = withLateDemand(analyze);
+      reserveInstanceRange(result.model);
+      return result;
+    }
+    if (auto reused = reuseInstance(key)) {
+      if (workMetrics != nullptr)
+        ++workMetrics->semanticInstanceReuseHits;
+      return std::move(*reused);
+    }
+    if (workMetrics != nullptr)
+      ++workMetrics->semanticInstanceReuseMisses;
+    std::unordered_set<FunctionId> consulted;
+    journalNextInstance = true;
+    SemanticInstanceAnalysis result = withLateDemand(analyze, &consulted);
+    journalNextInstance = false;
+    reserveInstanceRange(result.model);
+    retainInstance(std::move(key), result, consulted);
+    return result;
   }
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
