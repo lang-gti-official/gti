@@ -40,6 +40,13 @@ for what minor and patch releases mean.
 - Fix owning field replacement through non-failing reference-returning getters,
   including nested getters, without requiring a spurious failure edge (#88).
 
+## 0.423.4 — Payload enum parameter packs
+
+- Preserve concrete enum traits when forwarding parameter packs, fixing an
+  internal compiler error in owner construction and deque insertion with
+  payload enums. Enum values, generic identities, and owner cleanup retain
+  their existing language behavior. This fixes issue #73.
+
 ## 0.423.3 — Forwarded base constructor views
 
 - Fix an internal compiler error when a constructor forwards an incoming

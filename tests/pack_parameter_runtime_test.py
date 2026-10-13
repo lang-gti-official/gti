@@ -31,7 +31,6 @@ def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: pack_parameter_runtime_test.py <gti>")
     compiler = pathlib.Path(sys.argv[1]).resolve()
-    fixtures = pathlib.Path(__file__).parent / "fixtures"
     original = "pack_parameter_cleanup_failure"
     forwarded = "pack_parameter_lifetimes"
     constructed = "pack_constructor_lifetimes"
@@ -69,6 +68,11 @@ def main():
             (70, "2\n1\n", secondary(constructed, 19, 11)),
         ],
     }
+    run_cases(compiler, cases)
+
+
+def run_cases(compiler, cases):
+    fixtures = pathlib.Path(__file__).parent / "fixtures"
     modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"])
              for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
     modes.append(("asan-ubsan", ["--std", "c++23", "-O1"]))
