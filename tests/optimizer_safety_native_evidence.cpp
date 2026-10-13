@@ -487,6 +487,99 @@ void testBoundedLogicalSizeEmission(const std::string &compiler,
          "behavior");
 }
 
+// Lengths and indices come from argc, so no interval proves a check; only
+// the dominating comparison between each check's operands can. Phase 1 also
+// reaches a non-strict guard that admits `index == live`, whose check must
+// fail exactly as it does unoptimized.
+constexpr std::string_view relationalBoundsSource = R"(
+#include <std/vector>
+#include <std/string>
+
+uint64_t looped(uint64_t live) {
+  mut uint64_t total = 0;
+  for (mut uint64_t index = 0; index < live; index++) {
+    gti_internal::index_bounds_check(index, live);
+    total += index;
+  }
+  return total;
+}
+
+uint64_t guarded(uint64_t index, uint64_t live) {
+  if (live > index) {
+    gti_internal::index_bounds_check(index, live + uint64_t(1));
+    return index;
+  }
+  return uint64_t(0);
+}
+
+uint64_t non_strict(uint64_t index, uint64_t live) {
+  if (index <= live) {
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  uint64_t phase = uint64_t(argc) - uint64_t(1);
+  uint64_t live = uint64_t(argc) * uint64_t(5);
+  std::println(looped(live));
+  std::println(guarded(live - uint64_t(1), live));
+  if (phase == uint64_t(1)) {
+    std::println(non_strict(live, live));
+  }
+  return 0;
+}
+)";
+
+void testRelationalBoundsEmission(const std::string &compiler,
+                                  const std::filesystem::path &directory) {
+  const lang::FrontendResult frontend = analyzeTrusted(relationalBoundsSource);
+  expect(frontend.canGenerateCode(),
+         "relational bounds fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    return;
+  }
+
+  const EmittedProgram o0 = emitProgram(frontend, lang::OptimizationLevel::O0,
+                                        directory, "relational-o0");
+  const EmittedProgram o2 = emitProgram(frontend, lang::OptimizationLevel::O2,
+                                        directory, "relational-o2");
+  constexpr std::string_view checkedBounds =
+      "::gti_internal::backend::mir_checked_index_bounds_v1(";
+  // The whole program also carries library checks other proofs may remove;
+  // optimizer_safety pins the per-function counts.
+  expect(occurrences(o0.cpp, checkedBounds) >=
+             occurrences(o2.cpp, checkedBounds) + 2,
+         "O2 should emit no target operation for the two relationally proved "
+         "checks (O0 " +
+             std::to_string(occurrences(o0.cpp, checkedBounds)) + ", O2 " +
+             std::to_string(occurrences(o2.cpp, checkedBounds)) + ")");
+
+  const std::filesystem::path o0Binary =
+      build(compiler, o0.artifact, directory, "relational-o0");
+  const std::filesystem::path o2Binary =
+      build(compiler, o2.artifact, directory, "relational-o2");
+  for (const std::string_view arguments : {"", " fail"}) {
+    const std::string suffix = arguments.empty() ? "pass" : "fail";
+    const RunResult baseline =
+        run(o0Binary, directory, "relational-o0-" + suffix, arguments);
+    const RunResult optimized =
+        run(o2Binary, directory, "relational-o2-" + suffix, arguments);
+    expect(baseline.built && optimized.built &&
+               (arguments.empty() ? baseline.exitStatus == 0
+                                  : baseline.exitStatus != 0) &&
+               optimized.exitStatus == baseline.exitStatus &&
+               optimized.stdoutText == baseline.stdoutText &&
+               optimized.stderrText == baseline.stderrText,
+           "relationally discharged checks should preserve native O0 "
+           "behavior, including the retained check's failure (" +
+               suffix + ")");
+  }
+}
+
 void testClosedCallNearMisses() {
   const lang::FrontendResult frontend =
       analyzeTrusted(closedCallNearMissSource);
@@ -678,6 +771,7 @@ int main(int argc, char **argv) {
 
   testClosedCallNearMisses();
   testBoundedLogicalSizeEmission(compiler, directory);
+  testRelationalBoundsEmission(compiler, directory);
   testClosedCallAfterSourceAllocation(compiler, directory);
 
   const lang::FrontendResult frontend = analyzeTrusted(source);

@@ -68,7 +68,7 @@ below retain their technical prerequisites under the revised admission policy:
 | RT-2 contextual narrowing | Prepare a bounded post-fixpoint refinement, re-establishing conservative coverage of **every** reachable call context. Current closed-call contexts widen but do not narrow; simply replacing widened inputs with attractive return ranges is not a proof. Require independent replay, conflicting callers/recursion/budget negatives, and loop-carried performance validation at acceptance. |
 | RT-3 conversions/division/shifts | A general proof family, beginning with exact integral conversion domains. Each failure outcome needs its own rule and replay: zero and signed-minimum/-1 for division, and all GTI shift preconditions, not merely a bounded shift count. Require boundary negatives and representative byte/text performance validation; a prior measured gain is not required to broaden the family. |
 | RT-4 refreshed infallibility | Structural failure-freedom of canonical MIR and the backend's plain-call vocabulary are implemented; measured neutral at run time. The remaining slice requires effect derivation on optimized MIR plus an independently replayed Invoke-to-Call edit, including CFG/identity repair. Native, recursive, synchronizing and cleanup boundaries remain conservative. No backend inference from apparently empty failure blocks. |
-| RT-5 relational index/length facts | Begin with a body-local relation whose origin, dominance and mutation/alias invalidation are proved. Crossing an accessor requires an admitted precondition/specialization or bounded inlining; a container's public name is not authority. Require opaque-call/mutation negatives and exact failure parity. |
+| RT-5 relational index/length facts | The body-local slice is implemented (2026-10-13): strict orders from dominating comparisons discharge public logical-size checks in the same body, with opaque-call/mutation negatives and failure parity. It changes no corpus program or probe on its own. Crossing an accessor still requires an admitted precondition/specialization or bounded inlining; a container's public name is not authority. The measured ceiling of crossing `vector::operator[]` is about 20% on a store loop with a hoisted bound and little elsewhere, because Clang already removes the checks in plain read and copy loops; see [RT-5](#rt-5-no-relational-facts-between-indices-and-lengths). |
 | RT-6 affine loop versioning | Requires a non-failing, side-effect-free preflight and an unchanged checked fallback. Hoisting may not change the first failure, partial stores, evaluation order or floating-point ordering. The fallback's presence alone does not prove the preflight safe. Validate representative clients and preflight costs as part of acceptance. |
 | RT-7 iterator counters/reductions | Prove length fits the **counter's** domain; allocation capacity alone does not prove a `ptrdiff_t` counter cannot overflow. Speculative reductions additionally require non-observable, exactly restorable state and ordered first-failure replay. Do not apply a wrapping accumulator to ordinary effectful loops. |
 | RT-8 slot/drop self-checks | Earlier measurement found no demonstrated value; that is not an architecture admission gate. Before omitting an assertion, identify the exact verifier invariant and every representation caller that establishes it. Do not assume all backend checks are redundant or introduce an unchecked release mode. |
@@ -493,8 +493,10 @@ RT-3 and RT-5 discharge more checks, and it should follow them.
   representation or alias fact for that address carrier is the next
   prerequisite here.
   A runtime `n` would still need this relational domain.
-- `string::find(char)` iterates `index < this.count` and then indexes with
-  `this[index]`, whose check is the same comparison.
+- `string::find(char)` once iterated `index < this.count` and indexed with
+  `this[index]`, whose check is the same comparison. The standard library's
+  loops of this shape (`find`, `equals`, `compare_bytes`) now read through
+  `read_unchecked` under `unsafe`, so no such check remains in them.
 - The heapsort's `root < end / 2` and `child + 1 < end` guarantee its index
   checks.
 
@@ -522,6 +524,30 @@ intervals today.
 **First slice.** A body-local strict-upper-bound relation between scalar
 places and prefix-storage length, consumed by the existing public
 logical-size-check discharge.
+
+**Status (2026-10-13).** The first slice is implemented, with orders between
+immutable MIR values rather than between places. A comparison of two values of
+one integer domain records the order its taken edge implies. A public
+logical-size check in the same body is discharged when its operands denote the
+ordered values: the same value, loads of one place that no possibly aliasing
+write or barrier has retired, or one still-current owned field. Writes never
+retire an order; redefining a value in a later loop iteration does, and joins
+keep only orders established on every path. See the
+[admitted operations](../architecture/optimization.md).
+
+On its own the slice changes no program. A differential over the 1,367
+corpus programs that build, and over the runtime-audit probes, discharges no
+additional check, and every probe binary keeps its size; see
+[performance-tooling.md](performance-tooling.md#rt-5-body-local-indexlength-orders-2026-10-13).
+The checks that remain are in accessors. A ceiling measurement of crossing
+`vector::operator[]` found Clang already removing the checks in plain read and
+copy loops once it inlines the accessor. The one shape that gains is an
+in-place update whose bound is hoisted into a local, about 20%. Every store
+loop is limited more by aliasing between element stores and the vector's own
+fields, which forces reloads on each iteration and prevents vectorization, the
+same cause as the `matrix` gap above. Crossing therefore waits on either RT-10
+inlining or a precondition specialization with a client that measures, and
+that aliasing representation is the larger lever for store loops.
 
 #### RT-6: loop versioning for affine accesses
 

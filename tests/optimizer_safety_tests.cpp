@@ -1265,6 +1265,221 @@ int32_t main() {
   }
 }
 
+void testRelationalBoundsDischarge() {
+  // Runtime inputs keep calling-context intervals from proving any check;
+  // only a dominating comparison between the check's own operands can.
+  const std::string source = R"(
+extern "C" {
+  void analysis_barrier();
+  uint64_t runtime_value();
+}
+
+mut uint64_t shared_index = 0;
+
+uint64_t guarded(uint64_t index, uint64_t live) {
+  if (index < live) {
+    gti_internal::index_bounds_check(index, live);
+    return index;
+  }
+  return live;
+}
+
+uint64_t looped(uint64_t live) {
+  mut uint64_t last = 0;
+  for (mut uint64_t index = 0; index < live; index++) {
+    gti_internal::index_bounds_check(index, live);
+    last = index;
+  }
+  return last;
+}
+
+uint64_t greater_form(uint64_t index, uint64_t live) {
+  if (live > index) {
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t negated_form(uint64_t index, uint64_t live) {
+  if (!(index >= live)) {
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t offset_length(uint64_t index, uint64_t live) {
+  if (index < live) {
+    gti_internal::index_bounds_check(index, live + uint64_t(1));
+  }
+  return index;
+}
+
+uint64_t non_strict(uint64_t index, uint64_t live) {
+  if (index <= live) {
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t reversed(uint64_t index, uint64_t live) {
+  if (live < index) {
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t index_replaced(mut uint64_t index, uint64_t live, uint64_t other) {
+  if (index < live) {
+    index = other;
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t length_replaced(uint64_t index, mut uint64_t live, uint64_t other) {
+  if (index < live) {
+    live = other;
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t different_length(uint64_t index, uint64_t live, uint64_t other) {
+  if (index < live) {
+    gti_internal::index_bounds_check(index, other);
+  }
+  return index;
+}
+
+uint64_t global_across_barrier(uint64_t live) {
+  if (shared_index < live) {
+    analysis_barrier();
+    gti_internal::index_bounds_check(shared_index, live);
+  }
+  return live;
+}
+
+uint64_t one_path(uint64_t index, uint64_t live, bool guard) {
+  if (guard) {
+    if (index >= live) {
+      return live;
+    }
+  }
+  gti_internal::index_bounds_check(index, live);
+  return index;
+}
+
+uint64_t smaller_length(uint64_t index, uint64_t live) {
+  if (index < live) {
+    gti_internal::index_bounds_check(index, live - uint64_t(1));
+  }
+  return index;
+}
+
+void bump(mut uint64_t& slot) {
+  slot = slot + uint64_t(1);
+}
+
+void clear(mut uint64_t& slot) {
+  slot = uint64_t(0);
+}
+
+uint64_t unrelated_write(uint64_t live) {
+  mut uint64_t index = runtime_value();
+  mut uint64_t other = uint64_t(0);
+  if (index < live) {
+    other = live;
+    gti_internal::index_bounds_check(index, live);
+  }
+  return other;
+}
+
+uint64_t index_written_by_call(uint64_t live) {
+  mut uint64_t index = runtime_value();
+  if (index < live) {
+    bump(index);
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t length_written_by_call(uint64_t index) {
+  mut uint64_t live = runtime_value();
+  if (index < live) {
+    clear(live);
+    gti_internal::index_bounds_check(index, live);
+  }
+  return live;
+}
+
+int32_t main() {
+  uint64_t index = runtime_value();
+  uint64_t live = runtime_value();
+  uint64_t other = runtime_value();
+  shared_index = runtime_value();
+  mut uint64_t seen = guarded(index, live);
+  seen = looped(live);
+  seen = greater_form(index, live);
+  seen = negated_form(index, live);
+  seen = offset_length(index, live);
+  seen = non_strict(index, live);
+  seen = reversed(index, live);
+  seen = index_replaced(index, live, other);
+  seen = length_replaced(index, live, other);
+  seen = different_length(index, live, other);
+  seen = global_across_barrier(live);
+  seen = one_path(index, live, other == uint64_t(0));
+  seen = smaller_length(index, live);
+  seen = unrelated_write(live);
+  seen = index_written_by_call(live);
+  seen = length_written_by_call(index);
+  return seen == uint64_t(0) ? 0 : 1;
+}
+)";
+  const lang::FrontendResult frontend =
+      analyzeTrusted("optimizer-relational-bounds.gti", source);
+  expect(frontend.canGenerateCode(),
+         "relational bounds fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    return;
+  }
+
+  const lang::OptimizationPipeline pipeline;
+  const auto optimize = [&](lang::OptimizationLevel level) {
+    return pipeline.run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+  };
+  const lang::OptimizedProgram o2 = optimize(lang::OptimizationLevel::O2);
+  const lang::OptimizedProgram o3 = optimize(lang::OptimizationLevel::O3);
+  expect(o2.valid() && o3.valid(),
+         "relational bounds fixture should optimize and verify");
+  const auto bounds = [&](const lang::OptimizedProgram &optimized,
+                          std::string_view name) {
+    return functionDischarges(frontend, optimized, name,
+                              lang::MirSafetyCheckFamily::Bounds);
+  };
+  for (const std::string_view name :
+       {"guarded", "looped", "greater_form", "negated_form", "offset_length",
+        "unrelated_write"}) {
+    expect(bounds(o2, name) == 1 && bounds(o3, name) == 1,
+           std::string(name) +
+               " should discharge its check from the dominating comparison "
+               "at O2 and O3 (O2 " +
+               std::to_string(bounds(o2, name)) + ", O3 " +
+               std::to_string(bounds(o3, name)) + ")");
+  }
+  for (const std::string_view name :
+       {"non_strict", "reversed", "index_replaced", "length_replaced",
+        "different_length", "global_across_barrier", "one_path",
+        "smaller_length", "index_written_by_call", "length_written_by_call"}) {
+    expect(bounds(o2, name) == 0 && bounds(o3, name) == 0,
+           std::string(name) + " must retain its bounds check");
+  }
+}
+
 void testClosedIndexedElementEnvelope() {
   const std::string source = R"(
 #include <std/memory>
@@ -2390,6 +2605,7 @@ int main() {
   testSynchronizingCallInvalidation();
   testOpaqueRuntimeCallInvalidation();
   testSourcePrefixBoundsRelation();
+  testRelationalBoundsDischarge();
   testClosedIndexedElementEnvelope();
   testClosedIndexedRecordFieldEnvelope();
   testGuardedClosedCallContextWidening();
