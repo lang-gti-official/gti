@@ -1083,6 +1083,11 @@ The producer may activate its Value obligation directly after a failure-free
 constructor, or on the success edge of a fallible call. Both forms keep the
 payload in its local slot while later parameter cleanup runs; a failure-free
 constructor does not justify publishing early across a fallible destructor.
+Ordinary source member calls, including consuming (`&&`) receivers, use this
+same payload-return proof. A recorded invocation capability must agree with
+the selected concrete member's receiver mutability and retain an actual
+receiver; it is not grounds for rejecting an otherwise valid owning return.
+No special rule is attached to ownership-wrapper conversions or upcasts.
 
 A failure-free source call returning a complete owning Expected likewise uses
 the existing exact returned-call-result slot proof. Its value activation and
@@ -2168,7 +2173,11 @@ The C++ plan emits this body's admitted status constructor instead of a native
 `= default` operation that would call a missing ordinary base entry. Trivial
 and cleanup-owning bases use the same `InitializeBase` publication contract;
 the rollback record retains the base's exact cleanup requirement. No terminal
-adapter or native exception supplies the failure path. A source destructor
+adapter or native exception supplies the failure path. A base cleanup that
+cannot raise a defined failure is emitted with a null failure-record
+argument. Only a fallible base rollback consumes the body's secondary cleanup
+record and its paired failure edge; a non-failing rollback neither allocates
+nor references that optional record. A source destructor
 does not prevent this base-only generated schedule. Derived instance fields,
 generic owners/bases, constructor default arguments and
 generated-base chains remain outside this generated-body slice and retain

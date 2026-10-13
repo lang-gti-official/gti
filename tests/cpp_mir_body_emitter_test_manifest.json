@@ -346,6 +346,10 @@
       "suite": "text"
     },
     {
+      "name": "testExpectedConsumingMemberReturn",
+      "suite": "text"
+    },
+    {
       "name": "testExpectedTemporaryObservationSlot",
       "suite": "text"
     },
@@ -467,6 +471,14 @@
     },
     {
       "name": "testOwningBaseConstructorStatus",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testBaseRollbackFailureRecord",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testDefaultedOwningBaseSchedule",
       "suite": "lifecycle"
     },
     {
