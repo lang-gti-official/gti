@@ -4563,6 +4563,119 @@ void testReferenceOwnedFieldReplacement() {
          "checked reference field replacement reaches native emission");
 }
 
+void testRawOwnedFieldReplacement() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/raw_owned_field_replacement.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "raw field fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "raw field fixture must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  std::size_t selected = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *place =
+            instruction.destination
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            place == nullptr || place->root != lang::MirPlaceRootKind::Value ||
+            place->type.kind != lang::SemanticType::Class ||
+            place->traits.drop != lang::DropKind::Lexical ||
+            place->traits.copyable || place->projections.size() < 2 ||
+            (place->projections.front().kind !=
+                 lang::MirProjectionKind::RawDereference &&
+             place->projections.front().kind !=
+                 lang::MirProjectionKind::RawIndex))
+          continue;
+        ++selected;
+        const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                           function.id};
+        expect(lang::CppMirBodyEmitter(frontend.mir, map)
+                   .supportsFailureBodyText(address),
+               "raw pointer fields retain exact replacement scheduling");
+        for (int mutation = 0; mutation != 7; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(malformed, address);
+          if (mutation == 0 || mutation == 1) {
+            for (auto &value : body->values)
+              if (value.id == place->value) {
+                if (mutation == 0)
+                  value.info.type.pointerAccess = lang::AccessMode::ReadOnly;
+                else
+                  value.info.type.arguments.front() = lang::SemanticType::Void;
+              }
+          } else if (mutation == 6) {
+            for (auto &changed : body->places)
+              if (changed.id == place->id)
+                changed.projections.front().kind =
+                    lang::MirProjectionKind::Dereference;
+          } else if (mutation == 2) {
+            for (const auto &instance : malformed.classInstances())
+              for (auto &field : const_cast<lang::MirClassInstance &>(instance)
+                                     .declaredFields)
+                if (field.symbol == place->projections[1].field)
+                  field.access = lang::AccessMode::ReadOnly;
+          } else {
+            for (auto &changedBlock : body->blocks)
+              for (auto &changed : changedBlock.instructions)
+                if (changed.id == instruction.id) {
+                  if (mutation == 3)
+                    changed.lifecycle.clear();
+                  else if (mutation == 4)
+                    changed.rawMemoryAccess = false;
+                  else
+                    changed.unsafeOperation = lang::UnsafeOperationKind::None;
+                }
+          }
+          expect(!lang::verifyMirProgram(malformed).valid() ||
+                     !lang::CppMirBodyEmitter(malformed, map)
+                          .supportsFailureBodyText(address),
+                 "raw replacement rejects forged access, projection, effects "
+                 "and publication: " +
+                     std::to_string(mutation));
+        }
+        auto malformedCleanup = frontend.mir;
+        auto *cleanupBody = lang::findMirBody(malformedCleanup, address);
+        bool changedCleanup = false;
+        for (auto &cleanupBlock : cleanupBody->blocks)
+          for (auto &cleanup : cleanupBlock.instructions)
+            if (cleanup.kind == lang::MirInstructionKind::CleanupBeforeAssign &&
+                cleanup.destination == place->id) {
+              cleanup.rawMemoryAccess = false;
+              changedCleanup = true;
+            }
+        expect(changedCleanup &&
+                   !lang::verifyMirProgram(malformedCleanup).valid(),
+               "old-value cleanup retains its raw-memory effect");
+      }
+  expect(selected == 4,
+         "fixture has returned, nested, direct and indexed raw fields");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "raw owning field replacement reaches native emission");
+  for (const auto &invalid : {
+           R"(#include <std/string>
+struct State { mut std::string text{}; };
+void Set(State* state) { state->text = std::string("new"); }
+int main() { return 0; })",
+           R"(#include <std/string>
+struct State { mut std::string text{}; };
+void Set(const State* state) { unsafe { state->text = std::string("new"); } }
+int main() { return 0; })",
+           R"(#include <std/string>
+struct State { std::string text{}; };
+void Set(State* state) { unsafe { state->text = std::string("new"); } }
+int main() { return 0; })"})
+    expect(!analyzeWithStandardLibrary("/tmp/raw-field-rejected.gti", invalid)
+                .canGenerateCode(),
+           "raw field writes retain unsafe, pointee and field mutability "
+           "requirements");
+}
+
 void testVirtualExpectedOwningResult() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/virtual_expected_owning_return.gti";
@@ -14375,6 +14488,7 @@ constexpr NamedTest kTests[] = {
     {"testBaseRollbackFailureRecord", testBaseRollbackFailureRecord},
     {"testVirtualExpectedOwningResult", testVirtualExpectedOwningResult},
     {"testReferenceOwnedFieldReplacement", testReferenceOwnedFieldReplacement},
+    {"testRawOwnedFieldReplacement", testRawOwnedFieldReplacement},
     {"testDefaultedOwningBaseSchedule", testDefaultedOwningBaseSchedule},
     {"testPassiveOwnedParameterConstructorFields",
      testPassiveOwnedParameterConstructorFields},
