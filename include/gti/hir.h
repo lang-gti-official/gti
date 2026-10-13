@@ -209,6 +209,9 @@ struct HirValue {
   UnsafeOperationKind unsafeOperation = UnsafeOperationKind::None;
   SymbolId symbol = 0;
   std::vector<HirValueId> operands;
+  // Caller-expanded declaration defaults, in exact operand-suffix order.
+  // Retained even when a concrete pack prevents a fixed-arity call plan.
+  std::vector<HirValueId> defaultArguments;
   std::vector<SemanticType> parameterTypes;
   std::optional<TokenKind> operation;
   std::optional<Literal> literal;

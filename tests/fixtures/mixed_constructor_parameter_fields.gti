@@ -1,0 +1,52 @@
+#include <std/string>
+#include <std/vector>
+
+mut int stage = 0;
+struct Leaf { mut int value = 7; };
+struct Handle { mut Leaf leaf{}; };
+class Path {
+  std::string text;
+public:
+  Path(std::string value) : text(std::move(value)) {}
+  Path clone() { return Path(text.clone()); }
+  ~Path() {
+    std::println(10);
+    int cleanup_divisor = stage == 3 ? 0 : 1;
+    int checked = 2 / cleanup_divisor;
+  }
+};
+struct Metadata {
+  Handle first;
+  Handle second;
+  Path path;
+  Metadata(Handle one, Handle two, Path location)
+      : first(one), second(two), path(std::move(location)) {
+    std::println(30);
+    int constructor_divisor = stage == 2 || stage == 3 ? 0 : 1;
+    int checked = 7 / constructor_divisor;
+  }
+};
+class Guard {
+public:
+  Guard() = default;
+  ~Guard() { std::println(90); }
+};
+int Later() {
+  std::println(20);
+  int argument_divisor = stage == 1 ? 0 : 1;
+  return 1 / argument_divisor;
+}
+Path Make(Path& source, int token) { return source.clone(); }
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Guard guard{};
+  mut Handle original{};
+  Path source{std::string("value")};
+  Metadata metadata{original, original, Make(source, Later())};
+  original.leaf.value = 9;
+  if (metadata.first.leaf.value != 7 || metadata.second.leaf.value != 7) {
+    return 1;
+  }
+  std::println(40);
+  return 0;
+}

@@ -1,0 +1,36 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int argument_divisor = 1;
+mut int constructor_divisor = 1;
+struct Guard { ~Guard() { std::println(9); } };
+class Spec {
+public:
+  int count;
+  Spec(int value = 2) : count(value) { std::println(2); }
+  Spec(Spec& other) = delete;
+  Spec(Spec&& other) = default;
+  ~Spec() { std::println(5); }
+};
+int first() { std::println(1); return 4; }
+int later() { return 7 / argument_divisor; }
+class Item {
+  mut int count;
+public:
+  Item(int prefix, Spec spec = Spec(), int next = later())
+      : count(prefix + spec.count + next) {
+    std::println(3);
+    int checked = 7 / constructor_divisor;
+    this.count += checked - 7;
+  }
+  ~Item() { std::println(6); }
+  int get() { return this.count; }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  if (argc == 2) { argument_divisor = 0; }
+  if (argc == 3) { constructor_divisor = 0; }
+  auto value = std::make_unique<Item>(first());
+  return value->get() - 13;
+}

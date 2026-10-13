@@ -353,18 +353,19 @@ value. Literal-dependent range decisions remain in semantic contextual typing.
 Owning expected initialization preserves the payload and completed wrapper as
 distinct lifetime identities for MIR transfer and rollback.
 
-The existing bounded generated-derived family also has explicit body-local
-execution: a nongeneric derived class with no instance fields,
-whose nongeneric state-bearing base selects an exact zero-parameter source
-constructor. `ClassLifecycleInfo::generatedDefaultBaseConstructor` supplies the
-semantic selection. HIR discovers that base and records a source-free
-`generatedDefault` constructor instance, with zero declaration identity and
-one exact base initializer. It does not fabricate an AST constructor. HIR
-verification binds the empty generated body, concrete owner/base identity and
-constructor target to semantics, and rejects erasure of the target/failure
-propagation together. Empty generated defaults and other unselected shapes keep
-their existing route. Once every selected constructor owns a declaration default,
-the backend emits no duplicate native in-class initializer for that field.
+Generated base and field construction share one semantic schedule obligation,
+`ClassLifecycleInfo::generatedDefaultInitializers`. A fieldless derived owner
+still selects this schedule when it has a state-bearing base: that base may
+itself have a generated constructor and owning declaration defaults. HIR
+discovers each exact concrete base, including generic and multilevel chains,
+and records a source-free `generatedDefault` constructor with zero declaration
+identity. It does not fabricate an AST constructor or infer native defaultability.
+Verification binds the base identity, selected target/generated status, and
+ordered field initializers to semantics. A required base schedule cannot lose
+its constructor target. This subsumes the older nongeneric base-only selection;
+empty owners without a state-bearing base or fields retain their existing route.
+The backend emits no duplicate native in-class initializer for a field owned by
+the selected constructor schedule.
 
 Struct designated construction is resolved in semantics to a compiler-owned,
 full-field construction declaration that is not a source-callable overload.
@@ -771,6 +772,25 @@ ordered call plan. Constructor-initializer records retain both the complete
 lowered argument vector and `explicitArgumentCount`, including implicit base
 construction through a constructor callable with zero explicit arguments.
 Neither HIR nor a backend relies on native C++ defaults.
+Allocation of a selected ordinary constructor uses this same plan when its
+arguments are concrete values, including when an empty forwarded pack leaves
+only omitted defaults. Argument copy/move roles and default provenance come
+from the selected constructor contract. MIR prepares those parameters before
+allocating object storage; backend allocation emission uses the shared
+consumed-argument retirement rule on both constructor outcomes. Concrete pack
+expansion retains its existing explicit staging route. `HirValue::defaultArguments`
+also retains the exact caller-expanded declaration suffix when a concrete pack
+prevents a fixed-arity plan. HIR verifies that suffix against the selected
+declaration's default-expression identities.
+The selected semantic function declaration owns that identity even when its
+executable HIR source is a separate out-of-line definition with renamed
+parameters and no repeated defaults. Verification resolves the canonical
+declaration through the exact selected function identity, not body syntax or
+name lookup.
+MIR flattens the written pack
+before staging those defaults, using the flattened parameter index and ordinary
+prepared-owner failure/transfer rules. A non-final written pack is not newly
+permitted: only this verified, implicitly appended default suffix may follow it.
 
 A class binding initialized from an exact `nullptr_t` constructor remains one
 ordinary construction in HIR. The source literal owns the constructed value;

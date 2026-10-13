@@ -8192,8 +8192,7 @@ public:
         // owned fields stay empty until their MIR Move/Initialize executes.
         failureForm && owner != nullptr &&
         cppMirFailureConstructorEmptyFieldsEligible(mir, owner->id) &&
-        bindings && bindings->empty() && baseBindings && copiedBindings &&
-        copiedBindings->empty();
+        bindings && bindings->empty() && baseBindings && copiedBindings;
     if (!bindings || !baseBindings || !copiedBindings ||
         (!ownedBindings && !bodyStagedOwnedParameters)) {
       return;

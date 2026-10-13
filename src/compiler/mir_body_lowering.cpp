@@ -4562,7 +4562,8 @@ private:
     std::size_t argumentCount = value.parameterTypes.size();
     if (value.kind == HirValueKind::Call) {
       if (const auto *call = exprAs<Call>(value.source)) {
-        argumentCount = call->arguments().size();
+        argumentCount =
+            call->arguments().size() + value.defaultArguments.size();
       }
     }
     if (argumentCount > value.operands.size()) {
@@ -5714,7 +5715,14 @@ private:
     // The source selection has already completed at its checked AddressOf
     // prefix, before this prepared copy/borrow is published. Do not attach
     // that same selection failure to a second operation with no Invoke edge.
-    if (materializesCheckedPlace) {
+    // A call-like place is already materialized by emitPlaceDependencies.
+    // Its own instruction/Invoke performed the check before this stage copies
+    // or borrows the resulting place. Local effects belong to that producer,
+    // not a second check attached to the prepared argument.
+    const bool evaluatedCallPlace = sourceValueInfo != nullptr &&
+                                    isCallLike(*sourceValueInfo) &&
+                                    emittedValues.contains(sourceValue);
+    if (materializesCheckedPlace && !evaluatedCallPlace) {
       input.definedFailure = localDefinedFailure(sourceValueInfo);
       if (checkedPlacePrefixes.contains(sourceValue)) {
         // Membership is recorded only after emitting this exact Index's
@@ -6218,13 +6226,14 @@ private:
           [&](HirValueId sourceValue, const SemanticType &parameter,
               HirCallInputKind kind, MirOperand sourceOperand,
               MirDropObligationId movedBindingDrop = 0,
-              MirLoanId dependency = 0) {
+              MirLoanId dependency = 0, bool defaultArgument = false) {
             const std::size_t parameterIndex = call.operands.size();
             sourceArguments.push_back(sourceOperand);
-            PreparedCallInput prepared = prepareCallInput(
-                value.id, sourceValue, parameter, kind,
-                MirCallInputRole::Argument, parameterIndex,
-                std::move(sourceOperand), true, false, movedBindingDrop);
+            PreparedCallInput prepared =
+                prepareCallInput(value.id, sourceValue, parameter, kind,
+                                 MirCallInputRole::Argument, parameterIndex,
+                                 std::move(sourceOperand), true,
+                                 defaultArgument, movedBindingDrop);
             call.parameterTypes.push_back(parameter);
             call.operands.push_back(std::move(prepared.operand));
             argumentDependencies.push_back(dependency);
@@ -6240,9 +6249,11 @@ private:
           continue;
         }
         if (input->kind != HirValueKind::PackExpansion) {
-          const SemanticType parameter = index < value.parameterTypes.size()
-                                             ? value.parameterTypes[index]
-                                             : input->info.type;
+          const std::size_t parameterIndex = call.operands.size();
+          const SemanticType parameter =
+              parameterIndex < value.parameterTypes.size()
+                  ? value.parameterTypes[parameterIndex]
+                  : input->info.type;
           const bool mutableStorageInput =
               index == 0 && input->info.category == ValueCategory::Place &&
               input->info.type == parameter &&
@@ -6268,9 +6279,12 @@ private:
                   ? receiverOperand(input->id, AccessMode::Mutable)
                   : argumentOperand(input->id, parameter);
           preparedCallArgumentFailure = enclosingFailure;
-          appendPreparedArgument(input->id, parameter, *kind,
-                                 std::move(sourceArgument), 0,
-                                 loanForValue(input->id));
+          appendPreparedArgument(
+              input->id, parameter, *kind, std::move(sourceArgument), 0,
+              loanForValue(input->id),
+              std::find(value.defaultArguments.begin(),
+                        value.defaultArguments.end(),
+                        input->id) != value.defaultArguments.end());
           continue;
         }
 
@@ -6279,16 +6293,24 @@ private:
             local == localSymbols.end() ? 0 : placeForBinding(local->second);
         const MirPlace *resolvedPackPlace = output.findPlace(packPlaceId);
         const std::vector<SemanticType> &elements = input->info.type.arguments;
+        const std::size_t parameterIndex = call.operands.size();
+        const bool followedByDefaults =
+            arguments.size() - index - 1 == value.defaultArguments.size() &&
+            std::equal(arguments.begin() + index + 1, arguments.end(),
+                       value.defaultArguments.begin());
         const bool retainedPackParameter =
-            index + 1 == value.parameterTypes.size() &&
-            value.parameterTypes[index].kind == SemanticType::TypePack &&
-            value.parameterTypes[index].concretePack &&
-            value.parameterTypes[index].arguments == elements;
+            parameterIndex + 1 == value.parameterTypes.size() &&
+            value.defaultArguments.empty() &&
+            value.parameterTypes[parameterIndex].kind ==
+                SemanticType::TypePack &&
+            value.parameterTypes[parameterIndex].concretePack &&
+            value.parameterTypes[parameterIndex].arguments == elements;
         const bool flattenedPackParameters =
-            value.parameterTypes.size() == index + elements.size() &&
+            value.parameterTypes.size() == parameterIndex + elements.size() +
+                                               value.defaultArguments.size() &&
             std::equal(
                 elements.begin(), elements.end(),
-                value.parameterTypes.begin() + index,
+                value.parameterTypes.begin() + parameterIndex,
                 [](const SemanticType &element, const SemanticType &parameter) {
                   return mir_detail::validCallInputType(
                              element, parameter, HirCallInputKind::Value) ||
@@ -6297,7 +6319,7 @@ private:
                           parameter.arguments.size() == 1 &&
                           parameter.arguments.front() == element);
                 });
-        if (index + 1 != arguments.size() ||
+        if (!followedByDefaults ||
             input->info.type.kind != SemanticType::TypePack ||
             !input->info.type.concretePack || resolvedPackPlace == nullptr ||
             resolvedPackPlace->root != MirPlaceRootKind::Binding ||
@@ -6319,7 +6341,7 @@ private:
           const SemanticType &parameter =
               retainedPackParameter
                   ? element
-                  : value.parameterTypes[index + elementIndex];
+                  : value.parameterTypes[parameterIndex + elementIndex];
           // The selected signature, not the source pack's ownership mode,
           // decides whether this invocation borrows an element. Its owning
           // parameter remains alive until the enclosing body's cleanup.
