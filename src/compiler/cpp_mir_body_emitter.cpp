@@ -19017,6 +19017,10 @@ expectedClassPlacementResultType(const MirProgram &program,
 // giving the call that success destination directly, or by activating a
 // value-owned result and reparenting it into the binding. Both schedules name
 // one C++ object and one binding drop, never an additional SSA object.
+[[nodiscard]] const MirFunctionInstance *
+virtualFailureCallee(const MirProgram &program,
+                     const MirInstruction &instruction);
+
 [[nodiscard]] const MirPlace *
 expectedClassResultDestinationSlot(const MirProgram &program,
                                    const MirBody &body, MirValueId valueId) {
@@ -19031,12 +19035,17 @@ expectedClassResultDestinationSlot(const MirProgram &program,
       definition != nullptr && definition->lambdaTarget
           ? program.findLambda(*definition->lambdaTarget)
           : nullptr;
-  const bool sourceCall = target != nullptr &&
-                          target->returnType == value->info.type &&
-                          target->definitionKind == MirDefinitionKind::Source &&
-                          target->linkage == LanguageLinkage::Gti &&
-                          target->mayRaiseDefinedFailure ==
-                              invokePairedInstruction(body, definition->id);
+  const bool virtualSourceCall =
+      target != nullptr &&
+      virtualFailureCallee(program, *definition) == target &&
+      invokePairedInstruction(body, definition->id);
+  const bool sourceCall =
+      target != nullptr && target->returnType == value->info.type &&
+      target->linkage == LanguageLinkage::Gti &&
+      (virtualSourceCall ||
+       (target->definitionKind == MirDefinitionKind::Source &&
+        target->mayRaiseDefinedFailure ==
+            invokePairedInstruction(body, definition->id)));
   const bool sourceLambda =
       definition != nullptr && callableValueInvocation(*definition) &&
       lambda != nullptr && lambda->returnType == value->info.type &&
@@ -19663,12 +19672,15 @@ ownedExpectedExtractionProducer(const MirBody &body, MirValueId valueId) {
           producer->callableInvocation)) ||
         producer->constructorTarget || producer->bodyTarget ||
         producer->intrinsic != IntrinsicKind::None ||
-        producer->dispatch != CallDispatch::Static ||
         producer->info.type != receiver->info.type ||
-        (!callableProducer &&
-         producer->definedFailure.propagation !=
-             FailurePropagationKind::DirectCall &&
-         !producer->definedFailure.empty()) ||
+        !((producer->dispatch == CallDispatch::Static &&
+           (callableProducer || producer->definedFailure.empty() ||
+            producer->definedFailure.propagation ==
+                FailurePropagationKind::DirectCall)) ||
+          (producer->dispatch == CallDispatch::Virtual && !callableProducer &&
+           producer->receiver &&
+           producer->definedFailure.propagation ==
+               FailurePropagationKind::VirtualCall)) ||
         !producer->definedFailure.localOrigins.empty() ||
         !producer->localFailureSites.empty() ||
         !hasCompleteCallInputSchedule(body, *producer) ||
@@ -22959,10 +22971,14 @@ valueRootedPlacementCallResultSlot(const MirProgram &program,
         producer->callableInvocation)) ||
       producer->constructorTarget || producer->bodyTarget ||
       producer->intrinsic != IntrinsicKind::None ||
-      producer->dispatch != CallDispatch::Static ||
-      (!plainProducer && !callableProducer &&
-       producer->definedFailure.propagation !=
-           FailurePropagationKind::DirectCall) ||
+      !((producer->dispatch == CallDispatch::Static &&
+         (plainProducer || callableProducer ||
+          producer->definedFailure.propagation ==
+              FailurePropagationKind::DirectCall)) ||
+        (producer->dispatch == CallDispatch::Virtual && !plainProducer &&
+         !callableProducer &&
+         producer->definedFailure.propagation ==
+             FailurePropagationKind::VirtualCall)) ||
       !producer->definedFailure.localOrigins.empty() ||
       !producer->localFailureSites.empty() ||
       !exactPreparedInputTransfers(body, *producer) ||

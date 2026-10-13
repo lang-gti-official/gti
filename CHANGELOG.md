@@ -11,6 +11,11 @@ for what minor and patch releases mean.
 
 ## 0.424.3 — Constructor and owning argument composition
 
+- Fix an internal compiler error when extracting an owning expected payload
+  returned by virtual dispatch. Exact virtual-family identity, pending-result
+  publication and caller cleanup remain checked for named and temporary results
+  (issue #109).
+
 - Fix a backend internal compiler error when a declaration-ordered prefix of
   copied passive record fields precedes moved owning fields. Exact parameter
   and field publication order, later-argument failure, constructor rollback and
