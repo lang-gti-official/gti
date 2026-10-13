@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.423.1 — Interface owner constructor cleanup
+
+- Fix a backend internal compiler error when a concrete interface implementer
+  has a user destructor and constructs owning fields. Construction failure
+  preserves field rollback without calling the incomplete owner's destructor.
+  This covers the nested window/context ownership case in issue #75.
+
 ## 0.422.0 — Compile-time result and constructor composition
 
 - Passive `expected<T, E>` values (including void success) now compose in
