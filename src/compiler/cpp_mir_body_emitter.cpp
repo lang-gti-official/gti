@@ -13678,6 +13678,36 @@ optionalStorageOwnerEmptyState(const MirProgram &program,
 
 enum class EmptyFieldUse { Construction, Assignment };
 
+// Interface-only bases contribute dispatch identity but no source storage or
+// cleanup. Reuse this exact proof for empty native shells and for disarming a
+// declared destructor during failed construction. Stateful bases require their
+// own verified rollback schedule; polymorphism alone is not such state.
+[[nodiscard]] bool emptyInterfaceBaseSurface(const MirProgram &program,
+                                             const MirClassInstance &instance) {
+  return (!instance.polymorphic || !instance.bases.empty()) &&
+         instance.bases == instance.structuralBases &&
+         std::all_of(instance.bases.begin(), instance.bases.end(),
+                     [&](const HirBaseInstance &base) {
+                       const auto *interface =
+                           program.findClassInstance(base.instance);
+                       return base.interface && interface != nullptr &&
+                              interface->type == base.type &&
+                              interface->kind == ClassKind::Interface &&
+                              interface->declaredFields.empty() &&
+                              interface->fields.empty() &&
+                              interface->fieldDropOrder.empty() &&
+                              !interface->destructor &&
+                              !interface->requiresActiveCleanup &&
+                              !interface->requiresActiveDropState &&
+                              interface->bases.empty() &&
+                              interface->structuralBases.empty() &&
+                              interface->defaultConstructor ==
+                                  SpecialMemberStatus::Generated &&
+                              interface->destructorStatus ==
+                                  SpecialMemberStatus::Generated;
+                     });
+}
+
 [[nodiscard]] bool uninitializedStorageType(const MirProgram &program,
                                             const SemanticType &type) {
   const auto *owner = uniqueClassInstanceForType(program, type);
@@ -13755,29 +13785,7 @@ enum class EmptyFieldUse { Construction, Assignment };
   // is safe in the private tag constructor; state-bearing or source-defined
   // base initialization remains outside this representation.
   const bool emptyInterfaceBases =
-      instance != nullptr &&
-      (!instance->polymorphic || !instance->bases.empty()) &&
-      instance->bases == instance->structuralBases &&
-      std::all_of(instance->bases.begin(), instance->bases.end(),
-                  [&](const HirBaseInstance &base) {
-                    const auto *interface =
-                        program.findClassInstance(base.instance);
-                    return base.interface && interface != nullptr &&
-                           interface->type == base.type &&
-                           interface->kind == ClassKind::Interface &&
-                           interface->declaredFields.empty() &&
-                           interface->fields.empty() &&
-                           interface->fieldDropOrder.empty() &&
-                           !interface->destructor &&
-                           !interface->requiresActiveCleanup &&
-                           !interface->requiresActiveDropState &&
-                           interface->bases.empty() &&
-                           interface->structuralBases.empty() &&
-                           interface->defaultConstructor ==
-                               SpecialMemberStatus::Generated &&
-                           interface->destructorStatus ==
-                               SpecialMemberStatus::Generated;
-                  });
+      instance != nullptr && emptyInterfaceBaseSurface(program, *instance);
   if (instance == nullptr || instance->declaration == 0 || instance->abstract ||
       instance->cAbiRecord || instance->unionLayout || !emptyInterfaceBases ||
       (use == EmptyFieldUse::Assignment &&
@@ -13861,32 +13869,7 @@ enum class EmptyFieldUse { Construction, Assignment };
 [[nodiscard]] bool
 failureConstructorEmptyStateConstructible(const MirProgram &program,
                                           const MirClassInstance &instance) {
-  const bool emptyInterfaceBases = (!instance.polymorphic ||
-                                    !instance.bases.empty()) &&
-                                   instance.bases == instance.structuralBases &&
-                                   std::all_of(instance.bases.begin(),
-                                               instance.bases.end(),
-                                               [&](const HirBaseInstance
-                                                       &base) {
-                                                 const auto *interface =
-                                                     program.findClassInstance(
-                                                         base.instance);
-                                                 return base.interface && interface != nullptr &&
-                           interface->type == base.type &&
-                           interface->kind == ClassKind::Interface &&
-                           interface->declaredFields.empty() &&
-                           interface->fields.empty() &&
-                           interface->fieldDropOrder.empty() &&
-                           !interface->destructor &&
-                           !interface->requiresActiveCleanup &&
-                           !interface->requiresActiveDropState &&
-                           interface->bases.empty() &&
-                           interface->structuralBases.empty() &&
-                           interface->defaultConstructor ==
-                               SpecialMemberStatus::Generated &&
-                           interface->destructorStatus ==
-                               SpecialMemberStatus::Generated;
-                                               });
+  const bool emptyInterfaceBases = emptyInterfaceBaseSurface(program, instance);
   if (instance.declaration == 0 || instance.abstract || instance.cAbiRecord ||
       instance.unionLayout || !emptyInterfaceBases ||
       (instance.destructor
@@ -14950,12 +14933,16 @@ failureConstructorDisarmsDeclaredDestructor(const MirProgram &program,
   // field state before the caller ends the native object lifetime. The concrete
   // owner must seal that same reverse field schedule. The proof is structural:
   // no source-library type name is recognized here.
+  // Abstractness and virtual dispatch do not change this per-class guard.
+  // This witness covers only declared fields and the owner's destructor;
+  // failureConstructorBoundaryEligible independently verifies the selected
+  // base construction, success activation and rollback. In particular it is
+  // not an empty-state constructor witness for the whole object or its bases.
   const MirDestructorInstance *destructor =
       owner.destructor ? program.findDestructorInstance(*owner.destructor)
                        : nullptr;
   if (owner.declaration == 0 || destructor == nullptr ||
-      !nativeDestructorCompositionCovered(program, owner, *destructor) ||
-      owner.abstract || owner.polymorphic) {
+      !nativeDestructorCompositionCovered(program, owner, *destructor)) {
     return false;
   }
   return std::all_of(
@@ -15125,8 +15112,11 @@ failureConstructorBoundaryEligible(const MirProgram &program,
   const auto copiedParameters =
       cppMirCopyParameterFieldBindings(program, constructor);
   const bool bodyStagedOwnedParameters =
+      // A selected base does not move the input field owner. Keep that input
+      // armed through base failure, then let MIR publish it after base success.
+      // Base and field proofs compose; neither can replace the other.
       emptyStateFields && storedReferences && storedReferences->empty() &&
-      baseParameters && baseParameters->empty() && copiedParameters &&
+      baseParameters && passiveBases && copiedParameters &&
       copiedParameters->empty() &&
       bodyStagedOwnedParameterFieldInitializers(program, constructor);
   const bool bodyStagedOptionalParameter =
@@ -47768,7 +47758,7 @@ cppMirBasePreparation(const MirProgram &program,
 std::optional<std::vector<CppMirBaseParameterInitializerBinding>>
 cppMirBaseParameterInitializerBindings(
     const MirProgram &program, const MirConstructorInstance &constructor) {
-  const auto scalarArgumentType = [](const SemanticType &type) {
+  const auto passiveArgumentType = [](const SemanticType &type) {
     switch (type.kind) {
     case SemanticType::Int8:
     case SemanticType::Int16:
@@ -47917,7 +47907,7 @@ cppMirBaseParameterInitializerBindings(
             definition->operands.empty() && !definition->destination &&
             !definition->receiver && definition->definedFailure.empty() &&
             definition->lifecycle.empty() &&
-            scalarArgumentType(candidate.info.type) &&
+            passiveArgumentType(candidate.info.type) &&
             target->parameterTypes[argumentIndex] == candidate.info.type &&
             onlyBaseArgumentUses(candidate.id, argumentIndex)) {
           if (value != nullptr)
@@ -47937,7 +47927,7 @@ cppMirBaseParameterInitializerBindings(
             !definition->definedFailure.empty() ||
             !definition->lifecycle.empty() ||
             definition->info.type != candidate.info.type ||
-            !scalarArgumentType(candidate.info.type) ||
+            !passiveArgumentType(candidate.info.type) ||
             !onlyBaseArgumentUses(candidate.id, argumentIndex)) {
           continue;
         }

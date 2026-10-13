@@ -4021,7 +4021,9 @@ int main() {
 }
 
 void testBodyOrderedOwnedParameterConstructor() {
-  for (const bool declaredDestructor : {false, true}) {
+  for (const int shape : {0, 1, 2}) {
+    const bool declaredDestructor = shape != 0;
+    const bool interfaceBase = shape == 2;
     std::string source = R"(
 #include <std/string>
 
@@ -4058,6 +4060,15 @@ int main() {
       const std::string marker = "// destructor-stage";
       source.replace(source.find(marker), marker.size(), "~OrderedPath() {}");
     }
+    if (interfaceBase) {
+      const std::string marker = "class OrderedPath {";
+      source.replace(source.find(marker), marker.size(),
+                     "interface PathView { std::size_t first_size(); };\n"
+                     "class OrderedPath : public PathView {");
+      const std::string method = "std::size_t first_size() {";
+      source.replace(source.find(method), method.size(),
+                     "std::size_t first_size() override {");
+    }
     const lang::FrontendResult frontend = analyzeWithStandardLibrary(
         "cpp-mir-body-ordered-owned-parameter-constructor.gti", source);
     expect(frontend.canGenerateCode(),
@@ -4092,6 +4103,27 @@ int main() {
                                                             constructor->owner),
            "the private empty representation supports generated fields and "
            "an independently verified disarmed source destructor");
+    if (interfaceBase) {
+      for (const bool deletedDefault : {false, true}) {
+        lang::MirProgram malformed = frontend.mir;
+        auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+            malformed.classInstances());
+        bool changed = false;
+        for (auto &base : classes) {
+          if (base.kind != lang::ClassKind::Interface)
+            continue;
+          if (deletedDefault)
+            base.defaultConstructor = lang::SpecialMemberStatus::Deleted;
+          else
+            base.requiresActiveCleanup = true;
+          changed = true;
+        }
+        expect(changed && !lang::cppMirFailureConstructorEmptyStateEligible(
+                              malformed, constructor->owner),
+               "an interface with initialization or cleanup cannot be treated "
+               "as an observation-free constructor shell");
+      }
+    }
     if (declaredDestructor) {
       lang::MirProgram malformed = frontend.mir;
       auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
@@ -4294,7 +4326,9 @@ void testSourceDestructorOwningFieldCleanup() {
 void testOwningBaseConstructorStatus() {
   for (const auto fixtureName :
        {"inherited_unique_allocation.gti", "generated_base_constructor.gti",
-        "generated_base_owner_constructor.gti"}) {
+        "generated_base_owner_constructor.gti",
+        "polymorphic_owning_base_constructor.gti",
+        "owning_parameter_base_constructor.gti"}) {
     const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                          "fixtures" / fixtureName;
     std::ifstream input(fixture);
@@ -4363,21 +4397,107 @@ void testOwningBaseConstructorStatus() {
     }
     std::size_t selected = 0;
     for (const auto &constructor : frontend.mir.constructorInstances()) {
+      const auto *constructorOwner =
+          frontend.mir.findClassInstance(constructor.owner);
+      if (constructorOwner && constructorOwner->polymorphic &&
+          constructorOwner->destructor) {
+        const lang::CppMirBodyEmissionMap map(
+            buildRows(frontend, frontend.mir));
+        const lang::MirBodyAddress address{
+            .kind = lang::MirBodyKind::Constructor, .owner = constructor.id};
+        const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+        expect(emitter.supportsFailureBodyText(address),
+               "an abstract or concrete polymorphic owner retains guarded "
+               "source cleanup during status construction");
+        for (const auto &initializer : constructor.initializers) {
+          if (!initializer.ownedParameter)
+            continue;
+          for (int mutation = 0; mutation != 3; ++mutation) {
+            auto forged = frontend.mir;
+            auto *changed = const_cast<lang::MirConstructorInstance *>(
+                forged.findConstructorInstance(constructor.id));
+            bool mutated = false;
+            for (auto &block : changed->body.blocks) {
+              for (auto &instruction : block.instructions) {
+                if (mutation == 0 &&
+                    instruction.kind == lang::MirInstructionKind::Move &&
+                    instruction.info.type == initializer.targetType &&
+                    instruction.ownership) {
+                  instruction.ownership->after =
+                      lang::OwnershipStateSet::Available;
+                  mutated = true;
+                }
+                if (mutation == 1 &&
+                    instruction.kind == lang::MirInstructionKind::Initialize &&
+                    instruction.info.type == initializer.targetType &&
+                    !instruction.lifecycle.empty()) {
+                  instruction.lifecycle.clear();
+                  mutated = true;
+                }
+              }
+            }
+            if (mutation == 2) {
+              for (auto &drop : changed->body.dropObligations) {
+                if (drop.kind == lang::MirDropObligationKind::Binding &&
+                    drop.binding ==
+                        constructor
+                            .parameterBindings[*initializer.ownedParameter]) {
+                  drop.initiallyActive = false;
+                  mutated = true;
+                }
+              }
+            }
+            expect(mutated && !lang::verifyMirProgram(forged).valid() &&
+                       !lang::CppMirBodyEmitter(forged, map)
+                            .supportsFailureBodyText(address),
+                   "base-plus-owned-field composition must preserve input "
+                   "ownership, publication reparenting and parameter cleanup");
+          }
+        }
+        const auto text =
+            emitter.emitFailureBodyText(address, "guarded-owning-base-v1", 1);
+        const auto guard = "(*this).__gti_lifecycle_active_" +
+                           std::to_string(constructorOwner->declaration);
+        expect(text.emitted() &&
+                   text.text.find(guard + " = false;") != std::string::npos &&
+                   text.text.find(guard + " = true;") != std::string::npos,
+               "each declaring class disarms its own destructor until success");
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto forged = frontend.mir;
+          auto *changed = const_cast<lang::MirClassInstance *>(
+              forged.findClassInstance(constructor.owner));
+          if (mutation == 0)
+            changed->requiresActiveDropState = false;
+          else if (mutation == 1)
+            changed->destructorStatus = lang::SpecialMemberStatus::Generated;
+          else
+            changed->fieldDropOrder.clear();
+          expect(!lang::CppMirBodyEmitter(forged, map)
+                      .supportsFailureBodyText(address),
+                 "polymorphic rollback must retain its guard, declared "
+                 "destructor identity and exact reverse field cleanup");
+        }
+      }
       const auto *entry = constructor.body.findBlock(constructor.body.entry);
-      if (!entry || entry->instructions.empty() ||
-          entry->instructions.front().kind !=
-              lang::MirInstructionKind::InitializeBase)
+      if (!entry)
+        continue;
+      const auto stageIt = std::find_if(
+          entry->instructions.begin(), entry->instructions.end(),
+          [](const auto &instruction) {
+            return instruction.kind == lang::MirInstructionKind::InitializeBase;
+          });
+      if (stageIt == entry->instructions.end())
         continue;
       ++selected;
-      const auto &stage = entry->instructions.front();
+      const auto &stage = *stageIt;
       const auto bindings = lang::cppMirBaseParameterInitializerBindings(
           frontend.mir, constructor);
       expect(bindings && bindings->size() == 1 &&
-                 bindings->front().parameters.empty() &&
                  bindings->front().constructor == stage.constructorTarget &&
                  bindings->front().initializer + 1 ==
                      stage.constructorInitializer,
-             "zero-argument base initialization must retain its exact native "
+             "zero-argument, literal or parameter base initialization retains "
+             "its exact native "
              "binding");
       for (const auto standard :
            {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
@@ -4410,10 +4530,12 @@ void testOwningBaseConstructorStatus() {
             const_cast<std::vector<lang::MirConstructorInstance> &>(
                 malformed.constructorInstances());
         for (auto &candidate : constructors) {
-          if (candidate.id == constructor.id)
-            candidate.body.blocks[candidate.body.entry - 1]
-                .instructions.front()
-                .successResultDrop.reset();
+          if (candidate.id == constructor.id) {
+            for (auto &instruction :
+                 candidate.body.blocks[candidate.body.entry - 1].instructions)
+              if (instruction.id == stage.id)
+                instruction.successResultDrop.reset();
+          }
         }
         expect(!lang::CppMirBodyEmitter(malformed, map)
                     .supportsFailureBodyText(address),
@@ -4439,7 +4561,7 @@ void testOwningBaseConstructorStatus() {
       }
     }
     expect(selected == 1,
-           "the fixture must exercise exactly one owning-base stage");
+           "the fixture must exercise every selected owning-base stage");
   }
 }
 
