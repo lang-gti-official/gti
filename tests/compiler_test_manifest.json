@@ -658,6 +658,10 @@
       "suite": "constexpr"
     },
     {
+      "name": "testConstexprAllocation",
+      "suite": "constexpr"
+    },
+    {
       "name": "testStaticAssertions",
       "suite": "constexpr"
     },

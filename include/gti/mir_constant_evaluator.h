@@ -9,6 +9,11 @@ namespace lang {
 struct MirConstantLimits {
   std::size_t steps = 4096;
   std::size_t callDepth = 64;
+  // Deterministic logical storage bounds, independent of host/target layout.
+  // One unit per value/aggregate node plus one per text byte. Allocation IDs
+  // are not recycled within a request, so stale identities cannot alias reuse.
+  std::size_t allocations = 1024;
+  std::size_t heapUnits = 65536;
 };
 
 struct MirConstantEvaluation {

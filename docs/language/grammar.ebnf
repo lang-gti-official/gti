@@ -601,7 +601,7 @@ operator-declaration   = [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
                          non-call-overloadable-operator parameter-clause
                          [ call-receiver-qualifier ] [ requires-clause ] [ "override" ]
                          method-terminator
-                       | [ "virtual" ] "operator" "bool" parameter-clause
+                       | [ "virtual" ] [ "constexpr" ] "operator" "bool" parameter-clause
                          [ "mut" ] [ requires-clause ] [ "override" ]
                          method-terminator ;
 
