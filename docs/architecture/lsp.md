@@ -702,6 +702,19 @@ frontend trace reports `semanticLateDemandBodies`,
 `semanticLateDemandMicroseconds`, `semanticDemandRounds` and
 `semanticDemandFallbacks` for every analysis.
 
+The LSP also owns a `SemanticPreambleCache` beside its parse and instance
+caches and passes it through `FrontendOptions::preambleCache`: the open
+file's standard-library prefix is analysed once per include graph and every
+later snapshot resumes from a copy of that analysis, registering and
+analysing only the file's own declarations (see "Trusted Prefix Preamble" in
+[semantic-analysis.md](semantic-analysis.md)). The first snapshot of a new
+include graph pays for the build; a changed or re-parsed library unit selects
+a new preamble. The trace reports `preambleBuilds`,
+`preambleBuildMicroseconds`, `preambleAdoptions`,
+`preambleAdoptMicroseconds`, `preambleBodies`, `preambleReachedBodies`, the
+cache's occupancy and, for every analysis, `includeSuggestionsRequested`. The background raw-pointer audit never uses a
+preamble.
+
 Before analysis and completion, the LSP asks the driver for immutable
 `ProjectFacts` for the package containing the entry document. The facts select
 the nearest workspace member/package, the selected profile's analysis

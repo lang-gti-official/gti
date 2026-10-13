@@ -1027,7 +1027,8 @@ SemanticModel::findConstexprForExpansion(
   }
   const ConstexprForExpansion *inherited =
       base == nullptr ? nullptr : base->findConstexprForExpansion(statement);
-  noteBaseSyntheticSyntax(inherited != nullptr);
+  noteBaseSyntheticSyntax(inherited != nullptr &&
+                          !baseStableSyntheticSyntax(&statement));
   return inherited;
 }
 
@@ -1049,7 +1050,8 @@ SemanticModel::findExpressionAlias(const Expr &expression) const {
   }
   const Expr *inherited =
       base == nullptr ? nullptr : base->findExpressionAlias(expression);
-  noteBaseSyntheticSyntax(inherited != nullptr);
+  noteBaseSyntheticSyntax(inherited != nullptr &&
+                          !baseStableSyntheticSyntax(&expression));
   return inherited;
 }
 
@@ -1928,10 +1930,31 @@ bool SemanticModel::baseOwnsGeneratedConstructor(
     const ConstructorDecl *declaration) const {
   for (const SemanticModel *model = base; model != nullptr;
        model = model->base) {
+    if (model->stableSyntheticSyntax.contains(declaration))
+      return false;
     for (const auto &generated : model->designatedConstructors)
       if (generated.get() == declaration)
         return true;
   }
+  return false;
+}
+
+void SemanticModel::markSyntheticSyntaxStable() {
+  for (const auto &generated : designatedConstructors)
+    stableSyntheticSyntax.insert(generated.get());
+  for (const auto &[statement, expansion] : constexprForExpansions)
+    if (expansion)
+      stableSyntheticSyntax.insert(statement);
+  for (const auto &[expression, alias] : expressionAliases)
+    stableSyntheticSyntax.insert(expression);
+  for (const auto &[field, anchor] : implicitFieldInitializers)
+    sharedImplicitFieldInitializers.insert(field);
+}
+
+bool SemanticModel::baseStableSyntheticSyntax(const void *object) const {
+  for (const SemanticModel *model = base; model != nullptr; model = model->base)
+    if (model->stableSyntheticSyntax.contains(object))
+      return true;
   return false;
 }
 

@@ -2,6 +2,7 @@
 
 #include "gti/frontend_cache.h"
 #include "gti/instance_analysis_cache.h"
+#include "gti/semantic_preamble.h"
 
 #include <cstdint>
 #include <memory>
@@ -32,6 +33,7 @@ struct FrontendSourceIdentity {
 struct FrontendSourceSnapshot {
   std::shared_ptr<FrontendCache> cache;
   std::shared_ptr<InstanceAnalysisCache> instanceCache;
+  std::shared_ptr<SemanticPreambleCache> preambleCache;
   std::unordered_map<std::string, std::uint64_t> generations;
   std::unordered_map<std::string, std::uint64_t> digests;
 };
@@ -67,9 +69,13 @@ public:
 
   [[nodiscard]] std::shared_ptr<FrontendCache> cache() const;
   [[nodiscard]] std::shared_ptr<InstanceAnalysisCache> instanceCache() const;
+  [[nodiscard]] std::shared_ptr<SemanticPreambleCache> preambleCache() const;
 
 private:
   std::shared_ptr<FrontendCache> sharedCache;
+  // Analysed trusted prefixes, keyed by exact prefix syntax; a changed
+  // library unit selects another preamble.
+  std::shared_ptr<SemanticPreambleCache> sharedPreambleCache;
   // Entries are keyed by exact trusted-unit syntax and registration
   // identities, so source invalidation needs no explicit eviction here: a
   // changed library unit or project shape simply selects another generation.
