@@ -3153,6 +3153,9 @@ private:
     // Library-only concrete instance analyses are reused across snapshots;
     // see InstanceAnalysisCache.
     frontendOptions.instanceCache = request.frontendSources.instanceCache;
+    // The standard-library prefix is analysed once per include graph and
+    // adopted by every later snapshot; see SemanticPreambleCache.
+    frontendOptions.preambleCache = request.frontendSources.preambleCache;
     frontendOptions.sourceGenerations = request.frontendSources.generations;
     frontendOptions.sourceDigests = request.frontendSources.digests;
     frontendOptions.target = project.configuration.target();
@@ -4420,6 +4423,18 @@ private:
         {"hirMicroseconds", static_cast<std::int64_t>(metrics.hirMicroseconds)},
         {"hirFunctionInstances",
          static_cast<std::int64_t>(metrics.hirFunctionInstances)},
+        {"preambleBuilds",
+         static_cast<std::int64_t>(metrics.semanticPreambleBuilds)},
+        {"preambleBuildMicroseconds",
+         static_cast<std::int64_t>(metrics.semanticPreambleBuildMicroseconds)},
+        {"preambleAdoptions",
+         static_cast<std::int64_t>(metrics.semanticPreambleAdoptions)},
+        {"preambleAdoptMicroseconds",
+         static_cast<std::int64_t>(metrics.semanticPreambleAdoptMicroseconds)},
+        {"preambleBodies",
+         static_cast<std::int64_t>(metrics.semanticPreambleBodies)},
+        {"preambleReachedBodies",
+         static_cast<std::int64_t>(metrics.semanticPreambleReachedBodies)},
         {"instanceReuseHits",
          static_cast<std::int64_t>(metrics.semanticInstanceReuseHits)},
         {"instanceReuseMisses",
@@ -4455,6 +4470,15 @@ private:
          static_cast<std::int64_t>(cacheStats.limits.maximumEntries)},
         {"maximumEstimatedBytes",
          static_cast<std::int64_t>(cacheStats.limits.maximumEstimatedBytes)}};
+    const lang::SemanticPreambleCacheStats preambleStats =
+        frontendSnapshots.preambleCache()->stats();
+    record["preambleCache"] = JsonObject{
+        {"entries", static_cast<std::int64_t>(preambleStats.entries)},
+        {"hits", static_cast<std::int64_t>(preambleStats.hits)},
+        {"misses", static_cast<std::int64_t>(preambleStats.misses)},
+        {"stores", static_cast<std::int64_t>(preambleStats.stores)},
+        {"maximumEntries",
+         static_cast<std::int64_t>(preambleStats.limits.maximumEntries)}};
     const lang::InstanceAnalysisCacheStats instanceStats =
         frontendSnapshots.instanceCache()->stats();
     record["instanceCache"] = JsonObject{

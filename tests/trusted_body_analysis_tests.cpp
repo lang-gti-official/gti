@@ -6,6 +6,7 @@
 #include "gti/frontend.h"
 #include "gti/frontend_work.h"
 #include "gti/semantic_analyzer.h"
+#include "gti/semantic_preamble.h"
 #include "gti/source_graph.h"
 
 #include <algorithm>
@@ -124,61 +125,79 @@ void checkFixtures(const std::filesystem::path &root) {
   // demand must leave exactly the diagnostics a complete check reports, and
   // must fall back to a repeated analysis whenever completing the body late
   // could differ from analysing it in the pass.
-  const auto editorCase = [&](const std::string &label,
+  const auto editorCase = [&](const std::string &caseLabel,
                               const std::string &libraryText,
                               const std::string &source,
                               std::size_t expectedRounds) {
-    const auto run = [&](bool complete, lang::FrontendWorkMetrics &work) {
-      lang::FrontendOptions editor;
-      editor.stopAfter = lang::FrontendPhase::Hir;
-      editor.analyzeRecoveredProgram = true;
-      editor.lowerEntryUnitOnly = !complete;
-      editor.lowerLibraryOnlyInstanceBodies = complete;
-      editor.trustedBodies = complete ? lang::TrustedBodyAnalysis::Complete
-                                      : lang::TrustedBodyAnalysis::Reachable;
-      editor.workMetrics = &work;
-      return lang::Frontend(editor).analyze(
-          entry, source, {root / "stdlib/prelude.gti"},
-          {{library.string(), libraryText}}, {root / "stdlib"});
-    };
+    const auto run =
+        [&](bool complete, lang::FrontendWorkMetrics &work,
+            std::shared_ptr<lang::SemanticPreambleCache> preambles = nullptr) {
+          lang::FrontendOptions editor;
+          editor.stopAfter = lang::FrontendPhase::Hir;
+          editor.analyzeRecoveredProgram = true;
+          editor.lowerEntryUnitOnly = !complete;
+          editor.lowerLibraryOnlyInstanceBodies = complete;
+          editor.trustedBodies = complete
+                                     ? lang::TrustedBodyAnalysis::Complete
+                                     : lang::TrustedBodyAnalysis::Reachable;
+          editor.workMetrics = &work;
+          editor.preambleCache = std::move(preambles);
+          return lang::Frontend(editor).analyze(
+              entry, source, {root / "stdlib/prelude.gti"},
+              {{library.string(), libraryText}}, {root / "stdlib"});
+        };
     lang::FrontendWorkMetrics completeWork;
-    lang::FrontendWorkMetrics reachableWork;
     const auto complete = run(true, completeWork);
-    const auto reachable = run(false, reachableWork);
-    std::vector<std::string> completeKeys;
-    std::vector<std::string> reachableKeys;
-    for (const auto &diagnostic : complete.diagnostics)
-      completeKeys.push_back(diagnostic.code + ' ' + diagnostic.primary.source +
-                             ':' + std::to_string(diagnostic.primary.start) +
-                             ' ' + diagnostic.message);
-    for (const auto &diagnostic : reachable.diagnostics)
-      reachableKeys.push_back(
-          diagnostic.code + ' ' + diagnostic.primary.source + ':' +
-          std::to_string(diagnostic.primary.start) + ' ' + diagnostic.message);
-    std::sort(completeKeys.begin(), completeKeys.end());
-    std::sort(reachableKeys.begin(), reachableKeys.end());
-    if (completeKeys != reachableKeys) {
-      std::cerr << "complete:\n";
-      for (const auto &item : completeKeys)
-        std::cerr << "  " << item << '\n';
-      std::cerr << "reachable:\n";
-      for (const auto &item : reachableKeys)
-        std::cerr << "  " << item << '\n';
+    // The same expectations hold over a trusted prefix preamble, whose
+    // held-back body diagnostics late demand reaches instead of analysing.
+    for (const bool preamble : {false, true}) {
+      const std::string label = caseLabel + (preamble ? " [preamble]" : "");
+      lang::FrontendWorkMetrics reachableWork;
+      const auto reachable = run(
+          false, reachableWork,
+          preamble ? std::make_shared<lang::SemanticPreambleCache>() : nullptr);
+      std::vector<std::string> completeKeys;
+      std::vector<std::string> reachableKeys;
+      for (const auto &diagnostic : complete.diagnostics)
+        completeKeys.push_back(diagnostic.code + ' ' +
+                               diagnostic.primary.source + ':' +
+                               std::to_string(diagnostic.primary.start) + ' ' +
+                               diagnostic.message);
+      for (const auto &diagnostic : reachable.diagnostics)
+        reachableKeys.push_back(diagnostic.code + ' ' +
+                                diagnostic.primary.source + ':' +
+                                std::to_string(diagnostic.primary.start) + ' ' +
+                                diagnostic.message);
+      std::sort(completeKeys.begin(), completeKeys.end());
+      std::sort(reachableKeys.begin(), reachableKeys.end());
+      if (completeKeys != reachableKeys) {
+        std::cerr << "complete:\n";
+        for (const auto &item : completeKeys)
+          std::cerr << "  " << item << '\n';
+        std::cerr << "reachable:\n";
+        for (const auto &item : reachableKeys)
+          std::cerr << "  " << item << '\n';
+      }
+      expect(completeKeys == reachableKeys,
+             label + ": editor diagnostics equal the complete check");
+      expect(complete.semanticValid == reachable.semanticValid &&
+                 complete.hirValid == reachable.hirValid,
+             label + ": editor validity equals the complete check");
+      // Over a preamble the body's facts were complete before the plan was
+      // built, so the initializer case needs no repeated analysis.
+      expect(
+          reachableWork.semanticDemandRounds == expectedRounds ||
+              (preamble && reachableWork.semanticDemandRounds < expectedRounds),
+          label + ": " + std::to_string(expectedRounds) +
+              " repeated analysis round(s), got " +
+              std::to_string(reachableWork.semanticDemandRounds));
+      expect(reachableWork.semanticDemandFallbacks == 0,
+             label + ": no complete fallback");
+      // Every case reaches the body through concrete discovery first.
+      expect(reachableWork.semanticLateDemandBodies != 0 ||
+                 reachableWork.semanticPreambleReachedBodies != 0,
+             label + ": concrete discovery attempts late demand");
     }
-    expect(completeKeys == reachableKeys,
-           label + ": editor diagnostics equal the complete check");
-    expect(complete.semanticValid == reachable.semanticValid &&
-               complete.hirValid == reachable.hirValid,
-           label + ": editor validity equals the complete check");
-    expect(reachableWork.semanticDemandRounds == expectedRounds,
-           label + ": " + std::to_string(expectedRounds) +
-               " repeated analysis round(s), got " +
-               std::to_string(reachableWork.semanticDemandRounds));
-    expect(reachableWork.semanticDemandFallbacks == 0,
-           label + ": no complete fallback");
-    // Every case reaches the body through concrete discovery first.
-    expect(reachableWork.semanticLateDemandBodies != 0,
-           label + ": concrete discovery attempts late demand");
   };
   const std::string lateLibrary =
       "int leaf() { return 42; }\n"
@@ -226,10 +245,12 @@ std::string key(const lang::Diagnostic &diagnostic) {
   return result;
 }
 
-lang::FrontendResult analyze(const std::filesystem::path &root,
-                             const std::filesystem::path &entry,
-                             lang::TrustedBodyAnalysis policy,
-                             bool entryUnitHir) {
+lang::FrontendResult
+analyze(const std::filesystem::path &root, const std::filesystem::path &entry,
+        lang::TrustedBodyAnalysis policy, bool entryUnitHir,
+        std::shared_ptr<lang::SemanticPreambleCache> preambles = nullptr,
+        lang::FrontendWorkMetrics *metrics = nullptr,
+        std::shared_ptr<lang::FrontendCache> parses = nullptr) {
   lang::FrontendOptions options;
   options.stopAfter = lang::FrontendPhase::Hir;
   options.analyzeRecoveredProgram = true;
@@ -237,6 +258,9 @@ lang::FrontendResult analyze(const std::filesystem::path &root,
   options.lowerEntryUnitOnly = entryUnitHir;
   // The editor also omits library-only instance bodies from HIR.
   options.lowerLibraryOnlyInstanceBodies = !entryUnitHir;
+  options.preambleCache = std::move(preambles);
+  options.cache = std::move(parses);
+  options.workMetrics = metrics;
   return lang::Frontend(options).analyze(entry, std::nullopt,
                                          {root / "stdlib/prelude.gti"}, {},
                                          {root / "stdlib"});
@@ -401,6 +425,48 @@ void checkEntry(const std::filesystem::path &root,
                      reachableLibrary.begin(), reachableLibrary.end())) {
     report("reachable trusted-body library diagnostics (subset)", entry,
            completeLibrary, reachableLibrary);
+  }
+  // The editor configuration over a trusted prefix preamble: built on the
+  // first analysis, adopted by the second. Application diagnostics equal the
+  // complete check's, library diagnostics are a subset, HIR stays valid.
+  // Complete analysis over the preamble reports exactly the complete check.
+  // Rounds share a parse cache large enough for the library, as the editor
+  // does: the preamble is keyed by the prefix units' exact parsed syntax.
+  auto preambles = std::make_shared<lang::SemanticPreambleCache>();
+  auto parses = std::make_shared<lang::FrontendCache>(lang::FrontendCacheLimits{
+      .maximumEntries = 1024, .maximumEstimatedBytes = 512U * 1024U * 1024U});
+  for (int round = 0; round < 3; ++round) {
+    lang::FrontendWorkMetrics work;
+    const bool completeRound = round == 2;
+    const lang::FrontendResult resumed =
+        analyze(root, entry,
+                completeRound ? lang::TrustedBodyAnalysis::Complete
+                              : lang::TrustedBodyAnalysis::Reachable,
+                !completeRound, preambles, &work, parses);
+    const std::string label = "preamble round " + std::to_string(round);
+    expect(work.semanticPreambleBuilds == (round == 0 ? 1U : 0U) &&
+               work.semanticPreambleAdoptions != 0,
+           label + " builds the preamble once and adopts it for " +
+               entry.string());
+    expect(!complete.hirValid || resumed.hirValid,
+           label + " preserves valid HIR for " + entry.string());
+    std::vector<std::string> application;
+    std::vector<std::string> library;
+    for (const lang::Diagnostic &diagnostic : resumed.diagnostics)
+      (applicationLocated(resumed, diagnostic) ? application : library)
+          .push_back(key(diagnostic));
+    std::sort(application.begin(), application.end());
+    std::sort(library.begin(), library.end());
+    if (completeApplication != application)
+      report(label + " application diagnostics", entry, completeApplication,
+             application);
+    if (completeRound) {
+      if (completeLibrary != library)
+        report(label + " library diagnostics", entry, completeLibrary, library);
+    } else if (!std::includes(completeLibrary.begin(), completeLibrary.end(),
+                              library.begin(), library.end())) {
+      report(label + " library diagnostics", entry, completeLibrary, library);
+    }
   }
 }
 

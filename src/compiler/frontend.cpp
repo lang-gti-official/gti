@@ -458,6 +458,62 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // cannot stay equivalent to analysing the body in the pass, discovery
   // requests a fresh, more complete analysis instead.
   const std::size_t preSemanticDiagnostics = result.diagnostics.size();
+  // Trusted prefix preamble: the leading compiler-trusted units of the
+  // compilation order, analysed once per configuration and shared through
+  // the caller's SemanticPreambleCache; see SemanticPreamble.
+  std::shared_ptr<const SemanticPreamble> preamble;
+  std::size_t preambleDeclarations = 0;
+  const bool requireDefinitions = options.requireFunctionDefinitions ||
+                                  options.requireEntryPoint ||
+                                  options.program.kind == ProgramKind::Library;
+  if (options.preambleCache != nullptr &&
+      options.rawPointerAudit == RawPointerAuditMode::Off) {
+    SemanticPreambleKey key;
+    key.context = cacheContext(options) + "\npreamble:" +
+                  (options.toolingOccurrences ? "tooling" : "plain") +
+                  (requireDefinitions ? ":definitions" : ":fragments");
+    const StmtList &declarations = result.program.declarations();
+    for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
+      const SourceUnit *unit = result.sourceGraph.findUnit(unitId);
+      if (unit == nullptr || unit->entry ||
+          !result.sourceGraph.isCompilerTrusted(unitId) ||
+          unit->declarationStart != preambleDeclarations ||
+          unit->declarationStart + unit->declarationCount > declarations.size())
+        break;
+      SemanticPreambleKey::Unit identity{.id = unitId,
+                                         .path = unit->path.string(),
+                                         .sourceDigest = unit->sourceDigest,
+                                         .syntaxDigest = unit->syntaxDigest};
+      for (std::size_t index = unit->declarationStart;
+           index < unit->declarationStart + unit->declarationCount; ++index)
+        identity.declarations.push_back(declarations[index].get());
+      key.units.push_back(std::move(identity));
+      preambleDeclarations = unit->declarationStart + unit->declarationCount;
+    }
+    if (!key.units.empty()) {
+      preamble = options.preambleCache->lookup(key);
+      if (preamble == nullptr) {
+        const auto buildStart = std::chrono::steady_clock::now();
+        StmtList prefix(declarations.begin(),
+                        declarations.begin() +
+                            static_cast<std::ptrdiff_t>(preambleDeclarations));
+        SemanticVisitor builder(
+            options.target, &result.sourceGraph, options.toolingOccurrences,
+            nullptr, &result.sources, RawPointerAuditMode::Off,
+            requireDefinitions, TrustedBodyAnalysis::Complete);
+        preamble = builder.buildPreamble(Program(std::move(prefix)));
+        options.preambleCache->store(std::move(key), preamble);
+        if (options.workMetrics != nullptr) {
+          ++options.workMetrics->semanticPreambleBuilds;
+          options.workMetrics->semanticPreambleBuildMicroseconds +=
+              static_cast<std::size_t>(
+                  std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now() - buildStart)
+                      .count());
+        }
+      }
+    }
+  }
   std::unordered_set<const FunctionDecl *> requiredBodies;
   std::unique_ptr<SemanticVisitor> semanticOwner;
   HirLoweringResult hir;
@@ -473,11 +529,14 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     semanticOwner = std::make_unique<SemanticVisitor>(
         options.target, &result.sourceGraph, options.toolingOccurrences,
         options.workMetrics, &result.sources, options.rawPointerAudit,
-        options.requireFunctionDefinitions || options.requireEntryPoint ||
-            options.program.kind == ProgramKind::Library,
-        trustedBodies);
+        requireDefinitions, trustedBodies);
     SemanticVisitor &semantic = *semanticOwner;
     semantic.requireFunctionBodies(requiredBodies);
+    if (preamble != nullptr) {
+      semantic.adoptPreamble(preamble, preambleDeclarations);
+      if (options.workMetrics != nullptr)
+        ++options.workMetrics->semanticPreambleAdoptions;
+    }
     if (options.instanceCache != nullptr &&
         trustedBodies == TrustedBodyAnalysis::Reachable)
       semantic.useInstanceAnalysisCache(options.instanceCache,
