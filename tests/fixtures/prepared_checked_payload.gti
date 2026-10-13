@@ -38,17 +38,19 @@ expected<Box, int32_t> wrap_error() {
 
 int32_t observe(Item& item) { return item.number; }
 
+int32_t later(int32_t value) { std::println("later"); return value; }
+
 int main(int argc, std::vector<std::string> argv) {
   if (argc == 2) {
     Guard guard{};
     auto parsed = parse(false);
-    Box failing{parsed.value(), 1};
+    Box failing{parsed.value(), later(1)};
     return failing.total;
   }
   if (argc == 3) {
     Guard guard{};
     auto parsed = parse(true);
-    Box failing{parsed.value(), 2147483647};
+    Box failing{parsed.value(), later(2147483647)};
     return failing.total;
   }
   auto valid = wrap(true);
