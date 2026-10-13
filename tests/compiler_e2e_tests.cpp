@@ -771,6 +771,28 @@ int main() {
         expect(
             !lang::verifyMirProgram(malformed).valid(),
             "raw receiver stages cannot lose their exact call-site identity");
+        for (int mutation = 0; mutation < 4; ++mutation) {
+          lang::MirProgram missingEffect = frontend.mir;
+          auto *effectBody = const_cast<lang::MirFunctionInstance *>(
+              missingEffect.findFunctionInstance(instance.id));
+          for (auto &effectBlock : effectBody->body.blocks)
+            for (auto &effect : effectBlock.instructions) {
+              const bool selected =
+                  mutation < 2
+                      ? effect.id == input.id
+                      : effect.kind == lang::MirInstructionKind::Call &&
+                            effect.callSite == input.callSite;
+              if (selected) {
+                if (mutation % 2 == 0)
+                  effect.rawMemoryAccess = false;
+                else
+                  effect.unsafeOperation = lang::UnsafeOperationKind::None;
+              }
+            }
+          expect(!lang::verifyMirProgram(missingEffect).valid(),
+                 "raw receiver stage and call must both retain unsafe and "
+                 "memory effects");
+        }
       }
     }
     expect(stagedReceivers == 2,
