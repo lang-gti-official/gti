@@ -762,6 +762,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testNestedPassiveParameterCopies",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testExampleCorpusEmissionReadiness",
       "suite": "corpus"
     },

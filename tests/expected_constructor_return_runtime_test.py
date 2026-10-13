@@ -31,7 +31,8 @@ if __name__ == "__main__":
     prepared_overflow = (
         f"{prepared.name}:{prepared_line(': item(input), total(input.number + after)')}: "
         "runtime error[GTI-R0001]: integer_overflow in addition\n")
-    main(names=(fixture.stem, prepared.stem), cases={fixture.stem: [
+    nested = fixture.with_name("nested_passive_parameter_copy.gti")
+    main(names=(fixture.stem, prepared.stem, nested.stem), cases={fixture.stem: [
         ((), (0, "", "")),
         (("returned-construction-failure",), (70, "", access)),
         (("later-argument-failure", "returned"), (70, "", overflow)),
@@ -40,4 +41,4 @@ if __name__ == "__main__":
         ((), (0, "", "")),
         (("invalid",), (70, "cleanup\n", prepared_access)),
         (("constructor", "failure"), (70, "cleanup\n", prepared_overflow)),
-    ]})
+    ], nested.stem: [((), (0, "", ""))]})
