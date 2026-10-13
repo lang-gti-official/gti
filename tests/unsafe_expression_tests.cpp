@@ -112,21 +112,21 @@ void testBoundaries() {
            "statement syntax is not an assignment target", "GTI-P0001");
   rejected(
       "int& bad() { int x = 1; return unsafe { x }; } int main() { return 0; }",
-      "unsafe does not allow a checked reference to a dead local");
+      "unsafe does not allow a checked reference to a dead local", "GTI-S2017");
   rejected("int main() { int x = 1; mut int& ref = unsafe { x }; return ref; }",
-           "unsafe does not upgrade checked reference access");
+           "unsafe does not upgrade checked reference access", "GTI-S2017");
   rejected(
       "#include <std/memory>\nint main() { auto p = std::make_unique<int>(1); "
       "auto q = unsafe { std::move(p) }; return *p; }",
-      "ordinary use-after-move checks survive the wrapper");
+      "ordinary use-after-move checks survive the wrapper", "GTI-S2018");
   rejected(
       "#include <std/memory>\nint main() { auto p = std::make_unique<int>(1); "
       "auto& ref = *p; auto q = unsafe { std::move(p) }; return ref; }",
-      "unsafe cannot consume a checked borrowed owner");
+      "unsafe cannot consume a checked borrowed owner", "GTI-S2017");
   rejected("#include <std/string>\nint main() { auto text = unsafe { "
            "std::string(\"abc\").view() }; "
-           "return text.size(); }",
-           "temporary-owner borrow cannot escape");
+           "return text.empty() ? 0 : 1; }",
+           "temporary-owner borrow cannot escape", "GTI-S2045");
 
   const auto pure =
       analyze("constexpr int value() { return unsafe { 40 + 2 }; } "
