@@ -1,0 +1,58 @@
+#include <std/memory>
+#include <std/format>
+#include <std/vector>
+#include <std/string>
+
+class Probe {
+public:
+  int identity;
+  Probe(int id) : identity(id) {}
+  ~Probe() { std::println("{}", this.identity); }
+};
+struct Item {
+  mut std::unique_ptr<Probe> owner;
+  Item(int id) : owner(std::make_unique<Probe>(id)) {}
+};
+class Receiver {
+public:
+  Receiver() = default;
+  void Accept(Item item, int divisor) mut {
+    std::println("body");
+    int checked = 1 / divisor;
+  }
+  void Observe(Item item) { std::println("read"); }
+};
+Receiver* Select(Receiver* receiver, int divisor) {
+  std::println("receiver");
+  int checked = 1 / divisor;
+  return receiver;
+}
+int Argument(int divisor) {
+  std::println("argument");
+  return 1 / divisor;
+}
+expected<Item, Item> Make(bool success) {
+  if (success) { return Item(2); }
+  return unexpected(Item(3));
+}
+int main(int argc, std::vector<std::string> args) {
+  Probe outer{9};
+  mut Receiver receiver{};
+  mut auto result = Make(args.size() != std::size_t(3));
+  int receiver_divisor = args.size() == std::size_t(4) ? 0 : 1;
+  int argument_divisor = args.size() == std::size_t(5) ? 0 : 1;
+  int body_adjustment = args.size() == std::size_t(6) ? 1 : 0;
+  unsafe {
+    if (args.size() == std::size_t(2)) {
+      Select(&receiver, 1)->Observe(std::move(result).value());
+    } else if (args.size() == std::size_t(7)) {
+      mut auto error = Make(false);
+      Select(&receiver, 1)->Accept(std::move(error).error(), 1);
+    } else {
+      Select(&receiver, receiver_divisor)->Accept(
+          std::move(result).value(),
+          Argument(argument_divisor) - body_adjustment);
+    }
+  }
+  return 0;
+}

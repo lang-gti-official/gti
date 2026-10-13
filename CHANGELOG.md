@@ -16,6 +16,31 @@ for what minor and patch releases mean.
   such as `target = Item(source.view())`. Exact input-loan retirement and
   constructor/replacement cleanup remain checked. Covers issue #93.
 
+## 0.423.7 — Ordered owning arguments through raw receivers
+
+- Fix a backend internal compiler error when consuming owning expected payloads
+  directly into methods reached through raw pointers. Raw pointee receivers now
+  use the ordinary receiver-first call-input plan, preserving argument ownership
+  and failure cleanup without changing unsafe obligations (issue #92).
+
+## 0.423.6 — Static alternatives in borrowed returns
+
+- Fix an internal compiler error when a borrowed text return also has a string
+  literal or null C-string return path. Static alternatives are independently
+  verified without weakening the lifetime checks on dynamic results. Covers
+  the editor preview fallback in issue #89.
+
+## 0.423.4 — Expected pointer and owning payload composition
+
+- Fix backend internal compiler errors when returning passive pointer payloads
+  in `expected`, including null and read-only pointers, without changing raw
+  pointer safety obligations.
+- Allow consuming an owning `expected` value or error directly into an existing
+  object. Reuse the ordinary replacement lifetime slot and preserve old-value,
+  wrong-state and secondary-failure cleanup (issues #84 and #85).
+- Fix owning field replacement through non-failing reference-returning getters,
+  including nested getters, without requiring a spurious failure edge (#88).
+
 ## 0.423.3 — Forwarded base constructor views
 
 - Fix an internal compiler error when a constructor forwards an incoming

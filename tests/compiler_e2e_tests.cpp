@@ -685,6 +685,100 @@ int main() {
          "argument-two, invocation chain");
 }
 
+void testOrderedRawReceiverInputs() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "ordered-raw-receiver.gti", R"(
+#include <std/memory>
+struct Item {
+  mut std::unique_ptr<int> value;
+  Item(int n) : value(std::make_unique<int>(n)) {}
+};
+struct Receiver {
+  void Accept(Item item) mut {}
+  void Observe(Item item) {}
+};
+int main() {
+  mut Receiver receiver{};
+  mut Receiver* pointer = &receiver;
+  expected<Item, int> first = Item(1);
+  expected<Item, int> second = Item(2);
+  unsafe {
+    pointer->Accept(std::move(first).value());
+    pointer->Observe(std::move(second).value());
+  }
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode() && frontend.mirValid,
+         "raw member owning inputs should pass semantic and MIR checks");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  std::size_t plans = 0;
+  for (const auto &instance : frontend.hir.functionInstances()) {
+    if (!instance.source || instance.source->name().lexeme != "main")
+      continue;
+    for (const auto &call : instance.body.values) {
+      if (call.kind != lang::HirValueKind::Call || call.operands.empty())
+        continue;
+      const auto *callee = instance.body.findValue(call.operands.front());
+      if (!callee ||
+          callee->unsafeOperation != lang::UnsafeOperationKind::RawMember)
+        continue;
+      ++plans;
+      const auto *pointer = instance.body.findValue(callee->operands.front());
+      expect(call.callPlan && call.callPlan->receiver && pointer &&
+                 call.callPlan->receiver->value == callee->id &&
+                 call.callPlan->receiver->type ==
+                     pointer->info.type.arguments.front() &&
+                 call.callPlan->arguments.size() == 1 &&
+                 call.callPlan->arguments.front().kind ==
+                     lang::HirCallInputKind::MoveValue &&
+                 call.callPlan->receiver->kind ==
+                     (plans == 1 ? lang::HirCallInputKind::MutableBorrow
+                                 : lang::HirCallInputKind::ReadBorrow),
+             "raw calls stage the exact semantic pointee receiver before "
+             "owning arguments");
+    }
+    const auto *mir = frontend.mir.findFunctionInstance(instance.id);
+    if (!mir) {
+      expect(false, "raw receiver MIR body must exist");
+      continue;
+    }
+    std::size_t stagedReceivers = 0;
+    for (const auto &block : mir->body.blocks) {
+      for (const auto &input : block.instructions) {
+        if (input.kind != lang::MirInstructionKind::CallInput ||
+            input.callInputRole != lang::MirCallInputRole::Receiver ||
+            input.operands.size() != 1)
+          continue;
+        const auto *place = mir->body.findPlace(input.operands.front().place);
+        if (!place || place->projections.empty() ||
+            place->projections.front().kind !=
+                lang::MirProjectionKind::RawDereference)
+          continue;
+        ++stagedReceivers;
+        lang::MirProgram malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(instance.id));
+        for (auto &badBlock : changed->body.blocks)
+          for (auto &badInput : badBlock.instructions)
+            if (badInput.id == input.id)
+              badInput.callSite = 0;
+        expect(
+            !lang::verifyMirProgram(malformed).valid(),
+            "raw receiver stages cannot lose their exact call-site identity");
+      }
+    }
+    expect(stagedReceivers == 2,
+           "both raw receiver access modes have explicit MIR stages");
+  }
+  expect(plans == 2, "both raw member calls have ordered HIR plans");
+}
+
 void testOrderedClassValueCallInputs() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("ordered-class-value-inputs.gti", R"(
@@ -3797,6 +3891,7 @@ constexpr NamedTest kTests[] = {
     {"testMirControlFlowAndOwnershipEffects",
      testMirControlFlowAndOwnershipEffects},
     {"testOrderedOrdinaryCallInputs", testOrderedOrdinaryCallInputs},
+    {"testOrderedRawReceiverInputs", testOrderedRawReceiverInputs},
     {"testOrderedClassValueCallInputs", testOrderedClassValueCallInputs},
     {"testOrderedOrdinaryConstructorInputs",
      testOrderedOrdinaryConstructorInputs},
