@@ -8188,10 +8188,12 @@ public:
         constructedBindings =
             cppMirConstructedFieldInitializerBindings(mir, constructor);
     const bool bodyStagedOwnedParameters =
+        // A separately admitted base initializer remains in the native list;
+        // owned fields stay empty until their MIR Move/Initialize executes.
         failureForm && owner != nullptr &&
         cppMirFailureConstructorEmptyFieldsEligible(mir, owner->id) &&
-        bindings && bindings->empty() && baseBindings &&
-        baseBindings->empty() && copiedBindings && copiedBindings->empty();
+        bindings && bindings->empty() && baseBindings && copiedBindings &&
+        copiedBindings->empty();
     if (!bindings || !baseBindings || !copiedBindings ||
         (!ownedBindings && !bodyStagedOwnedParameters)) {
       return;

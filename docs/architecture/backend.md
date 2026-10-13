@@ -2352,6 +2352,14 @@ Ordinary native constructor overloads that publish fields from the same MIR
 body use the same proved private empty state as their failure-form overloads.
 They must not implicitly call a source default constructor before MIR field
 publication; that constructor may be deleted or have observable behavior.
+Body-ordered owned-parameter fields compose with an independently verified
+native base initializer. The base follows its exact selected status entry;
+the destination fields retain their private empty shells until MIR reaches
+their own `Move` and `Initialize`. An input parameter's original obligation
+therefore remains armed if base construction fails. Only successful field
+publication reparents it into field rollback. The field transfer, parameter
+cleanup and base success/rollback proofs are all required; this composition
+does not hoist an owning move across fallible base construction.
 A cleanup-free class field may have lexical lifetime without an active cleanup
 obligation. Such a field can accompany a guarded owner only when its concrete
 class has generated, observation-free destruction, no active cleanup state,

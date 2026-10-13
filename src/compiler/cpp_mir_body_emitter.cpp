@@ -15129,8 +15129,11 @@ failureConstructorBoundaryEligible(const MirProgram &program,
   const auto copiedParameters =
       cppMirCopyParameterFieldBindings(program, constructor);
   const bool bodyStagedOwnedParameters =
+      // A selected base does not move the input field owner. Keep that input
+      // armed through base failure, then let MIR publish it after base success.
+      // Base and field proofs compose; neither can replace the other.
       emptyStateFields && storedReferences && storedReferences->empty() &&
-      baseParameters && baseParameters->empty() && copiedParameters &&
+      baseParameters && passiveBases && copiedParameters &&
       copiedParameters->empty() &&
       bodyStagedOwnedParameterFieldInitializers(program, constructor);
   const bool bodyStagedOptionalParameter =
