@@ -328,7 +328,7 @@ layer.
    across snapshots. This is the largest change because `SemanticModel`
    identities are snapshot-local today.
 
-   *Concrete instance reuse — implemented in 0.419.0.* After late demand,
+   *Concrete instance reuse — implemented in 0.420.0.* After late demand,
    HIR's concrete instance reanalysis was the largest per-edit phase, and
    most of it re-derived library instances whose arguments name only library
    types. The LSP now owns an `InstanceAnalysisCache` beside its parse cache;
@@ -379,7 +379,7 @@ Same message-flow probe, Release `gti_lsp`, arm64 macOS, 2026-10-13, two
 alternating rounds per build on a loaded host (load average about 11);
 steady edits, milliseconds per edit:
 
-| Phase | before (0.418.0) | after (0.419.0) |
+| Phase | before (0.418.0) | after (0.420.0) |
 | --- | ---: | ---: |
 | 089 total | 470 | 298 |
 | source load / lex / parse | 27 / 12 / 12 | 15 / 0.2 / 0.2 |

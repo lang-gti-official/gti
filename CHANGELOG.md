@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.419.0 — Faster editor feedback for library-heavy files
+## 0.420.0 — Faster editor feedback for library-heavy files
 
 - `gti_lsp` reuses concrete instance analyses of standard-library generics
   whose arguments are standard-library types (for example
