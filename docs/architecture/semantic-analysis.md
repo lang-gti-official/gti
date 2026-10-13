@@ -1376,6 +1376,79 @@ cannot collide even when instances have identical source names or different
 types. These delta symbol records remain concrete and are handed to HIR without
 mutating the immutable primary snapshot. Discarded arms are still unanalyzed.
 
+### Trusted Prefix Preamble
+
+Most of an editor snapshot's semantic work is the standard library:
+registration of every loaded unit and, under `Reachable` analysis, the
+library bodies the open file reaches. Neither depends on the open file, only
+on which trusted units precede it. A frontend caller may pass a
+`SemanticPreambleCache` (`include/gti/semantic_preamble.h`) through
+`FrontendOptions::preambleCache`; the frontend then analyses a program's
+*trusted prefix* once and resumes every later analysis of a program with the
+same prefix from a copy of that state. `gti check` and builds do not set it,
+and an analysis with the raw-pointer audit enabled never uses it.
+
+- **Prefix.** The leading units of the compilation order that are
+  compiler-trusted and not the entry unit; their declarations are a prefix of
+  the program's declaration list. A `SemanticPreambleKey` names the analysis
+  configuration, every prefix unit by identity, path, digests and exact
+  parsed declarations, and the whole source graph by unit identity and
+  include edges (registration publishes each declaration's visibility per
+  consuming unit, so a program with other units cannot share the tables), so
+  a changed or re-parsed library unit, or another include graph, selects
+  another preamble (the cache keeps a few, least recently used first).
+- **Building.** `SemanticVisitor::buildPreamble` analyses the prefix
+  declarations as a program of their own with complete trusted bodies, then
+  freezes the analyzer: its session state (catalog, model, flow state,
+  analysed-body sets, identity counters) becomes the preamble, which also owns
+  the prefix program so the syntax that state refers to stays alive. Program
+  initialization and the hosted entry are not planned for a prefix. While a
+  preamble is built, every body that bounded analysis would have deferred is
+  analysed in place but *held back*: its body diagnostics and the function
+  records it consulted are kept beside the body instead of being reported.
+- **Resuming.** `SemanticVisitor::adoptPreamble` makes the next `check` copy
+  the preamble's session state (the compiler-generated copy of
+  `RequestSessionState`, with the catalog deep-copied and request-local
+  budgets replaced), reopen the catalog, and run the registration passes over
+  the declarations after the prefix only: the whole-catalog passes start at
+  the adopted class, enum, alias, concept and function floors, and native
+  record and union shape states persist in the session so later records can
+  refer to earlier ones. The body phase then analyses only the remaining
+  declarations, with a call journal, and finalization runs under the same
+  `LateFinalizationScope` late demand uses, with the forwarding, call-use,
+  candidate and occurrence counts recorded when the preamble was frozen, so
+  every whole-program pass confines itself to what this analysis added;
+  program initialization is planned for the whole program.
+- **Reaching held-back bodies.** A held-back body is complete in the adopted
+  model, but it is reported, and shown to HIR as analysed, only once this
+  analysis reaches it: the functions the entry bodies demanded, the bodies a
+  required-body request names, every body under complete analysis, and
+  transitively the bodies those consulted. HIR's primary-body requests and
+  the functions a concrete instance analysis consulted reach bodies the same
+  way; an error among a reached body's diagnostics fails that request exactly
+  as a fresh late analysis would have, so the repeated analysis reports it in
+  the pass. Diagnostics for the open file are therefore those of bounded
+  analysis, and a library body nothing reaches stays the library's own
+  `gti check` concern.
+- **Identity.** Registration of the prefix is literally the preamble's, so
+  trusted declaration identities, the instance-reuse registration fingerprint
+  and symbol identities below the prefix ceiling are the same in every
+  resumed analysis; the rest of the program registers above them. The syntax
+  the preamble synthesized (generated constructors, `constexpr for`
+  expansions, expression aliases, implicit field-initializer anchors) is the
+  same object in every resumed analysis, so the instance-reuse journal treats
+  it as stable rather than snapshot-owned; the instance cache's generation
+  context names the preamble's process-unique identity, so such entries are
+  never served under another preamble of the same units.
+
+`FrontendWorkMetrics` reports preamble builds and adoptions with their time,
+the held-back bodies and how many were reached. The `trusted_body_analysis`
+parity gate analyses every example and standard-library test fresh, resumed
+from a preamble twice (built, then adopted) and completely over a preamble,
+and requires the application-located diagnostics of the complete check, a
+subset of its library diagnostics under bounded analysis and exactly its
+diagnostics under complete analysis.
+
 ### Instance Reuse Across Snapshots
 
 An editor snapshot re-derives the same library instances on every keystroke:
