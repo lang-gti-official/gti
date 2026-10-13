@@ -26,7 +26,7 @@ if __name__ == "__main__":
         return next(i + 1 for i, source in enumerate(prepared_lines) if text in source)
 
     prepared_access = (
-        f"{prepared.name}:{prepared_line('Box failing{parsed.value(), 1}')}: "
+        f"{prepared.name}:{prepared_line('Box failing{parsed.value(), later(1)}')}: "
         "runtime error[GTI-R0009]: invalid_expected_access in value_on_error\n")
     prepared_overflow = (
         f"{prepared.name}:{prepared_line(': item(input), total(input.number + after)')}: "
@@ -39,5 +39,5 @@ if __name__ == "__main__":
     ], prepared.stem: [
         ((), (0, "", "")),
         (("invalid",), (70, "cleanup\n", prepared_access)),
-        (("constructor", "failure"), (70, "cleanup\n", prepared_overflow)),
+        (("constructor", "failure"), (70, "later\ncleanup\n", prepared_overflow)),
     ]})
