@@ -886,6 +886,14 @@ private:
     if (location.epoch != epoch(location) ||
         (!location.path.empty() && !valueStorage))
       return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    // Replacing the moved place restores it; writing only a child of a moved
+    // aggregate cannot resurrect the missing enclosing value.
+    for (const auto &moved : retired(location))
+      if (moved.root == location.root && moved.cell == location.cell &&
+          moved.epoch == location.epoch &&
+          moved.path.size() < location.path.size() &&
+          pathPrefix(moved.path, location.path))
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
     auto updated = location.path.empty() ? convertValue(value, *location.type)
                                          : project(*valueStorage, location.path,
                                                    *location.type, 0, &value);
@@ -1239,9 +1247,8 @@ private:
           instruction.kind != MirInstructionKind::Call ||
           !instruction.functionTarget ||
           instruction.dispatch != CallDispatch::Static))) {
-      return fail(
-          frame, ConstantEvaluationFailure::UnsupportedExpression,
-          "Operation is outside the passive-value constant MIR profile.");
+      return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
+                  "Operation is outside the constant MIR execution profile.");
     }
     if (instruction.kind == MirInstructionKind::Lifecycle) {
       return {};
@@ -2173,7 +2180,7 @@ private:
       default:
         return fail(
             frame, ConstantEvaluationFailure::UnsupportedExpression,
-            "Terminator is outside the passive-value constant MIR profile.");
+            "Terminator is outside the constant MIR execution profile.");
       }
     }
     return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
