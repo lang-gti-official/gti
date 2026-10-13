@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.420.1 — Shared cleanup for early returns
+## 0.421.1 — Shared cleanup for early returns
 
 - Functions and lambdas that return nothing, a scalar or a scalar error from
   several places now share the cleanup each return performs, instead of
@@ -18,6 +18,18 @@ for what minor and patch releases mean.
   times owners: with 80 owners, its exit cleanup holds 80 drops instead of
   3,320. Each return still destroys exactly the owners live at it, in the same
   order, with the same failure behavior and diagnostics.
+
+## 0.421.0 — Editor omits library-only instance bodies
+
+- Editor snapshots no longer lower the HIR bodies of library-only concrete
+  instances (standard-library declarations instantiated with only
+  standard-library types). Their instance analysis still runs, so the
+  diagnostics `gti check` reports for the open file's own code are unchanged;
+  library instances that only such a body would request are left to the
+  library's own check, like library code the open file does not reach. The
+  frontend trace reports `hirOmittedInstanceBodies`. With the instance reuse
+  of 0.420.0, a file with eight standard-library includes analyses in about
+  250 ms per edit instead of 300. `gti check` and builds are unaffected.
 
 ## 0.420.0 — Faster editor feedback for library-heavy files
 
