@@ -220,9 +220,10 @@ lexical fallbacks are acceptable only when clearly less authoritative.
 Status: measured 2026-10-13; editor-scoped HIR, the background raw-pointer
 audit, demand-driven trusted-body analysis (single analysis per edit) and the
 first slice of step 3, cross-snapshot reuse of library-only concrete instance
-analyses, are implemented. Registration and primary body reuse remain
-proposed; the eight-include file still exceeds the exit measure (see
-"Measured After Instance Reuse"). This is the
+analyses, and the omission of library-only instance bodies from editor HIR
+are implemented. Registration and primary body reuse remain proposed; the
+eight-include file still exceeds the exit measure (see "Measured After
+Library-Only Body Omission"). This is the
 compiler-side half of editor responsiveness. The protocol-side half (edit-time
 publication, adaptive debounce, refresh policy) is implemented and described
 in the architecture document.
@@ -395,6 +396,31 @@ time. The first analysis stores 590 entries (511 distinct keys, about 9 MB
 estimated). `network.gti` reuses 29. Peak server memory over the probe rose
 from about 355 MB to 440 MB, mostly the retained parsed library. Diagnostics
 for both files remain identical to `gti check`.
+
+### Measured After Library-Only Body Omission
+
+Same message-flow probe, Release `gti_lsp`, arm64 macOS, 2026-10-13; steady
+edits, milliseconds per edit. The first two rows compare the omission build
+against the same main before instance reuse; the last row is the reconciled
+build with both:
+
+| Build | 089 total | semantic | late demand | HIR |
+| --- | ---: | ---: | ---: | ---: |
+| entry-unit HIR, every reached body lowered | 450 | 195 | 10 (12 bodies) | 205 |
+| library-only bodies omitted | 300 | 193 | 4 (5 bodies) | 56 |
+| instance reuse and omission (0.421.0) | 250 | 200 | 4 (5 bodies) | 30 |
+
+Each steady 089 edit omits 123 library-only function, constructor and
+destructor bodies; the instances only those bodies would have requested are
+never discovered, so HIR analyses and lowers the file's own instances and the
+library instances the file requests directly. Semantic time is unchanged:
+registration (about 40 ms), eager library constructors, destructors, virtual
+and constant definitions plus application bodies (about 85 ms), demanded
+library bodies (about 52 ms) and finalization (8 ms) remain, and are now two
+thirds of the edit. With instance reuse, the omitted bodies also leave fewer instances to reuse
+(132 reused instance analyses per edit instead of 590, a 1.4 MB cache
+instead of 9 MB). Reaching the exit measure needs the rest of
+step 3.
 
 Exit measure: the eight-include file under 100 ms per edit with the probe,
 semantic diagnostics for the open file identical to `gti check` on its

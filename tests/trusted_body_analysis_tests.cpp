@@ -133,6 +133,7 @@ void checkFixtures(const std::filesystem::path &root) {
       editor.stopAfter = lang::FrontendPhase::Hir;
       editor.analyzeRecoveredProgram = true;
       editor.lowerEntryUnitOnly = !complete;
+      editor.lowerLibraryOnlyInstanceBodies = complete;
       editor.trustedBodies = complete ? lang::TrustedBodyAnalysis::Complete
                                       : lang::TrustedBodyAnalysis::Reachable;
       editor.workMetrics = &work;
@@ -234,6 +235,8 @@ lang::FrontendResult analyze(const std::filesystem::path &root,
   options.analyzeRecoveredProgram = true;
   options.trustedBodies = policy;
   options.lowerEntryUnitOnly = entryUnitHir;
+  // The editor also omits library-only instance bodies from HIR.
+  options.lowerLibraryOnlyInstanceBodies = !entryUnitHir;
   return lang::Frontend(options).analyze(entry, std::nullopt,
                                          {root / "stdlib/prelude.gti"}, {},
                                          {root / "stdlib"});
@@ -261,6 +264,104 @@ void report(const std::string &label, const std::filesystem::path &entry,
   for (const std::string &item : extra)
     std::cerr << "  extra:   " << item << '\n';
   ++failures;
+}
+
+// Editor HIR omits the bodies of library-only instances (trusted
+// declarations whose arguments name only trusted types). Each such instance
+// is still analysed, so what its own analysis reports is kept; what only its
+// body would request (callee and class instances) is not discovered and is
+// left to the library's own check. An instance of the open file's own type is
+// lowered completely and reports exactly what the complete check reports.
+void checkLibraryOnlyOmission(const std::filesystem::path &root) {
+  const auto entry = root / "tests/omission-entry.gti";
+  const auto library = root / "stdlib/std/cmath.gti";
+  // Probe<T> and checked<T> fail for every argument wider than a byte.
+  const std::string declarations =
+      "class Probe<T> {\n"
+      "  static_assert(sizeof(T) == uint64_t(1), \"needs a byte\");\n"
+      "};\n"
+      "int inner<T>(T& value) { Probe<T> probe{}; return 0; }\n"
+      "int outer<T>(T& value) { return inner(value); }\n"
+      "int direct<T>(T& value) { Probe<T> probe{}; return 0; }\n"
+      "int checked<T>(T& value) {\n"
+      "  static_assert(sizeof(T) == uint64_t(1), \"needs a byte\");\n"
+      "  return 0;\n"
+      "}\n"
+      "int plain(int value) { return value + 1; }\n";
+  const auto run = [&](const std::string &text, bool complete,
+                       lang::FrontendWorkMetrics &metrics) {
+    lang::FrontendOptions options;
+    options.stopAfter = lang::FrontendPhase::Hir;
+    options.analyzeRecoveredProgram = true;
+    options.trustedBodies = complete ? lang::TrustedBodyAnalysis::Complete
+                                     : lang::TrustedBodyAnalysis::Reachable;
+    options.lowerEntryUnitOnly = !complete;
+    options.lowerLibraryOnlyInstanceBodies = complete;
+    options.workMetrics = &metrics;
+    return lang::Frontend(options).analyze(
+        entry, "#include <std/cmath>\n" + text, {root / "stdlib/prelude.gti"},
+        {{library.string(), declarations}}, {root / "stdlib"});
+  };
+  const auto keys = [](const lang::FrontendResult &result) {
+    std::vector<std::string> items;
+    for (const lang::Diagnostic &diagnostic : result.diagnostics)
+      items.push_back(key(diagnostic));
+    std::sort(items.begin(), items.end());
+    return items;
+  };
+  // Returns the complete check's diagnostics and the editor's.
+  const auto compare = [&](const std::string &label, const std::string &text,
+                           bool expectEqual) {
+    lang::FrontendWorkMetrics completeWork;
+    lang::FrontendWorkMetrics editorWork;
+    const lang::FrontendResult complete = run(text, true, completeWork);
+    const lang::FrontendResult editor = run(text, false, editorWork);
+    expect(completeWork.hirOmittedInstanceBodies == 0,
+           label + ": the complete check omits no body");
+    expect(editorWork.hirOmittedInstanceBodies != 0,
+           label + ": the editor omits a library-only body");
+    expect(editorWork.hirFunctionInstances < completeWork.hirFunctionInstances,
+           label + ": the editor discovers fewer instances");
+    expect(editor.semanticValid && complete.semanticValid,
+           label + ": primary analysis is valid");
+    if (expectEqual) {
+      if (keys(complete) != keys(editor))
+        report(label, entry, keys(complete), keys(editor));
+      expect(complete.hirValid == editor.hirValid,
+             label + ": editor HIR validity equals the complete check");
+    } else {
+      expect(editor.hirValid,
+             label + ": the editor's HIR is valid without the omitted bodies");
+    }
+    return std::make_pair(keys(complete), keys(editor));
+  };
+  // A library-only instance's own analysis still reports.
+  const auto own =
+      compare("library-only instance analysis",
+              "int main() { int x = plain(0); return checked(x); }", true);
+  expect(!own.first.empty(), "a checked library-only instance has an error");
+  // A class instance that only an omitted body requests is not discovered,
+  // whether the open file requests the enclosing instance directly or
+  // through another library-only instance.
+  for (const auto &[label, text] :
+       {std::pair<std::string, std::string>{
+            "class instance requested by an omitted body",
+            "int main() { int x = plain(0); return direct(x); }"},
+        {"class instance requested by a nested omitted body",
+         "int main() { int x = 0; return outer(x); }"}}) {
+    const auto result = compare(label, text, false);
+    expect(!result.first.empty() && result.second.empty(),
+           label + ": left to the library's own check");
+  }
+  // An instance of the file's own type is lowered completely and reaches
+  // what the complete check reaches.
+  const auto application =
+      compare("instance of the file's own type",
+              "class App { public: int32_t width = 0; };\n"
+              "int main() { App app{}; return outer(app); }",
+              true);
+  expect(!application.first.empty(),
+         "a nested instance of the file's own type has an error");
 }
 
 void checkEntry(const std::filesystem::path &root,
@@ -335,6 +436,7 @@ int main(int argc, char *argv[]) {
       argc > 1 ? std::filesystem::path(argv[1])
                : std::filesystem::path(__FILE__).parent_path().parent_path());
   checkFixtures(root);
+  checkLibraryOnlyOmission(root);
   std::vector<std::filesystem::path> entries;
   bool measure = false;
   if (argc > 2) {
