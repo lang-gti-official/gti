@@ -478,6 +478,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testVirtualExpectedOwningResult",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testDefaultedOwningBaseSchedule",
       "suite": "lifecycle"
     },

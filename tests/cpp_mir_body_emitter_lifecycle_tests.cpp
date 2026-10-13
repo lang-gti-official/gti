@@ -4469,6 +4469,66 @@ void testSourceDestructorOwningFieldCleanup() {
   }
 }
 
+void testVirtualExpectedOwningResult() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/virtual_expected_owning_return.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "virtual expected fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "virtual expected fixture must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  std::size_t selected = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            instruction.dispatch != lang::CallDispatch::Virtual ||
+            instruction.info.type.kind != lang::SemanticType::Expected)
+          continue;
+        ++selected;
+        const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                           function.id};
+        expect(lang::CppMirBodyEmitter(frontend.mir, map)
+                   .supportsFailureBodyText(address),
+               "named and fresh virtual expected results have exact slots");
+        for (int mutation = 0; mutation != 5; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(malformed, address);
+          for (auto &changedBlock : body->blocks)
+            for (auto &changed : changedBlock.instructions)
+              if (changed.id == instruction.id) {
+                switch (mutation) {
+                case 0:
+                  changed.dispatchOwner = lang::SemanticType::Void;
+                  break;
+                case 1:
+                  changed.definedFailure.propagation =
+                      lang::FailurePropagationKind::DirectCall;
+                  break;
+                case 2:
+                  changed.receiver.reset();
+                  break;
+                case 3:
+                  changed.successResultDrop.reset();
+                  break;
+                case 4:
+                  changedBlock.terminator.successLifecycle.clear();
+                  break;
+                }
+              }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "virtual publication rejects forged dispatch, receiver and "
+                 "success activation");
+        }
+      }
+  expect(selected == 2, "fixture has named and fresh virtual owning results");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "virtual owning expected publication reaches native emission");
+}
+
 void testBaseRollbackFailureRecord() {
   for (const auto name :
        {"nonfallible_base_rollback", "fallible_base_rollback"}) {
@@ -14219,6 +14279,7 @@ constexpr NamedTest kTests[] = {
      testSourceDestructorOwningFieldCleanup},
     {"testOwningBaseConstructorStatus", testOwningBaseConstructorStatus},
     {"testBaseRollbackFailureRecord", testBaseRollbackFailureRecord},
+    {"testVirtualExpectedOwningResult", testVirtualExpectedOwningResult},
     {"testDefaultedOwningBaseSchedule", testDefaultedOwningBaseSchedule},
     {"testPassiveOwnedParameterConstructorFields",
      testPassiveOwnedParameterConstructorFields},

@@ -52,7 +52,7 @@ if(Python3_Interpreter_FOUND)
     expected_conditional_assignment_runtime expected_conditional_arms_runtime
     expected_class_return_runtime expected_constructor_return_runtime expected_consuming_return_runtime
     mixed_constructor_parameter_runtime
-    base_rollback_record_runtime
+    base_rollback_record_runtime virtual_expected_owning_return_runtime
     expected_field_and_join_runtime expected_scoped_return_runtime
     expected_temporary_observation_runtime
     expected_filesystem_prerequisites_runtime expected_passive_publication_runtime
