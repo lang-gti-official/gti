@@ -20,7 +20,7 @@ public:
     std::println("body");
     int checked = 1 / divisor;
   }
-  void Observe(Item item) { std::println("read"); }
+  unsafe void Observe(Item item) { std::println("read"); }
 };
 Receiver* Select(Receiver* receiver, int divisor) {
   std::println("receiver");
