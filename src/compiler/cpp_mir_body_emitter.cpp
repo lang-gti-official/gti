@@ -19497,8 +19497,9 @@ expectedConditionalArmSlot(const MirProgram &program, const MirBody &body,
 [[nodiscard]] OwnedExpectedExtractionProducer
 ownedExpectedExtractionProducer(const MirBody &body, MirValueId valueId) {
   const MirValue *value = body.findValue(valueId);
-  // Most values in aggregate-heavy bodies are scalar elements. Reject those
-  // before looking up an instruction or scanning lifetime obligations.
+  // The payload representation is not part of the ownership witness. The
+  // class-publication wrapper below retains its early class-only filter;
+  // other clients must still prove this exact active result and shell.
   if (value == nullptr || value->info.category != ValueCategory::Value ||
       !value->info.traits.movable) {
     return {};
