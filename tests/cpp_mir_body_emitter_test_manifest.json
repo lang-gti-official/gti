@@ -54,6 +54,14 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testConstructorBorrowedInputReplacement",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testConstructorBorrowedInputReborrowReplacement",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testNonFailingOwningDeclarationInitializer",
       "suite": "lifecycle"
     },
@@ -331,6 +339,10 @@
     },
     {
       "name": "testExpectedClassArgumentReturnedConstruction",
+      "suite": "text"
+    },
+    {
+      "name": "testExpectedConsumingMemberReturn",
       "suite": "text"
     },
     {

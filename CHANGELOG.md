@@ -23,6 +23,37 @@ for what minor and patch releases mean.
   bound compile-time work. Shared ownership, virtual destruction, raw-memory
   allocation protocols and stored-reference carriers remain outside the slice.
 
+## 0.423.8 — Owning replacement and borrowed call composition
+
+- Fix an internal compiler error when a freshly constructed owning object
+  replaces an existing value using a temporary borrowed constructor argument,
+  such as `target = Item(source.view())`. Exact input-loan retirement and
+  constructor/replacement cleanup remain checked. Covers issue #93.
+
+- Fix a backend internal compiler error when consuming owning expected payloads
+  directly into methods reached through raw pointers. Raw pointee receivers now
+  use the ordinary receiver-first call-input plan, preserving argument ownership
+  and failure cleanup without changing unsafe obligations (issue #92).
+
+- Fix an internal compiler error when a borrowed text return also has a string
+  literal or null C-string return path. Static alternatives are independently
+  verified without weakening the lifetime checks on dynamic results. Covers
+  the editor preview fallback in issue #89.
+
+- Fix an internal compiler error when a fallible call returning an expected
+  raw-pointer payload is used directly as a condition. Preserve the callee's
+  defined-failure channel and caller cleanup before observing the result;
+  ordinary expected errors remain ordinary values (issue #86).
+
+- Fix backend internal compiler errors when returning passive pointer payloads
+  in `expected`, including null and read-only pointers, without changing raw
+  pointer safety obligations.
+- Allow consuming an owning `expected` value or error directly into an existing
+  object. Reuse the ordinary replacement lifetime slot and preserve old-value,
+  wrong-state and secondary-failure cleanup (issues #84 and #85).
+- Fix owning field replacement through non-failing reference-returning getters,
+  including nested getters, without requiring a spurious failure edge (#88).
+
 ## 0.423.4 — Payload enum parameter packs
 
 - Preserve concrete enum traits when forwarding parameter packs, fixing an
