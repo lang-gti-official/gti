@@ -4283,6 +4283,8 @@ private:
 
   void requireUnsafe(const Expr &expression, UnsafeOperationKind operation,
                      const Token &token, std::string_view description);
+  void enterUnsafeRegion(const Token &keyword, bool expression);
+  void leaveUnsafeRegion();
 
   [[nodiscard]] std::vector<RawPointerOrigin>
   rawPointerOrigins(const ExprPtr &expression);
@@ -4734,8 +4736,8 @@ private:
       ProgramEffectOwner owner;
     };
     struct UnsafeBlockCandidate {
-      const BlockStmt *block = nullptr;
-      Token keyword;
+      const Token *keyword = nullptr;
+      bool expression = false;
       ProgramEffectOwner owner;
     };
 
@@ -4773,8 +4775,8 @@ private:
     std::vector<MutableLocalCandidate> mutableLocalCandidates;
     std::unordered_set<SymbolId> mutableBindingUses;
     std::vector<UnsafeBlockCandidate> unsafeBlockCandidates;
-    std::vector<const BlockStmt *> activeUnsafeBlocks;
-    std::unordered_set<const BlockStmt *> usedUnsafeBlocks;
+    std::vector<const Token *> activeUnsafeBlocks;
+    std::unordered_set<const Token *> usedUnsafeBlocks;
     TypeSubstitution instanceTypeSubstitution;
     ValueSubstitution instanceValueSubstitution;
     std::vector<std::string> currentNamespace;

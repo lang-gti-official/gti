@@ -12,6 +12,59 @@ Raw pointers are deliberately not owners or checked borrows. They are the
 escape hatch beneath safe values, references, and RAII classes, not a
 replacement for those abstractions.
 
+## Value-Producing Unsafe Expressions
+
+In expression position, `unsafe { expression }` evaluates one expression and
+produces its result. There is no semicolon inside these braces:
+
+```gti
+auto text = unsafe { std::string(description) };
+auto attempted = unsafe { std::string::try_from_c_string(description) };
+std::println(text.view());
+```
+
+`description` must satisfy the called operation's C-string validity contract.
+The binding `text` belongs to the surrounding scope. The result is not an
+"unsafe value": subsequent safe operations on the independent owned string
+need no unsafe permission. This is a general expression form, not a string
+conversion feature; raw reads, user-defined unsafe constructors/functions,
+generic calls and other ordinary expressions use the same rule. Example
+[`152-unsafe-expressions.gti`](../../examples/152-unsafe-expressions.gti)
+demonstrates both the native-text client and an unrelated reader.
+
+The expression preserves its operand's exact type, value/place category,
+access, move state and borrow origins, as parentheses do. It does not force a
+copy, implicitly move an ordinary named owner, upgrade an immutable reference,
+extend a temporary's lifetime or allow a checked borrow to escape its owner.
+Fresh results can directly initialize their destination, including immovable
+objects. Explicit movement and ordinary return-movement rules are unchanged.
+The result's temporaries and cleanup obligations belong to the enclosing
+full-expression; evaluation happens once at its normal left-to-right position.
+Defined failure and `?` propagation retain the enclosing function and its
+ordinary cleanup paths. No lambda, hidden call, allocation, or new runtime
+permission state is introduced.
+
+Permission covers only operations lexically inside the braces. It does not
+cover later arguments, adjacent operators or suffix operations outside them.
+Lambda bodies establish their own safety context even when the lambda value
+is created inside this expression. Known ownership/lifetime violations remain
+errors. Existing constant-eligibility rules remain unchanged: an unsafe wrapper
+does not make a runtime-only operation constexpr.
+
+This first expression form contains one expression, which may itself be a
+conditional, comma expression, call, lambda or nested unsafe expression. It
+does not support statement declarations or a final-value statement block.
+At statement start, `unsafe { statements... }` retains its existing syntax,
+scope and semicolons. Wrap a complete assignment in the unsafe expression;
+an unsafe group is not a parser assignment target. Extending this to blocks
+with local declarations requires explicit result publication before local
+cleanup and checks against escaping those locals; it must not be implemented
+as an implicitly invoked lambda.
+
+Unused expression permission uses the existing `unused-unsafe` warning. Unlike
+statement blocks, removing only its keyword would leave invalid syntax, so the
+diagnostic suggests parentheses and does not offer that keyword-only fix.
+
 ## Type And Binding Model
 
 Each raw-pointer layer is `T*` or `const T*`; its pointee may itself be an

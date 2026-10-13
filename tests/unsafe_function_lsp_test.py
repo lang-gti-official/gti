@@ -166,6 +166,28 @@ def main():
             assert "unsafe Packet(" in hover["contents"]["value"], hover
             assert change(fixed.replace("Packet(int v)", "Packet(int"), 15)
             assert change(fixed, 16) == []
+            expression = constructor.replace("Packet packet{1}; return packet.n;",
+                                             "auto packet = unsafe { Packet(1) }; return packet.n;")
+            assert change(expression, 17) == []
+            session.send({"jsonrpc": "2.0", "id": 16, "method": "textDocument/hover", "params": {
+                "textDocument": {"uri": uri}, "position": lsp_position(expression, expression.rindex("packet.n") + 1)}})
+            hover = session.receive_until(lambda message: message.get("id") == 16)["result"]
+            assert "Packet" in hover["contents"]["value"], hover
+            session.send({"jsonrpc": "2.0", "id": 17, "method": "textDocument/semanticTokens/full", "params": {
+                "textDocument": {"uri": uri}}})
+            tokens = semantic_tokens_by_position(
+                session.receive_until(lambda message: message.get("id") == 17)["result"]["data"])
+            position = lsp_position(expression, expression.rindex("unsafe"))
+            assert token_types[tokens[(position["line"], position["character"])]["type"]] == "keyword"
+            assert change(expression.replace("Packet(1) }", "Packet( }"), 18)
+            assert change(expression, 19) == []
+            unused_expression = "int main() { /* 😀 */ return unsafe { 1 }; }"
+            warning = next(d for d in change(unused_expression, 20) if d["code"] == "GTI-S2100")
+            start = unused_expression.index("unsafe")
+            assert warning["range"] == {"start": lsp_position(unused_expression, start),
+                                        "end": lsp_position(unused_expression, start + 6)}, warning
+            assert not action_for(warning, 18), "keyword-only removal would create invalid brace syntax"
+            assert change(expression, 21) == []
         finally:
             session.close()
 
