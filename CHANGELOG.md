@@ -20,6 +20,13 @@ for what minor and patch releases mean.
 - Fix owning field replacement through non-failing reference-returning getters,
   including nested getters, without requiring a spurious failure edge (#88).
 
+## 0.423.3 — Forwarded base constructor views
+
+- Fix an internal compiler error when a constructor forwards an incoming
+  string view to an owning base constructor. The temporary argument dependency
+  remains checked through base construction, with exact cleanup on base or
+  derived construction failure. Covers issue #80.
+
 ## 0.423.2 — Owning base and field constructor composition
 
 - Fix backend internal compiler errors for abstract owning bases with declared

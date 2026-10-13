@@ -47787,7 +47787,7 @@ cppMirBasePreparation(const MirProgram &program,
 std::optional<std::vector<CppMirBaseParameterInitializerBinding>>
 cppMirBaseParameterInitializerBindings(
     const MirProgram &program, const MirConstructorInstance &constructor) {
-  const auto scalarArgumentType = [](const SemanticType &type) {
+  const auto passiveArgumentType = [](const SemanticType &type) {
     switch (type.kind) {
     case SemanticType::Int8:
     case SemanticType::Int16:
@@ -47803,6 +47803,7 @@ cppMirBaseParameterInitializerBindings(
     case SemanticType::Char:
     case SemanticType::Enum:
     case SemanticType::NullPtr:
+    case SemanticType::StringView:
       return true;
     default:
       return false;
@@ -47935,8 +47936,7 @@ cppMirBaseParameterInitializerBindings(
             definition->operands.empty() && !definition->destination &&
             !definition->receiver && definition->definedFailure.empty() &&
             definition->lifecycle.empty() &&
-            (scalarArgumentType(candidate.info.type) ||
-             candidate.info.type.kind == SemanticType::StringView) &&
+            passiveArgumentType(candidate.info.type) &&
             target->parameterTypes[argumentIndex] == candidate.info.type &&
             onlyBaseArgumentUses(candidate.id, argumentIndex)) {
           if (value != nullptr)
@@ -47956,7 +47956,7 @@ cppMirBaseParameterInitializerBindings(
             !definition->definedFailure.empty() ||
             !definition->lifecycle.empty() ||
             definition->info.type != candidate.info.type ||
-            !scalarArgumentType(candidate.info.type) ||
+            !passiveArgumentType(candidate.info.type) ||
             !onlyBaseArgumentUses(candidate.id, argumentIndex)) {
           continue;
         }

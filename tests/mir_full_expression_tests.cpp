@@ -4,12 +4,108 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
 #include <vector>
 
 int main() {
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto forwarded = lang::Frontend().analyze(
+      "/tmp/forwarded.gti", R"(
+#include <std/string>
+class Base {
+  std::string name;
+public:
+  Base(std::string_view text) : name(std::string(text)) {}
+  ~Base() {}
+};
+class Derived : public Base {
+public:
+  Derived(std::string_view text) : Base(text) {}
+  ~Derived() {}
+};
+int main() { Derived b = Derived("other"); return 0; }
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  if (!forwarded.canGenerateCode() ||
+      !lang::verifyMirProgram(forwarded.mir).valid()) {
+    std::cerr << "forwarded passive base arguments must retain a valid stage\n";
+    for (const auto &diagnostic : forwarded.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return 1;
+  }
+  bool checkedForward = false;
+  for (const auto &constructor : forwarded.mir.constructorInstances()) {
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &stage : block.instructions) {
+        if (stage.kind != lang::MirInstructionKind::InitializeBase ||
+            stage.operands.size() != 1)
+          continue;
+        const auto *value = constructor.body.findValue(stage.operands[0].value);
+        if (!value || !value->info.traits.containsBorrowedState)
+          continue;
+        checkedForward = true;
+        for (int mutation = 0; mutation < 3; ++mutation) {
+          auto forged = forwarded.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              forged.findConstructorInstance(constructor.id));
+          auto &instructions = changed->body.blocks[block.id - 1].instructions;
+          auto selected = std::find_if(
+              instructions.begin(), instructions.end(),
+              [&](const auto &candidate) { return candidate.id == stage.id; });
+          if (mutation == 0) {
+            selected->constructorInitializer = 0;
+          } else if (mutation == 1) {
+            changed->body.loans.clear();
+          } else {
+            auto end = std::find_if(
+                instructions.begin(), instructions.end(),
+                [](const auto &candidate) {
+                  return candidate.kind == lang::MirInstructionKind::EndBorrow;
+                });
+            // On a fallible call the endpoint belongs to the successor block.
+            if (end == instructions.end()) {
+              for (auto &successor : changed->body.blocks) {
+                auto found = std::find_if(
+                    successor.instructions.begin(),
+                    successor.instructions.end(), [](const auto &candidate) {
+                      return candidate.kind ==
+                             lang::MirInstructionKind::EndBorrow;
+                    });
+                if (found == successor.instructions.end())
+                  continue;
+                auto premature = *found;
+                successor.instructions.erase(found);
+                instructions.insert(selected, premature);
+                break;
+              }
+            } else {
+              auto premature = *end;
+              instructions.erase(end);
+              selected = std::find_if(instructions.begin(), instructions.end(),
+                                      [&](const auto &candidate) {
+                                        return candidate.id == stage.id;
+                                      });
+              instructions.insert(selected, premature);
+            }
+          }
+          (void)lang::rebuildMirValueUses(changed->body);
+          if (lang::verifyMirProgram(forged).valid()) {
+            std::cerr << "base forwarding must reject absent stages/loans and "
+                         "loans ended before the base call\n";
+            return 1;
+          }
+        }
+      }
+    }
+  }
+  if (!checkedForward) {
+    std::cerr << "fixture must exercise a dynamically borrowed base argument\n";
+    return 1;
+  }
   auto frontend =
       lang::Frontend().analyze("/tmp/gti-full-expression-loop.gti", R"(
 enum class item_error { unavailable };

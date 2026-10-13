@@ -1,0 +1,33 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Base {
+  std::string name;
+  int checked;
+public:
+  Base(std::string_view text, int divisor)
+      : name(std::string(text)), checked(12 / divisor) {}
+  ~Base() { std::println(this.name); }
+  bool matches(std::string_view text) { return this.name == text; }
+};
+
+class Derived : public Base {
+  int derived_checked;
+public:
+  Derived(std::string_view text, int base_divisor, int derived_divisor)
+      : Base(text, base_divisor), derived_checked(24 / derived_divisor) {}
+  ~Derived() { std::println("derived"); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::string text{"forwarded"};
+  {
+    Derived value{text.view(), argc == 2 ? 0 : 1, argc == 3 ? 0 : 1};
+    text.clear();
+    if (!value.matches("forwarded")) { return 1; }
+  }
+  auto pointer = std::make_unique<Derived>("heap", 1, 1);
+  if (!pointer->matches("heap")) { return 2; }
+  return 0;
+}
