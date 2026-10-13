@@ -2826,6 +2826,63 @@ static_assert(fail_cleanup() == 0);
                      }),
          "destructor failure retains executing source and the requiring "
          "assertion");
+
+  const std::string orderSource = R"(
+#include <std/memory>
+struct First {
+  constexpr First() {}
+  ~First() { int zero = 0; int failure = 11 / zero; }
+};
+struct Last {
+  constexpr Last() {}
+  ~Last() { int zero = 0; int failure = 22 / zero; }
+};
+struct Fields {
+  First first{};
+  Last last{};
+  constexpr Fields() {}
+};
+struct Element {
+  int tag;
+  constexpr Element(int tag) : tag(tag) {}
+  ~Element() {
+    int zero = 0;
+    if (this.tag == 1) { int failure = 33 / zero; }
+    else { int failure = 44 / zero; }
+  }
+};
+struct FailingConstructor {
+  std::unique_ptr<int> first;
+  int second;
+  constexpr FailingConstructor(int zero)
+    : first(std::make_unique<int>(1)), second(55 / zero) {}
+};
+)";
+  for (const auto &[body, failingExpression] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"First first{}; Last last{};", "22 / zero"},
+           {"auto fields = std::make_unique<Fields>();", "22 / zero"},
+           {"Element elements[2] = {Element(1), Element(2)};", "44 / zero"},
+           {"auto value = std::make_unique<FailingConstructor>(0);",
+            "55 / zero"}}) {
+    const auto text = orderSource + "\nconstexpr int probe() { " + body +
+                      " return 0; }\nstatic_assert(probe() == 0);\n";
+    const auto checked = lang::Frontend().analyze(
+        "constexpr-cleanup-order.gti", text, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    expect(!checked.canGenerateCode() &&
+               std::any_of(checked.diagnostics.begin(),
+                           checked.diagnostics.end(),
+                           [&](const auto &d) {
+                             return d.code == "GTI-S2057" &&
+                                    d.primary.start ==
+                                        text.find(failingExpression) + 3 &&
+                                    d.message.find("zero") != std::string::npos;
+                           }),
+           "constant execution retains reverse cleanup and the first "
+           "construction/destruction failure: " +
+               body);
+  }
 }
 
 void testConstexprResults() {
