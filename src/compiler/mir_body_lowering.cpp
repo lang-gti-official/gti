@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <memory>
+#include <tuple>
 
 namespace lang {
 
@@ -62,6 +64,9 @@ class MirBodyLowerer {
 public:
   // Cleared only to lower a program with one cleanup chain per failure edge.
   bool shareFailureCleanupEnabled = true;
+  // Cleared only to lower a program in which every normal exit destroys its
+  // own live owners.
+  bool shareExitCleanupEnabled = true;
 
   MirBodyLowerer(
       const HirProgram &program, const FailureMetadata &failureMetadata,
@@ -119,6 +124,25 @@ public:
     }
     for (const HirStatement &statement : source.statements) {
       statements.emplace(statement.id, &statement);
+      if (statement.kind == HirStatementKind::Return) {
+        ++exitCount;
+      }
+    }
+    // Every `?` propagation is an exit too, and a body whose last statement
+    // is not a return may also complete by reaching its end.
+    for (const HirValue &value : source.values) {
+      if (value.expectedPropagation) {
+        ++exitCount;
+      }
+    }
+    const HirStatement *last =
+        source.roots.empty() ? nullptr : findStatement(source.roots.back());
+    while (last != nullptr && last->kind == HirStatementKind::Block &&
+           !last->statements.empty()) {
+      last = findStatement(last->statements.back());
+    }
+    if (last == nullptr || last->kind != HirStatementKind::Return) {
+      ++exitCount;
     }
     for (const HirBinding &binding : source.bindings) {
       bindings.emplace(binding.id, &binding);
@@ -388,22 +412,32 @@ public:
     }
     if (!terminated()) {
       retireConstructorRollback();
-      emitScopeExit(0);
-      if (output.kind == MirBodyKind::Module ||
-          output.kind == MirBodyKind::FieldInitializers ||
-          output.kind == MirBodyKind::StaticFieldInitializers) {
-        terminate({.kind = MirTerminatorKind::Exit});
-      } else if (function != nullptr && function->neverReturns) {
-        terminate({.kind = MirTerminatorKind::Unreachable});
-      } else if (implicitZeroReturn) {
-        terminate({.kind = MirTerminatorKind::Return,
-                   .value = MirOperand{.kind = MirOperandKind::Constant,
-                                       .literal = Literal{std::uint64_t{0}},
-                                       .type = SemanticType::Int32}});
-      } else if (output.returnType.kind == SemanticType::Void) {
-        terminate({.kind = MirTerminatorKind::Return});
-      } else {
-        terminate({.kind = MirTerminatorKind::Unreachable});
+      // A void body's end is an exit like any `return;`: it may share its
+      // cleanup with the body's other exits.
+      const bool sharedEnd = (output.kind == MirBodyKind::Function ||
+                              output.kind == MirBodyKind::Lambda) &&
+                             output.returnType.kind == SemanticType::Void &&
+                             !(function != nullptr && function->neverReturns) &&
+                             sharedExitEligible(temporaryDrops) &&
+                             emitSharedExit(SharedExitCarrier{}, 0);
+      if (!sharedEnd) {
+        emitScopeExit(0);
+        if (output.kind == MirBodyKind::Module ||
+            output.kind == MirBodyKind::FieldInitializers ||
+            output.kind == MirBodyKind::StaticFieldInitializers) {
+          terminate({.kind = MirTerminatorKind::Exit});
+        } else if (function != nullptr && function->neverReturns) {
+          terminate({.kind = MirTerminatorKind::Unreachable});
+        } else if (implicitZeroReturn) {
+          terminate({.kind = MirTerminatorKind::Return,
+                     .value = MirOperand{.kind = MirOperandKind::Constant,
+                                         .literal = Literal{std::uint64_t{0}},
+                                         .type = SemanticType::Int32}});
+        } else if (output.returnType.kind == SemanticType::Void) {
+          terminate({.kind = MirTerminatorKind::Return});
+        } else {
+          terminate({.kind = MirTerminatorKind::Unreachable});
+        }
       }
     }
     finishFailureCleanupAndVerify();
@@ -411,6 +445,10 @@ public:
   }
 
   [[nodiscard]] bool isValid() const { return valid; }
+  // Whether any exit was lowered through the shared exit ladders, and
+  // whether one of them joined another exit's cleanup.
+  [[nodiscard]] bool usedExitSharing() const { return exitSharingUsed; }
+  [[nodiscard]] bool joinedExits() const { return exitsJoined; }
   [[nodiscard]] const MirVerificationResult &proof() const {
     return verification;
   }
@@ -1754,7 +1792,14 @@ private:
   }
 
   [[nodiscard]] MirLoanId lifecycleLoanForBinding(HirBindingId binding) const {
-    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+    return lifecycleLoanForBinding(binding, scopes);
+  }
+
+  [[nodiscard]] MirLoanId
+  lifecycleLoanForBinding(HirBindingId binding,
+                          const std::vector<Scope> &scopeState) const {
+    for (auto scope = scopeState.rbegin(); scope != scopeState.rend();
+         ++scope) {
       for (auto candidate = scope->loans.rbegin();
            candidate != scope->loans.rend(); ++candidate) {
         const MirLoan *loan = output.findLoan(*candidate);
@@ -1769,6 +1814,12 @@ private:
   }
 
   [[nodiscard]] MirLoanId lifecycleLoanForPlace(const MirPlace &place) const {
+    return lifecycleLoanForPlace(place, scopes);
+  }
+
+  [[nodiscard]] MirLoanId
+  lifecycleLoanForPlace(const MirPlace &place,
+                        const std::vector<Scope> &scopeState) const {
     if (place.root != MirPlaceRootKind::Binding)
       return 0;
     if (!place.projections.empty()) {
@@ -1780,7 +1831,7 @@ private:
                  ? loan->id
                  : MirLoanId{0};
     }
-    return lifecycleLoanForBinding(place.binding);
+    return lifecycleLoanForBinding(place.binding, scopeState);
   }
 
   [[nodiscard]] MirTemporaryCarrierDependency
@@ -1895,17 +1946,31 @@ private:
     return retained;
   }
 
-  void endScopeLoansBeforeCleanup(const Scope &scope,
-                                  std::vector<MirLoanId> &ended,
-                                  bool failureCleanup) {
-    const auto retained = lifecycleRetainedLoans(ended);
+  // The loans of `scope` that its cleanup ends now, given the loans already
+  // ended on this path: child first, keeping lifecycle-bound loans and their
+  // ancestors for the drop of their carrier.
+  [[nodiscard]] std::vector<MirLoanId>
+  scopeLoansToEnd(const Scope &scope, const std::vector<MirLoanId> &ended,
+                  bool failureCleanup,
+                  const std::vector<Scope> *scopeState = nullptr) const {
+    const auto retained = lifecycleRetainedLoans(ended, scopeState);
+    const auto *returned = output.findLoan(pendingReturnLoan);
+    std::vector<MirLoanId> ending;
     for (const auto id : childFirstMirLoans(scope.loans)) {
-      const auto *returned = output.findLoan(pendingReturnLoan);
       if (containsLoan(ended, id) || retained.contains(id) ||
           containsLoan(constructorPublishedLoans, id) ||
           (!failureCleanup && returned != nullptr &&
            returned->storedDependency == id))
         continue;
+      ending.push_back(id);
+    }
+    return ending;
+  }
+
+  void endScopeLoansBeforeCleanup(const Scope &scope,
+                                  std::vector<MirLoanId> &ended,
+                                  bool failureCleanup) {
+    for (const auto id : scopeLoansToEnd(scope, ended, failureCleanup)) {
       (void)appendInstruction(
           {.kind = MirInstructionKind::EndBorrow, .loan = id});
       ended.push_back(id);
@@ -2704,6 +2769,8 @@ private:
     constructorRollback.clear();
   }
 
+  // `propagation` is given when the drop was planned ahead of its emission
+  // (shared exits); otherwise it is decided here, at the drop's own block.
   MirInstructionId appendNormalDrop(
       MirDropObligationId obligation, MirPlaceId destination,
       ExpressionInfo info, std::vector<MirLifecycleEvent> lifecycle,
@@ -2711,7 +2778,8 @@ private:
       const std::vector<MirLoanId> &endedLoans, HirValueId hirValue = 0,
       HirStatementId hirStatement = 0, std::size_t constructorInitializer = 0,
       MirLoanId producerEndedLoan = 0,
-      std::vector<MirLoanId> producerEndedLoans = {}) {
+      std::vector<MirLoanId> producerEndedLoans = {},
+      std::optional<FailurePropagationKind> propagation = std::nullopt) {
     MirInstruction drop{.kind = MirInstructionKind::Drop,
                         .hirValue = hirValue,
                         .hirStatement = hirStatement,
@@ -2720,7 +2788,8 @@ private:
                         .info = std::move(info),
                         .lifecycle = std::move(lifecycle)};
     drop.definedFailure.propagation =
-        normalizedDestructorPropagation(obligation);
+        propagation ? *propagation
+                    : normalizedDestructorPropagation(obligation);
     const bool mayRaise =
         drop.definedFailure.propagation == FailurePropagationKind::Destructor;
     const MirInstructionId instruction =
@@ -8262,17 +8331,39 @@ private:
     current = errorBlock;
     scopes = evaluatedScopes;
     temporaryDrops = evaluatedTemporaryDrops;
-    const MirOperand propagatedError = valueOperand(plan.unexpected);
-    const MirDropObligationId enclosingPendingReturnDrop = pendingReturnDrop;
-    prepareReturnOwnership(plan.unexpected, propagatedError);
-    endReturnExpressionLoans(scopeBaseline->second);
-    emitTemporaryDrops(temporaryBaseline->second, value.id, 0, 0, true);
-    emitScopeExit(0);
-    publishReturnOwnership(plan.unexpected);
-    pendingReturnDrop = enclosingPendingReturnDrop;
-    terminate({.kind = MirTerminatorKind::Return,
-               .hirValue = value.id,
-               .value = propagatedError});
+    // A scalar error may leave through the body's shared exit ladders. That
+    // path lowers only the error; the shared tail spells the Unexpected
+    // value at its return.
+    std::optional<SharedExitCarrier> shared = sharedValueCarrier(*unexpected);
+    if (shared && !sharedExitEligible(temporaryBaseline->second)) {
+      shared.reset();
+    }
+    if (shared) {
+      shared->stored = valueOperand(shared->storedSource);
+      if (!sharedExitEligible(temporaryBaseline->second)) {
+        shared.reset();
+      }
+    }
+    if (shared) {
+      const MirPlaceId carrier = storeSharedExitValue(*shared);
+      endReturnExpressionLoans(scopeBaseline->second);
+      emitTemporaryDrops(temporaryBaseline->second, value.id, 0, 0, true);
+      if (!emitSharedExit(*shared, carrier)) {
+        valid = false;
+      }
+    } else {
+      const MirOperand propagatedError = valueOperand(plan.unexpected);
+      const MirDropObligationId enclosingPendingReturnDrop = pendingReturnDrop;
+      prepareReturnOwnership(plan.unexpected, propagatedError);
+      endReturnExpressionLoans(scopeBaseline->second);
+      emitTemporaryDrops(temporaryBaseline->second, value.id, 0, 0, true);
+      emitScopeExit(0);
+      publishReturnOwnership(plan.unexpected);
+      pendingReturnDrop = enclosingPendingReturnDrop;
+      terminate({.kind = MirTerminatorKind::Return,
+                 .hirValue = value.id,
+                 .value = propagatedError});
+    }
 
     current = successBlock;
     scopes = evaluatedScopes;
@@ -9888,72 +9979,593 @@ private:
     scopes.front().loans.push_back(loan);
   }
 
-  void
-  emitScope(const Scope &scope,
-            std::vector<MirDropObligationId> *sharedConsumedDrops = nullptr,
-            std::vector<MirLoanId> *sharedEndedLoans = nullptr) {
-    std::vector<MirDropObligationId> localConsumedDrops;
-    std::vector<MirLoanId> localEndedLoans;
-    std::vector<MirDropObligationId> &consumedDrops =
-        sharedConsumedDrops == nullptr ? localConsumedDrops
-                                       : *sharedConsumedDrops;
-    std::vector<MirLoanId> &endedLoans =
-        sharedEndedLoans == nullptr ? localEndedLoans : *sharedEndedLoans;
-    endScopeLoansBeforeCleanup(scope, endedLoans, false);
-    std::vector<MirDropObligationId> cleanup;
-    cleanup.reserve(scope.drops.size());
-    for (auto drop = scope.drops.rbegin(); drop != scope.drops.rend(); ++drop) {
-      const MirPlace *place = output.findPlace(*drop);
-      const MirDropObligationId obligation = dropObligationForLocalPlace(place);
-      if (obligation != 0) {
-        if (!containsDrop(consumedDrops, obligation)) {
-          consumedDrops.push_back(obligation);
-        }
-        cleanup.push_back(obligation);
+  // Scope exit.
+  //
+  // Leaving scopes ends the loans they still hold and drops their owners in
+  // reverse construction order, innermost scope first. walkScopeExit is the
+  // one definition of that sequence. An ordinary exit emits it as it is
+  // walked. A shared exit (emitSharedExit) first walks it over a copy of the
+  // scope state to plan its join points, then walks it again to emit, so the
+  // plan cannot diverge from the emitted steps.
+  struct ScopeExitState {
+    std::vector<Scope> &scopes;
+    std::unordered_map<HirBindingId, MirLoanId> *bindingLoans = nullptr;
+    std::vector<MirDropObligationId> consumed;
+    std::vector<MirLoanId> ended;
+  };
+
+  // The walk is a sequence of units: the loan ends a scope performs before
+  // its drops, then each drop with the loan ends that follow it. The visitor
+  // sees beginUnit before each unit (returning false stops the walk), endLoan
+  // for every loan end, drop for the drop itself, dropped once its trailing
+  // loan ends are in place, endUnit after the unit, and scopeEnd after a
+  // scope's last unit.
+  template <typename Visitor>
+  void walkScopeExit(ScopeExitState &state, std::size_t keepScopes,
+                     Visitor &visitor) {
+    for (std::size_t depth = state.scopes.size(); depth > keepScopes; --depth) {
+      // Loans ended by a scope's walk leave every scope's inventory once that
+      // scope is complete, so the scope is walked from a copy.
+      const Scope scope = state.scopes[depth - 1];
+      if (!walkScope(state, scope, visitor)) {
+        return;
       }
-      const MirLoanId lifecycleLoan =
-          place != nullptr ? lifecycleLoanForPlace(*place) : 0;
-      (void)appendNormalDrop(
-          obligation, *drop,
-          place == nullptr ? ExpressionInfo{}
-                           : ExpressionInfo{.type = place->type,
-                                            .category = ValueCategory::Place,
-                                            .access = place->access,
-                                            .traits = place->traits},
-          obligation == 0
-              ? std::vector<MirLifecycleEvent>{}
-              : std::vector<MirLifecycleEvent>{{.kind =
-                                                    MirLifecycleEventKind::Drop,
-                                                .source = obligation}},
-          consumedDrops, endedLoans, 0, 0, 0, lifecycleLoan);
-      if (lifecycleLoan != 0 && !containsLoan(endedLoans, lifecycleLoan)) {
-        (void)appendInstruction(
-            {.kind = MirInstructionKind::EndBorrow, .loan = lifecycleLoan});
-        endedLoans.push_back(lifecycleLoan);
-      }
-      endScopeLoansBeforeCleanup(scope, endedLoans, false);
-    }
-    if (!cleanup.empty()) {
-      const std::size_t id = output.cleanupBoundaries.size() + 1;
-      output.cleanupBoundaries.push_back(
-          {.id = id, .obligations = std::move(cleanup)});
-      (void)appendInstruction(
-          {.kind = MirInstructionKind::Lifecycle, .cleanupBoundaryEnd = id});
-    }
-    // A local may own an entry loan originally registered in an outer scope.
-    // Its cleanup ends that loan on this path; popping only the local scope
-    // would leave a stale outer entry and emit another EndBorrow at the join.
-    for (const MirLoanId loan : endedLoans) {
-      removeLoanFromState(loan, scopes, bindingLoans);
     }
   }
 
-  void emitScopeExit(std::size_t keepScopes) {
-    std::vector<MirDropObligationId> consumedDrops;
-    std::vector<MirLoanId> endedLoans;
-    for (std::size_t depth = scopes.size(); depth > keepScopes; --depth) {
-      emitScope(scopes[depth - 1], &consumedDrops, &endedLoans);
+  template <typename Visitor>
+  bool walkScope(ScopeExitState &state, const Scope &scope, Visitor &visitor) {
+    const auto endLoans = [&](const std::vector<MirLoanId> &loans) {
+      for (const MirLoanId loan : loans) {
+        visitor.endLoan(loan);
+        state.ended.push_back(loan);
+      }
+    };
+    if (const std::vector<MirLoanId> loans =
+            scopeLoansToEnd(scope, state.ended, false, &state.scopes);
+        !loans.empty()) {
+      if (!visitor.beginUnit(state, false)) {
+        return false;
+      }
+      endLoans(loans);
+      visitor.endUnit();
     }
+    for (auto drop = scope.drops.rbegin(); drop != scope.drops.rend(); ++drop) {
+      const MirPlace *place = output.findPlace(*drop);
+      const MirDropObligationId obligation = dropObligationForLocalPlace(place);
+      if (!visitor.beginUnit(state, true)) {
+        return false;
+      }
+      if (obligation != 0 && !containsDrop(state.consumed, obligation)) {
+        state.consumed.push_back(obligation);
+      }
+      const MirLoanId lifecycleLoan =
+          place != nullptr ? lifecycleLoanForPlace(*place, state.scopes) : 0;
+      visitor.drop(*drop, place, obligation, lifecycleLoan, state);
+      if (lifecycleLoan != 0 && !containsLoan(state.ended, lifecycleLoan)) {
+        endLoans({lifecycleLoan});
+      }
+      endLoans(scopeLoansToEnd(scope, state.ended, false, &state.scopes));
+      visitor.dropped(obligation);
+      visitor.endUnit();
+    }
+    visitor.scopeEnd();
+    // A local may own an entry loan originally registered in an outer scope.
+    // Its cleanup ends that loan on this path; popping only the local scope
+    // would leave a stale outer entry and emit another EndBorrow at the join.
+    for (const MirLoanId loan : state.ended) {
+      for (Scope &remaining : state.scopes) {
+        std::erase(remaining.loans, loan);
+      }
+      if (state.bindingLoans != nullptr) {
+        std::erase_if(*state.bindingLoans,
+                      [&](const auto &entry) { return entry.second == loan; });
+      }
+    }
+    return true;
+  }
+
+  [[nodiscard]] static ExpressionInfo scopeDropInfo(const MirPlace *place) {
+    return place == nullptr ? ExpressionInfo{}
+                            : ExpressionInfo{.type = place->type,
+                                             .category = ValueCategory::Place,
+                                             .access = place->access,
+                                             .traits = place->traits};
+  }
+
+  [[nodiscard]] static std::vector<MirLifecycleEvent>
+  scopeDropLifecycle(MirDropObligationId obligation) {
+    return obligation == 0 ? std::vector<MirLifecycleEvent>{}
+                           : std::vector<MirLifecycleEvent>{
+                                 {.kind = MirLifecycleEventKind::Drop,
+                                  .source = obligation}};
+  }
+
+  void appendNormalCleanupBoundary(std::vector<MirDropObligationId> drops) {
+    const std::size_t id = output.cleanupBoundaries.size() + 1;
+    output.cleanupBoundaries.push_back(
+        {.id = id, .obligations = std::move(drops)});
+    (void)appendInstruction(
+        {.kind = MirInstructionKind::Lifecycle, .cleanupBoundaryEnd = id});
+  }
+
+  // Emits the walk as it goes, one cleanup boundary per scope.
+  struct GroupedScopeExitVisitor {
+    MirBodyLowerer &self;
+    std::vector<MirDropObligationId> group;
+
+    bool beginUnit(const ScopeExitState &, bool) { return true; }
+    void endLoan(MirLoanId loan) {
+      (void)self.appendInstruction(
+          {.kind = MirInstructionKind::EndBorrow, .loan = loan});
+    }
+    void drop(MirPlaceId destination, const MirPlace *place,
+              MirDropObligationId obligation, MirLoanId lifecycleLoan,
+              const ScopeExitState &state) {
+      (void)self.appendNormalDrop(obligation, destination, scopeDropInfo(place),
+                                  scopeDropLifecycle(obligation),
+                                  state.consumed, state.ended, 0, 0, 0,
+                                  lifecycleLoan);
+    }
+    void dropped(MirDropObligationId obligation) {
+      if (obligation != 0) {
+        group.push_back(obligation);
+      }
+    }
+    void endUnit() {}
+    void scopeEnd() {
+      if (!group.empty()) {
+        self.appendNormalCleanupBoundary(std::move(group));
+        group.clear();
+      }
+    }
+  };
+
+  void emitScopeExit(std::size_t keepScopes) {
+    ScopeExitState state{.scopes = scopes, .bindingLoans = &bindingLoans};
+    GroupedScopeExitVisitor visitor{.self = *this};
+    walkScopeExit(state, keepScopes, visitor);
+  }
+
+  // Shared normal-exit cleanup.
+  //
+  // Each normal exit of a function or lambda body destroys the owners live at
+  // it, so a body with an exit after each of its owners has exit code growing
+  // with exits times owners. Exits of the same body share that work. The
+  // cleanup an exit still has to do is a function of its state: the drops not
+  // yet performed and the loans not yet ended, per scope, plus the kind of
+  // value it returns. Every step of a shared exit begins a block registered
+  // under that state. A later exit that reaches a registered state jumps to
+  // its block and stops. Exits of one body therefore form ladders whose rungs
+  // are shared by every exit that passes them, and exit code grows with
+  // distinct exit states instead.
+  //
+  // Returned values travel in one Temporary carrier per value type: an exit
+  // stores its value before its cleanup, and the ladder's tail loads it and
+  // returns it. An `unexpected(error)` return carries the error and the tail
+  // rebuilds the Unexpected value, since an Unexpected value is spelled only
+  // at its consuming return. Only values of block-parameter type (scalars,
+  // enums, pointers) are carried; owning, class and borrowed results, exits
+  // with a pending owning result or return loan, and exits with live
+  // temporaries keep their own cleanup. So do bodies with a single exit.
+  //
+  // The lifecycle dataflow joins obligation states at a rung: exits sharing a
+  // rung have the same drops left, so every obligation the rung drops is
+  // active (or a moved-from shell) on each entering path and every obligation
+  // already dropped is inactive on each. Loan flow requires equal loan state
+  // on every edge into a block; exits sharing a rung have the same loans
+  // left. A drop is shared only when its failure propagation is its
+  // destructor's own summary: a drop proved to retire a moved-from shell
+  // depends on the path back to the move, so it and every step before it stay
+  // private to the exit. Each rung closes its own cleanup boundary, and a
+  // fallible drop's Invoke continuation holds that boundary before the jump
+  // to the next rung, so the verifier's boundary walk never crosses a join.
+  // A fallible drop's failure edge is planned from the state at its rung,
+  // which every exit entering the rung shares.
+  struct SharedExitKey {
+    MirPlaceId carrier = 0;
+    // Per scope with work left, outermost first: the places still to drop
+    // and the loans still to end.
+    std::vector<std::pair<std::vector<MirPlaceId>, std::vector<MirLoanId>>>
+        scopes;
+
+    friend bool operator==(const SharedExitKey &left,
+                           const SharedExitKey &right) {
+      return left.carrier == right.carrier && left.scopes == right.scopes;
+    }
+    friend bool operator<(const SharedExitKey &left,
+                          const SharedExitKey &right) {
+      return std::tie(left.carrier, left.scopes) <
+             std::tie(right.carrier, right.scopes);
+    }
+  };
+
+  struct SharedExitCarrier {
+    bool hasValue = false;
+    // The tail rebuilds Unexpected(value) from the carried error value.
+    bool unexpected = false;
+    SemanticType type = SemanticType::Unknown;
+    SemanticTypeTraits traits{};
+    // The HIR value lowered into the carrier; for an Unexpected return the
+    // error operand, since the Unexpected value is spelled only in the tail.
+    HirValueId storedSource = 0;
+    MirOperand stored;
+    // The HIR value the exit returns: the root of its full expression, which
+    // the carrier's store realizes on this path.
+    HirValueId rootSource = 0;
+    HirValueId valueSource = 0;
+    ExpressionInfo valueInfo;
+    HirValueId unexpectedSource = 0;
+    ExpressionInfo unexpectedInfo;
+  };
+
+  struct SharedExitUnit {
+    SharedExitKey key;
+    bool drop = false;
+    MirDropObligationId obligation = 0;
+    FailurePropagationKind propagation = FailurePropagationKind::None;
+    bool shareable = true;
+  };
+
+  struct SharedExitPlan {
+    std::vector<SharedExitUnit> units;
+    // Units before this index stay private to the exit.
+    std::size_t firstShared = 0;
+  };
+
+  [[nodiscard]] SharedExitKey sharedExitKey(MirPlaceId carrier,
+                                            const ScopeExitState &state) {
+    SharedExitKey key{.carrier = carrier};
+    for (const Scope &scope : state.scopes) {
+      std::vector<MirPlaceId> drops;
+      for (const MirPlaceId place : scope.drops) {
+        if (!containsDrop(state.consumed,
+                          dropObligationForLocalPlace(output.findPlace(place))))
+          drops.push_back(place);
+      }
+      std::vector<MirLoanId> loans;
+      for (const MirLoanId loan : scope.loans) {
+        if (!containsLoan(state.ended, loan))
+          loans.push_back(loan);
+      }
+      if (!drops.empty() || !loans.empty()) {
+        key.scopes.emplace_back(std::move(drops), std::move(loans));
+      }
+    }
+    return key;
+  }
+
+  // A drop is shared only when its propagation is its destructor's own
+  // summary; see the moved-from shell rule above.
+  [[nodiscard]] bool exitDropShareable(const MirPlace *place,
+                                       MirDropObligationId obligation) const {
+    return place != nullptr && obligation != 0 &&
+           normalizedDestructorPropagation(obligation) ==
+               (destructorMayRaise(obligation)
+                    ? FailurePropagationKind::Destructor
+                    : FailurePropagationKind::None);
+  }
+
+  // Whether an exit from the current scopes shares at least one drop: the
+  // walk's last drop, the oldest owner, must be shareable, since every unit
+  // after the last private one is shared.
+  [[nodiscard]] bool sharedExitHasShareableDrop() {
+    bool any = false;
+    bool shareable = false;
+    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+      for (auto drop = scope->drops.rbegin(); drop != scope->drops.rend();
+           ++drop) {
+        const MirPlace *place = output.findPlace(*drop);
+        const MirDropObligationId obligation =
+            dropObligationForLocalPlace(place);
+        if (place == nullptr || obligation == 0) {
+          return false;
+        }
+        any = true;
+        shareable = exitDropShareable(place, obligation);
+      }
+    }
+    return any && shareable;
+  }
+
+  // The state-independent conditions for sharing an exit's cleanup;
+  // `temporariesAtExit` are the temporaries still live when cleanup begins.
+  [[nodiscard]] bool
+  sharedExitEligible(const std::vector<TemporaryDrop> &temporariesAtExit) {
+    return shareExitCleanupEnabled && exitCount >= 2 &&
+           (output.kind == MirBodyKind::Function ||
+            output.kind == MirBodyKind::Lambda) &&
+           temporariesAtExit.empty() && pendingReturnDrop == 0 &&
+           pendingReturnLoan == 0 && constructorPublishedLoans.empty() &&
+           constructorRollback.empty() && sharedExitHasShareableDrop();
+  }
+
+  [[nodiscard]] static ExpressionInfo loadedValueInfo(const HirValue &value) {
+    ExpressionInfo info = value.info;
+    info.category = ValueCategory::Value;
+    info.access = AccessMode::ReadOnly;
+    return info;
+  }
+
+  // The carrier for returning `value` from a shared exit, when it is a
+  // scalar success value or `unexpected(error)` with a scalar error.
+  [[nodiscard]] std::optional<SharedExitCarrier>
+  sharedValueCarrier(const HirValue &value) const {
+    if (value.dropObligation || value.neverReturns) {
+      return std::nullopt;
+    }
+    const SemanticType &returned = output.returnType;
+    const bool expected = returned.kind == SemanticType::Expected &&
+                          returned.arguments.size() == 2;
+    if (value.kind == HirValueKind::Unexpected) {
+      const HirValue *error = value.operands.size() == 1
+                                  ? findValue(value.operands.front())
+                                  : nullptr;
+      if (error == nullptr || error->dropObligation || !expected ||
+          value.info.type.kind != SemanticType::Unexpected ||
+          value.info.type.arguments.size() != 1 ||
+          value.info.type.arguments.front() != returned.arguments[1] ||
+          error->info.type != returned.arguments[1] ||
+          !isMirBlockParameterType(error->info.type)) {
+        return std::nullopt;
+      }
+      return SharedExitCarrier{.hasValue = true,
+                               .unexpected = true,
+                               .type = error->info.type,
+                               .traits = error->info.traits,
+                               .storedSource = error->id,
+                               .rootSource = value.id,
+                               .valueSource = error->id,
+                               .valueInfo = loadedValueInfo(*error),
+                               .unexpectedSource = value.id,
+                               .unexpectedInfo = value.info};
+    }
+    if (!isMirBlockParameterType(value.info.type) ||
+        (value.info.type != returned &&
+         !(expected && value.info.type == returned.arguments.front()))) {
+      return std::nullopt;
+    }
+    return SharedExitCarrier{.hasValue = true,
+                             .type = value.info.type,
+                             .traits = value.info.traits,
+                             .storedSource = value.id,
+                             .rootSource = value.id,
+                             .valueSource = value.id,
+                             .valueInfo = loadedValueInfo(value)};
+  }
+
+  // The carrier of a return statement when its exit may share cleanup, or
+  // nullopt when the return keeps its own cleanup. Decided before the
+  // operand is emitted, because an `unexpected(error)` return lowers only
+  // the error on the shared path.
+  [[nodiscard]] std::optional<SharedExitCarrier>
+  sharedReturnCarrier(const HirStatement &statement,
+                      const std::vector<TemporaryDrop> &temporariesAtExit) {
+    std::optional<SharedExitCarrier> carrier;
+    if (!statement.value) {
+      if (output.returnType.kind != SemanticType::Void) {
+        return std::nullopt;
+      }
+      carrier = SharedExitCarrier{};
+    } else {
+      const HirValue *value = findValue(*statement.value);
+      if (value == nullptr) {
+        return std::nullopt;
+      }
+      if (output.returnType.kind == SemanticType::Void) {
+        if (value->info.type != SemanticType::Void) {
+          return std::nullopt;
+        }
+        carrier = SharedExitCarrier{};
+      } else if (output.returnType.kind == SemanticType::Reference ||
+                 mirFallibleBorrowReferent(output.returnType)) {
+        return std::nullopt;
+      } else {
+        carrier = sharedValueCarrier(*value);
+      }
+    }
+    if (!carrier || !sharedExitEligible(temporariesAtExit)) {
+      return std::nullopt;
+    }
+    return carrier;
+  }
+
+  [[nodiscard]] MirPlaceId exitCarrierPlace(const SharedExitCarrier &carrier) {
+    for (const auto &[identity, place] : exitCarriers) {
+      if (identity.first == carrier.unexpected &&
+          identity.second == carrier.type) {
+        return place;
+      }
+    }
+    const MirPlaceId place = appendPlace({.root = MirPlaceRootKind::Temporary,
+                                          .temporary = nextTemporary++,
+                                          .type = carrier.type,
+                                          .access = AccessMode::Mutable,
+                                          .traits = carrier.traits,
+                                          .sourceValue = carrier.valueSource});
+    exitCarriers.emplace_back(std::pair{carrier.unexpected, carrier.type},
+                              place);
+    return place;
+  }
+
+  // Records the walk's units with the state key before each one.
+  struct SharedExitPlanner {
+    MirBodyLowerer &self;
+    MirPlaceId carrier = 0;
+    SharedExitPlan plan;
+
+    bool beginUnit(const ScopeExitState &state, bool drop) {
+      plan.units.push_back(
+          {.key = self.sharedExitKey(carrier, state), .drop = drop});
+      return true;
+    }
+    void endLoan(MirLoanId) {}
+    void drop(MirPlaceId, const MirPlace *place, MirDropObligationId obligation,
+              MirLoanId, const ScopeExitState &) {
+      SharedExitUnit &unit = plan.units.back();
+      unit.obligation = obligation;
+      unit.propagation = self.normalizedDestructorPropagation(obligation);
+      unit.shareable = self.exitDropShareable(place, obligation);
+    }
+    void dropped(MirDropObligationId) {}
+    void endUnit() {}
+    void scopeEnd() {}
+  };
+
+  // Emits the walk against its plan: private units in place, each shared
+  // unit in a block registered under its state, or a jump to the block an
+  // earlier exit registered for that state.
+  struct SharedExitEmitter {
+    MirBodyLowerer &self;
+    const SharedExitPlan &plan;
+    MirPlaceId carrier = 0;
+    std::size_t index = 0;
+    bool joined = false;
+    bool consistent = true;
+
+    bool beginUnit(const ScopeExitState &state, bool drop) {
+      if (index >= plan.units.size() || plan.units[index].drop != drop ||
+          self.terminated()) {
+        consistent = false;
+        return false;
+      }
+      if (index < plan.firstShared) {
+        return true;
+      }
+      const SharedExitUnit &unit = plan.units[index];
+      if (self.sharedExitKey(carrier, state) != unit.key) {
+        consistent = false;
+        return false;
+      }
+      if (const auto found = self.sharedExitBlocks.find(unit.key);
+          found != self.sharedExitBlocks.end()) {
+        self.terminate(
+            {.kind = MirTerminatorKind::Goto, .target = found->second});
+        joined = true;
+        return false;
+      }
+      const MirBlockId block = self.appendBlock();
+      self.terminate({.kind = MirTerminatorKind::Goto, .target = block});
+      self.current = block;
+      self.sharedExitBlocks.emplace(unit.key, block);
+      return true;
+    }
+    void endLoan(MirLoanId loan) {
+      (void)self.appendInstruction(
+          {.kind = MirInstructionKind::EndBorrow, .loan = loan});
+    }
+    void drop(MirPlaceId destination, const MirPlace *place,
+              MirDropObligationId obligation, MirLoanId lifecycleLoan,
+              const ScopeExitState &state) {
+      const SharedExitUnit &unit = plan.units[index];
+      if (unit.obligation != obligation) {
+        consistent = false;
+      }
+      (void)self.appendNormalDrop(obligation, destination, scopeDropInfo(place),
+                                  scopeDropLifecycle(obligation),
+                                  state.consumed, state.ended, 0, 0, 0,
+                                  lifecycleLoan, {}, unit.propagation);
+    }
+    void dropped(MirDropObligationId obligation) {
+      if (obligation != 0) {
+        self.appendNormalCleanupBoundary({obligation});
+      }
+    }
+    void endUnit() { ++index; }
+    void scopeEnd() {}
+  };
+
+  // Stores a shared exit's value into its carrier, before the exit's
+  // full-expression cleanup: the store realizes the returned expression on
+  // this path, so it precedes the expression's end marker as the verifier
+  // requires of every root. Returns the carrier, or zero for no value.
+  [[nodiscard]] MirPlaceId
+  storeSharedExitValue(const SharedExitCarrier &carrier) {
+    if (!carrier.hasValue) {
+      return 0;
+    }
+    const MirPlaceId place = exitCarrierPlace(carrier);
+    (void)appendInstruction(
+        {.kind = MirInstructionKind::Initialize,
+         .hirValue = carrier.rootSource,
+         .destination = place,
+         .operands = {carrier.stored},
+         .info = ExpressionInfo{.type = carrier.type,
+                                .category = ValueCategory::Place,
+                                .access = AccessMode::Mutable,
+                                .traits = carrier.traits}},
+        false, false);
+    return place;
+  }
+
+  // Lowers the current exit's cleanup and return through the body's shared
+  // exit ladders, once its value is stored in `place`. Returns false, having
+  // emitted nothing, when the exit shares no drop.
+  //
+  // The tail belongs to every exit that reaches it, so its reload, rebuilt
+  // Unexpected value and return name no source location, like the shared
+  // failure cleanup: debug information maps them to generated code rather
+  // than to whichever exit happened to emit them first. Each exit's own
+  // carrier store keeps its source location.
+  bool emitSharedExit(const SharedExitCarrier &carrier, MirPlaceId place) {
+    std::vector<Scope> simulated = scopes;
+    ScopeExitState planning{.scopes = simulated};
+    SharedExitPlanner planner{.self = *this, .carrier = place};
+    walkScopeExit(planning, 0, planner);
+    SharedExitPlan plan = std::move(planner.plan);
+    for (std::size_t index = 0; index < plan.units.size(); ++index) {
+      if (!plan.units[index].shareable) {
+        plan.firstShared = index + 1;
+      }
+    }
+    if (std::none_of(plan.units.begin() +
+                         static_cast<std::ptrdiff_t>(plan.firstShared),
+                     plan.units.end(),
+                     [](const SharedExitUnit &unit) { return unit.drop; })) {
+      return false;
+    }
+    exitSharingUsed = true;
+    ScopeExitState state{.scopes = scopes, .bindingLoans = &bindingLoans};
+    SharedExitEmitter emitter{.self = *this, .plan = plan, .carrier = place};
+    walkScopeExit(state, 0, emitter);
+    if (!emitter.consistent ||
+        (!emitter.joined && emitter.index != plan.units.size())) {
+      valid = false;
+      return true;
+    }
+    if (emitter.joined) {
+      exitsJoined = true;
+      return true;
+    }
+    std::optional<MirOperand> result;
+    if (carrier.hasValue) {
+      const MirValueId loaded =
+          appendValue(carrier.valueSource, carrier.valueInfo);
+      (void)appendInstruction({.kind = MirInstructionKind::Load,
+                               .result = loaded,
+                               .operands = {{.kind = MirOperandKind::Copy,
+                                             .place = place,
+                                             .type = carrier.type}},
+                               .info = carrier.valueInfo},
+                              false, false);
+      result = MirOperand{
+          .kind = MirOperandKind::Value, .value = loaded, .type = carrier.type};
+      if (carrier.unexpected) {
+        const MirValueId wrapped =
+            appendValue(carrier.unexpectedSource, carrier.unexpectedInfo);
+        (void)appendInstruction({.kind = MirInstructionKind::Compute,
+                                 .result = wrapped,
+                                 .operands = {*result},
+                                 .operation = MirOperation::Unexpected,
+                                 .info = carrier.unexpectedInfo},
+                                false, false);
+        result = MirOperand{.kind = MirOperandKind::Value,
+                            .value = wrapped,
+                            .type = carrier.unexpectedInfo.type};
+      }
+    }
+    terminate({.kind = MirTerminatorKind::Return, .value = std::move(result)});
+    return true;
   }
 
   void lowerProgramInitializationPlan() {
@@ -10119,7 +10731,7 @@ private:
     scopes.push_back({});
     lowerNestedStatement(id);
     if (!terminated()) {
-      emitScope(scopes.back());
+      emitScopeExit(scopes.size() - 1);
     }
     scopes.pop_back();
   }
@@ -10135,7 +10747,7 @@ private:
       scopes.push_back({});
       lowerStatements(statement->statements);
       if (!terminated()) {
-        emitScope(scopes.back());
+        emitScopeExit(scopes.size() - 1);
       }
       scopes.pop_back();
       return;
@@ -11127,7 +11739,7 @@ private:
     temporaryDrops = loopTemporaryDrops;
     bindingLoans = std::move(cleanupBindingLoans);
     callTransferredLoanEndpoints = loopTransferEndpoints;
-    emitScope(scopes.back());
+    emitScopeExit(scopes.size() - 1);
     terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
     scopes.pop_back();
     current = exitBlock;
@@ -11442,7 +12054,7 @@ private:
           valid = false;
         }
         endSemanticLoansIfActive(statement.endedLoans, statement.id);
-        emitScope(scopes.back());
+        emitScopeExit(scopes.size() - 1);
         terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
       }
       scopes.pop_back();
@@ -11480,7 +12092,14 @@ private:
     const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     std::optional<MirOperand> result;
     std::optional<MirLoanId> returnLoan;
-    if (statement.value) {
+    // Decided before the operand is emitted: on the shared path an
+    // `unexpected(error)` return lowers only the error, and the shared tail
+    // spells the Unexpected value at its return.
+    std::optional<SharedExitCarrier> shared =
+        sharedReturnCarrier(statement, incomingTemporaryDrops);
+    if (statement.value && shared && shared->unexpected) {
+      shared->stored = valueOperand(shared->storedSource);
+    } else if (statement.value) {
       if (output.returnType.kind == SemanticType::Void) {
         const HirValue *value = findValue(*statement.value);
         if (value == nullptr || value->info.type != SemanticType::Void) {
@@ -11922,6 +12541,36 @@ private:
     if (terminated()) {
       return;
     }
+    if (shared && (returnLoan || !sharedExitEligible(incomingTemporaryDrops))) {
+      // Evaluating the return expression changed what the exit may share:
+      // it moved an owner, whose drop now depends on this path, or formed a
+      // loan the return exports. Finish on the ordinary path, spelling the
+      // Unexpected value the shared path left to its tail.
+      if (shared->unexpected) {
+        result = valueOperand(*statement.value);
+      }
+      shared.reset();
+    }
+    if (shared) {
+      // A carried value has no obligation, so there is no result ownership
+      // to prepare or publish around the cleanup.
+      if (shared->hasValue && !shared->unexpected) {
+        if (!result) {
+          valid = false;
+          return;
+        }
+        shared->stored = *result;
+      }
+      const MirPlaceId carrier = storeSharedExitValue(*shared);
+      endReturnExpressionLoans(incomingScopes);
+      emitTemporaryDrops(incomingTemporaryDrops, statement.value.value_or(0),
+                         statement.id);
+      if (!emitSharedExit(*shared, carrier)) {
+        // The candidate scan promised a shareable drop.
+        valid = false;
+      }
+      return;
+    }
     const MirDropObligationId enclosingPendingReturnDrop = pendingReturnDrop;
     if (statement.value && result &&
         output.returnType.kind != SemanticType::Reference &&
@@ -12048,6 +12697,16 @@ private:
   // complete; see shareFailureCleanup.
   std::vector<PlannedFailureCleanup> plannedFailureCleanup;
   std::optional<std::size_t> planningFailureCleanup;
+  // Shared normal-exit cleanup; see emitSharedExit. The exit count is the
+  // body's returns, `?` propagations and its reachable end; one carrier
+  // place per (error, type) holds returned values; each shared block is
+  // registered under the exit state it continues from.
+  std::size_t exitCount = 0;
+  std::vector<std::pair<std::pair<bool, SemanticType>, MirPlaceId>>
+      exitCarriers;
+  std::map<SharedExitKey, MirBlockId> sharedExitBlocks;
+  bool exitSharingUsed = false;
+  bool exitsJoined = false;
   std::unordered_map<HirValueId, const HirValue *> values;
   std::unordered_map<HirStatementId, const HirStatement *> statements;
   std::unordered_map<HirBindingId, const HirBinding *> bindings;
@@ -12110,13 +12769,40 @@ MirBody MirLowerer::lowerBody(
     MirProgramInitializationPlan *loweredProgramInitialization,
     bool compilerTrusted, const MirClassInstance *constructorOwner,
     const HirDestructorInstance *destructor) {
-  MirBodyLowerer lowerer(program, failureMetadata, body, kind,
-                         std::move(returnType), definedFailureEffects,
-                         implicitZeroReturn, function, constructor, lambda,
-                         programInitialization, loweredProgramInitialization,
-                         constructorOwner, destructor);
-  lowerer.shareFailureCleanupEnabled = shareFailureCleanup_;
-  MirBody result = lowerer.lower(prologueValues, initializers);
+  const auto lowerWith = [&](bool shareExitCleanup) {
+    auto lowerer = std::make_unique<MirBodyLowerer>(
+        program, failureMetadata, body, kind, returnType, definedFailureEffects,
+        implicitZeroReturn, function, constructor, lambda,
+        programInitialization, loweredProgramInitialization, constructorOwner,
+        destructor);
+    lowerer->shareFailureCleanupEnabled = shareFailureCleanup_;
+    lowerer->shareExitCleanupEnabled = shareExitCleanup;
+    MirBody lowered = lowerer->lower(prologueValues, initializers);
+    return std::pair{std::move(lowerer), std::move(lowered)};
+  };
+  auto [lowerer, result] = lowerWith(shareExitCleanup_);
+  if (!lowerer->isValid() && lowerer->usedExitSharing()) {
+    // Should a body's shared exit schedule not verify, lower the body again
+    // with each exit destroying its own owners, its established form.
+    ++cleanupSharingStatistics_.exitSharingBodyFallbacks;
+    cleanupSharingStatistics_.lastExitSharingBodyFallback =
+        "body kind " + std::to_string(static_cast<int>(kind)) + " owner " +
+        std::to_string(owner) +
+        (function != nullptr && function->source != nullptr
+             ? " (" + std::string(function->source->name().lexeme) + ")"
+             : std::string()) +
+        ": " +
+        (lowerer->rejection() ? lowerer->rejection()->second
+         : !lowerer->proof().errors.empty()
+             ? lowerer->proof().errors.front().message
+             : std::string("rejected before verification"));
+    auto unshared = lowerWith(false);
+    lowerer = std::move(unshared.first);
+    result = std::move(unshared.second);
+  }
+  if (lowerer->joinedExits()) {
+    ++cleanupSharingStatistics_.exitSharingBodies;
+  }
   result.compilerTrustedSynchronization =
       compilerTrusted &&
       std::any_of(result.blocks.begin(), result.blocks.end(),
@@ -12128,7 +12814,7 @@ MirBody MirLowerer::lowerBody(
                                  SynchronizationOperationKind::None;
                         });
                   });
-  if (!lowerer.isValid()) {
+  if (!lowerer->isValid()) {
     const auto sourceFor = [&](HirValueId value) -> std::optional<SourceSpan> {
       if (value == 0) {
         if (function && function->source)
@@ -12168,11 +12854,11 @@ MirBody MirLowerer::lowerBody(
       }
       return selected;
     };
-    if (const auto &rejection = lowerer.rejection(); rejection)
+    if (const auto &rejection = lowerer->rejection(); rejection)
       errors.push_back({.body = {kind, owner},
                         .source = sourceFor(rejection->first),
                         .message = rejection->second});
-    for (const auto &error : lowerer.proof().errors) {
+    for (const auto &error : lowerer->proof().errors) {
       HirValueId value = 0;
       std::optional<SourceSpan> anchor;
       if (const auto *block = result.findBlock(error.block))
@@ -12191,13 +12877,13 @@ MirBody MirLowerer::lowerBody(
                         .source = anchor ? anchor : sourceFor(value),
                         .message = error.message});
     }
-    if (!lowerer.rejection() && lowerer.proof().valid())
+    if (!lowerer->rejection() && lowerer->proof().valid())
       errors.push_back({.body = {kind, owner},
                         .source = sourceFor(0),
                         .message = "body lowering rejected its checked HIR "
                                    "before program initialization"});
   }
-  valid = valid && lowerer.isValid();
+  valid = valid && lowerer->isValid();
   return result;
 }
 

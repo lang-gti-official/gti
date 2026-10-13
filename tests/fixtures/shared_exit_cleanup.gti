@@ -1,0 +1,92 @@
+#include <std/string>
+#include <std/vector>
+
+// Shared normal-exit cleanup. Each phase leaves `run` or `drain` through a
+// different exit while a different set of user-defined resources is live:
+// plain returns, `?` propagations, `unexpected(...)` returns, a void body's
+// returns and its end. Every exit must release exactly the live resources,
+// newest first and once each, and the value or error it returns must survive
+// the cleanup it shares with the other exits. A destructor failing during
+// that cleanup reports an ordinary failure at the destructor.
+mut int32_t phase = 0;
+mut int32_t fail_destructor = 0;
+mut int32_t zero = 0;
+
+enum class Err : int32_t { Early = 1, Mid = 2, Late = 3, Probe = 4 };
+
+class Resource {
+  int32_t id;
+public:
+  Resource(int32_t id) : id(id) { std::println(id); }
+  ~Resource() {
+    std::println(0 - this.id);
+    if (fail_destructor == this.id) {
+      int32_t cleanup_failure = 7 / zero;
+    }
+  }
+};
+
+// A callee whose own exits share cleanup: `inner` is released by each exit.
+expected<int32_t, Err> probe(int32_t at) {
+  Resource inner = Resource(100 + at);
+  if (at == 0) { return unexpected(Err::Probe); }
+  if (at == 1) { return 10; }
+  return at;
+}
+
+expected<int32_t, Err> run(int32_t p) {
+  Resource a = Resource(1);
+  if (p == 1) { return 11; }
+  if (p == 2) { return unexpected(Err::Early); }
+  Resource b = Resource(2);
+  mut int32_t x = ?probe(p == 3 ? 0 : 5);
+  if (p == 4) { return x; }
+  {
+    Resource c = Resource(3);
+    if (p == 5) { return 55; }
+    if (p == 6) { return unexpected(Err::Mid); }
+    int32_t y = ?probe(p == 7 ? 0 : 1);
+    x = x + y;
+  }
+  Resource d = Resource(4);
+  if (p == 8) { return x; }
+  return unexpected(Err::Late);
+}
+
+void drain(int32_t p) {
+  Resource a = Resource(10);
+  if (p == 1) { return; }
+  Resource b = Resource(20);
+  if (p == 2) { return; }
+  Resource c = Resource(30);
+  if (p == 3) { return; }
+}
+
+int32_t code(Err error) {
+  if (error == Err::Early) { return 1; }
+  if (error == Err::Mid) { return 2; }
+  if (error == Err::Late) { return 3; }
+  return 4;
+}
+
+// Phase P below 50 runs `run(P)`; phase 50 + P runs `drain(P)`; phase
+// 100 + 10 * P + D runs `run(P)` with the destructor of resource D failing.
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  if (phase >= 100) {
+    fail_destructor = (phase - 100) % 10;
+    phase = (phase - 100) / 10;
+  }
+  if (phase >= 50) {
+    drain(phase - 50);
+    std::println(900);
+    return 0;
+  }
+  expected<int32_t, Err> result = run(phase);
+  if (result.has_value()) {
+    std::println(1000 + result.value());
+  } else {
+    std::println(2000 + code(result.error()));
+  }
+  return 0;
+}
