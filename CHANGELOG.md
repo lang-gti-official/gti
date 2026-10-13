@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.423.9 — Owned extraction and conditional method arguments
+
+- Fix an internal compiler error when an owning Expected payload is passed to
+  a method before a later conditional argument. Preserve receiver identity,
+  extraction order and exact cleanup on wrong-state or later-argument failure,
+  for both user-defined class and unique-owner payloads (issue #96).
+
 ## 0.423.5 — Temporary expected pointer failure routing
 
 - Fix an internal compiler error when a fallible call returning an expected
