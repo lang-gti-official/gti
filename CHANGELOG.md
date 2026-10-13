@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.424.4 — Defaulted owning base construction
+
+- Fix native compilation/link failures when defaulted derived constructors
+  inherit owning fields through defaulted bases. Base and field initialization
+  use the same selected GTI schedule, including generic bases, nonmoving fields,
+  multilevel inheritance, and construction-failure cleanup (issue #98).
+
 ## 0.424.0 — Transient compile-time ownership
 
 - Constant execution supports transient exclusive allocations and deterministic
