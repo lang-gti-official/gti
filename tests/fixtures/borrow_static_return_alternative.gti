@@ -1,0 +1,49 @@
+#include <std/string>
+
+class TextOwner {
+  std::string text{"preview"};
+public:
+  TextOwner() = default;
+  std::string_view View(bool empty) {
+    if (empty) { return ""; }
+    return this.text.view();
+  }
+  c_string CString(bool empty) {
+    if (empty) { return nullptr; }
+    return this.text.c_string();
+  }
+};
+
+std::string_view Relay(std::string_view text, bool empty) {
+  if (empty) { return "fallback"; }
+  return text;
+}
+
+c_string RelayCString(c_string text, bool empty) {
+  if (empty) { return nullptr; }
+  return text;
+}
+
+class Preview {
+  TextOwner* owner = nullptr;
+public:
+  Preview(TextOwner* value) : owner(value) {}
+  std::string_view Content() {
+    if (this.owner == nullptr) { return ""; }
+    unsafe { return this.owner->View(false); }
+  }
+};
+
+int main() {
+  mut TextOwner owner{};
+  if (owner.View(true) != "" || owner.View(false) != "preview") { return 1; }
+  if (owner.CString(true) != nullptr || owner.CString(false) == nullptr) { return 2; }
+  if (Relay(owner.View(false), true) != "fallback") { return 3; }
+  if (Relay(owner.View(false), false) != "preview") { return 4; }
+  if (RelayCString(owner.CString(false), true) != nullptr) { return 5; }
+  if (RelayCString(owner.CString(false), false) == nullptr) { return 6; }
+  Preview attached{&owner};
+  Preview empty{nullptr};
+  if (attached.Content() != "preview" || empty.Content() != "") { return 7; }
+  return 0;
+}

@@ -1,0 +1,40 @@
+#include <std/filesystem>
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+struct Pair {
+  mut std::string first;
+  mut std::string second;
+  Pair(std::string_view left, std::string_view right)
+      : first(std::string(left)), second(std::string(right)) {}
+};
+
+struct Holder {
+  mut Pair value{"old", "old"};
+};
+
+int main(int argc, std::vector<std::string> args) {
+  mut std::string first{"left"};
+  mut std::string second{"right"};
+  mut Pair direct{"old", "old"};
+  direct = Pair(first.view(), second.view());
+  if (direct.first != "left" || direct.second != "right") return 1;
+  mut auto holder = std::make_unique<Holder>();
+  holder->value = Pair(second.view(), first.view());
+  if (holder->value.first != "right" || holder->value.second != "left") return 2;
+  mut std::filesystem::path path{};
+  path = std::filesystem::path(first.view());
+  if (path.string() != "left") return 3;
+  first.append("!");
+  second.append("!");
+  if (direct.first != "left" || holder->value.first != "right") return 4;
+  for (mut std::size_t index = 0; index < args.size(); index++) {
+    path = std::filesystem::path(args[index].view());
+  }
+  if (path.empty()) return 5;
+  direct = Pair(args[std::size_t(0)].view(), args[std::size_t(0)].view());
+  if (direct.first != args[std::size_t(0)] ||
+      direct.second != args[std::size_t(0)]) return 6;
+  return 0;
+}
