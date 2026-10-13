@@ -11,21 +11,6 @@ the completed base is cleaned exactly once. `testBaseRollbackFailureRecord`
 checks that only a fallible base uses the declared secondary record and rejects
 four mutations to the rollback cleanup/failure contract.
 
-## Transient constexpr allocation and destruction
-
-`compiler_constexpr` includes direct canonical-MIR and required semantic-query
-coverage for exclusive scalar/class allocation, nested source-defined owners,
-destructors, moves, reset/swap, expected propagation and concrete pack entry
-calls. It checks allocation/step/live-storage bounds, escaped or imported owner
-rejection, ordinary runtime eligibility and destructor source diagnostics.
-`constexpr_allocation_runtime` and `constexpr_allocation_example` compare all
-four optimization levels in C++20/C++23; example 153 must also enter both corpus
-censuses. The constexpr aggregate LSP slice verifies destructor diagnostics and
-ordinary constexpr conversion syntax; Tree-sitter and formatter checks retain
-that spelling. Acceptance additionally requires the broad optimized suite,
-native portability and sanitizer ownership checks. Focused passes alone are
-not a substitute for those integration gates.
-
 ## Consuming member results at owning expected return boundaries (#99)
 
 `expected_consuming_return_runtime` covers a user-defined owning class returned
@@ -38,6 +23,17 @@ test `testExpectedConsumingMemberReturn` checks the exact concrete receiver
 capability and rejects five malformed receiver/activation schedules. This is
 representation admission for already-verified source calls, not a new language
 conversion or a special rule for `unique_ptr`.
+
+## Defaulted owning base construction
+
+`generated_base_constructor_runtime` covers defaulted multilevel owning bases,
+nonmoving nested owners, generic base/derived instances, stack and unique-owner
+construction, and exact cleanup after base-field initialization failure. The
+eight-mode native matrix includes C++20/C++23, O0/O1/O3, disabled elision and
+ASan/UBSan. `testDefaultedOwningBaseSchedule` verifies the concrete HIR base
+schedule and rejects erased targets, wrong generated status, self-base/target
+identities and omitted initialization edges. Existing base-constructor HIR/MIR
+mutations remain active after unifying base-only and field-default schedules.
 
 ## Expected pointer boundaries and owning field replacement
 
@@ -67,6 +63,21 @@ mutable-reference getters, with the same primary/secondary cleanup oracles.
 result activation, missing/conditional replacement transfer, and missing
 old-value cleanup. The receiver envelope and extracted payload keep independent
 MIR drop identities; accepting a new consumer does not relax those obligations.
+
+## Transient constexpr allocation and destruction
+
+`compiler_constexpr` includes direct canonical-MIR and required semantic-query
+coverage for exclusive scalar/class allocation, nested source-defined owners,
+destructors, moves, reset/swap, expected propagation and concrete pack entry
+calls. It checks allocation/step/live-storage bounds, escaped or imported owner
+rejection, ordinary runtime eligibility and destructor source diagnostics.
+`constexpr_allocation_runtime` and `constexpr_allocation_example` compare all
+four optimization levels in C++20/C++23; example 153 must also enter both corpus
+censuses. The constexpr aggregate LSP slice verifies destructor diagnostics and
+ordinary constexpr conversion syntax; Tree-sitter and formatter checks retain
+that spelling. Acceptance additionally requires the broad optimized suite,
+native portability and sanitizer ownership checks. Focused passes alone are
+not a substitute for those integration gates.
 
 ## Value-producing unsafe expressions
 

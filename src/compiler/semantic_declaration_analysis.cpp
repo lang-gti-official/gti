@@ -8031,20 +8031,6 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
         owner.destructor->declaration->specifier() &&
         owner.destructor->declaration->specifier()->kind ==
             SpecialMemberSpecifierKind::Deleted;
-    ConstructorId generatedBaseConstructor = 0;
-    if (defaultStatus == SpecialMemberStatus::Generated &&
-        owner.fields.empty() && owner.genericParameters.empty()) {
-      if (const auto *base = concreteBase(owner);
-          base != nullptr && base->type.arguments.empty() &&
-          base->type.valueArguments.empty()) {
-        const auto *selected =
-            defaultConstructor(classInfo(base->type.classId));
-        if (selected != nullptr && selected->parameterTypes.empty() &&
-            selected->declaration != nullptr &&
-            selected->declaration->body() != nullptr)
-          generatedBaseConstructor = selected->id;
-      }
-    }
     semanticModel.record(
         *owner.declaration,
         ClassLifecycleInfo{
@@ -8055,10 +8041,10 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
             .declaredMoveConstructor = owner.moveConstructor,
             .declaredDestructor = owner.destructor,
             .defaultConstructor = defaultStatus,
-            .generatedDefaultBaseConstructor = generatedBaseConstructor,
-            .generatedDefaultFieldInitializers =
+            .generatedDefaultInitializers =
                 defaultStatus == SpecialMemberStatus::Generated &&
-                owner.kind != ClassKind::Union && !owner.fields.empty() &&
+                owner.kind != ClassKind::Union &&
+                (!owner.fields.empty() || concreteBase(owner) != nullptr) &&
                 std::all_of(owner.fields.begin(), owner.fields.end(),
                             [&](const FieldInfo &field) {
                               return field.declaration != nullptr &&

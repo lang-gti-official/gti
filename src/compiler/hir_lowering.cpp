@@ -477,9 +477,7 @@ private:
                                    ? SpecialMemberStatus::Deleted
                                    : lifecycle->defaultConstructor,
          .generatedDefaultRequiresSchedule =
-             lifecycle != nullptr &&
-             (lifecycle->generatedDefaultFieldInitializers ||
-              lifecycle->generatedDefaultBaseConstructor != 0),
+             lifecycle != nullptr && lifecycle->generatedDefaultInitializers,
          .copyConstructor =
              lifecycle == nullptr
                  ? SpecialMemberStatus::Deleted
@@ -735,10 +733,9 @@ private:
         ownerType != nullptr && ownerType->declaration != nullptr
             ? baseModel->findClassLifecycle(*ownerType->declaration)
             : nullptr;
-    const bool generatedBody =
-        construction.generatedDefault && ownerLifecycle != nullptr &&
-        (ownerLifecycle->generatedDefaultBaseConstructor != 0 ||
-         ownerLifecycle->generatedDefaultFieldInitializers);
+    const bool generatedBody = construction.generatedDefault &&
+                               ownerLifecycle != nullptr &&
+                               ownerLifecycle->generatedDefaultInitializers;
     if (!owner || construction.kind != ConstructorKind::Ordinary ||
         (!generatedBody && (construction.generatedDefault ||
                             construction.declaration == nullptr ||

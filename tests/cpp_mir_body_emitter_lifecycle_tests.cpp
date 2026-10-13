@@ -4568,17 +4568,13 @@ void testOwningBaseConstructorStatus() {
       if (!generated.generatedDefault)
         continue;
       const auto &owner = frontend.hir.classInstances()[generated.owner - 1];
-      const auto *lifecycle =
-          owner.source == nullptr
-              ? nullptr
-              : frontend.semantics.findClassLifecycle(*owner.source);
-      if (lifecycle && lifecycle->generatedDefaultFieldInitializers)
+      if (!owner.fields.empty())
         continue;
       expect(
           generated.declaration == 0 && generated.source == nullptr &&
               generated.initializers.size() == 1,
           "generated construction needs a selected body without synthetic AST");
-      for (int mutation = 0; mutation != 7; ++mutation) {
+      for (int mutation = 0; mutation != 8; ++mutation) {
         auto malformed = frontend.hir;
         auto *changed = const_cast<lang::HirConstructorInstance *>(
             malformed.findConstructorInstance(generated.id));
@@ -4594,8 +4590,12 @@ void testOwningBaseConstructorStatus() {
           changed->body.roots.push_back(999999);
         else if (mutation == 5)
           changed->owner = 999999;
-        else
+        else if (mutation == 6)
           changed->declaration = 999999;
+        else {
+          changed->initializers.front().constructorTarget.reset();
+          changed->initializers.front().generatedDefault = true;
+        }
         expect(
             !lang::verifyHirProgramPlans(frontend.semantics, malformed).valid(),
             "generated construction must retain its exact semantic selection");
@@ -4787,6 +4787,63 @@ void testOwningBaseConstructorStatus() {
     }
     expect(selected == 1,
            "the fixture must exercise every selected owning-base stage");
+  }
+}
+
+void testDefaultedOwningBaseSchedule() {
+  for (const auto name : {"defaulted_owning_base_constructor.gti",
+                          "defaulted_base_composition.gti"}) {
+    const auto fixture =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures" / name;
+    std::ifstream input(fixture);
+    const std::string source{std::istreambuf_iterator<char>(input),
+                             std::istreambuf_iterator<char>()};
+    const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+    expect(frontend.canGenerateCode(), "defaulted owning base must verify");
+    if (!frontend.canGenerateCode())
+      continue;
+    std::size_t selected = 0;
+    for (const auto &constructor : frontend.hir.constructorInstances()) {
+      if (!constructor.generatedDefault || constructor.initializers.empty() ||
+          constructor.initializers.front().kind !=
+              lang::ConstructorInitializerTargetKind::Base)
+        continue;
+      const auto &base = constructor.initializers.front();
+      const auto *target =
+          base.constructorTarget
+              ? frontend.hir.findConstructorInstance(*base.constructorTarget)
+              : nullptr;
+      expect(
+          target && target->generatedDefault && base.generatedDefault,
+          "defaulted inheritance must select the base's executable schedule");
+      if (!target)
+        continue;
+      ++selected;
+      for (int mutation = 0; mutation != 5; ++mutation) {
+        auto malformed = frontend.hir;
+        auto *changed = const_cast<lang::HirConstructorInstance *>(
+            malformed.findConstructorInstance(constructor.id));
+        auto &initializer = changed->initializers.front();
+        if (mutation == 0)
+          initializer.constructorTarget.reset();
+        else if (mutation == 1)
+          initializer.generatedDefault = false;
+        else if (mutation == 2)
+          initializer.base = constructor.owner;
+        else if (mutation == 3)
+          initializer.constructorTarget = constructor.id;
+        else
+          changed->initializers.clear();
+        expect(
+            !lang::verifyHirProgramPlans(frontend.semantics, malformed).valid(),
+            "defaulted base scheduling must reject missing or forged "
+            "selection");
+      }
+    }
+    expect(selected >= 2,
+           "the fixture must cover multiple selected base edges");
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "verified generated bases must have a native representation");
   }
 }
 
@@ -14048,6 +14105,7 @@ constexpr NamedTest kTests[] = {
      testSourceDestructorOwningFieldCleanup},
     {"testOwningBaseConstructorStatus", testOwningBaseConstructorStatus},
     {"testBaseRollbackFailureRecord", testBaseRollbackFailureRecord},
+    {"testDefaultedOwningBaseSchedule", testDefaultedOwningBaseSchedule},
     {"testPassiveOwnedParameterConstructorFields",
      testPassiveOwnedParameterConstructorFields},
     {"testBodyOrderedPassivePolicyConstructor",
