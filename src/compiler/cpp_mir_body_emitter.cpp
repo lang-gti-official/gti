@@ -39857,12 +39857,16 @@ private:
           facts.body.findDropObligation(instruction.lifecycle.front().source);
       if (failureForm && drop != nullptr &&
           drop->dropType.requiresActiveCleanup) {
-        if (!instruction.definedFailure.empty())
+        const bool fallible = !instruction.definedFailure.empty();
+        if (fallible)
           output << "__gti_mir_drop_success_" << instruction.id << " = ";
         output << "(*this)." << typeSpelling(drop->dropType.type)
                << "::template __gti_mir_unique_cleanup_failure<"
-               << *drop->dropType.classInstance
-               << ">(&__gti_mir_cleanup_failure_record, true);\n";
+               << *drop->dropType.classInstance << ">(";
+        // Only a fallible cleanup owns a secondary failure record. A proved
+        // non-failing base cleanup must not reference that absent local.
+        output << (fallible ? "&__gti_mir_cleanup_failure_record" : "nullptr")
+               << ", true);\n";
         return;
       }
       output << "// GTI MIR base rollback ends with unpublished object "

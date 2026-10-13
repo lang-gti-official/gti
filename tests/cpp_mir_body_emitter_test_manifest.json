@@ -470,6 +470,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testBaseRollbackFailureRecord",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testPassiveOwnedParameterConstructorFields",
       "suite": "lifecycle"
     },

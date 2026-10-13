@@ -1,0 +1,35 @@
+#include <std/memory>
+#include <std/vector>
+#include <std/string>
+
+mut int stage = 0;
+int Read() {
+  std::println(30);
+  int divisor = stage == 1 ? 0 : 1;
+  return 7 / divisor;
+}
+class Base {
+public:
+  Base() = default;
+  ~Base() { std::println(10); }
+  virtual int Value() = 0;
+};
+class Derived : public Base {
+  int value = Read();
+public:
+  Derived() = default;
+  ~Derived() { std::println(20); }
+  int Value() override { return this.value; }
+};
+class Outer {
+public:
+  Outer() = default;
+  ~Outer() { std::println(90); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Outer outer{};
+  auto value = std::make_unique<Derived>();
+  std::println(40);
+  return value->Value() - 7;
+}

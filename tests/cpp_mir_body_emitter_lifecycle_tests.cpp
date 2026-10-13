@@ -4469,6 +4469,80 @@ void testSourceDestructorOwningFieldCleanup() {
   }
 }
 
+void testBaseRollbackFailureRecord() {
+  for (const auto name :
+       {"nonfallible_base_rollback", "fallible_base_rollback"}) {
+    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures" / (std::string(name) + ".gti");
+    std::ifstream input(fixture);
+    expect(input.good(), "base rollback fixture must exist");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+    expect(frontend.canGenerateCode(), "base rollback fixture must verify");
+    if (!frontend.canGenerateCode())
+      continue;
+    const bool fallible = std::string_view(name) == "fallible_base_rollback";
+    std::size_t selected = 0;
+    for (const auto &constructor : frontend.mir.constructorInstances()) {
+      for (const auto &block : constructor.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Drop ||
+              !instruction.destination || instruction.lifecycle.size() != 1 ||
+              !instruction.lifecycle.front().failureCleanup)
+            continue;
+          const auto *place =
+              constructor.body.findPlace(*instruction.destination);
+          if (!place || place->root != lang::MirPlaceRootKind::This ||
+              place->projections.size() != 1 ||
+              place->projections.front().kind != lang::MirProjectionKind::Base)
+            continue;
+          ++selected;
+          expect(instruction.definedFailure.empty() != fallible,
+                 "rollback failure capability comes from the selected base");
+          const lang::MirBodyAddress address{
+              .kind = lang::MirBodyKind::Constructor, .owner = constructor.id};
+          const lang::CppMirBodyEmissionMap map(
+              buildRows(frontend, frontend.mir));
+          const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+          expect(
+              emitter.supportsFailureBodyText(address),
+              "both rollback capabilities have complete constructor emission");
+          if (!emitter.supportsFailureBodyText(address))
+            continue;
+          const auto text =
+              emitter.emitFailureBodyText(address, "base-record-v1", 1);
+          expect(text.text.find(
+                     fallible ? ">(&__gti_mir_cleanup_failure_record, true);"
+                              : ">(nullptr, true);") != std::string::npos,
+                 "only fallible base rollback receives a secondary record");
+          expect((text.text.find("::gti_failure_record_v2 "
+                                 "__gti_mir_cleanup_failure_record{};") !=
+                  std::string::npos) == fallible,
+                 "secondary record allocation agrees with rollback capability");
+          for (int mutation = 0; mutation != 2; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *body = lang::findMirBody(malformed, address);
+            for (auto &changedBlock : body->blocks)
+              for (auto &changed : changedBlock.instructions)
+                if (changed.id == instruction.id) {
+                  if (mutation == 0)
+                    changed.lifecycle.front().failureCleanup = false;
+                  else if (fallible)
+                    changed.definedFailure = {};
+                  else
+                    changed.definedFailure.propagation =
+                        lang::FailurePropagationKind::Destructor;
+                }
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "base rollback cannot forge cleanup kind or failure "
+                   "capability");
+          }
+        }
+    }
+    expect(selected == 1, "fixture contains one exact base rollback operation");
+  }
+}
+
 void testOwningBaseConstructorStatus() {
   for (const auto fixtureName :
        {"inherited_unique_allocation.gti", "generated_base_constructor.gti",
@@ -13968,6 +14042,7 @@ constexpr NamedTest kTests[] = {
     {"testSourceDestructorOwningFieldCleanup",
      testSourceDestructorOwningFieldCleanup},
     {"testOwningBaseConstructorStatus", testOwningBaseConstructorStatus},
+    {"testBaseRollbackFailureRecord", testBaseRollbackFailureRecord},
     {"testPassiveOwnedParameterConstructorFields",
      testPassiveOwnedParameterConstructorFields},
     {"testBodyOrderedPassivePolicyConstructor",

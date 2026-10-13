@@ -2174,6 +2174,10 @@ The C++ plan emits this body's admitted status constructor instead of a native
 and cleanup-owning bases use the same `InitializeBase` publication contract;
 the rollback record retains the base's exact cleanup requirement. No terminal
 adapter or native exception supplies the failure path. A source destructor
+that cannot raise a defined failure is rolled back with a null failure-record
+argument. Only a fallible base rollback consumes the body's secondary cleanup
+record and its paired failure edge; a non-failing rollback neither allocates
+nor references that optional record. A source destructor
 does not prevent this base-only generated schedule. Derived instance fields,
 generic owners/bases, constructor default arguments and
 generated-base chains remain outside this generated-body slice and retain
