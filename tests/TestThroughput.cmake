@@ -56,6 +56,7 @@ if(Python3_Interpreter_FOUND)
     base_rollback_record_runtime virtual_expected_owning_return_runtime
     reference_owned_field_replacement_runtime
     raw_owned_field_replacement_runtime
+    shared_getter_worker_loans_runtime
     expected_field_and_join_runtime expected_scoped_return_runtime
     expected_temporary_observation_runtime
     expected_filesystem_prerequisites_runtime expected_passive_publication_runtime
