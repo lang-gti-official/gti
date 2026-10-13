@@ -23,6 +23,64 @@ require correction or explicit owner acceptance. Noisy shared CI remains a
 correctness/report gate, not a timing oracle. The sole live queue is
 [the implementation sequence](implementation-sequence.md).
 
+## RT-5: body-local index/length orders (2026-10-13)
+
+The safety analysis records a strict order between two values of one integer
+domain on each edge a comparison takes. A public logical-size check whose
+operands denote the ordered values is discharged in the same body; see
+[optimization.md](../architecture/optimization.md).
+
+**Reach.** None outside its own tests. A baseline compiler built from main
+`81d6d88d` and a candidate from the same tree with this change built every
+program under `examples/`, `tests/fixtures/` and `tests/coverage/`, plus the
+runtime-audit and storage-migration probes, at `-O2` with
+`--optimization-report` on the Mac mini:
+
+- 1,367 programs build with both compilers, and exit codes and diagnostics
+  match everywhere.
+- Both discharge 844 bounds checks. Overflow and domain counts are also
+  identical.
+- Compile time totals 636.0 s against 638.5 s, with ten parallel jobs.
+- The 15 probes produce identical outputs and binaries of identical size;
+  their run-time ratios range from 0.956 to 1.004.
+
+The standard library's loops that test an index against their own length
+already read through `read_unchecked` under `unsafe`, so they leave no
+body-local check. The checks that remain sit inside accessors such as
+`vector::operator[]`, which a caller's loop condition does not reach.
+
+**Crossing ceiling.** To bound what crossing `vector::operator[]` could save,
+each kernel below was also written with `get_unchecked` and
+`get_unchecked_mut`. The kernel is kept out of line by marking its emitted
+definition `noinline`, and its vectors hold 4 million `uint64_t`, sized at run
+time. It runs 41 times. The measurements use the Mac mini, AppleClang 21,
+`-O2`, loops aligned to 64 bytes, and the minimum of 9 interleaved runs;
+outputs match.
+
+| Kernel | Checked | Unchecked | Ratio |
+| --- | ---: | ---: | ---: |
+| read, `i < v.size()` | 31.8 ms | 31.8 ms | 1.00 |
+| copy, `i < a.size() && i < b.size()` | 90.3 ms | 90.3 ms | 1.00 |
+| update in place, `i < v.size()` | 72.7 ms | 71.3 ms | 1.02 |
+| update in place, bound hoisted to `count = v.size()` | 72.7 ms | 59.1 ms | 1.23 |
+
+- Clang removes the read and copy loops' checks itself after inlining the
+  accessor, and both builds emit the same loop.
+- The in-place update keeps its check. With `i < v.size()` the check reuses
+  the length that the loop condition reloads anyway. With a hoisted bound it
+  reloads the length and branches on its own, and that is the 23%.
+- Every store loop reloads the vector's data pointer after each store, and in
+  the checked builds its length too, because a `uint64_t` store may alias the
+  vector's own fields. No store loop vectorizes.
+- When the kernel inlines into the function that allocated the vector, Clang
+  removes these checks and vectorizes the store loops without help.
+
+Crossing the accessor is therefore worth up to about a fifth of a store loop
+with a hoisted bound, and little elsewhere. What limits every store loop is
+aliasing between element stores and the container's fields, the same cause as
+the `matrix` probe's remaining gap in
+[RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths).
+
 ## RT-9: introsort for `std::sort` (2026-10-12)
 
 `std::sort` replaces iterative heapsort with bounded iterative introsort: a

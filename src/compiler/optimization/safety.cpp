@@ -275,6 +275,26 @@ enum class LiveMemoryBarrier { None, VacantStructuralConstruction, Unknown };
 [[nodiscard]] bool mergeObject(ObjectFact &target, const ObjectFact &incoming,
                                bool widen);
 
+// An order between two immutable MIR values of one integer domain, keyed
+// (lesser, greater): `lesser < greater` when strict, otherwise
+// `lesser <= greater`. A dominating comparison establishes it. Values never
+// change, so no write retires an order; redefining either value does.
+struct OrderFact {
+  // The compared domain. Matching scalars across loads must not reinterpret
+  // an order under another domain's ordering.
+  CheckedIntegerDomain domain;
+  bool strict = false;
+  Evidence evidence;
+
+  friend bool operator==(const OrderFact &, const OrderFact &) = default;
+};
+
+using ValueOrders = std::map<std::pair<MirValueId, MirValueId>, OrderFact>;
+
+// Orders retained per abstract state. Dropping one is always conservative;
+// the bound keeps long bodies with many comparisons cheap to copy and join.
+constexpr std::size_t maxValueOrders = 64;
+
 struct AbstractState {
   bool reachable = false;
   // Unknown effects on a failure-only path must not poison a successful
@@ -316,10 +336,17 @@ struct AbstractState {
   std::map<MirPlaceId, ObjectFact> objects;
   std::map<MirValueId, MirPlaceId> aggregateOrigins;
   std::map<MirValueId, ObjectFact> objectValues;
+  ValueOrders orders;
 
   friend bool operator==(const AbstractState &,
                          const AbstractState &) = default;
 };
+
+void eraseOrders(AbstractState &state, MirValueId value) {
+  std::erase_if(state.orders, [&](const auto &entry) {
+    return entry.first.first == value || entry.first.second == value;
+  });
+}
 
 void publishConstructedScalar(AbstractState &state, ScalarAddressKey address,
                               ConstructedScalar value) {
@@ -1505,6 +1532,202 @@ readonlyRecordParameter(const MirProgram *program, MirBodyAddress address,
   }
 }
 
+// The value an inert stage forwards: a call input staged by value, or an
+// identity. Such a stage neither reads memory nor changes the scalar, so it
+// shares its source's orders. The walk is bounded like condition staging.
+[[nodiscard]] MirValueId orderSource(const MirBody &body, MirValueId value,
+                                     Evidence *evidence = nullptr) {
+  for (std::size_t depth = 0; value != 0 && depth < 32; ++depth) {
+    const MirInstruction *stage = definingInstruction(body, value);
+    if (stage == nullptr || stage->operands.size() != 1 ||
+        stage->operands.front().kind != MirOperandKind::Value ||
+        stage->operands.front().value == 0 || stage->operands.front().literal ||
+        stage->operands.front().type != stage->info.type)
+      break;
+    const bool staged = stage->kind == MirInstructionKind::CallInput &&
+                        stage->callInputKind == HirCallInputKind::Value;
+    const bool identity = stage->kind == MirInstructionKind::Compute &&
+                          stage->operation == MirOperation::Identity;
+    if (!staged && !identity)
+      break;
+    const auto effect = effects(*stage);
+    if (stage->rawMemoryAccess ||
+        stage->unsafeOperation != UnsafeOperationKind::None ||
+        effect.writesPlace || effect.writesUnknownMemory ||
+        effect.invokesUserCode || effect.maySynchronize)
+      break;
+    if (evidence != nullptr) {
+      addInstruction(*evidence, stage->id);
+      addValue(*evidence, value);
+    }
+    value = stage->operands.front().value;
+  }
+  return value;
+}
+
+// Whether two values denote one current scalar: the same value, or loads of
+// one place or owned field that no possibly aliasing write has retired since.
+[[nodiscard]] bool sameCurrentScalar(const AbstractState &state,
+                                     MirValueId left, MirValueId right,
+                                     Evidence &evidence) {
+  if (left == right) {
+    return true;
+  }
+  const auto leftLoad = state.loadedOrigins.find(left);
+  const auto rightLoad = state.loadedOrigins.find(right);
+  if (leftLoad != state.loadedOrigins.end() &&
+      rightLoad != state.loadedOrigins.end() &&
+      leftLoad->second == rightLoad->second) {
+    addPlace(evidence, leftLoad->second);
+    addValue(evidence, left);
+    addValue(evidence, right);
+    return true;
+  }
+  const auto leftField = state.fieldOrigins.find(left);
+  const auto rightField = state.fieldOrigins.find(right);
+  if (leftField != state.fieldOrigins.end() &&
+      rightField != state.fieldOrigins.end() &&
+      leftField->second == rightField->second) {
+    addValue(evidence, left);
+    addValue(evidence, right);
+    return true;
+  }
+  return false;
+}
+
+// Records the order a comparison of two values of one integer domain
+// establishes on the edge taken. A comparison with a literal side refines
+// intervals instead.
+void recordOrder(const MirBody &body, AbstractState &state, MirBlockId block,
+                 const MirInstruction &comparison, MirOperation operation,
+                 bool branchTaken, const Evidence &conditionEvidence,
+                 MirValueId condition) {
+  if (comparison.operands.size() != 2) {
+    return;
+  }
+  const MirOperand &left = comparison.operands[0];
+  const MirOperand &right = comparison.operands[1];
+  if (left.kind != MirOperandKind::Value ||
+      right.kind != MirOperandKind::Value || left.value == 0 ||
+      right.value == 0 || left.literal || right.literal ||
+      left.type != right.type) {
+    return;
+  }
+  const std::optional<CheckedIntegerDomain> domain =
+      constantIntegerDomain(left.type);
+  if (!domain) {
+    return;
+  }
+  bool leftLesser = true;
+  bool strict = false;
+  switch (operation) {
+  case MirOperation::Less:
+    leftLesser = branchTaken;
+    strict = branchTaken;
+    break;
+  case MirOperation::LessEqual:
+    leftLesser = branchTaken;
+    strict = !branchTaken;
+    break;
+  case MirOperation::Greater:
+    leftLesser = !branchTaken;
+    strict = branchTaken;
+    break;
+  case MirOperation::GreaterEqual:
+    leftLesser = !branchTaken;
+    strict = !branchTaken;
+    break;
+  default:
+    return;
+  }
+  Evidence evidence = conditionEvidence;
+  add(evidence, block);
+  addInstruction(evidence, comparison.id);
+  addValue(evidence, condition);
+  const MirValueId lesser =
+      orderSource(body, leftLesser ? left.value : right.value, &evidence);
+  const MirValueId greater =
+      orderSource(body, leftLesser ? right.value : left.value, &evidence);
+  if (lesser == greater) {
+    // `x < x` holds on no execution; `x <= x` says nothing new.
+    if (strict) {
+      state.reachable = false;
+    }
+    return;
+  }
+  addValue(evidence, lesser);
+  addValue(evidence, greater);
+  const auto existing = state.orders.find({lesser, greater});
+  if (existing != state.orders.end()) {
+    existing->second.strict = existing->second.strict || strict;
+    existing->second.evidence =
+        merged(std::move(existing->second.evidence), evidence);
+    return;
+  }
+  if (state.orders.size() < maxValueOrders) {
+    state.orders.emplace(
+        std::pair{lesser, greater},
+        OrderFact{.domain = *domain, .strict = strict, .evidence = evidence});
+  }
+}
+
+// Evidence that `lesser < greater` holds for these operands, from an order
+// between values denoting the same current scalars. The greater operand may
+// add a proved nonnegative amount to the ordered value: its checked addition
+// either produced that exact larger value or failed before this point.
+[[nodiscard]] std::optional<Evidence>
+strictlyOrdered(const MirBody &body, const AbstractState &state,
+                const MirOperand &lesserOperand,
+                const MirOperand &greaterOperand) {
+  if (lesserOperand.kind != MirOperandKind::Value ||
+      greaterOperand.kind != MirOperandKind::Value ||
+      lesserOperand.value == 0 || greaterOperand.value == 0 ||
+      lesserOperand.type != greaterOperand.type) {
+    return std::nullopt;
+  }
+  const std::optional<CheckedIntegerDomain> domain =
+      constantIntegerDomain(lesserOperand.type);
+  if (!domain) {
+    return std::nullopt;
+  }
+  Evidence staging;
+  const MirValueId lesser = orderSource(body, lesserOperand.value, &staging);
+  MirValueId greater = orderSource(body, greaterOperand.value, &staging);
+  std::vector<std::pair<MirValueId, Evidence>> candidates{{greater, staging}};
+  if (const MirInstruction *sum = definingInstruction(body, greater);
+      sum != nullptr && sum->kind == MirInstructionKind::Compute &&
+      sum->operation == MirOperation::Add && sum->operands.size() == 2 &&
+      sum->info.type == greaterOperand.type) {
+    for (std::size_t index = 0; index < 2; ++index) {
+      const MirOperand &addend = sum->operands[index];
+      const MirOperand &base = sum->operands[1 - index];
+      const auto increment = integerForOperand(body, state, addend);
+      if (!increment || base.kind != MirOperandKind::Value || base.value == 0 ||
+          base.type != sum->info.type || increment->lower.negative) {
+        continue;
+      }
+      Evidence evidence = merged(staging, increment->evidence);
+      addInstruction(evidence, sum->id);
+      addValue(evidence, greater);
+      candidates.emplace_back(orderSource(body, base.value, &evidence),
+                              std::move(evidence));
+    }
+  }
+  for (const auto &[key, fact] : state.orders) {
+    if (!fact.strict || fact.domain != *domain) {
+      continue;
+    }
+    for (const auto &[candidate, candidateEvidence] : candidates) {
+      Evidence evidence = merged(fact.evidence, candidateEvidence);
+      if (sameCurrentScalar(state, key.first, lesser, evidence) &&
+          sameCurrentScalar(state, key.second, candidate, evidence)) {
+        return evidence;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 void refineCondition(const MirBody &body, MirBlockId block,
                      const MirOperand &condition, AbstractState &state,
                      bool branchTaken, Evidence conditionEvidence = {}) {
@@ -1581,6 +1804,11 @@ void refineCondition(const MirBody &body, MirBlockId block,
       operation != MirOperation::Greater &&
       operation != MirOperation::GreaterEqual &&
       operation != MirOperation::Equal && operation != MirOperation::NotEqual) {
+    return;
+  }
+  recordOrder(body, state, block, *comparison, operation, branchTaken,
+              conditionEvidence, condition.value);
+  if (!state.reachable) {
     return;
   }
   const MirOperand *variable = &comparison->operands[0];
@@ -4516,6 +4744,9 @@ void applyInstruction(const MirBody &body,
     state.resultAlternatives.erase(*instruction.result);
     state.entryRelativeValues.erase(*instruction.result);
     state.scalarAddressValues.erase(*instruction.result);
+    // A loop re-executes this definition: the previous iteration's orders
+    // describe a value this one replaces.
+    eraseOrders(state, *instruction.result);
     if (instruction.loan) {
       state.borrowedAddresses.erase(*instruction.loan);
       state.borrowedRegions.erase(*instruction.loan);
@@ -5970,6 +6201,21 @@ void joinConstructed(std::map<Key, ConstructedScalar> &target,
       ++iterator;
     }
   }
+  // An order survives a join only when every incoming path establishes it,
+  // and is strict only when every path's order is.
+  for (auto iterator = target.orders.begin();
+       iterator != target.orders.end();) {
+    const auto found = incoming.orders.find(iterator->first);
+    if (found == incoming.orders.end() ||
+        found->second.domain != iterator->second.domain) {
+      iterator = target.orders.erase(iterator);
+      continue;
+    }
+    iterator->second.strict = iterator->second.strict && found->second.strict;
+    iterator->second.evidence =
+        merged(std::move(iterator->second.evidence), found->second.evidence);
+    ++iterator;
+  }
   return target != before;
 }
 
@@ -6013,6 +6259,8 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
   for (std::size_t index = 0; index < inputs.size(); ++index) {
     const MirValueId parameter = block->parameters[index].value;
     ArgumentFacts &facts = inputs[index];
+    // The parameter takes a new value on this edge.
+    eraseOrders(state, parameter);
     if (facts.integer) {
       addValue(facts.integer->evidence, parameter);
       state.integers[parameter] = std::move(*facts.integer);
@@ -6917,6 +7165,17 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
           appendProof(analysis, address, block, instruction,
                       MirSafetyCheckFamily::Bounds, *outcome,
                       merged(index->evidence, length->evidence));
+        } else if (outcome &&
+                   instruction.operands[0].type == SemanticType::UInt64) {
+          // An unsigned index is never negative, so `index < length` from
+          // a dominating comparison is the whole check.
+          if (std::optional<Evidence> ordered =
+                  strictlyOrdered(body, state, instruction.operands[0],
+                                  instruction.operands[1])) {
+            appendProof(analysis, address, block, instruction,
+                        MirSafetyCheckFamily::Bounds, *outcome,
+                        std::move(*ordered));
+          }
         }
       }
       const FixedArrayIndex fixed = fixedArrayIndex(body, state, instruction);
