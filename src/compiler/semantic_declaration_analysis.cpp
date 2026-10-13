@@ -804,7 +804,8 @@ auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
   // Alias identities are needed by member/signature registration. Structural
   // constraints, however, require the completed member/lifecycle inventory.
   deferringTypeAliasConstraints = true;
-  for (RegisteredTypeAlias &alias : typeAliases) {
+  for (RegisteredTypeAlias &alias :
+       registering(typeAliases, registrationFloor.typeAliases)) {
     if (alias.ownerDeclaration == nullptr) {
       continue;
     }
@@ -821,10 +822,12 @@ auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
     alias.compilerPrivate =
         alias.compilerPrivate || classInfo(alias.ownerClass).compilerPrivate;
   }
-  for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
+  for (TypeAliasId id = registrationFloor.typeAliases + 1;
+       id <= typeAliases.size(); ++id) {
     (void)resolveTypeAlias(id, nullptr);
   }
-  for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
+  for (TypeAliasId id = registrationFloor.typeAliases + 1;
+       id <= typeAliases.size(); ++id) {
     const RegisteredTypeAlias &alias = typeAliases[id - 1];
     if (alias.ownerClass == 0 ||
         alias.resolution != TypeAliasResolution::Resolved) {
@@ -856,7 +859,8 @@ auto SemanticVisitor::Impl::validateTypeAliasConstraints() -> void {
   const SourceUnitId enclosingUnit = currentSourceUnit;
   const auto enclosingNamespace = currentNamespace;
   const auto enclosingClass = currentClass;
-  for (const RegisteredTypeAlias &alias : typeAliases) {
+  for (const RegisteredTypeAlias &alias :
+       registering(typeAliases, registrationFloor.typeAliases)) {
     if (alias.resolution != TypeAliasResolution::Resolved) {
       continue;
     }
@@ -961,7 +965,8 @@ auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
 }
 
 auto SemanticVisitor::Impl::resolveConcepts() -> void {
-  for (ConceptId id = 1; id <= concepts.size(); ++id) {
+  for (ConceptId id = registrationFloor.concepts + 1; id <= concepts.size();
+       ++id) {
     (void)resolveConcept(id, nullptr);
   }
 }
@@ -1785,7 +1790,7 @@ auto SemanticVisitor::Impl::payloadTypeAllowed(const SemanticType &type,
 
 auto SemanticVisitor::Impl::registerEnumGenericParameters() -> void {
   const auto enclosingNamespace = currentNamespace;
-  for (auto &info : enums) {
+  for (auto &info : registering(enums, registrationFloor.enums)) {
     if (!info.payload || info.declaration == nullptr)
       continue;
     currentSourceUnit = info.sourceUnit;
@@ -1854,7 +1859,7 @@ auto SemanticVisitor::Impl::resolveEnumGenericDefaults(EnumId id) -> void {
 
 auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
   const std::vector<std::string> enclosingNamespace = currentNamespace;
-  for (EnumInfo &info : enums) {
+  for (EnumInfo &info : registering(enums, registrationFloor.enums)) {
     if (!info.payload || info.declaration == nullptr) {
       continue;
     }
@@ -4192,7 +4197,7 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
 }
 
 auto SemanticVisitor::Impl::resolveClassInheritance() -> void {
-  for (ClassInfo &owner : classes) {
+  for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
     if (owner.declaration == nullptr) {
       continue;
     }
@@ -4271,10 +4276,12 @@ auto SemanticVisitor::Impl::resolveClassInheritance() -> void {
   }
 
   std::vector<std::uint8_t> state(classes.size(), 0);
-  for (const ClassInfo &owner : classes) {
+  for (const ClassInfo &owner :
+       registering(classes, registrationFloor.classes)) {
     detectInheritanceCycle(owner.id, state);
   }
-  for (const ClassInfo &owner : classes) {
+  for (const ClassInfo &owner :
+       registering(classes, registrationFloor.classes)) {
     std::unordered_set<ClassId> ancestors;
     collectUniqueAncestors(owner, owner.id, ancestors);
   }
@@ -4766,7 +4773,8 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
 }
 
 auto SemanticVisitor::Impl::validateOrdinaryClassLayouts() -> void {
-  for (const ClassInfo &owner : classes) {
+  for (const ClassInfo &owner :
+       registering(classes, registrationFloor.classes)) {
     validateOrdinaryClassLayout(openClassType(owner.id));
   }
 }
@@ -5155,7 +5163,13 @@ auto SemanticVisitor::Impl::buildInheritedMembers(
 
 auto SemanticVisitor::Impl::resolveInheritedMembers() -> void {
   std::vector<std::uint8_t> state(classes.size(), 0);
-  for (const ClassInfo &owner : classes) {
+  // Classes adopted from a preamble are complete.
+  std::fill_n(state.begin(),
+              static_cast<std::ptrdiff_t>(
+                  std::min(registrationFloor.classes, classes.size())),
+              2);
+  for (const ClassInfo &owner :
+       registering(classes, registrationFloor.classes)) {
     buildInheritedMembers(owner.id, state);
   }
 }
@@ -5803,7 +5817,7 @@ auto SemanticVisitor::Impl::rejectCOpaquePointeeOperation(
 }
 
 auto SemanticVisitor::Impl::validateCOpaqueHandles() -> void {
-  for (ClassInfo &owner : classes) {
+  for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
     if (owner.declaration == nullptr) {
       continue;
     }
@@ -6451,14 +6465,16 @@ auto SemanticVisitor::Impl::computeUnionLayout(
 }
 
 auto SemanticVisitor::Impl::validateUnions() -> void {
-  std::vector<bool> shapeValid(classes.size(), false);
-  for (ClassInfo &owner : classes) {
+  std::vector<bool> &shapeValid = requestSession.unionShapes;
+  shapeValid.resize(classes.size(), false);
+  for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
     if (owner.kind == ClassKind::Union) {
       shapeValid[owner.id - 1] = validateUnionShape(owner);
     }
   }
-  std::vector<std::uint8_t> state(classes.size(), 0);
-  for (ClassInfo &owner : classes) {
+  std::vector<std::uint8_t> &state = requestSession.unionStates;
+  state.resize(classes.size(), 0);
+  for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
     if (owner.kind == ClassKind::Union && shapeValid[owner.id - 1] &&
         !computeUnionLayout(owner.id, state, shapeValid)) {
       state[owner.id - 1] = 3;
@@ -6468,14 +6484,16 @@ auto SemanticVisitor::Impl::validateUnions() -> void {
 
 auto SemanticVisitor::Impl::validateNativeRecords() -> void {
   validateCOpaqueHandles();
-  std::vector<bool> shapeValid(classes.size(), false);
-  for (ClassInfo &owner : classes) {
+  std::vector<bool> &shapeValid = requestSession.cAbiRecordShapes;
+  shapeValid.resize(classes.size(), false);
+  for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
     if (owner.cAbiRecord) {
       shapeValid[owner.id - 1] = validateCAbiRecordShape(owner);
     }
   }
-  std::vector<std::uint8_t> state(classes.size(), 0);
-  for (ClassInfo &owner : classes) {
+  std::vector<std::uint8_t> &state = requestSession.cAbiRecordStates;
+  state.resize(classes.size(), 0);
+  for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
     if (owner.cAbiRecord && shapeValid[owner.id - 1] &&
         !computeCAbiRecordLayout(owner.id, state, shapeValid)) {
       state[owner.id - 1] = 3;
@@ -6485,7 +6503,7 @@ auto SemanticVisitor::Impl::validateNativeRecords() -> void {
 }
 
 auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
-  for (ClassInfo &owner : classes) {
+  for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
     if (owner.kind == ClassKind::Union) {
       continue;
     }
@@ -6516,7 +6534,7 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
     }
   }
 
-  for (ClassInfo &owner : classes) {
+  for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
     if (owner.kind == ClassKind::Union) {
       continue;
     }
@@ -7710,7 +7728,7 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
       continue;
     }
     const FunctionInfo *existing = semanticModel.findFunction(*declaration);
-    if (existing == nullptr) {
+    if (existing == nullptr || existing->id < registrationFloor.functions) {
       continue;
     }
     if (workMetrics != nullptr) {
@@ -7756,8 +7774,9 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
 }
 
 auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
-  designatedMoves.clear();
-  for (ClassInfo &owner : classes) {
+  if (registrationFloor.classes == 0)
+    designatedMoves.clear();
+  for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
     if (owner.kind != ClassKind::Struct || owner.compilerPrivate ||
         owner.cAbiRecord || owner.cOpaqueHandle || !owner.bases.empty() ||
         !owner.constructors.empty() || owner.copyConstructor ||
@@ -7875,7 +7894,8 @@ auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
 }
 
 auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
-  for (const ClassInfo &owner : classes) {
+  for (const ClassInfo &owner :
+       registering(classes, registrationFloor.classes)) {
     if (owner.declaration == nullptr) {
       continue;
     }
@@ -8821,7 +8841,8 @@ auto SemanticVisitor::Impl::capabilityRequirement(
 }
 
 auto SemanticVisitor::Impl::validateInterfaceCapabilities() -> void {
-  for (const ClassInfo &owner : classes) {
+  for (const ClassInfo &owner :
+       registering(classes, registrationFloor.classes)) {
     if (owner.declaration == nullptr || owner.kind == ClassKind::Interface) {
       continue;
     }
@@ -8860,7 +8881,8 @@ auto SemanticVisitor::Impl::validateInterfaceCapabilities() -> void {
 }
 
 auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
-  for (const ClassInfo &owner : classes) {
+  for (const ClassInfo &owner :
+       registering(classes, registrationFloor.classes)) {
     if (owner.declaration == nullptr) {
       continue;
     }
@@ -8887,7 +8909,8 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
 }
 
 auto SemanticVisitor::Impl::recordClassFieldSymbols() -> void {
-  for (const ClassInfo &owner : classes) {
+  for (const ClassInfo &owner :
+       registering(classes, registrationFloor.classes)) {
     if (owner.declaration == nullptr)
       continue;
     // The catalog owns active declaration order. Reserve physical field
@@ -8915,7 +8938,8 @@ auto SemanticVisitor::Impl::recordClassFieldSymbols() -> void {
 }
 
 auto SemanticVisitor::Impl::recordClassTypes() -> void {
-  for (const ClassInfo &owner : classes) {
+  for (const ClassInfo &owner :
+       registering(classes, registrationFloor.classes)) {
     if (owner.declaration == nullptr) {
       continue;
     }

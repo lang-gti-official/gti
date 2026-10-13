@@ -403,6 +403,7 @@ add_library(
   "src/compiler/process_memory_runtime.cpp"
   "src/compiler/semantic_model.cpp"
   "src/compiler/semantic_instance_reuse.cpp"
+  "src/compiler/semantic_preamble.cpp"
   "src/compiler/semantic_diagnostics.cpp"
   "src/compiler/semantic_spelling.cpp"
   "src/compiler/semantic_type_printer.cpp"

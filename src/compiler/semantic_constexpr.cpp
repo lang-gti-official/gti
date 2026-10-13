@@ -60,6 +60,65 @@ private:
 };
 } // namespace
 
+SemanticVisitor::Impl::SemanticCatalog::SemanticCatalog(
+    const SemanticCatalog &other) {
+  *this = other;
+}
+
+auto SemanticVisitor::Impl::SemanticCatalog::operator=(
+    const SemanticCatalog &other) -> SemanticCatalog & {
+  if (this == &other)
+    return *this;
+  SemanticCatalog copy;
+  copy.namespaces = other.namespaces;
+  copy.namespaceToolingSymbols = other.namespaceToolingSymbols;
+  copy.namespaceAliases = other.namespaceAliases;
+  copy.compilerPrivateNamespaceSymbol = other.compilerPrivateNamespaceSymbol;
+  copy.typeAliasIds = other.typeAliasIds;
+  copy.typeAliases = other.typeAliases;
+  copy.conceptIds = other.conceptIds;
+  copy.concepts = other.concepts;
+  copy.namespaceSymbols = other.namespaceSymbols;
+  copy.internalNamespaceSymbols = other.internalNamespaceSymbols;
+  copy.classIds = other.classIds;
+  copy.enumIds = other.enumIds;
+  copy.visibleNamespaces = other.visibleNamespaces;
+  copy.visibleNamespaceAliases = other.visibleNamespaceAliases;
+  copy.visibleTypeAliasIds = other.visibleTypeAliasIds;
+  copy.visibleConceptIds = other.visibleConceptIds;
+  copy.visibleNamespaceSymbols = other.visibleNamespaceSymbols;
+  copy.visibleClassIds = other.visibleClassIds;
+  copy.visibleEnumIds = other.visibleEnumIds;
+  copy.classDeclIds = other.classDeclIds;
+  copy.conceptDeclIds = other.conceptDeclIds;
+  copy.functionGenericParameters = other.functionGenericParameters;
+  for (const auto &declaration : other.callableDeclarations) {
+    auto owned = std::make_unique<CallableDeclaration>(*declaration);
+    copy.callableDeclarationsBySyntax.insert_or_assign(owned->syntax,
+                                                       owned.get());
+    copy.callableDeclarations.emplace_back(std::move(owned));
+  }
+  copy.constructorGenericParameters = other.constructorGenericParameters;
+  copy.rootNativeStorageSymbols = other.rootNativeStorageSymbols;
+  copy.globalBorrowStorage = other.globalBorrowStorage;
+  copy.genericConstraints = other.genericConstraints;
+  copy.genericConstraintConcepts = other.genericConstraintConcepts;
+  copy.classes = other.classes;
+  copy.exactClassSpecializations = other.exactClassSpecializations;
+  copy.enums = other.enums;
+  copy.predeclaredVariables = other.predeclaredVariables;
+  copy.mutableFieldGroupOrigins = other.mutableFieldGroupOrigins;
+  copy.recursiveLayoutFields = other.recursiveLayoutFields;
+  copy.nextGenericParameterId = other.nextGenericParameterId;
+  copy.nextConstructorId = other.nextConstructorId;
+  copy.nextDefaultArgumentEffectOwner = other.nextDefaultArgumentEffectOwner;
+  copy.nextFunctionId = other.nextFunctionId;
+  copy.sealed = other.sealed;
+  copy.sealedShape = other.sealedShape;
+  *this = std::move(copy);
+  return *this;
+}
+
 auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
     -> SemanticCatalog {
   assertUnchangedSinceSeal();

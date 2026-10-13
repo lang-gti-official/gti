@@ -286,6 +286,68 @@ public:
   std::vector<const FunctionDecl *> *lateAnalyzedBodies = nullptr;
   const LateFinalizationScope *lateFinalization = nullptr;
 
+  // ---- Trusted prefix preamble (semantic_preamble.cpp) -------------------
+  // Set while buildPreamble analyses the prefix: bodies Reachable analysis
+  // would defer are bucketed instead of reported.
+  bool buildingPreamble = false;
+  // Set by adoptPreamble: the next check() resumes from this preamble's
+  // state and analyses only the declarations after the first
+  // adoptedPrefixDeclarations.
+  std::shared_ptr<const SemanticPreamble> adoptedPreamble;
+  std::size_t adoptedPrefixDeclarations = 0;
+  // The declarations a resumed analysis adds; lexical frames point into it,
+  // so it lives as long as the analyzer.
+  StmtList resumeDeclarations;
+  // Preamble bodies whose diagnostics this analysis has reported.
+  std::unordered_set<const FunctionDecl *> reachedPreambleBodies;
+  // Registration below these positions/identities was adopted from the
+  // preamble; whole-catalog registration passes start here.
+  struct RegistrationFloor {
+    std::size_t classes = 0;
+    std::size_t enums = 0;
+    std::size_t typeAliases = 0;
+    std::size_t concepts = 0;
+    FunctionId functions = 0;
+  } registrationFloor;
+  template <class T>
+  [[nodiscard]] static std::span<T> registering(std::vector<T> &items,
+                                                std::size_t floor) {
+    return std::span<T>(items).subspan(std::min(floor, items.size()));
+  }
+  template <class T>
+  [[nodiscard]] static std::span<const T>
+  registering(const std::vector<T> &items, std::size_t floor) {
+    return std::span<const T>(items).subspan(std::min(floor, items.size()));
+  }
+  // Whether bounded analysis would defer this body (its kind and unit), as
+  // seen at its declaration; deferTrustedBody adds the mode and context.
+  [[nodiscard]] bool reachableDeferrable(const FunctionDecl &stmt) const;
+  // check() for an adopted preamble.
+  [[nodiscard]] bool checkResumed(const Program &program);
+  // The registration passes over `declarations`, honouring registrationFloor
+  // for the whole-catalog ones; shared by check() and checkResumed().
+  void registerDeclarations(const StmtList &declarations);
+  // The body phase over `declarations` (between beginScope and endScope).
+  void analyzeBodies(const StmtList &declarations,
+                     const LateFinalizationScope *scope);
+  void freezePreamble();
+  // Drops the caller-owned graph, sources and metrics a frozen preamble
+  // must not keep, and makes an unused analyzer of the same configuration.
+  void detachFromCaller();
+  [[nodiscard]] std::unique_ptr<Impl> blankLikeThis() const;
+  void adoptPreambleState();
+  // Reports the preamble bodies reached from `roots`, the demanded
+  // functions and (with `all`) every preamble body, with the bodies they in
+  // turn consulted. Returns whether a reported diagnostic is an error.
+  bool reachPreambleBodies(std::span<const FunctionDecl *const> roots,
+                           bool all);
+  // Reaches the preamble bodies among `consulted` that are not reported
+  // yet. When one of them reports an error, marks late demand failed with
+  // those bodies required, exactly as a failed late analysis, and returns
+  // true.
+  bool
+  reachConsultedPreambleBodies(const std::unordered_set<FunctionId> &consulted);
+
   bool analyzeLateDemand(std::span<const FunctionDecl *const> roots);
   void finalizeLateDemand(const LateFinalizationScope &scope);
   void drainDemandedDeferredBodies();
@@ -315,6 +377,15 @@ public:
         result = analyze();
       }
       result.model.setFunctionDemandSink(nullptr);
+      // A preamble body it consulted is complete already; reaching it reports
+      // what the body held back, and an error there fails the request as a
+      // fresh late analysis would have.
+      if (adoptedPreamble != nullptr &&
+          reachConsultedPreambleBodies(consulted)) {
+        if (finalConsulted != nullptr)
+          *finalConsulted = std::move(consulted);
+        return result;
+      }
       std::vector<const FunctionDecl *> demanded;
       for (const FunctionId id : consulted) {
         const FunctionInfo *function = semanticModel.findFunction(id);
@@ -4686,6 +4757,14 @@ private:
     bool sealed = false;
     std::vector<std::size_t> sealedShape;
 
+    SemanticCatalog() = default;
+    SemanticCatalog(SemanticCatalog &&) noexcept = default;
+    SemanticCatalog &operator=(SemanticCatalog &&) noexcept = default;
+    // A copy owns its own callable declarations and re-points
+    // callableDeclarationsBySyntax at them; everything else is value state.
+    SemanticCatalog(const SemanticCatalog &other);
+    SemanticCatalog &operator=(const SemanticCatalog &other);
+
     void clear() { *this = SemanticCatalog{}; }
     [[nodiscard]] SemanticCatalog snapshotForInstanceAnalysis() const;
     void seal() {
@@ -4807,6 +4886,21 @@ private:
       internalNamespaceSymbols = catalog.internalNamespaceSymbols;
       visibleNamespaceSymbols = catalog.visibleNamespaceSymbols;
       staticFieldSymbols.clear();
+      extendBody(catalog);
+    }
+
+    // Adds the catalog's symbols a body phase does not know yet, keeping
+    // the ones an earlier body phase declared or refined (globals from the
+    // trusted prefix a resumed analysis adopted; see checkResumed).
+    void extendBody(const SemanticCatalog &catalog) {
+      for (const auto &[name, symbol] : catalog.namespaceSymbols)
+        namespaceSymbols.try_emplace(name, symbol);
+      for (const auto &[unit, symbols] : catalog.internalNamespaceSymbols)
+        for (const auto &[name, symbol] : symbols)
+          internalNamespaceSymbols[unit].try_emplace(name, symbol);
+      for (const auto &[unit, symbols] : catalog.visibleNamespaceSymbols)
+        for (const auto &[name, symbol] : symbols)
+          visibleNamespaceSymbols[unit].try_emplace(name, symbol);
       for (const auto &owner : catalog.classes)
         for (const auto &[_, member] : owner.members)
           if (member.symbol.bindingKind == SemanticBindingKind::StaticField &&
@@ -4836,10 +4930,6 @@ private:
 
     std::vector<SemanticDiagnostic> diagnostics;
     SemanticModel semanticModel;
-    // Diagnostic construction lives in its own translation unit
-    // (semantic_diagnostics.cpp); the reporter binds this session's sink and
-    // model, and analysis facts arrive as call parameters.
-    SemanticDiagnosticReporter reporter{semanticModel, diagnostics};
     SemanticCatalog catalog;
     ValueFlowState valueFlow;
     std::unordered_set<std::string> reportedCompilerPrivateAccess;
@@ -4987,11 +5077,42 @@ private:
     SemanticLoanId nextSemanticLoanId = 1;
     std::size_t nextPlaceSelectionId = 1;
     std::vector<SemanticType> invalidOrdinaryLayouts;
+    // ---- Trusted prefix preamble (see SemanticPreamble) -----------------
+    // A trusted body that bounded (Reachable) analysis would have deferred,
+    // analysed while a preamble was built: its own body diagnostics, held
+    // back until something reaches it, and the function records it
+    // consulted, which carry reachability on.
+    struct PreambleBody {
+      std::vector<Diagnostic> diagnostics;
+      std::vector<FunctionId> demands;
+    };
+    std::unordered_map<const FunctionDecl *, PreambleBody> preambleBodies;
+    std::vector<const FunctionDecl *> preambleBodyOrder;
+    // Finalization boundaries recorded when the preamble was frozen, so an
+    // analysis resumed from it finalizes only what it added.
+    std::size_t preambleForwardings = 0;
+    std::size_t preambleCThreadCallUses = 0;
+    std::size_t preambleUnsafeBlockCandidates = 0;
+    std::size_t preambleMutableLocalCandidates = 0;
+    std::size_t preambleGenericDefaultConstantUses = 0;
+    std::unordered_map<SourceUnitId, std::size_t> preambleOccurrenceCounts;
+    LambdaId preambleFirstLambda = 0;
+    // Native record and union shape/layout states, by class position. They
+    // outlive registration so a resumed analysis extends them.
+    std::vector<bool> cAbiRecordShapes;
+    std::vector<std::uint8_t> cAbiRecordStates;
+    std::vector<bool> unionShapes;
+    std::vector<std::uint8_t> unionStates;
   } requestSession;
 
   std::vector<SemanticDiagnostic> &diagnostics = requestSession.diagnostics;
   SemanticModel &semanticModel = requestSession.semanticModel;
-  SemanticDiagnosticReporter &reporter = requestSession.reporter;
+  // Diagnostic construction lives in its own translation unit
+  // (semantic_diagnostics.cpp); the reporter binds this session's sink and
+  // model, and analysis facts arrive as call parameters. It is bound per
+  // analyzer, not per session state, so a session state copied from a
+  // preamble reports into its own sink.
+  SemanticDiagnosticReporter reporter{semanticModel, diagnostics};
   SemanticCatalog &catalog = requestSession.catalog;
   ValueFlowState &valueFlow = requestSession.valueFlow;
   ScopeStack &scopes = requestSession.valueFlow.scopes;
@@ -5343,6 +5464,35 @@ private:
   // code. Closed executable/library requests need every actual GTI call target.
   bool requireFunctionDefinitions = false;
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
+};
+
+// The frozen analyzer of a trusted prefix (see semantic_preamble.h). It owns
+// the prefix program, so the syntax its state refers to stays alive, and the
+// spent analyzer whose session state resumed analyses copy. Immutable once
+// built; analyzers on several threads may adopt it at once.
+class SemanticPreamble {
+public:
+  SemanticPreamble(Program prefix, std::unique_ptr<SemanticVisitor::Impl> state)
+      : prefix(std::move(prefix)), state(std::move(state)) {}
+  ~SemanticPreamble() = default;
+
+  SemanticPreamble(const SemanticPreamble &) = delete;
+  SemanticPreamble &operator=(const SemanticPreamble &) = delete;
+
+  [[nodiscard]] std::size_t declarationCount() const {
+    return prefix.declarations().size();
+  }
+  // Distinct for every preamble ever built in this process, so reusable
+  // records that refer to a preamble's synthesized syntax are never served
+  // under another preamble of the same units.
+  [[nodiscard]] std::uint64_t identity() const { return identity_; }
+
+  Program prefix;
+  std::unique_ptr<SemanticVisitor::Impl> state;
+
+private:
+  std::uint64_t identity_ = nextIdentity();
+  static std::uint64_t nextIdentity();
 };
 
 } // namespace lang

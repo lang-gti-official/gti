@@ -7,6 +7,7 @@
 namespace lang {
 
 class InstanceAnalysisCache;
+class SemanticPreamble;
 class SourceManager;
 
 // Narrow mutable capability used only by HIR's concrete-instance discovery.
@@ -84,6 +85,17 @@ public:
   SemanticVisitor &operator=(SemanticVisitor &&) noexcept;
 
   bool check(const Program &program);
+  // Trusted prefix preamble (see SemanticPreambleCache). buildPreamble
+  // analyses `prefix`, a program made of a larger program's leading
+  // compiler-trusted units, completely and freezes this analyzer's state
+  // into the returned preamble; this analyzer is spent afterwards.
+  // adoptPreamble makes the next check(program) start from a copy of that
+  // state and analyse only the declarations after the first
+  // `prefixDeclarationCount`, which must be exactly the preamble's.
+  [[nodiscard]] std::shared_ptr<const SemanticPreamble>
+  buildPreamble(Program prefix);
+  void adoptPreamble(std::shared_ptr<const SemanticPreamble> preamble,
+                     std::size_t prefixDeclarationCount);
   // Lets bounded (Reachable) analysis reuse concrete instance analyses of
   // compiler-trusted declarations from earlier snapshots that shared `cache`
   // (see InstanceAnalysisCache). `context` identifies the frontend
@@ -149,6 +161,7 @@ public:
 
 private:
   class Impl;
+  friend class SemanticPreamble;
   std::unique_ptr<Impl> impl;
 };
 

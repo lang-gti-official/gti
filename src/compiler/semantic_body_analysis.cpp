@@ -44,6 +44,22 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   lateAnalyzedBodies = nullptr;
   lateFinalization = nullptr;
   requestSession.invalidOrdinaryLayouts.clear();
+  requestSession.preambleBodies.clear();
+  requestSession.preambleBodyOrder.clear();
+  requestSession.preambleForwardings = 0;
+  requestSession.preambleCThreadCallUses = 0;
+  requestSession.preambleUnsafeBlockCandidates = 0;
+  requestSession.preambleMutableLocalCandidates = 0;
+  requestSession.preambleGenericDefaultConstantUses = 0;
+  requestSession.preambleOccurrenceCounts.clear();
+  requestSession.preambleFirstLambda = 0;
+  requestSession.cAbiRecordShapes.clear();
+  requestSession.cAbiRecordStates.clear();
+  requestSession.unionShapes.clear();
+  requestSession.unionStates.clear();
+  resumeDeclarations.clear();
+  reachedPreambleBodies.clear();
+  registrationFloor = {};
   currentNamespace.clear();
   currentSourceUnit = 0;
   structuredBindingElements.clear();
@@ -124,67 +140,14 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
 }
 
 auto SemanticVisitor::Impl::check(const Program &program) -> bool {
+  if (adoptedPreamble != nullptr)
+    return checkResumed(program);
   resetRequestState(&program);
   analyzedProgram = &program;
   validateModuleExports(program.declarations());
 
   const auto registrationStart = std::chrono::steady_clock::now();
-  registerNamespaces(program.declarations(), {});
-  registerNamespaceAliases(program.declarations(), {});
-  registerTypeAliases(program.declarations(), {});
-  registerEnums(program.declarations(), {});
-  registerConcepts(program.declarations(), {});
-  registerEnumGenericParameters();
-  genericDefaultConstants.clear();
-  registerClasses(program.declarations(), {});
-  for (ClassId id = 1; id <= classes.size(); ++id)
-    resolveClassGenericDefaults(id);
-  for (EnumId id = 1; id <= enums.size(); ++id)
-    resolveEnumGenericDefaults(id);
-  resolveTypeAliases();
-  for (ClassId id = 1; id <= classes.size(); ++id) {
-    resolveClassArgumentPatterns(id);
-  }
-  registerClassSpecializations(program.declarations(), {});
-  // Compound concept arguments require the canonical class/specialization
-  // inventory. Primitive constraints used during registration resolve lazily.
-  resolveConcepts();
-  recordClassTypeIdentities();
-  resolveEnumPayloads();
-  resolveClassInheritance();
-  genericDefaultConstants.clear();
-  registerFunctionGenericParameters(program.declarations(), {}, false);
-  genericDefaultConstants.clear();
-  registerNamespaceSymbols(program.declarations(), {});
-  collectRootNativeStorageSymbols(program.declarations());
-  collectClassMembers(program.declarations(), {});
-  bindOutOfClassDefinitions(program.declarations(), {});
-  if (requireFunctionDefinitions) {
-    for (const auto &owner : classes) {
-      for (const auto &[name, member] : owner.members) {
-        for (const auto &candidate : member.symbol.overloads) {
-          if (candidate.virtualMethod && !candidate.pureVirtual &&
-              candidate.bodyDeclaration() != nullptr &&
-              !candidate.bodyDeclaration()->body()) {
-            requireFunctionDefinition(candidate, candidate.declaration->name());
-          }
-        }
-      }
-    }
-  }
-  recordClassFieldSymbols();
-  validateOrdinaryClassLayouts();
-  registerGlobalBorrowStorage(program.declarations(), {});
-  resolveInheritedMembers();
-  validateNativeRecords();
-  validateNativeFacingNamespaces(program.declarations());
-  validateStoredReferenceContracts();
-  resolveFunctionBorrowSummaries();
-  validateInterfaceCapabilities();
-  recordClassTypes();
-  recordClassLifecycles();
-  validateTypeAliasConstraints();
-  registerDesignatedConstructors();
+  registerDeclarations(program.declarations());
   catalog.seal();
   registrationSymbolCeiling = semanticModel.database().symbolIdentityCeiling();
   valueFlow.beginBody(catalog);
@@ -194,25 +157,8 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
             std::chrono::steady_clock::now() - registrationStart)
             .count());
   }
-  beginScope();
   const auto bodyStart = std::chrono::steady_clock::now();
-  measureTopLevelStatements = workMetrics != nullptr;
-  bodyPhaseActive = true;
-  analyzeDeclarationAttributes();
-  indexLexicallyReachableFunctions(program.declarations());
-  {
-    FunctionDemandScope demandScope(
-        semanticModel, trustedBodies == TrustedBodyAnalysis::Reachable
-                           ? &demandedFunctions
-                           : nullptr);
-    runLexicalPass(program.declarations());
-    measureTopLevelStatements = false;
-    analyzeDeferredBodies();
-  }
-  bodyPhaseActive = false;
-  recordGenericDefaultConstantUses();
-  validateDefaultArgumentCycles();
-  endScope();
+  analyzeBodies(program.declarations(), nullptr);
   if (workMetrics != nullptr) {
     workMetrics->semanticBodyMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
@@ -231,7 +177,10 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   semanticModel.finalizeCallableArguments();
   finalizeCThreadRequirements();
   finalizeRawBorrowContracts();
-  finalizeProgramInitialization(program);
+  // A prefix is not a program: initialization and the hosted entry are
+  // planned by the analysis that resumes from it.
+  if (!buildingPreamble)
+    finalizeProgramInitialization(program);
   semanticModel.finalizeOccurrences();
   finalizeAdvisoryDiagnostics();
   catalog.assertUnchangedSinceSeal();
@@ -243,6 +192,91 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   }
   lateDemandReady = trustedBodies == TrustedBodyAnalysis::Reachable;
   return !hadError();
+}
+
+auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
+    -> void {
+  const RegistrationFloor &floor = registrationFloor;
+  registerNamespaces(declarations, {});
+  registerNamespaceAliases(declarations, {});
+  registerTypeAliases(declarations, {});
+  registerEnums(declarations, {});
+  registerConcepts(declarations, {});
+  registerEnumGenericParameters();
+  genericDefaultConstants.clear();
+  registerClasses(declarations, {});
+  for (ClassId id = floor.classes + 1; id <= classes.size(); ++id)
+    resolveClassGenericDefaults(id);
+  for (EnumId id = floor.enums + 1; id <= enums.size(); ++id)
+    resolveEnumGenericDefaults(id);
+  resolveTypeAliases();
+  for (ClassId id = floor.classes + 1; id <= classes.size(); ++id) {
+    resolveClassArgumentPatterns(id);
+  }
+  registerClassSpecializations(declarations, {});
+  resolveConcepts();
+  recordClassTypeIdentities();
+  resolveEnumPayloads();
+  resolveClassInheritance();
+  genericDefaultConstants.clear();
+  registerFunctionGenericParameters(declarations, {}, false);
+  genericDefaultConstants.clear();
+  registerNamespaceSymbols(declarations, {});
+  collectRootNativeStorageSymbols(declarations);
+  collectClassMembers(declarations, {});
+  bindOutOfClassDefinitions(declarations, {});
+  if (requireFunctionDefinitions) {
+    for (const auto &owner : registering(classes, floor.classes)) {
+      for (const auto &[name, member] : owner.members) {
+        for (const auto &candidate : member.symbol.overloads) {
+          if (candidate.virtualMethod && !candidate.pureVirtual &&
+              candidate.bodyDeclaration() != nullptr &&
+              !candidate.bodyDeclaration()->body()) {
+            requireFunctionDefinition(candidate, candidate.declaration->name());
+          }
+        }
+      }
+    }
+  }
+  recordClassFieldSymbols();
+  validateOrdinaryClassLayouts();
+  registerGlobalBorrowStorage(declarations, {});
+  resolveInheritedMembers();
+  validateNativeRecords();
+  validateNativeFacingNamespaces(declarations);
+  validateStoredReferenceContracts();
+  resolveFunctionBorrowSummaries();
+  validateInterfaceCapabilities();
+  recordClassTypes();
+  recordClassLifecycles();
+  validateTypeAliasConstraints();
+  registerDesignatedConstructors();
+}
+
+auto SemanticVisitor::Impl::analyzeBodies(const StmtList &declarations,
+                                          const LateFinalizationScope *scope)
+    -> void {
+  beginScope();
+  measureTopLevelStatements = workMetrics != nullptr;
+  bodyPhaseActive = true;
+  analyzeDeclarationAttributes();
+  indexLexicallyReachableFunctions(declarations);
+  {
+    FunctionDemandScope demandScope(
+        semanticModel, trustedBodies == TrustedBodyAnalysis::Reachable
+                           ? &demandedFunctions
+                           : nullptr);
+    runLexicalPass(declarations);
+    measureTopLevelStatements = false;
+    analyzeDeferredBodies();
+  }
+  bodyPhaseActive = false;
+  // A resumed analysis records and validates only what it added.
+  lateFinalization = scope;
+  recordGenericDefaultConstantUses();
+  validateDefaultArgumentCycles();
+  lateFinalization = nullptr;
+  endScope();
 }
 
 auto SemanticVisitor::Impl::check(const Expr &expr) -> bool {
@@ -3095,8 +3129,17 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
 auto SemanticVisitor::Impl::analyzeFunctionBody(
     const FunctionDecl &stmt, const FunctionInfo *functionInfo,
     bool declarationErrors, bool constexprDeclarationValid) -> void {
+  // While a preamble is built, a body that bounded analysis would defer is
+  // analysed now but reported only once an analysis resumed from the
+  // preamble reaches it: its diagnostics and the functions it consulted are
+  // bucketed at the end (see reachPreambleBodies).
+  const bool bucketForPreamble = buildingPreamble && !instanceAnalysisActive &&
+                                 !onDemandBodyAnalysis && functionDepth == 0 &&
+                                 lambdaDepth == 0 && reachableDeferrable(stmt);
+  std::unordered_set<FunctionId> preambleDemands;
   FunctionDemandScope demandScope(
-      semanticModel, trustedBodies == TrustedBodyAnalysis::Reachable
+      semanticModel, bucketForPreamble ? &preambleDemands
+                     : trustedBodies == TrustedBodyAnalysis::Reachable
                          ? &demandedFunctions
                          : nullptr);
   if (!instanceAnalysisActive) {
@@ -3236,6 +3279,19 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   currentFunctionDeclaration = enclosingFunctionDeclaration;
   currentProgramEffectOwner = enclosingEffectOwner;
   restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
+  if (bucketForPreamble) {
+    RequestSessionState::PreambleBody &bucket =
+        requestSession.preambleBodies[&stmt];
+    bucket.demands.assign(preambleDemands.begin(), preambleDemands.end());
+    std::sort(bucket.demands.begin(), bucket.demands.end());
+    bucket.diagnostics.assign(
+        std::make_move_iterator(
+            diagnostics.begin() +
+            static_cast<std::ptrdiff_t>(bodyDiagnosticStart)),
+        std::make_move_iterator(diagnostics.end()));
+    diagnostics.resize(bodyDiagnosticStart);
+    requestSession.preambleBodyOrder.push_back(&stmt);
+  }
 }
 
 // A trusted (prelude or standard-library) body is deferred when the policy
@@ -3246,8 +3302,15 @@ auto SemanticVisitor::Impl::deferTrustedBody(const FunctionDecl &stmt) const
     -> bool {
   if (trustedBodies == TrustedBodyAnalysis::Complete ||
       requiredFunctionBodies.contains(&stmt) || instanceAnalysisActive ||
-      onDemandBodyAnalysis || functionDepth != 0 || lambdaDepth != 0 ||
-      sourceGraph == nullptr || currentSourceUnit == 0 ||
+      onDemandBodyAnalysis || functionDepth != 0 || lambdaDepth != 0) {
+    return false;
+  }
+  return reachableDeferrable(stmt);
+}
+
+auto SemanticVisitor::Impl::reachableDeferrable(const FunctionDecl &stmt) const
+    -> bool {
+  if (sourceGraph == nullptr || currentSourceUnit == 0 ||
       currentSourceUnit == sourceGraph->entryUnit() ||
       !sourceGraph->isCompilerTrusted(currentSourceUnit)) {
     return false;
@@ -3881,6 +3944,17 @@ auto SemanticVisitor::Impl::analyzeLateDemand(
   if (!lateDemandReady || lateDemandFailed || bodyPhaseActive ||
       instanceAnalysisActive || rawAuditEnabled() || hadError())
     return false;
+  // A preamble body is analysed already; reaching it reports what it held
+  // back. An error among that is exactly what a fresh late analysis would
+  // have found, so the request fails the same way and the repeated analysis
+  // reports it in the pass.
+  if (adoptedPreamble != nullptr && reachPreambleBodies(roots, false)) {
+    lateDemandFailed = true;
+    for (const FunctionDecl *root : roots)
+      if (root != nullptr && requestSession.preambleBodies.contains(root))
+        lateDemandedBodies.push_back(root);
+    return false;
+  }
   std::vector<const FunctionDecl *> pending;
   for (const FunctionDecl *root : roots)
     if (pendingDeferredBody(root))

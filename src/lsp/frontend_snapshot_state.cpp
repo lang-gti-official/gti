@@ -7,6 +7,7 @@ namespace lang::lsp {
 FrontendSnapshotState::FrontendSnapshotState(
     FrontendCacheLimits limits, InstanceAnalysisCacheLimits instanceLimits)
     : sharedCache(std::make_shared<FrontendCache>(limits)),
+      sharedPreambleCache(std::make_shared<SemanticPreambleCache>()),
       sharedInstanceCache(
           std::make_shared<InstanceAnalysisCache>(instanceLimits)) {}
 
@@ -22,6 +23,7 @@ FrontendSourceSnapshot FrontendSnapshotState::capture() const {
   const std::lock_guard lock(mutex);
   return {.cache = sharedCache,
           .instanceCache = sharedInstanceCache,
+          .preambleCache = sharedPreambleCache,
           .generations = generations,
           .digests = digests};
 }
@@ -65,6 +67,11 @@ std::shared_ptr<FrontendCache> FrontendSnapshotState::cache() const {
 std::shared_ptr<InstanceAnalysisCache>
 FrontendSnapshotState::instanceCache() const {
   return sharedInstanceCache;
+}
+
+std::shared_ptr<SemanticPreambleCache>
+FrontendSnapshotState::preambleCache() const {
+  return sharedPreambleCache;
 }
 
 } // namespace lang::lsp
