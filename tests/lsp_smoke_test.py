@@ -3276,6 +3276,7 @@ def test_defaulted_lifecycle_tooling(executable, root):
 
 def test_constexpr_aggregate_tooling(executable, root):
     source = (
+        "#include <std/memory>\n"
         "constexpr void advance(mut int32_t& value) { value += 1; }\n"
         "struct Point {\n"
         "  mut int32_t coordinate;\n"
@@ -3304,6 +3305,12 @@ def test_constexpr_aggregate_tooling(executable, root):
         "constexpr int capture() { mut int value = 3; Snapshot s = Snapshot(value); "
         "return s.value + value; }\n"
         "static_assert(capture() == 7);\n"
+        "struct Cleanup { mut int value; constexpr Cleanup(int value) : value(value) {} "
+        "~Cleanup() { int checked = 1 / this.value; } "
+        "constexpr operator bool() { return this.value != 0; } };\n"
+        "constexpr int cleaned() { auto resource = std::make_unique<Cleanup>(1); "
+        "return resource->value; }\n"
+        "static_assert(cleaned() == 1);\n"
         "int main() { return origin.value() - 7; }\n"
     )
     path = root / "constexpr-aggregate-tooling.gti"
@@ -3467,6 +3474,24 @@ def test_constexpr_aggregate_tooling(executable, root):
         assert diagnostic["range"]["start"] == lsp_position(
             overflow, overflow.index("+=")
         ), diagnostic
+        failed_cleanup = source.replace("make_unique<Cleanup>(1)", "make_unique<Cleanup>(0)")
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 5},
+                       "contentChanges": [{"text": failed_cleanup}]},
+        })
+        publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 5
+        )["params"]
+        diagnostic = next(item for item in publication["diagnostics"]
+                          if item.get("code") == "GTI-S2057" and "zero" in item["message"])
+        assert diagnostic["range"]["start"] == lsp_position(
+            failed_cleanup, failed_cleanup.index("/ this.value")
+        ), diagnostic
+        assert diagnostic["data"]["phase"] == "semantics"
+        assert diagnostic["relatedInformation"] and diagnostic["data"]["hints"]
     finally:
         session.close()
 

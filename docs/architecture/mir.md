@@ -111,7 +111,7 @@ field/index projection composition, field mutation, and returned values. Their
 exact class instance supplies field-symbol/type identity; external constant
 arguments are checked recursively for complete, exactly typed fields. Passive
 drop bookkeeping retires local storage without invoking hidden user code;
-active cleanup remains ineligible. Source constructors with explicit semantic
+active cleanup uses the transient lifetime profile below. Source constructors with explicit semantic
 constexpr eligibility execute the same MIR body and produce one fully initialized
 receiver. Each field must have one explicit, non-reference initialization stage;
 trivial fixed-array fields now retain their exact `Initialize` write as well as
@@ -151,7 +151,7 @@ consume the shared budget. A `void` call completes as a unit result without
 manufacturing a scalar constant. At the external service boundary a reference
 result is its observed value and a mutable input is isolated executor storage.
 Only a leading checked reference-binding dereference is transparent; arbitrary
-pointer projections, stored-reference carriers, allocation, and runtime calls remain
+pointer projections, stored-reference carriers and runtime calls remain
 ineligible. Untaken runtime-only
 calls do not execute. Rewritten/tombstoned instructions and optimizer-produced
 control flow cannot determine constant eligibility.
@@ -175,8 +175,34 @@ Constructor reference inputs use the same location transport as function
 inputs, preserving source/access/epoch and writes through mutable arguments.
 Generated defaults are structurally eligible, not implicitly source-marked
 constexpr. The selected initializer inventory and each exact field write are
-still verified; stored borrows, active cleanup and unrepresented in-place
+still verified; stored borrows and unrepresented in-place
 constructor targets are not silently executed.
+
+Transient exclusive allocation uses the ordinary `AllocateObject` followed by
+selected construction, or the scalar allocation intrinsic. The request-local
+heap assigns monotonic typed identities, not target addresses. Pointee loans
+retain allocation identity, access, projection and generation; reset/replacement
+cannot leave a live checked reference to freed storage. Projected movement
+retires the exact path while preserving the surrounding object shell. Result
+extraction retains its payload origin so propagation neither drops a moved
+payload twice nor hides it in a copied SSA value.
+
+Initialize/Move/Reparent/TransferOut/Drop lifecycle events drive active cleanup.
+`MirDropType` supplies exact destructor identity and ordered subobject recipes;
+execution does not rediscover cleanup from C++ representations or public names.
+Source destructors execute their verified body, then the remaining subobjects.
+An executed failure ends the constant request immediately and retains its body,
+instruction and source identity; no resulting constant or heap is published.
+
+Concrete pack roots remain grouped binding cells, while concrete call signatures
+are expanded. The executor maps declaration bindings to those exact elements,
+including empty packs, without changing MIR's call-input evaluation order.
+Transient owner nodes are accepted only inside this executor. Inputs and final
+results are recursively checked to reject imported or escaping owner identities;
+active-cleanup result types and leaked live allocations are also rejected.
+Allocation identities and live logical heap size have separate deterministic
+bounds in addition to shared execution/depth limits. These profiles do not
+extend the AST compatibility execution path.
 
 The service returns `ConstantValue` or a failure carrying the concrete body
 address, block, and instruction identity, including constructor failures.

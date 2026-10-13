@@ -1,0 +1,26 @@
+==================
+Constexpr conversion and ordinary destruction
+==================
+
+struct Ready {
+  constexpr operator bool() { return true; }
+  ~Ready() {}
+};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (operator_declaration
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (boolean_literal)))))))
+      (destructor_declaration
+        (identifier)
+        (block)))))

@@ -1285,7 +1285,8 @@ private:
   }
 
   StmtPtr conversionOperatorDeclaration(
-      Token keyword, std::optional<Token> virtualKeyword = std::nullopt) {
+      Token keyword, std::optional<Token> virtualKeyword = std::nullopt,
+      std::optional<Token> constexprKeyword = std::nullopt) {
     Token boolType =
         consume(TokenKind::BOOL,
                 "Only contextual 'operator bool()' conversions are supported.");
@@ -1296,7 +1297,8 @@ private:
     return functionDeclaration(TypeRef(boolType), std::move(name), {},
                                std::nullopt, true, Mutability::Immutable,
                                std::move(operatorName), std::nullopt,
-                               std::move(virtualKeyword));
+                               std::move(virtualKeyword), LanguageLinkage::Gti,
+                               std::move(constexprKeyword));
   }
 
   OperatorName overloadedOperatorName(Token keyword) {
@@ -2182,6 +2184,12 @@ private:
       }
       if (match({TokenKind::OPERATOR})) {
         return conversionOperatorDeclaration(previous());
+      }
+      if (check(TokenKind::CONSTEXPR) &&
+          peekAt(1).kind == TokenKind::OPERATOR) {
+        Token constant = advance();
+        return conversionOperatorDeclaration(advance(), std::nullopt,
+                                             std::move(constant));
       }
       if (check(TokenKind::VIRTUAL) && peekAt(1).kind == TokenKind::OPERATOR) {
         Token virtualKeyword = advance();

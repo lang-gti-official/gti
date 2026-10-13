@@ -9,14 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.423.9 — Owned extraction and conditional method arguments
+## 0.424.2 — Owned extraction and conditional method arguments
 
 - Fix an internal compiler error when an owning Expected payload is passed to
   a method before a later conditional argument. Preserve receiver identity,
   extraction order and exact cleanup on wrong-state or later-argument failure,
   for both user-defined class and unique-owner payloads (issue #96).
 
-## 0.423.8 — Owning replacement and borrowed call composition
+## 0.424.1 — Owning replacement and borrowed call composition
 
 - Fix an internal compiler error when a freshly constructed owning object
   replaces an existing value using a temporary borrowed constructor argument,
@@ -46,6 +46,20 @@ for what minor and patch releases mean.
   wrong-state and secondary-failure cleanup (issues #84 and #85).
 - Fix owning field replacement through non-failing reference-returning getters,
   including nested getters, without requiring a spurious failure edge (#88).
+
+## 0.424.0 — Transient compile-time ownership
+
+- Constant execution supports transient exclusive allocations and deterministic
+  source-defined destruction, using the same verified MIR lifecycle as runtime.
+  `std::make_unique`, dereference, reset, swap and ownership transport can be
+  used inside constexpr helpers; every allocation must be reclaimed before
+  the outer request completes. Example 153 returns a passive summary from an
+  allocated scratch object.
+- Concrete parameter packs and `constexpr operator bool()` compose with this
+  profile. Symbolic allocation identities never become native pointers or
+  persistent constants, and execution, allocation and live-storage budgets
+  bound compile-time work. Shared ownership, virtual destruction, raw-memory
+  allocation protocols and stored-reference carriers remain outside the slice.
 
 ## 0.423.4 — Payload enum parameter packs
 

@@ -334,6 +334,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                                const SemanticType &type) -> bool {
       return type.kind == SemanticType::Expected ||
              type.kind == SemanticType::Unexpected ||
+             type.kind == SemanticType::UniqueOwner ||
+             type.kind == SemanticType::TypePack ||
              ((type.kind == SemanticType::Array ||
                type.kind == SemanticType::Reference) &&
               type.arguments.size() == 1 && self(self, type.arguments[0]));
@@ -349,6 +351,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                        });
   };
   const bool requiresMir =
+      !mir.program.destructorInstances().empty() ||
       std::any_of(
           mir.program.functionInstances().begin(),
           mir.program.functionInstances().end(),
@@ -366,7 +369,13 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                     std::any_of(function.parameterTypes.begin(),
                                 function.parameterTypes.end(),
                                 mutableReference) ||
-                    mutableLoans(function.body) || resultValues(function.body));
+                    mutableLoans(function.body) ||
+                    resultValues(function.body) ||
+                    std::any_of(function.body.dropObligations.begin(),
+                                function.body.dropObligations.end(),
+                                [](const auto &drop) {
+                                  return drop.dropType.requiresActiveCleanup;
+                                }));
           }) ||
       std::any_of(
           mir.program.constructorInstances().begin(),
@@ -426,6 +435,10 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     if (const auto *constructor =
             hir.program.findConstructorInstance(result.body.owner))
       hirBody = &constructor->body;
+  } else if (result.body.kind == MirBodyKind::Destructor) {
+    if (const auto *destructor =
+            hir.program.findDestructorInstance(result.body.owner))
+      hirBody = &destructor->body;
   }
   if (mirBody != nullptr && hirBody != nullptr) {
     if (const auto *block = mirBody->findBlock(result.block)) {
