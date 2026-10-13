@@ -1,0 +1,57 @@
+import std.deque;
+import std.memory;
+
+enum Event { None, Close, Key(int code) };
+enum Tag { Zero, One };
+enum Message<T> { Empty, Value(T value) };
+
+struct Box {
+  Event event;
+  Box(Event value) : event(value) {}
+};
+
+int code(Event& event) {
+  switch (event) {
+    case Event::None: return 0;
+    case Event::Close: return 1;
+    case Event::Key(value): return value;
+  }
+}
+
+int read_number(Message<int>& value) {
+  switch (value) {
+    case Message<int>::Empty: return 0;
+    case Message<int>::Value(number): return number;
+  }
+}
+int read_flag(Message<bool>& value) {
+  switch (value) {
+    case Message<bool>::Empty: return 0;
+    case Message<bool>::Value(flag): return flag ? 1 : 0;
+  }
+}
+struct Packet<T> {
+  T item;
+  Packet(T value) : item(value) {}
+};
+T relay<T, Args...>(Args... args) { return T(args...); }
+
+int main() {
+  auto event = relay<Packet<Event>>(Event::Key(42));
+  auto tag = relay<Packet<Tag>>(Tag::One);
+  auto number = relay<Packet<Message<int>>>(Message<int>::Value(7));
+  auto flag = relay<Packet<Message<bool>>>(Message<bool>::Value(true));
+  if (code(event.item) != 42 || tag.item != Tag::One ||
+      read_number(number.item) != 7 || read_flag(flag.item) != 1) return 1;
+  auto empty = std::make_unique<Box>(Event::None);
+  auto payload = std::make_unique<Box>(Event::Key(23));
+  if (code(empty->event) != 0 || code(payload->event) != 23) return 2;
+  mut std::deque<Event> queue{};
+  queue.push_back(Event::Close);
+  queue.push_back(Event::Key(61));
+  if (code(queue.front()) != 1) return 3;
+  queue.pop_front();
+  if (code(queue.front()) != 61) return 4;
+  queue.pop_front();
+  return queue.empty() ? 0 : 5;
+}
