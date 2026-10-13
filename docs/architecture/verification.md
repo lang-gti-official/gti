@@ -5480,6 +5480,8 @@ failure, failure after commit and secondary cleanup failure. Its eight native
 modes include disabled elision and ASan/UBSan. The lifecycle emitter gate
 independently rejects missing or late input retirement, unrelated provenance,
 escaping dependencies, effectful retirement and missing staging-shell cleanup.
+Readonly receiver chains additionally cover indexed argv views and reject
+changed parent access, source or kind without losing child-to-parent ordering.
 On arm64 and x86-64 the SIMD runtime gate disables native
 automatic loop/SLP vectorization and checks that packed arithmetic exists only
 in the native-capability path. The scalar reference must contain no packed
