@@ -62,6 +62,11 @@ struct owned_record {
   int id;
   constexpr owned_record(std::unique_ptr<checked_cleanup> value, int id)
       : value(std::move(value)), id(id) {}
+  ~owned_record() {
+    // The user body runs while its owning fields are still alive. Their
+    // canonical recursive cleanup follows the body, exactly once.
+    if (this.value->value != 7) { int failure = 1 / (this.id - this.id); }
+  }
 };
 
 constexpr int nested_owner() {
