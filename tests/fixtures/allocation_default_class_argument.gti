@@ -16,13 +16,23 @@ public:
   Pair(int first, Spec second = Spec()) : count(first + second.count) {}
   int get() { return this.count; }
 };
+class Triple {
+  int count;
+public:
+  Triple(int first, int second, Spec third = Spec())
+      : count(first + second + third.count) {}
+  int get() { return this.count; }
+};
 int main() {
   auto omitted = std::make_unique<Item>();
   auto explicit_value = std::make_unique<Item>(Spec(4));
   auto explicit_pair = std::make_unique<Pair>(3, Spec(6));
+  auto partial = std::make_unique<Pair>(3);
+  auto partial_two = std::make_unique<Triple>(3, 4);
   Item stack{};
   if (omitted->get() != 2 || explicit_value->get() != 4 ||
-      explicit_pair->get() != 9 || stack.get() != 2) {
+      explicit_pair->get() != 9 || stack.get() != 2 ||
+      partial->get() != 5 || partial_two->get() != 9) {
     return 1;
   }
   return 0;

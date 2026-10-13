@@ -778,7 +778,13 @@ only omitted defaults. Argument copy/move roles and default provenance come
 from the selected constructor contract. MIR prepares those parameters before
 allocating object storage; backend allocation emission uses the shared
 consumed-argument retirement rule on both constructor outcomes. Concrete pack
-expansion retains its existing explicit staging route.
+expansion retains its existing explicit staging route. `HirValue::defaultArguments`
+also retains the exact caller-expanded declaration suffix when a concrete pack
+prevents a fixed-arity plan. HIR verifies that suffix against the selected
+declaration's default-expression identities. MIR flattens the written pack
+before staging those defaults, using the flattened parameter index and ordinary
+prepared-owner failure/transfer rules. A non-final written pack is not newly
+permitted: only this verified, implicitly appended default suffix may follow it.
 
 A class binding initialized from an exact `nullptr_t` constructor remains one
 ordinary construction in HIR. The source literal owns the constructed value;
