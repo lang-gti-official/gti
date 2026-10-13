@@ -1,0 +1,29 @@
+#include <std/memory>
+
+struct Spec {
+  int count = 2;
+  Spec(int value = 2) : count(value) {}
+};
+class Item {
+  int count;
+public:
+  Item(Spec spec = Spec()) : count(spec.count) {}
+  int get() { return this.count; }
+};
+class Pair {
+  int count;
+public:
+  Pair(int first, Spec second = Spec()) : count(first + second.count) {}
+  int get() { return this.count; }
+};
+int main() {
+  auto omitted = std::make_unique<Item>();
+  auto explicit_value = std::make_unique<Item>(Spec(4));
+  auto explicit_pair = std::make_unique<Pair>(3, Spec(6));
+  Item stack{};
+  if (omitted->get() != 2 || explicit_value->get() != 4 ||
+      explicit_pair->get() != 9 || stack.get() != 2) {
+    return 1;
+  }
+  return 0;
+}

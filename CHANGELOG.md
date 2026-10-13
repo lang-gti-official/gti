@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.424.7 — Class-valued allocation defaults
+
+- Fix allocation of objects whose constructor has omitted class-valued
+  arguments, including `std::make_unique<Item>()` with `Item(Spec = Spec())`.
+  Defaults use ordinary ordered parameter preparation and exact cleanup on
+  successful construction, failed later arguments, and constructor failure
+  (issue #105).
+
 ## 0.424.4 — Defaulted owning base construction
 
 - Fix native compilation/link failures when defaulted derived constructors

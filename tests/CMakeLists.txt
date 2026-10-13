@@ -3578,6 +3578,13 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(constructor_borrow_replacement_runtime PROPERTIES TIMEOUT 240)
     add_test(
+      NAME allocation_default_argument_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/allocation_default_argument_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(allocation_default_argument_runtime PROPERTIES TIMEOUT 240)
+    add_test(
       NAME reference_class_assignment_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/reference_class_assignment_runtime_test.py"
