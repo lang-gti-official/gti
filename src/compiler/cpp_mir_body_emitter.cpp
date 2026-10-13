@@ -19713,7 +19713,8 @@ cleanupFreeExpectedReceiver(const MirBody &body, const MirInstruction &call) {
                                             const MirInstruction &call) {
   if (call.kind != MirInstructionKind::Call || !call.result ||
       call.info.category != ValueCategory::Value ||
-      call.info.traits.drop != DropKind::Trivial ||
+      (call.info.traits.drop != DropKind::Trivial &&
+       call.info.type.kind != SemanticType::Expected) ||
       !call.info.traits.copyable || call.info.traits.containsBorrowedState ||
       call.info.type == SemanticType::Void ||
       !scalarResultRepresentation(program, call.info.type) ||

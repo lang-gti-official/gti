@@ -78,12 +78,28 @@ SemanticVisitor::scopedThreadTaskShapeFor(const SemanticType &type) {
   return impl->scopedThreadTaskShapeFor(type);
 }
 
+void SemanticVisitor::useInstanceAnalysisCache(
+    std::shared_ptr<InstanceAnalysisCache> cache, std::string context) {
+  impl->instanceCache = std::move(cache);
+  impl->instanceCacheContext = std::move(context);
+}
+
+void SemanticVisitor::publishInstanceAnalyses() {
+  impl->publishInstanceAnalyses();
+}
+
 SemanticInstanceAnalysis SemanticVisitor::analyzeFunctionInstance(
     FunctionId functionId, const std::vector<SemanticType> &classTypeArguments,
     const std::vector<CompileTimeValue> &classValueArguments,
     const std::vector<SemanticType> &functionTypeArguments,
     const std::vector<CompileTimeValue> &functionValueArguments) {
-  return impl->withLateDemand([&] {
+  InstanceAnalysisKey key{.kind = InstanceAnalysisKind::Function,
+                          .declaration = functionId,
+                          .classTypes = classTypeArguments,
+                          .classValues = classValueArguments,
+                          .types = functionTypeArguments,
+                          .values = functionValueArguments};
+  return impl->analyzeReusableInstance(std::move(key), [&] {
     return impl->analyzeFunctionInstance(
         functionId, classTypeArguments, classValueArguments,
         functionTypeArguments, functionValueArguments);
@@ -96,7 +112,13 @@ SemanticInstanceAnalysis SemanticVisitor::analyzeConstructorInstance(
     const std::vector<CompileTimeValue> &classValueArguments,
     const std::vector<SemanticType> &constructorTypeArguments,
     const std::vector<CompileTimeValue> &constructorValueArguments) {
-  return impl->withLateDemand([&] {
+  InstanceAnalysisKey key{.kind = InstanceAnalysisKind::Constructor,
+                          .declaration = constructorId,
+                          .classTypes = classTypeArguments,
+                          .classValues = classValueArguments,
+                          .types = constructorTypeArguments,
+                          .values = constructorValueArguments};
+  return impl->analyzeReusableInstance(std::move(key), [&] {
     return impl->analyzeConstructorInstance(
         constructorId, classTypeArguments, classValueArguments,
         constructorTypeArguments, constructorValueArguments);
@@ -106,7 +128,11 @@ SemanticInstanceAnalysis SemanticVisitor::analyzeConstructorInstance(
 SemanticInstanceAnalysis SemanticVisitor::analyzeDestructorInstance(
     ClassId classId, const std::vector<SemanticType> &classTypeArguments,
     const std::vector<CompileTimeValue> &classValueArguments) {
-  return impl->withLateDemand([&] {
+  InstanceAnalysisKey key{.kind = InstanceAnalysisKind::Destructor,
+                          .declaration = classId,
+                          .classTypes = classTypeArguments,
+                          .classValues = classValueArguments};
+  return impl->analyzeReusableInstance(std::move(key), [&] {
     return impl->analyzeDestructorInstance(classId, classTypeArguments,
                                            classValueArguments);
   });
@@ -115,7 +141,11 @@ SemanticInstanceAnalysis SemanticVisitor::analyzeDestructorInstance(
 SemanticInstanceAnalysis SemanticVisitor::analyzeClassFieldInitializers(
     ClassId classId, const std::vector<SemanticType> &classTypeArguments,
     const std::vector<CompileTimeValue> &classValueArguments) {
-  return impl->withLateDemand([&] {
+  InstanceAnalysisKey key{.kind = InstanceAnalysisKind::ClassFieldInitializers,
+                          .declaration = classId,
+                          .classTypes = classTypeArguments,
+                          .classValues = classValueArguments};
+  return impl->analyzeReusableInstance(std::move(key), [&] {
     return impl->analyzeClassFieldInitializers(classId, classTypeArguments,
                                                classValueArguments);
   });

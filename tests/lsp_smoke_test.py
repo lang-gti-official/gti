@@ -9549,6 +9549,133 @@ def test_editor_hir_scope_follows_open_file(executable, root):
         session.close()
 
 
+def test_instance_reuse_across_snapshots(executable, root):
+    # Library-only concrete instance analyses from one snapshot are reused by
+    # the next (InstanceAnalysisCache). Reuse is invisible: diagnostics,
+    # semantic tokens, hover and definition in the open file are unchanged,
+    # and editing a library unit invalidates every reusable instance.
+    source = (
+        "#include <std/string>\n"
+        "#include <std/vector>\n"
+        "#include <std/set>\n"
+        "int main() {\n"
+        "  mut std::vector<std::string> names{};\n"
+        '  names.push_back(std::string("ada"));\n'
+        "  mut std::set<std::string> seen{};\n"
+        "  for (auto& name : names) {\n"
+        "    [[discard]] seen.insert(name.clone());\n"
+        "  }\n"
+        "  return seen.size() == std::size_t(1) ? 0 : 1;\n"
+        "}\n"
+    )
+    path = root / "instance-reuse.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    library_path = (discover_standard_library_root(executable) / "std" / "vector.gti").resolve()
+    library_uri = library_path.as_uri()
+    trace_path = root / "instance-reuse-trace.jsonl"
+    trace_path.unlink(missing_ok=True)
+
+    def root_analyses():
+        if not trace_path.exists():
+            return []
+        return [
+            record
+            for record in (
+                json.loads(line)
+                for line in trace_path.read_text(encoding="utf-8").splitlines()
+            )
+            if record["kind"] == "analysis" and record["uri"] == uri
+        ]
+
+    def wait_for_analyses(count):
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            records = root_analyses()
+            if len(records) >= count:
+                return records
+            time.sleep(0.05)
+        raise AssertionError(f"timed out waiting for {count} analyses: {root_analyses()}")
+
+    session = LspSession(
+        executable,
+        environment=dict(
+            os.environ,
+            GTI_LSP_FRONTEND_TRACE=str(trace_path),
+            GTI_LSP_UPDATE_DEBOUNCE_MS="0",
+            GTI_LSP_ANALYSIS_WORKERS="1",
+        ),
+    )
+    next_id = [10]
+
+    def request(method, params):
+        next_id[0] += 1
+        identifier = next_id[0]
+        session.send(
+            {"jsonrpc": "2.0", "id": identifier, "method": method, "params": params}
+        )
+        return session.receive_until(
+            lambda message: message.get("id") == identifier, timeout=30
+        )["result"]
+
+    push_back = source.index("push_back") + 1
+
+    def queries():
+        tokens = request(
+            "textDocument/semanticTokens/full", {"textDocument": {"uri": uri}}
+        )["data"]
+        hover = request(
+            "textDocument/hover",
+            {"textDocument": {"uri": uri}, "position": lsp_position(source, push_back)},
+        )
+        definition = request(
+            "textDocument/definition",
+            {"textDocument": {"uri": uri}, "position": lsp_position(source, push_back)},
+        )
+        return tokens, hover, definition
+
+    try:
+        initialize_session(session)
+        open_document(session, uri, source)
+        first = wait_for_analyses(1)[-1]
+        assert first["instanceReuseHits"] == 0, first
+        assert first["instanceReuseStores"] > 0, first
+        tokens, hover, definition = queries()
+        assert tokens, tokens
+        assert "push_back" in json.dumps(hover), hover
+        locations = definition if isinstance(definition, list) else [definition]
+        assert any(
+            location["uri"].endswith("/std/vector.gti") for location in locations
+        ), definition
+
+        # An unchanged library: the next snapshot reuses every stored instance.
+        # A trailing blank line changes no token, so every query must agree.
+        edited = source + "\n"
+        session.send(full_change(uri, 2, edited))
+        diagnostics = publication_for(session, uri, 2)
+        assert not any(item.get("severity", 1) == 1 for item in diagnostics)
+        second = wait_for_analyses(2)[-1]
+        assert second["instanceReuseHits"] == first["instanceReuseStores"], second
+        assert second["instanceReuseMisses"] == 0, second
+        assert second["instanceCache"]["entries"] > 0, second
+        assert queries() == (tokens, hover, definition)
+
+        # Editing a library unit selects another library generation.
+        library_source = library_path.read_text(encoding="utf-8")
+        open_document(
+            session,
+            library_uri,
+            library_source + "\nnamespace std { int edited_unit() { return 1; } }\n",
+            expect_clean=False,
+        )
+        third = wait_for_analyses(3)[-1]
+        assert third["instanceReuseHits"] == 0, third
+        assert third["instanceReuseStores"] > 0, third
+        assert queries() == (tokens, hover, definition)
+    finally:
+        session.close()
+
+
 def test_worker_survives_failed_analysis(executable, root):
     """Analysis that cannot complete must leave the worker and its state usable.
 
@@ -11015,6 +11142,7 @@ def main():
     test_raw_pointer_audit_runs_in_background(sys.argv[1], root)
     test_raw_pointer_audit_waits_for_quiet_or_save(sys.argv[1], root)
     test_editor_hir_scope_follows_open_file(sys.argv[1], root)
+    test_instance_reuse_across_snapshots(sys.argv[1], root)
     test_semantic_hover(sys.argv[1], root)
     test_class_scoped_type_alias_tooling(sys.argv[1], root)
     test_documentation_hover(sys.argv[1], root)

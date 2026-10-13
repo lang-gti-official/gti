@@ -7885,8 +7885,18 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
       const auto member = owner.members.find(field.declaration->name().lexeme);
       if (owner.kind != ClassKind::Union && !owner.cAbiRecord &&
           member != owner.members.end() &&
-          member->second.symbol.type.kind == SemanticType::Class)
-        semanticModel.retainImplicitFieldInitializer(*field.declaration);
+          member->second.symbol.type.kind == SemanticType::Class) {
+        // Editor snapshots share trusted fields' anchors (see
+        // InstanceAnalysisCache) so their instance analyses stay reusable.
+        if (instanceCache != nullptr &&
+            trustedBodies == TrustedBodyAnalysis::Reachable &&
+            trustedUnit(owner.sourceUnit))
+          semanticModel.retainImplicitFieldInitializer(
+              *field.declaration,
+              instanceCache->implicitFieldInitializer(*field.declaration));
+        else
+          semanticModel.retainImplicitFieldInitializer(*field.declaration);
+      }
     }
     SemanticTypeTraits traits = typeTraits(openClassType(owner.id));
     // The declaration-bound optional slot is a single ownership state. Copy

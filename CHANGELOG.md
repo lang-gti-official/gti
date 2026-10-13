@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.420.0 — Compile-time result and constructor composition
+## 0.421.0 — Compile-time result and constructor composition
 
 - Passive `expected<T, E>` values (including void success) now compose in
   constexpr helpers: construction, state checks, observers, prefix propagation,
@@ -25,6 +25,20 @@ for what minor and patch releases mean.
 - Allocation, stored borrows, active cleanup and runtime-only operations remain
   outside constant execution; inactive result extraction and resource exhaustion
   are source diagnostics, not native compiler failures.
+
+## 0.420.0 — Faster editor feedback for library-heavy files
+
+- `gti_lsp` reuses concrete instance analyses of standard-library generics
+  whose arguments are standard-library types (for example
+  `std::vector<std::string>` members) from the previous snapshot instead of
+  repeating them on every edit. Each reuse is validated against the current
+  snapshot; anything that changed is analysed again, so diagnostics, hover,
+  definition and semantic tokens are unchanged. Editing a standard-library
+  file invalidates every reused analysis.
+- The editor's parsed-source cache is now large enough to keep a file's whole
+  standard-library include graph. A file with eight standard-library includes
+  previously reloaded, re-lexed and re-parsed the library on every edit.
+- `gti check` and builds are unaffected.
 
 ## 0.418.0 — Enum-aware compile-time builders
 
