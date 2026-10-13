@@ -382,9 +382,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                 ? semantics.findClassLifecycle(*instance.source)
                                 : nullptr;
     const bool requiresSchedule =
-        lifecycle != nullptr &&
-        (lifecycle->generatedDefaultFieldInitializers ||
-         lifecycle->generatedDefaultBaseConstructor != 0);
+        lifecycle != nullptr && lifecycle->generatedDefaultInitializers;
     if (instance.generatedDefaultRequiresSchedule != requiresSchedule ||
         (requiresSchedule &&
          instance.defaultConstructor != SpecialMemberStatus::Generated))
@@ -412,7 +410,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     const auto *lifecycle = owner != nullptr && owner->source != nullptr
                                 ? semantics.findClassLifecycle(*owner->source)
                                 : nullptr;
-    if (lifecycle != nullptr && lifecycle->generatedDefaultFieldInitializers) {
+    if (lifecycle != nullptr && lifecycle->generatedDefaultInitializers) {
       bool exact =
           instance.parameterTypes.empty() &&
           instance.parameterBindings.empty() &&
@@ -425,6 +423,15 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                        return !candidate.interface;
                                      });
       if (base != owner->bases.end()) {
+        const auto *baseOwner =
+            base->instance != 0 &&
+                    base->instance <= program.classInstances().size()
+                ? &program.classInstances()[base->instance - 1]
+                : nullptr;
+        const auto *baseLifecycle =
+            baseOwner != nullptr && baseOwner->source != nullptr
+                ? semantics.findClassLifecycle(*baseOwner->source)
+                : nullptr;
         const auto *initializer = instance.initializers.empty()
                                       ? nullptr
                                       : &instance.initializers.front();
@@ -443,15 +450,23 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                  initializer->base == base->instance &&
                  initializer->field == 0 &&
                  initializer->explicitArgumentCount == 0 &&
-                 !initializer->storesReference && !initializer->ownedParameter;
+                 !initializer->storesReference &&
+                 !initializer->ownedParameter && baseLifecycle != nullptr &&
+                 initializer->generatedDefault ==
+                     (baseLifecycle->defaultConstructor ==
+                      SpecialMemberStatus::Generated);
         if (initializer != nullptr && target != nullptr)
           exact &=
               target->owner == base->instance &&
+              initializer->generatedDefault == target->generatedDefault &&
               (target->generatedDefault ||
                (selected != nullptr && selected->requiredParameterCount == 0));
         else if (initializer != nullptr)
-          exact &=
-              initializer->generatedDefault && initializer->arguments.empty();
+          exact &= initializer->generatedDefault &&
+                   initializer->arguments.empty() && base->instance != 0 &&
+                   base->instance <= program.classInstances().size() &&
+                   !program.classInstances()[base->instance - 1]
+                        .generatedDefaultRequiresSchedule;
         ++position;
       }
       std::vector<HirValueId> selectedValues;
@@ -501,47 +516,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             "initializers");
       continue;
     }
-    const auto *initializer = instance.initializers.size() == 1
-                                  ? &instance.initializers.front()
-                                  : nullptr;
-    const auto *target =
-        initializer != nullptr && initializer->constructorTarget
-            ? program.findConstructorInstance(*initializer->constructorTarget)
-            : nullptr;
-    const auto *targetOwner =
-        target != nullptr && target->owner != 0 &&
-                target->owner <= program.classInstances().size()
-            ? &program.classInstances()[target->owner - 1]
-            : nullptr;
-    if (instance.declaration != 0 || instance.source != nullptr ||
-        !instance.parameterTypes.empty() || lifecycle == nullptr ||
-        !instance.parameterBindings.empty() ||
-        !instance.typeArguments.empty() || !instance.valueArguments.empty() ||
-        !instance.initializerValues.empty() ||
-        !instance.body.bindings.empty() || !instance.body.loans.empty() ||
-        !instance.body.fullExpressions.empty() ||
-        !instance.body.dropObligations.empty() ||
-        !instance.body.values.empty() || !instance.body.statements.empty() ||
-        !instance.body.roots.empty() || !owner->fields.empty() ||
-        !owner->type.arguments.empty() || !owner->type.valueArguments.empty() ||
-        lifecycle->defaultConstructor != SpecialMemberStatus::Generated ||
-        target == nullptr ||
-        lifecycle->generatedDefaultBaseConstructor != target->declaration ||
-        targetOwner == nullptr ||
-        initializer->targetType != targetOwner->type ||
-        std::count_if(owner->bases.begin(), owner->bases.end(),
-                      [&](const auto &base) {
-                        return !base.interface &&
-                               base.instance == target->owner &&
-                               base.type == initializer->targetType;
-                      }) != 1 ||
-        initializer->kind != ConstructorInitializerTargetKind::Base ||
-        initializer->base != target->owner || !initializer->arguments.empty() ||
-        initializer->field != 0 || initializer->generatedDefault ||
-        initializer->storesReference || initializer->ownedParameter ||
-        initializer->explicitArgumentCount != 0)
-      result.errors.emplace_back(
-          "generated constructor differs from its selected semantic base");
+    result.errors.emplace_back(
+        "generated constructor has no selected semantic initializer schedule");
   }
   const auto verifyDirectInitializations = [&](const HirBody &body) {
     std::unordered_set<const Expr *> seen;
@@ -656,9 +632,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           type != nullptr && type->declaration != nullptr
               ? semantics.findClassLifecycle(*type->declaration)
               : nullptr;
-      if (lifecycle == nullptr ||
-          (lifecycle->generatedDefaultBaseConstructor == 0 &&
-           !lifecycle->generatedDefaultFieldInitializers))
+      if (lifecycle == nullptr || !lifecycle->generatedDefaultInitializers)
         continue;
       const auto *target =
           value.constructorTarget
@@ -1919,8 +1893,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                     ? semantics.findClassLifecycle(*owner->source)
                     : nullptr;
             return lifecycle != nullptr &&
-                           (lifecycle->generatedDefaultBaseConstructor != 0 ||
-                            lifecycle->generatedDefaultFieldInitializers)
+                           lifecycle->generatedDefaultInitializers
                        ? target != nullptr && target->generatedDefault &&
                              targetOwner == owner
                        : !value.constructorTarget;

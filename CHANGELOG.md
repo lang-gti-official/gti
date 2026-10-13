@@ -9,6 +9,58 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.424.5 — Non-failing base rollback
+
+- Fix invalid generated native code when a failed derived constructor rolls
+  back a base whose destructor cannot fail. Such cleanup no longer references
+  an absent secondary failure record; fallible base cleanup retains its exact
+  failure and termination behavior (issue #101).
+
+## 0.424.4 — Defaulted owning base construction
+
+- Fix native compilation/link failures when defaulted derived constructors
+  inherit owning fields through defaulted bases. Base and field initialization
+  use the same selected GTI schedule, including generic bases, nonmoving fields,
+  multilevel inheritance, and construction-failure cleanup (issue #98).
+
+## 0.424.3 — Consuming members returning expected payloads
+
+- Fix a backend internal compiler error when a consuming source member returns
+  an owning value directly into `expected`, including polymorphic owner
+  factories using `std::move(owner).upcast<Base>()`. Retain exact receiver,
+  pending-result publication and failure-cleanup checks (issue #99).
+
+## 0.424.1 — Owning replacement and borrowed call composition
+
+- Fix an internal compiler error when a freshly constructed owning object
+  replaces an existing value using a temporary borrowed constructor argument,
+  such as `target = Item(source.view())`. Exact input-loan retirement and
+  constructor/replacement cleanup remain checked. Covers issue #93.
+
+- Fix a backend internal compiler error when consuming owning expected payloads
+  directly into methods reached through raw pointers. Raw pointee receivers now
+  use the ordinary receiver-first call-input plan, preserving argument ownership
+  and failure cleanup without changing unsafe obligations (issue #92).
+
+- Fix an internal compiler error when a borrowed text return also has a string
+  literal or null C-string return path. Static alternatives are independently
+  verified without weakening the lifetime checks on dynamic results. Covers
+  the editor preview fallback in issue #89.
+
+- Fix an internal compiler error when a fallible call returning an expected
+  raw-pointer payload is used directly as a condition. Preserve the callee's
+  defined-failure channel and caller cleanup before observing the result;
+  ordinary expected errors remain ordinary values (issue #86).
+
+- Fix backend internal compiler errors when returning passive pointer payloads
+  in `expected`, including null and read-only pointers, without changing raw
+  pointer safety obligations.
+- Allow consuming an owning `expected` value or error directly into an existing
+  object. Reuse the ordinary replacement lifetime slot and preserve old-value,
+  wrong-state and secondary-failure cleanup (issues #84 and #85).
+- Fix owning field replacement through non-failing reference-returning getters,
+  including nested getters, without requiring a spurious failure edge (#88).
+
 ## 0.424.0 — Transient compile-time ownership
 
 - Constant execution supports transient exclusive allocations and deterministic

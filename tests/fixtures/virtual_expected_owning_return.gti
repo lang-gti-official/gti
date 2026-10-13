@@ -1,0 +1,57 @@
+#include <std/string>
+#include <std/vector>
+
+mut int stage = 0;
+class Item {
+  std::string text{"payload"};
+public:
+  Item() = default;
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  ~Item() { std::println(10); }
+  bool Valid() { return this.text.view() == "payload"; }
+};
+class Guard {
+public:
+  Guard() = default;
+  ~Guard() {
+    std::println(20);
+    int divisor = stage == 3 ? 0 : 1;
+    int checked = 2 / divisor;
+  }
+};
+class Base {
+public:
+  virtual expected<Item, int> Produce() = 0;
+  Item Get() {
+    Guard guard{};
+    if (stage == 4) { return this.Produce().value(); }
+    mut auto result = this.Produce();
+    return std::move(result).value();
+  }
+};
+class Derived : public Base {
+public:
+  expected<Item, int> Produce() override {
+    std::println(30);
+    int divisor = stage == 2 || stage == 3 ? 0 : 1;
+    int checked = 1 / divisor;
+    if (stage == 1) { return unexpected(7); }
+    return Item();
+  }
+};
+class Outer {
+public:
+  Outer() = default;
+  ~Outer() { std::println(90); }
+};
+Item Dispatch(Base& source) { return source.Get(); }
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Outer outer{};
+  Derived derived{};
+  Item result = Dispatch(derived);
+  if (!result.Valid()) { return 1; }
+  std::println(40);
+  return 0;
+}
