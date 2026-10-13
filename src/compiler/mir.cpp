@@ -10402,6 +10402,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                                  place.access != AccessMode::ReadOnly)) ||
             (completeElement && place.type.kind != SemanticType::Class &&
              place.type.kind != SemanticType::Lambda &&
+             place.type.kind != SemanticType::Enum &&
              place.traits != semanticTraits(place.type)) ||
             !place.initiallyAvailable) {
           return failure(body, owner,

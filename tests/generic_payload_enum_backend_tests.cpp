@@ -719,5 +719,85 @@ int main() { return tag<Metadata<Phantom<int32_t>>>() - 7; }
            "an enum named only by a type argument publishes its exact row "
            "without requesting a phantom class layout in complete lowering");
   }
+  const auto packs = lang::Frontend().analyze("enum-pack-traits.gti", R"(
+enum Signal<T> { None, Value(T value) };
+enum Tag { Zero, One };
+struct Packet<T> {
+  T value;
+  Packet(T item) : value(item) {}
+};
+T construct<T, Args...>(Args... args) { return T(args...); }
+int main() {
+  auto empty = construct<Packet<Signal<int>>>(Signal<int>::None);
+  auto number = construct<Packet<Signal<int>>>(Signal<int>::Value(7));
+  auto flag = construct<Packet<Signal<bool>>>(Signal<bool>::Value(true));
+  auto tag = construct<Packet<Tag>>(Tag::One);
+  return 0;
+}
+)");
+  expect(packs.canGenerateCode() && lang::verifyMirProgram(packs.mir).valid(),
+         "concrete enum packs preserve exact nominal traits through source "
+         "construction without library-specific rules");
+  std::size_t enumElements = 0;
+  if (packs.canGenerateCode()) {
+    expect(!gti_test::emitCppText(packs).empty(),
+           "enum packs execute through verified MIR");
+    for (const auto &function : packs.mir.functionInstances()) {
+      for (const auto &place : function.body.places) {
+        if (place.type.kind != lang::SemanticType::Enum ||
+            place.projections.size() != 1 ||
+            place.projections.front().kind !=
+                lang::MirProjectionKind::PackElement)
+          continue;
+        ++enumElements;
+        const auto *enumeration = packs.mir.findPayloadEnum(place.type);
+        expect(place.traits == (enumeration ? enumeration->traits
+                                            : lang::semanticTraits(place.type)),
+               "pack traits use the exact concrete enum catalogue row");
+        auto malformed = packs.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &forged = changed->body.places[place.id - 1];
+        forged.traits.copyable = !forged.traits.copyable;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "program verification rejects forged enum pack traits");
+        if (enumeration) {
+          malformed = packs.mir;
+          auto &catalogue = lang::MirProgramTestAccess::enums(malformed);
+          std::erase_if(catalogue, [&](const auto &row) {
+            return row.type == place.type;
+          });
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "an enum pack cannot fall back to scalar traits when its "
+                 "exact concrete catalogue row is missing");
+        }
+      }
+    }
+  } else {
+    for (const auto &diagnostic : packs.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(enumElements >= 3,
+         "the fixture exercises integral and distinct payload enum pack types");
+  const auto owningPack = lang::Frontend().analyze("owning-enum-pack.gti", R"(
+struct Resource {
+  int value;
+  Resource(int initial) : value(initial) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+};
+enum Message { Value(Resource value) };
+void discard<Args...>(Args... args) {}
+int main() { discard(Message::Value(Resource(1))); return 0; }
+)");
+  expect(!owningPack.canGenerateCode() &&
+             std::any_of(
+                 owningPack.diagnostics.begin(), owningPack.diagnostics.end(),
+                 [](const auto &item) { return item.code == "GTI-S2067"; }) &&
+             std::none_of(
+                 owningPack.diagnostics.begin(), owningPack.diagnostics.end(),
+                 [](const auto &item) { return item.code == "GTI-B0001"; }),
+         "unsupported owning-enum packs retain their source diagnostic");
   return failures == 0 ? 0 : 1;
 }
