@@ -30,4 +30,15 @@ if __name__ == "__main__":
                 f"{source.name}:{divide}: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at {source.name}:{divide}; secondary [GTI-R0002]\n")),
         ],
     }
+    getter = "getter_owned_field_replacement"
+    getter_source = source.with_name(f"{getter}.gti")
+    getter_divide = next(i for i, line in enumerate(getter_source.read_text().splitlines(), 1)
+                         if "int checked = 1 / divisor" in line)
+    cases[getter] = [
+        ((), (0, "1\n2\n9\n", "")),
+        (("cleanup",), (70, "1\n2\n9\n",
+            f"{getter_source.name}:{getter_divide}: runtime error[GTI-R0002]: division_by_zero in integer_division\n")),
+        (("cleanup", "secondary"), (70, "1\n2\n",
+            f"{getter_source.name}:{getter_divide}: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at {getter_source.name}:{getter_divide}; secondary [GTI-R0002]\n")),
+    ]
     runtime_matrix(names=tuple(cases), cases=cases)

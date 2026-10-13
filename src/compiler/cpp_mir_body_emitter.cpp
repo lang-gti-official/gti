@@ -28780,8 +28780,9 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
 }
 
 // A checked field store evaluates its RHS before the exclusive destination
-// access. Preserve that exact receiver stage and call, then continue only on
-// its Invoke success edge. Both moved and constructed RHS slots use this
+// access. Preserve that exact receiver stage and call, continuing on its
+// Invoke success edge when the call can fail, or immediately after an exact
+// non-failing call. Both moved and constructed RHS slots use this
 // schedule; neither may move construction past destination evaluation.
 [[nodiscard]] bool advanceCheckedAssignmentReceiver(
     const MirBody &body, const MirLoan &loan, const MirBlock *&block,
@@ -28792,8 +28793,13 @@ expectedPayloadRangeLoanProducer(const MirBody &body, const MirLoan &loan) {
   const MirInstruction &input = *position++;
   if (position == block->instructions.end() ||
       producedCallResultLoan(body, *position) != &loan ||
-      input.callSite != position->callSite ||
-      std::next(position) != block->instructions.end() ||
+      input.callSite != position->callSite)
+    return false;
+  if (position->definedFailure.empty() && position->localFailureSites.empty()) {
+    ++position;
+    return true;
+  }
+  if (std::next(position) != block->instructions.end() ||
       block->terminator.kind != MirTerminatorKind::Invoke ||
       block->terminator.invokeInstruction != position->id)
     return false;

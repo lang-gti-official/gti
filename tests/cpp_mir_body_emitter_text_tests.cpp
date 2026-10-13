@@ -3231,7 +3231,8 @@ int main() {
 // assigned to the lifetime slot itself, and owning results raised GTI-B0001.)
 void testExpectedClassReplacementSources() {
   for (const std::string_view name :
-       {"expected_pointer_boundary", "expected_owned_payload_replacement"}) {
+       {"expected_pointer_boundary", "expected_owned_payload_replacement",
+        "getter_owned_field_replacement"}) {
     const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                          ("fixtures/" + std::string(name) + ".gti");
     std::ifstream input(fixture);
@@ -3249,10 +3250,15 @@ void testExpectedClassReplacementSources() {
     for (const auto &function : frontend.mir.functionInstances()) {
       for (const auto &block : function.body.blocks) {
         for (const auto &call : block.instructions) {
-          if (call.kind != lang::MirInstructionKind::Call || !call.result ||
+          const bool extraction =
+              call.kind == lang::MirInstructionKind::Call &&
+              (call.intrinsic == lang::IntrinsicKind::ExpectedValue ||
+               call.intrinsic == lang::IntrinsicKind::ExpectedError);
+          const bool construction =
+              name == "getter_owned_field_replacement" &&
+              call.kind == lang::MirInstructionKind::Construct;
+          if ((!extraction && !construction) || !call.result ||
               call.info.type.kind != lang::SemanticType::Class ||
-              (call.intrinsic != lang::IntrinsicKind::ExpectedValue &&
-               call.intrinsic != lang::IntrinsicKind::ExpectedError) ||
               !call.successResultDrop)
             continue;
           const lang::MirInstruction *assignment = nullptr;
@@ -3299,6 +3305,9 @@ void testExpectedClassReplacementSources() {
     if (name == "expected_owned_payload_replacement")
       expect(checked == 3, "value, error and source-defined string payloads "
                            "exercise replacement");
+    if (name == "getter_owned_field_replacement")
+      expect(checked == 2, "fresh owning values replace fields through nested "
+                           "non-failing getters");
   }
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-expected-class-replacement-sources.gti", R"gti(
