@@ -11,6 +11,10 @@ for what minor and patch releases mean.
 
 ## 0.424.3 — Constructor and owning argument composition
 
+- Preserve declaration-owned default arguments for out-of-line static and
+  instance method definitions, including owning defaults and renamed body
+  parameters. Exact selected declaration provenance remains verified (issue #119).
+
 - Fix owning-field replacement through a checked mutable reference, including
   repeated direct and nested uses of that reference. Preserve its exact carrier,
   pointee type and loan through replacement and cleanup (issue #116).

@@ -781,7 +781,13 @@ consumed-argument retirement rule on both constructor outcomes. Concrete pack
 expansion retains its existing explicit staging route. `HirValue::defaultArguments`
 also retains the exact caller-expanded declaration suffix when a concrete pack
 prevents a fixed-arity plan. HIR verifies that suffix against the selected
-declaration's default-expression identities. MIR flattens the written pack
+declaration's default-expression identities.
+The selected semantic function declaration owns that identity even when its
+executable HIR source is a separate out-of-line definition with renamed
+parameters and no repeated defaults. Verification resolves the canonical
+declaration through the exact selected function identity, not body syntax or
+name lookup.
+MIR flattens the written pack
 before staging those defaults, using the flattened parameter index and ordinary
 prepared-owner failure/transfer rules. A non-final written pack is not newly
 permitted: only this verified, implicitly appended default suffix may follow it.

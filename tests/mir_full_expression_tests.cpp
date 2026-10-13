@@ -464,5 +464,89 @@ int main() { auto item = std::make_unique<Item>(3, 4); return 0; }
     std::cerr << "pack/default fixture lost its selected allocation\n";
     return 1;
   }
+  const auto declarationDefaults =
+      lang::Frontend().analyze("/tmp/gti-declaration-default.gti", R"(
+class Runner {
+public:
+  static int Create(int count = 3);
+  int Run(int count = 7);
+};
+int Runner::Create(int renamed) { return renamed; }
+int Runner::Run(int renamed) { return renamed; }
+int main() { Runner runner{}; return Runner::Create() + runner.Run(); }
+)");
+  if (!declarationDefaults.canGenerateCode()) {
+    for (const auto &diagnostic : declarationDefaults.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return 1;
+  }
+  std::size_t checkedDeclarations = 0;
+  for (const auto &function : declarationDefaults.hir.functionInstances()) {
+    for (const auto &value : function.body.values) {
+      if (value.defaultArguments.empty() || !value.functionTarget)
+        continue;
+      const auto *target =
+          declarationDefaults.hir.findFunctionInstance(*value.functionTarget);
+      const auto *api =
+          declarationDefaults.semantics.findFunction(target->declaration);
+      if (!api || !api->declaration || !api->definition ||
+          target->source != api->definition ||
+          target->source->parameters().front().defaultArgument ||
+          !api->declaration->parameters().front().defaultArgument) {
+        std::cerr << "default contract must belong to API, not body syntax\n";
+        return 1;
+      }
+      ++checkedDeclarations;
+      const lang::HirFunctionInstance *other = nullptr;
+      for (const auto &candidate :
+           declarationDefaults.hir.functionInstances()) {
+        const auto *otherApi =
+            declarationDefaults.semantics.findFunction(candidate.declaration);
+        if (candidate.id != target->id && otherApi && otherApi->definition &&
+            otherApi->declaration->parameters().size() == 1 &&
+            otherApi->declaration->parameters().front().defaultArgument)
+          other = &candidate;
+      }
+      if (!other)
+        return 1;
+      const auto *otherApi =
+          declarationDefaults.semantics.findFunction(other->declaration);
+      for (int mutation = 0; mutation != 3; ++mutation) {
+        auto forged = declarationDefaults.hir;
+        auto *changed = const_cast<lang::HirFunctionInstance *>(
+            forged.findFunctionInstance(function.id));
+        for (auto &input : changed->body.values) {
+          if (mutation == 0 && input.id == value.defaultArguments.front())
+            input.source = otherApi->declaration->parameters()
+                               .front()
+                               .defaultArgument->expression.get();
+          if (mutation == 1 && input.id == value.id)
+            input.functionTarget = other->id;
+          if (mutation == 2 && input.id == value.id)
+            input.defaultArguments.push_back(input.defaultArguments.front());
+        }
+        if (lang::verifyHirProgramPlans(declarationDefaults.semantics, forged)
+                .valid()) {
+          std::cerr << "foreign or malformed declaration default accepted\n";
+          return 1;
+        }
+      }
+    }
+  }
+  if (checkedDeclarations != 2) {
+    std::cerr
+        << "static and instance defaults must retain exact declarations\n";
+    return 1;
+  }
+  const auto invalidDefault =
+      lang::Frontend().analyze("/tmp/gti-invalid-declaration-default.gti", R"(
+class Runner { public: int Run(int count = "bad"); };
+int Runner::Run(int renamed) { return renamed; }
+int main() { Runner runner{}; return runner.Run(); }
+)");
+  if (invalidDefault.canGenerateCode()) {
+    std::cerr << "a declaration default must retain semantic type checking\n";
+    return 1;
+  }
   return 0;
 }
