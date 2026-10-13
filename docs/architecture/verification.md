@@ -1,5 +1,15 @@
 # Compiler Verification
 
+## Getter-derived and independently owned carrier inputs (#123)
+
+The `getter_owned_dependencies` borrowing-composition case exercises a named
+borrowed object and temporary scoped workers combining shared getter results
+with distinct mutable local/owned-field outputs. It verifies exact input
+identity, access, parent and dependency mappings with malformed MIR, and keeps
+overlapping mutable outputs and writes during a retained borrow rejected.
+`shared_getter_worker_loans_runtime` runs sequential, concurrent, reordered and
+projected-input cases in C++20/23 at O0/O1/O3, no-elide and ASan/UBSan.
+
 ## Mixed constructor parameter publication (#114)
 
 `mixed_constructor_parameter_runtime` composes two copied nested passive fields
