@@ -2186,6 +2186,10 @@ state-bearing base or an abstract complete object. The selected base status
 constructor, its success activation and exact rollback obligation are still
 verified independently. Heap ownership, upcasting and stack construction use
 the same rule, with no new runtime metadata or successful-path allocation.
+Observation-free string-view literals may likewise feed
+the exact native base initializer. They retain the same MIR type, single-use
+argument, full-expression and borrow verification as other passive inputs;
+effectful producers still require a separately verified pre-base schedule.
 
 Checked/effectful scalar base arguments now execute through a pre-native-base
 partition of the same verified constructor MIR. The immutable body plan retains
