@@ -1371,6 +1371,66 @@ cleanup; `mir_shared_failure_cleanup` bounds both.
   mutations. `shared_failure_cleanup_runtime` is a differential runtime matrix
   over 33 phases in 9 modes, including ASan/UBSan.
 
+## Shared normal-exit cleanup (0.421.1)
+
+Function and lambda bodies now share the cleanup of normal exits that return
+nothing, a scalar or a scalar error; see
+[MIR](mir.md#shared-normal-exit-cleanup). The figures compare main `0abd4bc7`
+with the candidate built on it. Both are Release builds: compiler and corpus
+figures are from the Mac mini, and the GCC figures from the M-series laptop.
+
+The early-return variant of the synthetic bodies above (`run` at `-O0`). Each
+cell is MIR blocks / normal drops / returns / failure records:
+
+| Owners | Before | After |
+| ---: | --- | --- |
+| 10 | 230 / 65 / 11 / 104 | 130 / 10 / 1 / 49 |
+| 20 | 660 / 230 / 21 / 309 | 260 / 20 / 1 / 99 |
+| 40 | 2,120 / 860 / 41 / 1,019 | 520 / 40 / 1 / 199 |
+| 80 | 7,440 / 3,320 / 81 / 3,639 | 1,040 / 80 / 1 / 399 |
+
+Normal exit cleanup is one drop per owner, and every exit ends in one return.
+
+The single 100-line `exercise` body that
+`tests/fixtures/filesystem_operations.gti` had before it was split into
+phases on 2026-10-12:
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| `exercise`, lines of C++ | 17,087 | 6,879 |
+| its labels / fallible drops | 2,065 / 734 | 801 / 79 |
+| whole program, `--emit-cpp` | 2,245,888 bytes | 1,719,481 bytes |
+| GCC 15 `-O1 -fsanitize=address` compile of that C++ | killed at 1,200 s | 389 s |
+
+Thirteen of its 16 remaining returns are exits before any owner exists, which
+have nothing to drop and return directly. The other three are ladder tails.
+GCC's sanitized cost still grows faster than the body, so long bodies remain
+slower to build sanitized than short ones. Across other programs:
+`stdlib_surface_json` emits 4,754,934 → 4,639,107 bytes, and example 147
+1,802,807 → 1,799,654.
+
+**Evidence.**
+- **Corpus differential.** Both compilers built the 1,650 programs of
+  `examples/`, `tests/fixtures/` and `tests/coverage/` with `--emit-cpp`,
+  retrying 56 threaded programs with `--execution-profile concurrent`. Exit
+  codes and diagnostics are identical for every program both trees contain;
+  the one difference is this change's new fixture, which the baseline tree
+  lacks. 1,345 programs compile. An instrumented candidate counted 1,002
+  programs and 13,808 bodies whose exits joined, across lowering rounds, and
+  neither the body nor the program fallback ever ran. Generated C++ over the
+  corpus fell from 895.7 MB to 887.6 MB. 774 programs emit less, by up to 17%
+  (`restoring_exchange_shapes`) or 527 KB (`json_parity`). 236 programs emit
+  up to 0.9% more: bodies with several exits that never join still get a
+  block per cleanup step and a carrier store and load.
+- **Runtime controls.** The 14 runtime-audit probes and the storage probe were
+  built at `-O2` by both compilers, with loops aligned to 64 bytes. Their
+  output and binary sizes are identical, and minimum times over 9 interleaved
+  samples are within noise (ratios 0.981 to 1.005).
+- **New tests.** `mir_shared_failure_cleanup` adds scaling, exit-kind and
+  private-exit structure, program-constant exits and four verifier mutations.
+  `shared_exit_cleanup_runtime` runs 25 phases in 9 modes, including
+  ASan/UBSan.
+
 The command contracts, test ownership and development/completion guidance below
 describe how to verify current work. Delivery sections retain dated, exact-head
 acceptance and candidate evidence: an earlier "remaining" failure is not a live
@@ -6170,7 +6230,8 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `format_output_matrix_runtime` | A generated matrix of 1,110 formatted results compared byte-for-byte with output recorded before the allocation-lean formatter, at O0 and O3. It covers every integer width with sign, base, alternate, zero-padding, fill and alignment specs; `char` and `c` presentations; strings, views and `bool` with precision; float and double presentations; positional and escaped fields; long output; `try_format_to`; and rejected specs. |
 | `binary64_pipeline` | exact binary64 parsing/evaluation, promotion, conversions, diagnostics, constexpr, generic numeric use, HIR/MIR, formatting, and backend bits |
 | `binary64_runtime` | example 47 at O0/O3 under C++20/C++23 plus emitted strict-IEEE policy evidence |
-| `mir_shared_failure_cleanup` | shared failure-cleanup structure and contract: failure-cleanup drops stay at one per live owner and blocks grow linearly for 10/20/40/80 owners with failure-capable construction, calls and early returns. Mutations reject a continuation edge naming a producer, a `Goto` into a continuation, a secondary that continues, a continuation forged as a producer, duplicated and missing shared drops, a loan ended before its shared endpoint, continuations that form a cycle, and a secondary under the wrong primary. A lone failure edge stays unshared, a moved-shell drop never enters a shared suffix, and both the parity fixture and `stdlib_surface_json` share cleanup |
+| `mir_shared_failure_cleanup` | shared failure-cleanup structure and contract: failure-cleanup drops stay at one per live owner and blocks grow linearly for 10/20/40/80 owners with failure-capable construction, calls and early returns. Mutations reject a continuation edge naming a producer, a `Goto` into a continuation, a secondary that continues, a continuation forged as a producer, duplicated and missing shared drops, a loan ended before its shared endpoint, continuations that form a cycle, and a secondary under the wrong primary. A lone failure edge stays unshared, a moved-shell drop never enters a shared suffix, and both the parity fixture and `stdlib_surface_json` share cleanup. Shared normal exits: an early return after each of 10/20/40/80 owners keeps one normal drop per owner and one `Return` (unshared, N(N+3)/2 drops); the runtime fixture's void, scalar, `?` and `unexpected` exits share separate success and error ladders, and so do program-constant returns; owning and borrowed results and single-exit bodies stay private. Mutations reject an exit that skips a rung, an exit entering a rung it does not match, a missing carrier store and a missing shared loan end, and no body or program falls back |
+| `shared_exit_cleanup_runtime` | shared normal-exit cleanup keeps each exit's observable behavior. 25 phases leave `run`, `drain` and `probe` through plain, `?`, `unexpected` and void exits across nested scopes while printing user-defined resources are live. In 11 of them a destructor fails during the shared cleanup: the remaining resources are released and the program reports an ordinary failure at the destructor. The expected traces follow from the source alone. Each case runs at C++20/C++23 O0/O1/O2/O3 plus ASan/UBSan |
 | `shared_failure_cleanup_runtime` | differential parity of shared cleanup, with exact exit status, complete acquire/release traces and failure reports recorded from the compiler before sharing. User-defined resources fail at 26 points with different live sets: around nested scopes and a borrow, in loop iterations, in a callee holding a pending return, after an ownership transfer, in a partially constructed holder, with conditional initialization and early returns, and with a destructor failing during cleanup (`GTI-R0014` with both records). A managed worker fails at 6 points before its join hands the failure on. Each case runs at C++20/C++23 O0/O1/O2/O3 plus ASan/UBSan, and the test asserts that the emitted MIR shares cleanup |
 | `failure_metadata` | deterministic artifact sites; independently derived checked-scalar operation/domain outcome sets; bounded scalar/cleanup-owning-call `Invoke`; exact local-detector and static direct-call argument edges after prepared owners; fixed-record failure parameters; success-edge result initialization; reverse cleanup; and record-preserving propagation |
 | `many_fallible_scope_guards_runtime` / `testBoundedSecondaryFailureRecordStorage` | An unrelated ordinary 48-guard function runs complete reverse cleanup, first-failure propagation, an intervening successful destructor and immediate secondary-failure termination with exact messages/sites at C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan. macOS native compilation rejects uninitialized/sometimes-uninitialized carrier warnings. Detached body emission proves one invocation-local secondary record and cleanup scope, exact primary-entry activation, one in-place reset per active-primary fallible Drop, producer-only Drop status definitions, no per-terminal emergency local, and unchanged exact terminal-edge count. |

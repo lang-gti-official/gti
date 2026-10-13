@@ -3140,6 +3140,11 @@ private:
     // reaches are the library's own `gti check` concern.
     frontendOptions.stopAfter = lang::FrontendPhase::Hir;
     frontendOptions.lowerEntryUnitOnly = true;
+    // The LSP never reads HIR bodies: library-only instances (trusted
+    // declarations with only trusted arguments) are analysed for their
+    // diagnostics but not lowered, so the library code only they reach is
+    // not discovered; see HirLoweringScope::omitLibraryOnlyBodies.
+    frontendOptions.lowerLibraryOnlyInstanceBodies = false;
     // Likewise, standard-library bodies nothing in the open file reaches are
     // not analysed; their diagnostics are that library's `gti check` concern.
     frontendOptions.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
@@ -4408,6 +4413,8 @@ private:
          static_cast<std::int64_t>(metrics.semanticDemandFallbacks)},
         {"semanticLateDemandBodies",
          static_cast<std::int64_t>(metrics.semanticLateDemandBodies)},
+        {"hirOmittedInstanceBodies",
+         static_cast<std::int64_t>(metrics.hirOmittedInstanceBodies)},
         {"semanticLateDemandMicroseconds",
          static_cast<std::int64_t>(metrics.semanticLateDemandMicroseconds)},
         {"hirMicroseconds", static_cast<std::int64_t>(metrics.hirMicroseconds)},
