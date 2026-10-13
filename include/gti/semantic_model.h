@@ -1044,13 +1044,10 @@ struct ClassLifecycleInfo {
   std::optional<ConstructorInfo> declaredMoveConstructor;
   std::optional<DestructorInfo> declaredDestructor;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
-  // Exact source base selected by the bounded generated-constructor schedule.
-  // Zero means this base-only family is not selected; field-default schedules
-  // are selected independently below.
-  ConstructorId generatedDefaultBaseConstructor = 0;
-  // Declaration defaults execute in one selected constructor body, so failure
-  // can roll back earlier completed fields before leaving construction.
-  bool generatedDefaultFieldInitializers = false;
+  // A state-bearing base and declaration defaults execute in one selected
+  // constructor body. This also applies to fieldless derived owners: their
+  // base may need a GTI construction schedule rather than native defaulting.
+  bool generatedDefaultInitializers = false;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;

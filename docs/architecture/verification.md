@@ -1,5 +1,16 @@
 # Compiler Verification
 
+## Defaulted owning base construction
+
+`generated_base_constructor_runtime` covers defaulted multilevel owning bases,
+nonmoving nested owners, generic base/derived instances, stack and unique-owner
+construction, and exact cleanup after base-field initialization failure. The
+eight-mode native matrix includes C++20/C++23, O0/O1/O3, disabled elision and
+ASan/UBSan. `testDefaultedOwningBaseSchedule` verifies the concrete HIR base
+schedule and rejects erased targets, wrong generated status, self-base/target
+identities and omitted initialization edges. Existing base-constructor HIR/MIR
+mutations remain active after unifying base-only and field-default schedules.
+
 ## Transient constexpr allocation and destruction
 
 `compiler_constexpr` includes direct canonical-MIR and required semantic-query

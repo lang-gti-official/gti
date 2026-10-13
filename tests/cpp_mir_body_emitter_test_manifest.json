@@ -466,6 +466,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testDefaultedOwningBaseSchedule",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testPassiveOwnedParameterConstructorFields",
       "suite": "lifecycle"
     },
