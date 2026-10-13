@@ -20,6 +20,15 @@ for what minor and patch releases mean.
 - Fix owning field replacement through non-failing reference-returning getters,
   including nested getters, without requiring a spurious failure edge (#88).
 
+## 0.423.2 — Owning base and field constructor composition
+
+- Fix backend internal compiler errors for abstract owning bases with declared
+  destructors, literal string-view base arguments, and derived constructors
+  that move an owning parameter into a field after a fallible base initializer.
+  Preserve parameter cleanup on base failure and exactly-once base/field
+  rollback after publication. Covers engine layer ownership and UI configuration
+  construction in issues #76 and #81.
+
 ## 0.423.1 — Interface owner constructor cleanup
 
 - Fix a backend internal compiler error when a concrete interface implementer
