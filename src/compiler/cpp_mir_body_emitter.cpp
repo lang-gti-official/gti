@@ -21566,8 +21566,7 @@ transformedFailureCallee(const MirProgram &program,
       // checked referent. Require the same referent type and carrier proof
       // for every occurrence, not a globally unique occurrence-local ID.
       if (!exactMutableReferenceDestination(body, candidate) ||
-          (referenceRoot != nullptr &&
-           referenceRoot->type != candidate.type))
+          (referenceRoot != nullptr && referenceRoot->type != candidate.type))
         return false;
       referenceRoot = &candidate;
     }
