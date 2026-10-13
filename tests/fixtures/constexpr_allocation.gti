@@ -1,0 +1,122 @@
+#include <std/memory>
+
+struct checked_cleanup {
+  mut int value;
+  constexpr checked_cleanup(int value) : value(value) {}
+  constexpr operator bool() { return this.value == 7; }
+  ~checked_cleanup() {
+    if (this.value != 7) {
+      int invalid = 1 / (this.value - this.value);
+    }
+    this.value = 0;
+  }
+};
+
+constexpr int local_cleanup() {
+  checked_cleanup value = checked_cleanup(7);
+  if (!value) { return 0; }
+  return value.value + 1;
+}
+
+static_assert(local_cleanup() == 8);
+
+constexpr int allocate_scalar() {
+  auto owner = std::make_unique<int>(7);
+  return *owner + 1;
+}
+
+constexpr int forward_allocation<Args...>(Args... values) {
+  auto owner = std::make_unique<int>(values...);
+  return *owner;
+}
+
+static_assert(forward_allocation() == 0);
+static_assert(forward_allocation(7) == 7);
+
+static_assert(allocate_scalar() == 8);
+
+constexpr int allocate_class() {
+  auto owner = std::make_unique<checked_cleanup>(7);
+  return owner->value;
+}
+
+constexpr int change_owner() {
+  mut auto left = std::make_unique<int>(3);
+  mut auto right = std::make_unique<int>(5);
+  *left += 1;
+  left.swap(right);
+  int result = *left * 10 + *right;
+  right.reset();
+  if (right != nullptr) { return 0; }
+  left = nullptr;
+  return !left ? result : 0;
+}
+
+constexpr std::unique_ptr<int> return_owner(int value) {
+  auto owner = std::make_unique<int>(value);
+  return owner;
+}
+
+struct owned_record {
+  std::unique_ptr<checked_cleanup> value;
+  int id;
+  constexpr owned_record(std::unique_ptr<checked_cleanup> value, int id)
+      : value(std::move(value)), id(id) {}
+};
+
+constexpr int nested_owner() {
+  auto owner = std::make_unique<owned_record>(
+      std::make_unique<checked_cleanup>(7), 4);
+  return owner->value->value + owner->id;
+}
+
+enum class allocation_error { invalid };
+constexpr expected<std::unique_ptr<int>, allocation_error> maybe_owner(bool yes) {
+  if (!yes) { return unexpected(allocation_error::invalid); }
+  return return_owner(9);
+}
+
+constexpr expected<int, allocation_error> compose_owner(bool yes) {
+  auto value = ?maybe_owner(yes);
+  return *value;
+}
+
+constexpr int composed_owner() { return compose_owner(true).value(); }
+
+constexpr int reuse_heap() {
+  mut auto first = std::make_unique<int>(1);
+  first.reset();
+  auto second = std::make_unique<int>(2);
+  return *second;
+}
+
+constexpr int owner_array() {
+  std::unique_ptr<checked_cleanup> values[2] = {
+      std::make_unique<checked_cleanup>(7), std::make_unique<checked_cleanup>(7)};
+  return values[0]->value + values[1]->value;
+}
+
+constexpr int early_cleanup(bool early) {
+  auto value = std::make_unique<checked_cleanup>(7);
+  if (early) { return 2; }
+  return value->value;
+}
+
+static_assert(allocate_class() == 7);
+static_assert(change_owner() == 54);
+static_assert(nested_owner() == 11);
+static_assert(compose_owner(true).value() == 9);
+static_assert(compose_owner(false).error() == allocation_error::invalid);
+static_assert(reuse_heap() == 2);
+static_assert(owner_array() == 14);
+static_assert(early_cleanup(true) == 2 && early_cleanup(false) == 7);
+
+int main() {
+  if (local_cleanup() != 8 || allocate_scalar() != 8) { return 1; }
+  if (allocate_class() != 7 || change_owner() != 54 || nested_owner() != 11) { return 2; }
+  auto success = compose_owner(true);
+  auto error = compose_owner(false);
+  if (success.value() != 9 || error.error() != allocation_error::invalid) { return 3; }
+  if (reuse_heap() != 2 || owner_array() != 14) { return 5; }
+  return early_cleanup(true) == 2 && early_cleanup(false) == 7 ? 0 : 4;
+}

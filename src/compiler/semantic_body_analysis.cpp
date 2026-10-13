@@ -10478,20 +10478,35 @@ auto SemanticVisitor::Impl::constexprValue(
 
 auto SemanticVisitor::Impl::isSupportedConstexprType(
     const SemanticType &type, bool allowDependent,
-    std::vector<SemanticType> *visiting) const -> bool {
+    std::vector<SemanticType> *visiting, bool transient) const -> bool {
   if (allowDependent && type.kind == SemanticType::TypeParameter) {
     return true;
   }
+  // An execution-local owner is not a persistable constant. Signature checks
+  // admit it; the verified executor must destroy every allocation before
+  // publishing the outer request's passive result.
+  if (transient && type.kind == SemanticType::UniqueOwner)
+    return type.arguments.size() == 1 &&
+           isSupportedConstexprType(type.arguments[0], allowDependent, visiting,
+                                    true);
+  if (transient && type.kind == SemanticType::TypePack)
+    return (!type.concretePack && allowDependent) ||
+           (type.concretePack &&
+            std::all_of(type.arguments.begin(), type.arguments.end(),
+                        [&](const auto &element) {
+                          return isSupportedConstexprType(
+                              element, allowDependent, visiting, true);
+                        }));
   if (type.kind == SemanticType::Expected && type.arguments.size() == 2) {
     return (type.arguments[0] == SemanticType::Void ||
             isSupportedConstexprType(type.arguments[0], allowDependent,
-                                     visiting)) &&
-           isSupportedConstexprType(type.arguments[1], allowDependent,
-                                    visiting);
+                                     visiting, transient)) &&
+           isSupportedConstexprType(type.arguments[1], allowDependent, visiting,
+                                    transient);
   }
   if (type.kind == SemanticType::Unexpected && type.arguments.size() == 1) {
-    return isSupportedConstexprType(type.arguments[0], allowDependent,
-                                    visiting);
+    return isSupportedConstexprType(type.arguments[0], allowDependent, visiting,
+                                    transient);
   }
   if (constantIntegerDomain(type).has_value() ||
       semanticFloatFormat(type).has_value() || type == SemanticType::Bool ||
@@ -10508,7 +10523,7 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
       return false;
     }
     return isSupportedConstexprType(type.arguments.front(), allowDependent,
-                                    visiting);
+                                    visiting, transient);
   }
   if (type.kind != SemanticType::Class) {
     return false;
@@ -10516,7 +10531,8 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
   const ClassInfo *owner = classInfo(type);
   if (owner == nullptr || owner->kind == ClassKind::Interface ||
       owner->kind == ClassKind::Union || !owner->bases.empty() ||
-      owner->polymorphic || owner->storedReference || owner->destructor) {
+      owner->polymorphic || owner->storedReference ||
+      (!transient && owner->destructor)) {
     return false;
   }
   std::vector<SemanticType> localVisiting;
@@ -10537,7 +10553,7 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
     if (member == owner->members.end() ||
         !isSupportedConstexprType(
             substituteType(member->second.symbol.type, substitution),
-            allowDependent, visiting)) {
+            allowDependent, visiting, transient)) {
       visiting->pop_back();
       return false;
     }
@@ -10576,15 +10592,8 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
     reject(*function.constexprKeyword(),
            "The main entry point cannot be constexpr.");
   }
-  if (std::any_of(function.genericParameters().begin(),
-                  function.genericParameters().end(),
-                  [](const GenericParameter &parameter) {
-                    return parameter.pack.has_value();
-                  })) {
-    reject(function.name(),
-           "Constexpr generic parameter packs are outside the bounded "
-           "constexpr subset.");
-  }
+  // Concrete pack expansion is owned by ordinary semantic/HIR instantiation.
+  // Constant execution sees only the resulting exact parameter sequence.
   if (methodDeclaration && !staticMethod &&
       function.receiverMutability() == ReceiverMutability::Consuming) {
     reject(function.operatorName() ? function.operatorName()->keyword
@@ -10598,25 +10607,19 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
   // Syntax, receiver, linkage and ordinary ownership checks are never deferred.
   if (methodDeclaration && !staticMethod && currentClass &&
       !instanceAnalysisActive &&
-      !isSupportedConstexprType(openClassType(*currentClass), true)) {
+      !isSupportedConstexprType(openClassType(*currentClass), true, nullptr,
+                                true)) {
     reject(function.operatorName() ? function.operatorName()->keyword
                                    : function.name(),
            "A constexpr instance method requires a structural aggregate "
            "receiver with no base, polymorphism, stored reference, union "
-           "state, or active destructor.");
+           "state, or unsupported field.");
   }
   if (function.runtimeBinding() || intrinsicDeclaration ||
       function.hasCLinkage()) {
     reject(function.name(),
            "Runtime, intrinsic, and extern C functions cannot be declared "
            "constexpr.");
-  }
-  if (function.operatorName() &&
-      (function.operatorName()->kind == OverloadedOperator::Arrow ||
-       function.operatorName()->kind == OverloadedOperator::ContextualBool)) {
-    reject(
-        function.operatorName()->symbol,
-        "Constexpr arrow and contextual-bool operators are not yet supported.");
   }
   if (function.isVirtual() || function.isOverride() || function.isPure()) {
     const Token &location =
@@ -10637,7 +10640,8 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
        returnType.kind != SemanticType::Reference) ||
       (!instanceAnalysisActive && returnType != SemanticType::Unknown &&
        returnType != SemanticType::Void &&
-       !isSupportedConstexprType(observedType(returnType), true))) {
+       !isSupportedConstexprType(observedType(returnType), true, nullptr,
+                                 true))) {
     reject(function.returnType().name.last(),
            "A constexpr function must return void or a supported value: a "
            "fixed-width integer, float, double, bool, char, string_view, "
@@ -10648,11 +10652,11 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
   }
   for (const Parameter &parameter : function.parameters()) {
     const SemanticType parameterType = typeOf(parameter);
-    if (parameter.pack ||
-        (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
-         !isSupportedConstexprType(observedType(parameterType), true))) {
+    if (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
+        !isSupportedConstexprType(observedType(parameterType), true, nullptr,
+                                  true)) {
       reject(parameter.sourceAnchor(),
-             "Constexpr function parameters must be non-pack supported "
+             "Constexpr function parameters must be supported "
              "values or checked references to supported values.");
     }
   }
@@ -10676,18 +10680,12 @@ auto SemanticVisitor::Impl::validateConstexprConstructor(
            "A constexpr constructor must be an ordinary constructor with "
            "a source body.");
   }
-  if (!instanceAnalysisActive && !isSupportedConstexprType(ownerType, true)) {
+  if (!instanceAnalysisActive &&
+      !isSupportedConstexprType(ownerType, true, nullptr, true)) {
     reject(*constructor.constexprKeyword(),
            "A constexpr constructor requires a structural class or struct "
            "with supported fields and no base, polymorphism, union state, "
-           "stored reference, or active destructor.");
-  }
-  for (const GenericParameter &parameter : constructor.genericParameters()) {
-    if (parameter.pack) {
-      reject(*parameter.pack,
-             "Constexpr constructor generic packs are outside the bounded "
-             "constexpr subset.");
-    }
+           "stored reference, or unsupported field.");
   }
   for (const Parameter &parameter : constructor.parameters()) {
     const SemanticType parameterType = typeOf(parameter);
@@ -10696,12 +10694,11 @@ auto SemanticVisitor::Impl::validateConstexprConstructor(
                 parameterType.arguments.size() == 1
             ? parameterType.arguments[0]
             : parameterType;
-    if (parameter.pack ||
-        (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
-         !isSupportedConstexprType(observed, true))) {
+    if (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
+        !isSupportedConstexprType(observed, true, nullptr, true)) {
       reject(parameter.name.lexeme.empty() ? parameter.type.name.last()
                                            : parameter.name,
-             "Constexpr constructor parameters must be non-pack supported "
+             "Constexpr constructor parameters must be supported "
              "values or checked references to supported values.");
     }
   }
@@ -11959,7 +11956,16 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
   std::size_t valueArgument = 0;
   for (const GenericParameterInfo &parameter :
        functionInfo->genericParameters) {
-    if (parameter.value) {
+    if (parameter.pack) {
+      std::vector<SemanticType> elements;
+      while (typeArgument < resolved->typeArguments.size())
+        SemanticType::appendExpandedArgument(
+            elements,
+            constexprType(resolved->typeArguments[typeArgument++], context));
+      substitution.types.insert_or_assign(
+          parameter.id,
+          SemanticType::concreteTypePack(parameter.id, std::move(elements)));
+    } else if (parameter.value) {
       if (valueArgument >= resolved->valueArguments.size()) {
         return constexprFailure(
             callSite, ConstantEvaluationFailure::UnsupportedExpression,
@@ -12342,7 +12348,11 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
         "The constexpr call depth exceeded the compiler limit of " +
             std::to_string(constexprCallDepthLimit) + ".");
   }
-  if (!function.body() || function.parameters().size() != arguments.size()) {
+  const bool hasPack = std::any_of(
+      function.parameters().begin(), function.parameters().end(),
+      [](const auto &parameter) { return parameter.pack.has_value(); });
+  if (!function.body() ||
+      (!hasPack && function.parameters().size() != arguments.size())) {
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
         "The constexpr function definition is unavailable or has an "
@@ -12373,10 +12383,11 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
     return std::move(*staged);
   }
 
-  if (function.operatorName()) {
+  if (function.operatorName() || hasPack) {
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
-        "Compile-time operator calls require an available verified MIR body.");
+        "Compile-time operator and parameter-pack calls require an available "
+        "verified MIR body.");
   }
 
   if (returnType.kind == SemanticType::Reference ||

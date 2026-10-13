@@ -2689,6 +2689,145 @@ int main() { return result - 2; }
          "callee and silently lose its writes");
 }
 
+void testConstexprAllocation() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/constexpr_allocation.gti";
+  std::ifstream input(fixture);
+  std::string source, runtimeSource, line;
+  while (std::getline(input, line)) {
+    source += line + '\n';
+    if (!line.starts_with("static_assert("))
+      runtimeSource += line + '\n';
+  }
+  const auto required = lang::Frontend().analyze(
+      fixture, source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(required.canGenerateCode(),
+         "required allocation constants execute staged MIR");
+  const auto formatted = lang::Formatter().format(source);
+  expect(lang::Formatter().format(formatted) == formatted &&
+             lang::Frontend()
+                 .analyze(fixture, formatted, {standardLibraryPrelude()}, {},
+                          {standardLibraryRoot()})
+                 .canGenerateCode(),
+         "formatter preserves constexpr ownership and conversion operators");
+  const auto runtime = lang::Frontend().analyze(fixture, runtimeSource,
+                                                {standardLibraryPrelude()}, {},
+                                                {standardLibraryRoot()});
+  expect(runtime.canGenerateCode(),
+         "transient allocation has canonical runtime MIR");
+  if (!runtime.canGenerateCode()) {
+    for (const auto &diagnostic : runtime.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  for (const auto &function : runtime.hir.functionInstances()) {
+    if (!function.source || function.owner || !function.constexprFunction ||
+        !function.parameterTypes.empty() ||
+        function.returnType != lang::SemanticType::Int32)
+      continue;
+    const auto result =
+        lang::evaluateMirConstantFunction(runtime.mir, function.id, {});
+    expect(bool(result),
+           "transient allocation and cleanup execute canonical MIR: " +
+               function.source->name().lexeme);
+    if (!result) {
+      std::cerr << "allocation failure " << int(result.failure) << " body "
+                << int(result.body.kind) << ':' << result.body.owner
+                << " instruction " << result.instruction << ": "
+                << result.detail << '\n';
+    }
+    if (function.source->name().lexeme == "allocate_scalar") {
+      for (const auto limits : {lang::MirConstantLimits{.steps = 4},
+                                lang::MirConstantLimits{.allocations = 0},
+                                lang::MirConstantLimits{.heapUnits = 0}}) {
+        const auto limited = lang::evaluateMirConstantFunction(
+            runtime.mir, function.id, {}, limits);
+        expect(!limited && limited.failure ==
+                               lang::ConstantEvaluationFailure::ResourceLimit,
+               "instructions, symbolic allocations and heap storage have "
+               "deterministic bounds");
+      }
+    }
+    if (function.source->name().lexeme == "reuse_heap") {
+      expect(bool(lang::evaluateMirConstantFunction(runtime.mir, function.id,
+                                                    {}, {.heapUnits = 1})),
+             "reset returns live heap capacity without recycling allocation "
+             "identities");
+      const auto limited = lang::evaluateMirConstantFunction(
+          runtime.mir, function.id, {}, {.allocations = 1});
+      expect(!limited && limited.failure ==
+                             lang::ConstantEvaluationFailure::ResourceLimit,
+             "total allocation identities remain independently bounded after "
+             "reset");
+    }
+  }
+  for (const auto &function : runtime.hir.functionInstances()) {
+    if (!function.source || function.source->name().lexeme != "return_owner")
+      continue;
+    const std::array<lang::ConstantValue, 1> args{lang::makeConstantInteger(
+        {.magnitude = 7}, {.width = 32, .signedValue = true})};
+    const auto escaped =
+        lang::evaluateMirConstantFunction(runtime.mir, function.id, args);
+    expect(!escaped && escaped.failure ==
+                           lang::ConstantEvaluationFailure::UnsupportedType,
+           "live owners returned by internal helpers cannot escape the "
+           "constant request");
+    auto forged = lang::makeConstantAggregate(
+        {.kind = lang::ConstantAggregateKind::TransientOwner,
+         .identity = 1,
+         .exactType =
+             std::make_shared<const lang::SemanticType>(function.returnType)});
+    const std::array<lang::ConstantValue, 1> forgedArgs{forged};
+    const auto rejected =
+        lang::evaluateMirConstantFunction(runtime.mir, function.id, forgedArgs);
+    expect(!rejected && rejected.failure ==
+                            lang::ConstantEvaluationFailure::InvalidOperands,
+           "a constant request cannot import a forged or prior-request "
+           "allocation identity");
+    expect(!lang::convertConstantToType(forged, function.returnType),
+           "general constant conversion cannot publish transient ownership");
+    const std::array<lang::ConstantValue, 1> nested{lang::makeConstantAggregate(
+        {.kind = lang::ConstantAggregateKind::Object,
+         .fields = {{1, forged}}})};
+    expect(!lang::evaluateMirConstantFunction(runtime.mir, function.id, nested),
+           "nesting an imported owner in an aggregate cannot bypass isolation");
+  }
+
+  for (const auto &extra :
+       {"constexpr auto escaped = std::make_unique<int>(7);",
+        "constexpr int null_owner() { std::unique_ptr<int> p = nullptr; return "
+        "*p; }\nstatic_assert(null_owner() == 0);",
+        "constexpr int failed_cleanup() { checked_cleanup value = "
+        "checked_cleanup(6); return 0; }\nstatic_assert(failed_cleanup() == "
+        "0);"}) {
+    const auto invalid = lang::Frontend().analyze(
+        "invalid-constexpr-allocation.gti", runtimeSource + '\n' + extra,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!invalid.canGenerateCode(),
+           "invalid allocation/lifetime cannot become a constant");
+    expect(std::none_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto &d) { return d.code == "GTI-B0001"; }),
+           "constant ownership failures are semantic diagnostics, not ICEs");
+  }
+  const std::string destructionFailure = runtimeSource + R"(
+constexpr int fail_cleanup() { auto owner = std::make_unique<checked_cleanup>(6); return 0; }
+static_assert(fail_cleanup() == 0);
+)";
+  const auto failed = lang::Frontend().analyze(
+      "constexpr-destructor-origin.gti", destructionFailure,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(std::any_of(failed.diagnostics.begin(), failed.diagnostics.end(),
+                     [&](const auto &d) {
+                       return d.code == "GTI-S2057" &&
+                              d.message.find("zero") != std::string::npos &&
+                              d.primary.start ==
+                                  destructionFailure.find("/ (this.value") &&
+                              !d.related.empty();
+                     }),
+         "destructor failure retains executing source and the requiring "
+         "assertion");
+}
+
 void testConstexprResults() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constexpr_results.gti";
@@ -4109,8 +4248,6 @@ constexpr RuntimePoint runtime_point = RuntimePoint(1);
           hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
           hasDiagnostic(invalid.diagnostics,
                         "does not name a constexpr function") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Constexpr generic parameter packs") &&
           hasDiagnostic(invalid.diagnostics, "cannot consume its receiver") &&
           hasDiagnostic(invalid.diagnostics, "must be static") &&
           hasDiagnostic(invalid.diagnostics,
@@ -5392,6 +5529,7 @@ constexpr NamedTest kTests[] = {
     {"testConstexprMutation", testConstexprMutation},
     {"testConstexprEnumBuilders", testConstexprEnumBuilders},
     {"testConstexprResults", testConstexprResults},
+    {"testConstexprAllocation", testConstexprAllocation},
     {"testStaticAssertions", testStaticAssertions},
     {"testStaticStorageAndMembers", testStaticStorageAndMembers},
     {"testConcurrentGlobalPolicy", testConcurrentGlobalPolicy},
