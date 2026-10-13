@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.424.6 — Prepared arguments from checked call results
+
+- Fix an internal compiler error when copying a checked class payload into a
+  constructor argument, including constructing a returned Expected payload.
+  The checked producer retains its original failure edge and cleanup; preparing
+  the resulting copied or borrowed argument no longer duplicates that failure
+  metadata onto a second operation (issue #104).
+
 ## 0.424.2 — Owned extraction and conditional method arguments
 
 - Fix an internal compiler error when an owning Expected payload is passed to

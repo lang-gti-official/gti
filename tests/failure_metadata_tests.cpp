@@ -338,6 +338,87 @@ int main() {
          "unique cleanup spine");
 }
 
+void testCheckedCallPlacePreparation() {
+  const auto frontend =
+      lang::Frontend().analyze("/tmp/gti-checked-call-place/main.gti", R"(
+class Item {
+  int value = 1;
+public:
+  Item() {}
+  Item(Item&) = default;
+  Item(Item&&) = default;
+};
+class Box {
+  Item item{};
+public:
+  Box(Item input) : item(input) {}
+};
+expected<Item, int> parse(bool valid) {
+  if (!valid) { return unexpected(7); }
+  return Item();
+}
+expected<Box, int> wrap(bool valid) {
+  auto parsed = parse(valid);
+  if (!parsed) { return unexpected(parsed.error()); }
+  return Box(parsed.value());
+}
+int observe(Item& item) { return 0; }
+int borrowed(bool valid) {
+  auto parsed = parse(valid);
+  return observe(parsed.value());
+}
+int main() { auto result = wrap(true); return borrowed(true); }
+)");
+  expect(frontend.canGenerateCode(),
+         "checked call places must reach verified MIR before argument staging");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+  for (const auto name : {"wrap", "borrowed"}) {
+    const auto id = functionInstance(frontend, name);
+    const auto *body = functionBody(frontend, name);
+    expect(id.has_value() && body != nullptr,
+           "checked place fixture must retain both copying and borrowing");
+    if (!id || body == nullptr)
+      continue;
+    std::size_t checked = 0;
+    std::size_t prepared = 0;
+    for (const auto &block : body->blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.intrinsic == lang::IntrinsicKind::ExpectedValue) {
+          ++checked;
+          expect(!instruction.localFailureSites.empty() &&
+                     block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                     block.terminator.invokeInstruction == instruction.id,
+                 "checked place producer must retain its own detector/Invoke");
+          auto forged = frontend.mir;
+          auto *changed = functionBody(forged, *id);
+          auto &terminator = changed->blocks[block.id - 1].terminator;
+          terminator = {.kind = lang::MirTerminatorKind::Goto,
+                        .target = terminator.target};
+          lang::rebuildMirReachability(*changed);
+          (void)lang::rebuildMirValueUses(*changed);
+          expect(!lang::verifyMirProgram(forged).valid(),
+                 "removing the original checked place Invoke must fail MIR");
+        }
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            (instruction.callInputKind == lang::HirCallInputKind::CopyValue ||
+             instruction.callInputKind == lang::HirCallInputKind::ReadBorrow)) {
+          ++prepared;
+          expect(instruction.definedFailure.empty() &&
+                     instruction.localFailureSites.empty(),
+                 "preparing an evaluated place must not repeat its effects");
+        }
+      }
+    }
+    expect(
+        checked == 1 && prepared == 1,
+        "each fixture must check once and prepare one copied/borrowed place");
+  }
+}
+
 void testInvokeEdgesAndFailureCleanup() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("/tmp/gti-failure-control/main.gti", R"(
@@ -3730,6 +3811,8 @@ int main(int argc, char **argv) {
       testCollectionCleanupContracts();
     else if (name == "testImplicitUniqueAllocationContracts")
       testImplicitUniqueAllocationContracts();
+    else if (name == "testCheckedCallPlacePreparation")
+      testCheckedCallPlacePreparation();
     else {
       std::cerr << "unknown test: " << name << '\n';
       return 2;
@@ -3744,6 +3827,7 @@ int main(int argc, char **argv) {
   testContainerContractChecks();
   testCleanupSpinePredecessorIndex();
   testInvokeEdgesAndFailureCleanup();
+  testCheckedCallPlacePreparation();
   testEmptyDescriptorContract();
   testHostedProgramEntryMetadata();
   testExternalSourceRouteIdentity();

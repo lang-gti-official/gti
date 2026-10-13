@@ -904,6 +904,14 @@ stage metadata and owning, borrowed and retained-receiver stages are unchanged.
 Source spans and ownership events remain attached; preparation does not execute
 the earlier expression a second time or relax its lexical unsafe obligations.
 
+Copying or borrowing a place returned by an already-evaluated call likewise
+does not repeat that call's local failure effects on `CallInput`. Place
+dependency lowering executes the producer and its checked `Invoke` before the
+prepared input is published. The producer retains its detector, source location
+and failure cleanup; the later copy/borrow retains only its own staging and
+ownership events. Unexecuted place selection checks remain on their owning
+operation, including the existing checked array-address prefix schedule.
+
 MIR independently checks the selected target, typed inputs, dominance, failure
 sites and cleanup transfers. The object-lifetime operation's effects compose
 with the selected constructor's effects, and the original failure record drives
