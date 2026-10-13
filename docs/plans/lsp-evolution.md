@@ -218,12 +218,12 @@ lexical fallbacks are acceptable only when clearly less authoritative.
 ## Per-Keystroke Analysis Cost
 
 Status: measured 2026-10-13; editor-scoped HIR, the background raw-pointer
-audit, demand-driven trusted-body analysis (single analysis per edit) and the
-first slice of step 3, cross-snapshot reuse of library-only concrete instance
-analyses, and the omission of library-only instance bodies from editor HIR
-are implemented. Registration and primary body reuse remain proposed; the
-eight-include file still exceeds the exit measure (see "Measured After
-Library-Only Body Omission"). This is the
+audit, demand-driven trusted-body analysis (single analysis per edit),
+cross-snapshot reuse of library-only concrete instance analyses, the omission
+of library-only instance bodies from editor HIR and the trusted prefix
+preamble (registration and library bodies analysed once per include graph)
+are implemented. The eight-include file meets the exit measure (see
+"Measured After The Preamble"). This is the
 compiler-side half of editor responsiveness. The protocol-side half (edit-time
 publication, adaptive debounce, refresh policy) is implemented and described
 in the architecture document.
@@ -329,6 +329,17 @@ layer.
    across snapshots. This is the largest change because `SemanticModel`
    identities are snapshot-local today.
 
+   *Trusted prefix preamble — implemented in 0.423.0.* Instead of per-unit
+   caching with relocatable identities, the prefix of compiler-trusted units
+   is analysed once as a program of its own and every later snapshot resumes
+   from a copy of that analyzer state, so prefix identities are the same in
+   every snapshot by construction. Library bodies are analysed completely in
+   the preamble but held back and reported only when reached, which keeps
+   the bounded-analysis contract (see "Trusted Prefix Preamble" in
+   [semantic-analysis.md](../architecture/semantic-analysis.md)). Per-unit
+   caching would only matter for include graphs whose trusted units follow
+   an application unit, which the prefix does not cover.
+
    *Concrete instance reuse — implemented in 0.420.0.* After late demand,
    HIR's concrete instance reanalysis was the largest per-edit phase, and
    most of it re-derived library instances whose arguments name only library
@@ -419,8 +430,27 @@ and constant definitions plus application bodies (about 85 ms), demanded
 library bodies (about 52 ms) and finalization (8 ms) remain, and are now two
 thirds of the edit. With instance reuse, the omitted bodies also leave fewer instances to reuse
 (132 reused instance analyses per edit instead of 590, a 1.4 MB cache
-instead of 9 MB). Reaching the exit measure needs the rest of
-step 3.
+instead of 9 MB).
+
+### Measured After The Preamble
+
+Same message-flow probe, Release `gti_lsp`, arm64 macOS, 2026-10-13; steady
+edits, milliseconds per edit, with instance reuse and body omission:
+
+| Build | 089 total | load | semantic | HIR |
+| --- | ---: | ---: | ---: | ---: |
+| instance reuse and omission (0.421.0) | 250 | 15 | 200 | 30 |
+| trusted prefix preamble (0.423.0) | 81 | 8 | 31 | 39 |
+
+The preamble of 089's eight includes is built once in about 360 ms (its
+1,254 held-back bodies included). Each later edit adopts it in about 17 ms
+(the copy of the analyzer state), registers the file's own declarations in
+under 2 ms, analyses its bodies in about 11 ms, reaches 180 held-back bodies
+and finalizes in under 1 ms. HIR rose from 30 to 39 ms because 48 instance
+analyses that read syntax the preamble synthesized (generated constructors,
+`constexpr for` expansions) are not stored for reuse yet; that syntax is
+stable across snapshots now, so the journal rule can be relaxed. The exit
+measure is met.
 
 Exit measure: the eight-include file under 100 ms per edit with the probe,
 semantic diagnostics for the open file identical to `gti check` on its
