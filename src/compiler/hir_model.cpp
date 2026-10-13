@@ -618,6 +618,55 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   const auto verifyGeneratedConstructionValues = [&](const HirBody &body) {
     verifyDirectInitializations(body);
     for (const auto &value : body.values) {
+      if (!value.defaultArguments.empty()) {
+        const std::vector<Parameter> *parameters = nullptr;
+        if (const auto *target =
+                value.constructorTarget
+                    ? program.findConstructorInstance(*value.constructorTarget)
+                    : nullptr;
+            target && target->source)
+          parameters = &target->source->parameters();
+        else if (const auto *target =
+                     value.functionTarget
+                         ? program.findFunctionInstance(*value.functionTarget)
+                         : nullptr;
+                 target && target->source)
+          parameters = &target->source->parameters();
+        bool exact = parameters &&
+                     value.defaultArguments.size() <= parameters->size() &&
+                     value.defaultArguments.size() <= value.operands.size();
+        if (exact) {
+          const auto count = value.defaultArguments.size();
+          exact = std::equal(value.defaultArguments.begin(),
+                             value.defaultArguments.end(),
+                             value.operands.end() - count);
+          for (std::size_t index = 0; exact && index < count; ++index) {
+            const auto &parameter =
+                (*parameters)[parameters->size() - count + index];
+            const auto *input = body.findValue(value.defaultArguments[index]);
+            const auto *expression =
+                parameter.defaultArgument
+                    ? parameter.defaultArgument->expression.get()
+                    : nullptr;
+            exact = input && expression && input->source == expression &&
+                    input->kind != HirValueKind::PackExpansion;
+          }
+        }
+        if (!exact)
+          result.errors.emplace_back(
+              "caller-expanded defaults lost their exact declaration suffix");
+      }
+      for (std::size_t index = 0; index < value.operands.size(); ++index)
+        if (const auto *input = body.findValue(value.operands[index]);
+            input && input->kind == HirValueKind::PackExpansion &&
+            index + 1 < value.operands.size() &&
+            (value.defaultArguments.size() !=
+                 value.operands.size() - index - 1 ||
+             !std::equal(value.defaultArguments.begin(),
+                         value.defaultArguments.end(),
+                         value.operands.begin() + index + 1)))
+          result.errors.emplace_back(
+              "non-final argument pack lost its exact default suffix");
       if (value.kind != HirValueKind::Call &&
           value.kind != HirValueKind::DirectInitializer)
         continue;

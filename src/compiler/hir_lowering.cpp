@@ -5998,6 +5998,7 @@ private:
                     defaultArgument, defaultModel, targetClassArguments,
                     targetClassValueArguments, body, sourceLocationAt(*call))) {
               value.operands.push_back(*lowered);
+              value.defaultArguments.push_back(*lowered);
             }
           }
         }
@@ -6125,6 +6126,7 @@ private:
                     defaultArgument, defaultModel, targetClassArguments,
                     targetClassValueArguments, body, sourceLocationAt(*raw))) {
               value.operands.push_back(*lowered);
+              value.defaultArguments.push_back(*lowered);
             }
           }
         }

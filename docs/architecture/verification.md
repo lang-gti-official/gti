@@ -8,8 +8,12 @@ disabled copy elision and sanitizers. It retains explicit-pack and stack
 controls, and checks observable parameter/caller cleanup after later-default
 and constructor-body failure. `mir_full_expression` checks the default's HIR
 plan and exact MIR prepared parameter, rejecting missing call identity, wrong
-parameter index and erased cleanup identity. A nonempty source pack followed
-by omitted constructor defaults remains tracked separately as issue #110.
+parameter index and erased cleanup identity. Nonempty packs followed by selected
+constructor defaults retain their exact HIR suffix and flattened MIR parameter
+indices. Additional mutations erase, substitute or duplicate that suffix and
+remove or conditionalize the owning parameter transfer. The native matrix also
+checks one- and two-element packs before passive defaults and observable owned
+default cleanup after later-argument and constructor failures (issue #110).
 
 ## Defaulted owning base construction
 
