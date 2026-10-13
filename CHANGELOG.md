@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## Pending integration — Mixed constructor parameter fields
+
+- Fix a backend internal compiler error when a declaration-ordered prefix of
+  copied passive record fields precedes moved owning fields. Exact parameter
+  and field publication order, later-argument failure, constructor rollback and
+  secondary cleanup behavior remain verified (issue #114). The final patch
+  version is consolidated with the related pending constructor fixes.
+
 ## 0.424.8 — Nested passive parameter field copies
 
 - Fix an internal compiler error when a by-value parameter containing nested

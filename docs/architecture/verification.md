@@ -1,5 +1,14 @@
 # Compiler Verification
 
+## Mixed constructor parameter publication (#114)
+
+`mixed_constructor_parameter_runtime` composes two copied nested passive fields
+with an owning field in eight native modes, including disabled elision and
+sanitizers. Copy independence, later-argument failure, constructor failure and
+secondary cleanup failure retain exact observable order. The corresponding
+emitter test rejects reordered prefix loads/boundaries and a missing boundary;
+native prefix admission cannot bypass body-ordered owned-field cleanup.
+
 ## Constructor base rollback failure-record selection (#101)
 
 `base_rollback_record_runtime` covers defaulted derived constructors whose

@@ -11544,6 +11544,54 @@ void testPassiveClassFieldRollback() {
   expect(checked == 1, "rollback fixture must exercise one guarded owner");
 }
 
+void testMixedConstructorParameterFields() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/mixed_constructor_parameter_fields.gti";
+  std::ifstream input(fixture);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "mixed constructor fixture must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  std::size_t checked = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+    const auto *info =
+        owner ? frontend.semantics.findClassType(owner->declaration) : nullptr;
+    if (!info || !info->declaration ||
+        info->declaration->name().lexeme != "Metadata")
+      continue;
+    ++checked;
+    const auto copies =
+        lang::cppMirCopyParameterFieldBindings(frontend.mir, constructor);
+    expect(copies && copies->size() == 2,
+           "both passive fields have exact independent copy witnesses");
+    const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                       constructor.id};
+    expect(lang::CppMirBodyEmitter(frontend.mir, map)
+               .supportsFailureBodyText(address),
+           "passive copied prefix composes with owning publication");
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto malformed = frontend.mir;
+      auto *body = lang::findMirBody(malformed, address);
+      auto *entry = body->findBlock(body->entry);
+      if (mutation == 0)
+        std::swap(entry->instructions[2], entry->instructions[3]);
+      if (mutation == 1)
+        std::swap(entry->instructions[0], entry->instructions[3]);
+      if (mutation == 2)
+        entry->instructions[2].fullExpressionEnd = 0;
+      expect(!lang::CppMirBodyEmitter(malformed, map)
+                  .supportsFailureBodyText(address),
+             "copied fields cannot skip or reorder prefix publication");
+    }
+  }
+  expect(checked == 1, "one mixed constructor must be tested");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "mixed copied and owning constructor reaches native emission");
+}
+
 void testNestedPassiveParameterCopies() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/nested_passive_parameter_copy.gti";
@@ -14303,6 +14351,8 @@ constexpr NamedTest kTests[] = {
     {"testOwnedPrologueFormalEntryLoanEnd",
      testOwnedPrologueFormalEntryLoanEnd},
     {"testNestedPassiveParameterCopies", testNestedPassiveParameterCopies},
+    {"testMixedConstructorParameterFields",
+     testMixedConstructorParameterFields},
 };
 
 } // namespace
