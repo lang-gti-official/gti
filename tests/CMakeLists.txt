@@ -973,6 +973,11 @@ add_test(NAME expected_consuming_return_runtime
                  "${PROJECT_SOURCE_DIR}/tests/expected_consuming_return_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(expected_consuming_return_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME base_rollback_record_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/base_rollback_record_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(base_rollback_record_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME expected_temporary_observation_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/expected_temporary_observation_runtime_test.py"

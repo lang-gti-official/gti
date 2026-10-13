@@ -1,5 +1,16 @@
 # Compiler Verification
 
+## Constructor base rollback failure-record selection (#101)
+
+`base_rollback_record_runtime` covers defaulted derived constructors whose
+fallible field initializer may roll back a non-failing or fallible base.
+C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan observations check normal virtual
+destruction, first field failure, secondary base-cleanup failure and primary
+destructor failure. The derived destructor never runs for failed construction;
+the completed base is cleaned exactly once. `testBaseRollbackFailureRecord`
+checks that only a fallible base uses the declared secondary record and rejects
+four mutations to the rollback cleanup/failure contract.
+
 ## Transient constexpr allocation and destruction
 
 `compiler_constexpr` includes direct canonical-MIR and required semantic-query
