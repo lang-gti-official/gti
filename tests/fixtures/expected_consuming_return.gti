@@ -1,0 +1,53 @@
+#include <std/string>
+#include <std/vector>
+
+mut int stage = 0;
+
+class Item {
+  mut std::string text{"payload"};
+public:
+  Item() { std::println(10); }
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  ~Item() { std::println(12); }
+  Item Take() && {
+    std::println(11);
+    int divisor = stage == 1 || stage == 3 ? 0 : 1;
+    int checked = 1 / divisor;
+    return std::move(this);
+  }
+  bool Valid() { return this.text.view() == "payload"; }
+};
+
+class Guard {
+public:
+  Guard() = default;
+  ~Guard() {
+    std::println(20);
+    int divisor = stage == 2 || stage == 3 ? 0 : 1;
+    int checked = 2 / divisor;
+  }
+};
+
+class Outer {
+public:
+  Outer() = default;
+  ~Outer() { std::println(90); }
+};
+
+expected<Item, int> Make() {
+  Guard guard{};
+  if (stage == 4) { return unexpected(7); }
+  Item item{};
+  return std::move(item).Take();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Outer outer{};
+  auto result = Make();
+  if (!result) { return result.error() - 7; }
+  if (!result.value().Valid()) { return 1; }
+  std::println(30);
+  return 0;
+}

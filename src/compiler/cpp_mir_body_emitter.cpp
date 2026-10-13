@@ -23598,9 +23598,13 @@ expectedPayloadReturnSlot(const MirProgram &program,
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
       producer->dispatch == CallDispatch::Static && producer->functionTarget &&
       !producer->constructorTarget && !producer->bodyTarget &&
-      !producer->lambdaTarget && !producer->callableInvocation &&
+      !producer->lambdaTarget &&
       producer->intrinsic == IntrinsicKind::None &&
       producer->localFailureSites.empty() && callee != nullptr &&
+      (!producer->callableInvocation ||
+       (callee->owner && producer->receiver &&
+        *producer->callableInvocation ==
+            callableInvocationCapability(callee->receiverMutability))) &&
       callee->returnType == value->info.type &&
       callee->parameterTypes == producer->parameterTypes &&
       (callee->mayRaiseDefinedFailure ? producer->definedFailure.propagation ==

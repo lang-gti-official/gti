@@ -1,5 +1,18 @@
 # Compiler Verification
 
+## Consuming member results at owning expected return boundaries (#99)
+
+`expected_consuming_return_runtime` covers a user-defined owning class returned
+directly by a consuming source member into `expected`, and the motivating
+polymorphic owner factory. It runs C++20/C++23 at O0/O1/O3, disabled elision,
+and ASan/UBSan. Exact observations cover successful publication, callee failure,
+pending-result cleanup failure, secondary cleanup failure, ordinary expected
+errors, virtual dispatch and once-only concrete destruction. The text-emitter
+test `testExpectedConsumingMemberReturn` checks the exact concrete receiver
+capability and rejects five malformed receiver/activation schedules. This is
+representation admission for already-verified source calls, not a new language
+conversion or a special rule for `unique_ptr`.
+
 ## Expected pointer boundaries and owning field replacement
 
 `raw_receiver_owned_argument_runtime` runs raw-pointee receiver calls with
