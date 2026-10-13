@@ -1,0 +1,35 @@
+import std.memory;
+import std.utility;
+enum Error { Failed };
+interface Context { expected<void, Error> Init() mut; void SwapBuffers(); };
+class ConcreteContext : public Context {
+public:
+  ConcreteContext() = default;
+  expected<void, Error> Init() mut override { return; }
+  void SwapBuffers() override {}
+};
+interface WindowBase { expected<void, Error> Init() mut; expected<void, Error> Shutdown() mut; void OnUpdate(); };
+class Window : public WindowBase {
+  mut std::unique_ptr<Context> context = nullptr;
+public:
+  Window() = default;
+  ~Window() { [[discard]] this.Shutdown(); }
+  expected<void, Error> Init() mut override {
+    mut auto concrete = std::make_unique<ConcreteContext>();
+    auto result = concrete->Init();
+    if (!result) { [[discard]] this.Shutdown(); return unexpected(Error::Failed); }
+    this.context = concrete.upcast<Context>();
+    return;
+  }
+  expected<void, Error> Shutdown() mut override { this.context.reset(); return; }
+  void OnUpdate() override { if (this.context) { this.context->SwapBuffers(); } }
+};
+int main() {
+  mut Window window{};
+  auto initialized = window.Init();
+  if (!initialized) { return 1; }
+  window.OnUpdate();
+  auto stopped = window.Shutdown();
+  if (!stopped) { return 2; }
+  return 0;
+}
