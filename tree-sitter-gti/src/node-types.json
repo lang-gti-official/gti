@@ -4683,6 +4683,10 @@
         {
           "type": "unexpected_expression",
           "named": true
+        },
+        {
+          "type": "unsafe_expression",
+          "named": true
         }
       ]
     }
@@ -5452,6 +5456,22 @@
           },
           {
             "type": "update_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "unsafe_expression",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
             "named": true
           }
         ]

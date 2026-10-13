@@ -714,33 +714,39 @@ auto SemanticVisitor::Impl::visitEnumDecl(const EnumDecl &stmt) -> void {
   }
 }
 
-auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
-  const std::size_t enclosingUnsafeDepth = unsafeDepth;
-  if (stmt.isUnsafe()) {
-    ++unsafeDepth;
-    requestSession.activeUnsafeBlocks.push_back(&stmt);
-    // A generic body can acquire a required operation only after concrete
-    // selection. Do not suggest removing its permission from symbolic evidence.
-    const bool genericFunction =
-        currentFunctionDeclaration != nullptr &&
-        !currentFunctionDeclaration->genericParameters().empty();
-    const bool genericClass =
-        currentClass && !classInfo(*currentClass).genericParameters.empty();
-    if (!instanceAnalysisActive && !genericFunction && !genericClass &&
-        !isCompilerTrustedRequester(*stmt.unsafeKeyword())) {
-      requestSession.unsafeBlockCandidates.push_back(
-          {.block = &stmt,
-           .keyword = *stmt.unsafeKeyword(),
-           .owner = currentProgramEffectOwner});
-    }
+auto SemanticVisitor::Impl::enterUnsafeRegion(const Token &keyword,
+                                              bool expression) -> void {
+  ++unsafeDepth;
+  requestSession.activeUnsafeBlocks.push_back(&keyword);
+  // A generic body can acquire a required operation only after concrete
+  // selection. Do not suggest removing its permission from symbolic evidence.
+  const bool genericFunction =
+      currentFunctionDeclaration != nullptr &&
+      !currentFunctionDeclaration->genericParameters().empty();
+  const bool genericClass =
+      currentClass && !classInfo(*currentClass).genericParameters.empty();
+  if (!instanceAnalysisActive && !genericFunction && !genericClass &&
+      !isCompilerTrustedRequester(keyword)) {
+    requestSession.unsafeBlockCandidates.push_back(
+        {.keyword = &keyword,
+         .expression = expression,
+         .owner = currentProgramEffectOwner});
   }
+}
+
+auto SemanticVisitor::Impl::leaveUnsafeRegion() -> void {
+  requestSession.activeUnsafeBlocks.pop_back();
+  --unsafeDepth;
+}
+
+auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
+  if (stmt.isUnsafe())
+    enterUnsafeRegion(*stmt.unsafeKeyword(), false);
   beginScope();
   analyze(stmt.statements());
   endScope();
-  if (stmt.isUnsafe()) {
-    requestSession.activeUnsafeBlocks.pop_back();
-  }
-  unsafeDepth = enclosingUnsafeDepth;
+  if (stmt.isUnsafe())
+    leaveUnsafeRegion();
 }
 
 // The work visitClassDecl does before its members (tooling symbol, base and
@@ -7858,7 +7864,11 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitGroupingExpr(const Grouping &expr) -> void {
+  if (expr.unsafeKeyword())
+    enterUnsafeRegion(*expr.unsafeKeyword(), true);
   currentType = analyze(expr.expression());
+  if (expr.unsafeKeyword())
+    leaveUnsafeRegion();
 }
 
 auto SemanticVisitor::Impl::visitIndexExpr(const Index &expr) -> void {

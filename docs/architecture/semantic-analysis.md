@@ -2,6 +2,19 @@
 
 Status: Current implementation.
 
+## Unsafe expression permission
+
+Value-producing `unsafe { expression }` uses the existing expression grouping
+model with a retained keyword. Semantic analysis enters the same lexical
+permission stack as a statement unsafe block, analyzes the operand normally,
+then restores permission. Grouping queries keep the exact place, borrow origin,
+access, callable boundary, ownership state and fresh-initialization source.
+No new function or local storage scope is synthesized. AST cloning preserves
+the permission keyword and expansion identity for concrete analysis. Advisory
+tracking identifies each region by its keyword; expression warnings omit the
+statement-only keyword-removal edit. Constant evaluation reuses existing
+grouping and staged MIR execution rather than gaining a second operation rule.
+
 ## Local reference inference
 
 `analyzeInferredVariable` resolves written `auto&`/`mut auto&` from the analyzed
