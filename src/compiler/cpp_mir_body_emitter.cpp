@@ -1776,6 +1776,25 @@ cppMirEnumBoundaryRow(const MirProgram &program,
   return true;
 }
 
+// Scalar-only result trees have ordinary by-value carriers: every leaf is
+// passive and no constructor, allocation or borrowed payload can be hidden by
+// copying an intermediate result. Keep class alternatives on their distinct
+// lifetime-slot path.
+[[nodiscard]] bool scalarResultRepresentation(const MirProgram &program,
+                                              const SemanticType &type) {
+  if (type.kind == SemanticType::Expected)
+    return type.arguments.size() == 2 &&
+           scalarResultRepresentation(program, type.arguments[0]) &&
+           type.arguments[1] != SemanticType::Void &&
+           scalarResultRepresentation(program, type.arguments[1]);
+  const auto representation = cppMirExpectedTypeRepresentation(type);
+  return representation &&
+         (*representation == CppMirTypeRepresentationKind::Scalar ||
+          *representation == CppMirTypeRepresentationKind::Void ||
+          (*representation == CppMirTypeRepresentationKind::Enum &&
+           program.findPayloadEnum(type) == nullptr));
+}
+
 // An Expected result whose success alternative is passive publishes by value
 // through the transformed body's ordinary typed out-parameter: the caller
 // declares the boundary value-initialized and the Return assigns it. Scalar,
@@ -1790,14 +1809,15 @@ cppMirEnumBoundaryRow(const MirProgram &program,
   const SemanticType &success = type.arguments.front();
   const std::optional<CppMirTypeRepresentationKind> successKind =
       cppMirExpectedTypeRepresentation(success);
-  return successKind &&
-         (*successKind == CppMirTypeRepresentationKind::Scalar ||
-          *successKind == CppMirTypeRepresentationKind::Void ||
-          (success.kind == SemanticType::Reference &&
-           success.referenceAccess == AccessMode::ReadOnly &&
-           success.arguments.size() == 1) ||
-          (*successKind == CppMirTypeRepresentationKind::Enum &&
-           cppMirEnumBoundaryRow(program, representations, success)));
+  return scalarResultRepresentation(program, type) ||
+         (successKind &&
+          (*successKind == CppMirTypeRepresentationKind::Scalar ||
+           *successKind == CppMirTypeRepresentationKind::Void ||
+           (success.kind == SemanticType::Reference &&
+            success.referenceAccess == AccessMode::ReadOnly &&
+            success.arguments.size() == 1) ||
+           (*successKind == CppMirTypeRepresentationKind::Enum &&
+            cppMirEnumBoundaryRow(program, representations, success))));
 }
 
 // A cleanup-owning payload enum crosses the transformed failure ABI through
@@ -19688,25 +19708,6 @@ cleanupFreeExpectedReceiver(const MirBody &body, const MirInstruction &call) {
     return {};
   }
   return {.move = move, .source = source};
-}
-
-// Scalar-only result trees have ordinary by-value carriers: every leaf is
-// passive and no constructor, allocation or borrowed payload can be hidden by
-// copying an intermediate result. Keep class alternatives on their distinct
-// lifetime-slot path.
-[[nodiscard]] bool scalarResultRepresentation(const MirProgram &program,
-                                              const SemanticType &type) {
-  if (type.kind == SemanticType::Expected)
-    return type.arguments.size() == 2 &&
-           scalarResultRepresentation(program, type.arguments[0]) &&
-           type.arguments[1] != SemanticType::Void &&
-           scalarResultRepresentation(program, type.arguments[1]);
-  const auto representation = expectedTypeRepresentation(type);
-  return representation &&
-         (*representation == CppMirTypeRepresentationKind::Scalar ||
-          *representation == CppMirTypeRepresentationKind::Void ||
-          (*representation == CppMirTypeRepresentationKind::Enum &&
-           program.findPayloadEnum(type) == nullptr));
 }
 
 [[nodiscard]] bool scalarExpectedExtraction(const MirProgram &program,

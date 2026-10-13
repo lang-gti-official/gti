@@ -2750,6 +2750,35 @@ void testConstexprResults() {
     return lang::HirFunctionInstanceId{0};
   };
   const auto work = functionId("result_array");
+  bool checkedNestedFailureEdge = false;
+  for (const auto &function : result.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.functionTarget != functionId("nested_result"))
+          continue;
+        expect(lang::requiresMirFailureControlFlow(
+                   instruction, lang::MirFailureControlFlowPosition::None) &&
+                   block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block.terminator.invokeInstruction == instruction.id,
+               "nested passive result calls require success-only publication "
+               "and an explicit failure edge");
+        auto malformed = result.mir;
+        auto *caller = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &terminator = caller->body.blocks[block.id - 1].terminator;
+        terminator.kind = lang::MirTerminatorKind::Goto;
+        terminator.invokeInstruction = 0;
+        terminator.failureRecord = 0;
+        terminator.elseTarget = 0;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "verification rejects deleting a nested result call's "
+               "defined-failure edge");
+        checkedNestedFailureEdge = true;
+      }
+    }
+  }
+  expect(checkedNestedFailureEdge,
+         "result fixture exercises runtime nested-result call routing");
   const auto evaluated =
       lang::evaluateMirConstantFunction(result.mir, work, {});
   expect(evaluated &&

@@ -271,11 +271,23 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
         [](const auto &loan) { return loan.access == AccessMode::Mutable; });
   };
   const auto resultValues = [](const MirBody &body) {
-    return std::any_of(
-        body.values.begin(), body.values.end(), [](const auto &value) {
-          return value.info.type.kind == SemanticType::Expected ||
-                 value.info.type.kind == SemanticType::Unexpected;
-        });
+    const auto resultType = [](const auto &self,
+                               const SemanticType &type) -> bool {
+      return type.kind == SemanticType::Expected ||
+             type.kind == SemanticType::Unexpected ||
+             ((type.kind == SemanticType::Array ||
+               type.kind == SemanticType::Reference) &&
+              type.arguments.size() == 1 && self(self, type.arguments[0]));
+    };
+    return resultType(resultType, body.returnType) ||
+           std::any_of(body.places.begin(), body.places.end(),
+                       [&](const auto &place) {
+                         return resultType(resultType, place.type);
+                       }) ||
+           std::any_of(body.values.begin(), body.values.end(),
+                       [&](const auto &value) {
+                         return resultType(resultType, value.info.type);
+                       });
   };
   const bool requiresMir =
       std::any_of(

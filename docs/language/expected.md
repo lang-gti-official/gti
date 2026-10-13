@@ -11,7 +11,7 @@ state checks, observers, prefix `?`, assignment and field/array operations run
 through verified MIR. Inactive `.value()`/`.error()` extraction is diagnosed at
 compile time; `.value_or(fallback)` still evaluates the fallback eagerly.
 Borrowed payloads, owning alternatives and active cleanup are not part of this
-constant-execution profile. See [constant expressions](static-semantics.md#312-constant-expressions)
+constant-execution profile. See [constant expressions](static-semantics.md#311-bounded-constant-evaluation)
 and [the runnable builder example](../../examples/142-constexpr-builders.gti).
 
 ```gti
