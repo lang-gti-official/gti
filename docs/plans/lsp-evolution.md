@@ -217,10 +217,11 @@ lexical fallbacks are acceptable only when clearly less authoritative.
 
 ## Per-Keystroke Analysis Cost
 
-Status: measured 2026-10-12; editor-scoped HIR, the background raw-pointer
-audit and demand-driven trusted-body analysis (single analysis per edit) are
-implemented. Broader semantic reuse remains proposed; the eight-include file
-still exceeds the exit measure (see "Measured After Late Demand"). This is the
+Status: measured 2026-10-13; editor-scoped HIR, the background raw-pointer
+audit, demand-driven trusted-body analysis (single analysis per edit) and the
+omission of library-only instance bodies from editor HIR are implemented.
+Broader semantic reuse remains proposed; the eight-include file still exceeds
+the exit measure (see "Measured After Library-Only Body Omission"). This is the
 compiler-side half of editor responsiveness. The protocol-side half (edit-time
 publication, adaptive debounce, refresh policy) is implemented and described
 in the architecture document.
@@ -353,6 +354,25 @@ bodies (about 75 ms), demanded library bodies (about 57 ms), finalization
 (8 ms) and entry-unit HIR, whose concrete instance analyses cost about 200 ms
 for 478 function instances. Reaching the exit measure needs step 3 or a
 cheaper concrete-instance analysis; neither is a demand problem.
+
+### Measured After Library-Only Body Omission
+
+Same message-flow probe, Release `gti_lsp`, arm64 macOS, 2026-10-13; steady
+edits, milliseconds per edit, the omission build against the same main:
+
+| Build | 089 total | semantic | late demand | HIR |
+| --- | ---: | ---: | ---: | ---: |
+| entry-unit HIR, every reached body lowered | 450 | 195 | 10 (12 bodies) | 205 |
+| library-only bodies omitted (0.421.0) | 300 | 193 | 4 (5 bodies) | 56 |
+
+Each steady 089 edit omits 123 library-only function, constructor and
+destructor bodies; the instances only those bodies would have requested are
+never discovered, so HIR analyses and lowers the file's own instances and the
+library instances the file requests directly. Semantic time is unchanged:
+registration (about 40 ms), eager library constructors, destructors, virtual
+and constant definitions plus application bodies (about 85 ms), demanded
+library bodies (about 52 ms) and finalization (8 ms) remain, and are now two
+thirds of the edit. Reaching the exit measure needs step 3.
 
 Exit measure: the eight-include file under 100 ms per edit with the probe,
 semantic diagnostics for the open file identical to `gti check` on its
