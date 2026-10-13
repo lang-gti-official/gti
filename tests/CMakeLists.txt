@@ -1834,6 +1834,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(pack_parameter_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME enum_pack_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/enum_pack_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(enum_pack_runtime PROPERTIES TIMEOUT 180)
+  add_test(
     NAME unique_owner_access_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/unique_owner_access_runtime_test.py"
