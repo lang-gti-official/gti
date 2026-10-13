@@ -1746,6 +1746,10 @@ private:
         evaluated = instruction.intrinsic == IntrinsicKind::StringViewSize
                         ? evaluateConstantTextSize(*text.value)
                         : evaluateConstantTextEmpty(*text.value);
+      } else if (!instruction.receiver && arguments.empty() &&
+                 instruction.intrinsic ==
+                     IntrinsicKind::DefaultTypeParameterConstruction) {
+        evaluated = defaultValue(instruction.info.type);
       } else if (!instruction.receiver && arguments.size() == 1 &&
                  (instruction.intrinsic ==
                       IntrinsicKind::NumericAliasConversion ||

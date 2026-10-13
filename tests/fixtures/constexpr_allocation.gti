@@ -127,6 +127,15 @@ constexpr int packed_pair<Args...>(Args... values) {
   return value->first + value->second;
 }
 
+struct constructed_packet<T> {
+  T value;
+  constexpr constructed_packet<Args...>(Args... args) : value(T(args...)) {}
+};
+
+constexpr constructed_packet<int> empty_pack = constructed_packet<int>();
+constexpr constructed_packet<int> single_pack = constructed_packet<int>(9);
+static_assert(empty_pack.value == 0 && single_pack.value == 9);
+
 constexpr int early_cleanup(bool early) {
   auto value = std::make_unique<checked_cleanup>(7);
   if (early) { return 2; }
@@ -153,5 +162,8 @@ int main() {
   if (success.value() != 9 || error.error() != allocation_error::invalid) { return 3; }
   if (reuse_heap() != 2 || owner_array() != 14) { return 5; }
   if (observe_error() != 7 || loop_cleanup() != 14 || packed_pair(4, 5) != 9) { return 6; }
+  auto runtime_empty = constructed_packet<int>();
+  auto runtime_single = constructed_packet<int>(9);
+  if (runtime_empty.value != empty_pack.value || runtime_single.value != single_pack.value) { return 7; }
   return early_cleanup(true) == 2 && early_cleanup(false) == 7 ? 0 : 4;
 }
