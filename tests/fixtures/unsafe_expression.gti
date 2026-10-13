@@ -52,7 +52,7 @@ int main(int argc, std::vector<std::string> argv) {
   auto bad = propagate(false);
   if (!good || good.value() != 7 || bad || bad.error() != error::missing) { return 5; }
   mut std::string source{"callback text"};
-  c_string description = unsafe { source.c_string() };
+  c_string description = source.c_string();
   auto text = unsafe { std::string(description) };
   auto checked = unsafe { std::string::try_from_c_string(description) };
   if (!checked || checked.value().view() != text.view()) { return 6; }

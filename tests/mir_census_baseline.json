@@ -147,7 +147,8 @@
     "148-nested-configuration.gti": 428,
     "149-interface-static-factories.gti": 69,
     "150-out-of-class-methods.gti": 116,
-    "151-c-string-import.gti": 120
+    "151-c-string-import.gti": 120,
+    "152-unsafe-expressions.gti": 117
   },
-  "total": 16240
+  "total": 16357
 }
