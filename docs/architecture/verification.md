@@ -1,5 +1,32 @@
 # Compiler Verification
 
+## Expected pointer boundaries and owning field replacement
+
+`raw_receiver_owned_argument_runtime` runs raw-pointee receiver calls with
+owning user-defined argument records across C++20/C++23 at O0/O1/O3, disabled
+copy elision, and ASan/UBSan. Observable traces cover read-only and mutable
+receivers, consuming value/error payload extraction, receiver evaluation,
+wrong-state extraction, later-argument failure and callee failure, with
+exactly-once payload cleanup. `testOrderedRawReceiverInputs` checks the exact
+HIR pointee identity/access mode and MIR receiver stages; mutated call-site
+identities must fail verification.
+
+`expected_boundary_replacement_runtime` exercises pointer-valued expected
+results through indexed owning fields and virtual dispatch, read-only and null
+pointer transport, and consuming value/error replacement of an existing class
+field. An unrelated source-defined owning record makes destruction observable.
+Both C++ standards run at O0/O1/O3, with additional no-elide and ASan/UBSan modes.
+The oracle distinguishes successful replacement, wrong-state extraction,
+old-value cleanup failure, and a secondary failure while retiring the held RHS.
+The same fixture retains the original source-defined string replacement client.
+The getter fixture also replaces fresh owning values through nested non-failing
+mutable-reference getters, with the same primary/secondary cleanup oracles.
+
+`testExpectedClassReplacementSources` includes all three fixtures and rejects forged
+result activation, missing/conditional replacement transfer, and missing
+old-value cleanup. The receiver envelope and extracted payload keep independent
+MIR drop identities; accepting a new consumer does not relax those obligations.
+
 ## Value-producing unsafe expressions
 
 `unsafe_expression_contract` covers lexical permission on grouped expressions,
@@ -7487,6 +7514,13 @@ forgeries independently in MIR and C++ admission, while
 `borrow_origin_runtime` retains the original missing-key runtime failure and
 tests populated nested storage and unrelated user-defined accessors across
 all eight native modes.
+
+The static-return alternative regression in these same gates covers receiver
+and parameter text relays with literal/null branches, plus an unsafe raw-receiver
+relay used by editor previews. It rejects missing or forged literal witnesses,
+cleared dynamic-return loans, and local-owner escapes; native C++20/C++23
+O0/O1/O3, disabled elision and ASan/UBSan exercise both alternatives without
+adding runtime lifetime state.
 
 ### Operator-place composition focused gates
 
