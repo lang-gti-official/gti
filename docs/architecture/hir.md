@@ -816,6 +816,17 @@ the full-expression materialization instead of synthesizing an ownership move.
 Conditional receivers retain their existing join slot. `std::move(this)` has
 an ordinary Move value with an exact whole-This ownership event; HIR does not
 infer it from a returned name or from the selected backend.
+An ordinary method selected through a raw pointer uses the same ordered plan.
+Its receiver stage names the checked raw-member expression and the pointee
+type, with the semantic read-only or mutable receiver mode. MIR evaluates the
+pointer once, projects the existing raw-dereference place, and stages that
+receiver before arguments. Owning arguments therefore retain their ordinary
+prepared-parameter transfer and failure cleanup even when their producer is a
+fallible consuming extraction. The plan neither creates a checked lifetime for
+the raw pointee nor changes the lexical unsafe permission or caller obligations.
+Both the receiver stage and consuming call retain the raw-memory effect. A
+declared-unsafe method additionally retains its own call obligation; staging
+does not replace that contract with receiver permission.
 An exact immediate nominal or stored-lambda field invocation authorized by
 semantics inside consuming `this` instead uses `RetainedReceiver`. Its Move-shaped HIR value
 records `retainedReceiverProjection` and creates no new drop obligation;
