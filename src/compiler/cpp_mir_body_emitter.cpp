@@ -14933,13 +14933,16 @@ failureConstructorDisarmsDeclaredDestructor(const MirProgram &program,
   // field state before the caller ends the native object lifetime. The concrete
   // owner must seal that same reverse field schedule. The proof is structural:
   // no source-library type name is recognized here.
+  // Abstractness and virtual dispatch do not change this per-class guard.
+  // This witness covers only declared fields and the owner's destructor;
+  // failureConstructorBoundaryEligible independently verifies the selected
+  // base construction, success activation and rollback. In particular it is
+  // not an empty-state constructor witness for the whole object or its bases.
   const MirDestructorInstance *destructor =
       owner.destructor ? program.findDestructorInstance(*owner.destructor)
                        : nullptr;
   if (owner.declaration == 0 || destructor == nullptr ||
-      !nativeDestructorCompositionCovered(program, owner, *destructor) ||
-      owner.abstract ||
-      (owner.polymorphic && !emptyInterfaceBaseSurface(program, owner))) {
+      !nativeDestructorCompositionCovered(program, owner, *destructor)) {
     return false;
   }
   return std::all_of(
@@ -15109,8 +15112,11 @@ failureConstructorBoundaryEligible(const MirProgram &program,
   const auto copiedParameters =
       cppMirCopyParameterFieldBindings(program, constructor);
   const bool bodyStagedOwnedParameters =
+      // A selected base does not move the input field owner. Keep that input
+      // armed through base failure, then let MIR publish it after base success.
+      // Base and field proofs compose; neither can replace the other.
       emptyStateFields && storedReferences && storedReferences->empty() &&
-      baseParameters && baseParameters->empty() && copiedParameters &&
+      baseParameters && passiveBases && copiedParameters &&
       copiedParameters->empty() &&
       bodyStagedOwnedParameterFieldInitializers(program, constructor);
   const bool bodyStagedOptionalParameter =
@@ -47900,7 +47906,8 @@ cppMirBaseParameterInitializerBindings(
             definition->operands.empty() && !definition->destination &&
             !definition->receiver && definition->definedFailure.empty() &&
             definition->lifecycle.empty() &&
-            scalarArgumentType(candidate.info.type) &&
+            (scalarArgumentType(candidate.info.type) ||
+             candidate.info.type.kind == SemanticType::StringView) &&
             target->parameterTypes[argumentIndex] == candidate.info.type &&
             onlyBaseArgumentUses(candidate.id, argumentIndex)) {
           if (value != nullptr)
