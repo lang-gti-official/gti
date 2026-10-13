@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.423.7 — Ordered owning arguments through raw receivers
+
+- Fix a backend internal compiler error when consuming owning expected payloads
+  directly into methods reached through raw pointers. Raw pointee receivers now
+  use the ordinary receiver-first call-input plan, preserving argument ownership
+  and failure cleanup without changing unsafe obligations (issue #92).
+
 ## 0.423.4 — Expected pointer and owning payload composition
 
 - Fix backend internal compiler errors when returning passive pointer payloads
