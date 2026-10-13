@@ -19690,17 +19690,33 @@ cleanupFreeExpectedReceiver(const MirBody &body, const MirInstruction &call) {
   return {.move = move, .source = source};
 }
 
+// Scalar-only result trees have ordinary by-value carriers: every leaf is
+// passive and no constructor, allocation or borrowed payload can be hidden by
+// copying an intermediate result. Keep class alternatives on their distinct
+// lifetime-slot path.
+[[nodiscard]] bool scalarResultRepresentation(const MirProgram &program,
+                                              const SemanticType &type) {
+  if (type.kind == SemanticType::Expected)
+    return type.arguments.size() == 2 &&
+           scalarResultRepresentation(program, type.arguments[0]) &&
+           type.arguments[1] != SemanticType::Void &&
+           scalarResultRepresentation(program, type.arguments[1]);
+  const auto representation = expectedTypeRepresentation(type);
+  return representation &&
+         (*representation == CppMirTypeRepresentationKind::Scalar ||
+          *representation == CppMirTypeRepresentationKind::Void ||
+          (*representation == CppMirTypeRepresentationKind::Enum &&
+           program.findPayloadEnum(type) == nullptr));
+}
+
 [[nodiscard]] bool scalarExpectedExtraction(const MirProgram &program,
                                             const MirInstruction &call) {
-  const auto representation = expectedTypeRepresentation(call.info.type);
   if (call.kind != MirInstructionKind::Call || !call.result ||
       call.info.category != ValueCategory::Value ||
       call.info.traits.drop != DropKind::Trivial ||
       !call.info.traits.copyable || call.info.traits.containsBorrowedState ||
-      !representation ||
-      (*representation != CppMirTypeRepresentationKind::Scalar &&
-       (*representation != CppMirTypeRepresentationKind::Enum ||
-        program.findPayloadEnum(call.info.type) != nullptr)) ||
+      call.info.type == SemanticType::Void ||
+      !scalarResultRepresentation(program, call.info.type) ||
       call.destination || call.successResultDrop ||
       call.successResultDestination || !call.receiver ||
       call.receiver->kind != MirOperandKind::Value ||
@@ -19746,18 +19762,7 @@ directExpectedScalarExtraction(const MirProgram &program, const MirBody &body,
          receiver->info.category == ValueCategory::Value &&
          uniqueValueDrop(body, receiver->id, receiver->info.type) == nullptr &&
          !receiver->info.traits.containsBorrowedState &&
-         std::all_of(
-             receiver->info.type.arguments.begin(),
-             receiver->info.type.arguments.end(),
-             [&](const SemanticType &type) {
-               const auto representation = expectedTypeRepresentation(type);
-               return representation &&
-                      (*representation ==
-                           CppMirTypeRepresentationKind::Scalar ||
-                       *representation == CppMirTypeRepresentationKind::Void ||
-                       (*representation == CppMirTypeRepresentationKind::Enum &&
-                        program.findPayloadEnum(type) == nullptr));
-             });
+         scalarResultRepresentation(program, receiver->info.type);
 }
 
 // A counted text view is an ordinary by-value SSA descriptor. Its verified

@@ -2776,6 +2776,30 @@ void testConstexprResults() {
     expect(wrapped && wrapped->value,
            "result constants use the shared typed aggregate representation");
     if (wrapped && wrapped->value) {
+      const auto consume = functionId("consume_result");
+      const std::array<lang::ConstantValue, 1> valid{*propagated.value};
+      const auto observed =
+          lang::evaluateMirConstantFunction(result.mir, consume, valid);
+      expect(observed &&
+                 std::get<lang::ConstantInteger>(*observed.value).magnitude ==
+                     11,
+             "an externally supplied exact error result is observed by value");
+      for (int corruption = 0; corruption < 3; ++corruption) {
+        auto malformed = *wrapped->value;
+        auto error = std::get<lang::ConstantEnum>(malformed.elements.front());
+        if (corruption == 0)
+          error.enumId = 0;
+        if (corruption == 1)
+          error.value.domain.width = 64;
+        malformed.elements.front() = corruption == 2
+                                         ? lang::ConstantValue{true}
+                                         : lang::ConstantValue{error};
+        const std::array<lang::ConstantValue, 1> invalid{
+            lang::makeConstantAggregate(std::move(malformed))};
+        expect(!lang::evaluateMirConstantFunction(result.mir, consume, invalid),
+               "result payload identity and integer domain are independently "
+               "validated");
+      }
       for (int corruption = 0; corruption < 6; ++corruption) {
         auto malformed = *wrapped->value;
         if (corruption == 0)

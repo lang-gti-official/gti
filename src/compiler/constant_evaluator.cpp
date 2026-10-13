@@ -1,5 +1,6 @@
 #include "gti/semantic_core.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -13,7 +14,8 @@ ConstantEvaluation constantResultHasValue(const ConstantValue &value) {
       node && node->value && node->value->exactType &&
       node->value->exactType->kind == SemanticType::Expected &&
       (node->value->kind == ConstantAggregateKind::ExpectedSuccess ||
-       node->value->kind == ConstantAggregateKind::ExpectedError))
+       node->value->kind == ConstantAggregateKind::ExpectedError) &&
+      convertConstantToType(value, *node->value->exactType))
     return {.value =
                 node->value->kind == ConstantAggregateKind::ExpectedSuccess};
   return {.failure = ConstantEvaluationFailure::InvalidOperands};
@@ -36,6 +38,12 @@ ConstantEvaluation makeConstantResult(const SemanticType &type, bool success,
   if ((expected && type.arguments.size() != 2) ||
       (!expected && (type.kind != SemanticType::Unexpected || success ||
                      type.arguments.size() != 1)))
+    return {.failure = ConstantEvaluationFailure::UnsupportedType};
+  if (type.arguments.back() == SemanticType::Void ||
+      std::any_of(type.arguments.begin(), type.arguments.end(),
+                  [](const auto &argument) {
+                    return argument.kind == SemanticType::Reference;
+                  }))
     return {.failure = ConstantEvaluationFailure::UnsupportedType};
   const auto &alternative = type.arguments[expected && !success ? 1 : 0];
   if (alternative.kind == SemanticType::Reference ||
@@ -73,7 +81,8 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
         aggregate->value->exactType->kind == SemanticType::Unexpected &&
         aggregate->value->exactType->arguments.size() == 1 &&
         aggregate->value->exactType->arguments[0] == target.arguments[1] &&
-        aggregate->value->elements.size() == 1)
+        aggregate->value->elements.size() == 1 &&
+        convertConstantToType(value, *aggregate->value->exactType))
       return makeConstantResult(target, false, aggregate->value->elements[0]);
     if (target.kind == SemanticType::Expected && target.arguments.size() == 2 &&
         aggregate->value && aggregate->value->exactType &&
@@ -96,7 +105,12 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
                           node.kind != ConstantAggregateKind::Unexpected))
         return {.failure = ConstantEvaluationFailure::InvalidOperands};
       const auto &alternative = target.arguments[expected && !success ? 1 : 0];
-      if (node.elements.size() != (alternative == SemanticType::Void ? 0u : 1u))
+      if (target.arguments.back() == SemanticType::Void ||
+          std::any_of(target.arguments.begin(), target.arguments.end(),
+                      [](const auto &argument) {
+                        return argument.kind == SemanticType::Reference;
+                      }) ||
+          node.elements.size() != (alternative == SemanticType::Void ? 0u : 1u))
         return {.failure = ConstantEvaluationFailure::InvalidOperands};
       // Like arrays/records, recursive exactness belongs to the budgeted
       // verifier/executor. Conversion preserves this immutable exact node.

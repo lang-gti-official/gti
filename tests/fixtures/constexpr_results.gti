@@ -21,6 +21,15 @@ constexpr expected<int, parse_error> twice(std::string_view text) {
   return digit * 2;
 }
 
+constexpr expected<expected<int, parse_error>, parse_error> nested_result(bool valid) {
+  if (!valid) { return unexpected(parse_error::invalid); }
+  return twice("");
+}
+
+constexpr int consume_result(expected<int, parse_error> input) {
+  return input.value_or(11);
+}
+
 struct Reading {
   mut expected<int, parse_error> result;
   constexpr Reading(std::string_view input) : result(twice(input)) {}
@@ -121,6 +130,11 @@ constexpr int area = Dimensions(2).area();
 constexpr int snapshots = snapshot_value();
 static_assert(accepted == 14);
 static_assert(rejected == 9);
+static_assert(nested_result(true).has_value());
+static_assert(!nested_result(true).value().has_value());
+static_assert(nested_result(true).value().error() == parse_error::empty);
+static_assert(nested_result(false).error() == parse_error::invalid);
+static_assert(consume_result(twice("7")) == 14);
 static_assert(area == 48);
 static_assert(snapshots == 18);
 static_assert(twice("").error() == parse_error::empty);
@@ -151,5 +165,8 @@ int main() {
   if (result_array() != 28 || Nested(2).dimensions.area() != 48) { return 7; }
   if (read_snapshot() != 9 || checked_sum(true) != 71 || checked_sum(false) != 6) { return 8; }
   if (constructor_defaults() != 17 || defaults_value() != 62 || Selected(12).value != 12) { return 9; }
+  if (!nested_result(true) || nested_result(true).value().has_value() ||
+      nested_result(true).value().error() != parse_error::empty ||
+      nested_result(false).error() != parse_error::invalid || consume_result(twice("7")) != 14) { return 10; }
   return 0;
 }
