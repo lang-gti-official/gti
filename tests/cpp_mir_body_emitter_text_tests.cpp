@@ -3627,6 +3627,87 @@ int main() {
          "local");
 }
 
+void testExpectedConsumingMemberReturn() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-expected-consuming-member-return.gti", R"(
+#include <std/utility>
+class Item {
+  int divisor = 1;
+public:
+  Item() = default;
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  ~Item() { int checked = 1 / this.divisor; }
+  Item Take(int divisor) && {
+    int checked = 2 / divisor;
+    return std::move(this);
+  }
+};
+expected<Item, int> Make(int divisor) {
+  Item item{};
+  return std::move(item).Take(divisor);
+}
+int main() { auto result = Make(1); return result ? 0 : 1; }
+)");
+  expect(frontend.canGenerateCode(),
+         "a consuming member may supply an owning expected payload");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::MirBodyAddress address{};
+  lang::MirInstructionId producer = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.returnType.kind != lang::SemanticType::Expected)
+      continue;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.callableInvocation ==
+                lang::CallableInvocationCapability::Once &&
+            instruction.successResultDrop) {
+          address = {.kind = lang::MirBodyKind::Function, .owner = function.id};
+          producer = instruction.id;
+        }
+  }
+  expect(producer != 0,
+         "the payload producer retains its consuming capability");
+  if (producer == 0)
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "a consuming member uses the exact ordinary pending-payload proof");
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *body = lang::findMirBody(malformed, address);
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == producer) {
+          if (mutation == 0)
+            instruction.callableInvocation =
+                lang::CallableInvocationCapability::Read;
+          else if (mutation == 1)
+            instruction.callableInvocation.reset();
+          else if (mutation == 2)
+            instruction.receiver.reset();
+          else if (mutation == 3)
+            instruction.successResultDrop.reset();
+          else
+            instruction.successResultDrop = 0;
+        }
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "a changed consuming receiver or payload activation fails MIR "
+           "verification " +
+               std::to_string(mutation));
+    const lang::CppMirBodyEmitter rejected(malformed, map);
+    expect(!rejected.analyze(address).ready() ||
+               !rejected.supportsFailureBodyText(address),
+           "a malformed consuming return cannot enter backend emission " +
+               std::to_string(mutation));
+  }
+}
+
 // A construction consuming a cleanup-free Expected<Class, E> argument may
 // publish its own result through its consuming Return or into a constructor
 // field. The success class has no default constructor: a failure-free
@@ -4912,6 +4993,7 @@ constexpr NamedTest kTests[] = {
      testCleanupFreeExpectedClassConstructorArgumentSlot},
     {"testExpectedClassArgumentReturnedConstruction",
      testExpectedClassArgumentReturnedConstruction},
+    {"testExpectedConsumingMemberReturn", testExpectedConsumingMemberReturn},
     {"testExpectedTemporaryObservationSlot",
      testExpectedTemporaryObservationSlot},
     {"testOwningTemporaryFieldView", testOwningTemporaryFieldView},
