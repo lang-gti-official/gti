@@ -4021,7 +4021,9 @@ int main() {
 }
 
 void testBodyOrderedOwnedParameterConstructor() {
-  for (const bool declaredDestructor : {false, true}) {
+  for (const int shape : {0, 1, 2}) {
+    const bool declaredDestructor = shape != 0;
+    const bool interfaceBase = shape == 2;
     std::string source = R"(
 #include <std/string>
 
@@ -4058,6 +4060,15 @@ int main() {
       const std::string marker = "// destructor-stage";
       source.replace(source.find(marker), marker.size(), "~OrderedPath() {}");
     }
+    if (interfaceBase) {
+      const std::string marker = "class OrderedPath {";
+      source.replace(source.find(marker), marker.size(),
+                     "interface PathView { std::size_t first_size(); };\n"
+                     "class OrderedPath : public PathView {");
+      const std::string method = "std::size_t first_size() {";
+      source.replace(source.find(method), method.size(),
+                     "std::size_t first_size() override {");
+    }
     const lang::FrontendResult frontend = analyzeWithStandardLibrary(
         "cpp-mir-body-ordered-owned-parameter-constructor.gti", source);
     expect(frontend.canGenerateCode(),
@@ -4092,6 +4103,27 @@ int main() {
                                                             constructor->owner),
            "the private empty representation supports generated fields and "
            "an independently verified disarmed source destructor");
+    if (interfaceBase) {
+      for (const bool deletedDefault : {false, true}) {
+        lang::MirProgram malformed = frontend.mir;
+        auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+            malformed.classInstances());
+        bool changed = false;
+        for (auto &base : classes) {
+          if (base.kind != lang::ClassKind::Interface)
+            continue;
+          if (deletedDefault)
+            base.defaultConstructor = lang::SpecialMemberStatus::Deleted;
+          else
+            base.requiresActiveCleanup = true;
+          changed = true;
+        }
+        expect(changed && !lang::cppMirFailureConstructorEmptyStateEligible(
+                              malformed, constructor->owner),
+               "an interface with initialization or cleanup cannot be treated "
+               "as an observation-free constructor shell");
+      }
+    }
     if (declaredDestructor) {
       lang::MirProgram malformed = frontend.mir;
       auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
