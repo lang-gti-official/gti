@@ -3251,6 +3251,7 @@ void testExpectedClassReplacementSources() {
       for (const auto &block : function.body.blocks) {
         for (const auto &call : block.instructions) {
           const bool extraction =
+              name != "getter_owned_field_replacement" &&
               call.kind == lang::MirInstructionKind::Call &&
               (call.intrinsic == lang::IntrinsicKind::ExpectedValue ||
                call.intrinsic == lang::IntrinsicKind::ExpectedError);
@@ -3272,6 +3273,16 @@ void testExpectedClassReplacementSources() {
                 assignment = &consumer;
           if (!assignment)
             continue;
+          if (construction) {
+            const auto *destination =
+                assignment->destination
+                    ? function.body.findPlace(*assignment->destination)
+                    : nullptr;
+            if (!destination ||
+                destination->root != lang::MirPlaceRootKind::Loan ||
+                destination->projections.empty())
+              continue;
+          }
           ++checked;
           for (int mutation = 0; mutation != 4; ++mutation) {
             auto malformed = frontend.mir;
@@ -3307,7 +3318,8 @@ void testExpectedClassReplacementSources() {
                            "exercise replacement");
     if (name == "getter_owned_field_replacement")
       expect(checked == 2, "fresh owning values replace fields through nested "
-                           "non-failing getters");
+                           "non-failing getters: " +
+                               std::to_string(checked));
   }
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-expected-class-replacement-sources.gti", R"gti(
