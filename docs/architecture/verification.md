@@ -5446,6 +5446,13 @@ SIMD: fixed-array and scalar-field structs, repeated self-read replacement,
 exact constructor counts, immutable-binding rejection, and first-failure
 propagation with enclosing cleanup at O0/O3 under C++20/C++23. These regressions
 ensure native representation staging does not introduce hidden construction.
+`constructor_borrow_replacement_runtime` exercises an unrelated owning class
+constructed from a temporary borrowed view during replacement, including
+source mutation after retirement, constructor failure, old-value cleanup
+failure, failure after commit and secondary cleanup failure. Its eight native
+modes include disabled elision and ASan/UBSan. The lifecycle emitter gate
+independently rejects missing or late input retirement, unrelated provenance,
+escaping dependencies, effectful retirement and missing staging-shell cleanup.
 On arm64 and x86-64 the SIMD runtime gate disables native
 automatic loop/SLP vectorization and checks that packed arithmetic exists only
 in the native-capability path. The scalar reference must contain no packed

@@ -1,0 +1,32 @@
+#include <std/filesystem>
+#include <std/memory>
+#include <std/string>
+
+struct Pair {
+  mut std::string first;
+  mut std::string second;
+  Pair(std::string_view left, std::string_view right)
+      : first(std::string(left)), second(std::string(right)) {}
+};
+
+struct Holder {
+  mut Pair value{"old", "old"};
+};
+
+int main() {
+  mut std::string first{"left"};
+  mut std::string second{"right"};
+  mut Pair direct{"old", "old"};
+  direct = Pair(first.view(), second.view());
+  if (direct.first != "left" || direct.second != "right") return 1;
+  mut auto holder = std::make_unique<Holder>();
+  holder->value = Pair(second.view(), first.view());
+  if (holder->value.first != "right" || holder->value.second != "left") return 2;
+  mut std::filesystem::path path{};
+  path = std::filesystem::path(first.view());
+  if (path.string() != "left") return 3;
+  first.append("!");
+  second.append("!");
+  if (direct.first != "left" || holder->value.first != "right") return 4;
+  return 0;
+}
