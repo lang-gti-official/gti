@@ -1,0 +1,54 @@
+==================
+Unsafe expression results
+==================
+
+int main() {
+  auto text = unsafe { copy(description) };
+  return combine(unsafe { read(pointer) }, unsafe { unsafe { read(pointer) } });
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type)
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (unsafe_expression
+              (call_expression
+                (primary_expression
+                  (identifier))
+                (argument_list
+                  (primary_expression
+                    (identifier))))))))
+      (return_statement
+        (initializer_expression
+          (call_expression
+            (primary_expression
+              (identifier))
+            (argument_list
+              (primary_expression
+                (unsafe_expression
+                  (call_expression
+                    (primary_expression
+                      (identifier))
+                    (argument_list
+                      (primary_expression
+                        (identifier))))))
+              (primary_expression
+                (unsafe_expression
+                  (primary_expression
+                    (unsafe_expression
+                      (call_expression
+                        (primary_expression
+                          (identifier))
+                        (argument_list
+                          (primary_expression
+                            (identifier)))))))))))))))
