@@ -23,6 +23,13 @@ for what minor and patch releases mean.
   bound compile-time work. Shared ownership, virtual destruction, raw-memory
   allocation protocols and stored-reference carriers remain outside the slice.
 
+## 0.423.1 — Interface owner constructor cleanup
+
+- Fix a backend internal compiler error when a concrete interface implementer
+  has a user destructor and constructs owning fields. Construction failure
+  preserves field rollback without calling the incomplete owner's destructor.
+  This covers the nested window/context ownership case in issue #75.
+
 ## 0.422.0 — Compile-time result and constructor composition
 
 - Passive `expected<T, E>` values (including void success) now compose in
