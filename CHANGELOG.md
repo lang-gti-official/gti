@@ -11,6 +11,10 @@ for what minor and patch releases mean.
 
 ## 0.424.3 — Constructor and owning argument composition
 
+- Fix owning-field replacement through a checked mutable reference, including
+  repeated direct and nested uses of that reference. Preserve its exact carrier,
+  pointee type and loan through replacement and cleanup (issue #116).
+
 - Fix an internal compiler error when extracting an owning expected payload
   returned by virtual dispatch. Exact virtual-family identity, pending-result
   publication and caller cleanup remain checked for named and temporary results
