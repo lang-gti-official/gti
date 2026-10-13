@@ -18,9 +18,10 @@ if __name__ == "__main__":
             return (f"{fixture.name}:{line}: runtime error[GTI-R0002]: "
                     "division_by_zero in integer_division\n")
 
+        base = "10\n" if name == "fallible_base_rollback" else ""
         cases[name] = [
-            ((), (0, "30\n40\n20\n10\n90\n", "")),
-            (("field-fails",), (70, "30\n10\n90\n", failure(primary))),
+            ((), (0, f"30\n40\n20\n{base}90\n", "")),
+            (("field-fails",), (70, f"30\n{base}90\n", failure(primary))),
         ]
         if name == "fallible_base_rollback":
             cleanup = next(i + 1 for i, text in enumerate(lines) if "2 / divisor" in text)

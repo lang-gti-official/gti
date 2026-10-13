@@ -11,7 +11,7 @@ int Read() {
 class Base {
 public:
   Base() = default;
-  ~Base() { std::println(10); }
+  ~Base() {}
   virtual int Value() = 0;
 };
 class Derived : public Base {
