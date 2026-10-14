@@ -9,6 +9,12 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.425.1 — Accurate check progress labels
+
+- `gti check` now says `Checking` in its initial banner and elapsed-time updates
+  during internal lowering, instead of implying a native build. Verbose phase
+  detail, diagnostics, analysis, and normal build progress are unchanged.
+
 ## 0.424.4 — Raw field replacement and independent borrowing
 
 - Fix an internal compiler error replacing an owning field through a returned,
