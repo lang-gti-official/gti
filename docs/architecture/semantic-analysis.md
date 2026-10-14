@@ -2,6 +2,24 @@
 
 Status: Current implementation.
 
+Member visibility is shared by semantic field/call/constructor/type checks and
+completion filtering. `canAccessMember` uses the lexical class context, the
+selected declaration's access and owner, substituted inheritance paths, and an
+instance receiver's static type. Protected access through a derived context
+requires a receiver of that context's type or a descendant; static members and
+base-subobject initialization have no instance receiver restriction. Inaccessible
+selected members use `GTI-S2007` with their declaration as related information.
+The existing `AccessModifier` metadata carries protected sections through AST,
+semantic symbols and LoweredProgram. HIR/MIR retain the existing resolved
+field/call/constructor identities and execution operations; the declaration
+planner preserves section spelling, while lifetime-slot constructor helpers
+retain their existing semantic-authorized native-public representation.
+Generic constructor initializer matching compares the substituted direct base
+with the resolved initializer type during concrete reanalysis. Value-dependent
+default eligibility is deferred only after proving an accessible default
+constructor exists, so an open base argument cannot manufacture one beside an
+argument-taking constructor.
+
 ## Unsafe expression permission
 
 Value-producing `unsafe { expression }` uses the existing expression grouping
@@ -86,6 +104,67 @@ producer. The wrapper adds no invocation effects or new borrow permission;
 ordinary producer validity, unsafe obligations and escape checking remain
 mandatory. Tooling retains a selected construction occurrence whose hover
 explicitly explains that no additional copy/move is selected.
+
+## Declaration construction
+
+An explicitly typed class or struct declaration may have an initializer of
+another type that no assignment rule admits. `analyzeDeclarationConstruction`
+then selects a constructor for it, through the same
+`analyzeConstructorCallArguments` call a direct initializer makes, with the
+initializer as the sole analyzed argument. Overload, access, ownership and
+default-argument rules are therefore shared rather than restated. In this
+contextual mode, selection considers only constructors whose
+`ConstructorInfo::implicitConstruction` records a valid `implicit` modifier;
+declaration collection rejects the modifier on copy/move policies, packs and
+constructors that cannot take exactly one explicit argument (`GTI-S2121`), and
+the parser rejects it beside `unsafe`.
+`SemanticModel::recordContextualConstruction` keeps the selection and its site
+beside the initializer's own expression, call and construction records, which
+still describe the initializer itself. When no implicit constructor
+accepts the initializer, the selection's own `GTI-S2012` is dropped and the
+declaration reports its `GTI-S2003`, with a hint naming the explicit form;
+every other rejection keeps the selection's diagnostic. The construction records its program-storage and cleanup effects,
+and conservative raw-pointer field origins, at the declaration, as the direct
+initializer's expression would.
+
+The rule runs where the exact `nullptr_t` construction does, for declarations
+and field constructor initializers. It does not run for `constexpr` or
+range-element bindings, reference fields, unions, abstract classes,
+borrow-carrying declared types, or initializers typed by their destination
+(brace lists, contextually typed calls and function names). Calls, returns and
+assignment never consult it.
+
+## Conversion operators
+
+`operator Target()` is an `OverloadedOperator::Conversion` member named
+`__gti_operator_conversion`; every target shares that overload set, and
+`sameFunctionSignature` adds the resolved target to a conversion's identity,
+so aliases of one target collide and `implicit` does not distinguish
+declarations. `operator bool()` keeps its own `ContextualBool` member.
+`validateOperatorDeclaration` admits read-only, `mut` and consuming
+receivers and rejects parameters, `void`, references, text views,
+borrow-carrying targets and the owner class.
+
+One selection serves every conversion site. `conversionOperatorCandidates`
+returns the source class's operators to exactly the target, with every access
+and receiver. `conversionConstructorCandidates` runs the constructor
+candidate loop of `analyzeConstructorCallArguments` as a probe: it collects the
+constructors whose parameter types take the source, whatever access or
+ownership selection would then require, and reports and records nothing. A
+site whose source declares a conversion to the target and whose target also
+has such a constructor is ambiguous (`GTI-S2122`); otherwise
+`selectConversionOperator` calls `resolveOperator` with the exact target, and
+with only implicit operators for a declaration. Receiver modes, loans, access
+and raw-pointer effects are therefore those of any operator call. An explicit
+conversion, `Target(source)`, `int(source)` or `bool(source)`, records the
+operator on its `Call` or `Conversion` node; `explicitConversionReceiver`
+names the receiver for the ownership, constexpr and HIR consumers that
+otherwise locate an operator receiver by node shape. A declaration records a
+contextual conversion on its initializer, in the map that holds a condition's
+`operator bool`, and the declaration's sites accept the initializer through
+`recordsDeclarationConversion`. Every contextual conversion now records its
+target's program effect edge, so a condition's `operator bool` contributes to
+initializer-order effects like a declaration's conversion does.
 
 ## Native C scalar target facts
 

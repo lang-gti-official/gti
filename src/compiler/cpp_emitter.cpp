@@ -3,6 +3,7 @@
 #include "cpp_program_emission_plan.h"
 #include "cpp_program_text_writer.h"
 #include "gti/lowered_program.h"
+#include "gti/support.h"
 
 #include <memory>
 #include <utility>
@@ -13,9 +14,13 @@ class CppEmitter::Impl final {
 public:
   explicit Impl(const VerifiedLoweredProgram &program, CppStandard standard,
                 bool debugInfo)
-      : plan(buildCppProgramEmissionPlan(program, standard, debugInfo)) {}
+      : plan([&] {
+          const PhaseTimeScope timeScope("backend-plan");
+          return buildCppProgramEmissionPlan(program, standard, debugInfo);
+        }()) {}
 
   [[nodiscard]] std::string emit() const {
+    const PhaseTimeScope timeScope("backend-write");
     return writeCppProgramEmissionPlan(plan);
   }
 

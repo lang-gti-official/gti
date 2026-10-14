@@ -1,5 +1,6 @@
 #include "gti/lowered_program_builder.h"
 #include "gti/mir_verifier.h"
+#include "gti/support.h"
 
 #include "gti/ast.h"
 #include "gti/failure_metadata.h"
@@ -1213,7 +1214,8 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     const HirProgram &hir, const MirProgram &sourceMir,
     const MirProgram &optimizedMir,
     const std::vector<MirTransformRecord> &transformations,
-    const TargetInfo &target, bool captureDebugLocations) const {
+    const TargetInfo &target, bool captureDebugLocations,
+    LoweredProgramVerifiedInputs verified) const {
   LoweredProgramBuild build;
   if (!target.supported()) {
     addIssue(build.issues, LoweredProgramIssueKind::UnsupportedTarget,
@@ -1225,14 +1227,21 @@ LoweredProgramBuild LoweredProgramBuilder::build(
              "supplied Program or target differs from the semantic analysis "
              "seal");
   }
-  const HirProgramPlanVerificationResult hirPlans =
-      verifyHirProgramPlans(semantics, hir);
+  const HirProgramPlanVerificationResult hirPlans = [&] {
+    const PhaseTimeScope timeScope("lowered-verify-hir-plans");
+    return verifyHirProgramPlans(semantics, hir);
+  }();
   if (!hirPlans.valid()) {
     addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,
              hirPlans.errors.empty() ? "semantic and HIR program plans differ"
                                      : hirPlans.errors.front());
   }
-  const MirVerificationResult sourceVerification = verifyMirProgram(sourceMir);
+  const MirVerificationResult sourceVerification = [&] {
+    if (verified.sourceMirVerified)
+      return MirVerificationResult{};
+    const PhaseTimeScope timeScope("lowered-verify-source-mir");
+    return verifyMirProgram(sourceMir);
+  }();
   if (!sourceMir.valid() || !sourceVerification.valid()) {
     addIssue(build.issues, LoweredProgramIssueKind::InvalidSourceMir,
              sourceVerification.errors.empty()
@@ -1241,27 +1250,35 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   }
   // Verification depends only on program content, and an unoptimized
   // program is identical to its source.
-  const MirVerificationResult optimizedVerification =
-      optimizedMir == sourceMir ? sourceVerification
-                                : verifyMirProgram(optimizedMir);
+  const MirVerificationResult optimizedVerification = [&] {
+    const PhaseTimeScope timeScope("lowered-verify-optimized-mir");
+    return optimizedMir == sourceMir ? sourceVerification
+                                     : verifyMirProgram(optimizedMir);
+  }();
   if (!optimizedMir.valid() || !optimizedVerification.valid()) {
     addIssue(build.issues, LoweredProgramIssueKind::InvalidOptimizedMir,
              optimizedVerification.errors.empty()
                  ? "optimized MIR is not marked valid"
                  : optimizedVerification.errors.front().message);
   }
-  const FailureMetadataVerificationResult failureVerification =
-      verifyFailureMetadata(optimizedMir.failureMetadata());
+  const FailureMetadataVerificationResult failureVerification = [&] {
+    const PhaseTimeScope timeScope("lowered-verify-failure-metadata");
+    return verifyFailureMetadata(optimizedMir.failureMetadata());
+  }();
   if (!failureVerification.valid()) {
     addIssue(build.issues, LoweredProgramIssueKind::InvalidFailureMetadata,
              failureVerification.errors.empty()
                  ? "optimized MIR failure metadata is invalid"
                  : failureVerification.errors.front());
   }
-  const MirVerificationResult optimization =
-      mir_detail::verifyVerifiedMirOptimizationCoherence(
-          sourceMir, optimizedMir, transformations, sourceVerification.valid(),
-          optimizedVerification.valid());
+  const MirVerificationResult optimization = [&] {
+    if (verified.optimizationCoherenceVerified)
+      return MirVerificationResult{};
+    const PhaseTimeScope timeScope("lowered-verify-optimization-coherence");
+    return mir_detail::verifyVerifiedMirOptimizationCoherence(
+        sourceMir, optimizedMir, transformations, sourceVerification.valid(),
+        optimizedVerification.valid());
+  }();
   if (!optimization.valid()) {
     addIssue(build.issues, LoweredProgramIssueKind::InvalidOptimization,
              optimization.errors.empty()
@@ -1269,7 +1286,11 @@ LoweredProgramBuild LoweredProgramBuilder::build(
                  : optimization.errors.front().message);
   }
   std::string frontendMismatch;
-  if (!frontendInstancesMatch(semantics, hir, sourceMir, frontendMismatch)) {
+  const bool frontendMatches = [&] {
+    const PhaseTimeScope timeScope("lowered-verify-frontend-instances");
+    return frontendInstancesMatch(semantics, hir, sourceMir, frontendMismatch);
+  }();
+  if (!frontendMatches) {
     addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,
              std::move(frontendMismatch));
   }
@@ -1296,6 +1317,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     }
     lowered.embeddingPlan_ = std::move(plan);
   }
+  const PhaseTimeScope collectScope("lowered-collect");
   lowered.declarations_ = DeclarationCollector(semantics, target, hir)
                               .collect(program.declarations());
   for (LoweredDeclaration &declaration : lowered.declarations_) {
@@ -1477,7 +1499,10 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   // Checking a seal immediately after computing it from the same value would
   // print the whole program a second time without testing anything.
   lowered.indexDeclarations();
-  build.issues = lowered_detail::verifyLoweredProgramContents(lowered);
+  build.issues = [&] {
+    const PhaseTimeScope timeScope("lowered-verify-contents");
+    return lowered_detail::verifyLoweredProgramContents(lowered);
+  }();
   if (build.issues.empty()) {
     lowered.constructionSeal_ = constructionSeal(lowered);
     build.program.emplace(std::move(lowered));

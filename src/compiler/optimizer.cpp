@@ -1,4 +1,5 @@
 #include "gti/optimizer.h"
+#include "gti/support.h"
 
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -1217,10 +1218,9 @@ public:
             if (!programVerified) {
               programVerified = verifyMirProgram(context.program).valid();
             }
-            MirProgram replay = context.program;
             if (*programVerified &&
-                mir_detail::rewriteVerifiedMirDeadInstruction(replay, address,
-                                                              instruction.id)) {
+                mir_detail::canRewriteVerifiedMirDeadInstruction(
+                    context.program, address, instruction.id)) {
               editor.queueDeadInstructionRemoval(
                   {.body = address, .instruction = instruction.id});
             } else {
@@ -1329,6 +1329,7 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
   }
 
   if (request.options.verifyMir) {
+    const PhaseTimeScope timeScope("mir-verify-input");
     result.report.inputVerification = verifyMirProgram(result.mir);
     if (!result.report.inputVerification.valid()) {
       return result;
@@ -1339,6 +1340,7 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
     OptimizationResult localCompatibility;
     const OptimizationResult *compatibility = request.compatibility;
     if (compatibility == nullptr) {
+      const PhaseTimeScope timeScope("hir-compatibility-folding");
       localCompatibility = run(request.hir, request.level, request.target);
       compatibility = &localCompatibility;
     }
@@ -1346,6 +1348,7 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
     MirPassContext context{
         .hir = request.hir, .program = result.mir, .target = request.target};
     const auto execute = [&](MirPass &pass) {
+      const PhaseTimeScope timeScope("mir-pass", pass.name());
       MirPassOutcome outcome = pass.run(context, analyses);
       if (!outcome.verification.valid()) {
         result.report.outputVerification = std::move(outcome.verification);
@@ -1433,6 +1436,7 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
 
   if (request.options.verifyMir) {
     // The source snapshot is the input verified above.
+    const PhaseTimeScope timeScope("mir-verify-output-coherence");
     result.report.outputVerification =
         mir_detail::verifyVerifiedMirOptimizationCoherence(
             result.sourceMir, result.mir, result.report.transformations, true,

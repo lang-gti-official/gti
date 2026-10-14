@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -20,6 +21,10 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#endif
 
 namespace lang::driver {
 namespace {
@@ -95,7 +100,7 @@ publishDebugBundle(const std::filesystem::path &staged,
   return std::nullopt;
 }
 
-constexpr std::string_view cacheSchema = "gti-build-cache-v2";
+constexpr std::string_view cacheSchema = "gti-build-cache-v3";
 using detail::IdentityBuilder;
 
 struct FileDigest {
@@ -481,18 +486,21 @@ resolveExecutableForIdentity(std::string_view command) {
   return std::nullopt;
 }
 
+// Adds a compiler's command, executable content and version report to the
+// identity. `mirror`, when given, receives the same facts, so a second
+// identity (the native discovery memo context) can share one version probe.
 bool addCompilerIdentity(IdentityBuilder &identity, std::string_view label,
-                         const std::string &compiler,
-                         std::string &errorMessage) {
-  identity.add(std::string(label) + ".command", compiler);
+                         const std::string &compiler, std::string &errorMessage,
+                         IdentityBuilder *mirror = nullptr) {
   const std::optional<std::filesystem::path> executable =
       resolveExecutableForIdentity(compiler);
   if (!executable) {
     errorMessage = "cannot resolve compiler executable '" + compiler + "'";
     return false;
   }
-  if (!addFileIdentity(identity, std::string(label) + ".executable",
-                       *executable, true, errorMessage)) {
+  const std::optional<FileDigest> digest =
+      digestFile(*executable, errorMessage);
+  if (!digest) {
     return false;
   }
   const ProcessResult version =
@@ -505,7 +513,19 @@ bool addCompilerIdentity(IdentityBuilder &identity, std::string_view label,
         "compiler identity probe failed for '" + compiler + "'");
     return false;
   }
-  identity.add(std::string(label) + ".version", version.output);
+  for (IdentityBuilder *builder : {&identity, mirror}) {
+    if (builder == nullptr) {
+      continue;
+    }
+    builder->add(std::string(label) + ".command", compiler);
+    builder->add(std::string(label) + ".executable.begin", "file");
+    builder->add(std::string(label) + ".executable.path",
+                 normalizedAbsolute(*executable).generic_string());
+    builder->add(std::string(label) + ".executable.size",
+                 static_cast<std::uint64_t>(digest->size));
+    builder->add(std::string(label) + ".executable.sha256", digest->hash);
+    builder->add(std::string(label) + ".version", version.output);
+  }
   return true;
 }
 
@@ -812,6 +832,9 @@ bool addPathDirectorySequence(IdentityBuilder &identity, std::string_view label,
 
 std::optional<std::string> readTextFile(const std::filesystem::path &path,
                                         std::string &errorMessage);
+bool publishTextAtomically(const std::filesystem::path &destination,
+                           std::string_view contents,
+                           std::string &errorMessage);
 
 std::vector<std::filesystem::path>
 nativeCppIncludeDirectories(const ToolchainLayout &toolchain,
@@ -838,19 +861,297 @@ struct NativeLinkIdentityPlan {
   std::vector<ResolvedNativeFramework> frameworks;
 };
 
+constexpr std::string_view nativeDiscoverySchema = "gti-native-discovery-v1";
+constexpr std::string_view nativeDiscoveryDirectory = "native-discovery";
+
+// The stat facts under which a memoized discovery may trust a recorded
+// content digest without rereading the file. Any difference rehashes the
+// file; equal content then repairs the stamp.
+struct FileStamp {
+  std::uint64_t size = 0;
+  std::uint64_t modifiedNs = 0;
+  std::uint64_t inode = 0;
+
+  bool operator==(const FileStamp &) const = default;
+};
+
+std::optional<FileStamp> stampFile(const std::filesystem::path &path) {
+#if defined(_WIN32)
+  std::error_code error;
+  const std::uintmax_t size = std::filesystem::file_size(path, error);
+  if (error) {
+    return std::nullopt;
+  }
+  const std::filesystem::file_time_type written =
+      std::filesystem::last_write_time(path, error);
+  if (error) {
+    return std::nullopt;
+  }
+  return FileStamp{.size = static_cast<std::uint64_t>(size),
+                   .modifiedNs = static_cast<std::uint64_t>(
+                       written.time_since_epoch().count()),
+                   .inode = 0};
+#else
+  struct stat info{};
+  if (::stat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) {
+    return std::nullopt;
+  }
+#if defined(__APPLE__)
+  const timespec &modified = info.st_mtimespec;
+#else
+  const timespec &modified = info.st_mtim;
+#endif
+  return FileStamp{.size = static_cast<std::uint64_t>(info.st_size),
+                   .modifiedNs = static_cast<std::uint64_t>(modified.tv_sec) *
+                                     1000000000ULL +
+                                 static_cast<std::uint64_t>(modified.tv_nsec),
+                   .inode = static_cast<std::uint64_t>(info.st_ino)};
+#endif
+}
+
+std::uint64_t wallClockNs() {
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count());
+}
+
+// The entry names of a directory, which decide whether a file could now
+// shadow an include the compiler resolved elsewhere. A directory that cannot
+// be listed has the fixed identity "absent".
+std::string directoryNamesDigest(const std::filesystem::path &directory) {
+  std::error_code error;
+  std::vector<std::string> names;
+  for (std::filesystem::directory_iterator iterator(directory, error), end;
+       iterator != end; iterator.increment(error)) {
+    if (error) {
+      break;
+    }
+    names.push_back(iterator->path().filename().string());
+  }
+  if (error) {
+    return "absent";
+  }
+  std::sort(names.begin(), names.end());
+  IdentityBuilder identity;
+  identity.add("names", static_cast<std::uint64_t>(names.size()));
+  for (const std::string &name : names) {
+    identity.add("name", name);
+  }
+  return identity.finish();
+}
+
+struct DiscoveredDependency {
+  std::string path;
+  FileDigest digest;
+  FileStamp stamp;
+};
+
+struct WatchedDirectory {
+  std::string path;
+  std::string namesDigest;
+};
+
+// One probe's outcome: the preprocessed unit's digest, every file the
+// preprocessor opened (sorted by path) and the directories whose entry names
+// decided include resolution. Persisted beneath the cache root so an unchanged
+// source skips the preprocessor on later lookups.
+struct NativeDiscoveryRecord {
+  std::uint64_t writtenNs = 0;
+  FileDigest preprocessed;
+  std::vector<DiscoveredDependency> dependencies;
+  std::vector<WatchedDirectory> directories;
+};
+
+std::string renderNativeDiscoveryRecord(const NativeDiscoveryRecord &record) {
+  std::string text = std::string(nativeDiscoverySchema) + "\n" + "written " +
+                     std::to_string(record.writtenNs) + "\n" + "preprocessed " +
+                     record.preprocessed.hash + " " +
+                     std::to_string(record.preprocessed.size) + "\n";
+  for (const WatchedDirectory &directory : record.directories) {
+    text += "directory " + directory.namesDigest + " " + directory.path + "\n";
+  }
+  for (const DiscoveredDependency &dependency : record.dependencies) {
+    text += "dependency " + dependency.digest.hash + " " +
+            std::to_string(dependency.digest.size) + " " +
+            std::to_string(dependency.stamp.modifiedNs) + " " +
+            std::to_string(dependency.stamp.inode) + " " + dependency.path +
+            "\n";
+  }
+  return text;
+}
+
+// Parses a record strictly; anything unexpected is an absent record.
+std::optional<NativeDiscoveryRecord>
+readNativeDiscoveryRecord(const std::filesystem::path &path) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(path, error) || error) {
+    return std::nullopt;
+  }
+  std::string ignored;
+  const std::optional<std::string> text = readTextFile(path, ignored);
+  if (!text) {
+    return std::nullopt;
+  }
+  std::istringstream input(*text);
+  std::string line;
+  if (!std::getline(input, line) || line != nativeDiscoverySchema) {
+    return std::nullopt;
+  }
+  const auto validDigest = [](std::string_view hash) {
+    return hash.size() == 64 &&
+           std::all_of(hash.begin(), hash.end(),
+                       [](unsigned char c) { return std::isxdigit(c) != 0; });
+  };
+  NativeDiscoveryRecord record;
+  bool sawWritten = false;
+  bool sawPreprocessed = false;
+  while (std::getline(input, line)) {
+    std::istringstream fields(line);
+    std::string kind;
+    fields >> kind;
+    if (kind == "written") {
+      if (sawWritten || !(fields >> record.writtenNs)) {
+        return std::nullopt;
+      }
+      sawWritten = true;
+    } else if (kind == "preprocessed") {
+      if (sawPreprocessed ||
+          !(fields >> record.preprocessed.hash >> record.preprocessed.size) ||
+          !validDigest(record.preprocessed.hash)) {
+        return std::nullopt;
+      }
+      sawPreprocessed = true;
+    } else if (kind == "directory") {
+      WatchedDirectory directory;
+      if (!(fields >> directory.namesDigest) || fields.get() != ' ' ||
+          !std::getline(fields, directory.path) || directory.path.empty()) {
+        return std::nullopt;
+      }
+      record.directories.push_back(std::move(directory));
+    } else if (kind == "dependency") {
+      DiscoveredDependency dependency;
+      if (!(fields >> dependency.digest.hash >> dependency.digest.size >>
+            dependency.stamp.modifiedNs >> dependency.stamp.inode) ||
+          !validDigest(dependency.digest.hash) || fields.get() != ' ' ||
+          !std::getline(fields, dependency.path) || dependency.path.empty()) {
+        return std::nullopt;
+      }
+      dependency.stamp.size = dependency.digest.size;
+      record.dependencies.push_back(std::move(dependency));
+    } else {
+      return std::nullopt;
+    }
+  }
+  if (!sawWritten || !sawPreprocessed) {
+    return std::nullopt;
+  }
+  return record;
+}
+
+// Checks a memoized discovery against the file system: every watched
+// directory must list the same names and every dependency must have the same
+// content. A stamp equal to the recorded one, settled well before the record
+// was written, vouches for the recorded digest; anything else is rehashed,
+// and equal content repairs the stamp (`repaired`). Returns false when the
+// record no longer describes the inputs.
+bool nativeDiscoveryRecordHolds(NativeDiscoveryRecord &record, bool &repaired) {
+  repaired = false;
+  for (const WatchedDirectory &directory : record.directories) {
+    if (directoryNamesDigest(directory.path) != directory.namesDigest) {
+      return false;
+    }
+  }
+  constexpr std::uint64_t stampSettleNs = 2000000000ULL;
+  for (DiscoveredDependency &dependency : record.dependencies) {
+    const std::optional<FileStamp> stamp = stampFile(dependency.path);
+    if (!stamp) {
+      return false;
+    }
+    if (*stamp == dependency.stamp &&
+        stamp->modifiedNs + stampSettleNs < record.writtenNs) {
+      continue;
+    }
+    std::string ignored;
+    const std::optional<FileDigest> digest =
+        digestFile(dependency.path, ignored);
+    if (!digest || *digest != dependency.digest) {
+      return false;
+    }
+    dependency.stamp = *stamp;
+    repaired = true;
+  }
+  return true;
+}
+
+// Folds a discovery outcome into the cache identity. Fresh probes and valid
+// memoized records go through this one function, so a memo hit contributes
+// exactly the bytes the probe would have.
+void addNativeDiscoveryIdentity(IdentityBuilder &identity,
+                                std::string_view label,
+                                const std::filesystem::path &source,
+                                const NativeDiscoveryRecord &record) {
+  identity.add(std::string(label) + ".source",
+               normalizedAbsolute(source).generic_string());
+  identity.add(std::string(label) + ".deps",
+               static_cast<std::uint64_t>(record.dependencies.size()));
+  for (const DiscoveredDependency &dependency : record.dependencies) {
+    identity.add(std::string(label) + ".dep.path", dependency.path);
+    identity.add(std::string(label) + ".dep.size",
+                 static_cast<std::uint64_t>(dependency.digest.size));
+    identity.add(std::string(label) + ".dep.sha256", dependency.digest.hash);
+  }
+  identity.add(std::string(label) + ".preprocessed.size",
+               static_cast<std::uint64_t>(record.preprocessed.size));
+  identity.add(std::string(label) + ".preprocessed.sha256",
+               record.preprocessed.hash);
+}
+
+// Best effort: a memo that cannot be written only costs the next lookup a
+// probe.
+void writeNativeDiscoveryRecord(const std::filesystem::path &memo,
+                                NativeDiscoveryRecord &record) {
+  record.writtenNs = wallClockNs();
+  std::error_code error;
+  std::filesystem::create_directories(memo.parent_path(), error);
+  if (error) {
+    return;
+  }
+  std::string ignored;
+  publishTextAtomically(memo, renderNativeDiscoveryRecord(record), ignored);
+}
+
 // Runs one native preprocessor probe and folds the compiler's own dependency
 // report into the cache identity: every file the preprocessor opened joins
 // with content identity, and the preprocessed translation unit itself is
 // hashed so include resolution changes (for example a newly added shadowing
-// header) always change the key. Policy violations set `policyBypassDetail`;
-// mechanical failures set `errorMessage`.
-bool addNativeSourceDiscovery(IdentityBuilder &identity, std::string_view label,
-                              const std::vector<std::string> &probeCommand,
-                              const std::filesystem::path &source,
-                              const std::filesystem::path &preprocessed,
-                              const std::filesystem::path &depfile,
-                              std::string &errorMessage,
-                              std::string &policyBypassDetail) {
+// header) always change the key. `memo` names this probe's persisted record;
+// a record whose watched directories and dependency contents still hold
+// answers without running the preprocessor. Policy violations set
+// `policyBypassDetail`; mechanical failures set `errorMessage`.
+bool addNativeSourceDiscovery(
+    IdentityBuilder &identity, std::string_view label,
+    const std::vector<std::string> &probeCommand,
+    const std::filesystem::path &source,
+    const std::filesystem::path &preprocessed,
+    const std::filesystem::path &depfile,
+    const std::vector<std::filesystem::path> &includeDirectories,
+    const std::optional<std::filesystem::path> &memo, std::string &errorMessage,
+    std::string &policyBypassDetail) {
+  if (memo) {
+    if (std::optional<NativeDiscoveryRecord> record =
+            readNativeDiscoveryRecord(*memo)) {
+      bool repaired = false;
+      if (nativeDiscoveryRecordHolds(*record, repaired)) {
+        addNativeDiscoveryIdentity(identity, label, source, *record);
+        if (repaired) {
+          writeNativeDiscoveryRecord(*memo, *record);
+        }
+        return true;
+      }
+    }
+  }
+
   const ProcessResult probe = invokeProcess(
       probeCommand, {.outputMode = ProcessOutputMode::Capture,
                      .captureSuccessfulOutput = false,
@@ -883,11 +1184,14 @@ bool addNativeSourceDiscovery(IdentityBuilder &identity, std::string_view label,
   discovered.erase(std::unique(discovered.begin(), discovered.end()),
                    discovered.end());
 
-  identity.add(std::string(label) + ".source",
-               normalizedAbsolute(source).generic_string());
-  identity.add(std::string(label) + ".deps",
-               static_cast<std::uint64_t>(discovered.size()));
+  NativeDiscoveryRecord record;
+  std::vector<std::string> watched;
+  for (const std::filesystem::path &directory : includeDirectories) {
+    watched.push_back(normalizedAbsolute(directory).generic_string());
+  }
   for (const std::string &dependency : discovered) {
+    // Stamp before reading so a write racing the probe is rehashed later.
+    const std::optional<FileStamp> stamp = stampFile(dependency);
     const std::optional<std::string> contents =
         readTextFile(dependency, errorMessage);
     if (!contents) {
@@ -898,10 +1202,13 @@ bool addNativeSourceDiscovery(IdentityBuilder &identity, std::string_view label,
                            dependency + "' prevent deterministic native reuse";
       return false;
     }
-    identity.add(std::string(label) + ".dep.path", dependency);
-    identity.add(std::string(label) + ".dep.size",
-                 static_cast<std::uint64_t>(contents->size()));
-    identity.add(std::string(label) + ".dep.sha256", digestText(*contents));
+    record.dependencies.push_back(
+        DiscoveredDependency{.path = dependency,
+                             .digest = FileDigest{.hash = digestText(*contents),
+                                                  .size = contents->size()},
+                             .stamp = stamp.value_or(FileStamp{})});
+    watched.push_back(
+        std::filesystem::path(dependency).parent_path().generic_string());
   }
 
   const std::optional<FileDigest> preprocessedDigest =
@@ -909,23 +1216,24 @@ bool addNativeSourceDiscovery(IdentityBuilder &identity, std::string_view label,
   if (!preprocessedDigest) {
     return false;
   }
-  identity.add(std::string(label) + ".preprocessed.size",
-               static_cast<std::uint64_t>(preprocessedDigest->size));
-  identity.add(std::string(label) + ".preprocessed.sha256",
-               preprocessedDigest->hash);
+  record.preprocessed = *preprocessedDigest;
+  addNativeDiscoveryIdentity(identity, label, source, record);
+
+  if (memo) {
+    std::sort(watched.begin(), watched.end());
+    watched.erase(std::unique(watched.begin(), watched.end()), watched.end());
+    for (const std::string &directory : watched) {
+      record.directories.push_back(WatchedDirectory{
+          .path = directory, .namesDigest = directoryNamesDigest(directory)});
+    }
+    writeNativeDiscoveryRecord(*memo, record);
+  }
   return true;
 }
 
-std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
-                                         const CompilationInputs &inputs,
-                                         const BuildCachePolicy &policy,
-                                         const NativeLinkIdentityPlan &linkPlan,
-                                         std::string &errorMessage,
-                                         std::string &policyBypassDetail) {
-  IdentityBuilder identity;
-  identity.add("cache.schema", cacheSchema);
-  identity.add("compiler.identity", policy.compilerIdentity);
-  identity.add("project-model.identity", policy.projectModelIdentity);
+// The scalar native-toolchain environment that affects compiler policy
+// without injecting a mutable search root.
+void addNativeEnvironmentIdentity(IdentityBuilder &identity) {
   constexpr std::array<std::string_view, 19> nativeEnvironment{
       "PATH",
       "CPATH",
@@ -957,6 +1265,19 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
       identity.add("native.environment.value", value);
     }
   }
+}
+
+std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
+                                         const CompilationInputs &inputs,
+                                         const BuildCachePolicy &policy,
+                                         const NativeLinkIdentityPlan &linkPlan,
+                                         std::string &errorMessage,
+                                         std::string &policyBypassDetail) {
+  IdentityBuilder identity;
+  identity.add("cache.schema", cacheSchema);
+  identity.add("compiler.identity", policy.compilerIdentity);
+  identity.add("project-model.identity", policy.projectModelIdentity);
+  addNativeEnvironmentIdentity(identity);
   identity.add("backend.standard",
                static_cast<std::uint64_t>(request.compilation().cppStandard()));
   identity.add(
@@ -964,6 +1285,30 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
       static_cast<std::uint64_t>(request.compilation().requiresEntryPoint()));
   identity.add("optimization", static_cast<std::uint64_t>(
                                    request.compilation().optimization()));
+  // Source-level debug artifacts embed the loaded units' paths (the
+  // backend's line directives, native DWARF, the symbol bundle), so a debug
+  // build is keyed on them where a plain build is keyed on logical names and
+  // may move with its checkout. Darwin's symbol bundle is produced by
+  // dsymutil, which joins the identity like the compilers do.
+  const bool debugInfo = request.compilation().debugInfo();
+  identity.add("debug-info", static_cast<std::uint64_t>(debugInfo));
+  if (debugInfo) {
+    std::vector<std::string> sourcePaths;
+    for (const SourceUnit &unit : inputs.sourceGraph.sourceUnits()) {
+      sourcePaths.push_back(unit.path.string());
+    }
+    std::sort(sourcePaths.begin(), sourcePaths.end());
+    identity.add("debug.source-paths",
+                 static_cast<std::uint64_t>(sourcePaths.size()));
+    for (const std::string &path : sourcePaths) {
+      identity.add("debug.source-path", path);
+    }
+    if (request.compilation().target().os == "macos" &&
+        !addCompilerIdentity(identity, "debug.dsymutil", "dsymutil",
+                             errorMessage)) {
+      return std::nullopt;
+    }
+  }
   identity.add(
       "raw-pointer-audit",
       rawPointerAuditModeName(request.compilation().rawPointerAudit()));
@@ -1024,8 +1369,14 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
     return std::nullopt;
   }
 
+  // Native discovery memos are keyed on the facts that decide what a
+  // preprocessor run can see: the environment, the compilers and the exact
+  // probe argument vector.
+  IdentityBuilder probeContext;
+  probeContext.add("discovery.schema", nativeDiscoverySchema);
+  addNativeEnvironmentIdentity(probeContext);
   if (!addCompilerIdentity(identity, "native-cxx", request.nativeCompiler(),
-                           errorMessage)) {
+                           errorMessage, &probeContext)) {
     return std::nullopt;
   }
   const bool anyNativeCSources =
@@ -1041,10 +1392,11 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
       return std::nullopt;
     }
     if (!addCompilerIdentity(identity, "native-cc", *request.cCompiler(),
-                             errorMessage)) {
+                             errorMessage, &probeContext)) {
       return std::nullopt;
     }
   }
+  const std::string probeContextDigest = probeContext.finish();
 
   if (!addDirectoryIdentity(identity, "toolchain.runtime-include",
                             request.toolchain().runtimeInclude, false,
@@ -1221,9 +1573,27 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                             request.compilation().optimization(),
                             includeDirectories, arguments, native.targetPolicy),
                         depfile);
-          return addNativeSourceDiscovery(identity, label, probeCommand, source,
-                                          preprocessed, depfile, errorMessage,
-                                          policyBypassDetail);
+          std::optional<std::filesystem::path> memo;
+          if (!policy.root.empty()) {
+            IdentityBuilder key;
+            key.add("discovery.context", probeContextDigest);
+            key.add("discovery.label", label);
+            key.add("discovery.source",
+                    normalizedAbsolute(source).generic_string());
+            key.add("discovery.argv",
+                    static_cast<std::uint64_t>(probeCommand.size()));
+            for (const std::string &argument : probeCommand) {
+              // The staged output paths carry a per-run identity.
+              key.add("discovery.arg", argument == preprocessed.string() ||
+                                               argument == depfile.string()
+                                           ? std::string_view("<staged>")
+                                           : std::string_view(argument));
+            }
+            memo = policy.root / nativeDiscoveryDirectory / key.finish();
+          }
+          return addNativeSourceDiscovery(
+              identity, label, probeCommand, source, preprocessed, depfile,
+              includeDirectories, memo, errorMessage, policyBypassDetail);
         };
 
     std::vector<std::filesystem::path> cIncludeDirectories{
@@ -1288,7 +1658,85 @@ struct CacheMetadata {
   FileDigest generated;
   FileDigest executable;
   std::uint32_t executablePermissions = 0;
+  // The debug symbol bundle published beside a source-level debug
+  // executable (Darwin's `.dSYM`), as a tree digest over its files, or
+  // absent when the build published none.
+  std::optional<FileDigest> symbols;
 };
+
+constexpr std::string_view cacheSymbolsDirectory = "symbols.dSYM";
+
+// A content digest of a directory tree: every regular file by its relative
+// path, content hash and size, in sorted path order. Symlinks and other
+// entries make the tree unidentifiable.
+std::optional<FileDigest> digestTree(const std::filesystem::path &root,
+                                     std::string &errorMessage) {
+  std::error_code error;
+  std::vector<std::filesystem::path> files;
+  for (std::filesystem::recursive_directory_iterator
+           iterator(root, std::filesystem::directory_options::none, error),
+       end;
+       iterator != end; iterator.increment(error)) {
+    if (error) {
+      break;
+    }
+    const auto status = iterator->symlink_status(error);
+    if (error) {
+      break;
+    }
+    if (std::filesystem::is_directory(status)) {
+      continue;
+    }
+    if (!std::filesystem::is_regular_file(status)) {
+      errorMessage = "debug symbol bundle contains a non-regular entry '" +
+                     iterator->path().string() + "'";
+      return std::nullopt;
+    }
+    files.push_back(iterator->path());
+  }
+  if (error) {
+    errorMessage =
+        "cannot enumerate '" + root.string() + "': " + error.message();
+    return std::nullopt;
+  }
+  std::sort(files.begin(), files.end());
+  IdentityBuilder identity;
+  std::uintmax_t total = 0;
+  for (const std::filesystem::path &file : files) {
+    const std::optional<FileDigest> digest = digestFile(file, errorMessage);
+    if (!digest) {
+      return std::nullopt;
+    }
+    identity.add("tree.path", file.lexically_relative(root).generic_string());
+    identity.add("tree.sha256", digest->hash);
+    identity.add("tree.size", static_cast<std::uint64_t>(digest->size));
+    total += digest->size;
+  }
+  return FileDigest{.hash = identity.finish(), .size = total};
+}
+
+// Copies a directory tree of regular files, failing on anything else.
+bool copyTree(const std::filesystem::path &source,
+              const std::filesystem::path &destination,
+              std::string &errorMessage) {
+  std::error_code error;
+  std::filesystem::remove_all(destination, error);
+  if (error) {
+    errorMessage =
+        "cannot clear '" + destination.string() + "': " + error.message();
+    return false;
+  }
+  std::filesystem::copy(source, destination,
+                        std::filesystem::copy_options::recursive |
+                            std::filesystem::copy_options::copy_symlinks,
+                        error);
+  if (error) {
+    errorMessage = "cannot copy '" + source.string() + "' to '" +
+                   destination.string() + "': " + error.message();
+    return false;
+  }
+  return true;
+}
 
 bool validDigest(std::string_view digest) {
   return digest.size() == 64 &&
@@ -1311,16 +1759,26 @@ readCacheMetadata(const std::filesystem::path &path,
   CacheMetadata metadata;
   std::string generatedLabel;
   std::string executableLabel;
+  std::string symbolsLabel;
+  std::string symbolsHash;
   if (!(input >> schema >> metadata.key >> generatedLabel >>
         metadata.generated.hash >> metadata.generated.size >> executableLabel >>
         metadata.executable.hash >> metadata.executable.size >>
-        metadata.executablePermissions) ||
+        metadata.executablePermissions >> symbolsLabel >> symbolsHash) ||
       schema != cacheSchema || generatedLabel != "generated" ||
-      executableLabel != "executable" || !validDigest(metadata.key) ||
-      !validDigest(metadata.generated.hash) ||
+      executableLabel != "executable" || symbolsLabel != "symbols" ||
+      !validDigest(metadata.key) || !validDigest(metadata.generated.hash) ||
       !validDigest(metadata.executable.hash)) {
     errorMessage = "metadata has an invalid schema or digest";
     return std::nullopt;
+  }
+  if (symbolsHash != "none") {
+    std::uintmax_t symbolsSize = 0;
+    if (!validDigest(symbolsHash) || !(input >> symbolsSize)) {
+      errorMessage = "metadata has an invalid symbol bundle digest";
+      return std::nullopt;
+    }
+    metadata.symbols = FileDigest{.hash = symbolsHash, .size = symbolsSize};
   }
   std::string trailing;
   if (input >> trailing) {
@@ -1336,7 +1794,11 @@ std::string renderCacheMetadata(const CacheMetadata &metadata) {
          std::to_string(metadata.generated.size) + "\n" + "executable " +
          metadata.executable.hash + " " +
          std::to_string(metadata.executable.size) + " " +
-         std::to_string(metadata.executablePermissions) + "\n";
+         std::to_string(metadata.executablePermissions) + "\n" + "symbols " +
+         (metadata.symbols ? metadata.symbols->hash + " " +
+                                 std::to_string(metadata.symbols->size)
+                           : std::string("none")) +
+         "\n";
 }
 
 enum class CacheLookupStatus {
@@ -1350,6 +1812,8 @@ struct CacheLookupResult {
   std::string generated;
   FileDigest executableDigest;
   std::filesystem::perms executablePermissions = std::filesystem::perms::none;
+  // The verified debug symbol bundle inside the entry, when it holds one.
+  std::optional<std::filesystem::path> symbols;
   std::string detail;
 };
 
@@ -1360,8 +1824,12 @@ std::optional<std::string> readTextFile(const std::filesystem::path &path,
     errorMessage = "cannot read '" + path.string() + "'";
     return std::nullopt;
   }
-  std::string contents{std::istreambuf_iterator<char>(input),
-                       std::istreambuf_iterator<char>()};
+  std::string contents;
+  std::array<char, 64 * 1024> buffer{};
+  while (input) {
+    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    contents.append(buffer.data(), static_cast<std::size_t>(input.gcount()));
+  }
   if (input.bad()) {
     errorMessage = "cannot finish reading '" + path.string() + "'";
     return std::nullopt;
@@ -1426,11 +1894,30 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
                                 permissionError.message()
                           : "executable permissions do not match metadata"};
   }
+  std::optional<std::filesystem::path> symbols;
+  if (metadata->symbols) {
+    const std::filesystem::path symbolsPath = entry / cacheSymbolsDirectory;
+    const std::optional<FileDigest> symbolsDigest =
+        digestTree(symbolsPath, detail);
+    if (!symbolsDigest || *symbolsDigest != *metadata->symbols) {
+      return {.status = CacheLookupStatus::Corrupt,
+              .detail = symbolsDigest
+                            ? "debug symbol bundle digest does not match "
+                              "metadata"
+                            : std::move(detail)};
+    }
+    symbols = symbolsPath;
+  }
+  const std::string detailText =
+      symbols ? "verified backend representation, executable and debug "
+                "symbol digests"
+              : "verified backend representation and executable digests";
   return {.status = CacheLookupStatus::Hit,
           .generated = std::move(*generated),
           .executableDigest = *executableDigest,
           .executablePermissions = executablePermissions,
-          .detail = "verified backend representation and executable digests"};
+          .symbols = std::move(symbols),
+          .detail = detailText};
 }
 
 bool writeBinaryFile(const std::filesystem::path &path,
@@ -1557,12 +2044,29 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
     return false;
   }
 
-  const CacheMetadata metadata{
-      .key = std::string(key),
-      .generated = generatedDigest,
-      .executable = *executableDigest,
-      .executablePermissions =
-          static_cast<std::uint32_t>(executablePermissions)};
+  CacheMetadata metadata{.key = std::string(key),
+                         .generated = generatedDigest,
+                         .executable = *executableDigest,
+                         .executablePermissions =
+                             static_cast<std::uint32_t>(executablePermissions)};
+  // A source-level debug build on Darwin published its symbol bundle beside
+  // the executable; the entry keeps a copy so a hit can restore both.
+  const std::filesystem::path symbolsPath = entry / cacheSymbolsDirectory;
+  std::error_code symbolsError;
+  std::filesystem::remove_all(symbolsPath, symbolsError);
+  if (request.compilation().debugInfo() &&
+      request.compilation().target().os == "macos") {
+    const std::filesystem::path published(request.output().string() + ".dSYM");
+    if (std::filesystem::is_directory(published, symbolsError)) {
+      if (!copyTree(published, symbolsPath, errorMessage)) {
+        return false;
+      }
+      metadata.symbols = digestTree(symbolsPath, errorMessage);
+      if (!metadata.symbols) {
+        return false;
+      }
+    }
+  }
   // Metadata is the commit marker. Readers ignore incomplete entries until it
   // has been atomically replaced after both payloads have been published.
   return publishTextAtomically(metadataPath, renderCacheMetadata(metadata),
@@ -1748,10 +2252,6 @@ std::optional<std::string>
 nativeCacheBypassDetail(const ExecutableBuildRequest &request,
                         NativeLinkIdentityPlan &plan) {
   plan = {};
-  if (request.compilation().debugInfo()) {
-    return "source-level debug artifacts retain checkout paths and native "
-           "symbol sidecars; caching these is not yet supported";
-  }
   const NativeInputs &inputs = request.nativeInputs();
   if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||
       !inputs.linkerArguments.empty() || !inputs.trailingArguments.empty()) {
@@ -2661,7 +3161,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = "cache requires a managed project output policy";
     } else {
-      const std::filesystem::path versionRoot = request.cache()->root / "v2";
+      const std::filesystem::path versionRoot = request.cache()->root / "v3";
       const std::filesystem::path cacheProbe = versionRoot / "probe/metadata";
       if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
               *request.managedOutput(), cacheProbe, false)) {
@@ -2750,6 +3250,29 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
                 "gti: failed to restore cached executable: " + restoreError;
             result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
             return result;
+          }
+          if (lookup.symbols) {
+            // Restore the symbol bundle through the same staged publication
+            // a fresh build uses, so ownership and collision rules hold.
+            const std::filesystem::path symbols(request.output().string() +
+                                                ".dSYM");
+            const std::filesystem::path staged = stagedArtifactPath(symbols);
+            if (!copyTree(*lookup.symbols, staged, restoreError)) {
+              result.driverDiagnostic =
+                  "gti: failed to restore cached debug symbols: " +
+                  restoreError;
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+              return result;
+            }
+            if (const auto diagnostic = publishDebugBundle(staged, symbols)) {
+              std::error_code cleanupError;
+              std::filesystem::remove_all(staged, cleanupError);
+              result.driverDiagnostic =
+                  "gti: failed to publish cached debug bundle '" +
+                  symbols.string() + "': " + *diagnostic;
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+              return result;
+            }
           }
           result.generatedSourceRetained = request.keepGeneratedSource();
           result.status = ExecutableBuildStatus::Success;

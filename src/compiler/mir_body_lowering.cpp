@@ -2783,19 +2783,20 @@ private:
 
   // `propagation` is given when the drop was planned ahead of its emission
   // (shared exits); otherwise it is decided here, at the drop's own block.
+  // A drop never names a constructor-initializer stage: only the stage's one
+  // Initialize/InitializeBase publication does, even when the drop ends a
+  // temporary of that initializer's full expression.
   MirInstructionId appendNormalDrop(
       MirDropObligationId obligation, MirPlaceId destination,
       ExpressionInfo info, std::vector<MirLifecycleEvent> lifecycle,
       const std::vector<MirDropObligationId> &consumedDrops,
       const std::vector<MirLoanId> &endedLoans, HirValueId hirValue = 0,
-      HirStatementId hirStatement = 0, std::size_t constructorInitializer = 0,
-      MirLoanId producerEndedLoan = 0,
+      HirStatementId hirStatement = 0, MirLoanId producerEndedLoan = 0,
       std::vector<MirLoanId> producerEndedLoans = {},
       std::optional<FailurePropagationKind> propagation = std::nullopt) {
     MirInstruction drop{.kind = MirInstructionKind::Drop,
                         .hirValue = hirValue,
                         .hirStatement = hirStatement,
-                        .constructorInitializer = constructorInitializer,
                         .destination = destination,
                         .info = std::move(info),
                         .lifecycle = std::move(lifecycle)};
@@ -3181,8 +3182,8 @@ private:
                              {{.kind = MirLifecycleEventKind::Drop,
                                .source = candidate->obligation,
                                .conditional = candidate->conditional}},
-                             consumedDrops, {}, hirValue, hirStatement,
-                             constructorInitializer, 0, endedLoans);
+                             consumedDrops, {}, hirValue, hirStatement, 0,
+                             endedLoans);
       for (const auto loan : endedLoans) {
         (void)appendInstruction(
             {.kind = MirInstructionKind::EndBorrow, .loan = loan});
@@ -10379,7 +10380,7 @@ private:
               const ScopeExitState &state) {
       (void)self.appendNormalDrop(obligation, destination, scopeDropInfo(place),
                                   scopeDropLifecycle(obligation),
-                                  state.consumed, state.ended, 0, 0, 0,
+                                  state.consumed, state.ended, 0, 0,
                                   lifecycleLoan);
     }
     void dropped(MirDropObligationId obligation) {
@@ -10742,7 +10743,7 @@ private:
       }
       (void)self.appendNormalDrop(obligation, destination, scopeDropInfo(place),
                                   scopeDropLifecycle(obligation),
-                                  state.consumed, state.ended, 0, 0, 0,
+                                  state.consumed, state.ended, 0, 0,
                                   lifecycleLoan, {}, unit.propagation);
     }
     void dropped(MirDropObligationId obligation) {

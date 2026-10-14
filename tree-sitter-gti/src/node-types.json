@@ -597,6 +597,10 @@
             "named": false
           },
           {
+            "type": "protected",
+            "named": false
+          },
+          {
             "type": "public",
             "named": false
           }
@@ -1821,6 +1825,16 @@
           {
             "type": "requires_clause",
             "named": true
+          }
+        ]
+      },
+      "implicit": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "implicit",
+            "named": false
           }
         ]
       },
@@ -4182,11 +4196,61 @@
         ]
       },
       "conversion_type": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "array_extent",
+            "named": true
+          },
+          {
+            "type": "auto",
+            "named": false
+          },
+          {
+            "type": "const",
+            "named": false
+          },
+          {
+            "type": "expected_type",
+            "named": true
+          },
+          {
+            "type": "native_function_type",
+            "named": true
+          },
+          {
+            "type": "nullptr_t",
+            "named": false
+          },
+          {
+            "type": "pointer_declarator",
+            "named": true
+          },
+          {
+            "type": "primitive_type",
+            "named": true
+          },
+          {
+            "type": "reference_declarator",
+            "named": true
+          },
+          {
+            "type": "user_type",
+            "named": true
+          },
+          {
+            "type": "void",
+            "named": false
+          }
+        ]
+      },
+      "implicit": {
         "multiple": false,
         "required": false,
         "types": [
           {
-            "type": "bool",
+            "type": "implicit",
             "named": false
           }
         ]
@@ -4363,6 +4427,36 @@
         "types": [
           {
             "type": "parameter_clause",
+            "named": true
+          }
+        ]
+      },
+      "pointee_const": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "const",
+            "named": false
+          }
+        ]
+      },
+      "pointer": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "pointer_declarator",
+            "named": true
+          }
+        ]
+      },
+      "reference": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "reference_declarator",
             "named": true
           }
         ]
@@ -6038,6 +6132,10 @@
     "named": false
   },
   {
+    "type": "implicit",
+    "named": false
+  },
+  {
     "type": "import",
     "named": false
   },
@@ -6127,6 +6225,10 @@
   },
   {
     "type": "private",
+    "named": false
+  },
+  {
+    "type": "protected",
     "named": false
   },
   {

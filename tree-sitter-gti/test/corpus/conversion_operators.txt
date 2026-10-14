@@ -1,0 +1,105 @@
+==================
+Conversion operators
+==================
+
+struct RawId {
+  int64_t raw;
+  operator UserId() { return UserId(this.raw); }
+  implicit operator std::string() && { return std::to_string(this.raw); }
+  implicit virtual operator Box<int>() mut;
+  implicit constexpr operator bool() { return true; }
+};
+bool on = bool(id);
+UserId user = UserId(id);
+int implicit = 1;
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier))
+      (operator_declaration
+        (user_type
+          (identifier))
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (call_expression
+                (primary_expression
+                  (identifier))
+                (argument_list
+                  (member_expression
+                    (primary_expression
+                      (this_expression))
+                    (identifier))))))))
+      (operator_declaration
+        (user_type
+          (scoped_identifier
+            (identifier)
+            (identifier)))
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (call_expression
+                (primary_expression
+                  (scoped_identifier
+                    (identifier)
+                    (identifier)))
+                (argument_list
+                  (member_expression
+                    (primary_expression
+                      (this_expression))
+                    (identifier))))))))
+      (operator_declaration
+        (user_type
+          (identifier)
+          (type_argument_clause
+            (type
+              (primitive_type))))
+        (parameter_clause))
+      (operator_declaration
+        (primitive_type)
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (boolean_literal)))))))))
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (numeric_conversion
+          (primitive_type)
+          (primary_expression
+            (identifier))))))
+  (variable_declaration
+    (type
+      (user_type
+        (identifier)))
+    (identifier)
+    (initializer_expression
+      (call_expression
+        (primary_expression
+          (identifier))
+        (argument_list
+          (primary_expression
+            (identifier))))))
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (integer_literal))))))

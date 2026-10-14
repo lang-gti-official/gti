@@ -906,7 +906,8 @@ private:
     if (match({TokenKind::COLON})) {
       do {
         std::optional<Token> access;
-        if (match({TokenKind::PUBLIC, TokenKind::PRIVATE})) {
+        if (match({TokenKind::PUBLIC, TokenKind::PRIVATE,
+                   TokenKind::PROTECTED})) {
           access = previous();
         }
         bases.push_back({.access = std::move(access), .type = parseBaseType()});
@@ -1285,21 +1286,46 @@ private:
         std::move(definitionOwner));
   }
 
+  // `operator Target()`. A bool target is the contextual boolean
+  // conversion; any other target is an explicitly requested conversion.
+  // `implicit` additionally admits either in declaration initialization.
   StmtPtr conversionOperatorDeclaration(
       Token keyword, std::optional<Token> virtualKeyword = std::nullopt,
-      std::optional<Token> constexprKeyword = std::nullopt) {
-    Token boolType =
-        consume(TokenKind::BOOL,
-                "Only contextual 'operator bool()' conversions are supported.");
-    OperatorName operatorName{OverloadedOperator::ContextualBool, keyword,
-                              boolType};
-    Token name = syntheticOperatorName(operatorName);
-    consume(TokenKind::LEFT_PAREN, "Expect '(' after 'operator bool'.");
-    return functionDeclaration(TypeRef(boolType), std::move(name), {},
-                               std::nullopt, true, Mutability::Immutable,
-                               std::move(operatorName), std::nullopt,
-                               std::move(virtualKeyword), LanguageLinkage::Gti,
-                               std::move(constexprKeyword));
+      std::optional<Token> constexprKeyword = std::nullopt,
+      std::optional<Token> implicitKeyword = std::nullopt) {
+    StmtPtr declaration;
+    if (check(TokenKind::BOOL) && peekAt(1).kind == TokenKind::LEFT_PAREN) {
+      Token boolType = advance();
+      OperatorName operatorName{OverloadedOperator::ContextualBool, keyword,
+                                boolType};
+      Token name = syntheticOperatorName(operatorName);
+      consume(TokenKind::LEFT_PAREN, "Expect '(' after 'operator bool'.");
+      declaration = functionDeclaration(
+          TypeRef(boolType), std::move(name), {}, std::nullopt, true,
+          Mutability::Immutable, std::move(operatorName), std::nullopt,
+          std::move(virtualKeyword), LanguageLinkage::Gti,
+          std::move(constexprKeyword));
+    } else {
+      // The parameter clause follows the target, so `Target()` is not a
+      // function signature type here.
+      const Token targetStart = peek();
+      TypeRef target = parseType(false);
+      OperatorName operatorName{OverloadedOperator::Conversion, keyword,
+                                targetStart};
+      Token name = syntheticOperatorName(operatorName);
+      consume(TokenKind::LEFT_PAREN,
+              "Expect '(' after the conversion operator's target type.");
+      declaration = functionDeclaration(
+          std::move(target), std::move(name), {}, std::nullopt, true,
+          Mutability::Immutable, std::move(operatorName), std::nullopt,
+          std::move(virtualKeyword), LanguageLinkage::Gti,
+          std::move(constexprKeyword));
+    }
+    if (implicitKeyword) {
+      static_cast<FunctionDecl &>(*declaration)
+          .setImplicitKeyword(std::move(*implicitKeyword));
+    }
+    return declaration;
   }
 
   OperatorName overloadedOperatorName(Token keyword) {
@@ -1518,7 +1544,8 @@ private:
 
   StmtPtr constructorDeclaration(Token name,
                                  std::optional<Token> constexprKeyword = {},
-                                 std::optional<Token> unsafeKeyword = {}) {
+                                 std::optional<Token> unsafeKeyword = {},
+                                 std::optional<Token> implicitKeyword = {}) {
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
@@ -1579,6 +1606,10 @@ private:
         throw error(*unsafeKeyword,
                     "Only constructors with a source body may be unsafe.");
       }
+      if (implicitKeyword) {
+        throw error(*implicitKeyword,
+                    "Only constructors with a source body may be implicit.");
+      }
       return std::make_shared<ConstructorDecl>(
           std::move(constexprKeyword), std::move(name),
           std::move(genericParameters), std::move(parameters),
@@ -1595,7 +1626,124 @@ private:
         std::move(constexprKeyword), std::move(name),
         std::move(genericParameters), std::move(parameters),
         std::move(requiresClause), std::move(initializers), std::nullopt,
-        std::move(body), std::move(unsafeKeyword));
+        std::move(body), std::move(unsafeKeyword), std::move(implicitKeyword));
+  }
+
+  // The length of a constructor modifier run containing the contextual
+  // `implicit`, when one starts here. `implicit` is a modifier only there.
+  [[nodiscard]] std::optional<std::size_t>
+  implicitConstructorModifiers() const {
+    bool implicitSeen = false;
+    bool unsafeSeen = false;
+    bool constexprSeen = false;
+    for (std::size_t offset = 0; offset < 3; ++offset) {
+      const Token &token = peekAt(offset);
+      bool *seen =
+          token.kind == TokenKind::IDENTIFIER && token.lexeme == "implicit"
+              ? &implicitSeen
+          : token.kind == TokenKind::UNSAFE    ? &unsafeSeen
+          : token.kind == TokenKind::CONSTEXPR ? &constexprSeen
+                                               : nullptr;
+      if (seen == nullptr) {
+        return implicitSeen && isConstructorStart(offset)
+                   ? std::optional<std::size_t>(offset)
+                   : std::nullopt;
+      }
+      if (*seen) {
+        return std::nullopt;
+      }
+      *seen = true;
+    }
+    return implicitSeen && isConstructorStart(3) ? std::optional<std::size_t>(3)
+                                                 : std::nullopt;
+  }
+
+  // Misordered or conflicting modifiers are reported, and the constructor
+  // they introduce is still parsed so that recovery consumes it.
+  StmtPtr implicitConstructorDeclaration(std::size_t modifiers) {
+    std::optional<Token> implicitKeyword;
+    std::optional<Token> unsafeKeyword;
+    std::optional<Token> constexprKeyword;
+    for (std::size_t index = 0; index < modifiers; ++index) {
+      Token modifier = advance();
+      if (modifier.kind == TokenKind::CONSTEXPR) {
+        constexprKeyword = std::move(modifier);
+      } else if (modifier.kind == TokenKind::UNSAFE) {
+        unsafeKeyword = std::move(modifier);
+      } else {
+        if (constexprKeyword) {
+          (void)error(modifier, "Write 'implicit' before 'constexpr'.");
+        }
+        implicitKeyword = std::move(modifier);
+      }
+    }
+    if (implicitKeyword && unsafeKeyword) {
+      (void)error(*implicitKeyword,
+                  "An implicit constructor cannot be unsafe; construct the "
+                  "value explicitly in an unsafe context instead.");
+      implicitKeyword.reset();
+    }
+    return constructorDeclaration(advance(), std::move(constexprKeyword),
+                                  std::move(unsafeKeyword),
+                                  std::move(implicitKeyword));
+  }
+
+  // The length of a conversion operator's modifier run containing the
+  // contextual `implicit`: `implicit` and at most one of `virtual` or
+  // `constexpr`, followed by `operator` and a type. Elsewhere `implicit` is an
+  // identifier, including a type named `implicit` before an operator symbol.
+  [[nodiscard]] std::optional<std::size_t>
+  implicitConversionOperatorModifiers() const {
+    bool implicitSeen = false;
+    bool otherSeen = false;
+    for (std::size_t offset = 0; offset < 3; ++offset) {
+      const Token &token = peekAt(offset);
+      if (token.kind == TokenKind::OPERATOR) {
+        return implicitSeen && typeEnd(offset + 1)
+                   ? std::optional<std::size_t>(offset)
+                   : std::nullopt;
+      }
+      bool *seen =
+          token.kind == TokenKind::IDENTIFIER && token.lexeme == "implicit"
+              ? &implicitSeen
+          : token.kind == TokenKind::VIRTUAL ||
+                  token.kind == TokenKind::CONSTEXPR
+              ? &otherSeen
+              : nullptr;
+      if (seen == nullptr || *seen) {
+        return std::nullopt;
+      }
+      *seen = true;
+    }
+    return std::nullopt;
+  }
+
+  // A misordered modifier is reported, and the conversion operator it
+  // introduces is still parsed so that recovery consumes it.
+  StmtPtr implicitConversionOperatorDeclaration(std::size_t modifiers) {
+    std::optional<Token> implicitKeyword;
+    std::optional<Token> virtualKeyword;
+    std::optional<Token> constexprKeyword;
+    for (std::size_t index = 0; index < modifiers; ++index) {
+      Token modifier = advance();
+      if (modifier.kind == TokenKind::VIRTUAL) {
+        virtualKeyword = std::move(modifier);
+      } else if (modifier.kind == TokenKind::CONSTEXPR) {
+        constexprKeyword = std::move(modifier);
+      } else {
+        if (virtualKeyword || constexprKeyword) {
+          (void)error(
+              modifier,
+              "Write 'implicit' before '" +
+                  (virtualKeyword ? virtualKeyword : constexprKeyword)->lexeme +
+                  "'.");
+        }
+        implicitKeyword = std::move(modifier);
+      }
+    }
+    return conversionOperatorDeclaration(advance(), std::move(virtualKeyword),
+                                         std::move(constexprKeyword),
+                                         std::move(implicitKeyword));
   }
 
   StmtPtr destructorDeclaration(Token tilde) {
@@ -2169,12 +2317,14 @@ private:
         Token keyword = advance();
         return mutableFieldGroupDeclaration(std::move(keyword));
       }
-      if (match({TokenKind::PUBLIC, TokenKind::PRIVATE})) {
+      if (match(
+              {TokenKind::PUBLIC, TokenKind::PRIVATE, TokenKind::PROTECTED})) {
         Token keyword = previous();
         consume(TokenKind::COLON, "Expect ':' after access specifier.");
         return std::make_shared<AccessSpecifierDecl>(
-            keyword, keyword.kind == TokenKind::PUBLIC
-                         ? AccessModifier::Public
+            keyword, keyword.kind == TokenKind::PUBLIC ? AccessModifier::Public
+                     : keyword.kind == TokenKind::PROTECTED
+                         ? AccessModifier::Protected
                          : AccessModifier::Private);
       }
       if (match({TokenKind::SEMICOLON})) {
@@ -2185,6 +2335,10 @@ private:
       }
       if (match({TokenKind::OPERATOR})) {
         return conversionOperatorDeclaration(previous());
+      }
+      if (const std::optional<std::size_t> modifiers =
+              implicitConversionOperatorModifiers()) {
+        return implicitConversionOperatorDeclaration(*modifiers);
       }
       if (check(TokenKind::CONSTEXPR) &&
           peekAt(1).kind == TokenKind::OPERATOR) {
@@ -2197,6 +2351,10 @@ private:
         Token operatorKeyword = advance();
         return conversionOperatorDeclaration(std::move(operatorKeyword),
                                              std::move(virtualKeyword));
+      }
+      if (const std::optional<std::size_t> modifiers =
+              implicitConstructorModifiers()) {
+        return implicitConstructorDeclaration(*modifiers);
       }
       if (check(TokenKind::UNSAFE) &&
           (isConstructorStart(1) ||
@@ -3294,7 +3452,10 @@ private:
       consume(TokenKind::RIGHT_PAREN, "Expect ')' after layout query type.");
       return std::make_unique<LayoutQuery>(std::move(keyword), std::move(type));
     }
-    if ((isNumericTypeToken(peek().kind) || peek().kind == TokenKind::CHAR) &&
+    // `bool(value)` is explicit like the numeric spellings: a class value
+    // converts through its own operator bool.
+    if ((isNumericTypeToken(peek().kind) || peek().kind == TokenKind::CHAR ||
+         peek().kind == TokenKind::BOOL) &&
         peekAt(1).kind == TokenKind::LEFT_PAREN) {
       TypeRef targetType = parseType(false);
       consume(TokenKind::LEFT_PAREN, "Expect '(' after conversion type.");
@@ -4035,7 +4196,8 @@ private:
           return;
         }
         if (allowAccessSpecifiers &&
-            (check(TokenKind::PUBLIC) || check(TokenKind::PRIVATE))) {
+            (check(TokenKind::PUBLIC) || check(TokenKind::PRIVATE) ||
+             check(TokenKind::PROTECTED))) {
           return;
         }
         if (allowAccessSpecifiers && isConstructorStart()) {

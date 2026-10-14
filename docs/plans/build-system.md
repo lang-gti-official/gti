@@ -125,7 +125,7 @@ parses TOML 1.0 with vendored toml++ v3.4.0, validates manifest schema version
 and writes artifacts beneath
 `build/gti/<profile>/<arch>-<vendor>-<os>/` for standalone packages (and the
 package-qualified workspace layout above), with verified-payload whole-program
-cache entries beneath `build/gti/cache/v2/`. Declared native C/C++ sources
+cache entries beneath `build/gti/cache/v3/`. Declared native C/C++ sources
 (including a dependency group's), declared include and library search
 directories, content-complete exact link files, and `-l` names resolving to
 exactly one content-complete file inside a declared search directory now join

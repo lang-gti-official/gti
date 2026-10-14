@@ -1055,6 +1055,8 @@ struct ConstructorInfo {
   std::vector<std::size_t> borrowParameters;
   bool constexprConstructor = false;
   bool requiresUnsafe = false;
+  // Declared `implicit`: a declaration may construct from its one argument.
+  bool implicitConstruction = false;
   bool compilerPrivate = false;
   bool parameterPack = false;
 };
@@ -1378,6 +1380,26 @@ struct ResolvedOperatorInfo {
   // lowering must not reconstruct these facts from a declaration symbol.
   ExpressionInfo receiverInfo;
 };
+
+// The receiver of the conversion operator an explicit conversion selected:
+// the value of `int(source)`, or the sole argument of `Target(source)`. A
+// conversion operator has no parameters.
+[[nodiscard]] inline const ExprPtr *
+explicitConversionReceiver(const Expr &expression,
+                           const ResolvedOperatorInfo &resolved) {
+  if (resolved.kind != OverloadedOperator::Conversion &&
+      resolved.kind != OverloadedOperator::ContextualBool) {
+    return nullptr;
+  }
+  if (const auto *conversion = exprAs<Conversion>(&expression)) {
+    return &conversion->value();
+  }
+  if (const auto *call = exprAs<Call>(&expression);
+      call != nullptr && call->arguments().size() == 1) {
+    return &call->arguments().front();
+  }
+  return nullptr;
+}
 
 enum class SemanticBindingKind {
   None,
@@ -2124,8 +2146,14 @@ public:
   [[nodiscard]] const ResolvedOperatorInfo *
   findProjectionOperator(const Expr &expression) const;
 
+  // The conversion operator applied to an expression's value where its context
+  // requires another type: a condition's operator bool, or the implicit
+  // conversion of a declaration initializer to the declared type.
   [[nodiscard]] const ResolvedOperatorInfo *
   findContextualConversion(const Expr &expression) const;
+
+  // Whether this model, not a base, records the expression's conversion.
+  [[nodiscard]] bool recordsContextualConversion(const Expr &expression) const;
 
   [[nodiscard]] bool isContextualIntegerOperand(const Expr &expression) const;
 
@@ -2150,6 +2178,20 @@ public:
 
   [[nodiscard]] const ResolvedConstructionInfo *
   findArrayElementConstruction(const ArrayInitializer &initializer) const;
+
+  // The construction that consumes a declaration initializer whose own type
+  // differs from the declared class type. The initializer keeps every record
+  // of its own; this selected constructor takes it as the sole argument.
+  [[nodiscard]] const ResolvedConstructionInfo *
+  findContextualConstruction(const Expr &initializer) const;
+
+  // Whether this model, not a base, records the initializer's construction.
+  [[nodiscard]] bool
+  recordsContextualConstruction(const Expr &initializer) const;
+
+  // The initializer token a contextual construction reports and locates at.
+  [[nodiscard]] std::optional<Token>
+  contextualConstructionSite(const Expr &initializer) const;
 
   [[nodiscard]] const ResolvedConstructorInitializerInfo *
   findConstructorInitializer(const ConstructorInitializer &initializer) const;
@@ -2454,6 +2496,8 @@ private:
   void recordContextualConversion(const Expr &expression,
                                   ResolvedOperatorInfo info);
 
+  void forgetContextualConversion(const Expr &expression);
+
   void recordContextualIntegerOperand(const Expr &expression);
 
   void record(const ClassDecl &declaration, ClassLifecycleInfo info);
@@ -2462,6 +2506,11 @@ private:
 
   void recordArrayElementConstruction(const ArrayInitializer &initializer,
                                       ResolvedConstructionInfo info);
+
+  void recordContextualConstruction(const Expr &initializer,
+                                    ResolvedConstructionInfo info, Token site);
+
+  void forgetContextualConstruction(const Expr &initializer);
 
   void record(const ConstructorInitializer &initializer,
               ResolvedConstructorInitializerInfo info);
@@ -2625,6 +2674,9 @@ private:
       collections;
   std::unordered_map<const ArrayInitializer *, ResolvedConstructionInfo>
       arrayElementConstructions;
+  std::unordered_map<const Expr *, ResolvedConstructionInfo>
+      contextualConstructions;
+  std::unordered_map<const Expr *, Token> contextualConstructionSites;
   std::unordered_map<const ConstructorInitializer *,
                      ResolvedConstructorInitializerInfo>
       constructorInitializers;

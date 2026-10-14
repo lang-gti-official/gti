@@ -7,6 +7,7 @@
 #include "gti/frontend_work.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/standard_library.h"
+#include "gti/support.h"
 #include "semantic_diagnostics.h"
 #include "semantic_spelling.h"
 
@@ -1486,6 +1487,7 @@ private:
     AccessModifier access = AccessModifier::Public;
     bool compilerPrivate = false;
     bool specializedOwner = false;
+    SemanticType ownerType = SemanticType::Unknown;
     std::vector<ResolvedTypeAlias> qualifiers;
   };
 
@@ -2635,7 +2637,63 @@ private:
       std::optional<CallableBoundary> boundary = std::nullopt,
       std::optional<OperatorReceiverState> receiverState = std::nullopt,
       bool projection = false, bool preferReadOnlyReceiver = false,
-      ContextualCallArguments *contextualArguments = nullptr);
+      ContextualCallArguments *contextualArguments = nullptr,
+      std::optional<SemanticType> conversionTarget = std::nullopt,
+      bool implicitOnly = false);
+
+  // The operator a conversion to `target` names: operator bool for bool and
+  // the general conversion operator for every other target.
+  [[nodiscard]] static OverloadedOperator
+  conversionOperatorKind(const SemanticType &target) {
+    return target == SemanticType::Bool ? OverloadedOperator::ContextualBool
+                                        : OverloadedOperator::Conversion;
+  }
+
+  // A reference, a text view, or a value carrying a borrow: converting to it
+  // needs stored-borrow provenance a conversion site does not yet record.
+  [[nodiscard]] bool conversionTargetCarriesBorrow(const SemanticType &target) {
+    return target.kind == SemanticType::Reference ||
+           target.kind == SemanticType::StringView ||
+           target.kind == SemanticType::CString ||
+           typeTraits(target).containsBorrowedState;
+  }
+
+  // The conversion operators of the class `source` to exactly `target`.
+  [[nodiscard]] std::vector<CallableCandidate>
+  conversionOperatorCandidates(const SemanticType &source,
+                               const SemanticType &target, bool implicitOnly);
+
+  // The constructors of the class `target` that take `argument` as their one
+  // explicit argument by type; null stands for a union's first member.
+  [[nodiscard]] std::vector<const ConstructorInfo *>
+  conversionConstructorCandidates(const Expr &site, const ExprPtr &argument,
+                                  const SemanticType &argumentType,
+                                  const SemanticType &target,
+                                  const Token &token, bool implicitOnly);
+
+  void reportMissingConversionOperator(const Token &token,
+                                       const SemanticType &source,
+                                       const SemanticType &target);
+
+  void reportAmbiguousConversion(
+      const Token &token, const SemanticType &source,
+      const SemanticType &target, std::span<const CallableCandidate> operators,
+      std::span<const ConstructorInfo *const> constructors, bool declaration);
+
+  // Selects and records `source`'s conversion operator to `target`: on `site`
+  // for an explicit conversion, and as `source`'s contextual conversion for a
+  // declaration, which considers only implicit operators.
+  std::optional<CallableCandidate> selectConversionOperator(
+      const Expr &site, const ExprPtr &source, const SemanticType &sourceType,
+      const SemanticType &target, const Token &token, bool declaration);
+
+  // `Target(source)` or `int(source)` when `source`'s class declares a
+  // conversion operator to the target. Returns false, having done nothing,
+  // when it declares none.
+  bool analyzeExplicitConversion(const Expr &site, const ExprPtr &source,
+                                 const SemanticType &sourceType,
+                                 const SemanticType &target,
+                                 const Token &token);
 
   SemanticType arrowTargetType(const Expr &site, const ExprPtr &receiver,
                                const SemanticType &receiverType,
@@ -2836,12 +2894,16 @@ private:
   forwardedPackArgumentMatches(const SemanticType &parameter,
                                const SemanticType &argument) const;
 
+  // A contextual construction consumes `construction` as its sole argument;
+  // the selection is recorded beside the expression's own records.
   void analyzeConstructorCallArguments(
       const Expr &construction, ClassId classId,
       const std::vector<SemanticType> &typeArguments,
       const std::vector<CompileTimeValue> &valueArguments,
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
-      bool requireExactNullParameter = false);
+      bool requireExactNullParameter = false,
+      bool contextualConstruction = false,
+      std::vector<const ConstructorInfo *> *candidateProbe = nullptr);
 
   void analyzeExpectedMemberCall(const Call &call, const Get &member,
                                  const SemanticType &expected,
@@ -3366,6 +3428,15 @@ private:
                        ClassId enclosingClass = 0,
                        AccessModifier *enclosingAccess = nullptr);
   [[nodiscard]] bool isWithinClass(ClassId owner) const;
+  // Visibility only: callers still enforce receiver mutability, loans and
+  // lifetime. An Unknown receiver denotes a static member, type, or base
+  // initializer.
+  [[nodiscard]] bool
+  canAccessMember(AccessModifier access, ClassId owner,
+                  const SemanticType &receiver = SemanticType::Unknown,
+                  const SemanticType &lookupType = SemanticType::Unknown) const;
+  [[nodiscard]] SemanticType memberDeclaringType(const SemanticType &type,
+                                                 ClassId owner) const;
   [[nodiscard]] bool validateNestedClassAccess(ClassId id, const Token &use);
   [[nodiscard]] bool validateClassPathAliases(const NamePath &path,
                                               const Token &use);
@@ -3694,7 +3765,18 @@ private:
                                    const SourceSpan &span,
                                    bool includeDirectDestructor = true);
 
+  // The effect edge of a selected overloaded operator's target function.
+  void
+  recordProgramOperatorTargetEffects(const Expr &expression,
+                                     const ResolvedOperatorInfo &operation);
+
   void recordProgramCallEffects(const Expr &expression);
+
+  // Whether the construction's closed effects were open and recording stopped.
+  [[nodiscard]] bool
+  recordProgramConstructionEffects(const Expr &site,
+                                   const ResolvedConstructionInfo &construction,
+                                   std::size_t suppliedArguments);
 
   [[nodiscard]] std::vector<SourceUnitId>
   programInitializationUnitOrder() const;
@@ -3814,7 +3896,51 @@ private:
 
   SemanticType analyzeInitializer(const ExprPtr &expr,
                                   const SemanticType &expectedType,
-                                  bool allowExactNullConstruction = false);
+                                  bool allowExactNullConstruction = false,
+                                  bool allowDeclarationConstruction = false);
+
+  [[nodiscard]] bool
+  declarationConstructionApplies(const ExprPtr &expr,
+                                 const SemanticType &declaredType,
+                                 const SemanticType &initializerType);
+
+  SemanticType
+  analyzeDeclarationConstruction(const ExprPtr &expr,
+                                 const SemanticType &declaredType,
+                                 const SemanticType &initializerType);
+
+  // Whether a declaration's initializer of another type could convert to the
+  // declared type through an implicit conversion operator of its class.
+  [[nodiscard]] bool
+  declarationConversionApplies(const ExprPtr &expr,
+                               const SemanticType &declaredType,
+                               const SemanticType &initializerType);
+
+  SemanticType analyzeDeclarationConversion(const ExprPtr &expr,
+                                            const SemanticType &declaredType,
+                                            const SemanticType &initializerType,
+                                            bool constructionApplies);
+
+  // A declaration initializer whose value an implicit constructor or implicit
+  // conversion operator converts to the declared type.
+  [[nodiscard]] bool
+  recordsDeclarationConversion(const Expr &initializer) const {
+    return semanticModel.recordsContextualConstruction(initializer) ||
+           semanticModel.recordsContextualConversion(initializer);
+  }
+
+  [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
+  contextualConstructionRawFields(const Expr &initializer,
+                                  const SemanticType &type);
+
+  // The hint for a declaration no implicit conversion accepts, with the
+  // explicit spelling that selects any constructor or conversion operator.
+  [[nodiscard]] static std::string
+  implicitConstructionHint(const std::string &explicitSpelling) {
+    return "Only a constructor or conversion operator declared 'implicit' "
+           "converts a declaration's initializer; write '" +
+           explicitSpelling + "' to convert explicitly.";
+  }
 
   [[nodiscard]] bool isDefaultLibraryUnit(SourceUnitId sourceUnit) const;
 
@@ -4093,6 +4219,14 @@ private:
                         const CallableCandidate &right);
 
   [[nodiscard]] static bool
+  isConversionOperator(const CallableCandidate &candidate) {
+    return candidate.declaration != nullptr &&
+           candidate.declaration->operatorName() &&
+           candidate.declaration->operatorName()->kind ==
+               OverloadedOperator::Conversion;
+  }
+
+  [[nodiscard]] static bool
   sameConstructorSignature(const ConstructorInfo &left,
                            const ConstructorInfo &right);
 
@@ -4129,7 +4263,8 @@ private:
       std::vector<SemanticCompletionCandidateRecord> &result,
       const std::string &name, const std::string &qualifiedName,
       const Symbol &symbol, std::size_t scopeDistance,
-      bool substitutedCallable = false, bool mutableReceiver = true) const;
+      bool substitutedCallable = false, bool mutableReceiver = true,
+      const SemanticType &receiverType = SemanticType::Unknown) const;
 
   void appendNamespaceChildren(
       std::vector<SemanticCompletionCandidateRecord> &result,
@@ -5487,6 +5622,26 @@ private:
   // code. Closed executable/library requests need every actual GTI call target.
   bool requireFunctionDefinitions = false;
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
+
+  // ---- Staged constant evaluation worker --------------------------------
+  // The analyzer a staged constexpr evaluation lowers its constant instance
+  // through. It copies the sealed catalog and the staging model, which is
+  // most of an evaluation's cost, so it is kept and reused while nothing it
+  // copied can have changed: the staging model, the current declaration
+  // order, and the constexpr definitions and constructors declared before
+  // it. Per-evaluation context (the work budget, raw result queries, the
+  // lambda identity floor) is refreshed on every use.
+  struct StagedWorker {
+    std::unique_ptr<Impl> impl;
+    const SemanticModel *stagingModel = nullptr;
+    std::size_t declarationOrder = 0;
+    std::size_t definitions = 0;
+    std::size_t constructors = 0;
+  };
+  StagedWorker stagedWorker;
+  [[nodiscard]] Impl &
+  stagedWorkerFor(const SemanticModel &stagingModel,
+                  const std::shared_ptr<ConstexprWorkBudget> &work);
 };
 
 // The frozen analyzer of a trusted prefix (see semantic_preamble.h). It owns

@@ -60,6 +60,10 @@ public:
     return index;
   }
 
+  implicit operator int64_t() {
+    return int64_t(this.hidden);
+  }
+
 private:
   /// This must not be published.
   int secret = 1;
@@ -209,6 +213,15 @@ int main() {
              subscript->ownerQualifiedName == "std::widget",
          "operator identities should use source-facing names, not compiler "
          "mangling names");
+  const lang::DocumentationDeclaration *conversion =
+      findDeclaration(projected.index, "std::widget::operator int64_t",
+                      lang::DocumentationKind::Operator);
+  expect(conversion != nullptr && conversion->name == "operator int64_t" &&
+             conversion->signature &&
+             *conversion->signature ==
+                 "implicit std::widget::operator int64_t()",
+         "a conversion operator is named by its target and keeps `implicit` "
+         "in its signature");
 
   const lang::DocumentationDeclaration *function = findDeclaration(
       projected.index, "std::twice", lang::DocumentationKind::Function);

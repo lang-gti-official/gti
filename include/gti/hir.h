@@ -391,6 +391,14 @@ struct HirDirectInitialization {
   std::optional<SemanticDirectInitializationProof> constructionProof;
 };
 
+// A declaration initializer whose own type differs from its declared class
+// type, consumed by the constructor semantics selected for it. `value` is that
+// source-less construction; its first operand is the initializer's own value.
+struct HirContextualConstruction {
+  const Expr *source = nullptr;
+  HirValueId value = 0;
+};
+
 struct HirBody {
   PlaceDomain placeDomain;
   std::vector<HirBinding> bindings;
@@ -399,6 +407,7 @@ struct HirBody {
   std::vector<HirDropObligation> dropObligations;
   std::vector<HirValue> values;
   std::vector<HirDirectInitialization> directInitializations;
+  std::vector<HirContextualConstruction> contextualConstructions;
   // Source expressions that semantics aliased to another expression (a
   // reflected field access and the projection it denotes): the source shares
   // the aliased expression's value without a value of its own.
@@ -413,6 +422,11 @@ struct HirBody {
   [[nodiscard]] const HirValue *findValue(HirValueId id) const;
 
   [[nodiscard]] const HirValue *valueForSource(const Expr &source) const;
+
+  // The value a declaration initializer supplies to its binding or field:
+  // its contextual construction when one consumes it, else its own value.
+  [[nodiscard]] const HirValue *
+  initializerValueForSource(const Expr &source) const;
 
   [[nodiscard]] const HirStatement *findStatement(HirStatementId id) const;
 
