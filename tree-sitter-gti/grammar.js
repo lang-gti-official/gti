@@ -60,6 +60,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "or",
   "override",
   "private",
+  "protected",
   "public",
   "requires",
   "return",
@@ -519,7 +520,7 @@ module.exports = grammar({
 
     base_specifier: ($) =>
       seq(
-        optional(field("access", choice("public", "private"))),
+        optional(field("access", choice("public", "private", "protected"))),
         field("type", $._base_type),
       ),
 
@@ -571,7 +572,7 @@ module.exports = grammar({
         ";",
       ),
 
-    access_specifier: () => seq(choice("public", "private"), ":"),
+    access_specifier: () => seq(choice("public", "private", "protected"), ":"),
 
     constructor_declaration: ($) =>
       seq(

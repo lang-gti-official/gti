@@ -2,6 +2,21 @@
 
 Status: Current implementation.
 
+Member visibility is shared by semantic field/call/constructor/type checks and
+completion filtering. `canAccessMember` uses the lexical class context, the
+selected declaration's access and owner, substituted inheritance paths, and an
+instance receiver's static type. Protected access through a derived context
+requires a receiver of that context's type or a descendant; static members and
+base-subobject initialization have no instance receiver restriction. Inaccessible
+selected members use `GTI-S2007` with their declaration as related information.
+The existing `AccessModifier` metadata carries protected sections through AST,
+semantic symbols and LoweredProgram. HIR/MIR retain the existing resolved
+field/call/constructor identities and execution operations; the declaration
+planner preserves section spelling, while lifetime-slot constructor helpers
+retain their existing semantic-authorized native-public representation.
+Generic constructor initializer matching compares the substituted direct base
+with the resolved initializer type during concrete reanalysis.
+
 ## Unsafe expression permission
 
 Value-producing `unsafe { expression }` uses the existing expression grouping

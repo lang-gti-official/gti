@@ -118,6 +118,7 @@ enum class TokenKind : std::uint8_t {
   OR,
   OVERRIDE,
   PRIVATE,
+  PROTECTED,
   PUBLIC,
   REQUIRES,
   RETURN,
@@ -487,6 +488,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "OVERRIDE";
   case TokenKind::PRIVATE:
     return "PRIVATE";
+  case TokenKind::PROTECTED:
+    return "PROTECTED";
   case TokenKind::PUBLIC:
     return "PUBLIC";
   case TokenKind::REQUIRES:

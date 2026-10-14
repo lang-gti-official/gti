@@ -1486,6 +1486,7 @@ private:
     AccessModifier access = AccessModifier::Public;
     bool compilerPrivate = false;
     bool specializedOwner = false;
+    SemanticType ownerType = SemanticType::Unknown;
     std::vector<ResolvedTypeAlias> qualifiers;
   };
 
@@ -3349,6 +3350,15 @@ private:
                        ClassId enclosingClass = 0,
                        AccessModifier *enclosingAccess = nullptr);
   [[nodiscard]] bool isWithinClass(ClassId owner) const;
+  // Visibility only: callers still enforce receiver mutability, loans and
+  // lifetime. An Unknown receiver denotes a static member, type, or base
+  // initializer.
+  [[nodiscard]] bool
+  canAccessMember(AccessModifier access, ClassId owner,
+                  const SemanticType &receiver = SemanticType::Unknown,
+                  const SemanticType &lookupType = SemanticType::Unknown) const;
+  [[nodiscard]] SemanticType memberDeclaringType(const SemanticType &type,
+                                                 ClassId owner) const;
   [[nodiscard]] bool validateNestedClassAccess(ClassId id, const Token &use);
   [[nodiscard]] bool validateClassPathAliases(const NamePath &path,
                                               const Token &use);
@@ -4107,7 +4117,8 @@ private:
       std::vector<SemanticCompletionCandidateRecord> &result,
       const std::string &name, const std::string &qualifiedName,
       const Symbol &symbol, std::size_t scopeDistance,
-      bool substitutedCallable = false, bool mutableReceiver = true) const;
+      bool substitutedCallable = false, bool mutableReceiver = true,
+      const SemanticType &receiverType = SemanticType::Unknown) const;
 
   void appendNamespaceChildren(
       std::vector<SemanticCompletionCandidateRecord> &result,

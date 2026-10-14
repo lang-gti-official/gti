@@ -4089,7 +4089,7 @@ auto SemanticVisitor::Impl::appendSymbolCompletions(
     std::vector<SemanticCompletionCandidateRecord> &result,
     const std::string &name, const std::string &qualifiedName,
     const Symbol &symbol, std::size_t scopeDistance, bool substitutedCallable,
-    bool mutableReceiver) const -> void {
+    bool mutableReceiver, const SemanticType &receiverType) const -> void {
   if (name.rfind("__gti_", 0) == 0 ||
       symbol.valueState != ValueState::Available ||
       (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4097,10 +4097,15 @@ auto SemanticVisitor::Impl::appendSymbolCompletions(
         semanticModel.isCompilerPrivateType(symbol.type)))) {
     return;
   }
-  if (currentStaticMemberFunction && symbol.ownerClass != 0 &&
-      !symbol.staticMember) {
+  if (currentStaticMemberFunction && receiverType == SemanticType::Unknown &&
+      symbol.ownerClass != 0 && !symbol.staticMember) {
     return;
   }
+  if (symbol.type != SemanticType::Function &&
+      !canAccessMember(symbol.access, symbol.ownerClass,
+                       symbol.staticMember ? SemanticType::Unknown
+                                           : receiverType))
+    return;
   if (symbol.type == SemanticType::Function) {
     for (const CallableCandidate &overload : symbol.overloads) {
       if (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4113,8 +4118,10 @@ auto SemanticVisitor::Impl::appendSymbolCompletions(
                        }))) {
         continue;
       }
-      if (overload.access == AccessModifier::Private &&
-          !isWithinClass(overload.ownerClass)) {
+      if (!canAccessMember(overload.access, overload.ownerClass,
+                           overload.staticMember ? SemanticType::Unknown
+                                                 : receiverType,
+                           overload.dispatchOwner)) {
         continue;
       }
       if (!mutableReceiver &&
@@ -4321,8 +4328,7 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
     }
     for (const auto &[name, alias] : owner.typeAliases) {
       if (!seen.insert(name).second ||
-          (alias.access == AccessModifier::Private &&
-           !isWithinClass(alias.ownerClass)) ||
+          (!canAccessMember(alias.access, alias.ownerClass)) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            (alias.compilerPrivate ||
             semanticModel.isCompilerPrivateType(alias.type)))) {
@@ -4353,8 +4359,7 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
          id = classInfo(id).enclosingClass) {
       const ClassInfo &nested = classInfo(id);
       if (nested.enclosingClass != 0 &&
-          nested.enclosingAccess == AccessModifier::Private &&
-          !isWithinClass(nested.enclosingClass)) {
+          !canAccessMember(nested.enclosingAccess, nested.enclosingClass)) {
         return true;
       }
     }
@@ -4429,16 +4434,14 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       if ((!isCompilerTrustedUnit(currentSourceUnit) &&
            nested.compilerPrivate) ||
           (nested.enclosingClass != 0 &&
-           nested.enclosingAccess == AccessModifier::Private &&
-           !isWithinClass(nested.enclosingClass))) {
+           !canAccessMember(nested.enclosingAccess, nested.enclosingClass))) {
         semanticModel.recordCompletion(std::move(context));
         return;
       }
     }
     for (const auto &[name, nestedId] : classType.nestedTypes) {
       const ClassInfo &nested = classInfo(nestedId);
-      if ((nested.enclosingAccess == AccessModifier::Private &&
-           !isWithinClass(*owner)) ||
+      if ((!canAccessMember(nested.enclosingAccess, *owner)) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            nested.compilerPrivate)) {
         continue;
@@ -4470,8 +4473,9 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
     for (const auto &[name, alias] : classType.typeAliases) {
       const SemanticType selectedType =
           substituteType(alias.type, substitution);
-      if ((alias.access == AccessModifier::Private &&
-           !isWithinClass(alias.ownerClass)) ||
+      if ((!canAccessMember(
+              alias.access, alias.ownerClass, SemanticType::Unknown,
+              specializedOwner.value_or(openClassType(*owner)))) ||
           (!specializedOwner && !classType.genericParameters.empty() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4499,8 +4503,9 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       if (alias.ownerClass != *owner ||
           alias.resolution != TypeAliasResolution::Resolved ||
           !seenTypeAliases.insert(alias.declaration->name().lexeme).second ||
-          (alias.access == AccessModifier::Private &&
-           !isWithinClass(alias.ownerClass)) ||
+          (!canAccessMember(
+              alias.access, alias.ownerClass, SemanticType::Unknown,
+              specializedOwner.value_or(openClassType(*owner)))) ||
           (!specializedOwner && !classType.genericParameters.empty() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4525,15 +4530,19 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       // Do not advertise a spelling that ordinary symbol lookup cannot use.
       if (typeOnly || (specializedOwner && !ownerType) ||
           !member.symbol.staticMember ||
-          (member.access == AccessModifier::Private &&
-           !isWithinClass(member.symbol.ownerClass))) {
+          (member.symbol.type != SemanticType::Function &&
+           !canAccessMember(
+               member.access, member.symbol.ownerClass, SemanticType::Unknown,
+               specializedOwner.value_or(openClassType(*owner))))) {
         continue;
       }
       appendSymbolCompletions(
           context.candidates, name,
           qualifiedName(classType.namespaceScope,
                         classType.name.lexeme + "::" + name),
-          member.symbol, 0);
+          specializedOwner ? substituteSymbol(member.symbol, *specializedOwner)
+                           : member.symbol,
+          0);
     }
   } else if (const std::optional<std::string> owner =
                  resolveNamespacePath(ownerPath, currentNamespace)) {
@@ -4559,13 +4568,14 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
         if (member.symbol.staticMember) {
           continue;
         }
-        if (member.access == AccessModifier::Private &&
-            !isWithinClass(member.symbol.ownerClass)) {
+        if (member.symbol.type != SemanticType::Function &&
+            !canAccessMember(member.access, member.symbol.ownerClass,
+                             objectType)) {
           continue;
         }
         const Symbol substituted = substituteSymbol(member.symbol, objectType);
         appendSymbolCompletions(context.candidates, name, name, substituted, 0,
-                                true, mutableReceiver);
+                                true, mutableReceiver, objectType);
       }
     }
   } else if (objectType.kind == SemanticType::Array) {
@@ -5071,6 +5081,7 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
   }
   alias->type = substituteType(alias->type, classSubstitution(owner));
   alias->specializedOwner = true;
+  alias->ownerType = owner;
   if (auto qualifier = resolveTypeAliasPath(*type.qualifiedOwner, fromScope)) {
     alias->qualifiers.push_back(std::move(*qualifier));
   }
@@ -5152,6 +5163,7 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
       if (auto alias = member(ownerType.classId, path.last().lexeme)) {
         alias->type = substituteType(alias->type, classSubstitution(ownerType));
         alias->specializedOwner = true;
+        alias->ownerType = ownerType;
         alias->qualifiers.push_back(*qualifier);
         return alias;
       }
@@ -6538,15 +6550,17 @@ auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
     return nullptr;
   }
   if (member->symbol.type != SemanticType::Function &&
-      member->access == AccessModifier::Private &&
-      !isWithinClass(member->symbol.ownerClass) &&
+      !canAccessMember(member->access, member->symbol.ownerClass,
+                       member->symbol.staticMember ? SemanticType::Unknown
+                                                   : objectType) &&
       !(analyzingReflectedFieldAccess &&
         classInfo(member->symbol.ownerClass).reflectPrivate)) {
     const ClassInfo &declaringOwner = classInfo(member->symbol.ownerClass);
-    Diagnostic diagnostic =
-        makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, name,
-                       "Member '" + name.lexeme + "' of '" +
-                           declaringOwner.name.lexeme + "' is private.");
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2007", DiagnosticPhase::Semantics, name,
+        "Member '" + name.lexeme + "' of '" + declaringOwner.name.lexeme +
+            "' is " + std::string(accessModifierSpelling(member->access)) +
+            ".");
     diagnostic.related.push_back(
         {tokenSpan(member->symbol.declaration), "Member declared here."});
     diagnostics.emplace_back(std::move(diagnostic));

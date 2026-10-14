@@ -2249,11 +2249,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 34
       }
+    },
+    "150-protected-events.gti": {
+      "declarations": 122,
+      "bodies": 32,
+      "generated_items": 4,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 3
+      }
     }
   },
   "totals": {
-    "declarations": 106990,
-    "bodies": 16446,
-    "generated_items": 10113
+    "declarations": 107112,
+    "bodies": 16478,
+    "generated_items": 10117
   }
 }
