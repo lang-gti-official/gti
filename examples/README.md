@@ -588,6 +588,10 @@ Address validity, extent and termination remain the caller's unsafe obligations.
 
 ## Complete projects
 
+[`annotated-tests/`](annotated-tests/README.md) shows one manifest suite root
+with several `[[test]]` functions, automatic reporting, source-located checks
+and fresh process state for every test. Run `gti test` in that directory.
+
 [`transit-planner/`](transit-planner/README.md) is a multi-file manifest project
 that loads an external graph, runs Dijkstra's shortest-path algorithm, validates
 the result, and prints a report. It demonstrates the language and `gti`

@@ -2839,6 +2839,25 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   std::unordered_set<std::string> functionAttributeNames;
   for (const auto &contract : stmt.functionAttributes()) {
     const Token &attribute = contract.name;
+    if (attribute.lexeme == "test") {
+      if (!functionAttributeNames.insert(attribute.lexeme).second) {
+        reportContract(attribute, "Duplicate function attribute 'test'.");
+      } else if (contract.argument || functionInfo == nullptr ||
+                 functionInfo->ownerClass != 0 ||
+                 functionInfo->internalLinkage || isEntryPoint ||
+                 !functionInfo->genericParameters.empty() ||
+                 !functionInfo->parameterTypes.empty() ||
+                 functionInfo->returnType != SemanticType::Void ||
+                 functionInfo->requiresUnsafe || stmt.hasCLinkage() ||
+                 stmt.runtimeBinding() || !stmt.body() || stmt.operatorName()) {
+        reportContract(
+            attribute,
+            "A test requires a defined, safe, non-generic "
+            "non-static namespace-scope void function with no parameters "
+            "or attribute arguments.");
+      }
+      continue;
+    }
     if (attribute.lexeme == "thread_confined_callback") {
       if (!functionAttributeNames.insert(attribute.lexeme).second) {
         reportContract(

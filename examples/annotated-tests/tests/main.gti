@@ -1,0 +1,20 @@
+#include <std/testing>
+#include "events.gti"
+
+namespace engine::tests {
+  mut int executions = 0;
+
+  [[test]]
+  void fresh_scene_state() {
+    executions++;
+    std::testing::check(executions == 1, "Each test gets a fresh process");
+  }
+
+  [[test]]
+  void another_fresh_scene_state() {
+    executions++;
+    std::testing::check(executions == 1, "State must not leak from another test");
+  }
+}
+
+// GTI supplies the suite entry point. Run: gti test

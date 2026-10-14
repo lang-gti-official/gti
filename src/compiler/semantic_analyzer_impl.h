@@ -715,6 +715,7 @@ private:
     bool tracksCaller = false;
     bool discardableResult = false;
     bool threadConfinedCallback = false;
+    bool testFunction = false;
     CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
     ProcessMemoryRuntimeOperation processMemoryOperation =
         ProcessMemoryRuntimeOperation::None;
@@ -4260,6 +4261,8 @@ private:
                                bool mutableReceiver);
 
   [[nodiscard]] const Symbol *resolve(const Token &name) const;
+  [[nodiscard]] const Symbol *
+  resolveGeneratedTestReference(const NamePath &path) const;
 
   [[nodiscard]] Symbol *resolveMutable(const Token &name);
 

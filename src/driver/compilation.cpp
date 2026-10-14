@@ -81,6 +81,7 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
                                           ProgressObserver *progress) {
   FrontendResult frontend = analyze(request, std::move(inputs), progress, true);
   CompilationResult result;
+  result.testCases = std::move(frontend.testCases);
   if (!frontend.canGenerateCode()) {
     result.status = CompilationStatus::FrontendFailure;
     result.sources = std::move(frontend.sources);
@@ -399,11 +400,17 @@ CompilationInputs loadCompilationInputs(const CompilationRequest &request,
                                         ProgressObserver *progress) {
   SourceLoader sourceLoader;
   CompilationInputs inputs;
+  std::vector<std::filesystem::path> preludes{
+      request.standardLibrary().prelude};
+  if (request.program().testSuite) {
+    preludes.push_back(request.standardLibrary().root / "std/string.gti");
+    preludes.push_back(request.standardLibrary().root / "std/vector.gti");
+  }
   {
     const PhaseTimeScope timeScope("gti-source-load");
     const ProgressScope loadProgress(progress, ProgressPhase::Loading);
     inputs.sourceGraph = sourceLoader.load(
-        request.entry(), std::nullopt, {request.standardLibrary().prelude}, {},
+        request.entry(), std::nullopt, preludes, {},
         {request.standardLibrary().root}, std::nullopt,
         request.packageSources(), request.target(),
         request.configurationFlags(), request.declaredConfigurationFlags());

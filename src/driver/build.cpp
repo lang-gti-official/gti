@@ -100,7 +100,7 @@ publishDebugBundle(const std::filesystem::path &staged,
   return std::nullopt;
 }
 
-constexpr std::string_view cacheSchema = "gti-build-cache-v3";
+constexpr std::string_view cacheSchema = "gti-build-cache-v4";
 using detail::IdentityBuilder;
 
 struct FileDigest {
@@ -605,7 +605,14 @@ projectBuildSourceMaterials(const CompilationInputs &inputs,
   projection.logicalNamesById.resize(inputs.sourceGraph.sourceUnits().size() +
                                      1);
   for (const SourceUnit &unit : inputs.sourceGraph.sourceUnits()) {
-    const std::optional<std::string> name = logicalSourceName(unit, sourceRoot);
+    std::optional<std::string> name = logicalSourceName(unit, sourceRoot);
+    if (name && *name == "prelude") {
+      const auto &roots = inputs.sourceGraph.preludeRoots();
+      const auto position = std::find(roots.begin(), roots.end(), unit.id);
+      if (position != roots.end() && position != roots.begin()) {
+        *name += ":" + std::to_string(std::distance(roots.begin(), position));
+      }
+    }
     if (!name) {
       errorMessage = "cannot derive a logical source name for '" +
                      unit.path.string() + "'";
@@ -1283,6 +1290,9 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   identity.add(
       "frontend.requires-entry-point",
       static_cast<std::uint64_t>(request.compilation().requiresEntryPoint()));
+  identity.add(
+      "frontend.test-suite",
+      static_cast<std::uint64_t>(request.compilation().program().testSuite));
   identity.add("optimization", static_cast<std::uint64_t>(
                                    request.compilation().optimization()));
   // Source-level debug artifacts embed the loaded units' paths (the
@@ -1658,6 +1668,7 @@ struct CacheMetadata {
   FileDigest generated;
   FileDigest executable;
   std::uint32_t executablePermissions = 0;
+  std::vector<std::string> testCases;
   // The debug symbol bundle published beside a source-level debug
   // executable (Darwin's `.dSYM`), as a tree digest over its files, or
   // absent when the build published none.
@@ -1665,6 +1676,13 @@ struct CacheMetadata {
 };
 
 constexpr std::string_view cacheSymbolsDirectory = "symbols.dSYM";
+
+std::string testCatalogText(const std::vector<std::string> &names) {
+  std::string text;
+  for (const std::string &name : names)
+    text += name + '\n';
+  return text;
+}
 
 // A content digest of a directory tree: every regular file by its relative
 // path, content hash and size, in sorted path order. Symlinks and other
@@ -1780,6 +1798,34 @@ readCacheMetadata(const std::filesystem::path &path,
     }
     metadata.symbols = FileDigest{.hash = symbolsHash, .size = symbolsSize};
   }
+  std::string testsLabel;
+  std::size_t testCount = 0;
+  std::string testDigest;
+  if (!(input >> testsLabel >> testCount >> testDigest) ||
+      testsLabel != "tests" || testCount > 100000 || !validDigest(testDigest)) {
+    errorMessage = "metadata has an invalid test catalog";
+    return std::nullopt;
+  }
+  for (std::size_t i = 0; i < testCount; ++i) {
+    std::string label, name;
+    if (!(input >> label >> name) || label != "case" || name.empty() ||
+        name.size() > 4096 ||
+        !std::all_of(name.begin(), name.end(),
+                     [](unsigned char c) {
+                       return (c >= 'a' && c <= 'z') ||
+                              (c >= 'A' && c <= 'Z') ||
+                              (c >= '0' && c <= '9') || c == '_' || c == ':';
+                     }) ||
+        (!metadata.testCases.empty() && name <= metadata.testCases.back())) {
+      errorMessage = "metadata has an invalid or unordered test name";
+      return std::nullopt;
+    }
+    metadata.testCases.push_back(std::move(name));
+  }
+  if (digestText(testCatalogText(metadata.testCases)) != testDigest) {
+    errorMessage = "test catalog digest does not match metadata";
+    return std::nullopt;
+  }
   std::string trailing;
   if (input >> trailing) {
     errorMessage = "metadata contains unexpected trailing fields";
@@ -1789,16 +1835,21 @@ readCacheMetadata(const std::filesystem::path &path,
 }
 
 std::string renderCacheMetadata(const CacheMetadata &metadata) {
-  return std::string(cacheSchema) + "\n" + metadata.key + "\n" + "generated " +
-         metadata.generated.hash + " " +
-         std::to_string(metadata.generated.size) + "\n" + "executable " +
-         metadata.executable.hash + " " +
-         std::to_string(metadata.executable.size) + " " +
-         std::to_string(metadata.executablePermissions) + "\n" + "symbols " +
-         (metadata.symbols ? metadata.symbols->hash + " " +
-                                 std::to_string(metadata.symbols->size)
-                           : std::string("none")) +
-         "\n";
+  std::string text =
+      std::string(cacheSchema) + "\n" + metadata.key + "\n" + "generated " +
+      metadata.generated.hash + " " + std::to_string(metadata.generated.size) +
+      "\n" + "executable " + metadata.executable.hash + " " +
+      std::to_string(metadata.executable.size) + " " +
+      std::to_string(metadata.executablePermissions) + "\n" + "symbols " +
+      (metadata.symbols ? metadata.symbols->hash + " " +
+                              std::to_string(metadata.symbols->size)
+                        : std::string("none")) +
+      "\n";
+  text += "tests " + std::to_string(metadata.testCases.size()) + " " +
+          digestText(testCatalogText(metadata.testCases)) + "\n";
+  for (const std::string &name : metadata.testCases)
+    text += "case " + name + '\n';
+  return text;
 }
 
 enum class CacheLookupStatus {
@@ -1815,6 +1866,7 @@ struct CacheLookupResult {
   // The verified debug symbol bundle inside the entry, when it holds one.
   std::optional<std::filesystem::path> symbols;
   std::string detail;
+  std::vector<std::string> testCases;
 };
 
 std::optional<std::string> readTextFile(const std::filesystem::path &path,
@@ -1917,7 +1969,8 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
           .executableDigest = *executableDigest,
           .executablePermissions = executablePermissions,
           .symbols = std::move(symbols),
-          .detail = detailText};
+          .detail = detailText + ", and test catalog digest",
+          .testCases = metadata->testCases};
 }
 
 bool writeBinaryFile(const std::filesystem::path &path,
@@ -2005,7 +2058,9 @@ ArtifactPublishResult copyFileAtomically(
 
 bool storeCacheEntry(const ExecutableBuildRequest &request,
                      const std::filesystem::path &entry, std::string_view key,
-                     std::string_view generated, std::string &errorMessage) {
+                     std::string_view generated,
+                     const std::vector<std::string> &testCases,
+                     std::string &errorMessage) {
   if (!request.managedOutput()) {
     errorMessage = "cache publication requires a managed project output";
     return false;
@@ -2048,7 +2103,8 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
                          .generated = generatedDigest,
                          .executable = *executableDigest,
                          .executablePermissions =
-                             static_cast<std::uint32_t>(executablePermissions)};
+                             static_cast<std::uint32_t>(executablePermissions),
+                         .testCases = testCases};
   // A source-level debug build on Darwin published its symbol bundle beside
   // the executable; the entry keeps a copy so a hit can restore both.
   const std::filesystem::path symbolsPath = entry / cacheSymbolsDirectory;
@@ -3161,7 +3217,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = "cache requires a managed project output policy";
     } else {
-      const std::filesystem::path versionRoot = request.cache()->root / "v3";
+      const std::filesystem::path versionRoot = request.cache()->root / "v4";
       const std::filesystem::path cacheProbe = versionRoot / "probe/metadata";
       if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
               *request.managedOutput(), cacheProbe, false)) {
@@ -3209,6 +3265,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
           }
 
           result.compilation.status = CompilationStatus::Success;
+          result.compilation.testCases = lookup.testCases;
           result.compilation.sources = std::move(compilationInputs.sources);
           result.compilation.diagnostics =
               std::move(compilationInputs.diagnostics);
@@ -3699,7 +3756,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     std::string cacheStoreError;
     if (storeCacheEntry(request, *cacheEntry, result.cache.key,
                         result.compilation.artifact->contents,
-                        cacheStoreError)) {
+                        result.compilation.testCases, cacheStoreError)) {
       if (corruptCacheEntry) {
         result.cache.status = BuildCacheStatus::RecoveredCorruption;
         result.cache.detail =
