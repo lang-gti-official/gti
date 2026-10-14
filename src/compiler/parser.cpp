@@ -1612,12 +1612,12 @@ private:
     bool constexprSeen = false;
     for (std::size_t offset = 0; offset < 3; ++offset) {
       const Token &token = peekAt(offset);
-      bool *seen = token.kind == TokenKind::IDENTIFIER &&
-                           token.lexeme == "implicit"
-                       ? &implicitSeen
-                   : token.kind == TokenKind::UNSAFE    ? &unsafeSeen
-                   : token.kind == TokenKind::CONSTEXPR ? &constexprSeen
-                                                        : nullptr;
+      bool *seen =
+          token.kind == TokenKind::IDENTIFIER && token.lexeme == "implicit"
+              ? &implicitSeen
+          : token.kind == TokenKind::UNSAFE    ? &unsafeSeen
+          : token.kind == TokenKind::CONSTEXPR ? &constexprSeen
+                                               : nullptr;
       if (seen == nullptr) {
         return implicitSeen && isConstructorStart(offset)
                    ? std::optional<std::size_t>(offset)
