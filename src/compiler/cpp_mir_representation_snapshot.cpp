@@ -1,4 +1,5 @@
 #include "cpp_mir_representation_snapshot.h"
+#include "gti/support.h"
 
 #include "cpp_representation.h"
 
@@ -1045,7 +1046,10 @@ buildCppMirRepresentationSnapshot(const VerifiedLoweredProgram &verified,
   CppMirRepresentationSnapshotBuild build;
   CppMirRepresentationSnapshot snapshot;
   std::optional<CppMirProgramEmissionPlan> emissionPlan;
-  snapshot.mir = program.mir();
+  {
+    const PhaseTimeScope timeScope("backend-snapshot-mir-copy");
+    snapshot.mir = program.mir();
+  }
   for (const LoweredBody &body : program.bodies()) {
     // The C++-private plan predates constructor declaration identities in the
     // shared lowered boundary. Preserve its established identity contract
@@ -1139,7 +1143,10 @@ buildCppMirRepresentationSnapshot(const VerifiedLoweredProgram &verified,
         program.mir(), emissionMap, nullptr,
         debugInfo ? std::span<const LoweredBody>(program.bodies())
                   : std::span<const LoweredBody>{});
-    emissionPlan = bodyEmitter.buildProgramPlan();
+    emissionPlan = [&] {
+      const PhaseTimeScope timeScope("backend-snapshot-body-plan");
+      return bodyEmitter.buildProgramPlan();
+    }();
     const CppMirProgramEmissionAnalysis emission = emissionPlan->analysis();
     bool emissionReady = emission.ready();
     bool knownLimitationsOnly = true;
