@@ -15,7 +15,10 @@ overlay, and rejects a moved Load, a noncopyable or borrowing value, active
 field cleanup, a lost initializer record, and a captured class without a
 generated copy. It also requires the owned move after a closure copy to keep
 its native binding, and rejects it once the copy's Load and boundary are
-reordered.
+reordered. Under the real closure overlays, `base_constructor_stage` admits a
+lambda-typed class that copies its closure beside a literal base argument.
+A lambda-typed class that computes its base argument keeps its MIR preparation
+but receives no carrier, because its `concreteGenericClass` fact is clear.
 
 ## Generic base arguments (0.431.1)
 
