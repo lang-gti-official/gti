@@ -672,6 +672,16 @@ by their semantic identities across unit/module visibility boundaries.
 This permission is attached to fresh generated syntax and exact semantic test
 identities; ordinary user bodies retain their normal visibility rules.
 
+The cost model is one GTI/native build per suite and one process launch per
+selected function, including normal hosted argument ownership and capture of
+that child's output. Successful cases do not enter the panic path. Isolation
+intentionally repeats global initialization and teardown; resources are not
+shared between cases. The initial dispatcher compares qualified-name selectors
+once per child. No test-specific runtime, extra worker thread, or exception
+mechanism is involved. Ordinary non-test builds do not run test discovery or
+the second semantic pass. Build/run comparisons must retain equivalent process
+isolation rather than compare this workflow with an in-process test harness.
+
 The verified hosted `ReturnEntry` adapter preserves returned integers in
 0..255 and maps every other integer to status 1, after invocation cleanup.
 Consequently, a test returning a nonzero failure count such as 256 cannot be
