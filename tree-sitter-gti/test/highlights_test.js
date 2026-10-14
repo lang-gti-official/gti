@@ -698,6 +698,11 @@ const conversionRow = fixtureLines.findIndex((line) =>
 requireCapture(conversionRow, "implicit", "keyword.modifier");
 requireCapture(conversionRow, "operator", "keyword.operator");
 
+const protectedRow = fixtureLines.findIndex((line) =>
+  line.includes("class ProtectedHighlight"),
+);
+requireCapture(protectedRow, "protected", "keyword.modifier");
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

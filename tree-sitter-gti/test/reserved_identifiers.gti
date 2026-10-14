@@ -27,7 +27,6 @@ int noexcept = 1;
 int not = 1;
 int not_eq = 1;
 int or_eq = 1;
-int protected = 1;
 int register = 1;
 int reinterpret_cast = 1;
 int short = 1;

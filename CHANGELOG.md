@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.430.0 — Protected members
+
+- Class members can use `protected:` sections for base implementation state,
+  methods, constructors and nested types. Derived instance access requires a
+  receiver of that derived type or a descendant; arbitrary base and sibling
+  objects remain inaccessible. Inheritance remains public.
+- Compiler diagnostics and completion, formatting, and editor syntax recognize
+  the access rule. [Example 150](examples/150-protected-events.gti) demonstrates
+  event handlers and a generic storage base.
+
 ## 0.429.1 — Methods on temporaries in field initializers
 
 - Fix an internal compiler error ("failed to construct valid MIR") when a field

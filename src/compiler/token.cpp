@@ -31,6 +31,7 @@ const std::unordered_map<std::string_view, TokenKind> keywords{
     {"or", TokenKind::OR},
     {"override", TokenKind::OVERRIDE},
     {"private", TokenKind::PRIVATE},
+    {"protected", TokenKind::PROTECTED},
     {"public", TokenKind::PUBLIC},
     {"requires", TokenKind::REQUIRES},
     {"return", TokenKind::RETURN},

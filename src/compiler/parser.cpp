@@ -906,7 +906,8 @@ private:
     if (match({TokenKind::COLON})) {
       do {
         std::optional<Token> access;
-        if (match({TokenKind::PUBLIC, TokenKind::PRIVATE})) {
+        if (match({TokenKind::PUBLIC, TokenKind::PRIVATE,
+                   TokenKind::PROTECTED})) {
           access = previous();
         }
         bases.push_back({.access = std::move(access), .type = parseBaseType()});
@@ -2316,12 +2317,14 @@ private:
         Token keyword = advance();
         return mutableFieldGroupDeclaration(std::move(keyword));
       }
-      if (match({TokenKind::PUBLIC, TokenKind::PRIVATE})) {
+      if (match(
+              {TokenKind::PUBLIC, TokenKind::PRIVATE, TokenKind::PROTECTED})) {
         Token keyword = previous();
         consume(TokenKind::COLON, "Expect ':' after access specifier.");
         return std::make_shared<AccessSpecifierDecl>(
-            keyword, keyword.kind == TokenKind::PUBLIC
-                         ? AccessModifier::Public
+            keyword, keyword.kind == TokenKind::PUBLIC ? AccessModifier::Public
+                     : keyword.kind == TokenKind::PROTECTED
+                         ? AccessModifier::Protected
                          : AccessModifier::Private);
       }
       if (match({TokenKind::SEMICOLON})) {
@@ -4185,7 +4188,8 @@ private:
           return;
         }
         if (allowAccessSpecifiers &&
-            (check(TokenKind::PUBLIC) || check(TokenKind::PRIVATE))) {
+            (check(TokenKind::PUBLIC) || check(TokenKind::PRIVATE) ||
+             check(TokenKind::PROTECTED))) {
           return;
         }
         if (allowAccessSpecifiers && isConstructorStart()) {
