@@ -1769,5 +1769,247 @@ int main() {
            "copied and moved closure fields were each checked twice, the "
            "struct capture's formal drop included");
   }
+  // The constructed closure field composes with a selected base initializer
+  // and with owned-parameter siblings in the same native member-initializer
+  // list. The impossible failure of the field's construction may retire the
+  // native base and the consumed formals.
+  const auto composedField =
+      analyzeTrustedPreludeFixture("composed-closure-field.gti", R"(
+#include <std/string>
+#include <std/utility>
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+class Holder<F> {
+public:
+  F callback;
+  Holder(F f) : callback(f) {}
+  int invoke() { return callback(); }
+};
+class Base {
+public:
+  int amount;
+  Base(int amount) : amount(amount) {}
+};
+class Derived<F> : public Base {
+public:
+  Holder<F> inner;
+  Derived(F f) : Base(10), inner(Holder<F>(f)) {}
+};
+class Named<F> {
+public:
+  Holder<F> inner;
+  std::string name;
+  Named(F f, std::string name) : inner(Holder<F>(f)), name(std::move(name)) {}
+};
+class Twice<F> {
+public:
+  Holder<F> inner;
+  F spare;
+  Twice(F f, F g) : inner(Holder<F>(f)), spare(std::move(g)) {}
+  int call_spare() { return spare(); }
+};
+int derived<F>(F f) {
+  Derived<F> value = Derived<F>(f);
+  return value.amount + value.inner.invoke();
+}
+int named<F>(F f) {
+  std::string label{"abc"};
+  Named<F> value = Named<F>(f, std::move(label));
+  return value.inner.invoke() + (value.name.size() == 3 ? 1 : 0);
+}
+int twice<F>(F f) {
+  Twice<F> value = Twice<F>(f, f);
+  return value.inner.invoke() + value.call_spare();
+}
+int main() {
+  int k = 3;
+  Offset offset{4};
+  return derived([k]() -> int { return k; }) +
+         derived([offset]() -> int { return offset.amount; }) +
+         named([k]() -> int { return k; }) +
+         named([offset]() -> int { return offset.amount; }) +
+         twice([k]() -> int { return k; }) +
+         twice([offset]() -> int { return offset.amount; }) - 50;
+}
+)");
+  expect(composedField.canGenerateCode(), "composed closure fields verify");
+  if (composedField.canGenerateCode()) {
+    const auto text = gti_test::emitCppText(composedField);
+    expect(text.find(": ::__gti_program::Base(static_cast<std::int32_t>(10)), "
+                     "inner(std::remove_cv_t<decltype(inner)>("
+                     "__gti_mir_arg_0)) {") != std::string::npos &&
+               text.find(": inner(std::remove_cv_t<decltype(inner)>("
+                         "__gti_mir_arg_0)), name(std::move(__gti_mir_arg_1)) "
+                         "{") != std::string::npos &&
+               text.find(": inner(std::remove_cv_t<decltype(inner)>("
+                         "__gti_mir_arg_0)), spare(std::move("
+                         "__gti_mir_arg_1)) {") != std::string::npos,
+           "the base, the constructed field and the owned siblings share "
+           "one native member-initializer list");
+    const auto lowered = gti_test::lowerProgram(
+        composedField, composedField.mir, composedField.mir);
+    std::size_t bases = 0;
+    std::size_t ownedStrings = 0;
+    std::size_t ownedClosures = 0;
+    std::size_t mutations = 0;
+    for (const auto &instance : lowered.mir().constructorInstances()) {
+      const auto *owner = lowered.mir().findClassInstance(instance.owner);
+      if (owner == nullptr || owner->declaredFields.empty() ||
+          owner->declaredFields.front().type.kind !=
+              lang::SemanticType::Class ||
+          instance.parameterTypes.empty() ||
+          instance.parameterTypes.front().kind != lang::SemanticType::Lambda)
+        continue;
+      const bool base = !owner->bases.empty();
+      const bool owned = instance.parameterTypes.size() == 2;
+      if (!base && !owned)
+        continue;
+      const bool ownedClosure = owned && instance.parameterTypes.back().kind ==
+                                             lang::SemanticType::Lambda;
+      const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
+          lowered.mir(), instance);
+      expect(bindings.size() == 1 &&
+                 bindings.front().initializer == (base ? 1u : 0u) &&
+                 bindings.front().arguments.size() == 1 &&
+                 bindings.front().arguments.front().parameter == 0,
+             "the constructed closure field composes with its sibling");
+      const auto baseBindings =
+          lang::cppMirBaseParameterInitializerBindings(lowered.mir(), instance);
+      const auto ownedBindings =
+          lang::cppMirOwnedParameterFieldBindings(lowered.mir(), instance);
+      expect(baseBindings && baseBindings->size() == (base ? 1u : 0u) &&
+                 ownedBindings && ownedBindings->size() == (owned ? 1u : 0u),
+             "the base and owned proofs publish their own initializers");
+      if (bindings.size() != 1 || !ownedBindings ||
+          ownedBindings->size() != (owned ? 1u : 0u))
+        continue;
+      if (owned) {
+        const auto &move = ownedBindings->front();
+        expect(
+            move.initializer == 1 && move.parameter == 1 &&
+                (ownedClosure
+                     ? move.initializeInstruction == 0 && move.fieldDrop == 0
+                     : move.initializeInstruction != 0 && move.fieldDrop != 0),
+            "an owned string stages its field and a moved closure "
+            "publishes from the constructor record");
+      }
+      ++(base ? bases : ownedClosure ? ownedClosures : ownedStrings);
+      const auto *source = lowered.findConstructorInstance(instance.id);
+      const auto *declaration =
+          source == nullptr
+              ? nullptr
+              : lowered.findConstructorDeclaration(source->declaration);
+      auto rows = lang::buildCppMirBodyEmissionMapRows(
+          lowered, lang::CppStandard::Cpp23);
+      const auto overlays =
+          declaration == nullptr
+              ? std::nullopt
+              : lang::cppMirApplyGenericOwnerConstructorTypeOverlays(
+                    rows, lowered, *declaration, instance);
+      expect(overlays && *overlays != 0,
+             "the composed constructor spells F through its overlay");
+      const lang::CppMirBodyEmissionMap map(std::move(rows));
+      const lang::CppMirBodyEmitter emitter(lowered.mir(), map);
+      const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                         instance.id};
+      expect(emitter.supportsBodyText(address) ||
+                 emitter.supportsFailureBodyText(address),
+             "the composed constructor body is in the C++ vocabulary");
+      // The native base's rollback, or the owned move's consumption of its
+      // formal: each must keep its exact MIR schedule.
+      const auto *stage = [&]() -> const lang::MirInstruction * {
+        for (const auto &block : instance.body.blocks)
+          for (const auto &candidate : block.instructions)
+            if (candidate.kind == lang::MirInstructionKind::InitializeBase)
+              return &candidate;
+        return nullptr;
+      }();
+      const lang::MirDropObligationId rollback =
+          stage != nullptr && stage->successResultDrop
+              ? *stage->successResultDrop
+              : 0;
+      const lang::MirInstructionId ownedMove =
+          owned ? ownedBindings->front().moveInstruction : 0;
+      const lang::MirDropObligationId formalDrop =
+          owned ? ownedBindings->front().parameterDrop : 0;
+      expect(base == (rollback != 0),
+             "the native base arms its construction rollback");
+      for (int mutation = 0; mutation != 3; ++mutation) {
+        auto forged = lowered.mir();
+        auto *body = lang::findMirBody(forged, address);
+        bool applied = false;
+        for (auto &block : body->blocks)
+          for (auto &candidate : block.instructions) {
+            for (auto &event : candidate.lifecycle) {
+              if (rollback == 0 ||
+                  (event.source != rollback && event.target != rollback))
+                continue;
+              // The stage arms the rollback, the shared transfer retires
+              // it, and only an impossible failure drops it.
+              if (mutation == 0 &&
+                  candidate.kind == lang::MirInstructionKind::InitializeBase) {
+                event.conditional = true;
+                applied = true;
+              }
+              if (mutation == 1 &&
+                  event.kind == lang::MirLifecycleEventKind::TransferOut) {
+                event.kind = lang::MirLifecycleEventKind::Drop;
+                applied = true;
+              }
+              if (mutation == 2 && event.failureCleanup) {
+                event.conditional = true;
+                applied = true;
+              }
+            }
+            if (ownedMove != 0 && candidate.id == ownedMove &&
+                candidate.ownership) {
+              if (mutation == 0) {
+                candidate.ownership->after = lang::OwnershipStateSet::Available;
+                applied = true;
+              }
+              if (mutation == 1) {
+                candidate.hirValue = 0;
+                applied = true;
+              }
+            }
+            if (mutation == 2 && formalDrop != 0 &&
+                candidate.kind == lang::MirInstructionKind::Drop &&
+                candidate.lifecycle.size() == 1 &&
+                candidate.lifecycle.front().source == formalDrop &&
+                !candidate.lifecycle.front().failureCleanup) {
+              candidate.lifecycle.front().conditional = true;
+              applied = true;
+            }
+          }
+        if (mutation == 2 && ownedClosure && formalDrop == 0) {
+          // A scalar-capturing closure has no formal drop: give its record
+          // publication a lifecycle event instead.
+          for (auto &block : body->blocks)
+            for (auto &candidate : block.instructions)
+              if (candidate.id == ownedMove) {
+                candidate.lifecycle.push_back(
+                    {.kind = lang::MirLifecycleEventKind::Initialize});
+                applied = true;
+              }
+        }
+        if (!applied)
+          continue;
+        ++mutations;
+        const auto *changed = forged.findConstructorInstance(instance.id);
+        expect(lang::cppMirConstructedFieldInitializerBindings(forged, *changed)
+                   .empty(),
+               "a composed closure field rejects a conditional base "
+               "activation, a retained base rollback, a conditional failure "
+               "rollback, an unconsumed or foreign owned move, a conditional "
+               "formal drop and a staged record publication " +
+                   std::to_string(mutation));
+      }
+    }
+    expect(bases == 2 && ownedStrings == 2 && ownedClosures == 2 &&
+               mutations == 18,
+           "each composition was checked for both closure instances");
+  }
   return failures == 0 ? 0 : 1;
 }

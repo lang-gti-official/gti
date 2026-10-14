@@ -1,0 +1,189 @@
+// A generic class instantiated with a closure type constructs another
+// closure-carrying generic class in a member initializer beside a selected
+// base class initializer, with or without an interface, or beside fields that
+// take ownership of other parameters. The closure is copied or moved from the
+// formal, for captureless, scalar-capturing and struct-capturing closures of
+// one class.
+#include <std/string>
+#include <std/utility>
+
+class Holder<F> {
+public:
+  F callback;
+  Holder(F f) : callback(f) {}
+  int invoke() { return callback(); }
+};
+
+class Moved<F> {
+public:
+  F callback;
+  Moved(F f) : callback(std::move(f)) {}
+  int invoke() { return callback(); }
+};
+
+class Base {
+public:
+  int amount;
+  Base(int amount) : amount(amount) {}
+};
+
+class Tagged {
+public:
+  int amount = 40;
+};
+
+interface Shape {
+  int32_t value();
+};
+
+class Derived<F> : public Base {
+public:
+  Holder<F> inner;
+  Derived(F f) : Base(10), inner(Holder<F>(f)) {}
+};
+
+class Forwarded<F> : public Base {
+public:
+  Holder<F> inner;
+  int extra;
+  Forwarded(int amount, F f) : Base(amount), inner(Holder<F>(f)), extra(5) {}
+};
+
+class Implicit<F> : public Tagged {
+public:
+  Holder<F> inner;
+  Implicit(F f) : inner(Holder<F>(f)) {}
+};
+
+class Shaped<F> : public Base, public Shape {
+public:
+  Holder<F> inner;
+  Shaped(F f) : Base(50), inner(Holder<F>(f)) {}
+  int32_t value() override { return amount + inner.invoke(); }
+};
+
+class MovingDerived<F> : public Base {
+public:
+  Moved<F> inner;
+  MovingDerived(F f) : Base(20), inner(Moved<F>(std::move(f))) {}
+};
+
+class Named<F> {
+public:
+  Holder<F> inner;
+  std::string name;
+  Named(F f, std::string name) : inner(Holder<F>(f)), name(std::move(name)) {}
+};
+
+class Labeled<F> {
+public:
+  std::string name;
+  Holder<F> inner;
+  Labeled(std::string name, F f) : name(std::move(name)), inner(Holder<F>(f)) {}
+};
+
+class MovingNamed<F> {
+public:
+  Moved<F> inner;
+  std::string first;
+  std::string second;
+  MovingNamed(F f, std::string first, std::string second)
+      : inner(Moved<F>(std::move(f))), first(std::move(first)),
+        second(std::move(second)) {}
+};
+
+class Both<F> : public Base {
+public:
+  Holder<F> inner;
+  std::string name;
+  int extra;
+  Both(F f, std::string name)
+      : Base(30), inner(Holder<F>(f)), name(std::move(name)), extra(3) {}
+};
+
+int derived<F>(F f) {
+  Derived<F> value = Derived<F>(f);
+  return value.amount + value.inner.invoke();
+}
+
+int forwarded<F>(F f) {
+  Forwarded<F> value = Forwarded<F>(7, f);
+  return value.amount + value.inner.invoke() + value.extra;
+}
+
+int implicit<F>(F f) {
+  Implicit<F> value = Implicit<F>(f);
+  return value.amount + value.inner.invoke();
+}
+
+int shaped<F>(F f) {
+  Shaped<F> value = Shaped<F>(f);
+  return value.value();
+}
+
+int moving_derived<F>(F f) {
+  MovingDerived<F> value = MovingDerived<F>(std::move(f));
+  return value.amount + value.inner.invoke();
+}
+
+int named<F>(F f) {
+  std::string label{"named"};
+  Named<F> value = Named<F>(f, std::move(label));
+  std::println(value.name);
+  return value.inner.invoke();
+}
+
+int labeled<F>(F f) {
+  std::string label{"labeled"};
+  Labeled<F> value = Labeled<F>(std::move(label), f);
+  std::println(value.name);
+  return value.inner.invoke();
+}
+
+int moving_named<F>(F f) {
+  std::string first{"first"};
+  std::string second{"second"};
+  MovingNamed<F> value =
+      MovingNamed<F>(std::move(f), std::move(first), std::move(second));
+  std::println(value.first);
+  std::println(value.second);
+  return value.inner.invoke();
+}
+
+int both<F>(F f) {
+  std::string label{"both"};
+  Both<F> value = Both<F>(f, std::move(label));
+  std::println(value.name);
+  return value.amount + value.inner.invoke() + value.extra;
+}
+
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+
+int main() {
+  int k = 3;
+  Offset offset{4};
+  std::println(derived([]() -> int { return 1; }));
+  std::println(derived([k]() -> int { return k; }));
+  std::println(derived([offset]() -> int { return offset.amount; }));
+  std::println(forwarded([k]() -> int { return k; }));
+  std::println(forwarded([offset]() -> int { return offset.amount; }));
+  std::println(implicit([k]() -> int { return k; }));
+  std::println(implicit([offset]() -> int { return offset.amount; }));
+  std::println(shaped([k]() -> int { return k; }));
+  std::println(shaped([offset]() -> int { return offset.amount; }));
+  std::println(moving_derived([k]() -> int { return k; }));
+  std::println(moving_derived([offset]() -> int { return offset.amount; }));
+  std::println(named([]() -> int { return 1; }));
+  std::println(named([k]() -> int { return k; }));
+  std::println(named([offset]() -> int { return offset.amount; }));
+  std::println(labeled([k]() -> int { return k; }));
+  std::println(labeled([offset]() -> int { return offset.amount; }));
+  std::println(moving_named([k]() -> int { return k; }));
+  std::println(moving_named([offset]() -> int { return offset.amount; }));
+  std::println(both([k]() -> int { return k; }));
+  std::println(both([offset]() -> int { return offset.amount; }));
+  return 0;
+}
