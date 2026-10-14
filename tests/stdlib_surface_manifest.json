@@ -16,7 +16,7 @@
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
-    "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
+    "stdlib/std/filesystem.gti": "c023d1f5d67afe2662bc2c84c1eff7cde9b285b9dba3025735c28e04c4dcb932",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "a5a15a5fcf0b908e161df030798829c11a95bfd4d9bc8c116394469e6d56af1a",
     "stdlib/std/functional.gti": "36655633f83576c320307577ddf51204ae4a2f6d8498b539b6176f5cf079d7ea",
@@ -43,7 +43,7 @@
     "stdlib/std/simd.gti": "9db37c0d480f519cfcfb44b22a478cf51f19e0c11334e85caf76e23bbe107f3b",
     "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
     "stdlib/std/span.gti": "430adc5e18fd0325a8e7abba92c7edfa031d956d64c16fbb7327da3776d21c6e",
-    "stdlib/std/string.gti": "7ec8b841a3f108884bba2aadc86908e13572222716143443120f1523e4df88e9",
+    "stdlib/std/string.gti": "f283b464bce49ba83e36478c02ba2732933ef0a514063fd24c4a058279811569",
     "stdlib/std/string_view.gti": "db84934530d41115374ab9f76978a276e7c2c6789b6f2848a25dacf295beba27",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "8cbe5f5b4807a6e2480213c04f0ff09f692f72c55527b3b75198d92a8027a732",
@@ -1360,6 +1360,13 @@
       "id": "string-ordering",
       "mode": "run",
       "source": "tests/fixtures/string_ordering.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "string-view-assignment",
+      "mode": "run",
+      "source": "tests/fixtures/string_view_assignment.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -3708,6 +3715,7 @@
         "std::string::find",
         "std::string::insert",
         "std::string::npos",
+        "std::string::operator=(string_view)",
         "std::string::replace",
         "std::string::rfind",
         "std::string::starts_with",
@@ -3715,6 +3723,7 @@
       ],
       "case_ids": [
         "string-operations",
+        "string-view-assignment",
         "text-owner-relay"
       ],
       "required_instantiations": [
@@ -3724,7 +3733,9 @@
       "evidence": [
         "tests/string_operations_runtime_test.py",
         "tests/string_operations_errors_test.py",
-        "tests/compiler_declarations_tests.cpp"
+        "tests/compiler_declarations_tests.cpp",
+        "tests/fixtures/string_view_assignment.gti",
+        "tests/declaration_construction_runtime_test.py"
       ]
     },
     {

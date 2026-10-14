@@ -548,7 +548,8 @@ namespace std {
 
     string() {}
 
-    string(string_view value) : data(detail::terminated_prefix_owner(value.size())) {
+    /// `std::string text = "literal";` constructs through this constructor.
+    implicit string(string_view value) : data(detail::terminated_prefix_owner(value.size())) {
       for (mut size_t index = 0; index < value.size(); index++) {
         unsafe { this.data.append(value[index]); }
       }
@@ -918,6 +919,13 @@ namespace std {
       for (mut size_t index = 0; index < value.size(); index++) {
         unsafe { this.data.append(value[index]); }
       }
+    }
+
+    /// Replaces the contents with a copy of `value`, retaining capacity.
+    /// Ordinary exclusive-receiver rules forbid a view of this string.
+    void operator=(string_view value) mut {
+      this.clear();
+      this.append(value);
     }
 
     /// Replaces a clamped range in linear time, retaining capacity where

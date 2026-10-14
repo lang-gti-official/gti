@@ -1518,7 +1518,8 @@ private:
 
   StmtPtr constructorDeclaration(Token name,
                                  std::optional<Token> constexprKeyword = {},
-                                 std::optional<Token> unsafeKeyword = {}) {
+                                 std::optional<Token> unsafeKeyword = {},
+                                 std::optional<Token> implicitKeyword = {}) {
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
@@ -1579,6 +1580,10 @@ private:
         throw error(*unsafeKeyword,
                     "Only constructors with a source body may be unsafe.");
       }
+      if (implicitKeyword) {
+        throw error(*implicitKeyword,
+                    "Only constructors with a source body may be implicit.");
+      }
       return std::make_shared<ConstructorDecl>(
           std::move(constexprKeyword), std::move(name),
           std::move(genericParameters), std::move(parameters),
@@ -1595,7 +1600,7 @@ private:
         std::move(constexprKeyword), std::move(name),
         std::move(genericParameters), std::move(parameters),
         std::move(requiresClause), std::move(initializers), std::nullopt,
-        std::move(body), std::move(unsafeKeyword));
+        std::move(body), std::move(unsafeKeyword), std::move(implicitKeyword));
   }
 
   StmtPtr destructorDeclaration(Token tilde) {
@@ -2197,6 +2202,37 @@ private:
         Token operatorKeyword = advance();
         return conversionOperatorDeclaration(std::move(operatorKeyword),
                                              std::move(virtualKeyword));
+      }
+      // `implicit` is contextual: it is a modifier only before a constructor.
+      const auto implicitModifierAt = [&](std::size_t offset) {
+        return peekAt(offset).kind == TokenKind::IDENTIFIER &&
+               peekAt(offset).lexeme == "implicit" &&
+               (isConstructorStart(offset + 1) ||
+                (peekAt(offset + 1).kind == TokenKind::CONSTEXPR &&
+                 isConstructorStart(offset + 2)) ||
+                (peekAt(offset + 1).kind == TokenKind::UNSAFE &&
+                 isConstructorStart(offset + 2)));
+      };
+      if (check(TokenKind::CONSTEXPR) && implicitModifierAt(1)) {
+        throw error(peekAt(1), "Write 'implicit' before 'constexpr'.");
+      }
+      if (check(TokenKind::UNSAFE) && implicitModifierAt(1)) {
+        throw error(peekAt(1), "An implicit constructor cannot be unsafe; "
+                               "construct the value explicitly in an unsafe "
+                               "context instead.");
+      }
+      if (implicitModifierAt(0)) {
+        Token implicitKeyword = advance();
+        if (check(TokenKind::UNSAFE)) {
+          throw error(peek(), "An implicit constructor cannot be unsafe; "
+                              "construct the value explicitly in an unsafe "
+                              "context instead.");
+        }
+        std::optional<Token> constexprKeyword;
+        if (match({TokenKind::CONSTEXPR}))
+          constexprKeyword = previous();
+        return constructorDeclaration(advance(), std::move(constexprKeyword),
+                                      std::nullopt, std::move(implicitKeyword));
       }
       if (check(TokenKind::UNSAFE) &&
           (isConstructorStart(1) ||
