@@ -1902,6 +1902,10 @@ pointee instantiation for recursive shapes such as
 graphs on one ABI until the representation snapshot records an explicit
 carrier closure. A direct class's field-initializer schedule always uses its
 concrete representation row, never a declaration-level `T` or value parameter.
+The lexical-carrier census includes constructor instances, even when no free
+or member function carries the closure type. An unnameable constructor parameter
+uses the admitted dependent-template overlay and is not also published as a
+concrete native specialization with an invented parameter spelling.
 A direct generic class definition is ordered by its exact concrete application
 and exact substituted by-value fields, not by one collapsed source-family
 node. Finite alternating nests such as `box<cell<box<int>>>` therefore form an

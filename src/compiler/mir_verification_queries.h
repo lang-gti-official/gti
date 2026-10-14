@@ -49,11 +49,15 @@ erasedReferenceResultLoan(const MirProgram &program, const MirBody &body,
 [[nodiscard]] const MirInstruction *
 restoredBorrowAuthority(const MirBody &body, const MirLoan &loan);
 // Nonempty, exact local reference aliases of a CallResult. Every alias has
-// one dominating Initialize from this loan; its pointer storage is never
-// reseated, moved, copied, addressed or passed to another operation.
-[[nodiscard]] bool callResultReferenceAliases(const MirBody &body,
-                                              const MirLoan &loan,
-                                              const MirBlock &consumer);
+// one dominating Initialize from this loan, after its unique typed producer
+// and before consumerPosition; its pointer storage is never reseated, moved,
+// copied, addressed or passed to another operation. Returns that exact producer.
+// Ordinary call, type, provenance and live-loan verification remain mandatory;
+// this query proves alias storage identity, not independent escape authority.
+[[nodiscard]] const MirInstruction *
+callResultReferenceAliases(const MirBody &body, const MirLoan &loan,
+                           const MirBlock &consumer,
+                           std::size_t consumerPosition);
 // Exact safe GTI invocation signature and stateless selected body. These are
 // language-call boundaries, not native C function-pointer adaptation.
 [[nodiscard]] const SemanticType *

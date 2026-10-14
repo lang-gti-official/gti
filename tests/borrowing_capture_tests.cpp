@@ -257,6 +257,62 @@ int main() {
   return apply(view) - 7;
 }
 )");
+  positive("mutable-restoration-helper-alias", R"(
+#include <std/memory>
+struct Writer {
+  mut int& value;
+  Writer(mut int& source) : value(source) {}
+  void increment() mut { this.value += 1; }
+};
+unsafe mut Writer& restore_writer(mut std::erased_object& object) {
+  unsafe {
+    mut Writer& restored = std::restore_mut<Writer>(object);
+    return restored;
+  }
+}
+int main() {
+  mut int value = 4;
+  mut Writer writer{value};
+  mut std::erased_object& object = std::erase_mut(writer);
+  unsafe {
+    mut Writer& restored = restore_writer(object);
+    restored.increment();
+  }
+  return value - 5;
+}
+)");
+  negative("restoration-alias-cannot-return-local-owner", R"(
+#include <std/memory>
+struct Reader {
+  int& value;
+  Reader(int& source) : value(source) {}
+};
+Reader& bad(int& source) {
+  Reader local{source};
+  std::erased_object& object = std::erase_ref(local);
+  unsafe {
+    Reader& restored = std::restore_ref<Reader>(object);
+    return restored;
+  }
+}
+int main() { return 0; }
+)",
+           "GTI-S2017");
+  negative("restoration-alias-cannot-upgrade-return-access", R"(
+#include <std/memory>
+struct Reader {
+  int& value;
+  Reader(int& source) : value(source) {}
+};
+unsafe mut Reader& bad(std::erased_object& object) {
+  unsafe {
+    Reader& restored = std::restore_ref<Reader>(object);
+    return restored;
+  }
+}
+int main() { return 0; }
+)",
+           "GTI-S2017");
   positive("mutable-function-ref", R"(
 #include <std/functional>
 int main() {
