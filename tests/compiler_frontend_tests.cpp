@@ -3214,7 +3214,44 @@ void testSupportFacilities() {
          "LLVM-backed facilities should agree on availability");
 }
 
+void testAnnotatedFunctionContracts() {
+  const std::string validSource = "namespace app { [[test]] void first() {} }\n"
+                                  "[[test, track_caller]] void second() {}\n";
+  const auto valid =
+      lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics})
+          .analyze("annotated-tests.gti", validSource);
+  expect(valid.semanticValid && valid.diagnostics.empty() &&
+             valid.semantics.testFunctions().size() == 2,
+         "validated tests should retain compiler-owned function identities");
+  for (const std::string source :
+       {"[[test]] int invalid() { return 0; }",
+        "[[test]] void invalid(int value) {}", "[[test]] void invalid<T>() {}",
+        "[[test]] void invalid();", "[[test, test]] void invalid() {}",
+        "[[test]] static void invalid() {}",
+        "struct Owner { [[test]] void invalid() {} };"}) {
+    const auto invalid =
+        lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics})
+            .analyze("invalid-test.gti", source);
+    const auto diagnostic = std::find_if(
+        invalid.diagnostics.begin(), invalid.diagnostics.end(),
+        [](const lang::Diagnostic &item) { return item.code == "GTI-S2099"; });
+    expect(!invalid.semanticValid && diagnostic != invalid.diagnostics.end(),
+           "invalid annotated function shapes must fail semantic analysis");
+    expect(
+        diagnostic->primary.source ==
+                invalid.sourceGraph.findUnit(invalid.sourceGraph.entryUnit())
+                    ->path.string() &&
+            source.substr(diagnostic->primary.start,
+                          diagnostic->primary.end -
+                              diagnostic->primary.start) == "test" &&
+            diagnostic->fixes.empty(),
+        "test diagnostics must identify the exact attribute without "
+        "speculative edits");
+  }
+}
+
 constexpr NamedTest kTests[] = {
+    {"testAnnotatedFunctionContracts", testAnnotatedFunctionContracts},
     {"testDefiniteReturnAnalysis", testDefiniteReturnAnalysis},
     {"testSourceUnitDependencyGraph", testSourceUnitDependencyGraph},
     {"testSourceModuleInterfaces", testSourceModuleInterfaces},

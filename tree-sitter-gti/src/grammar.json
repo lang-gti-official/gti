@@ -4362,6 +4362,10 @@
           "members": [
             {
               "type": "STRING",
+              "value": "test"
+            },
+            {
+              "type": "STRING",
               "value": "noreturn"
             },
             {
@@ -4394,6 +4398,10 @@
               {
                 "type": "CHOICE",
                 "members": [
+                  {
+                    "type": "STRING",
+                    "value": "test"
+                  },
                   {
                     "type": "STRING",
                     "value": "noreturn"

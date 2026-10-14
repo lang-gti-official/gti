@@ -3914,6 +3914,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   add_test(
+    NAME annotated_test_suites
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/annotated_test_suite_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(annotated_test_suites PROPERTIES TIMEOUT 600)
+  add_test(
     NAME scoped_configuration_defines
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/scoped_configuration_defines_test.py"

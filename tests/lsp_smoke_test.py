@@ -6724,6 +6724,45 @@ def test_function_contract_diagnostics(executable, root):
             and message["params"].get("version") == 4
         )["params"]
         assert not has_error_diagnostics(repaired_publication), repaired_publication
+        invalid_test = "/* 😀 */ [[test]] int invalid_test() { return 0; }\n"
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 5},
+                       "contentChanges": [{"text": invalid_test}]},
+        })
+        test_publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 5
+        )["params"]
+        test_diagnostic = next(item for item in test_publication["diagnostics"]
+                               if item.get("code") == "GTI-S2099")
+        attribute_start = invalid_test.index("test]]")
+        assert test_diagnostic["range"] == {
+            "start": lsp_position(invalid_test, attribute_start),
+            "end": lsp_position(invalid_test, attribute_start + 4),
+        }, test_diagnostic
+        assert "void" in test_diagnostic["message"] and "test" in test_diagnostic["message"]
+        assert not test_diagnostic["data"].get("fixes"), test_diagnostic
+        valid_test = "[[test]] void valid_test() {}\n"
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 6},
+                       "contentChanges": [{"text": valid_test}]},
+        })
+        test_corrected = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 6
+        )["params"]
+        assert not has_error_diagnostics(test_corrected), test_corrected
+        session.send({
+            "jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
+            "params": {"textDocument": {"uri": uri},
+                       "position": lsp_position(valid_test, valid_test.index("valid_test"))},
+        })
+        hover = session.receive_until(lambda message: message.get("id") == 2)
+        assert "[[test]]" in json.dumps(hover), hover
     finally:
         session.close()
 

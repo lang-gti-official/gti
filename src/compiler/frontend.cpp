@@ -1,6 +1,8 @@
 #include "gti/frontend.h"
+#include "diagnostic_registry.h"
 #include "gti/diagnostic.h"
 #include "gti/hir.h"
+#include "gti/lexer.h"
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 #include "gti/parser.h"
@@ -122,6 +124,7 @@ std::string cacheContext(const FrontendOptions &options) {
   }
   result += '\n';
   result += options.requireEntryPoint ? "entry:required\n" : "entry:optional\n";
+  result += options.program.testSuite ? "tests:enabled\n" : "tests:disabled\n";
   result += options.target.dataLayout.supported() ? "layout:supported"
                                                   : "layout:unsupported";
   for (std::size_t index = 0; index < targetScalarKindCount; ++index) {
@@ -520,6 +523,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     }
   }
   std::unordered_set<const FunctionDecl *> requiredBodies;
+  bool testDiscoveryComplete = false;
   std::unique_ptr<SemanticVisitor> semanticOwner;
   HirLoweringResult hir;
   TrustedBodyAnalysis trustedBodies = options.trustedBodies;
@@ -575,6 +579,97 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
               std::chrono::steady_clock::now() - semanticStart)
               .count());
     }
+    if (result.semanticValid && options.program.testSuite &&
+        !testDiscoveryComplete && !options.completionOffset) {
+      testDiscoveryComplete = true;
+      SourceUnit *entry =
+          result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+      for (const FunctionInfo *function : semantic.model().testFunctions()) {
+        const SourceUnit *unit =
+            result.sourceGraph.findUnit(function->sourceUnit);
+        if (entry != nullptr && unit != nullptr &&
+            !result.sourceGraph.isCompilerTrusted(unit->id) &&
+            unit->packageIdentity == entry->packageIdentity) {
+          result.testCases.push_back(function->qualifiedName);
+        }
+      }
+      std::sort(result.testCases.begin(), result.testCases.end());
+      if (!result.testCases.empty() && entry != nullptr) {
+        if (!semantic.model().executableEntryDiagnostic(entry->id,
+                                                        entry->path.string())) {
+          result.diagnostics.push_back(makeDiagnostic(
+              DiagnosticId::InvalidFunctionContract,
+              SourceSpan{entry->path.string(), 0, 0, 1},
+              {"An annotated test suite supplies its own entry point; remove "
+               "the suite's main or use a separate legacy test target."}));
+          result.semanticValid = false;
+        } else {
+          // Generate ordinary source only after semantic discovery validates
+          // declaration identities and signatures. The dispatcher goes back
+          // through semantics, HIR and verified MIR, including hosted argv
+          // ownership and failure cleanup; the backend has no test policy.
+          const std::string *original =
+              result.sources.find(entry->path.string());
+          const std::string prefix =
+              original == nullptr ? std::string{} : *original;
+          std::string dispatcher = "\nint main(int gti_test_argc, "
+                                   "std::vector<std::string> gti_test_argv) {\n"
+                                   "  if (gti_test_argc != 2) { return 2; }\n";
+          for (const std::string &name : result.testCases) {
+            dispatcher += "  if (gti_test_argv[std::size_t(1)] == \"" + name +
+                          "\") { " + name + "(); return 0; }\n";
+          }
+          dispatcher += "  return 2;\n}\n";
+          const std::string expanded = prefix + dispatcher;
+          Lexer lexer;
+          std::vector<Token> tokens =
+              lexer.scan(dispatcher, entry->path.string());
+          const int lineOffset =
+              static_cast<int>(std::count(prefix.begin(), prefix.end(), '\n'));
+          for (Token &token : tokens) {
+            token.position += prefix.size();
+            token.line += lineOffset;
+            token.generated = true;
+          }
+          Parser parser(std::move(tokens), expanded);
+          Program generated = parser.parse();
+          for (const StmtPtr &statement : generated.declarations()) {
+            if (stmtAs<FunctionDecl>(statement.get()) != nullptr)
+              static_cast<FunctionDecl *>(statement.get())
+                  ->markGeneratedTestEntry();
+          }
+          if (lexer.hadError() || parser.hadError()) {
+            result.diagnostics.push_back(
+                makeDiagnostic(DiagnosticId::InvalidFunctionContract,
+                               SourceSpan{entry->path.string(), 0, 0, 1},
+                               {"The compiler could not construct the "
+                                "annotated test dispatcher: " +
+                                (parser.errors().empty()
+                                     ? std::string("invalid generated tokens")
+                                     : parser.errors().front().message)}));
+            result.semanticValid = false;
+          } else {
+            StmtList statements = result.program.declarations();
+            const std::size_t insertion =
+                entry->declarationStart + entry->declarationCount;
+            const std::size_t count = generated.declarations().size();
+            statements.insert(statements.begin() +
+                                  static_cast<std::ptrdiff_t>(insertion),
+                              generated.declarations().begin(),
+                              generated.declarations().end());
+            for (SourceUnit &unit : result.sourceGraph.units) {
+              if (unit.id != entry->id && unit.declarationStart >= insertion)
+                unit.declarationStart += count;
+            }
+            entry->declarationCount += count;
+            entry->sourceDigest = sourceTextDigest(expanded);
+            result.sources.set(entry->path.string(), expanded);
+            result.program = Program(std::move(statements));
+            continue;
+          }
+        }
+      }
+    }
     append(result.diagnostics, semantic.errors());
     const std::size_t semanticDiagnosticCount = semantic.errors().size();
     // Complete the requested inference phases before applying CI policy, so
@@ -586,6 +681,13 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       if (auto diagnostic = semantic.model().executableEntryDiagnostic(
               result.sourceGraph.entryUnit(),
               entry == nullptr ? entryPath.string() : entry->path.string())) {
+        if (options.program.testSuite && result.testCases.empty()) {
+          diagnostic->message = "Test target requires an annotated test "
+                                "function or a global main definition.";
+          diagnostic->hints.emplace_back(
+              "Define [[test]] void name() {} for an automatically reported, "
+              "isolated test suite.");
+        }
         result.diagnostics.push_back(std::move(*diagnostic));
         result.semanticValid = false;
       }

@@ -1,5 +1,17 @@
 # Compiler Verification
 
+## Annotated test suites
+
+`annotated_test_suites` checks the runnable `examples/annotated-tests` project
+at O0/C++20 and O3/C++23, included test declarations, independent global state,
+automatic per-function reports, cache reuse and corrupted-catalog recovery.
+Panic/check failures preserve destructor cleanup and source attribution; signal
+termination and later tests are reported independently. Invalid function shapes,
+mixed hosted main/annotations, empty suites and legacy executables are covered.
+The `function-contract` LSP case checks exact UTF-16 spans, unsaved correction
+and annotated signatures in hover; Tree-sitter covers the same attribute syntax.
+The stdlib surface census records `std::testing::check` with O0/O3 execution.
+
 ## Owning field replacement through raw pointers (#122)
 
 `raw_owned_field_replacement_runtime` covers returned, direct, indexed and nested

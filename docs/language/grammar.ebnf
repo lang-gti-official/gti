@@ -113,9 +113,12 @@ function-contract-attributes = function-contract-attribute
                               { function-contract-attribute } ;
 function-contract-attribute = "[[" function-contract-name
                               { "," function-contract-name } "]]" ;
-function-contract-name = "noreturn" | "track_caller" | "discardable" | "thread_confined_callback"
+function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | "thread_confined_callback"
                        | "borrowed_from" "(" ( IDENTIFIER | "this" ) ")" ;
-(* noreturn/track_caller: defined, non-polymorphic GTI functions only, except trusted compiler
+(* test: defined, safe, non-generic namespace-scope void functions with no
+   parameters or attribute arguments. Explicit test targets discover these
+   functions and execute them separately; ordinary compilation does not run them.
+   noreturn/track_caller: defined, non-polymorphic GTI functions only, except trusted compiler
    intrinsic declarations; operator annotations are rejected semantically.
    noreturn forbids normal returns and reachable
    fallthrough. track_caller propagates the external caller location through

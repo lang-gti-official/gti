@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.426.0 — Annotated isolated test suites
+
+- Explicit test targets collect safe, non-generic, non-static `[[test]] void`
+  functions with no parameters, including selected-package included and private
+  module declarations. One executable is built per suite; each function runs
+  in a fresh child process with automatic reporting, timings and captured output.
+  Panic and signal failures do not stop later tests. Dependency tests are excluded.
+- `<std/testing>` supplies caller-tracked `std::testing::check` over the existing
+  cleanup-preserving panic facility. Existing test targets with their own `main`
+  remain supported; annotated suites supply their entry point automatically.
+- Whole-program cache schema v3 retains a verified test catalog and distinguishes
+  ordered additional prelude roots. Compiler diagnostics, editor hover and
+  Tree-sitter recognise the attribute. `examples/annotated-tests` demonstrates
+  the complete workflow.
+
 ## 0.425.1 — Accurate check progress labels
 
 - `gti check` now says `Checking` in its initial banner and elapsed-time updates

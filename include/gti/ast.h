@@ -2366,6 +2366,9 @@ public:
   [[nodiscard]] bool hasFunctionAttribute(std::string_view name) const {
     return findFunctionAttribute(name) != nullptr;
   }
+  // Set only by the compiler after validating the selected test catalog.
+  void markGeneratedTestEntry() { generatedTestEntry_ = true; }
+  [[nodiscard]] bool generatedTestEntry() const { return generatedTestEntry_; }
 
 private:
   TypeRef returnType_;
@@ -2389,6 +2392,7 @@ private:
   std::optional<Token> unsafeKeyword_;
   std::vector<FunctionAttribute> functionAttributes_;
   std::optional<NamePath> definitionOwner_;
+  bool generatedTestEntry_ = false;
 };
 
 class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {
