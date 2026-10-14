@@ -12,6 +12,10 @@ temporary's end-of-full-expression destruction and that all 19 temporaries are
 destroyed exactly once, in C++20/C++23 at O0–O3 with disabled elision and at O1
 with ASan/UBSan. The emitted C++ reads all 17 views through MIR's own result
 slots and none through a cleanup-free value slot.
+`owning_temporary_field_read_runtime` adds plain, nested and by-value-argument
+constructions in its eight native modes. It observes that a failure after the
+read destroys the constructed temporary once, and that a failed construction is
+never destroyed.
 `testOwningConstructionFieldView` checks plain, raising and generated-default
 publication, a short-circuit conditional temporary and constructor-body reads,
 and rejects a view moved out of its temporary and an obligation armed before
