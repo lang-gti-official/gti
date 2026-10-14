@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.427.0 — Annotated isolated test suites
+## 0.428.0 — Annotated isolated test suites
 
 - Explicit test targets collect safe, non-generic, non-static `[[test]] void`
   functions with no parameters, including selected-package included and private
@@ -19,10 +19,22 @@ for what minor and patch releases mean.
 - `<std/testing>` supplies caller-tracked `std::testing::check` over the existing
   cleanup-preserving panic facility. Existing test targets with their own `main`
   remain supported; annotated suites supply their entry point automatically.
-- Whole-program cache schema v3 retains a verified test catalog and distinguishes
+- Whole-program cache schema v4 retains a verified test catalog and distinguishes
   ordered additional prelude roots. Compiler diagnostics, editor hover and
   Tree-sitter recognise the attribute. `examples/annotated-tests` demonstrates
   the complete workflow.
+
+## 0.427.0 — Debug builds use the project cache
+
+- `gti build`, `run` and `test` with source-level debug info (`-g`, or a
+  profile's `debug-info = true`, as in the default `dev` profile of many
+  projects) now use the whole-program project cache instead of bypassing it.
+  An unchanged debug build is a cache hit that restores the executable and,
+  on macOS, its `.dSYM` bundle; the engine-sized editor target that rebuilt
+  everything in about 25-35 s now restores in about 4 s. Debug entries are
+  keyed on the loaded sources' paths and the `dsymutil` identity, so moving
+  a checkout or changing the symbol tool rebuilds. The cache schema is v3;
+  older entries are left unused.
 
 ## 0.426.0 — Implicit constructors
 

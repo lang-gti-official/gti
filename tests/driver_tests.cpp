@@ -1503,13 +1503,14 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
           lang::driver::PackageWarningPolicy packageWarnings = {},
           lang::WarningPolicy warnings = {},
           lang::RawPointerAuditMode rawPointerAudit =
-              lang::RawPointerAuditMode::Off) {
+              lang::RawPointerAuditMode::Off,
+          bool debugInfo = false) {
         return lang::driver::buildExecutable(
             lang::driver::ExecutableBuildRequest(
                 lang::driver::CompilationRequest(
                     source, toolchain.standardLibrary, std::move(target),
                     optimization, standard, {}, {}, {}, std::move(warnings),
-                    false, std::move(packageWarnings), rawPointerAudit),
+                    debugInfo, std::move(packageWarnings), rawPointerAudit),
                 toolchain, generated, output, nativeCompiler,
                 std::move(nativeInputs), keepCpp, true, false, managed,
                 std::nullopt, cache));
@@ -1556,10 +1557,10 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   const std::string firstKey = first.cache.key;
   const std::filesystem::path firstEntry = first.cache.entry;
   expect(
-      firstEntry.parent_path() == cache.root / "v3" &&
-          readFile(firstEntry / "metadata").starts_with("gti-build-cache-v3\n"),
-      "the current one-root driver request should publish only the v3 "
-      "ordered-prelude cache schema");
+      firstEntry.parent_path() == cache.root / "v4" &&
+          readFile(firstEntry / "metadata").starts_with("gti-build-cache-v4\n"),
+      "the current one-root driver request should publish only the v4 "
+      "symbol- and test-aware ordered-prelude cache schema");
 
   std::error_code removeError;
   std::filesystem::remove(output, removeError);
@@ -1572,6 +1573,63 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              std::filesystem::is_regular_file(output),
          "an unchanged build should verify and restore the cached executable "
          "without invoking any native compilation");
+
+  const auto debugBuild = [&] {
+    return build(lang::OptimizationLevel::O0, {}, false,
+                 lang::CppStandard::Cpp23, lang::TargetInfo::host(), {}, {},
+                 lang::RawPointerAuditMode::Off, true);
+  };
+  const lang::driver::ExecutableBuildResult debugFirst = debugBuild();
+  if (debugFirst.cache.status != lang::driver::BuildCacheStatus::Miss) {
+    std::cerr << "whole-program cache debug-build status: "
+              << static_cast<int>(debugFirst.cache.status)
+              << " detail: " << debugFirst.cache.detail.value_or("none")
+              << '\n';
+  }
+  expect(debugFirst.succeeded() &&
+             debugFirst.cache.status == lang::driver::BuildCacheStatus::Miss &&
+             !debugFirst.cache.key.empty() &&
+             debugFirst.cache.key != firstKey &&
+             std::filesystem::is_regular_file(debugFirst.cache.entry /
+                                              "metadata") &&
+             readFile(debugFirst.cache.entry / "metadata").find("\nsymbols ") !=
+                 std::string::npos,
+         "a source-level debug build should use the cache under its own key "
+         "and record its symbol bundle in the entry metadata");
+  const std::filesystem::path debugBundle =
+      std::filesystem::path(output.string() + ".dSYM");
+#if defined(__APPLE__)
+  expect(
+      std::filesystem::is_directory(debugFirst.cache.entry / "symbols.dSYM") &&
+          std::filesystem::is_regular_file(debugBundle / ".gti-debug-symbols"),
+      "a Darwin debug build should publish its owned symbol bundle and "
+      "keep a copy of it in the cache entry");
+  std::error_code bundleRemoveError;
+  std::filesystem::remove_all(debugBundle, bundleRemoveError);
+#endif
+  std::error_code debugRemoveError;
+  std::filesystem::remove(output, debugRemoveError);
+  const lang::driver::ExecutableBuildResult debugHit = debugBuild();
+  expect(debugHit.succeeded() &&
+             debugHit.cache.status == lang::driver::BuildCacheStatus::Hit &&
+             debugHit.cache.key == debugFirst.cache.key &&
+             !debugHit.nativeProcess && debugHit.cCompilations.empty() &&
+             debugHit.cppCompilations.empty() &&
+             std::filesystem::is_regular_file(output),
+         "an unchanged debug build should restore the cached executable "
+         "without native compilation");
+#if defined(__APPLE__)
+  expect(std::filesystem::is_regular_file(debugBundle / ".gti-debug-symbols"),
+         "a Darwin debug cache hit should restore the owned symbol bundle "
+         "next to the executable");
+#endif
+  const lang::driver::ExecutableBuildResult plainAfterDebug =
+      build(lang::OptimizationLevel::O0);
+  expect(plainAfterDebug.succeeded() &&
+             plainAfterDebug.cache.status ==
+                 lang::driver::BuildCacheStatus::Hit &&
+             plainAfterDebug.cache.key == firstKey,
+         "the non-debug entry should remain valid beside the debug entry");
 
   std::string warnAuditKey;
   for (const auto mode :
@@ -2163,9 +2221,9 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   std::filesystem::remove_all(firstEntry, removeError);
   expect(!removeError && readFile(output) == publishedExecutable,
          "deleting a cache entry should not damage the published executable");
-  const std::filesystem::path legacyEntry = cache.root / "v1" / firstKey;
+  const std::filesystem::path legacyEntry = cache.root / "v3" / firstKey;
   std::filesystem::create_directories(legacyEntry);
-  expect(writeFile(legacyEntry / "metadata", "gti-build-cache-v1\n") &&
+  expect(writeFile(legacyEntry / "metadata", "gti-build-cache-v3\n") &&
              writeFile(legacyEntry / "generated.cpp", "stale") &&
              writeFile(legacyEntry / "executable", "stale"),
          "the legacy cache-schema fixture should be writable");
@@ -2175,8 +2233,8 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              afterDeletion.cache.status ==
                  lang::driver::BuildCacheStatus::Miss &&
              afterDeletion.nativeProcess &&
-             afterDeletion.cache.entry.parent_path() == cache.root / "v3",
-         "a deleted v2 cache entry should ignore a same-key v1 entry and "
+             afterDeletion.cache.entry.parent_path() == cache.root / "v4",
+         "a deleted v4 cache entry should ignore a same-key v3 entry and "
          "degrade to a clean rebuild");
 
   const lang::driver::ExecutableBuildResult unmanagedCache =

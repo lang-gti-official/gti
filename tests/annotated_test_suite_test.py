@@ -43,6 +43,21 @@ def main():
         assert "Test result: 3 passed" in recovered and "wrong_name ..." not in recovered, recovered
         assert "case engine::tests::fresh_scene_state" in metadata.read_text()
 
+        # Debug symbols and the test catalog coexist in the same cache entry.
+        debug_first = run(project, "test", "-g", "--verbose")
+        debug_second = run(project, "test", "-g", "--verbose")
+        assert "Test result: 3 passed" in debug_first and "Test result: 3 passed" in debug_second
+        assert "cache hit" in debug_second.lower(), debug_second
+        if sys.platform == "darwin":
+            executable = next((project / "build/gti/dev").glob("*/engine-tests"))
+            symbols = Path(str(executable) + ".dSYM")
+            assert symbols.is_dir(), debug_second
+            shutil.rmtree(symbols)
+            executable.unlink()
+            restored = run(project, "test", "-g", "--verbose")
+            assert "cache hit" in restored.lower() and "Test result: 3 passed" in restored
+            assert executable.is_file() and symbols.is_dir(), restored
+
         source = project / "tests/main.gti"
         source.write_text('''#include <std/testing>
 #include <std/string>
