@@ -1,0 +1,91 @@
+#include <std/memory>
+#include <std/functional>
+#include <std/numeric>
+
+class Inspection {
+  std::erased_object& object;
+public:
+  Inspection(int& object) : object(std::erase_ref(object)) {}
+  int read() {
+    unsafe { int& original = std::restore_ref<int>(this.object); return original; }
+  }
+};
+
+class Reader {
+  int& value;
+public:
+  Reader(int& value) : value(value) {}
+  int read() { return this.value; }
+};
+Reader& restore_reader(std::erased_object& object) {
+  unsafe { Reader& reader = std::restore_ref<Reader>(object); return reader; }
+}
+
+struct Selection {
+  mut int calls;
+  mut int selected;
+  Selection(int calls, int selected) : calls(calls), selected(selected) {}
+};
+// A reference-initializer helper must have no failure edge to bind a native
+// reference member before the constructor body; wrapping arithmetic keeps
+// the once-counter free of a checked overflow site.
+mut int& select_value(mut Selection& source) {
+  source.calls = std::wrapping_add(source.calls, 1);
+  return source.selected;
+}
+class SelectedView {
+  mut int& value;
+public:
+  SelectedView(mut Selection& source) : value(select_value(source)) {}
+  void increment() mut { this.value += 1; }
+};
+
+int next(int value) { return value + 1; }
+int apply(std::function_ref<int(int)>& callback, int input) { return callback(input); }
+
+class Handler<F> {
+  mut F callback;
+public:
+  Handler(F callback) : callback(std::move(callback)) {}
+  int run() mut { return this.callback(); }
+};
+Handler<F> store<F>(F callback) { return Handler<F>(std::move(callback)); }
+
+int main() {
+  int value = 4;
+  Inspection inspection{value};
+  if (inspection.read() != 4) return 1;
+  Reader original{value};
+  std::erased_object& erased = std::erase_ref(original);
+  Reader& restored = restore_reader(erased);
+  if (restored.read() != 4) return 8;
+  mut Selection selection{0, 10};
+  mut SelectedView selected{selection};
+  selected.increment();
+  if (selection.calls != 1 || selection.selected != 11) return 10;
+  std::function_ptr<int(int)> named{next};
+  std::function_ptr<int(int)> lambda{[](int input) -> int { return input + 2; }};
+  if (named(3) != 4 || lambda(3) != 5) return 2;
+
+  auto reader = [&value](int input) -> int { return value + input; };
+  std::function_ref<int(int)> shared{reader};
+  if (apply(shared, 3) != 7) return 3;
+
+  mut int count = 0;
+  mut auto writer = [mut &count](int step) -> int { count += step; return count; };
+  mut std::function_ref<int(int) mut> exclusive{writer};
+  if (exclusive(2) != 2 || exclusive(3) != 5) return 4;
+  if (count != 5) return 5;
+  mut int ticks = 0;
+  mut auto tick = [mut &ticks]() -> void { ticks += 1; };
+  mut std::function_ref<void() mut> tick_view{tick};
+  tick_view();
+  if (ticks != 1) return 9;
+
+  mut int stored_count = 2;
+  mut auto update = [mut &stored_count]() -> int { stored_count += 3; return stored_count; };
+  mut auto stored = store(std::move(update));
+  if (stored.run() != 5) return 6;
+
+  return 0;
+}

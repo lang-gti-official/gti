@@ -427,9 +427,12 @@ struct CppMirStoredReferenceBinding {
   std::size_t initializer = 0;
   SymbolId field = 0;
   std::size_t parameter = 0;
+  // Exact no-failure checked helper, executed once in the native initializer.
+  std::optional<HirFunctionInstanceId> functionTarget;
 };
 [[nodiscard]] std::optional<std::vector<CppMirStoredReferenceBinding>>
-cppMirStoredReferenceBindings(const MirConstructorInstance &constructor);
+cppMirStoredReferenceBindings(const MirProgram &program,
+                              const MirConstructorInstance &constructor);
 
 // True when a constructor and every constructor selected by its initializer
 // metadata can never report a recoverable failure to its caller. Terminal

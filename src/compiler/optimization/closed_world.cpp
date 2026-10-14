@@ -201,6 +201,8 @@ private:
       for (const MirInstruction &instruction : block.instructions) {
         if (instruction.functionTarget && !directCall(instruction))
           open(*instruction.functionTarget);
+        if (instruction.functionPointerFunctionTarget)
+          open(*instruction.functionPointerFunctionTarget);
         if (instruction.nativeCallbackAdapter)
           if (const auto *adapter = program.findNativeCallbackAdapter(
                   *instruction.nativeCallbackAdapter))

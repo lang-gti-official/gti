@@ -1,0 +1,21 @@
+#include <std/functional>
+#include <std/io>
+#include <std/panic>
+
+class Token {
+  int value;
+public:
+  Token(int value) : value(value) {}
+  ~Token() { std::println(this.value); }
+};
+
+int fail(Token input) {
+  std::panic("callback failed");
+}
+
+int main() {
+  Token caller{2};
+  std::function_ptr<int(Token)> callback{fail};
+  Token input{1};
+  return callback(std::move(input));
+}

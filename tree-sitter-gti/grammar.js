@@ -1373,9 +1373,12 @@ module.exports = grammar({
     lambda_capture: ($) =>
       prec(
         1,
-        seq(
-          field("name", $.identifier),
-          optional(seq("=", field("initializer", $._expression_not_comma))),
+        choice(
+          seq(
+            field("name", $.identifier),
+            optional(seq("=", field("initializer", $._expression_not_comma))),
+          ),
+          seq(optional(field("mutable", "mut")), "&", field("name", $.identifier)),
         ),
       ),
 

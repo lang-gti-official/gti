@@ -1324,7 +1324,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v84\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v85\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3517,7 +3517,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v103 ") &&
+  expect(mirDump.starts_with("mir-v104 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -16384,7 +16384,7 @@ int main() {
       hasDiagnostic(invalid.diagnostics, "not captured") &&
           hasDiagnostic(invalid.diagnostics, "listed more than once") &&
           hasDiagnostic(invalid.diagnostics,
-                        "reference captures are not supported") &&
+                        "use an explicit '&' or 'mut &' capture") &&
           hasDiagnostic(invalid.diagnostics,
                         "captured snapshots cannot be made mutable") &&
           hasDiagnostic(invalid.diagnostics,
@@ -16802,23 +16802,21 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!invalidOwnedMoveCapture.canGenerateCode() &&
-             hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
-                           "already been moved") &&
-             hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
-                           "limited to the explicit owned-move form") &&
-             hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
-                           "is not movable") &&
-             hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
-                           "cannot contain tracked borrowed state"),
-         "owned move capture should update source availability and reject "
-         "general, non-movable, or borrowed-state init captures");
+  expect(
+      !invalidOwnedMoveCapture.canGenerateCode() &&
+          hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
+                        "already been moved") &&
+          hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
+                        "limited to the explicit owned-move form") &&
+          hasDiagnostic(invalidOwnedMoveCapture.diagnostics, "is not movable"),
+      "owned move capture should update source availability and reject "
+      "general or non-movable init captures");
 
   lang::Lexer lexer;
   lang::Parser parser(lexer.scan(R"(
 int main() {
   auto bad_default = [=]() -> int { return 0; };
-  auto bad_reference = [&value]() -> int { return value; };
+  auto bad_reference = [&value = source]() -> int { return value; };
   auto valid_syntax = [value = std::move(value)]() -> int { return 1; };
   int recovered = 1;
   return recovered;
@@ -16827,8 +16825,10 @@ int main() {
   const lang::Program recovered = parser.parse();
   expect(parser.hadError() && !recovered.declarations().empty() &&
              hasDiagnostic(parser.errors(), "capture defaults") &&
-             hasDiagnostic(parser.errors(), "reference captures"),
-         "the parser should reject C++ capture defaults and references while "
+             hasDiagnostic(parser.errors(),
+                           "borrowing capture names an existing binding"),
+         "the parser should reject capture defaults and borrowing init "
+         "captures while "
          "recovering around the supported move-capture syntax");
 
   const std::string formatted = lang::Formatter().format(
@@ -18482,7 +18482,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v103 ") &&
+             mirDump.starts_with("mir-v104 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

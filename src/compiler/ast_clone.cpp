@@ -253,7 +253,8 @@ private:
       captures.reserve(node.captures().size());
       for (const LambdaCapture &capture : node.captures()) {
         captures.emplace_back(tok(capture.name), tok(capture.equal),
-                              expr(capture.initializer));
+                              expr(capture.initializer), tok(capture.borrow),
+                              tok(capture.mutKeyword));
       }
       StmtList body;
       if (!stmts(node.body(), body)) {

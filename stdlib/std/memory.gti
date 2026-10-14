@@ -13,6 +13,12 @@ class unique_owner<T> {};
 class shared_owner<T> {};
 // Layout-only capability: no engagement bit and no automatic payload drop.
 class uninitialized_storage<T> {};
+// An opaque referent identity, never an object GTI source may construct/read.
+class erased_object {};
+erased_object& erase_reference<T>(T& object);
+mut erased_object& erase_reference_mut<T>(mut T& object);
+unsafe T& restore_reference<T>(erased_object& object);
+unsafe mut T& restore_reference_mut<T>(mut erased_object& object);
 
 @compiler_constraint("object_layout") concept object_layout_capability<T>;
 @compiler_constraint("independent_object") concept independent_object<T>;
@@ -58,6 +64,24 @@ enum class empty_storage_adoption {
 }
 
 namespace std {
+/// Checked type erasure retains the original object's lifetime and access.
+/// Erasure does not make an object transferable or concurrently shareable.
+using erased_object = gti_internal::erased_object;
+
+erased_object& erase_ref<T>(T& object) {
+  return gti_internal::erase_reference(object);
+}
+mut erased_object& erase_mut<T>(mut T& object) {
+  return gti_internal::erase_reference_mut(object);
+}
+/// The caller must restore precisely the original referent type. Lifetime
+/// and shared/exclusive access remain checked even inside unsafe.
+unsafe T& restore_ref<T>(erased_object& object) {
+  unsafe { return gti_internal::restore_reference<T>(object); }
+}
+unsafe mut T& restore_mut<T>(mut erased_object& object) {
+  unsafe { return gti_internal::restore_reference_mut<T>(object); }
+}
 /// Complete object types supported by the runtime representation query.
 concept layout_queryable<T> = gti_internal::object_layout_capability<T>;
 /// Complete storage elements that retain no checked external owner borrow.

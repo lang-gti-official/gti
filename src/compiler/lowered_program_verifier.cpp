@@ -1183,16 +1183,46 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
                       symbolIdentities.contains(lowered.symbol);
     }
     std::vector<SemanticType> parameterTypes;
-    parameterTypes.reserve(instance.parameters.size());
-    for (const LoweredParameter &parameter : instance.parameters) {
-      parameterTypes.push_back(parameter.type);
+    parameterTypes.reserve(mir.parameterTypes.size());
+    bool parametersMatch =
+        instance.parameters.size() == mir.parameterBindings.size();
+    for (std::size_t parameterIndex = 0;
+         parameterIndex < instance.parameters.size(); ++parameterIndex) {
+      const auto &parameter = instance.parameters[parameterIndex];
       requireSymbol(parameter.symbol, 0);
+      const auto binding = std::find_if(
+          mir.body.places.begin(), mir.body.places.end(),
+          [&](const MirPlace &place) {
+            return parameterIndex < mir.parameterBindings.size() &&
+                   place.root == MirPlaceRootKind::Binding &&
+                   place.binding == mir.parameterBindings[parameterIndex] &&
+                   place.projections.empty();
+          });
+      parametersMatch = parametersMatch && binding != mir.body.places.end() &&
+                        binding->initiallyAvailable && parameter.symbol != 0 &&
+                        parameter.symbol == binding->symbol &&
+                        parameter.type == binding->type &&
+                        parameter.access == binding->access;
+      if (parameter.pack) {
+        parametersMatch = parametersMatch &&
+                          parameterIndex + 1 == instance.parameters.size() &&
+                          parameter.type.kind == SemanticType::TypePack &&
+                          parameter.type.concretePack;
+        parameterTypes.insert(parameterTypes.end(),
+                              parameter.type.arguments.begin(),
+                              parameter.type.arguments.end());
+      } else {
+        parametersMatch =
+            parametersMatch && parameter.type.kind != SemanticType::TypePack;
+        parameterTypes.push_back(parameter.type);
+      }
     }
     if (instance.id != index + 1 || instance.id != mir.id ||
         instance.declaration != mir.declaration || instance.type != mir.type ||
         instance.returnType != mir.returnType ||
         parameterTypes != mir.parameterTypes ||
-        !validParameters(instance.parameters) || !capturesMatch) {
+        !validParameters(instance.parameters) || !parametersMatch ||
+        !capturesMatch) {
       addIssue(issues, LoweredProgramIssueKind::InvalidInstanceInventory,
                "lowered lambda instance is unresolved or differs from MIR");
     }

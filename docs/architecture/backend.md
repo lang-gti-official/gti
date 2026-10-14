@@ -1937,6 +1937,10 @@ pointee instantiation for recursive shapes such as
 graphs on one ABI until the representation snapshot records an explicit
 carrier closure. A direct class's field-initializer schedule always uses its
 concrete representation row, never a declaration-level `T` or value parameter.
+The lexical-carrier census includes constructor instances, even when no free
+or member function carries the closure type. An unnameable constructor parameter
+uses the admitted dependent-template overlay and is not also published as a
+concrete native specialization with an invented parameter spelling.
 A direct generic class definition is ordered by its exact concrete application
 and exact substituted by-value fields, not by one collapsed source-family
 node. Finite alternating nests such as `box<cell<box<int>>>` therefore form an
@@ -2132,6 +2136,13 @@ When equivalent constructor instances share one source-template body, only the
 representation comparison omits instance markers. The emitted body retains
 every admitted instance's exact marker, including separate cleanup-shape
 variants, so coalescing cannot silently remove an instance from corpus evidence.
+When lexical closure parameters select different verified constructor bodies
+with the same cleanup shape, the template uses their exact artifact-local MIR
+lambda identities and nameable owner identity as compile-time selectors.
+Distinct bodies require distinct selectors; unrepresented combinations fail
+at instantiation rather than choosing a fallback body. The selectors carry no
+runtime state and do not perform GTI overload resolution. Initializer-list
+representations must still agree before bodies can share this template.
 
 Within one immutable emission plan, constructor and callable-template body
 plans are cached by concrete instance identity together with their exact

@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v101`, `mir-body-v84`).
+instruction, body, and caller-assignment facts (`mir-v104`, `mir-body-v85`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -318,8 +318,30 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v101`/`mir-body-v84`,
-with `lowered-program-v17` declaration metadata. Version 101/body 84 reconciles
+The combined deterministic serialization is currently `mir-v104`/`mir-body-v85`,
+with `lowered-program-v17` declaration metadata. Version 104/body 85 records
+checked borrowing capture modes, each concrete environment's invocation
+capability, per-dependency loan parents, and exact stateless GTI function-pointer
+targets. Reference captures retain ordinary checked-reference storage and
+carrier origins; mutable captures make the environment non-copyable and require
+exclusive invocation. Composed carriers retain every dependency and ancestor,
+including dependencies transported through generic parameters and fields.
+No native address or public library spelling replaces those checked facts.
+
+Checked erased-reference operations preserve the exact origin and access while
+changing the referent type. Restoration is explicitly unsafe and retains its
+checked lifetime witness. The GTI function-pointer operation records either one
+safe function instance or one stateless lambda instance, with its exact signature;
+invocation uses the same explicit failure and cleanup protocol as other GTI
+calls. It is not a native C callback adapter. Reference-field initialization
+through a checked helper verifies the actual returned reference and publication.
+The native reference-initializer representation currently admits a no-failure,
+single-reference-argument helper within a reference-initializer prefix; the
+helper executes once, in order. Supporting fallible or later-field reference
+initializers requires an explicit preparation schedule, not a substituted input
+address or duplicated helper call.
+
+Version 101/body 84 reconciles
 the checked range endpoint parking/publication inventory and shared failure
 cleanup with the scoped-task contract introduced on main in version 100/body 83.
 That contract adds exact
@@ -400,7 +422,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v101`/`lowered-program-v17`, preserving
+The combined serialization is `mir-v104`/`lowered-program-v17`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,
@@ -446,9 +468,9 @@ Source prefix-capacity checks are ordinary control flow. Their selected calls,
 ordered inputs and object-lifetime operations remain visible to deterministic
 inspection and replay; the retired private construction-preflight identity is
 not serialized.
-The new loan contract separates a physical carrier reference from its inherited
-external-owner authority. `storedDependency` names one exact `Stored` loan;
-unlike `parent`, it does not denote containment or suspend that loan. Dependency
+The loan contract separates a physical carrier reference from its inherited
+external-owner authority. Ordinarily `storedDependency` names one exact `Stored`
+loan; unlike `parent`, it does not denote containment or suspend that loan. Dependency
 identity, liveness, permission capping and child-before-dependency retirement
 are verified independently. Dependencies may form an acyclic chain when an
 adapter borrows another adapter. Protected-source and call-conflict queries
@@ -459,9 +481,29 @@ the ultimate owner. Reference formals and receivers seed an abstract
 physical reference loan. Program verification independently binds function,
 lambda and constructor-reference-formal entries to the exact formal (or the
 function/lambda receiver) and checks field access against
-the concrete class layout. Each local value copy attached to an entry requires
+the concrete class layout. Concrete parameter packs retain a separate entry for
+each opaque checked reference, including read-only references: the verified
+element index, referent type, access, source, and entry identity must all agree.
+A constructor reference initializer may execute a checked reference-returning
+helper, then publish its result while retaining the original caller-owned
+`Stored` dependency. The helper's body-derived origin, exact call result, and
+field publication must agree; matching forged call/field metadata cannot invent
+or erase the original owner authority. Each local value copy attached to an entry requires
 an independently proven, dominating same-type initialization; merely adding a
 binding to the carrier list grants no authority.
+Checked restoration of an opaque reference has a separate explicit proof:
+the concrete restored field paths and access must match a verified restore
+operation or body-proven helper summary. Its hidden dependencies remain bounded
+by the original checked witness rather than becoming invented `Stored` owners.
+A named restored-reference return may retain that exact caller-parameter witness
+only when its source and access agree, there are no additional, designated, or
+cleanup-bound dependencies, and every local reference carrier has a unique
+typed initialization from the original call result. Producer, initialization,
+and return publication must occur in that order on every path. The pointer
+carrier cannot be reseated, moved, addressed, or forwarded through a CFG edge.
+The fresh `Return` loan preserves the witness and immediately retires the
+body-local call result; ordinary origin, liveness, escape, and permission checks
+remain mandatory. An alias identity proof alone grants no escape authority.
 An abstract entry describes declared field access, not a capability-produced
 loan or the caller's cleanup ownership. In particular, borrowing a guard does
 not acquire its lock-release obligation. Local bindings of stored referents
