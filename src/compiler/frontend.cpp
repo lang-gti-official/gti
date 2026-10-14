@@ -612,12 +612,22 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
               result.sources.find(entry->path.string());
           const std::string prefix =
               original == nullptr ? std::string{} : *original;
-          std::string dispatcher = "\nint main(int gti_test_argc, "
-                                   "std::vector<std::string> gti_test_argv) {\n"
-                                   "  if (gti_test_argc != 2) { return 2; }\n";
+          // Generated locals must not collide with an annotated global
+          // function: generated-call lookup may cross source-unit boundaries.
+          const auto freshLocal = [&](std::string candidate) {
+            while (std::binary_search(result.testCases.begin(),
+                                      result.testCases.end(), candidate))
+              candidate += '_';
+            return candidate;
+          };
+          const std::string argcName = freshLocal("gti_test_argc");
+          const std::string argvName = freshLocal("gti_test_argv");
+          std::string dispatcher =
+              "\nint main(int " + argcName + ", std::vector<std::string> " +
+              argvName + ") {\n  if (" + argcName + " != 2) { return 2; }\n";
           for (const std::string &name : result.testCases) {
-            dispatcher += "  if (gti_test_argv[std::size_t(1)] == \"" + name +
-                          "\") { " + name + "(); return 0; }\n";
+            dispatcher += "  if (" + argvName + "[std::size_t(1)] == \"" +
+                          name + "\") { " + name + "(); return 0; }\n";
           }
           dispatcher += "  return 2;\n}\n";
           const std::string expanded = prefix + dispatcher;

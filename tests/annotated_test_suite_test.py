@@ -98,6 +98,14 @@ namespace sample {
         output = run(project, "test", "--no-cache")
         assert "Test result: 1 passed" in output and "never_run ..." not in output, output
 
+        # Dispatcher locals are hygienic even when test functions use its
+        # preferred scratch names, including successive fallback names.
+        source.write_text("\n".join(
+            f"[[test]] void {name}() {{}}"
+            for name in ("gti_test_argc", "gti_test_argc_", "gti_test_argv", "gti_test_argv_")) + "\n")
+        output = run(project, "test", "--no-cache")
+        assert "Test result: 4 passed" in output, output
+
         invalid = [
             "[[test]] int invalid() { return 0; }",
             "[[test]] void invalid(int parameter) {}",
