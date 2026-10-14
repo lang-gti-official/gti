@@ -1514,10 +1514,11 @@ constructs the slot in place and arms the result's obligation with its own
 address and arms the obligation on its Invoke success edge. Either way the
 construction's only other uses must be field views. Views cover nested fields
 and a field lent to one member call as in `make_named().text.size()`, in
-function bodies as well as field defaults and member initializers. A view is a
-pure field projection of the result's value root with exact field rows. It
-carries no loan or drop and is touched only by copying `Load`s or by read-only
-borrow stages consumed by one call. It declares no local and spells
+function bodies as well as field defaults, member initializers and base
+argument preparations, whose carrier holds the slot. A view is a pure field
+projection of the result's value root with exact field rows. It carries no
+loan or drop and is touched only by copying `Load`s or by read-only borrow
+stages consumed by one call. It declares no local and spells
 `slot.get().field`, so a field class without a default constructor is never
 default-constructed. MIR's verified initialization bounds every read, and the
 result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.

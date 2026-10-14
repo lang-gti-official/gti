@@ -150,6 +150,18 @@ public:
   field_reader_t() : initialized(checked_t(0).count) {}
 };
 
+class base_reader_t {
+public:
+  int32_t stored;
+  base_reader_t(int32_t value) : stored(value) {}
+};
+
+// The base argument's temporary lives until the base is constructed.
+class derived_reader_t : public base_reader_t {
+public:
+  derived_reader_t() : base_reader_t(tracked_t(1).count) {}
+};
+
 int32_t owning_if_position() {
   if (tracked_t(1).count == 1) {
     return 1;
@@ -234,6 +246,11 @@ int32_t owning_field_initializers() {
   return reader.declared + reader.initialized - 1;
 }
 
+int32_t owning_base_initializer() {
+  derived_reader_t reader = derived_reader_t();
+  return reader.stored;
+}
+
 int32_t owning_observations() {
   return owning_if_position() + owning_while_position() +
          owning_switch_position() + owning_argument_position() +
@@ -242,7 +259,8 @@ int32_t owning_observations() {
          owning_compound_assignment_position() +
          owning_short_circuit_position() + owning_full_expression_order() +
          owning_nested_and_lent_fields() + owning_construction_kinds() +
-         owning_loop_position() + owning_field_initializers();
+         owning_loop_position() + owning_field_initializers() +
+         owning_base_initializer();
 }
 
 int32_t main() {
@@ -254,7 +272,7 @@ int32_t main() {
       factory_evaluations != 5) {
     return 1;
   }
-  if (owning_observations() != 14 || drops != 19) {
+  if (owning_observations() != 15 || drops != 20) {
     return 2;
   }
   return total - 67;
