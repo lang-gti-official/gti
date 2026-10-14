@@ -92,8 +92,8 @@ def coherence(compiler, directory):
     built = subprocess.run([str(compiler), "build"], cwd=app,
                            capture_output=True, text=True, timeout=600)
     assert built.returncode == 0, (built.stdout, built.stderr)
-    executable = next(path for path in (app / "build/gti/dev").iterdir()
-                      if path.name in ("app", "app.exe"))
+    executable = next(path for path in (app / "build").rglob("app*")
+                      if path.is_file() and path.name in ("app", "app.exe"))
     assert run([str(executable)]).returncode == 0
     (app / "main.gti").write_text(FOREIGN)
     rejected = subprocess.run([str(compiler), "check"], cwd=app,
