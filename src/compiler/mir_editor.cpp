@@ -445,9 +445,8 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
     if (!sourceVerified) {
       sourceVerified = verifyMirProgram(program).valid();
     }
-    MirProgram replay = program;
-    if (!*sourceVerified || !mir_detail::rewriteVerifiedMirDeadInstruction(
-                                replay, cleanup.body, cleanup.instruction)) {
+    if (!*sourceVerified || !mir_detail::canRewriteVerifiedMirDeadInstruction(
+                                program, cleanup.body, cleanup.instruction)) {
       addError(result, cleanup.body, 0, cleanup.instruction,
                "MIR dead-instruction removal is not proven by exact uses and "
                "effects");

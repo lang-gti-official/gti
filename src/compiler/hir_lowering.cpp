@@ -2,6 +2,7 @@
 
 #include "diagnostic_registry.h"
 #include "gti/semantic_analyzer.h"
+#include "gti/support.h"
 
 #include <unordered_set>
 
@@ -147,6 +148,7 @@ public:
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
                             lifecycleValid;
+    const PhaseTimeScope verifyScope("hir-verify-plans");
     if (output.program.valid_ &&
         !verifyHirProgramPlans(*baseModel, output.program).valid()) {
       output.program.valid_ = false;
@@ -1851,6 +1853,8 @@ private:
     if (!concreteInstance) {
       return nullptr;
     }
+    const PhaseTimeScope timeScope("hir-instance-analysis",
+                                   declaration->qualifiedName);
     auto analysis = std::make_unique<SemanticInstanceAnalysis>(
         instanceProvider->analyzeFunctionInstance(
             declaration->id, classArguments, classValueArguments,
@@ -1881,6 +1885,7 @@ private:
       return nullptr;
     }
     const HirClassInstance &owner = output.program.classes[snapshot.owner - 1];
+    const PhaseTimeScope timeScope("hir-instance-analysis", "constructor");
     auto analysis = std::make_unique<SemanticInstanceAnalysis>(
         instanceProvider->analyzeConstructorInstance(
             snapshot.declaration, owner.typeArguments, owner.valueArguments,
@@ -2416,6 +2421,7 @@ private:
     SemanticInstanceAnalysis fieldAnalysis;
     const SemanticModel *fieldModel = baseModel;
     if (!classArguments.empty() || !classValueArguments.empty()) {
+      const PhaseTimeScope timeScope("hir-instance-analysis", "fields");
       fieldAnalysis = instanceProvider->analyzeClassFieldInitializers(
           owner.declaration, classArguments, classValueArguments);
       retainInstanceSymbols(fieldAnalysis.model);
@@ -2503,6 +2509,7 @@ private:
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (!owner.typeArguments.empty() || !owner.valueArguments.empty()) {
+      const PhaseTimeScope timeScope("hir-instance-analysis", "destructor");
       analysis = instanceProvider->analyzeDestructorInstance(
           owner.declaration, owner.typeArguments, owner.valueArguments);
       retainInstanceSymbols(analysis.model);

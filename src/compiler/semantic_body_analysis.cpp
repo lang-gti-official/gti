@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include "gti/support.h"
+
 #include <iterator>
 
 namespace lang {
@@ -60,6 +62,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   resumeDeclarations.clear();
   reachedPreambleBodies.clear();
   registrationFloor = {};
+  stagedWorker = {};
   currentNamespace.clear();
   currentSourceUnit = 0;
   structuredBindingElements.clear();
@@ -900,6 +903,7 @@ auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
 // reanalysis, exactly like a dependent `if constexpr` condition.
 auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
     -> void {
+  const PhaseTimeScope timeScope("constexpr-for");
   const SemanticType sequenceType = analyze(stmt.sequence());
   if (sequenceType == SemanticType::Unknown) {
     semanticModel.recordConstexprForExpansion(stmt, std::nullopt);

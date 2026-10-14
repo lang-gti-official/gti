@@ -3894,10 +3894,18 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(cli_color PROPERTIES TIMEOUT 180)
+  add_executable(gti_cli_progress_probe
+    cli_progress_probe.cpp
+    "${PROJECT_SOURCE_DIR}/src/cli/build_progress.cpp"
+    "${PROJECT_SOURCE_DIR}/src/cli/terminal_style.cpp")
+  target_include_directories(gti_cli_progress_probe PRIVATE
+    "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/src/cli")
+  target_include_directories(gti_cli_progress_probe SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+  target_link_libraries(gti_cli_progress_probe PRIVATE LLVMSupport Threads::Threads)
   add_test(
     NAME cli_progress
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cli_progress_test.py"
-            "$<TARGET_FILE:gti>"
+            "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_cli_progress_probe>"
   )
   set_tests_properties(cli_progress PROPERTIES TIMEOUT 180)
   add_test(

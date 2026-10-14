@@ -303,7 +303,10 @@ dependency preparation are backend detail. They are still observed, but they
 get rows only under `--verbose`, which restores `Lowering`, `Emitting` and
 `Native` between `Checking` and `Publishing`. While one of these hidden stages
 runs, the live display shows `Building  <name>` with the build's total elapsed
-time instead, so a long native link does not look like a hang.
+time instead, so a long native link does not look like a hang. Project `check`
+uses `Checking` for its initial banner and overall elapsed-time rows instead.
+It still reports `Lowering` under `--verbose`; checking does not generate or
+link an executable, and progress labels do not alter analysis or caching.
 
 `--progress=auto` is the default: a capable stderr terminal updates one active
 row in place, refreshing elapsed time every 200 ms. Redirected streams and
@@ -389,6 +392,27 @@ reports its actual target waits, with target ordinal/count, while other children
 may also be running. `--progress=never` preserves byte-identical serial/parallel
 presentation; elapsed progress is intentionally not byte-stable. The display
 does not imply that waiting for one target means the other targets are idle.
+
+### Compile-time telemetry
+
+`gti --time-trace <path>` writes a Chrome Trace Format profile of one
+compilation through LLVM's time profiler. Every `PhaseTimeScope` in the
+compiler contributes a nested, named region; tracing costs nothing when it is
+off. The regions are the driver phases (`gti-source-load`, `gti-parse`,
+`gti-semantics`, `gti-hir-lowering`, `gti-failure-metadata`,
+`gti-mir-lowering`, `gti-optimize`, `gti-lowered-program`, `gti-backend`),
+each optimizer pass (`mir-pass` with the pass name as detail, plus
+`hir-compatibility-folding`, `mir-verify-input` and
+`mir-verify-output-coherence`), the lowered-program builder's verification
+and collection steps (`lowered-verify-*`, `lowered-collect`), the backend
+(`backend-verify-lowered-program`, `backend-plan`, `backend-plan-program`,
+`backend-write`), HIR's concrete instance analyses (`hir-instance-analysis`
+with the declaration as detail, `hir-verify-plans`), staged constant
+evaluation (`constexpr-staged-*`, `constexpr-for`), the safety analysis
+(`mir-safety-analysis`) and the optimization coherence verifier's replays
+(`coherence-*`). Regions nest, so a viewer's self time, not the sum of
+totals, attributes cost; a region that runs many times (instance analyses,
+staged evaluations) is best read as a count and a total.
 
 ## Direct Mode
 
