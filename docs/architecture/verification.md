@@ -1,5 +1,16 @@
 # Compiler Verification
 
+## Generic base arguments
+
+`base_constructor_stage_runtime` adds `generic_base_arguments.gti`. In it, two
+concrete instances of a generic derived class compute their generic base's
+arguments through a checked call and a temporary receiver. In C++20/C++23 at
+O0/O1/O3, no-elide and ASan/UBSan it checks the temporary's drop after each
+base, and an argument, base-constructor or body failure ending each value
+exactly once. `base_constructor_stage` requires a preparation for both
+instances. It rejects the carrier and the gate when the `concreteGenericClass`
+representation fact of either the derived or the base class is cleared.
+
 ## Constructor-initializer temporaries (0.430.1)
 
 `mutable_temporary_receiver_runtime` binds temporaries, with and without a

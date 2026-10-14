@@ -1519,6 +1519,8 @@ struct RowsBuilder {
            .kind = *kind,
            .spelling = facts.typeSpelling(standard, type),
            .templateNameSpelling = std::move(templateNameSpelling),
+           .concreteGenericClass = type.kind == SemanticType::Class &&
+                                   facts.usesDirectClassRepresentation(type),
            .boundaryConstructible = boundaryConstructible,
            .copyConstructible = copyConstructible,
            .copyable = copyable});
