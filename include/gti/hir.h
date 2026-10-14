@@ -235,6 +235,7 @@ struct HirValue {
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
+  std::vector<SemanticLoanDependency> borrowDependencies;
   bool storedReferenceAccess = false;
   bool retainedReceiverProjection = false;
   std::optional<HirValueId> retainedReceiverOwner;
@@ -429,6 +430,7 @@ struct HirLambda {
   std::vector<SemanticType> parameterTypes;
   std::vector<HirBindingId> parameterBindings;
   std::vector<LambdaCaptureInfo> captures;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::vector<bool> captureRequiresActiveCleanup;
   SemanticTypeTraits traits{};
   HirBody body;

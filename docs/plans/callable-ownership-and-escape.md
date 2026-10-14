@@ -749,6 +749,47 @@ row. None may be introduced as an incidental extension of L-CALL-01. Conversely,
 a concrete regression in valid use of the implemented API is a correctness
 issue, not automatically one of these deferrals.
 
+## L-CALL-03: Checked Borrowing Callbacks (In Progress)
+
+The accepted source spelling is `[&value]` for shared/read-only access and
+`[mut &value]` for exclusive mutable access. These captures borrow existing
+named bindings; a reference binding can select a disjoint field first. Capture
+defaults and arbitrary reference init-captures are not part of this spelling.
+Copy/move value captures retain their existing meanings.
+
+The outcome is scoped and stored callbacks that can use surrounding state
+without transferring its ownership, plus non-owning callable views. This is
+not permission to publish a callback after its referents die, to copy an
+exclusive capability, or to permit overlapping reentrant mutation. A mutable
+capture requires mutable invocation of the environment. Shared reentrancy is
+not prohibited merely because it is recursive; the ordinary access contract
+decides whether a particular call is valid.
+
+Implementation must extend the common stored-reference paths and loan graph.
+Every environment dependency carries an origin place, field/capture projection,
+access mode, parent capability where reborrowed, and a checked endpoint. Moving
+an environment transfers those dependencies; nested ordinary records preserve
+them. Multiple captured reference bindings must retain all parent capabilities,
+not just the first. Temporary carrier dependencies remain live for the enclosing
+full expression. Cleanup-bearing composition retains its existing drop boundary.
+Semantics publishes expression dependencies; concrete HIR qualifies their places;
+MIR preserves and verifies the same facts before production representation.
+
+The successful-path cost target is reference storage in the closure, with no
+heap allocation or ownership/reference-counting machinery added for borrowing.
+Callable views must not hide lifetime obligations behind unchecked pointers.
+Exact-type views can be source-defined; signature-erased views require either
+an existing general checked erasure representation or a justified minimal
+language facility, never a public `std::*` name exception.
+
+Acceptance includes shared/exclusive and mixed captures, multiple independent
+parents, disjoint fields, generic invocation/forwarding, stored callbacks,
+movement, last-use and cleanup endpoints, and rejection of invalid escapes,
+conflicting owner use, exclusive copies and conflicting reentrant access.
+Verifier mutations, O0/O1/O3 execution, relevant C++20/23 parity, editor syntax
+and diagnostics, runnable examples and optimized cost evidence accompany the
+feature. This section records work in progress, not a shipped guarantee.
+
 ## Completion Evidence
 
 D-CALL-01 is complete when this accepted contract is reflected in the

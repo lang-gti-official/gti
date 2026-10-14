@@ -331,6 +331,7 @@ enum class MirLoanKind {
 
 struct MirLoanDependency {
   MirPlaceId source = 0;
+  MirLoanId parent = 0;
   std::vector<SymbolId> designatedFields;
   AccessMode access = AccessMode::ReadOnly;
 
@@ -1506,6 +1507,7 @@ struct MirLambdaInstance {
   std::vector<HirBindingId> parameterBindings;
   std::vector<SemanticType> captureTypes;
   std::vector<LambdaCaptureMode> captureModes;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::vector<SymbolId> captureSymbols;
   std::vector<bool> captureRequiresActiveCleanup;
   MirEffectSummary effectSummary;

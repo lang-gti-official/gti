@@ -780,8 +780,14 @@ concreteMirTypeTraits(const MirProgram &program, const SemanticType &type,
       traits.drop = DropKind::Lexical;
     traits.copyable = traits.copyable && capture->copyable;
     traits.movable = traits.movable && capture->movable;
+    traits.containsBorrowedState =
+        traits.containsBorrowedState || capture->containsBorrowedState;
     traits.transferCapable = traits.transferCapable && capture->transferCapable;
     traits.shareCapable = traits.shareCapable && capture->shareCapable;
+  }
+  if (traits.containsBorrowedState) {
+    traits.copyAssignable = false;
+    traits.moveAssignable = false;
   }
   return traits;
 }
@@ -1921,6 +1927,7 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
         const CallableInvocationCapability expected =
             exactFunctionCallable ? callableInvocationCapability(
                                         functionTarget->receiverMutability)
+            : exactLambdaCallable ? lambdaTarget->capability
                                   : CallableInvocationCapability::Read;
         if (*instruction.callableInvocation != expected) {
           return verificationFailure(
@@ -2664,8 +2671,29 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                ++index) {
             const MirOperand &capture = instruction.operands[index];
             const bool exactType = capture.type == lambda->captureTypes[index];
-            const bool exactMode =
-                lambda->captureModes[index] == LambdaCaptureMode::Copy
+            const auto mode = lambda->captureModes[index];
+            const auto *place = body.findPlace(capture.place);
+            const auto *loan = body.findLoan(capture.loan);
+            const bool borrowed = isBorrowingCapture(mode);
+            const AccessMode access = mode == LambdaCaptureMode::BorrowMut
+                                          ? AccessMode::Mutable
+                                          : AccessMode::ReadOnly;
+            const bool exactBorrow = borrowed &&
+                capture.type.kind == SemanticType::Reference &&
+                capture.type.arguments.size() == 1 &&
+                capture.type.referenceAccess == access && place &&
+                place->type == capture.type.arguments.front() &&
+                (access == AccessMode::ReadOnly ||
+                 place->access == AccessMode::Mutable) &&
+                ((capture.kind == MirOperandKind::BorrowRead &&
+                  access == AccessMode::ReadOnly) ||
+                 (capture.kind == MirOperandKind::BorrowWrite &&
+                  access == AccessMode::Mutable) ||
+                 (capture.kind == MirOperandKind::Loan && loan &&
+                  (access == AccessMode::ReadOnly ||
+                   loan->access == AccessMode::Mutable)));
+            const bool exactMode = borrowed ? exactBorrow
+                : mode == LambdaCaptureMode::Copy
                     ? capture.kind == MirOperandKind::Copy && capture.place != 0
                     : movedValueInto(body, capture, instruction.id, index);
             if (!exactType || !exactMode) {
@@ -2675,6 +2703,41 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                   "its exact ownership mode",
                   block.id, instruction.id);
             }
+          }
+          std::vector<std::pair<std::size_t, const MirPlace *>> borrows;
+          for (std::size_t index = 0; index < lambda->captureModes.size(); ++index)
+            if (isBorrowingCapture(lambda->captureModes[index]))
+              borrows.emplace_back(index,
+                  body.findPlace(instruction.operands[index].place));
+          const auto *retained = instruction.loan
+              ? body.findLoan(*instruction.loan) : nullptr;
+          if (borrows.empty() != (retained == nullptr) ||
+              (retained && (retained->kind != MirLoanKind::Stored ||
+                  retained->entry || retained->escapes ||
+                  retained->producedBy != instruction.hirValue ||
+                  retained->additionalDependencies.size() + 1 != borrows.size())))
+            return verificationFailure(body, owner,
+                "closure does not retain its exact capture dependencies",
+                block.id, instruction.id);
+          for (std::size_t ordinal = 0; ordinal < borrows.size(); ++ordinal) {
+            const auto [index, input] = borrows[ordinal];
+            const auto source = ordinal == 0 ? retained->source
+                : retained->additionalDependencies[ordinal - 1].source;
+            const auto access = ordinal == 0 ? retained->access
+                : retained->additionalDependencies[ordinal - 1].access;
+            const auto &fields = ordinal == 0 ? retained->designatedFields
+                : retained->additionalDependencies[ordinal - 1].designatedFields;
+            const auto *origin = body.findPlace(source);
+            if (!input || !origin || origin->root != input->root ||
+                origin->binding != input->binding || origin->symbol != input->symbol ||
+                origin->capture != input->capture || origin->value != input->value ||
+                origin->loan != input->loan || origin->projections != input->projections ||
+                origin->type != input->type ||
+                access != lambda->captureTypes[index].referenceAccess ||
+                fields != std::vector<SymbolId>{lambda->captureSymbols[index]})
+              return verificationFailure(body, owner,
+                  "closure capture dependency differs from its exact input place",
+                  block.id, instruction.id);
           }
         }
         if (instruction.borrowOrigin != BorrowOriginKind::None) {
@@ -3784,6 +3847,27 @@ findStoredCarrierReferences(const MirProgram &program,
       return {};
     }
     visiting.push_back(current);
+    if (current.kind == SemanticType::Lambda) {
+      const auto instance = std::find_if(program.lambdaInstances().begin(),
+          program.lambdaInstances().end(), [&](const auto &row) {
+            return row.type == current;
+          });
+      std::vector<MirStoredCarrierReference> paths;
+      if (instance != program.lambdaInstances().end()) {
+        for (std::size_t index = 0; index < instance->captureTypes.size(); ++index) {
+          const auto &field = instance->captureTypes[index];
+          auto children = field.kind == SemanticType::Reference
+              ? std::vector<MirStoredCarrierReference>{{.reference = field}}
+              : self(self, field);
+          for (auto &child : children) {
+            child.fields.insert(child.fields.begin(), instance->captureSymbols[index]);
+            paths.push_back(std::move(child));
+          }
+        }
+      }
+      visiting.pop_back();
+      return paths;
+    }
     if (current.kind != SemanticType::Class) {
       visiting.pop_back();
       return {};
@@ -12775,6 +12859,8 @@ verifyMirProgramContracts(const MirProgram &program) {
             rejectCallableContract(prefix +
                                    "does not match an exact lambda target");
           }
+          if (target != nullptr)
+            expected = target->capability;
         } else if (signature.nativeCalleeType) {
           const auto &type = *signature.nativeCalleeType;
           const auto parameters = type.nativeFunctionParameterTypes();
@@ -13995,10 +14081,20 @@ verifyMirProgramContracts(const MirProgram &program) {
            .message = "lambda capture ownership metadata has the wrong size"});
     } else {
       std::unordered_set<SymbolId> exactCaptureSymbols;
+      const auto expectedCapability =
+          std::find(instance.captureModes.begin(), instance.captureModes.end(),
+                    LambdaCaptureMode::BorrowMut) != instance.captureModes.end()
+              ? CallableInvocationCapability::Mutable
+              : CallableInvocationCapability::Read;
+      if (instance.capability != expectedCapability)
+        result.errors.push_back({.bodyKind = MirBodyKind::Lambda,
+            .owner = instance.id,
+            .message = "lambda invocation capability does not match its captures"});
       for (std::size_t capture = 0; capture < instance.captureTypes.size();
            ++capture) {
         if ((instance.captureModes[capture] != LambdaCaptureMode::Copy &&
-             instance.captureModes[capture] != LambdaCaptureMode::Move) ||
+             instance.captureModes[capture] != LambdaCaptureMode::Move &&
+             !isBorrowingCapture(instance.captureModes[capture])) ||
             instance.captureSymbols[capture] == 0 ||
             !exactCaptureSymbols.insert(instance.captureSymbols[capture])
                  .second) {
@@ -14007,6 +14103,17 @@ verifyMirProgramContracts(const MirProgram &program) {
                .owner = instance.id,
                .message = "lambda capture mode or symbol identity is "
                           "invalid or duplicated"});
+        }
+        const auto mode = instance.captureModes[capture];
+        const auto &type = instance.captureTypes[capture];
+        if (isBorrowingCapture(mode) &&
+            (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
+             type.referenceAccess != (mode == LambdaCaptureMode::BorrowMut
+                                          ? AccessMode::Mutable
+                                          : AccessMode::ReadOnly))) {
+          result.errors.push_back({.bodyKind = MirBodyKind::Lambda,
+              .owner = instance.id,
+              .message = "borrowed capture mode does not match its reference access"});
         }
         const std::optional<bool> exactActiveCleanup =
             typeRequiresActiveCleanup(instance.captureTypes[capture],
@@ -14041,7 +14148,9 @@ verifyMirProgramContracts(const MirProgram &program) {
             (exactCapture != 0 &&
              (place.root != MirPlaceRootKind::Symbol || !exactPlaceType ||
               place.type != *exactPlaceType ||
-              place.access != AccessMode::ReadOnly))) {
+              place.access !=
+                  (instance.captureModes[exactCapture - 1] == LambdaCaptureMode::BorrowMut
+                       ? AccessMode::Mutable : AccessMode::ReadOnly)))) {
           result.errors.push_back(
               {.bodyKind = MirBodyKind::Lambda,
                .owner = instance.id,

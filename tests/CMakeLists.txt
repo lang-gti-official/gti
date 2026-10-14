@@ -161,6 +161,9 @@ add_executable(gti_operator_place_composition_tests operator_place_composition_t
 target_link_libraries(gti_operator_place_composition_tests PRIVATE gti_cpp_backend)
 add_test(NAME operator_place_composition_pipeline COMMAND gti_operator_place_composition_tests)
 add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
+add_executable(gti_borrowing_callbacks_mir_tests borrowing_callbacks_mir_tests.cpp)
+target_link_libraries(gti_borrowing_callbacks_mir_tests PRIVATE gti_compiler)
+add_test(NAME borrowing_callbacks_mir COMMAND gti_borrowing_callbacks_mir_tests)
 add_executable(gti_resource_memory_runtime_tests resource_memory_runtime_tests.cpp)
 target_link_libraries(gti_resource_memory_runtime_tests PRIVATE gti_runtime)
 add_test(NAME resource_memory_runtime COMMAND gti_resource_memory_runtime_tests)
@@ -1176,6 +1179,9 @@ add_test(NAME function_signature_types COMMAND gti_function_signature_tests)
 add_executable(gti_stored_callable_tests stored_callable_tests.cpp)
 target_link_libraries(gti_stored_callable_tests PRIVATE gti_cpp_backend)
 add_test(NAME stored_callable_types COMMAND gti_stored_callable_tests)
+add_executable(gti_borrowing_capture_tests borrowing_capture_tests.cpp)
+target_link_libraries(gti_borrowing_capture_tests PRIVATE gti_cpp_backend)
+add_test(NAME borrowing_capture_semantics COMMAND gti_borrowing_capture_tests)
 add_executable(gti_owning_function_tests owning_function_tests.cpp)
 target_link_libraries(gti_owning_function_tests PRIVATE gti_cpp_backend)
 add_test(NAME owning_function_types COMMAND gti_owning_function_tests)
@@ -3176,6 +3182,11 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(lambda_pack_invocation_runtime PROPERTIES TIMEOUT 1200)
+  add_test(NAME borrowing_callbacks_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrowing_callbacks_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(borrowing_callbacks_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME lambda_base_reference_runtime
     COMMAND "${Python3_EXECUTABLE}"

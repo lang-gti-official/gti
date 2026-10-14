@@ -1173,6 +1173,20 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
     }
     if (place->root == MirPlaceRootKind::Loan) {
       throughLoan = place->loan;
+    } else if (place->root == MirPlaceRootKind::Symbol && place->capture != 0 &&
+               !place->projections.empty() &&
+               place->projections.front().kind == MirProjectionKind::Dereference) {
+      for (const auto &loan : body.loans) {
+        const auto *origin = body.findPlace(loan.source);
+        if (loan.entry && loan.kind == MirLoanKind::Parameter && origin &&
+            origin->root == MirPlaceRootKind::Symbol &&
+            origin->symbol == place->symbol && origin->capture == place->capture &&
+            origin->projections.empty()) {
+          throughLoan = loan.id;
+          projectionOffset = 1;
+          break;
+        }
+      }
     } else if (place->root == MirPlaceRootKind::Binding &&
                !place->projections.empty() &&
                place->projections.front().kind ==
@@ -2277,7 +2291,9 @@ additionalLoanAuthorities(const MirBody &body, const MirLoan &loan) {
   if (loan.kind != MirLoanKind::Stored || loan.entry || loan.escapes)
     return result;
   for (const auto &dependency : loan.additionalDependencies) {
-    const auto authority = dependencyAuthority(body, dependency.source);
+    const auto authority = dependency.parent != 0
+                               ? dependency.parent
+                               : dependencyAuthority(body, dependency.source);
     if (authority != 0 && authority != loan.parent &&
         std::find(result.begin(), result.end(), authority) == result.end())
       result.push_back(authority);
@@ -2405,7 +2421,8 @@ soleInvokePredecessor(const MirBlockPredecessors &predecessors,
          (source->root == MirPlaceRootKind::Binding &&
           source->type.kind == SemanticType::Reference &&
           source->type.arguments.size() == 1 &&
-          source->type.arguments.front().kind == SemanticType::Class &&
+          (source->type.arguments.front().kind == SemanticType::Class ||
+           source->type.arguments.front().kind == SemanticType::Lambda) &&
           std::find(loan.carriers.begin(), loan.carriers.end(),
                     source->binding) == loan.carriers.end());
 }
@@ -2701,7 +2718,9 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
       if (instruction.kind != MirInstructionKind::Borrow &&
           instruction.kind != MirInstructionKind::Call &&
           instruction.kind != MirInstructionKind::Construct &&
-          instruction.kind != MirInstructionKind::CallInput) {
+          instruction.kind != MirInstructionKind::CallInput &&
+          !(instruction.kind == MirInstructionKind::Compute &&
+            instruction.operation == MirOperation::Closure)) {
         return failure(body, owner,
                        "only borrow, call, construct, and call-input "
                        "instructions may produce a loan",
@@ -9956,7 +9975,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     };
     switch (instruction.kind) {
     case MirInstructionKind::Compute:
-      return !instruction.receiver && !instruction.loan &&
+      return !instruction.receiver &&
+             (!instruction.loan || instruction.operation == MirOperation::Closure) &&
              (instruction.operation == MirOperation::FunctionItem
                   ? instruction.functionTarget.has_value()
                   : !instruction.functionTarget) &&
@@ -10526,6 +10546,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                       return (dependency.source == 0
                                   ? dependency.designatedFields.empty()
                                   : !validPlace(dependency.source)) ||
+                             (dependency.parent != 0 &&
+                              (!validLoan(dependency.parent) ||
+                               dependency.parent == loan.id)) ||
                              (dependency.access != AccessMode::ReadOnly &&
                               dependency.access != AccessMode::Mutable);
                     }) ||
@@ -10679,6 +10702,15 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     if (loan.entry) {
       const MirPlace *source = body.findPlace(loan.source);
+      const bool capturedReference = body.kind == MirBodyKind::Lambda &&
+          source && source->root == MirPlaceRootKind::Symbol &&
+          source->capture != 0 && source->symbol != 0 &&
+          source->projections.empty() && source->initiallyAvailable &&
+          source->type.kind == SemanticType::Reference &&
+          source->type.referenceAccess == loan.access &&
+          loan.kind == MirLoanKind::Parameter && loan.semanticLoan != 0 &&
+          loan.producedBy == 0 && loan.parent == 0 && !loan.escapes &&
+          loan.carriers.empty();
       const bool packElement =
           source != nullptr && source->projections.size() == 1 &&
           source->projections.front().kind == MirProjectionKind::PackElement &&
@@ -10690,7 +10722,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             source->traits.containsBorrowedState &&
             loan.kind == MirLoanKind::Stored &&
             !loan.designatedFields.empty()));
-      if (!abstractStoredEntry(body, loan) &&
+      if (!abstractStoredEntry(body, loan) && !capturedReference &&
           (loan.producedBy != 0 || source == nullptr ||
            source->root != MirPlaceRootKind::Binding ||
            (!source->projections.empty() && !packElement) ||

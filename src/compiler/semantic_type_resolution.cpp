@@ -4379,6 +4379,8 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
       }
     }
     pending.push_back(retained->parent);
+    for (const auto &dependency : retained->additionalDependencies)
+      pending.push_back(dependency.parent);
     pending.push_back(retained->storedDependency);
   }
   if (returnsCarrier)
@@ -4920,7 +4922,8 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
       const auto path = storedReferencePath(objectType);
       if (owner != nullptr && path && !path->fields.empty() &&
           selected != nullptr &&
-          selected->symbol.variableDeclaration == path->fields.front()) {
+          selected->symbol.variableDeclaration ==
+              path->fields.front().declaration) {
         return path->fields.size() == 1
                    ? StoredCarrierReturnProvenance::ExternalReferent
                    : StoredCarrierReturnProvenance::CarrierValue;
@@ -5243,6 +5246,13 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     return hasStableBorrowStorage(grouping->expression(), visiting);
   }
+  if (const auto dependencies = semanticModel.findBorrowDependencies(*expression);
+      !dependencies.empty())
+    return std::all_of(dependencies.begin(), dependencies.end(),
+                       [](const auto &dependency) {
+                         return dependency.place.root != 0 ||
+                                dependency.place.receiver;
+                       });
   if (const auto *binary = exprAs<Binary>(expression.get());
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return hasStableBorrowStorage(binary->right(), visiting);

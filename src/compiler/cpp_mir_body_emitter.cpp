@@ -2068,7 +2068,7 @@ valueCallableReceiverInput(const MirBody &body,
           ? findInstruction(body, uses.front().instruction)
           : nullptr;
   return call != nullptr && callableValueInvocation(*call) &&
-         call->callableInvocation == CallableInvocationCapability::Read &&
+         call->callableInvocation != CallableInvocationCapability::Once &&
          call->receiver->value == *instruction.result &&
          call->callSite == instruction.callSite;
 }
@@ -11534,8 +11534,8 @@ lambdaValueDestination(const MirBody &body, MirValueId valueId) {
               return false;
             }
             return call != nullptr && callableValueInvocation(*call) &&
-                   call->callableInvocation ==
-                       CallableInvocationCapability::Read &&
+                   call->callableInvocation !=
+                       CallableInvocationCapability::Once &&
                    std::none_of(call->lifecycle.begin(), call->lifecycle.end(),
                                 [&](const MirLifecycleEvent &event) {
                                   return drop != nullptr &&
@@ -11701,6 +11701,11 @@ materializedClosure(const MirProgram &program, const MirBody &body,
     if (mode == LambdaCaptureMode::Copy &&
         operand.kind == MirOperandKind::Copy && operand.place != 0) {
       source = body.findPlace(operand.place);
+    } else if (isBorrowingCapture(mode) &&
+               (operand.kind == MirOperandKind::BorrowRead ||
+                operand.kind == MirOperandKind::BorrowWrite ||
+                operand.kind == MirOperandKind::Loan) && operand.place != 0) {
+      source = body.findPlace(operand.place);
     } else if (mode == LambdaCaptureMode::Move) {
       ++moveCaptures;
       if (operand.kind == MirOperandKind::Move && operand.place != 0) {
@@ -11709,7 +11714,12 @@ materializedClosure(const MirProgram &program, const MirBody &body,
         source = movedPlaceChainSource(body, operand.value, closure);
       }
     }
-    if (source == nullptr || source->type != lambda->captureTypes[index] ||
+    const auto &captureType = lambda->captureTypes[index];
+    const SemanticType *sourceType = isBorrowingCapture(mode) &&
+            captureType.kind == SemanticType::Reference &&
+            captureType.arguments.size() == 1
+        ? &captureType.arguments.front() : &captureType;
+    if (source == nullptr || source->type != *sourceType ||
         operand.type != lambda->captureTypes[index]) {
       return {};
     }
@@ -24413,9 +24423,10 @@ loanReferentType(const MirProgram &program, const MirBody &body,
   for (std::size_t index = firstProjection; index < projections.size();
        ++index) {
     const MirPlaceProjection &projection = projections[index];
-    if (referenceFields && index > firstProjection &&
+    if (referenceFields &&
+        (index == firstProjection ||
+         projections[index - 1].kind == MirProjectionKind::Field) &&
         projection.kind == MirProjectionKind::Dereference &&
-        projections[index - 1].kind == MirProjectionKind::Field &&
         currentType.kind == SemanticType::Reference &&
         currentType.arguments.size() == 1) {
       SemanticType referent = currentType.arguments.front();
@@ -34336,7 +34347,13 @@ public:
           output << "std::addressof(" << parameterValueSpelling(facts, *element)
                  << ")";
         } else {
-          output << "__gti_mir_p_" << loan.source;
+          if (source->root == MirPlaceRootKind::Symbol && source->capture != 0) {
+            output << "std::addressof(";
+            emitStoragePlaceValue(facts, *source);
+            output << ')';
+          } else {
+            output << "__gti_mir_p_" << loan.source;
+          }
         }
         output << ";\n";
         continue;
@@ -35317,12 +35334,12 @@ private:
              << closure.lambda->id << ">;\n";
       for (std::size_t index = 0; index < closure.captures.size(); ++index) {
         writeIndent();
+        const auto &captureType = closure.lambda->captureTypes[index];
         const bool byteTransport = cppRequiresBytePreservingTransport(
-            program, closure.captures[index].source->type);
+            program, captureType);
         if (byteTransport)
           output << "::gti_internal::backend::representation_cell<";
-        output << bodyLocalTypeSpelling(body,
-                                        closure.captures[index].source->type);
+        output << bodyLocalTypeSpelling(body, captureType);
         if (byteTransport)
           output << '>';
         output << ' '
@@ -35393,7 +35410,8 @@ private:
         output << typeSpelling(closure.lambda->returnType)
                << " *__gti_mir_out_result";
       }
-      output << ") const "
+      output << (closure.lambda->capability == CallableInvocationCapability::Mutable
+                     ? ") " : ") const ")
              << ScalarBodyTextEmitter(program, representations, indentation,
                                       failureForm, indentationPlaceholder,
                                       deducedCallableFamilyOverride,
@@ -35411,6 +35429,11 @@ private:
         output << ", ";
       }
       const MaterializedClosureCapture &capture = closure.captures[index];
+      if (isBorrowingCapture(capture.mode)) {
+        output << bodyLocalTypeSpelling(body, closure.lambda->captureTypes[index])
+               << " __gti_mir_capture_arg_" << suffix << '_' << index;
+        continue;
+      }
       if (capture.mode == LambdaCaptureMode::Copy) {
         output << "const ";
       }
@@ -35448,6 +35471,11 @@ private:
       }
       const MaterializedClosureCapture &capture = closure.captures[index];
       output << "std::declval<";
+      if (isBorrowingCapture(capture.mode)) {
+        output << bodyLocalTypeSpelling(body, closure.lambda->captureTypes[index])
+               << ">()";
+        continue;
+      }
       if (capture.mode == LambdaCaptureMode::Copy) {
         output << "const ";
       }
@@ -35498,9 +35526,9 @@ private:
     for (std::size_t index = firstProjection; index < projections.size();
          ++index) {
       const MirPlaceProjection &projection = projections[index];
-      if (index > firstProjection &&
+      if ((index == firstProjection ||
+           projections[index - 1].kind == MirProjectionKind::Field) &&
           projection.kind == MirProjectionKind::Dereference &&
-          projections[index - 1].kind == MirProjectionKind::Field &&
           currentType.kind == SemanticType::Reference &&
           currentType.arguments.size() == 1) {
         // Native reference fields already denote their referent lvalue.
@@ -52728,6 +52756,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // (ADR 018 §4): bound once in the prelude, dereferenced at use.
       // Admission requires exactly the carrier shape the reference-local
       // place vocabulary already spells.
+      const bool capture = address.kind == MirBodyKind::Lambda &&
+          loan.entry && loanSource->root == MirPlaceRootKind::Symbol &&
+          loanSource->capture != 0 && loanSource->projections.empty() &&
+          loanSource->type.kind == SemanticType::Reference;
+      if (capture)
+        continue;
       if (!loan.entry || loan.carriers.empty() ||
           loanSource->root != MirPlaceRootKind::Binding ||
           (!loanSource->projections.empty() &&
@@ -53315,7 +53349,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !captureRow(address.owner, place.symbol, place.capture) ||
             !exactFieldProjectionRows(program_, representations_,
                                       lambda->captureTypes[place.capture - 1],
-                                      place.projections, 0, place.type)) {
+                                      place.projections, 0, place.type, true)) {
           {
             return false;
           }
