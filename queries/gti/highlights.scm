@@ -42,6 +42,7 @@
   capability_parameter: (identifier) @type)
 (function_declaration "unsafe" @keyword)
 (constructor_declaration "implicit" @keyword.modifier)
+(operator_declaration "implicit" @keyword.modifier)
 (function_contract_attribute ["noreturn" "track_caller" "discardable" "thread_confined_callback"] @attribute)
 (borrow_origin_attribute "borrowed_from" @attribute)
 (borrow_origin_attribute origin: (identifier) @variable.parameter)

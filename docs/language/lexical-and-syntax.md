@@ -64,6 +64,9 @@ Access sections use a trailing colon; inheritance still requires `public`.
 ordinary source constructor's declaration, it lets a declaration construct the
 class from that constructor's argument type, as described in
 [static semantics](static-semantics.md#35-initialization-and-conversion).
+Written first in a conversion operator, before `virtual` or `constexpr`, it
+lets a declaration convert through that operator
+([conversion operators](static-semantics.md#392-conversion-operators)).
 Anywhere else it is an ordinary identifier.
 
 `sizeof` and `alignof` are reserved word operators. They cannot be used as

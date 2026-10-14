@@ -134,6 +134,38 @@ borrow-carrying declared types, or initializers typed by their destination
 (brace lists, contextually typed calls and function names). Calls, returns and
 assignment never consult it.
 
+## Conversion operators
+
+`operator Target()` is an `OverloadedOperator::Conversion` member named
+`__gti_operator_conversion`; every target shares that overload set, and
+`sameFunctionSignature` adds the resolved target to a conversion's identity,
+so aliases of one target collide and `implicit` does not distinguish
+declarations. `operator bool()` keeps its own `ContextualBool` member.
+`validateOperatorDeclaration` admits read-only, `mut` and consuming
+receivers and rejects parameters, `void`, references, text views,
+borrow-carrying targets and the owner class.
+
+One selection serves every conversion site. `conversionOperatorCandidates`
+returns the source class's operators to exactly the target, with every access
+and receiver. `conversionConstructorCandidates` runs the constructor
+candidate loop of `analyzeConstructorCallArguments` as a probe: it collects the
+constructors whose parameter types take the source, whatever access or
+ownership selection would then require, and reports and records nothing. A
+site whose source declares a conversion to the target and whose target also
+has such a constructor is ambiguous (`GTI-S2122`); otherwise
+`selectConversionOperator` calls `resolveOperator` with the exact target, and
+with only implicit operators for a declaration. Receiver modes, loans, access
+and raw-pointer effects are therefore those of any operator call. An explicit
+conversion, `Target(source)`, `int(source)` or `bool(source)`, records the
+operator on its `Call` or `Conversion` node; `explicitConversionReceiver`
+names the receiver for the ownership, constexpr and HIR consumers that
+otherwise locate an operator receiver by node shape. A declaration records a
+contextual conversion on its initializer, in the map that holds a condition's
+`operator bool`, and the declaration's sites accept the initializer through
+`recordsDeclarationConversion`. Every contextual conversion now records its
+target's program effect edge, so a condition's `operator bool` contributes to
+initializer-order effects like a declaration's conversion does.
+
 ## Native C scalar target facts
 
 `NativeCScalarKind` identifies a C declaration family independently of numeric

@@ -3295,9 +3295,12 @@ auto SemanticVisitor::Impl::metaMethodFacts(const SemanticType &type,
   }
   const GenericSubstitution substitution = classSubstitution(type);
   MetaMethodFacts facts{
-      .name = declaration.operatorName()
-                  ? "operator" + declaration.operatorName()->symbol.lexeme
-                  : declaration.name().lexeme,
+      .name =
+          !declaration.operatorName() ? declaration.name().lexeme
+          : declaration.operatorName()->kind == OverloadedOperator::Conversion
+              ? "operator " + typeSpelling(substituteType(function->returnType,
+                                                          substitution))
+              : "operator" + declaration.operatorName()->symbol.lexeme,
       .declaration = &declaration,
       .staticMember = function->staticMember,
       .operatorMethod = declaration.operatorName().has_value(),
