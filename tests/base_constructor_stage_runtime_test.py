@@ -21,6 +21,7 @@ def main():
     effectful = repository / "tests/fixtures/effectful_base_arguments.gti"
     checked = repository / "tests/fixtures/checked_base_arguments.gti"
     forwarded = repository / "tests/fixtures/forwarded_base_view.gti"
+    temporaries = repository / "tests/fixtures/base_initializer_temporaries.gti"
     success = "1\n5\n2\n3\n6\n16\n13\n12\n15\n11\n"
     sources = [
         (reproducer / "a45-base-state-rollback-unsupported.gti", "2\n"),
@@ -34,6 +35,7 @@ def main():
         (repository / "tests/fixtures/generated_abstract_base.gti", ""),
         (repository / "examples/005-objects.gti", "objects use explicit construction\n"),
         (forwarded, "derived\nforwarded\nderived\nheap\n"),
+        (temporaries, "1\n2\n30\n102\n101\n50\n150\n130\n"),
     ]
     failures = [
         (1, "1\n5\n11\n", "GTI-R0002", 27),
@@ -56,6 +58,18 @@ def main():
             result = run([str(executable), "overflow"], 70)
             assert result.stdout == "", result
             assert "checked_base_arguments.gti:12: runtime error[GTI-R0001]" in result.stderr, result
+            return
+        if source == temporaries:
+            # Base-initializer temporaries end after the base is built, and
+            # every failure before or after that ends each exactly once.
+            for phase, output, line in (
+                (1, "1\n2\n102\n101\n", 13),
+                (2, "1\n2\n30\n102\n101\n", 31),
+                (3, "1\n2\n30\n102\n101\n50\n130\n", 47),
+            ):
+                result = run([str(executable)] + ["phase"] * phase, 70)
+                assert result.stdout == output, result
+                assert f"base_initializer_temporaries.gti:{line}: runtime error[GTI-R0002]" in result.stderr, result
             return
         if source == effectful:
             for phase, output, line in (
@@ -96,8 +110,11 @@ def main():
         verify(executable, sources[7][1], effectful)
         run([str(compiler), str(forwarded), "-O1", "--progress", "never", "-o", str(executable),
              "--", "-fsanitize=address,undefined", "-fno-elide-constructors"])
-        verify(executable, sources[-1][1], forwarded)
-    print("base constructor stage: 66 native cases, 60 failures and 12 sanitizer runs passed")
+        verify(executable, sources[-2][1], forwarded)
+        run([str(compiler), str(temporaries), "-O1", "--progress", "never", "-o", str(executable),
+             "--", "-fsanitize=address,undefined", "-fno-elide-constructors"])
+        verify(executable, sources[-1][1], temporaries)
+    print("base constructor stage: 72 native cases, 78 failures and 16 sanitizer runs passed")
 
 
 if __name__ == "__main__":
