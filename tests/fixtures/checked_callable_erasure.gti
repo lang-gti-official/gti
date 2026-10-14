@@ -11,6 +11,16 @@ public:
   }
 };
 
+class Reader {
+  int& value;
+public:
+  Reader(int& value) : value(value) {}
+  int read() { return this.value; }
+};
+Reader& restore_reader(std::erased_object& object) {
+  unsafe { Reader& reader = std::restore_ref<Reader>(object); return reader; }
+}
+
 int next(int value) { return value + 1; }
 std::string echo(std::string value) { return std::move(value); }
 int apply(std::function_ref<int(int)>& callback, int input) { return callback(input); }
@@ -27,6 +37,10 @@ int main() {
   int value = 4;
   Inspection inspection{value};
   if (inspection.read() != 4) return 1;
+  Reader original{value};
+  std::erased_object& erased = std::erase_ref(original);
+  Reader& restored = restore_reader(erased);
+  if (restored.read() != 4) return 8;
   std::function_ptr<int(int)> named{next};
   std::function_ptr<int(int)> lambda{[](int input) -> int { return input + 2; }};
   if (named(3) != 4 || lambda(3) != 5) return 2;
@@ -40,6 +54,11 @@ int main() {
   mut std::function_ref<int(int) mut> exclusive{writer};
   if (exclusive(2) != 2 || exclusive(3) != 5) return 4;
   if (count != 5) return 5;
+  mut int ticks = 0;
+  mut auto tick = [mut &ticks]() -> void { ticks += 1; };
+  mut std::function_ref<void() mut> tick_view{tick};
+  tick_view();
+  if (ticks != 1) return 9;
 
   mut int stored_count = 2;
   mut auto update = [mut &stored_count]() -> int { stored_count += 3; return stored_count; };

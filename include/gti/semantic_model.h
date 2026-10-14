@@ -768,6 +768,10 @@ struct FunctionInfo {
   std::vector<std::size_t> returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  // Body-proven restoration of a checked referent from the single opaque
+  // return-borrow argument. Never inferred from a signature or public name.
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   std::vector<FunctionId> virtualRoots;
   std::vector<CallableParameterContract> callableParameters;
@@ -1170,6 +1174,7 @@ struct ResolvedCallInfo {
   // signature and concrete target type are retained in typeArguments.
   FunctionId functionPointerFunction = 0;
   LambdaId functionPointerLambda = 0;
+  bool restoresReferenceResult = false;
   std::vector<RestoredBorrowField> restoredBorrowFields;
   std::vector<ResolvedScopedThreadTask> scopedThreadTasks;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
@@ -2322,8 +2327,9 @@ private:
   void recordPayloadBinding(const Token &name, BindingInfo info);
 
   void recordLoan(SemanticLoanInfo info);
-  void recordBorrowDependencies(
-      const Expr &expression, std::vector<SemanticLoanDependency> dependencies);
+  void
+  recordBorrowDependencies(const Expr &expression,
+                           std::vector<SemanticLoanDependency> dependencies);
 
   void recordBindingLoan(const VariableDecl &declaration, SemanticLoanId loan);
 

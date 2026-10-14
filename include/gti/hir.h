@@ -234,6 +234,7 @@ struct HirValue {
   // Exact argument origins retained for composed owner-dependent values.
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
+  bool restoresReferenceResult = false;
   std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
   std::vector<SemanticLoanDependency> borrowDependencies;
@@ -575,6 +576,8 @@ struct HirFunctionInstance {
   std::vector<std::size_t> returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   HirBody body;
   std::optional<SourceSpan> instantiationSite;

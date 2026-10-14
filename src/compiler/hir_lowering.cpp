@@ -622,6 +622,8 @@ private:
          .returnBorrowParameters = declaration.returnBorrowParameters,
          .returnBorrowFields = declaration.returnBorrowFields,
          .returnBorrowPlace = declaration.returnBorrowPlace,
+         .restoresReferenceResult = declaration.restoresReferenceResult,
+         .restoredBorrowFields = declaration.restoredBorrowFields,
          .ownedPointeeProjection = declaration.ownedPointeeProjection,
          .instantiationSite = std::move(site),
          .staticMember = declaration.staticMember,
@@ -2059,6 +2061,10 @@ private:
           concrete->returnBorrowAccess;
       output.program.functions[index].returnBorrowPlace =
           concrete->returnBorrowPlace;
+      output.program.functions[index].restoresReferenceResult =
+          concrete->restoresReferenceResult;
+      output.program.functions[index].restoredBorrowFields =
+          concrete->restoredBorrowFields;
       output.program.functions[index].ownedPointeeProjection =
           concrete->ownedPointeeProjection;
     }
@@ -2650,9 +2656,10 @@ private:
     for (const SemanticLoanInfo &loan : model.loans()) {
       if ((declaration != nullptr && loan.entryDeclaration == declaration) ||
           (loan.entry && std::any_of(captures.begin(), captures.end(),
-              [&](const LambdaCaptureInfo &capture) {
-                return capture.bindingSymbol == loan.place.root;
-              })) ||
+                                     [&](const LambdaCaptureInfo &capture) {
+                                       return capture.bindingSymbol ==
+                                              loan.place.root;
+                                     })) ||
           std::any_of(
               loan.carriers.begin(), loan.carriers.end(),
               [&](SymbolId carrier) { return bindings.contains(carrier); }))
@@ -5768,12 +5775,15 @@ private:
         value.intrinsic = resolved->intrinsic;
         if (value.intrinsic == IntrinsicKind::FunctionPointerFromItem) {
           if (resolved->functionPointerFunction != 0) {
-            if (const auto *target = baseModel->findFunction(resolved->functionPointerFunction))
-              value.functionPointerFunctionTarget = enqueueFunction(
-                  *target, {}, {}, {}, {}, target->returnType, target->parameterTypes);
+            if (const auto *target =
+                    baseModel->findFunction(resolved->functionPointerFunction))
+              value.functionPointerFunctionTarget =
+                  enqueueFunction(*target, {}, {}, {}, {}, target->returnType,
+                                  target->parameterTypes);
           }
           if (resolved->functionPointerLambda != 0) {
-            if (const auto target = lambdaTargets.find(resolved->functionPointerLambda);
+            if (const auto target =
+                    lambdaTargets.find(resolved->functionPointerLambda);
                 target != lambdaTargets.end())
               value.functionPointerLambdaTarget = target->second;
           }
@@ -5820,6 +5830,7 @@ private:
         value.borrowArgument = resolved->borrowArgument;
         value.borrowArguments = resolved->borrowArguments;
         value.borrowFields = resolved->borrowFields;
+        value.restoresReferenceResult = resolved->restoresReferenceResult;
         value.restoredBorrowFields = resolved->restoredBorrowFields;
         value.borrowAccess = resolved->borrowAccess;
         value.borrowPlace = resolved->borrowPlace;
@@ -6419,8 +6430,10 @@ private:
                 : ReceiverMutability::ReadOnly,
             receiver->retainedReceiverProjection ? CallReceiverMode::Consuming
             : receiver->info.category == ValueCategory::Place
-                ? value.callableInvocation == CallableInvocationCapability::Mutable
-                    ? CallReceiverMode::MutablePlace : CallReceiverMode::ReadOnlyPlace
+                ? value.callableInvocation ==
+                          CallableInvocationCapability::Mutable
+                      ? CallReceiverMode::MutablePlace
+                      : CallReceiverMode::ReadOnlyPlace
                 : CallReceiverMode::Value,
             body);
         if (planned && receiverPlan) {

@@ -7,5 +7,5 @@ int main() {
   };
   run(update);
   report(state);
-  return 0;
+  return state == uint64_t(0xa4e8) ? 0 : 1;
 }

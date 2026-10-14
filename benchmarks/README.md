@@ -15,6 +15,16 @@ handoff/broadcast correctness and TSan are covered separately by
 `tests/fixtures/atomic_wait.gti`. No GTI per-wait state/allocation is required;
 platform parking implementations may have their own process-global costs.
 
+`borrowing-callbacks` compares an exact mutable borrowed lambda, a direct
+signature-erased `function_ref`, and a two-word C++ borrowed view over the same
+40-million-step checked integer recurrence. Every variant checks the expected
+final state. The callback environment and view require no heap allocation.
+This measures an optimizer-visible, single-threaded target; it does not claim
+to measure opaque cross-module dispatch, retained native registrations or
+concurrent callbacks. Use the ordinary comparison runner with
+`--workload borrowing-callbacks` and retain emitted-code/size evidence alongside
+timings.
+
 ## Compiler latency
 
 Use an optimized **host build** of GTI and matched native compiler, standard,

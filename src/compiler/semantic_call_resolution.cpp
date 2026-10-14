@@ -555,9 +555,10 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
     return;
   }
   bool valid = true;
-  const auto access = lambda->capability == CallableInvocationCapability::Mutable
-                          ? AccessMode::Mutable
-                          : AccessMode::ReadOnly;
+  const auto access =
+      lambda->capability == CallableInvocationCapability::Mutable
+          ? AccessMode::Mutable
+          : AccessMode::ReadOnly;
   if (access == AccessMode::Mutable && !isMutableObject(call.callee())) {
     report(expressionToken(call.callee()),
            "A callback with an exclusive mutable capture requires mutable "
@@ -632,17 +633,14 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
   validateCallPlaceExclusivityImpl(ordinaryParameterTypes, ordinaryArguments,
                                    call.paren(), receiver, access);
   valid = validateCallableReturn(call, lambda->returnType) && valid;
-  valid =
-      validateCallableCapability(call, lambda->capability) &&
-      valid;
+  valid = validateCallableCapability(call, lambda->capability) && valid;
   if (valid) {
     semanticModel.recordLambdaCall(
-        call,
-        ResolvedLambdaCallInfo{.lambda = lambda->id,
-                               .returnType = lambda->returnType,
-                               .parameterTypes = lambda->parameterTypes,
-                               .capability = lambda->capability,
-                               .boundary = boundary});
+        call, ResolvedLambdaCallInfo{.lambda = lambda->id,
+                                     .returnType = lambda->returnType,
+                                     .parameterTypes = lambda->parameterTypes,
+                                     .capability = lambda->capability,
+                                     .boundary = boundary});
   }
   currentType =
       valid ? callExpressionType(lambda->returnType) : SemanticType::Unknown;
@@ -2818,7 +2816,8 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
                        type.lambdaCaptureTypes().end(),
                        [&](const SemanticType &capture) {
                          return containsDisallowedCallableCaptureState(
-                             capture, visiting, reviewedRawState, checkedBorrows);
+                             capture, visiting, reviewedRawState,
+                             checkedBorrows);
                        });
   }
   if (type.kind == SemanticType::Class && type.classId != 0 &&
@@ -2865,21 +2864,22 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
     const auto concrete = enumTypeFor(type);
     if (!concrete)
       return false;
-    return std::any_of(concrete->enumerators.begin(),
-                       concrete->enumerators.end(), [&](const auto &entry) {
-                         return std::any_of(
-                             entry.payloadTypes.begin(),
-                             entry.payloadTypes.end(),
-                             [&](const SemanticType &payload) {
-                               return containsDisallowedCallableCaptureState(
-                                   payload, visiting, reviewedRawState, checkedBorrows);
-                             });
-                       });
+    return std::any_of(
+        concrete->enumerators.begin(), concrete->enumerators.end(),
+        [&](const auto &entry) {
+          return std::any_of(
+              entry.payloadTypes.begin(), entry.payloadTypes.end(),
+              [&](const SemanticType &payload) {
+                return containsDisallowedCallableCaptureState(
+                    payload, visiting, reviewedRawState, checkedBorrows);
+              });
+        });
   }
   return std::any_of(type.arguments.begin(), type.arguments.end(),
                      [&](const SemanticType &argument) {
                        return containsDisallowedCallableCaptureState(
-                           argument, visiting, reviewedRawState, checkedBorrows);
+                           argument, visiting, reviewedRawState,
+                           checkedBorrows);
                      });
 }
 
@@ -3304,7 +3304,8 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
       const bool provenBoundary =
           target != nullptr &&
           (callableParameterContract(target->id, argument.parameterIndex) !=
-               nullptr || isCheckedReferenceRelay(*target, argument.parameterIndex));
+               nullptr ||
+           isCheckedReferenceRelay(*target, argument.parameterIndex));
       if (provenBoundary ||
           argument.parameterIndex >= call->arguments().size()) {
         continue;
@@ -5236,13 +5237,14 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
       lambda = instanceBaseModel->findLambda(callable.lambdaId);
     }
     if (lambda != nullptr) {
-      result.push_back({.returnType = lambda->returnType,
-                        .parameterTypes = lambda->parameterTypes,
-                        .receiverMutability =
-                            lambda->capability == CallableInvocationCapability::Mutable
-                                ? ReceiverMutability::Mutable
-                                : ReceiverMutability::ReadOnly,
-                        .access = AccessModifier::Public});
+      result.push_back(
+          {.returnType = lambda->returnType,
+           .parameterTypes = lambda->parameterTypes,
+           .receiverMutability =
+               lambda->capability == CallableInvocationCapability::Mutable
+                   ? ReceiverMutability::Mutable
+                   : ReceiverMutability::ReadOnly,
+           .access = AccessModifier::Public});
     }
     return result;
   };
@@ -6867,6 +6869,25 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   if (declarationInfo != nullptr) {
     ensureBodyAnalyzed(*declarationInfo);
   }
+  // Restoration authority is a checked-body fact, not part of the sealed
+  // overload signature. Refresh it after an on-demand body, and materialize
+  // the selected concrete referent's field dependencies at this call.
+  const FunctionInfo *restoreDeclaration =
+      semanticModel.findFunction(function.id);
+  if (restoreDeclaration == nullptr && instanceBaseModel != nullptr)
+    restoreDeclaration = instanceBaseModel->findFunction(function.id);
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredFields;
+  if (!function.virtualMethod && restoreDeclaration != nullptr &&
+      restoreDeclaration->restoresReferenceResult &&
+      function.returnType.kind == SemanticType::Reference &&
+      function.returnType.arguments.size() == 1) {
+    if (auto fields =
+            restoredReferenceFields(function.returnType.arguments.front())) {
+      restoresReferenceResult = true;
+      restoredFields = std::move(*fields);
+    }
+  }
   const FunctionReturnBorrowSummary concreteBorrow =
       functionReturnBorrowSummary(
           function.returnType, function.parameterTypes, function.ownerClass,
@@ -6903,6 +6924,19 @@ auto SemanticVisitor::Impl::recordResolvedCall(
                                     call.arguments().size() +
                                         (argumentReceiver != nullptr));
   recordDefaultArgumentDependencies(defaultArguments);
+  if (declarationInfo != nullptr) {
+    // A concrete lambda may have received a provisional confined-callable
+    // descriptor before selection. A checked reference relay does not invoke
+    // or own its referent; retain its ordinary borrow contract, not a callable
+    // permission absent from the selected function's body contract.
+    std::erase_if(callableArguments,
+                  [&](const CallableArgumentBoundary &argument) {
+                    return isCheckedReferenceRelay(*declarationInfo,
+                                                   argument.parameterIndex) &&
+                           callableParameterContract(
+                               function.id, argument.parameterIndex) == nullptr;
+                  });
+  }
   ResolvedCallInfo resolved{
       .function = function.id,
       .declaration = function.declaration,
@@ -6940,6 +6974,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
                           CThreadRuntimeOperation::ConditionBroadcast)
                        ? SynchronizationOperationKind::ConditionNotify
                        : SynchronizationOperationKind::None},
+      .restoresReferenceResult = restoresReferenceResult,
+      .restoredBorrowFields = std::move(restoredFields),
       .borrowOrigin = returnBorrowOrigin,
       .borrowArgument = returnBorrowParameter,
       .borrowAccess = returnBorrowAccess,

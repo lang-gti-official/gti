@@ -42,6 +42,18 @@ rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
 [[nodiscard]] const MirLoan *
 erasedReferenceResultLoan(const MirProgram &program, const MirBody &body,
                           const MirInstruction &instruction);
+// A restored borrow-carrying referent retains the exact opaque checked
+// witness. This body-local query traces explicit restore publications and
+// transfers only; program verification separately proves the concrete
+// intrinsic/helper contract and complete reference-field paths.
+[[nodiscard]] const MirInstruction *
+restoredBorrowAuthority(const MirBody &body, const MirLoan &loan);
+// Nonempty, exact local reference aliases of a CallResult. Every alias has
+// one dominating Initialize from this loan; its pointer storage is never
+// reseated, moved, copied, addressed or passed to another operation.
+[[nodiscard]] bool callResultReferenceAliases(const MirBody &body,
+                                              const MirLoan &loan,
+                                              const MirBlock &consumer);
 // Exact safe GTI invocation signature and stateless selected body. These are
 // language-call boundaries, not native C function-pointer adaptation.
 [[nodiscard]] const SemanticType *
@@ -55,7 +67,7 @@ referenceInitializerCall(const MirProgram &program,
                          const MirConstructorInstance &constructor,
                          const MirConstructorInitializer &initializer);
 [[nodiscard]] bool functionPointerOperation(const MirProgram &program,
-                                             const MirInstruction &instruction);
+                                            const MirInstruction &instruction);
 // Unsafe raw text assertions retain a checked witness without assigning
 // ownership or validity to the address itself. The exact ordered input
 // stages and resulting loan source are shared by verification and emission.

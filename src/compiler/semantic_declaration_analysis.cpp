@@ -4259,6 +4259,13 @@ auto SemanticVisitor::Impl::resolveClassInheritance() -> void {
       }
 
       const ClassInfo &base = classInfo(baseType.classId);
+      if (base.compilerCapability == CompilerCapabilityTypeKind::ErasedObject) {
+        report(location,
+               "An opaque erased referent has no object layout and cannot "
+               "be used as a base type.",
+               "GTI-S2040");
+        continue;
+      }
       if (base.kind == ClassKind::Union) {
         report(location, "A union cannot be used as a base type.", "GTI-S2066");
         continue;
@@ -5332,8 +5339,10 @@ auto SemanticVisitor::Impl::classCanGenerateDefaultConstructor(
   // state. Newly supplied omitted-nominal defaults cannot manufacture another
   // construction entry point beside an owner's declared argument-taking API.
   return owner != nullptr && defaultConstructorCandidateCount(*owner) == 0 &&
-         owner->compilerCapability != CompilerCapabilityTypeKind::ErasedObject &&
-         owner->compilerCapability != CompilerCapabilityTypeKind::FunctionPointer &&
+         owner->compilerCapability !=
+             CompilerCapabilityTypeKind::ErasedObject &&
+         owner->compilerCapability !=
+             CompilerCapabilityTypeKind::FunctionPointer &&
          (owner->constructors.empty() || declaredDefaults) &&
          classCanUseStructuralDefaultConstruction(type);
 }

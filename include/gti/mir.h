@@ -716,6 +716,8 @@ struct MirInstruction {
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   MirOperation operation = MirOperation::None;
   std::optional<Literal> literal;
   MirLiteralProvenance literalProvenance;
@@ -1380,6 +1382,8 @@ struct MirFunctionInstance {
   std::vector<std::size_t> returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
