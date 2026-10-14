@@ -401,9 +401,11 @@ the GTI source graph does not.
 
 Initialization requires an exact type unless a specific rule permits a
 conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
-Constructors are selected by one exact parameter list. They define no implicit
-conversion for calls, returns, or assignment; only the declaration rule below
-selects one, declared `implicit`, for an initializer of another type.
+Constructors are selected by one exact parameter list, and a class may declare
+conversion operators to other types (section 3.9.2). Neither defines an
+implicit conversion for calls, returns, or assignment; only the declaration
+rule below selects one, declared `implicit`, for an initializer of another
+type.
 
 The source-defined `std::upcast_unique<Base, Derived>` operation is an explicit
 ownership conversion, not an overload conversion. Its trusted private step is
@@ -443,6 +445,19 @@ contextually typed call, or a function name. Function arguments, returns, and
 assignment never use it. A class assignment from another type requires an
 exact member `operator=`, such as `std::string`'s
 `operator=(std::string_view)`.
+
+A declaration whose initializer has a class type `U` also converts it
+through an implicit conversion operator of `U` to exactly the declared type,
+as `T(initializer)` would (section 3.9.2). This applies to every declared
+value type, including `bool` and numeric types, under the same exclusions,
+except that a declared class type need not be a constructible class. So
+`UserId id = raw;` calls `RawId`'s `implicit operator UserId()`, and
+`bool ready = flag;` calls an `implicit operator bool()`. When the declared
+class also has an implicit constructor that takes the initializer, the
+declaration is ambiguous (`GTI-S2122`): GTI never ranks a constructor against
+a conversion operator, and `T name{initializer}` still selects the
+constructor. A conversion operator without `implicit` converts only
+explicitly; the exact-type error's hint then names `T(...)`.
 
 `implicit` is written first in an ordinary constructor declaration, before
 `constexpr`. It requires a source body and a constructor callable with exactly
@@ -1458,6 +1473,85 @@ Consequently a named expected with a move-only value or error is rejected;
 `?std::move(result)` is the explicit consuming form. `GTI-S2086` owns invalid
 operand types, enclosing return contexts, mismatched error types, and
 unavailable alternative transport.
+
+### 3.9.2 Conversion Operators
+
+A class declares a conversion to another type with a conversion operator,
+named by its target:
+
+```gti
+struct RawId {
+  int64_t raw;
+  RawId(int64_t value) : raw(value) {}
+  operator UserId() { return UserId(this.raw); }
+  implicit operator int64_t() { return this.raw; }
+};
+
+UserId user = UserId(raw);  // explicit: calls RawId's operator UserId()
+int64_t bits = raw;         // implicit: a declaration may use it
+```
+
+The target is the operator's result type. A conversion operator is a
+non-static member with no parameters and a read-only, `mut`, or consuming
+(`&&`) receiver, and it may be `constexpr` or virtual. Its target is an owned
+value type: not `void`, a reference, a text view (`std::string_view`,
+`c_string`), a type carrying a borrow, or its own class. The boolean
+conversion is spelled `operator bool()`; another spelling of `bool`, such as an
+alias, is rejected. A class declares at most one conversion operator per target
+and receiver. Aliases denote their resolved target, and `implicit` does not
+distinguish declarations, so `operator Count()` and `operator int()` collide
+when `Count` aliases `int`. A conversion operator is inherited and overridden
+like any member; an override has the same target and receiver.
+
+A conversion operator is explicit by default. Only `Target(value)` calls it,
+including the keyword forms `int(value)`, `double(value)`, `char(value)`, and
+`bool(value)`, and an alias of a numeric, raw pointer, or class target.
+`implicit operator Target()` also admits the declaration conversion of
+section 3.5. No other context converts: function arguments, returns,
+assignment, operator operands, and `auto` inference keep exact types, and brace
+construction `Target{value}` considers only constructors.
+
+**Selection.** In `Target(value)`, where `value` has a class type `U` that
+declares a conversion operator to exactly `Target`, the conversion has two
+possible paths: a constructor of `Target` that takes `value` as its one
+explicit argument, and a conversion operator of `U` to `Target`. Each path
+counts every declaration of its kind whose types match, whatever access,
+receiver, or ownership it would then require. Exactly one path may exist: a
+constructor and an operator together are ambiguous (`GTI-S2122`), with no
+preference rule. When `U` declares no conversion operator to `Target`,
+`Target(value)` is ordinary construction. On the operator path, ordinary
+receiver selection chooses among `U`'s operators to `Target`: a read-only
+receiver selects only a read-only operator, a mutable place prefers a `mut`
+operator, and an owned temporary or `std::move(value)` prefers a consuming
+operator. A consuming operator never consumes a named owner implicitly, and a
+`mut` operator requires a mutable place. Access is checked after selection,
+so a private operator is an access error, never a reason to use another path.
+A declaration considers only implicit constructors and implicit operators,
+under the same rule.
+
+At most one conversion applies. GTI never chains a conversion operator with a
+constructor, another conversion operator, or a numeric conversion: a
+conversion to `C` through an intermediate `B` must be written in two steps.
+
+**Execution.** A conversion calls the selected operator with the converted
+value as its receiver, exactly as a member call would: the receiver's
+ownership and borrow rules, failure propagation, and the cleanup of a
+temporary receiver at the end of its full expression are those of the call.
+Its result is a fresh value of the target type; a declaration initialized by
+it owns that value. A consuming conversion consumes its receiver and cannot
+return borrowed state.
+
+**Contextual `operator bool`.** Conditions, `!`, `&&`, `||`, and the
+conditional operator's condition use any `operator bool`, implicit or not.
+`bool(value)` calls one explicitly, and `bool flag = value;` requires
+`implicit operator bool()`.
+
+**Generics.** A conversion whose source is a class, including a class
+parameterized by type parameters, is resolved where it is written. Within
+`Box<T>`, `operator T()` converts to the type parameter, and in a generic body
+`T value = box;` uses it when it is implicit. A type-parameter target `T(value)`
+remains a numeric conversion, because a generic body is checked before its
+instances: GTI has no constraint that names a conversion operator.
 
 ## 3.10 Well-Formed Control Flow
 

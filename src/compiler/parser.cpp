@@ -1285,21 +1285,46 @@ private:
         std::move(definitionOwner));
   }
 
+  // `operator Target()`. A bool target is the contextual boolean
+  // conversion; any other target is an explicitly requested conversion.
+  // `implicit` additionally admits either in declaration initialization.
   StmtPtr conversionOperatorDeclaration(
       Token keyword, std::optional<Token> virtualKeyword = std::nullopt,
-      std::optional<Token> constexprKeyword = std::nullopt) {
-    Token boolType =
-        consume(TokenKind::BOOL,
-                "Only contextual 'operator bool()' conversions are supported.");
-    OperatorName operatorName{OverloadedOperator::ContextualBool, keyword,
-                              boolType};
-    Token name = syntheticOperatorName(operatorName);
-    consume(TokenKind::LEFT_PAREN, "Expect '(' after 'operator bool'.");
-    return functionDeclaration(TypeRef(boolType), std::move(name), {},
-                               std::nullopt, true, Mutability::Immutable,
-                               std::move(operatorName), std::nullopt,
-                               std::move(virtualKeyword), LanguageLinkage::Gti,
-                               std::move(constexprKeyword));
+      std::optional<Token> constexprKeyword = std::nullopt,
+      std::optional<Token> implicitKeyword = std::nullopt) {
+    StmtPtr declaration;
+    if (check(TokenKind::BOOL) && peekAt(1).kind == TokenKind::LEFT_PAREN) {
+      Token boolType = advance();
+      OperatorName operatorName{OverloadedOperator::ContextualBool, keyword,
+                                boolType};
+      Token name = syntheticOperatorName(operatorName);
+      consume(TokenKind::LEFT_PAREN, "Expect '(' after 'operator bool'.");
+      declaration = functionDeclaration(
+          TypeRef(boolType), std::move(name), {}, std::nullopt, true,
+          Mutability::Immutable, std::move(operatorName), std::nullopt,
+          std::move(virtualKeyword), LanguageLinkage::Gti,
+          std::move(constexprKeyword));
+    } else {
+      // The parameter clause follows the target, so `Target()` is not a
+      // function signature type here.
+      const Token targetStart = peek();
+      TypeRef target = parseType(false);
+      OperatorName operatorName{OverloadedOperator::Conversion, keyword,
+                                targetStart};
+      Token name = syntheticOperatorName(operatorName);
+      consume(TokenKind::LEFT_PAREN,
+              "Expect '(' after the conversion operator's target type.");
+      declaration = functionDeclaration(
+          std::move(target), std::move(name), {}, std::nullopt, true,
+          Mutability::Immutable, std::move(operatorName), std::nullopt,
+          std::move(virtualKeyword), LanguageLinkage::Gti,
+          std::move(constexprKeyword));
+    }
+    if (implicitKeyword) {
+      static_cast<FunctionDecl &>(*declaration)
+          .setImplicitKeyword(std::move(*implicitKeyword));
+    }
+    return declaration;
   }
 
   OperatorName overloadedOperatorName(Token keyword) {
@@ -1660,6 +1685,64 @@ private:
     return constructorDeclaration(advance(), std::move(constexprKeyword),
                                   std::move(unsafeKeyword),
                                   std::move(implicitKeyword));
+  }
+
+  // The length of a conversion operator's modifier run containing the
+  // contextual `implicit`: `implicit` and at most one of `virtual` or
+  // `constexpr`, followed by `operator` and a type. Elsewhere `implicit` is an
+  // identifier, including a type named `implicit` before an operator symbol.
+  [[nodiscard]] std::optional<std::size_t>
+  implicitConversionOperatorModifiers() const {
+    bool implicitSeen = false;
+    bool otherSeen = false;
+    for (std::size_t offset = 0; offset < 3; ++offset) {
+      const Token &token = peekAt(offset);
+      if (token.kind == TokenKind::OPERATOR) {
+        return implicitSeen && typeEnd(offset + 1)
+                   ? std::optional<std::size_t>(offset)
+                   : std::nullopt;
+      }
+      bool *seen =
+          token.kind == TokenKind::IDENTIFIER && token.lexeme == "implicit"
+              ? &implicitSeen
+          : token.kind == TokenKind::VIRTUAL ||
+                  token.kind == TokenKind::CONSTEXPR
+              ? &otherSeen
+              : nullptr;
+      if (seen == nullptr || *seen) {
+        return std::nullopt;
+      }
+      *seen = true;
+    }
+    return std::nullopt;
+  }
+
+  // A misordered modifier is reported, and the conversion operator it
+  // introduces is still parsed so that recovery consumes it.
+  StmtPtr implicitConversionOperatorDeclaration(std::size_t modifiers) {
+    std::optional<Token> implicitKeyword;
+    std::optional<Token> virtualKeyword;
+    std::optional<Token> constexprKeyword;
+    for (std::size_t index = 0; index < modifiers; ++index) {
+      Token modifier = advance();
+      if (modifier.kind == TokenKind::VIRTUAL) {
+        virtualKeyword = std::move(modifier);
+      } else if (modifier.kind == TokenKind::CONSTEXPR) {
+        constexprKeyword = std::move(modifier);
+      } else {
+        if (virtualKeyword || constexprKeyword) {
+          (void)error(
+              modifier,
+              "Write 'implicit' before '" +
+                  (virtualKeyword ? virtualKeyword : constexprKeyword)->lexeme +
+                  "'.");
+        }
+        implicitKeyword = std::move(modifier);
+      }
+    }
+    return conversionOperatorDeclaration(advance(), std::move(virtualKeyword),
+                                         std::move(constexprKeyword),
+                                         std::move(implicitKeyword));
   }
 
   StmtPtr destructorDeclaration(Token tilde) {
@@ -2249,6 +2332,10 @@ private:
       }
       if (match({TokenKind::OPERATOR})) {
         return conversionOperatorDeclaration(previous());
+      }
+      if (const std::optional<std::size_t> modifiers =
+              implicitConversionOperatorModifiers()) {
+        return implicitConversionOperatorDeclaration(*modifiers);
       }
       if (check(TokenKind::CONSTEXPR) &&
           peekAt(1).kind == TokenKind::OPERATOR) {
@@ -3362,7 +3449,10 @@ private:
       consume(TokenKind::RIGHT_PAREN, "Expect ')' after layout query type.");
       return std::make_unique<LayoutQuery>(std::move(keyword), std::move(type));
     }
-    if ((isNumericTypeToken(peek().kind) || peek().kind == TokenKind::CHAR) &&
+    // `bool(value)` is explicit like the numeric spellings: a class value
+    // converts through its own operator bool.
+    if ((isNumericTypeToken(peek().kind) || peek().kind == TokenKind::CHAR ||
+         peek().kind == TokenKind::BOOL) &&
         peekAt(1).kind == TokenKind::LEFT_PAREN) {
       TypeRef targetType = parseType(false);
       consume(TokenKind::LEFT_PAREN, "Expect '(' after conversion type.");

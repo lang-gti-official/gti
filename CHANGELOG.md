@@ -9,6 +9,29 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.429.0 — Conversion operators
+
+- A class can declare a conversion to another type with `operator Target()`.
+  It is explicit: `UserId(key)`, `int64_t(key)` and `bool(flag)` call it, and
+  nothing else does. Writing `implicit operator Target()` also lets a
+  declaration convert, as an implicit constructor does: `int64_t bits = key;`.
+  Calls, returns, assignment, operators and `auto` still never convert, and
+  `Target{value}` still selects only a constructor.
+- A conversion runs as an ordinary member call on the converted value. A
+  `mut` operator needs a mutable value; a consuming `operator Target() &&` runs
+  on a temporary or `std::move(value)` and can move its state into the result,
+  never consuming a named value implicitly.
+- GTI never ranks a constructor against a conversion operator: when both could
+  convert a value, the conversion is ambiguous (`GTI-S2122`), and
+  `Target{value}` selects the constructor. Conversions never chain.
+- `operator bool()` is unchanged in conditions, `bool(flag)` calls it
+  explicitly, and `bool ready = flag;` needs `implicit operator bool()`.
+- Conversion operators cannot yet be virtual or target a reference, a view or
+  another borrow-carrying type; a virtual named method called by the operator
+  covers the first. A condition's `operator bool` now counts toward the
+  initialization-order check of a namespace or static initializer, which could
+  previously miss storage it read.
+
 ## 0.428.0 — Memoized native dependency discovery
 
 - Project cache lookups no longer rerun the native preprocessor for every

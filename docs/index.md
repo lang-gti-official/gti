@@ -147,6 +147,10 @@ while canonical language documents continue to describe actual support.
   — fixes the generated C wrapper, descriptor, context, status, lifecycle,
   signature, symbol, and unload contract without exposing ordinary GTI or
   generated C++ layout as an engine ABI.
+- [027: Explicit-by-default user-defined conversions](decisions/027-user-defined-conversions.md)
+  — conversion operators called only by `Target(value)` unless declared
+  `implicit`, one shared selection with constructors and no ranking, one
+  step, and member-call receivers.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.
