@@ -51,6 +51,21 @@ namespace {
              DefinedFailureOutcome{.code = code, .detail = detail};
 }
 
+// The call a contextual conversion adds after the value it converts: both
+// share one source, and the call's receiver is that value. The source's own
+// records describe the converted value, not this call.
+[[nodiscard]] bool contextualConversionCall(const HirBody &body,
+                                            const HirValue &value,
+                                            const SemanticModel &semantics) {
+  if (value.kind != HirValueKind::Call || !value.functionTarget ||
+      !value.receiver || value.source == nullptr ||
+      semantics.findContextualConversion(*value.source) == nullptr) {
+    return false;
+  }
+  const HirValue *converted = body.findValue(*value.receiver);
+  return converted != nullptr && converted->source == value.source;
+}
+
 [[nodiscard]] bool
 materializableProgramConstant(const std::optional<ConstantValue> &constant) {
   return constant && !std::holds_alternative<ConstantAggregateValue>(*constant);
@@ -679,8 +694,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                          value.operands.begin() + index + 1)))
           result.errors.emplace_back(
               "non-final argument pack lost its exact default suffix");
-      if (value.kind != HirValueKind::Call &&
-          value.kind != HirValueKind::DirectInitializer)
+      if ((value.kind != HirValueKind::Call &&
+           value.kind != HirValueKind::DirectInitializer) ||
+          contextualConversionCall(body, value, semantics))
         continue;
       const auto *construction = value.source != nullptr
                                      ? semantics.findConstruction(*value.source)
@@ -2206,6 +2222,20 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         result.errors.emplace_back(
             "source-less module initializer value is not an exact admitted "
             "lowerer-owned shape");
+      }
+      continue;
+    }
+    // A contextual conversion of a source's value is a further call that
+    // shares the source; its result is the conversion's, not the source's.
+    if (contextualConversionCall(program.module(), value, semantics)) {
+      const ResolvedOperatorInfo &conversion =
+          *semantics.findContextualConversion(*value.source);
+      if (value.info.type != conversion.returnType ||
+          value.info.category != ValueCategory::Value || value.constant ||
+          value.programConstantSubstitution) {
+        result.errors.emplace_back(
+            "module contextual conversion value differs from its semantic "
+            "conversion");
       }
       continue;
     }

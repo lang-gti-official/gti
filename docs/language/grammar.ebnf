@@ -603,9 +603,21 @@ operator-declaration   = [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
                          non-call-overloadable-operator parameter-clause
                          [ call-receiver-qualifier ] [ requires-clause ] [ "override" ]
                          method-terminator
-                       | [ "virtual" ] [ "constexpr" ] "operator" "bool" parameter-clause
-                         [ "mut" ] [ requires-clause ] [ "override" ]
-                         method-terminator ;
+                       | conversion-operator-declaration ;
+
+(* A conversion operator is named by its target type, which is also its
+   result; `Target()` here is the target and its empty parameter clause, not
+   a function signature type. `implicit` is contextual: it is a modifier only
+   first in a conversion operator, before `virtual` or `constexpr`, and admits
+   the conversion in declaration initialization. *)
+conversion-operator-declaration
+                       = [ "implicit" ] [ "virtual" | "constexpr" ] "operator"
+                         conversion-target parameter-clause
+                         [ call-receiver-qualifier ] [ requires-clause ]
+                         [ "override" ] method-terminator ;
+
+conversion-target      = ( raw-pointer-base | base-type ) { array-extent }
+                         [ "&" ] ;
 
 method-terminator      = block | ";" | pure-specifier ;
 
@@ -806,11 +818,14 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    receiver.
    `operator->`
    performs one checked reference step; recursive proxy lookup is not provided.
-   `operator bool` participates only in conditions, logical `and`/`or`
-   (`&&`/`||`), and `!`. Operator operands are evaluated left to right. No free
-   operators, implicit conversions, argument-dependent lookup, reversed-
-   operand search, conversion ranking, or synthesized related candidates are
-   provided.
+   `operator bool` participates implicitly only in conditions, logical
+   `and`/`or` (`&&`/`||`), and `!`. A conversion operator `operator T()` takes
+   no parameters and uses a read-only, `mut`, or `&&` receiver; `T(value)`
+   calls it explicitly, and an `implicit` one also converts a declaration's
+   initializer (static-semantics.md, section 3.9.2). Operator operands are
+   evaluated left to right. No free operators, implicit argument conversions,
+   argument-dependent lookup, reversed-operand search, conversion ranking, or
+   synthesized related candidates are provided.
    Read-only, mutable, and consuming `operator()` overloads may coexist when
    their exact signatures and receiver qualifiers distinguish them. Other
    value-producing operators may pair read-only and consuming forms. *)
@@ -1709,8 +1724,10 @@ lambda-capture         = IDENTIFIER
 
 unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
 
-numeric-conversion     = ( integer-type | "float" | "double" | "char" )
+numeric-conversion     = ( integer-type | "float" | "double" | "char" | "bool" )
                          "(" assignment-expression ")" ;
+(* `bool(value)` and a numeric spelling applied to a class value call that
+   class's conversion operator to the named type. *)
 
 layout-query-expression
                        = layout-query-operator "(" type ")" ;

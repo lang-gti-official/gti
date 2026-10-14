@@ -759,6 +759,7 @@ public:
                 (literal
                   (boolean_literal)))))))
       (operator_declaration
+        (primitive_type)
         (parameter_clause)
         (block
           (return_statement
@@ -1722,6 +1723,7 @@ public:
                 (user_type
                   (identifier)))))))
       (operator_declaration
+        (primitive_type)
         (parameter_clause)
         (requires_clause
           (constraint_expression
