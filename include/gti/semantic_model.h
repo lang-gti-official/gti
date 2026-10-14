@@ -748,6 +748,7 @@ struct FunctionInfo {
   bool tracksCaller = false;
   bool discardableResult = false;
   bool threadConfinedCallback = false;
+  bool testFunction = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   ProcessMemoryRuntimeOperation processMemoryOperation =
       ProcessMemoryRuntimeOperation::None;
@@ -2031,6 +2032,27 @@ public:
   findFunction(const FunctionDecl &declaration) const;
 
   [[nodiscard]] const FunctionInfo *findFunction(FunctionId id) const;
+
+  [[nodiscard]] std::vector<const FunctionInfo *> testFunctions() const {
+    std::vector<const FunctionInfo *> result =
+        base == nullptr ? std::vector<const FunctionInfo *>{}
+                        : base->testFunctions();
+    for (const auto &[declaration, info] : functions) {
+      if (!info.testFunction)
+        continue;
+      bool replaced = false;
+      for (const FunctionInfo *&existing : result) {
+        if (existing->id == info.id) {
+          existing = &info;
+          replaced = true;
+          break;
+        }
+      }
+      if (!replaced)
+        result.push_back(&info);
+    }
+    return result;
+  }
 
   // Primary body facts are required before concrete HIR discovery may use a
   // function definition. Invalid primary analysis never reaches HIR.

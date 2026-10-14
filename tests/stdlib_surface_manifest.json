@@ -46,6 +46,7 @@
     "stdlib/std/string.gti": "f283b464bce49ba83e36478c02ba2732933ef0a514063fd24c4a058279811569",
     "stdlib/std/string_view.gti": "db84934530d41115374ab9f76978a276e7c2c6789b6f2848a25dacf295beba27",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
+    "stdlib/std/testing.gti": "18cf2151c6ef75c12f5adb4a52bd95435d23dce84d5e29fbaabade33bedb2ae0",
     "stdlib/std/thread.gti": "8cbe5f5b4807a6e2480213c04f0ff09f692f72c55527b3b75198d92a8027a732",
     "stdlib/std/unordered_map.gti": "8f2b0f540d58b9e2a363c33b1708e31bc13cf4985051f9ae9a82c071bc411bb1",
     "stdlib/std/unordered_set.gti": "d34da5c1a6347dea83c385c536c7eaf217335da2bcab7ba99275a9ea26f52fc4",
@@ -1396,6 +1397,13 @@
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_tcp.gti",
       "native_sources": ["tests/fixtures/stdlib_surface_tcp_stub.cpp"],
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "testing",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_testing.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -3815,6 +3823,15 @@
       "case_ids": ["tcp"],
       "required_instantiations": [],
       "evidence": ["tests/fixtures/stdlib_surface_tcp.gti", "tests/fixtures/stdlib_surface_tcp_stub.cpp", "docs/language/tcp.md"]
+    },
+    {
+      "id": "testing.executable",
+      "source": "stdlib/std/testing.gti",
+      "status": "executable",
+      "operations": ["std::testing::check"],
+      "case_ids": ["testing"],
+      "required_instantiations": ["explicit and default messages; source attribution and failure cleanup in isolated tests"],
+      "evidence": ["tests/fixtures/stdlib_surface_testing.gti", "tests/annotated_test_suite_test.py", "examples/annotated-tests/tests/main.gti"]
     },
     {
       "id": "thread.executable",

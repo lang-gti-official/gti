@@ -59,6 +59,12 @@ struct CppMirTypeRepresentation {
   // The spelling was resolved in this body's native template scope, rather
   // than copied from the program-wide (potentially unnameable) type table.
   bool bodyTypeOverlay = false;
+  // A generic class application emitted as its own concrete C++ class, like
+  // a non-generic class, rather than through a retained native class
+  // template. Per-instance private members, such as a base-preparation
+  // carrier or a base gate constructor, are declared and defined only on
+  // such a class.
+  bool concreteGenericClass = false;
   // A Class row's semantic lifecycle proves the prelude-declaration shape
   // compiles: a usable default constructor and move assignment let the
   // value declare value-initialized and receive its construction by

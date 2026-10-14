@@ -36,6 +36,8 @@ struct EmbeddingExportRequest {
 struct ProgramRequest {
   ProgramKind kind = ProgramKind::Executable;
   std::vector<EmbeddingExportRequest> exports;
+  // Select a hosted dispatcher for validated annotated test functions.
+  bool testSuite = false;
 
   friend bool operator==(const ProgramRequest &,
                          const ProgramRequest &) = default;

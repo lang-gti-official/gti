@@ -646,6 +646,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testOwningConstructionFieldView",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testDiscardedCleanupFreeClassResult",
       "suite": "lifecycle"
     },

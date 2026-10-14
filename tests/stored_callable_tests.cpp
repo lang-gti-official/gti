@@ -1424,5 +1424,185 @@ Owner<T> own<T>(T value) { return Owner<T>(std::move(value)); }
            "concrete field callable rejects inexact result, non-callable, and "
            "mutable-only target");
   }
+  // A closure copied from its constructor parameter into a generic owner's
+  // field has no explicit MIR Initialize: the constructor record publishes
+  // the parameter's copy Load. The copy-parameter proof binds that exact Load
+  // to a native member initializer for scalar-, record- and capture-free
+  // closures alike, and every instance keeps its siblings body-staged so the
+  // shared constructor template has one member-initializer list.
+  const auto copiedField =
+      analyzeTrustedPreludeFixture("copied-closure-field.gti", R"(
+#include <std/string>
+#include <std/utility>
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+class Holder<F> {
+public:
+  F callback;
+  int value;
+  Holder(F f) : callback(f), value(10) {}
+  int invoke() { return callback(); }
+};
+int use<F>(F f) {
+  Holder<F> h = Holder<F>(f);
+  return h.value + h.invoke();
+}
+class Named<F> {
+public:
+  F callback;
+  std::string name;
+  Named(F f, std::string name) : callback(f), name(std::move(name)) {}
+  int invoke() { return callback(); }
+};
+int named<F>(F f) {
+  std::string label{"ab"};
+  Named<F> n = Named<F>(f, std::move(label));
+  return n.invoke();
+}
+int main() {
+  int k = 3;
+  Offset offset{4};
+  int empty = use([]() -> int { return 1; });
+  int scalar = use([k]() -> int { return k; });
+  int record = use([offset]() -> int { return offset.amount; });
+  int owned = named([k]() -> int { return k; }) +
+              named([offset]() -> int { return offset.amount; });
+  return empty + scalar + record + owned - 45;
+}
+)");
+  expect(copiedField.canGenerateCode(), "copied closure fields verify");
+  if (copiedField.canGenerateCode()) {
+    expect(!gti_test::emitCpp(copiedField).contents.empty(),
+           "copied closure fields reach native emission");
+    const auto lowered =
+        gti_test::lowerProgram(copiedField, copiedField.mir, copiedField.mir);
+    std::size_t copiedClosures = 0;
+    for (const auto &instance : lowered.mir().constructorInstances()) {
+      if (instance.parameterTypes.size() != 1 ||
+          instance.parameterTypes.front().kind != lang::SemanticType::Lambda)
+        continue;
+      ++copiedClosures;
+      const auto bindings =
+          lang::cppMirCopyParameterFieldBindings(lowered.mir(), instance);
+      expect(bindings && bindings->size() == 1 &&
+                 bindings->front().initializer == 0 &&
+                 bindings->front().initializeInstruction == 0,
+             "the record-published closure copy binds to its field");
+      expect(lang::cppMirConstructedFieldInitializerBindings(lowered.mir(),
+                                                             instance)
+                 .empty(),
+             "closure instances keep sibling fields body-staged");
+      const auto *source = lowered.findConstructorInstance(instance.id);
+      const auto *declaration =
+          source == nullptr
+              ? nullptr
+              : lowered.findConstructorDeclaration(source->declaration);
+      auto rows = lang::buildCppMirBodyEmissionMapRows(
+          lowered, lang::CppStandard::Cpp23);
+      const auto overlays =
+          declaration == nullptr
+              ? std::nullopt
+              : lang::cppMirApplyGenericOwnerConstructorTypeOverlays(
+                    rows, lowered, *declaration, instance);
+      expect(overlays && *overlays != 0,
+             "the closure type spells through the constructor overlay");
+      const lang::CppMirBodyEmissionMap map(std::move(rows));
+      const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                         instance.id};
+      expect(
+          lang::CppMirBodyEmitter(lowered.mir(), map).supportsBodyText(address),
+          "the copied closure constructor body is in the C++ vocabulary");
+      if (!bindings || bindings->size() != 1)
+        continue;
+      const auto &binding = bindings->front();
+      const auto *lambda =
+          lowered.mir().findLambda(instance.parameterTypes.front().lambdaId);
+      const bool recordCapture =
+          lambda != nullptr && !lambda->captureTypes.empty() &&
+          lambda->captureTypes.front().kind == lang::SemanticType::Class;
+      for (int mutation = 0; mutation != 6; ++mutation) {
+        if (mutation == 5 && !recordCapture)
+          continue;
+        auto forged = lowered.mir();
+        auto *body = lang::findMirBody(forged, address);
+        for (auto &block : body->blocks)
+          for (auto &candidate : block.instructions)
+            if (mutation == 0 && candidate.id == binding.loadInstruction)
+              candidate.operands.front().kind = lang::MirOperandKind::Move;
+        for (auto &value : body->values) {
+          if (value.id != binding.loadedValue)
+            continue;
+          if (mutation == 1)
+            value.info.traits.copyable = false;
+          if (mutation == 2)
+            value.info.traits.containsBorrowedState = true;
+        }
+        auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+            forged.classInstances());
+        for (auto &type : classes) {
+          if (mutation == 3 && type.id == instance.owner)
+            type.declaredFields.front().requiresActiveCleanup = true;
+          if (mutation == 5 && type.type == lambda->captureTypes.front())
+            type.copyConstructor = lang::SpecialMemberStatus::Deleted;
+        }
+        auto *changed = const_cast<lang::MirConstructorInstance *>(
+            forged.findConstructorInstance(instance.id));
+        if (mutation == 4)
+          changed->initializers.front().arguments.front() = 0;
+        const auto rejected =
+            lang::cppMirCopyParameterFieldBindings(forged, *changed);
+        expect(!rejected || rejected->empty(),
+               "a closure field copy rejects a moved or noncopyable value, "
+               "borrowed state, active field cleanup, a lost record and a "
+               "capture without a generated copy " +
+                   std::to_string(mutation));
+      }
+    }
+    expect(copiedClosures == 3,
+           "three closure instances share one copying constructor");
+    // A following owned field still moves in the native member-initializer
+    // list: the closure copy's exact Load and boundary are an effect-free
+    // prefix of the owned move, like a passive scalar sibling.
+    std::size_t ownedSiblings = 0;
+    for (const auto &instance : lowered.mir().constructorInstances()) {
+      if (instance.parameterTypes.size() != 2 ||
+          instance.parameterTypes.front().kind != lang::SemanticType::Lambda)
+        continue;
+      ++ownedSiblings;
+      const auto copies =
+          lang::cppMirCopyParameterFieldBindings(lowered.mir(), instance);
+      const auto moves =
+          lang::cppMirOwnedParameterFieldBindings(lowered.mir(), instance);
+      expect(copies && copies->size() == 1 &&
+                 copies->front().initializeInstruction == 0 && moves &&
+                 moves->size() == 1 && moves->front().initializer == 1,
+             "a closure copy prefix admits the following owned move");
+      if (!copies || copies->size() != 1)
+        continue;
+      auto forged = lowered.mir();
+      auto *body = lang::findMirBody(
+          forged, {lang::MirBodyKind::Constructor, instance.id});
+      auto &instructions = body->findBlock(body->entry)->instructions;
+      const auto load = std::find_if(
+          instructions.begin(), instructions.end(), [&](const auto &candidate) {
+            return candidate.id == copies->front().loadInstruction;
+          });
+      expect(load != instructions.end() &&
+                 std::next(load) != instructions.end(),
+             "the closure copy Load precedes its boundary");
+      if (load == instructions.end() || std::next(load) == instructions.end())
+        continue;
+      std::iter_swap(load, std::next(load));
+      const auto *changed = forged.findConstructorInstance(instance.id);
+      const auto rejected =
+          lang::cppMirOwnedParameterFieldBindings(forged, *changed);
+      expect(!rejected || rejected->empty(),
+             "a reordered closure copy prefix cannot precede the owned move");
+    }
+    expect(ownedSiblings == 2,
+           "both closure instances move their owned sibling natively");
+  }
   return failures == 0 ? 0 : 1;
 }

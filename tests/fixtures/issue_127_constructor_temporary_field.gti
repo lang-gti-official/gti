@@ -110,6 +110,159 @@ int32_t immovable_observations() {
   return total;
 }
 
+// A class with a destructor keeps its temporary in MIR's own result slot. Each
+// field is read before the temporary is destroyed at the end of its full
+// expression, and every temporary is destroyed exactly once.
+mut int32_t drops = 0;
+
+struct tag_t {
+  int32_t code;
+  tag_t(int32_t code) : code(code) {}
+  int32_t twice() { return this.code * 2; }
+};
+
+class tracked_t {
+public:
+  int32_t count;
+  tag_t tag;
+  tracked_t(int32_t initial) : count(initial), tag(tag_t(initial)) {}
+  ~tracked_t() { drops += 1; }
+};
+
+// A constructor that can fail publishes its result on its success edge.
+class checked_t {
+public:
+  int32_t count;
+  checked_t(int32_t initial) : count(initial + 1) {}
+  ~checked_t() { drops += 1; }
+};
+
+class defaulted_t {
+public:
+  mut int32_t count = 1;
+  ~defaulted_t() { drops += 1; }
+};
+
+class field_reader_t {
+public:
+  int32_t declared = tracked_t(1).count;
+  int32_t initialized;
+  field_reader_t() : initialized(checked_t(0).count) {}
+};
+
+class base_reader_t {
+public:
+  int32_t stored;
+  base_reader_t(int32_t value) : stored(value) {}
+};
+
+// The base argument's temporary lives until the base is constructed.
+class derived_reader_t : public base_reader_t {
+public:
+  derived_reader_t() : base_reader_t(tracked_t(1).count) {}
+};
+
+int32_t owning_if_position() {
+  if (tracked_t(1).count == 1) {
+    return 1;
+  }
+  return 0;
+}
+
+int32_t owning_while_position() {
+  mut bool pending = true;
+  mut int32_t result = 0;
+  while (pending && tracked_t(1).count == 1) {
+    result = 1;
+    pending = false;
+  }
+  return result;
+}
+
+int32_t owning_switch_position() {
+  switch (tracked_t(1).count) {
+  case 1:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+int32_t owning_argument_position() {
+  return accept_scalar(tracked_t(1).count);
+}
+
+int32_t owning_return_position() { return tracked_t(1).count; }
+
+int32_t owning_index_position() {
+  int32_t values[2] = {0, 1};
+  return values[tracked_t(1).count];
+}
+
+int32_t owning_initializer_position() {
+  int32_t value = tracked_t(1).count;
+  return value;
+}
+
+int32_t owning_compound_assignment_position() {
+  mut int32_t value = 0;
+  value += tracked_t(1).count;
+  return value;
+}
+
+int32_t owning_short_circuit_position() {
+  bool skip = false;
+  if (skip || tracked_t(1).count == 1) {
+    return 1;
+  }
+  return 0;
+}
+
+// The read happens before the destruction that ends its full expression.
+int32_t owning_full_expression_order() {
+  int32_t before = drops;
+  int32_t observed = tracked_t(1).count + drops - before;
+  return observed + drops - before - 1;
+}
+
+int32_t owning_nested_and_lent_fields() {
+  return tracked_t(1).tag.code + tracked_t(1).tag.twice() - 2;
+}
+
+int32_t owning_construction_kinds() {
+  return checked_t(0).count + defaulted_t().count - 1;
+}
+
+int32_t owning_loop_position() {
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index += 1) {
+    total += tracked_t(index).count;
+  }
+  return total - 2;
+}
+
+int32_t owning_field_initializers() {
+  field_reader_t reader{};
+  return reader.declared + reader.initialized - 1;
+}
+
+int32_t owning_base_initializer() {
+  derived_reader_t reader = derived_reader_t();
+  return reader.stored;
+}
+
+int32_t owning_observations() {
+  return owning_if_position() + owning_while_position() +
+         owning_switch_position() + owning_argument_position() +
+         owning_return_position() + owning_index_position() +
+         owning_initializer_position() +
+         owning_compound_assignment_position() +
+         owning_short_circuit_position() + owning_full_expression_order() +
+         owning_nested_and_lent_fields() + owning_construction_kinds() +
+         owning_loop_position() + owning_field_initializers() +
+         owning_base_initializer();
+}
+
 int32_t main() {
   int32_t total = if_position() + while_position() + switch_position() +
                   argument_position() + return_position() + index_position() +
@@ -118,6 +271,9 @@ int32_t main() {
   if (constructions != 22 || argument_evaluations != 10 ||
       factory_evaluations != 5) {
     return 1;
+  }
+  if (owning_observations() != 15 || drops != 20) {
+    return 2;
   }
   return total - 67;
 }
