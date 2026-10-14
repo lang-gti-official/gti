@@ -47739,13 +47739,15 @@ bool preparationScalar(const SemanticType &type) {
 }
 } // namespace
 
+// A generic class instance qualifies like any other class. Whether its C++
+// class can carry the gate constructor is a representation fact the emitter
+// checks separately (baseCarrierClass).
 bool cppMirBaseGateEligible(const MirProgram &program,
                             const MirConstructorInstance &constructor) {
   const auto *owner = program.findClassInstance(constructor.owner);
   return constructor.definitionKind == MirDefinitionKind::Source &&
          owner != nullptr && !owner->cAbiRecord && !owner->unionLayout &&
          owner->compilerCapability == CompilerCapabilityTypeKind::None &&
-         owner->type.arguments.empty() && owner->type.valueArguments.empty() &&
          !classHasStateBearingBase(*owner) &&
          !owner->traits.containsBorrowedState &&
          passiveConstructorFieldInitializers(program,
@@ -47771,10 +47773,11 @@ cppMirBasePreparation(const MirProgram &program,
       stage && stage->constructorTarget
           ? program.findConstructorInstance(*stage->constructorTarget)
           : nullptr;
+  // As for the gate, a generic owner instance qualifies here; the emitter
+  // admits its carrier only on a class with its own C++ definition.
   if (!owner || owner->cAbiRecord || owner->unionLayout ||
-      owner->compilerCapability != CompilerCapabilityTypeKind::None ||
-      !owner->type.arguments.empty() || !owner->type.valueArguments.empty() ||
-      !stage || !target || !cppMirBaseGateEligible(program, *target) ||
+      owner->compilerCapability != CompilerCapabilityTypeKind::None || !stage ||
+      !target || !cppMirBaseGateEligible(program, *target) ||
       !constructorBaseRollbackCovered(constructor, *owner) ||
       target->parameterTypes.size() != stage->operands.size() ||
       stage->parameterTypes != target->parameterTypes ||
@@ -52711,6 +52714,27 @@ bool CppMirBodyEmitter::boundaryDeclarationBody(MirBodyAddress address) const {
           block.terminator.kind == MirTerminatorKind::Unreachable);
 }
 
+namespace {
+// The class's own C++ definition can declare, and the program can define out
+// of class, a per-instance base-preparation carrier or base gate: a
+// non-generic class, or a generic application emitted as its own concrete
+// class. A retained native class template would need template
+// specialization of those members instead.
+[[nodiscard]] bool
+baseCarrierClass(const MirProgram &program,
+                 const CppMirBodyEmissionMap &representations,
+                 HirClassInstanceId id) {
+  const MirClassInstance *instance = program.findClassInstance(id);
+  if (instance == nullptr)
+    return false;
+  if (instance->type.arguments.empty() && instance->type.valueArguments.empty())
+    return true;
+  const CppMirTypeRepresentation *row =
+      representationTypeRow(representations, instance->type);
+  return row != nullptr && row->concreteGenericClass;
+}
+} // namespace
+
 bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                              bool failureForm) const {
   const MirBodyLookupScope lookups;
@@ -52910,11 +52934,21 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         return false;
       }
     }
-    // A carrier slot replaces exactly the guarded lifetime slot the body
-    // would declare for that temporary; its MIR obligation, not scope exit,
-    // ends the value.
+    // The carrier and the selected base's gate are members of their classes'
+    // own C++ definitions. A carrier slot replaces exactly the guarded
+    // lifetime slot the body would declare for that temporary; its MIR
+    // obligation, not scope exit, ends the value.
     if (const auto preparation =
             cppMirBasePreparation(program_, *constructor)) {
+      const MirInstruction *stage = constructorBaseInitialization(*constructor);
+      const MirConstructorInstance *target =
+          stage != nullptr && stage->constructorTarget
+              ? program_.findConstructorInstance(*stage->constructorTarget)
+              : nullptr;
+      if (target == nullptr ||
+          !baseCarrierClass(program_, representations_, constructor->owner) ||
+          !baseCarrierClass(program_, representations_, target->owner))
+        return false;
       for (const MirPlaceId id : preparation->slots) {
         const MirPlace *slot = constructor->body.findPlace(id);
         if (slot == nullptr ||
@@ -60656,6 +60690,7 @@ CppMirBodyEmissionPlan CppMirBodyEmitter::buildPlanFromAnalysis(
                     instance->id) != baseGateTargets_->end();
       if (instance && requestedGate &&
           cppMirBaseGateEligible(program_, *instance) &&
+          baseCarrierClass(program_, representations_, instance->owner) &&
           (plan.supportsPlainText() || plan.supportsFailureText())) {
         ScalarBodyTextEmitter writer(program_, representations_, 0, true,
                                      cppMirBodyEmissionIndentationPlaceholder,
