@@ -494,15 +494,14 @@ remains path-sensitive by design.
 When capture is requested, the real generated-C++ compile/link invocation adds
 a driver-owned depfile and bypasses whole-program cache reuse so the report
 always describes a performed invocation. The existing native depfile parser
-selects only dependencies under the resolved runtime and compatibility include
-roots. Only the `gti/...` runtime and `nonstd/...` compatibility subtrees are
-classified, even when an installed toolchain resolves both include roots to
-the same directory. The sidecar records those used headers, the exact runtime
-archive input, their content hashes, the native compiler executable identity,
-and exact native argv. Its runtime aggregate hashes header kind/logical name
-and content facts plus archive content facts, while retaining canonical paths
-only in the individual records. It does not claim which archive members the
-linker selected.
+selects only dependencies under the resolved runtime include root, and only its
+`gti/...` subtree is classified, even when an installed toolchain shares that
+include directory with other headers. The sidecar records those used headers,
+the exact runtime archive input, their content hashes, the native compiler
+executable identity, and exact native argv. Its runtime aggregate hashes header
+kind/logical name and content facts plus archive content facts, while retaining
+canonical paths only in the individual records. It does not claim which archive
+members the linker selected.
 
 Every build refreshes the compiler source identity from the source repository,
 rather than freezing it at configure time: a 40-hex commit is paired with
@@ -959,7 +958,7 @@ outside the package keeps its path-sensitive external identity. Every recorded
 identity is compared: the producer executable, the compiler source identity,
 each source unit and the relocation-stable source aggregate, the project
 selection and model identity, the native compiler executable, the native argv,
-each runtime and compatibility header, the runtime archive, the runtime
+each runtime header, the runtime archive, the runtime
 aggregate, and the produced executable's bytes. Divergences are reported one
 per fact, naming the subject, the compared field, and the recorded and rebuilt
 values, and the command exits 70. Two native argv operands are normalized
@@ -1861,7 +1860,7 @@ The current key includes:
 - the native C++ compiler command, resolved executable content, and `--version`
   output (plus the same identity for the C compiler when C sources are
   declared);
-- runtime headers/archive and the C++20 compatibility headers when selected;
+- runtime headers/archive;
 - selected native standards;
 - declared native include directories as full sorted tree identities, so
   adding, removing, or editing any file below a declared include root changes

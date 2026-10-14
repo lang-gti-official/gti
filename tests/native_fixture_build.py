@@ -39,9 +39,6 @@ def build_fixture(command, output, *, native_sources=(), native_arguments=(),
         Path(command[0]).resolve().parent / "libgti_runtime.a")
     includes = [environment.get("GTI_RUNTIME_INCLUDE") or str(
         repository / "runtime" / "include")]
-    if standard == "c++20":
-        includes.append(environment.get("GTI_VENDOR_INCLUDE") or str(
-            repository / "vendor" / "expected_lite" / "include"))
     native = [str(compiler), f"-std={standard}", f"-{optimization}",
               *(f"-I{directory}" for directory in includes), str(generated),
               *map(str, native_sources), runtime, *map(str, native_arguments),

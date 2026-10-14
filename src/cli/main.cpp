@@ -2264,12 +2264,7 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
     return finishFailure(exitCode(ExitStatus::Io));
   case lang::driver::ExecutableBuildStatus::ToolchainConfigurationFailure:
     if (result.resourceError) {
-      std::cerr
-          << (*result.resourceError ==
-                      lang::driver::ToolchainResourceError::RuntimeFilesMissing
-                  ? "gti: native runtime files were not found\n"
-                  : "gti: backend compatibility header was not "
-                    "found\n");
+      std::cerr << "gti: native runtime files were not found\n";
     }
     return finishFailure(exitCode(ExitStatus::ToolchainConfiguration));
   case lang::driver::ExecutableBuildStatus::NativeCCompilerFailure: {

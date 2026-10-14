@@ -77,13 +77,9 @@ RunResult buildAndRun(const std::string &compiler,
     command += " " + extraFlags;
   }
   const std::string runtimeInclude = environmentPath("GTI_RUNTIME_INCLUDE");
-  const std::string vendorInclude = environmentPath("GTI_VENDOR_INCLUDE");
   const std::string runtimeLibrary = environmentPath("GTI_RUNTIME_LIBRARY");
   if (!runtimeInclude.empty()) {
     command += " -I\"" + runtimeInclude + "\"";
-  }
-  if (!vendorInclude.empty()) {
-    command += " -I\"" + vendorInclude + "\"";
   }
   command += " \"" + artifact.string() + "\"";
   if (!runtimeLibrary.empty()) {
