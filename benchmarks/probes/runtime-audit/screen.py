@@ -106,8 +106,7 @@ def patched(source, families):
 
 def attribute(arguments):
     native = [arguments.cxx, f"-std={arguments.std}", f"-O{arguments.level}", "-I",
-              str(arguments.runtime_include), "-I", str(arguments.vendor_include),
-              *STRICT, "-D__gti_strict_ieee754=1"]
+              str(arguments.runtime_include), *STRICT, "-D__gti_strict_ieee754=1"]
     rows = []
     for name in arguments.probes or PROBES:
         out = arguments.output / name
@@ -152,9 +151,6 @@ def main():
                         default=REPOSITORY / "runtime" / "include")
     parser.add_argument("--runtime-library", type=pathlib.Path,
                         help="libgti_runtime.a from the same build (attribute only)")
-    parser.add_argument("--vendor-include", type=pathlib.Path,
-                        default=REPOSITORY / "vendor" / "expected_lite" / "include",
-                        help="expected-lite include directory for C++20 attribution")
     parser.add_argument("--output", type=pathlib.Path, required=True,
                         help="new directory for builds and JSON results")
     parser.add_argument("probes", nargs="*", help=f"subset of: {', '.join(PROBES)}")

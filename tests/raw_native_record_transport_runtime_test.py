@@ -81,7 +81,6 @@ def main():
                     run([cxx, f"-std={standard}", "-fsyntax-only",
                          "-fno-fast-math", "-ffp-contract=off",
                          "-D__gti_strict_ieee754=1", "-I", root / "runtime/include",
-                         "-I", root / "vendor/expected_lite/include",
                          syntax_source])
             for level in ("O0", "O2", "O3"):
                 binary = work / f"transport-{standard}-{level}"

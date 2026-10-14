@@ -163,7 +163,7 @@ def probe(case: InteractionCase, gti: str, cxx: str, root: Path, *,
         "signature": signature, "case": case.record(), "variant": variant,
         "configuration": list(configuration), "expected": list(case.oracle()),
         "resource_environment": {name: os.environ[name] for name in (
-            "GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY", "GTI_VENDOR_INCLUDE")
+            "GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY")
             if name in os.environ},
         "observations": [asdict(record) for record in records],
     }
@@ -312,7 +312,7 @@ def triage_failure(case: InteractionCase, original: dict[str, Any], root: Path,
               "current_signature": repeated["signature"] if repeated else None,
               "phases": phases,
               "resource_environment": {name: os.environ[name] for name in (
-                  "GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY", "GTI_VENDOR_INCLUDE")
+                  "GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY")
                   if name in os.environ},
               "scope": "measured admission boundary; not proof of the root cause"}
     write_json(root / "triage.json", result)

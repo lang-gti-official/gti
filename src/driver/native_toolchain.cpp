@@ -20,9 +20,6 @@
 #if !defined(GTI_RUNTIME_LIBRARY_NAME)
 #define GTI_RUNTIME_LIBRARY_NAME "libgti_runtime.a"
 #endif
-#if !defined(GTI_BUILD_VENDOR_INCLUDE_DIR)
-#define GTI_BUILD_VENDOR_INCLUDE_DIR ""
-#endif
 
 namespace lang::driver {
 namespace {
@@ -251,14 +248,11 @@ ToolchainLayout discoverToolchainLayout(const char *driver) {
       .runtimeLibrary = selectToolchainPath(
           "GTI_RUNTIME_LIBRARY", prefix / "lib" / GTI_RUNTIME_LIBRARY_NAME,
           GTI_BUILD_RUNTIME_LIBRARY_PATH),
-      .vendorInclude = selectToolchainPath(
-          "GTI_VENDOR_INCLUDE", prefix / "include",
-          GTI_BUILD_VENDOR_INCLUDE_DIR, "nonstd/expected.hpp"),
   };
 }
 
 std::optional<ToolchainResourceError>
-validateToolchainLayout(const ToolchainLayout &layout, CppStandard standard) {
+validateToolchainLayout(const ToolchainLayout &layout) {
   std::error_code error;
   if (!std::filesystem::is_regular_file(
           layout.runtimeInclude / "gti/runtime.hpp", error) ||
@@ -274,11 +268,6 @@ validateToolchainLayout(const ToolchainLayout &layout, CppStandard standard) {
           layout.runtimeInclude / "gti/runtime_thread.hpp", error) ||
       !std::filesystem::is_regular_file(layout.runtimeLibrary, error)) {
     return ToolchainResourceError::RuntimeFilesMissing;
-  }
-  if (standard == CppStandard::Cpp20 &&
-      !std::filesystem::is_regular_file(
-          layout.vendorInclude / "nonstd/expected.hpp", error)) {
-    return ToolchainResourceError::ExpectedCompatibilityHeaderMissing;
   }
   return std::nullopt;
 }
