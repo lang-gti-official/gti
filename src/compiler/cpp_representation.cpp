@@ -823,7 +823,7 @@ bool cppRequiresBytePreservingTransport(const MirProgram &program,
             current.arguments.begin(), current.arguments.end(),
             [&](const auto &item) { return self(self, item, nativeField); });
       if (current.kind == SemanticType::Lambda) {
-        const auto *lambda = program.findLambda(current.lambdaId);
+        const auto *lambda = program.findLambdaForType(current);
         if (!lambda)
           return false;
         for (std::size_t index = 0; index < lambda->captureTypes.size();

@@ -7074,17 +7074,31 @@ public:
             separator = true;
           }
           for (const std::size_t parameter : varying) {
+            const std::string spelling = cppSemanticTypeSpelling(
+                loweredProgram, standard,
+                constructor.parameters[parameter].type);
+            // A closure identity already fixes the instance built from that
+            // parameter, including its MIR drop decision; native
+            // destructibility would disagree for a closure capturing a
+            // passive class, which drops lexically yet is trivially
+            // destructible in C++.
+            if (exactClosures &&
+                std::any_of(body.closureConditions.begin(),
+                            body.closureConditions.end(),
+                            [&](const std::string &condition) {
+                              return condition.find(
+                                         "mir_lambda_identity_v<" + spelling +
+                                         ">") != std::string::npos;
+                            })) {
+              continue;
+            }
             if (separator) {
               output << " && ";
             }
             if (body.cleanup[parameter]) {
               output << '!';
             }
-            output << "std::is_trivially_destructible_v<"
-                   << cppSemanticTypeSpelling(
-                          loweredProgram, standard,
-                          constructor.parameters[parameter].type)
-                   << '>';
+            output << "std::is_trivially_destructible_v<" << spelling << '>';
             separator = true;
           }
           output << ") {\n";
