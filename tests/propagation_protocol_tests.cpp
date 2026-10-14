@@ -546,6 +546,21 @@ Reply shared_residual() {
   return Reply(value);
 }
 
+// The state test only observes, even for a consumed operand.
+class ConsumingTest {
+public:
+  ConsumingTest() {}
+  implicit ConsumingTest(Failure failure) {}
+  bool has_value() && { return true; }
+  int value() && { return 1; }
+  Failure residual() { return Failure(1); }
+};
+
+ConsumingTest consuming_test() {
+  int value = ?ConsumingTest();
+  return ConsumingTest();
+}
+
 constexpr Reply constant_context() {
   Reply reply = Reply(0);
   int value = ?reply;
@@ -567,9 +582,12 @@ int main() { return 0; }
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const bool contract =
       !invalid.canGenerateCode() &&
-      countDiagnosticCode(invalid.diagnostics, "GTI-S2086") == 4 &&
+      countDiagnosticCode(invalid.diagnostics, "GTI-S2086") == 5 &&
       hasDiagnostic(invalid.diagnostics,
                     "returning 'Ticket', but this one returns 'Reply'") &&
+      hasDiagnostic(invalid.diagnostics,
+                    "requires 'has_value()' to take no arguments and have a "
+                    "read-only receiver.") &&
       hasDiagnostic(invalid.diagnostics,
                     "not yet available in a constexpr function") &&
       hasDiagnostic(invalid.diagnostics,
@@ -582,7 +600,8 @@ int main() { return 0; }
   }
   expect(contract,
          "protocol propagation should reject another family sharing the "
-         "residual type, constexpr functions, constructors and module scope");
+         "residual type, a consuming state test, constexpr functions, "
+         "constructors and module scope");
 }
 
 } // namespace

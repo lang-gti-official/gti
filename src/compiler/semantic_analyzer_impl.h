@@ -572,7 +572,8 @@ public:
                              const SemanticType &operandType);
   [[nodiscard]] std::optional<PropagationMemberCall>
   selectPropagationMember(const Unary &expr, const SemanticType &operandType,
-                          std::string_view name, bool consumesOperand);
+                          std::string_view name, bool consumesOperand,
+                          bool allowConsuming = true);
   [[nodiscard]] std::optional<ResolvedConstructionInfo>
   selectPropagationReturnConstruction(const Unary &expr,
                                       const SemanticType &returnType,

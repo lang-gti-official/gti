@@ -9803,7 +9803,8 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
 // are never part of the protocol.
 auto SemanticVisitor::Impl::selectPropagationMember(
     const Unary &expr, const SemanticType &operandType, std::string_view name,
-    bool consumesOperand) -> std::optional<PropagationMemberCall> {
+    bool consumesOperand, bool allowConsuming)
+    -> std::optional<PropagationMemberCall> {
   const Token &site = expr.oper();
   const ClassInfo *owner = classInfo(operandType);
   const std::string member(name);
@@ -9853,8 +9854,8 @@ auto SemanticVisitor::Impl::selectPropagationMember(
       continue;
     }
     if (candidate.receiverMutability == ReceiverMutability::Consuming &&
-        !consumesOperand) {
-      consumingOnly = true;
+        (!consumesOperand || !allowConsuming)) {
+      consumingOnly = allowConsuming;
       continue;
     }
     if (candidate.compilerPrivate && !isCompilerTrustedRequester(site)) {
@@ -9883,11 +9884,12 @@ auto SemanticVisitor::Impl::selectPropagationMember(
                     "Apply '?' to std::move(name) to consume a named "
                     "operand explicitly.");
     }
-    return reject("Propagation through '" + typeSpelling(operandType) +
-                      "' requires '" + member +
-                      "()' to take no arguments and have a read-only" +
-                      (consumesOperand ? " or consuming" : "") + " receiver.",
-                  protocolHint);
+    return reject(
+        "Propagation through '" + typeSpelling(operandType) + "' requires '" +
+            member + "()' to take no arguments and have a read-only" +
+            (consumesOperand && allowConsuming ? " or consuming" : "") +
+            " receiver.",
+        protocolHint);
   }
   if (viable.size() != 1) {
     return reject("Propagation through '" + typeSpelling(operandType) +
@@ -10067,7 +10069,8 @@ auto SemanticVisitor::Impl::analyzePropagationProtocol(
   }
 
   const std::optional<PropagationMemberCall> test =
-      selectPropagationMember(expr, operandType, "has_value", consumes);
+      // The state test only observes: value() or residual() still runs.
+      selectPropagationMember(expr, operandType, "has_value", consumes, false);
   if (!test) {
     return SemanticType::Unknown;
   }
