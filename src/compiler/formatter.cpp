@@ -960,6 +960,11 @@ private:
         }
       }
       std::size_t position = start;
+      // Constructor modifiers: the contextual `implicit`, then `constexpr`.
+      if (lexemes[significant[position]].text == "implicit" &&
+          kindAt(position + 1, Kind::Word)) {
+        ++position;
+      }
       if (lexemes[significant[position]].text == "constexpr") {
         ++position;
       }
@@ -1469,7 +1474,8 @@ private:
     return lexeme.kind == Kind::Word &&
            (lexeme.text == "export" || lexeme.text == "virtual" ||
             lexeme.text == "static" || lexeme.text == "constexpr" ||
-            lexeme.text == "mut" || lexeme.text == "unsafe");
+            lexeme.text == "mut" || lexeme.text == "unsafe" ||
+            lexeme.text == "implicit");
   }
 
   static bool isDeclarationBoundary(const Lexeme *lexeme) {

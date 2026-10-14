@@ -1977,6 +1977,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(shared_exit_cleanup_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME declaration_construction_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/declaration_construction_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(declaration_construction_runtime PROPERTIES TIMEOUT 600)
 
   add_test(
     NAME recursive_cleanup_failure_runtime

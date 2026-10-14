@@ -401,8 +401,9 @@ the GTI source graph does not.
 
 Initialization requires an exact type unless a specific rule permits a
 conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
-Constructors are selected by one exact parameter list and do not define implicit
-conversions.
+Constructors are selected by one exact parameter list. They define no implicit
+conversion for calls, returns, or assignment; only the declaration rule below
+selects one, declared `implicit`, for an initializer of another type.
 
 The source-defined `std::upcast_unique<Base, Derived>` operation is an explicit
 ownership conversion, not an overload conversion. Its trusted private step is
@@ -417,6 +418,39 @@ constructor whose sole parameter is exactly `nullptr_t`. The same conversion
 is not considered for function arguments, constructor arguments, or returns.
 Assignment does not use this construction rule; a class assignment from
 `nullptr` requires an exact member `operator=(nullptr_t)`.
+
+The same declarations also construct from an initializer of another type, but
+only through a constructor its class declares `implicit`. In
+`T name = initializer;`, where `T` is the declared class or struct type and
+the initializer has a type `U` that no other rule admits, the declaration
+constructs `T` exactly as `T name{initializer}` would, considering only `T`'s
+implicit constructors. It selects the one whose exact parameter list accepts
+the initializer as its sole explicit argument, by value or by read-only
+reference, with any trailing defaults. Overload selection, access, argument
+ownership, failure, and cleanup are those of the direct initializer. So
+`std::string text = "Sampling...";` uses `std::string`'s
+`implicit string(std::string_view)`, and `Celsius warm = 21;` calls a declared
+`implicit Celsius(int)`. A constructor without `implicit`, such as a
+container's element-count constructor, is only ever called explicitly. A named
+move-only initializer still requires `std::move`, and an ambiguous or
+unavailable selection is diagnosed as for direct initialization. When no
+implicit constructor accepts `U`, the declaration keeps its exact-type
+initialization error, with a hint naming the explicit form. The rule does not
+apply to `constexpr` bindings, range-`for` element bindings, reference fields,
+unions, abstract classes, a declared type that carries a borrow, or an
+initializer whose type comes from its destination: a brace list, a
+contextually typed call, or a function name. Function arguments, returns, and
+assignment never use it. A class assignment from another type requires an
+exact member `operator=`, such as `std::string`'s
+`operator=(std::string_view)`.
+
+`implicit` is written first in an ordinary constructor declaration, before
+`constexpr`. It requires a source body and a constructor callable with exactly
+one explicit argument, so any further parameters must have defaults. It is
+invalid on a copy or move constructor or a constructor with a parameter pack
+(`GTI-S2121`), and cannot be combined with `unsafe`: a construction a
+declaration performs implicitly carries no unsafe caller obligation.
+Misplaced spellings, such as `constexpr implicit`, are syntax errors.
 
 Value-assignment contexts, including initialization, assignment, and return,
 accept an integer literal when its mathematical value fits the destination.

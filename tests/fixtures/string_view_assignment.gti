@@ -1,0 +1,21 @@
+#include <std/string>
+
+// Assignment from a counted view replaces the contents and keeps capacity.
+int main() {
+  mut std::string text = std::string("a longer original value");
+  std::size_t capacity = text.capacity();
+  text = "short";
+  if (!(text == "short") || text.capacity() != capacity) {
+    return 1;
+  }
+  std::string_view empty = "";
+  text = empty;
+  if (!text.empty()) {
+    return 2;
+  }
+  text = "two\0parts";
+  if (text.size() != std::size_t(9)) {
+    return 3;
+  }
+  return 0;
+}

@@ -1,0 +1,48 @@
+#include <std/string>
+
+// A constructor declared `implicit` lets a declaration construct its class
+// from one value of another type. The declaration selects the constructor
+// `T name{value}` would, so ownership, failure and cleanup are exactly those
+// of the direct initializer.
+struct Celsius {
+  int degrees;
+  implicit Celsius(int value) : degrees(value) {}
+};
+
+// Without `implicit`, a constructor is only ever called explicitly, so a
+// declaration cannot quietly turn a count into a buffer.
+struct Buffer {
+  int capacity;
+  Buffer(int size) : capacity(size) {}
+};
+
+class Sensor {
+public:
+  // A field default and a constructor initializer construct the same way.
+  std::string unit = "celsius";
+  std::string label;
+  Celsius reading;
+
+  Sensor(std::string_view name, int degrees) : label(name), reading(degrees) {}
+};
+
+int main() {
+  // A string literal is a std::string_view; std::string's implicit
+  // string(std::string_view) constructs the owning string from it.
+  mut std::string status = "Sampling...";
+  Celsius warm = 21;
+  Buffer buffer{64};
+  Sensor porch{"porch", 18};
+
+  // Assignment never constructs implicitly. std::string declares an exact
+  // operator=(std::string_view), which replaces its contents.
+  status = "Done";
+
+  if (status == "Done" and warm.degrees == 21 and buffer.capacity == 64 and
+      porch.reading.degrees == 18 and porch.unit == "celsius" and
+      porch.label == "porch") {
+    std::println("declarations construct through implicit constructors");
+    return 0;
+  }
+  return 1;
+}

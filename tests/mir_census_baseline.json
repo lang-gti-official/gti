@@ -149,7 +149,8 @@
     "150-out-of-class-methods.gti": 116,
     "151-c-string-import.gti": 120,
     "152-unsafe-expressions.gti": 117,
-    "153-constexpr-allocation.gti": 45
+    "153-constexpr-allocation.gti": 45,
+    "154-declaration-construction.gti": 127
   },
-  "total": 16433
+  "total": 16560
 }
