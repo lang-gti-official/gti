@@ -306,8 +306,8 @@ shorthand, qualification, and alias spelling. Namespace- and class-scoped
 `using Name = Type;` aliases are declaration-order independent within their
 direct declaring scope after cycle validation. Every class-like body (`class`,
 `struct`, `interface`, and `union`) admits aliases as type members. An alias
-follows the owner's current `public:` or `private:` section and the class key's
-default access, and its name cannot collide with a value, callable, or another
+follows the owner's current `public:`, `protected:`, or `private:` section and
+the class key's default access, and its name cannot collide with a value, callable, or another
 type alias in that owner. A public alias of a non-generic type may be named with
 `Owner::Name` outside the class.
 
@@ -1096,6 +1096,47 @@ public:
   int render(int frame) override { return frame; }
 };
 ```
+
+### Member visibility
+
+Class members default to `private`; struct members default to `public`.
+`public:`, `protected:`, and `private:` sections apply to following members,
+including instance/static fields, methods, constructors, aliases and nested
+types. Visibility is checked by GTI semantic analysis after lookup and overload
+selection, before executable lowering. A public overload or virtual override
+keeps its own declared access; a public API may use protected implementation
+members without exposing them to its callers.
+
+A protected member is accessible in its declaring class and lexically nested
+classes, and in classes that publicly derive from that declaring class,
+transitively, including their lexically nested classes. For instance members,
+access granted through a derived class `D` additionally requires the receiver's
+static type to be `D` or a descendant of `D`. A `Base&` or sibling receiver is
+insufficient even if its dynamic object might be a `D`. The declaring class
+itself may access the member on other objects of its own type. Implicit receiver
+access follows the same rule. Concrete generic owner/receiver types matter:
+deriving from `Base<int>` grants no access to `Base<bool>`'s protected members.
+
+Static members and member types have no instance-receiver restriction, but
+retain the declaring-class/derivation requirement. Ordinary static members
+declared in generic owners remain unsupported under GTI's existing qualified
+generic value-member path restriction; protected access does not expand it.
+Qualification and public aliases cannot bypass an inaccessible intermediate
+alias or nested type.
+Protected constructors may initialize a derived object's direct base, including
+implicit base default construction; this permission does not permit derived
+code to construct arbitrary complete base objects. An `implicit` constructor
+retains the same access requirement during declaration initialization. Copy/move
+policies and destructors remain public under the existing ownership rules. Interface instance
+requirements remain public; interface static helpers may use protected access.
+Unions and native C records retain their public-storage restrictions.
+
+Protected visibility changes no mutation, borrowing, initialization, lifetime,
+unsafe, transfer/share or compiler-private capability obligations. Inheritance
+must still be explicitly `public`; protected inheritance and friendship are
+not introduced. No runtime access check, allocation or extra object state is
+required. [`150-protected-events.gti`](../../examples/150-protected-events.gti)
+demonstrates event-handler state and an unrelated generic counter.
 
 ### Optional out-of-class method definitions
 

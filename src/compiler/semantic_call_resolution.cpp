@@ -4539,19 +4539,25 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
                                     : function.declaration->name().lexeme);
     return false;
   }
-  if (function.ownerClass != 0 && function.access == AccessModifier::Private &&
-      !isWithinClass(function.ownerClass)) {
+  const auto *member = exprAs<Get>(callee.get());
+  const SemanticType accessReceiver =
+      function.staticMember ? SemanticType::Unknown
+      : member              ? semanticModel.typeOf(*member->object())
+      : currentClass        ? openClassType(*currentClass)
+                            : SemanticType::Unknown;
+  if (!canAccessMember(function.access, function.ownerClass, accessReceiver,
+                       function.dispatchOwner)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, paren,
         "Method '" + function.declaration->name().lexeme + "' of '" +
-            classInfo(function.ownerClass).name.lexeme + "' is private.");
+            classInfo(function.ownerClass).name.lexeme + "' is " +
+            std::string(accessModifierSpelling(function.access)) + ".");
     diagnostic.related.push_back(
         {tokenSpan(function.declaration->name()), "Method declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
   }
 
   validateMutableCallArgumentLoans(function.parameterTypes, arguments, paren);
-  const auto *member = exprAs<Get>(callee.get());
   if (member == nullptr && function.ownerClass != 0 && !function.staticMember) {
     SemanticPlace receiver{.root = receiverStateSymbol(), .receiver = true};
     if (const auto *state = unavailableProjectedState(receiver)) {
@@ -6314,15 +6320,16 @@ auto SemanticVisitor::Impl::resolveOperator(
                                       concreteArguments))
         return std::nullopt;
   }
-  if (selected.access == AccessModifier::Private &&
-      !isWithinClass(selected.ownerClass)) {
+  if (!canAccessMember(selected.access, selected.ownerClass, receiverType,
+                       selected.dispatchOwner)) {
+    const std::string access(accessModifierSpelling(selected.access));
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, token,
         conversionTarget
             ? "The conversion of '" + owner->name.lexeme + "' to '" +
-                  typeSpelling(*conversionTarget) + "' is private."
+                  typeSpelling(*conversionTarget) + "' is " + access + "."
             : std::string(operatorSourceSpelling(kind)) + " of '" +
-                  owner->name.lexeme + "' is private.");
+                  owner->name.lexeme + "' is " + access + ".");
     diagnostic.related.push_back(
         {tokenSpan(selected.declaration->operatorName()->keyword),
          "Operator declared here."});

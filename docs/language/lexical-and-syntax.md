@@ -57,6 +57,9 @@ an accepted attribute spelling. `const` is a
 keyword for the implemented raw-pointer pointee/slot qualifiers; its presence
 does not introduce general C++ cv-qualified values or declarators.
 
+`protected` is a member-access keyword alongside `public` and `private`.
+Access sections use a trailing colon; inheritance still requires `public`.
+
 `implicit` is a contextual modifier, not a reserved word. Written first in an
 ordinary source constructor's declaration, it lets a declaration construct the
 class from that constructor's argument type, as described in

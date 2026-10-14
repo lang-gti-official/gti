@@ -1,0 +1,24 @@
+==================
+Protected class members
+==================
+class Base { protected: int value; };
+class Derived : public Base {};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier))))
+  (class_declaration
+    (identifier)
+    (base_clause
+      (base_specifier
+        (user_type
+          (identifier))))
+    (class_body)))
