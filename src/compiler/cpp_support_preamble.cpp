@@ -182,6 +182,8 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "exact_call_type_compatible",
       "exact_type",
       "function_item",
+      "function_pointer",
+      "function_pointer_parameter",
       "expected_result",
       "forward_pack_argument",
       "fresh",
@@ -884,6 +886,27 @@ template <typename T>
 struct byte_transport : decltype(__gti_byte_transport_tag(static_cast<T *>(nullptr))) {};
 template <typename T, std::size_t Size>
 struct byte_transport<std::array<T, Size>> : byte_transport<T> {};
+
+// GTI invocation pointers carry no environment and use one uniform checked
+// failure ABI. This transport tag is the same representation fact used for
+// ordinary verified GTI calls; C-ABI raw-slot records must not be native-copied.
+template <typename T>
+using function_pointer_parameter = std::conditional_t<
+    !std::is_reference_v<T> && byte_transport<std::remove_cvref_t<T>>::value,
+    const T &, T>;
+template <typename Signature> struct function_pointer;
+template <typename Result, typename... Arguments>
+struct function_pointer<Result(Arguments...)> final {
+  using pointer = bool (*)(function_pointer_parameter<Arguments>...,
+                           Result *, ::gti_failure_record_v2 *);
+  pointer target;
+};
+template <typename... Arguments>
+struct function_pointer<void(Arguments...)> final {
+  using pointer = bool (*)(function_pointer_parameter<Arguments>...,
+                           ::gti_failure_record_v2 *);
+  pointer target;
+};
 
 // A container alternative owns exactly one ordinary representation lifetime.
 // Exact trivial copies preserve bytes; nontrivial values retain their selected

@@ -1,0 +1,52 @@
+#include <std/functional>
+
+// One signature accepts different callable types without taking ownership.
+// The view borrows its callable; the callable may itself borrow other objects.
+int sample(std::function_ref<int(int)>& callback) {
+  return callback(4);
+}
+
+void update(mut std::function_ref<void(int) mut>& callback, int step) {
+  callback(step);
+}
+
+// Ordinary user-defined storage retains the same checked dependencies.
+class Listener<F> {
+  mut F callback;
+public:
+  Listener(F callback) : callback(std::move(callback)) {}
+  void notify(int step) mut { this.callback(step); }
+};
+
+Listener<F> listen<F>(F callback) {
+  return Listener<F>(std::move(callback));
+}
+
+int twice(int value) { return value * 2; }
+
+int main() {
+  int offset = 3;
+  auto read = [&offset](int value) -> int { return value + offset; };
+  std::function_ref<int(int)> view{read};
+  if (sample(view) != 7) return 1;
+
+  mut int count = 0;
+  mut auto increment = [mut &count](int step) -> void { count += step; };
+  mut std::function_ref<void(int) mut> changing{increment};
+  update(changing, 2);
+  update(changing, 3);
+  // The exclusive borrow ends after its final use. Neither the callback nor
+  // its view may be copied, or overlap another access while still in use.
+  if (count != 5) return 2;
+
+  mut int received = 0;
+  mut auto handler = [mut &received](int step) -> void { received += step; };
+  mut auto stored = listen(std::move(handler));
+  stored.notify(7);
+  if (received != 7) return 3;
+
+  // A stateless GTI invocation pointer carries a checked signature and the
+  // normal GTI failure convention. It is not a native C function pointer.
+  std::function_ptr<int(int)> pointer{twice};
+  return pointer(4) - 8;
+}

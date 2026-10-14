@@ -1,0 +1,13 @@
+#include <std/functional>
+#include "kernel.gti"
+
+int main() {
+  mut uint64_t state = 3;
+  mut auto update = [mut &state](uint64_t bias) -> void {
+    state = (state * uint64_t(17) + bias) % uint64_t(65521);
+  };
+  mut std::function_ref<void(uint64_t) mut> view{update};
+  run(view);
+  report(state);
+  return 0;
+}

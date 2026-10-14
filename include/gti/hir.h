@@ -234,6 +234,7 @@ struct HirValue {
   // Exact argument origins retained for composed owner-dependent values.
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
   std::vector<SemanticLoanDependency> borrowDependencies;
   bool storedReferenceAccess = false;
@@ -259,6 +260,8 @@ struct HirValue {
   std::vector<HirPackFoldElement> packFoldElements;
   std::vector<HirPackExpansionElement> packExpansionElements;
   std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<HirFunctionInstanceId> functionPointerFunctionTarget;
+  std::optional<HirLambdaId> functionPointerLambdaTarget;
   std::optional<SemanticType> nativeCalleeType;
   std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<HirThreadTaskAdapterId> threadTaskAdapter;

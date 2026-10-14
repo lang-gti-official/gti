@@ -792,6 +792,35 @@ feature. This section records work in progress, not a shipped guarantee.
 
 ## Completion Evidence
 
+### Direct signature erasure (owner-approved, in progress)
+
+The borrowing-callback release includes direct construction of
+`std::function_ref<R(Args...)>` and its mutable signature variant. The intended
+implementation is source-defined policy over two reusable language mechanisms:
+
+- checked reference erasure to an opaque referent, retaining the exact origin,
+  access and parent loans. Restoring a concrete type is unsafe: the caller must
+  select the original referent type, but cannot waive lifetime or access checks;
+- non-null typed GTI invocation pointers, formed from an exact namespace
+  function item or captureless lambda. They retain GTI's defined-failure calling
+  convention and are not interchangeable with C function pointers.
+
+The erased referent is not a byte buffer, constructible object, raw-pointer
+conversion, allocation, or permission to inspect representation bytes. Its
+backend may use an object-representation address while source can only retain
+the checked reference or restore its original type. Signature erasure must not
+invent transfer/sharing capabilities. Signatures whose results borrow need an
+explicit result-origin contract before those shapes are admitted.
+
+Captureless lambda parameter packs reuse the ordinary lexical pack binding and
+concrete parameter expansion model, allowing source-defined invocation thunks
+for arbitrary exact signatures. The public view stores a checked erased borrow
+and a typed thunk, with no target ownership, allocation, or reference counting.
+Shared views permit read invocation; exclusive views require mutable invocation
+and cannot duplicate their exclusive loan. An unrelated custom borrowed wrapper
+must exercise the same facilities. A named adapter remains a valid source
+technique, but is not the intended required public construction ceremony.
+
 D-CALL-01 is complete when this accepted contract is reflected in the
 restriction ledger and operational queue. It supplies:
 

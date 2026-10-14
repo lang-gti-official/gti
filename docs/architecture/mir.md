@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v101`, `mir-body-v84`).
+instruction, body, and caller-assignment facts (`mir-v104`, `mir-body-v85`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -318,8 +318,30 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v101`/`mir-body-v84`,
-with `lowered-program-v17` declaration metadata. Version 101/body 84 reconciles
+The combined deterministic serialization is currently `mir-v104`/`mir-body-v85`,
+with `lowered-program-v17` declaration metadata. Version 104/body 85 records
+checked borrowing capture modes, each concrete environment's invocation
+capability, per-dependency loan parents, and exact stateless GTI function-pointer
+targets. Reference captures retain ordinary checked-reference storage and
+carrier origins; mutable captures make the environment non-copyable and require
+exclusive invocation. Composed carriers retain every dependency and ancestor,
+including dependencies transported through generic parameters and fields.
+No native address or public library spelling replaces those checked facts.
+
+Checked erased-reference operations preserve the exact origin and access while
+changing the referent type. Restoration is explicitly unsafe and retains its
+checked lifetime witness. The GTI function-pointer operation records either one
+safe function instance or one stateless lambda instance, with its exact signature;
+invocation uses the same explicit failure and cleanup protocol as other GTI
+calls. It is not a native C callback adapter. Reference-field initialization
+through a checked helper verifies the actual returned reference and publication.
+The native reference-initializer representation currently admits a no-failure,
+single-reference-argument helper within a reference-initializer prefix; the
+helper executes once, in order. Supporting fallible or later-field reference
+initializers requires an explicit preparation schedule, not a substituted input
+address or duplicated helper call.
+
+Version 101/body 84 reconciles
 the checked range endpoint parking/publication inventory and shared failure
 cleanup with the scoped-task contract introduced on main in version 100/body 83.
 That contract adds exact
@@ -400,7 +422,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v101`/`lowered-program-v17`, preserving
+The combined serialization is `mir-v104`/`lowered-program-v17`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,

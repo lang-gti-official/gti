@@ -479,6 +479,12 @@ auto SemanticVisitor::Impl::typeCapabilities(
   visiting.push_back(type);
 
   const ClassInfo &owner = classInfo(type.classId);
+  if (owner.compilerCapability == CompilerCapabilityTypeKind::ErasedObject ||
+      owner.compilerCapability == CompilerCapabilityTypeKind::FunctionPointer) {
+    visiting.pop_back();
+    // Signature erasure does not establish a target's concurrency effects.
+    return {};
+  }
   if (owner.compilerCapability ==
       CompilerCapabilityTypeKind::PolymorphicStorage) {
     const auto erased = type.arguments.size() == 1
@@ -714,6 +720,23 @@ auto SemanticVisitor::Impl::typeTraits(
   visiting.push_back(type);
 
   const ClassInfo &owner = classInfo(type.classId);
+  if (owner.compilerCapability == CompilerCapabilityTypeKind::ErasedObject ||
+      owner.compilerCapability == CompilerCapabilityTypeKind::FunctionPointer) {
+    visiting.pop_back();
+    const bool pointer = owner.compilerCapability ==
+                         CompilerCapabilityTypeKind::FunctionPointer;
+    return SemanticTypeTraits{.ownership = OwnershipKind::Value,
+                              .drop = DropKind::Trivial,
+                              .copyable = pointer,
+                              .movable = pointer,
+                              .copyAssignable = pointer,
+                              .moveAssignable = pointer,
+                              .containsBorrowedState = false,
+                              .transferCapable = false,
+                              .shareCapable = false,
+                              .relocation = pointer ? RelocationKind::Bitwise
+                                                    : RelocationKind::Unavailable};
+  }
   if (owner.compilerCapability ==
       CompilerCapabilityTypeKind::UninitializedStorage) {
     const auto payload = type.arguments.size() == 1
@@ -1393,7 +1416,8 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
   // explicit nominal constructor calls whose argument trees terminate in
   // exact enclosing parameters. Ordinary concrete call analysis still owns
   // overload viability, access, movement and exact initialized-field typing.
-  // Factories, defaults, packs, arbitrary expressions and recursive summaries
+  // Unambiguous reference-returning calls may compose a declared argument
+  // origin. Defaults, packs, arbitrary expressions and recursive summaries
   // deliberately do not acquire a guessed dependency contract here.
   std::vector<const ConstructorDecl *> visiting;
   const auto summarize = [&](const auto &self, const SemanticType &type,
@@ -1419,6 +1443,65 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       while (const auto *group = exprAs<Grouping>(argument->get()))
         argument = &group->expression();
       if (const Call *call = directCall(*argument)) {
+        if (expected.kind == SemanticType::Reference) {
+          // A declared checked-reference contract can change the referent
+          // type while preserving its source. This is not overload selection:
+          // require one named candidate and let ordinary body analysis check
+          // its concrete arguments, result type, and permission independently.
+          const Symbol *callee = nullptr;
+          if (const auto *name = exprAs<QualifiedName>(call->callee().get())) {
+            const auto &path = name->name();
+            const NamePath qualifier(std::vector<Token>(
+                path.segments.begin(), path.segments.end() - 1));
+            const auto scope =
+                resolveNamespacePathGlobally(qualifier, owner->namespaceScope);
+            if (scope) {
+              const auto found = activeNamespaceSymbols().find(
+                  *scope + "::" + path.last().lexeme);
+              if (found != activeNamespaceSymbols().end())
+                callee = &found->second;
+            }
+          } else if (const auto *name = exprAs<Variable>(call->callee().get())) {
+            if (owner->members.contains(name->name().lexeme) ||
+                std::any_of(constructor->parameters().begin(),
+                            constructor->parameters().end(), [&](const auto &p) {
+                              return p.name.lexeme == name->name().lexeme;
+                            }))
+              return std::nullopt;
+            for (std::size_t depth = owner->namespaceScope.size() + 1;
+                 depth > 0 && callee == nullptr; --depth) {
+              const auto found = activeNamespaceSymbols().find(qualifiedName(
+                  owner->namespaceScope, depth - 1, name->name().lexeme));
+              if (found != activeNamespaceSymbols().end())
+                callee = &found->second;
+            }
+          }
+          if (callee == nullptr || callee->overloads.size() != 1)
+            return std::nullopt;
+          const auto &candidate = callee->overloads.front();
+          if (candidate.returnType != expected || candidate.parameterPack ||
+              candidate.parameterTypes.size() != call->arguments().size() ||
+              candidate.returnBorrowOrigin != BorrowOriginKind::Argument ||
+              !candidate.returnBorrowParameters.empty() ||
+              !candidate.returnBorrowFields.empty() ||
+              candidate.returnBorrowParameter >= call->arguments().size())
+            return std::nullopt;
+          argument = &call->arguments()[candidate.returnBorrowParameter];
+          while (const auto *group = exprAs<Grouping>(argument->get()))
+            argument = &group->expression();
+          const auto *source = exprAs<Variable>(argument->get());
+          if (source == nullptr)
+            return std::nullopt;
+          const auto &parameters = constructor->parameters();
+          for (std::size_t index = 0;
+               index < parameters.size() && index < parameterTypes.size(); ++index)
+            if (parameters[index].name.lexeme == source->name().lexeme &&
+                parameterTypes[index].kind == SemanticType::Reference &&
+                parameterTypes[index].referenceAccess == expected.referenceAccess &&
+                !parameters[index].pack)
+              return index;
+          return std::nullopt;
+        }
         const auto intrinsic = intrinsicCandidate(call->callee());
         if (!intrinsic ||
             intrinsic->record().intrinsic != IntrinsicKind::Move ||
@@ -2122,6 +2205,14 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (scope.front() != "gti_internal") {
       return IntrinsicKind::None;
     }
+    if (name == "erase_reference")
+      return IntrinsicKind::EraseReference;
+    if (name == "erase_reference_mut")
+      return IntrinsicKind::EraseReferenceMut;
+    if (name == "restore_reference")
+      return IntrinsicKind::RestoreReference;
+    if (name == "restore_reference_mut")
+      return IntrinsicKind::RestoreReferenceMut;
     if (name == "object_size") {
       return IntrinsicKind::ObjectSize;
     }
@@ -2188,6 +2279,13 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "shared_owner_upcast") {
       return IntrinsicKind::SharedOwnerUpcast;
     }
+    return IntrinsicKind::None;
+  }
+  if (isFunctionalLibraryUnit(sourceUnit) && scope.front() == "gti_internal") {
+    if (name == "function_pointer_from_item")
+      return IntrinsicKind::FunctionPointerFromItem;
+    if (name == "function_pointer_invoke")
+      return IntrinsicKind::FunctionPointerInvoke;
     return IntrinsicKind::None;
   }
   if (isOptionalLibraryUnit(sourceUnit)) {
@@ -2540,13 +2638,16 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(
         {.place = loan.place,
          .designatedFields = loan.designatedFields,
          .access = loan.access,
-         .protectsStorage = loan.protectsStorage}};
+         .protectsStorage = loan.protectsStorage,
+         .parent = loan.id}};
     result.insert(result.end(), loan.additionalDependencies.begin(),
                   loan.additionalDependencies.end());
-    for (auto &dependency : result)
+    for (auto &dependency : result) {
+      dependency.parent = loan.id;
       for (const auto field : dependency.designatedFields)
         dependency.place.projections.push_back(
             {.kind = PlaceProjectionKind::Field, .field = field});
+    }
     return result;
   }
   return {};
@@ -2754,10 +2855,13 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
           {.place = loan->place,
            .designatedFields = loan->designatedFields,
            .access = loan->access,
-           .protectsStorage = loan->protectsStorage}};
+           .protectsStorage = loan->protectsStorage,
+           .parent = loan->id}};
       dependencies.insert(dependencies.end(),
                           loan->additionalDependencies.begin(),
                           loan->additionalDependencies.end());
+      for (auto &dependency : dependencies)
+        dependency.parent = loan->id;
       if (loan->entry && loan->kind == SemanticLoanKind::StoredValue)
         for (auto &dependency : dependencies)
           for (const auto field : dependency.designatedFields)
@@ -2806,7 +2910,10 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
            .access = semanticModel.findExpression(*expression) == nullptr
                          ? AccessMode::ReadOnly
                          : semanticModel.findExpression(*expression)->access,
-           .protectsStorage = hasStableBorrowStorage(expression)}};
+           .protectsStorage = hasStableBorrowStorage(expression),
+           .parent = retainedLoanSource(expression)
+                         ? retainedLoanSource(expression)->loan
+                         : SemanticLoanId{0}}};
 }
 
 auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
@@ -5081,7 +5188,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       }
     }
   }
-  if (storedReferencePaths(carrier->type).size() > 1 &&
+  if (!storedReferencePaths(carrier->type).empty() &&
       ((construction != nullptr && (!construction->borrowArguments.empty() ||
                                     !construction->borrowFields.empty())) ||
        (resolved != nullptr && (!resolved->borrowArguments.empty() ||
@@ -5144,7 +5251,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           }
           if (parameter < arguments.size() &&
               parameter < parameterTypes.size() &&
-              parameterTypes[parameter].kind == SemanticType::Class &&
+              (parameterTypes[parameter].kind == SemanticType::Class ||
+               parameterTypes[parameter].kind == SemanticType::Lambda) &&
               semanticModel.typeOf(*arguments[parameter]) ==
                   parameterTypes[parameter])
             if (const auto source = retainedLoanSource(arguments[parameter]);
@@ -5603,17 +5711,17 @@ auto SemanticVisitor::Impl::recordSemanticLoanUseForLoan(SemanticLoanId loan)
     return;
   }
 
-  const auto conditionalBoundary =
-      std::find_if(loanFlow.conditionalBoundaries.begin(),
-                   loanFlow.conditionalBoundaries.end(),
-                   [&](const LoanFlowConditionalBoundary &candidate) {
+  const auto statementBoundary =
+      std::find_if(loanFlow.statementBoundaries.begin(),
+                   loanFlow.statementBoundaries.end(),
+                   [&](const LoanFlowStatementBoundary &candidate) {
                      return candidate.region == flow.region;
                    });
-  if (conditionalBoundary != loanFlow.conditionalBoundaries.end() &&
-      conditionalBoundary->statement != nullptr) {
-    if (conditionalBoundary->order >= flow.lastUseOrder) {
-      flow.lastUseOrder = conditionalBoundary->order;
-      flow.lastUse = conditionalBoundary->statement;
+  if (statementBoundary != loanFlow.statementBoundaries.end() &&
+      statementBoundary->statement != nullptr) {
+    if (statementBoundary->order >= flow.lastUseOrder) {
+      flow.lastUseOrder = statementBoundary->order;
+      flow.lastUse = statementBoundary->statement;
     }
     return;
   }
@@ -5663,6 +5771,7 @@ auto SemanticVisitor::Impl::supportsProvenLoanEnd(
     const LoanFlowRecord &loan) const -> bool {
   if (stmtAs<VariableDecl>(loan.lastUse) != nullptr ||
       stmtAs<ExpressionStmt>(loan.lastUse) != nullptr ||
+      stmtAs<BlockStmt>(loan.lastUse) != nullptr ||
       stmtAs<IfStmt>(loan.lastUse) != nullptr ||
       stmtAs<SwitchStmt>(loan.lastUse) != nullptr) {
     return true;
@@ -7959,6 +8068,20 @@ auto SemanticVisitor::Impl::runtimeObjectLayoutType(
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  if (intrinsic == IntrinsicKind::EraseReference ||
+      intrinsic == IntrinsicKind::EraseReferenceMut ||
+      intrinsic == IntrinsicKind::RestoreReference ||
+      intrinsic == IntrinsicKind::RestoreReferenceMut) {
+    analyzeReferenceErasureCall(expr, intrinsic);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::FunctionPointerFromItem ||
+      intrinsic == IntrinsicKind::FunctionPointerInvoke) {
+    analyzeFunctionPointerCall(expr, intrinsic);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::TextViewFromAddress ||
       intrinsic == IntrinsicKind::CStringFromAddress) {
     const bool counted = intrinsic == IntrinsicKind::TextViewFromAddress;

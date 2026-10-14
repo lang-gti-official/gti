@@ -744,6 +744,13 @@ SemanticModel::isCompilerPrivateType(const SemanticType &type) const {
     return true;
   case SemanticType::Class: {
     const ClassTypeInfo *info = findClassType(type.classId);
+    // The opaque referent identity may cross a public checked-reference API.
+    // Its private declaration spelling and erase/restore operations remain
+    // trusted; unlike a storage implementation type, the referent itself is
+    // the intended public capability and has no constructible object value.
+    if (info != nullptr &&
+        info->compilerCapability == CompilerCapabilityTypeKind::ErasedObject)
+      return false;
     if (info != nullptr && info->compilerPrivate) {
       return true;
     }
@@ -2030,6 +2037,9 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
   std::size_t occurrences = 0;
   for (const auto &[_, unit] : semanticDatabase.occurrencesByUnit)
     occurrences += unit.size();
+  std::size_t borrowedDependencies = 0;
+  for (const auto &[_, dependencies] : expressionBorrowDependencies)
+    borrowedDependencies += dependencies.size();
   // Records hold nested types and vectors whose allocator footprint is not
   // exposed; charge a deliberately generous per-record estimate so the LRU
   // bound is conservative rather than byte-exact.
@@ -2043,7 +2053,7 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
          (statementFullExpressions.size() + constructorFullExpressions.size() +
           fullExpressionOrder.size()) *
              96 +
-         retainedLoans.size() * 256 +
+         (retainedLoans.size() + borrowedDependencies) * 256 +
          semanticDatabase.symbolRecords.size() * 384 + occurrences * 256 +
          (resolvedSymbols.size() + definedFailures.size() +
           placeSelections.size() + implicitReturnMoves.size()) *

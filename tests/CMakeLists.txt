@@ -1102,6 +1102,11 @@ if(TARGET gti_lsp)
             "${PROJECT_SOURCE_DIR}/tests/borrowed_callable_conditionals_lsp_test.py"
             $<TARGET_FILE:gti_lsp>)
   set_tests_properties(borrowed_callable_conditionals_lsp PROPERTIES TIMEOUT 120)
+  add_test(NAME borrowing_callbacks_lsp
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/tests/borrowing_callbacks_lsp_test.py"
+            $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(borrowing_callbacks_lsp PROPERTIES TIMEOUT 120)
 endif()
 add_test(NAME consuming_call_assignment_runtime
          COMMAND "${Python3_EXECUTABLE}"

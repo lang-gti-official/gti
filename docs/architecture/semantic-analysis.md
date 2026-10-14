@@ -1574,10 +1574,42 @@ captures are immutable copy snapshots. The only owned initializer is
 `[target = std::move(source)]`, where `source` resolves in the enclosing scope
 to an available local or by-value parameter. Semantics invokes the ordinary
 move intrinsic and place-state authority before introducing the new immutable
-target binding, so later captures observe the source as moved. Reference,
-stored-borrowed-state, global/field, and general init captures remain rejected.
+target binding, so later captures observe the source as moved. Explicit `&name`
+and `mut &name` captures instead retain shared/exclusive checked dependencies.
+The common stored-field path identity includes lambda captures as well as record
+fields. Each dependency preserves its origin place, access and parent loan;
+copy/move captures of borrowed carriers retain their nested dependency paths.
+Multiple independent parents are represented explicitly, rather than collapsing
+all captures onto one parent. Global/field capture spelling and general init
+captures remain rejected; a named local reference may select a field first.
 
 ## Confined Callable Contracts
+
+Checked reference erasure is a declaration-bound capability over the existing
+borrow model. Erase/restore calls publish exact argument-origin and access facts;
+restoration additionally records an unsafe exact-referent-type obligation.
+The erased referent is opaque and nonconstructible. A typed GTI invocation
+pointer admits only exact safe stateless targets and records their function or
+lambda identities before HIR. Its erased signature retains GTI failure and
+ownership conventions but cannot encode a borrowed result origin yet. Neither
+capability obtains semantics from a public `std::*` spelling.
+
+Source-defined callable views compose these capabilities with ordinary reference
+fields and captureless invocation thunks. A constructor's single-reference
+helper initializer can retain the helper's checked argument-origin projection;
+the actual selected helper call and result remain verified executable operations,
+not a backend reinterpretation of the formal argument. An unrelated wrapper
+uses the same rule. Current native reference-member preparation supports an
+ordered prefix of exact no-failure reference helper initializers; extending that
+preparation to arbitrary fallible helper calls is a separate lifecycle goal.
+
+An exact checked-reference relay with no callable-use contract can forward a
+borrow of callable state without acquiring ownership or invocation permission.
+Other callable boundaries still require their existing confined/owned contract.
+Generic local reference bindings may be invoked just like generic parameters
+and fields; concrete reanalysis establishes the exact target. Captureless lambda
+parameters may expand a surrounding lexical type pack, with the same concrete
+binding and ownership checks as an ordinary function pack.
 
 A direct by-value or checked-reference generic parameter may acquire a `Confined` callable
 contract when its visible body invokes it or forwards it to another proven
@@ -1666,8 +1698,9 @@ body syntax. An exact same-type return may coexist with a
 `Confined` contract when that parameter has repeatable signatures, no
 forwarding edges, and mutable access only when declared `mut`. A callable
 argument at either transporting boundary must use explicit `std::move`, remain
-exactly typed and movable, and contain no reference, tracked-borrow, or raw-
-pointer stored state. Local closure environment movement and cleanup remain
+exactly typed and movable. Checked borrowed state retains its ordinary
+origin/escape/drop obligations through the transfer; unreviewed raw-pointer
+capture state is not upgraded. Local closure environment movement and cleanup remain
 represented independently and supply its concrete lifecycle evidence.
 
 After confined forwarding reaches its fixed point, a source-defined function's
@@ -1677,14 +1710,15 @@ describes the concrete parameter type, not a
 prescribed return/constructor expression. Branches, local owners, normal
 transfers, and cleanup therefore use ordinary concrete semantic analysis and
 MIR lifecycle verification. It neither upgrades an existing confined contract
-nor permits an implicit caller move or borrowed/raw capture state. MIR requires
+nor permits an implicit caller move or unchecked raw capture state. MIR requires
 the exact initially available parameter place and, for lexical values, its
 initially active cleanup obligation; calls retain their exact consuming input.
 An ordinary `CallInput` may stage a nominal carrier after its explicit move.
 Verification follows the exact single-use stage back to the ownership event;
 the prepared lifetime and its handoff remain independently checked. This does
 not admit a reference parameter, bodyless transport, implicit closure copy, or
-borrowed/raw stored state.
+unchecked raw stored state. A checked borrowed carrier transfers its precise
+stored dependencies to the new field paths, not a reused source carrier identity.
 Final by-value generic packs receive the same contract per concrete closure
 element. Declaration contracts retain the source formal index; instantiated
 contracts and call boundaries use flattened argument indices, so fixed prefixes
@@ -1692,8 +1726,8 @@ and non-callable elements cannot shift ownership onto a different argument.
 Explicit whole-pack expansion preserves the existing copyable-element copy /
 move-only-element move rule. Each copied element gets a fresh prepared lifetime;
 moving any move-only element consumes the source pack. Ordinary call arguments
-still require explicit closure transfer and reject borrowed/raw capture state.
-Callable-reference parameters, general native template shape composition, and
+still require explicit closure transfer and preserve checked capture loans.
+General native template shape composition and
 additional erased allocation/failure profiles remain separate extensions.
 The supported public `function`/`move_only_function` wrappers are implemented
 in ordinary `<std/functional>` source with their exact signature families,
@@ -1717,9 +1751,10 @@ Each exact callable signature also retains a `Read`, `Mutable`, or `Once`
 invocation capability. An immutable by-value generic callable parameter
 requires read-callable invocation. A `mut` by-value parameter permits mutable
 invocation and accepts either a read-callable or mut-callable target; concrete
-reanalysis records which one was selected. Lambdas are read-callable because
-their capture fields remain immutable, whether initialized by copy or owned
-move. A class `operator() ... mut`
+reanalysis records which one was selected. A lambda with an exclusive borrowed
+capture is mut-callable and noncopyable; other lambdas are read-callable. Value
+capture fields remain immutable whether initialized by copy or owned move.
+A class `operator() ... mut`
 is mut-callable. A direct `std::move(operation)()` on a by-value generic
 parameter requires `Once`, consumes that parameter place, and may select an
 exact read-callable, mut-callable, or trailing-`&&` once-callable target.

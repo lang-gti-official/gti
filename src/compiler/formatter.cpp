@@ -440,6 +440,11 @@ public:
           state.append(">");
           --state.templateDepth;
           state.binaryOperator("=");
+        } else if (lexeme.text == "&" &&
+                   isBorrowingCaptureMarker(lexemes, index)) {
+          if (previous != nullptr && previous->kind == Kind::Word)
+            state.space();
+          state.append("&");
         } else if ((lexeme.text == "&" || lexeme.text == "&&") &&
                    !isConceptGenericAngle(lexemes, index) &&
                    isReferenceDeclarator(lexemes, index, declaredTypes)) {
@@ -2431,6 +2436,27 @@ private:
         const Lexeme *next = nextSignificant(lexemes, current);
         return next != nullptr && next->kind == Kind::LeftParen;
       }
+    }
+    return false;
+  }
+
+  static bool isBorrowingCaptureMarker(const std::vector<Lexeme> &lexemes,
+                                       std::size_t index) {
+    const Lexeme *previous = previousSignificant(lexemes, index);
+    if (previous != nullptr && previous->kind == Kind::Word &&
+        previous->text == "mut")
+      previous = previousSignificant(
+          lexemes, static_cast<std::size_t>(previous - lexemes.data()));
+    if (previous == nullptr ||
+        (previous->kind != Kind::LeftBracket && previous->kind != Kind::Comma))
+      return false;
+    for (std::size_t current = index; current-- > 0;) {
+      if (lexemes[current].kind == Kind::LeftBracket)
+        return isLambdaCaptureStart(lexemes, current);
+      if (lexemes[current].kind == Kind::RightBracket ||
+          lexemes[current].kind == Kind::Semicolon ||
+          lexemes[current].kind == Kind::LeftBrace)
+        return false;
     }
     return false;
   }

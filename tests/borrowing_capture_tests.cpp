@@ -1,18 +1,43 @@
 #include "compiler_test_fixture.h"
 
 int main() {
-  const auto positive = [](const std::string &name, const std::string &source) {
-    auto result = analyzeTrustedPreludeFixture(name + ".gti", source);
+  const auto application = [](const std::string &name, const std::string &source,
+                              lang::FrontendOptions options = {}) {
+    const auto entry = std::filesystem::temp_directory_path() / ("gti-app-" + name);
+    return lang::Frontend(std::move(options)).analyze(
+        entry, source, {standardLibraryPrelude()},
+        {{std::filesystem::weakly_canonical(entry).string(), source}},
+        {standardLibraryRoot()});
+  };
+  const auto positive = [&](const std::string &name, const std::string &source) {
+    auto result = application(name + ".gti", source);
     if (!result.canGenerateCode())
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << name << ": " << diagnostic.code << " ("
+                  << diagnostic.primary.source << ":" << diagnostic.primary.line << "): "
+                  << diagnostic.message << '\n';
+    expect(result.canGenerateCode(), name);
+    lang::FrontendOptions reachableOptions;
+    reachableOptions.toolingOccurrences = false;
+    reachableOptions.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
+    reachableOptions.lowerReachableOnly = true;
+    reachableOptions.lowerLibraryReachableOnly = true;
+    const auto reachable = application(
+        name + "-reachable.gti", source, std::move(reachableOptions));
+    if (!reachable.canGenerateCode())
+      for (const auto &diagnostic : reachable.diagnostics)
+        std::cerr << name << " (reachable): " << diagnostic.code << ": "
+                  << diagnostic.message << '\n';
+    expect(reachable.canGenerateCode(), name + " with artifact reachability");
+    return result;
+  };
+  const auto negative = [&](const std::string &name, const std::string &source,
+                           const std::string &code) {
+    const auto result = application(name + ".gti", source);
+    if (result.canGenerateCode() || !hasDiagnosticCode(result.diagnostics, code))
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << name << ": " << diagnostic.code << ": "
                   << diagnostic.message << '\n';
-    expect(result.canGenerateCode(), name);
-    return result;
-  };
-  const auto negative = [](const std::string &name, const std::string &source,
-                           const std::string &code) {
-    const auto result = analyzeTrustedPreludeFixture(name + ".gti", source);
     expect(!result.canGenerateCode() &&
                hasDiagnosticCode(result.diagnostics, code) &&
                !hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
@@ -56,6 +81,97 @@ int main() {
   return invoke(update) - 5;
 }
 )");
+  positive("stored-generic-capture", R"(
+class Handler<F> {
+  mut F callback;
+public:
+  Handler(F callback) : callback(std::move(callback)) {}
+  int run() mut { return this.callback(); }
+};
+Handler<F> store<F>(F callback) {
+  return Handler<F>(std::move(callback));
+}
+int main() {
+  mut int value = 3;
+  mut auto update = [mut &value]() -> int { value += 2; return value; };
+  mut auto handler = store(std::move(update));
+  return handler.run() - 5;
+}
+)");
+  positive("nested-shared-capture", R"(
+int main() {
+  int value = 3;
+  auto read = [&value]() -> int { return value; };
+  auto outer = [read]() -> int { return read(); };
+  return outer() - 3;
+}
+)");
+  positive("capture-last-use", R"(
+int main() {
+  mut int value = 3;
+  auto read = [&value]() -> int { return value; };
+  int previous = read();
+  value = 4;
+  return previous + value - 7;
+}
+)");
+  positive("shared-reentrant-arguments", R"(
+int invoke<F>(F& callback, int& value) {
+  int result = callback();
+  return result + value;
+}
+int main() {
+  int value = 3;
+  auto read = [&value]() -> int { return value; };
+  return invoke(read, value) - 6;
+}
+)");
+  positive("ordinary-reference-block-last-use", R"(
+int main() {
+  mut int owner = 3;
+  mut int& reference = owner;
+  { reference += 2; }
+  owner += 1;
+  return owner - 6;
+}
+)");
+  negative("ordinary-reference-block-future-use", R"(
+int main() {
+  mut int owner = 3;
+  mut int& reference = owner;
+  { reference += 2; }
+  owner += 1;
+  return reference;
+}
+)", "GTI-S2017");
+  negative("ordinary-reference-block-loop-backedge", R"(
+int main() {
+  mut int owner = 3;
+  mut int& reference = owner;
+  for (mut int i = 0; i < 2; i += 1) {
+    { reference += 2; }
+    owner += 1;
+  }
+  return 0;
+}
+)", "GTI-S2017");
+  negative("exclusive-reentrant-arguments", R"(
+int invoke<F>(mut F& callback, mut int& value) { value += 1; return callback(); }
+int main() {
+  mut int value = 3;
+  mut auto update = [mut &value]() -> int { value += 1; return value; };
+  return invoke(update, value);
+}
+)", "GTI-S2017");
+  negative("borrow-then-move-capture", R"(
+int main() {
+  mut int value = 3;
+  auto read = [&value, copied = std::move(value)]() -> int {
+    return value + copied;
+  };
+  return read();
+}
+)", "GTI-S2017");
   negative("shared-capture-mutation", R"(
 int main() {
   mut int value = 0;
@@ -63,6 +179,195 @@ int main() {
   return callback();
 }
 )", "GTI-S2002");
+  positive("erased-reference-round-trip", R"(
+#include <std/memory>
+int main() {
+  mut int owner = 3;
+  mut std::erased_object& erased = std::erase_mut(owner);
+  unsafe {
+    mut int& restored = std::restore_mut<int>(erased);
+    restored += 2;
+  }
+  return owner - 5;
+}
+)");
+  positive("erased-reference-user-wrapper", R"(
+#include <std/memory>
+class Inspection {
+  std::erased_object& object;
+public:
+  Inspection(int& object) : object(std::erase_ref(object)) {}
+  int read() {
+    unsafe { int& value = std::restore_ref<int>(this.object); return value; }
+  }
+};
+int main() { int owner = 7; Inspection view{owner}; return view.read() - 7; }
+)");
+  positive("gti-invocation-pointer", R"(
+#include <std/functional>
+int increment(int value) { return value + 1; }
+int main() {
+  std::function_ptr<int(int)> first{increment};
+  std::function_ptr<int(int)> second{[](int value) -> int { return value + 2; }};
+  return first(3) + second(4) - 10;
+}
+)");
+  positive("read-function-ref", R"(
+#include <std/functional>
+int apply(std::function_ref<int(int)>& operation) { return operation(4); }
+int main() {
+  int offset = 3;
+  auto callback = [&offset](int value) -> int { return offset + value; };
+  std::function_ref<int(int)> view{callback};
+  return apply(view) - 7;
+}
+)");
+  positive("mutable-function-ref", R"(
+#include <std/functional>
+int main() {
+  mut int value = 3;
+  mut auto callback = [mut &value](int amount) -> int { value += amount; return value; };
+  mut std::function_ref<int(int) mut> view{callback};
+  int first = view(2);
+  int second = view(3);
+  return first + second - 13;
+}
+)");
+  negative("restore-requires-unsafe", R"(
+#include <std/memory>
+int main() {
+  int owner = 3;
+  std::erased_object& erased = std::erase_ref(owner);
+  int& restored = std::restore_ref<int>(erased);
+  return restored;
+}
+)", "GTI-S2055");
+  negative("erased-referent-cannot-be-constructed", R"(
+#include <std/memory>
+int main() { std::erased_object forged{}; return 0; }
+)", "GTI-S2019");
+  negative("erased-private-factory-remains-private", R"(
+#include <std/memory>
+int main() {
+  int owner = 3;
+  auto& erased = gti_internal::erase_reference(owner);
+  return 0;
+}
+)", "GTI-S2058");
+  negative("invocation-pointer-has-no-default", R"(
+#include <std/functional>
+int main() { std::function_ptr<int()> pointer{}; return pointer(); }
+)", "GTI-S2012");
+  negative("erased-reference-owner-conflict", R"(
+#include <std/memory>
+int main() {
+  mut int owner = 3;
+  std::erased_object& erased = std::erase_ref(owner);
+  owner = 5;
+  unsafe { int& restored = std::restore_ref<int>(erased); return restored; }
+}
+)", "GTI-S2017");
+  negative("erased-reference-retains-capture-origin", R"(
+#include <std/memory>
+int main() {
+  mut int owner = 3;
+  auto callback = [&owner]() -> int { return owner; };
+  std::erased_object& erased = std::erase_ref(callback);
+  owner = 5;
+  unsafe { int& wrong = std::restore_ref<int>(erased); return wrong; }
+}
+)", "GTI-S2017");
+  negative("erased-reference-is-not-layout-storage", R"(
+#include <std/memory>
+static_assert(!std::layout_queryable<std::erased_object>);
+int main() { std::erased_object forged{}; return 0; }
+)", "GTI-S2019");
+  negative("function-ref-cannot-outlive-local-callable", R"(
+#include <std/functional>
+std::function_ref<int()> bad() {
+  auto callback = []() -> int { return 1; };
+  return std::function_ref<int()>(callback);
+}
+int main() { return 0; }
+)", "GTI-S2045");
+  negative("function-ref-retains-shared-capture-origin", R"(
+#include <std/functional>
+int main() {
+  mut int owner = 3;
+  auto callback = [&owner]() -> int { return owner; };
+  std::function_ref<int()> view{callback};
+  owner = 5;
+  return view();
+}
+)", "GTI-S2017");
+  negative("invocation-pointer-capturing-target", R"(
+#include <std/functional>
+int main() {
+  int value = 3;
+  auto callback = [value]() -> int { return value; };
+  std::function_ptr<int()> pointer{callback};
+  return pointer();
+}
+)", "GTI-S2093");
+  negative("invocation-pointer-signature-mismatch", R"(
+#include <std/functional>
+int main() {
+  std::function_ptr<int(int)> pointer{[](bool value) -> int { return value ? 1 : 0; }};
+  return pointer(3);
+}
+)", "GTI-S2093");
+  negative("invocation-pointer-borrowed-result", R"(
+#include <std/functional>
+int& identity(int& value) { return value; }
+int main() {
+  std::function_ptr<int&(int&)> pointer{identity};
+  return 0;
+}
+)", "GTI-S2093");
+  negative("erased-reference-cannot-invent-mutable-access", R"(
+#include <std/memory>
+int main() {
+  int owner = 3;
+  std::erased_object& erased = std::erase_ref(owner);
+  unsafe {
+    mut int& restored = std::restore_mut<int>(erased);
+    restored = 5;
+  }
+  return owner;
+}
+)", "GTI-S2017");
+  negative("borrowed-callable-outlives-owner", R"(
+#include <std/functional>
+std::function_ref<int()> bad() {
+  int owner = 3;
+  auto callback = [&owner]() -> int { return owner; };
+  return std::function_ref<int()>(callback);
+}
+int main() { auto escaped = bad(); return escaped(); }
+)", "GTI-S2045");
+  negative("exclusive-function-ref-conflicting-call", R"(
+#include <std/functional>
+int invoke(mut std::function_ref<int() mut>& callback, mut int& owner) {
+  owner += 1;
+  return callback();
+}
+int main() {
+  mut int owner = 3;
+  mut auto callback = [mut &owner]() -> int { owner += 1; return owner; };
+  mut std::function_ref<int() mut> view{callback};
+  return invoke(view, owner);
+}
+)", "GTI-S2017");
+  negative("mutable-function-ref-copy", R"(
+#include <std/functional>
+int main() {
+  mut int value = 3;
+  mut auto callback = [mut &value]() -> int { value += 1; return value; };
+  mut std::function_ref<int() mut> view{callback};
+  mut auto copy = view;
+  return copy();
+}
+)", "GTI-S2003");
   negative("exclusive-capture-readonly-source", R"(
 int main() {
   int value = 0;

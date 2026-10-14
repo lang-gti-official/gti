@@ -749,6 +749,8 @@ struct MirInstruction {
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<HirFunctionInstanceId> functionPointerFunctionTarget;
+  std::optional<HirLambdaId> functionPointerLambdaTarget;
   std::optional<SemanticType> nativeCalleeType;
   std::optional<MirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<MirThreadTaskAdapterId> threadTaskAdapter;

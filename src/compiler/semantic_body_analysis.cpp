@@ -774,6 +774,9 @@ auto SemanticVisitor::Impl::leaveUnsafeRegion() -> void {
 }
 
 auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
+  loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
+                                         .order = loanFlow.currentOrder,
+                                         .statement = &stmt});
   if (stmt.isUnsafe())
     enterUnsafeRegion(*stmt.unsafeKeyword(), false);
   beginScope();
@@ -781,6 +784,7 @@ auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
   endScope();
   if (stmt.isUnsafe())
     leaveUnsafeRegion();
+  loanFlow.statementBoundaries.pop_back();
 }
 
 // The work visitClassDecl does before its members (tooling symbol, base and
@@ -4158,7 +4162,7 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
        .conflictBegin = loanFlow.conflicts.size(),
        .parentPath = loanFlow.activeConditionalArms,
        .parentSwitchPath = loanFlow.activeSwitchArms});
-  loanFlow.conditionalBoundaries.push_back({.region = loanFlow.currentRegion,
+  loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
                                             .order = loanFlow.currentOrder,
                                             .statement = &stmt});
   const SemanticType conditionType =
@@ -4234,7 +4238,7 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
   }
   scopes = loanScopes;
   applyMoveStates(moveScopes);
-  loanFlow.conditionalBoundaries.pop_back();
+  loanFlow.statementBoundaries.pop_back();
 }
 
 auto SemanticVisitor::Impl::visitLoopControlStmt(const LoopControlStmt &stmt)
@@ -8290,9 +8294,16 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   std::vector<SemanticType> parameterTypes;
   parameterTypes.reserve(expr.parameters().size());
   for (const Parameter &parameter : expr.parameters()) {
+    const bool previousAllowPack = allowPackTypeReference;
+    allowPackTypeReference = parameter.pack.has_value();
     validateType(parameter.type);
+    allowPackTypeReference = previousAllowPack;
     validateReferencePlacement(parameter.type, true, "lambda parameter");
-    const SemanticType parameterType = typeOf(parameter);
+    const SemanticType declaredType = typeOf(parameter);
+    const SemanticType parameterType =
+        parameter.pack && declaredType.kind == SemanticType::TypeParameter
+            ? SemanticType::typePack(declaredType.genericParameterId)
+            : declaredType;
     validateOwningPayloadEnumByValueBoundary(
         parameterType, parameter.type.name.last(), "lambda parameter",
         directOwningPayloadTransport);
@@ -8308,9 +8319,12 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       report(parameter.type.name.last(),
              "Lambda parameters cannot have type void.", "GTI-S2027");
     }
-    if (parameter.pack) {
+    if (parameter.pack &&
+        (&parameter != &expr.parameters().back() ||
+         parameterType.kind != SemanticType::TypePack)) {
       report(*parameter.pack,
-             "Variadic lambda parameters are not supported yet.", "GTI-S2027");
+             "A lambda parameter pack must be final and name an enclosing "
+             "type pack.", "GTI-S2027");
     }
     parameterTypes.push_back(parameterType);
   }
@@ -8318,7 +8332,9 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   analyzeParameterDefaults(expr.parameters(), parameterTypes,
                            std::span<const std::size_t>{},
                            DefaultArgumentOwnerKind::Function, false,
-                           "lambda parameters", false, !instanceAnalysisActive);
+                           "lambda parameters",
+                           !expr.parameters().empty() && expr.parameters().back().pack.has_value(),
+                           !instanceAnalysisActive);
 
   std::unordered_set<std::string> capturedNames;
   std::vector<LambdaCaptureInfo> captures;
@@ -8417,7 +8433,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         source->type.kind == SemanticType::Reference) {
       report(capture.name,
              "Lambda capture '" + capture.name.lexeme +
-                 "' is a reference; reference captures are not supported.",
+                 "' names a reference; use an explicit '&' or 'mut &' capture.",
              "GTI-S2027");
     }
     if (mode == LambdaCaptureMode::Copy && !traits.copyable) {
@@ -8428,22 +8444,19 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                  ")]' to transfer ownership explicitly.",
              "GTI-S2027");
     }
-    if (mode == LambdaCaptureMode::Move && traits.containsBorrowedState) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2027", DiagnosticPhase::Semantics, capture.name,
-          "Owned lambda move capture cannot contain tracked borrowed "
-          "state.");
-      diagnostic.related.push_back({tokenSpan(sourceBinding.declaration),
-                                    "Borrowed-state source declared here."});
-      diagnostic.hints.emplace_back(
-          "Capture the owning value or keep this callable confined to a "
-          "scope whose lifetime is already proven.");
-      diagnostics.push_back(std::move(diagnostic));
-      continue;
-    }
-
     const std::size_t diagnosticsBeforeInitializer = diagnostics.size();
     const SemanticType initializerType = analyze(capture.initializer);
+    if (!isBorrowingCapture(mode)) {
+      const auto sourcePlace = retainedLoanPlace(capture.initializer);
+      for (const auto &previous : captureDependencies)
+        if ((mode == LambdaCaptureMode::Move ||
+             previous.access == AccessMode::Mutable) &&
+            loanPlacesOverlap(previous.place, sourcePlace))
+          report(capture.name,
+                 "A capture initializer conflicts with an earlier borrowing "
+                 "capture of the same storage.",
+                 "GTI-S2017");
+    }
     const SemanticType captureType =
         isBorrowingCapture(mode)
             ? SemanticType::referenceTo(
@@ -8455,6 +8468,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     if (isBorrowingCapture(mode))
       validateReferenceBinding(captureType, initializerType,
                                capture.initializer);
+    if (mode == LambdaCaptureMode::BorrowMut)
+      recordMutableBindingUse(capture.initializer);
     if (mode == LambdaCaptureMode::Move &&
         diagnostics.size() == diagnosticsBeforeInitializer &&
         (moveCall == nullptr ||
@@ -8492,6 +8507,18 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
           "A borrowing capture overlaps a borrow that may still be live.",
           dependency.parent);
       captureDependencies.push_back(std::move(dependency));
+    } else if (typeTraits(captureType).containsBorrowedState) {
+      auto dependencies = storedBorrowDependencies(capture.initializer);
+      if (storedReferencePaths(captureType).empty() || dependencies.empty())
+        report(capture.name,
+               "Captured borrowed state requires complete checked dependency "
+               "paths for its environment.",
+               "GTI-S2017");
+      for (auto &dependency : dependencies) {
+        dependency.designatedFields.insert(dependency.designatedFields.begin(),
+                                           bindingSymbol);
+        captureDependencies.push_back(std::move(dependency));
+      }
     }
     captures.push_back({.capture = capture.name,
                         .declaration = sourceBinding.declaration,
@@ -8580,11 +8607,15 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   requestSession.rawAccessObservation = 0;
 
   for (const auto &capture : captures) {
-    if (!isBorrowingCapture(capture.mode))
-      continue;
     auto *carrier = resolveMutable(capture.capture);
     if (carrier == nullptr)
       continue;
+    if (!isBorrowingCapture(capture.mode)) {
+      if (isDirectStoredReferenceType(capture.type))
+        recordStoredEntryDependency(*carrier, capture.bindingSymbol,
+                                    capture.type, false);
+      continue;
+    }
     const auto dependency =
         isDirectStoredReferenceType(capture.type.arguments.front())
             ? recordStoredEntryDependency(*carrier, capture.bindingSymbol,
@@ -8603,8 +8634,10 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
 
   for (const Parameter &parameter : expr.parameters()) {
     if (!parameter.name.lexeme.empty()) {
-      recordProgramCleanupEffects(typeOf(parameter), tokenSpan(parameter.name));
-      declare(parameter.name, typeOf(parameter),
+      const auto index = std::size_t(&parameter - expr.parameters().data());
+      const auto &type = parameterTypes[index];
+      recordProgramCleanupEffects(type, tokenSpan(parameter.name));
+      declare(parameter.name, type,
               parameter.mutability == Mutability::Mutable,
               SemanticBindingKind::Parameter, nullptr, &parameter);
       recordParameterEntryLoan(parameter);
@@ -8678,6 +8711,10 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
               : concrete->second);
     }
   }
+  std::vector<SemanticType> expandedParameterTypes;
+  for (const auto &parameterType : parameterTypes)
+    SemanticType::appendExpandedArgument(expandedParameterTypes, parameterType);
+  parameterTypes = std::move(expandedParameterTypes);
   currentType = SemanticType::lambdaType(
       id, returnType, parameterTypes, captureTypes, classTypeArguments,
       functionTypeArguments, classValueArguments, functionValueArguments);
