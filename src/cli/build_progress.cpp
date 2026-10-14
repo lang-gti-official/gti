@@ -63,15 +63,17 @@ bool backendDetail(ProgressPhase phase) {
 
 BuildProgress::BuildProgress(const TerminalStyle &style, ProgressMode mode,
                              std::string name, std::string configuration,
-                             int optimization, bool verbose, bool enabled)
-    : style_(style), name_(safeText(name)), optimization_(optimization),
-      verbose_(verbose), enabled_(enabled && mode != ProgressMode::Never),
+                             int optimization, bool verbose, bool enabled,
+                             ProgressOperation operation)
+    : style_(style), name_(safeText(name)), operation_(operation),
+      optimization_(optimization), verbose_(verbose),
+      enabled_(enabled && mode != ProgressMode::Never),
       interactive_(mode == ProgressMode::Auto && style.interactive(std::cerr) &&
                    style.columns(std::cerr) >= 32),
       start_(std::chrono::steady_clock::now()) {
   if (enabled_) {
-    row("Building", name_ + " (" + safeText(configuration) + ")", Style::Note,
-        false);
+    row(operationVerb(), name_ + " (" + safeText(configuration) + ")",
+        Style::Note, false);
     try {
       worker_ = std::thread([this] { heartbeat(); });
     } catch (const std::system_error &) {
@@ -94,6 +96,10 @@ ProgressObserver *BuildProgress::observer() {
 
 bool BuildProgress::phaseShown() const {
   return verbose_ || !backendDetail(phase_);
+}
+
+std::string_view BuildProgress::operationVerb() const {
+  return operation_ == ProgressOperation::Check ? "Checking" : "Building";
 }
 
 std::string_view BuildProgress::phaseVerb() const {
@@ -123,7 +129,7 @@ std::string_view BuildProgress::phaseVerb() const {
   case ProgressPhase::NativeDependency:
     return "Native";
   case ProgressPhase::Targets:
-    return "Building";
+    return operationVerb();
   }
   return "Working";
 }
@@ -266,9 +272,9 @@ void BuildProgress::heartbeat() {
                         now - phaseStart_ >= std::chrono::seconds(1)),
             Style::Note, interactive_, now - phaseStart_);
       } else {
-        // A hidden phase can still be the slowest one; the overall build
-        // row keeps it from looking like a hang.
-        row("Building", name_, Style::Note, interactive_, now - start_);
+        // A hidden phase can still be the slowest one; the overall operation
+        // row stays live without describing analysis as a native build.
+        row(operationVerb(), name_, Style::Note, interactive_, now - start_);
       }
       lastHeartbeat_ = now;
     }

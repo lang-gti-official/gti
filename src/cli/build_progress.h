@@ -11,6 +11,7 @@
 namespace lang::cli {
 
 enum class ProgressMode { Auto, Plain, Never };
+enum class ProgressOperation { Build, Check };
 
 // One invocation's stderr renderer. Compiler/driver observers remain entirely
 // synchronous; only this presentation layer owns an elapsed-time heartbeat.
@@ -18,7 +19,8 @@ class BuildProgress final : public ProgressObserver {
 public:
   BuildProgress(const TerminalStyle &style, ProgressMode mode, std::string name,
                 std::string configuration, int optimization, bool verbose,
-                bool enabled = true);
+                bool enabled = true,
+                ProgressOperation operation = ProgressOperation::Build);
   ~BuildProgress();
   void onProgress(const ProgressEvent &event) noexcept override;
   [[nodiscard]] ProgressObserver *observer();
@@ -33,11 +35,13 @@ private:
            bool transient, std::chrono::nanoseconds elapsed = {});
   [[nodiscard]] std::string phaseDetail(bool perUnit) const;
   [[nodiscard]] std::string_view phaseVerb() const;
+  [[nodiscard]] std::string_view operationVerb() const;
   [[nodiscard]] bool phaseShown() const;
   void clearRow();
 
   const TerminalStyle &style_;
   std::string name_;
+  const ProgressOperation operation_;
   int optimization_;
   bool verbose_;
   bool enabled_;

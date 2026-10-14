@@ -4162,6 +4162,11 @@ parallel-child output. Its POSIX pseudo-terminal probe holds a native compiler
 process open until elapsed progress arrives, then releases a deliberate native
 failure and verifies live row cleanup and unchanged stdout. It explicitly
 proves the output was visible before the native process exited.
+Check-mode assertions reject `Building` in plain, coloured, verbose and failed
+checks and preserve existing executable/representation bytes. A test-only
+renderer probe holds HIR and MIR phases open until the pseudo-terminal observes
+the elapsed row, then releases them. It requires `Checking` for check mode and
+`Building` for build mode without depending on a program's compilation speed.
 
 The native-detail assertion accepts the intended elapsed-time suffix and
 rejects explicit backend/tool labels. Pure positive and negative cases keep
