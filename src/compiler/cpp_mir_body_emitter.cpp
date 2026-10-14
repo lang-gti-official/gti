@@ -50863,6 +50863,7 @@ constructedFieldInitializerSchedule(const MirProgram &program,
   // member-initializer list: one failure-free base constructor whose scalar
   // arguments are the only instructions before its stage. That stage arms the
   // base rollback, which the shared transfer below retires like a field's.
+  // Any other base is a stateless interface with nothing to initialize.
   const MirInstruction *baseStage = nullptr;
   const MirDropObligation *baseRollback = nullptr;
   if (!passiveDefaultBaseSurface(program, *owner, constructor)) {
@@ -50872,9 +50873,25 @@ constructedFieldInitializerSchedule(const MirProgram &program,
     baseRollback = baseStage != nullptr && baseStage->successResultDrop
                        ? body.findDropObligation(*baseStage->successResultDrop)
                        : nullptr;
+    const bool statelessInterfaces = std::all_of(
+        owner->bases.begin(), owner->bases.end(),
+        [&](const HirBaseInstance &base) {
+          const MirClassInstance *instance =
+              program.findClassInstance(base.instance);
+          return !base.interface ||
+                 (instance != nullptr &&
+                  instance->kind == ClassKind::Interface &&
+                  instance->fields.empty() &&
+                  instance->declaredFields.empty() &&
+                  !instance->requiresActiveCleanup &&
+                  !instance->requiresActiveDropState && !instance->destructor);
+        });
     if (!bases || bases->size() != 1 || bases->front().prepared ||
         bases->front().initializer != 0 || baseStage == nullptr ||
-        baseRollback == nullptr || owner->bases.size() != 1 ||
+        baseRollback == nullptr || !statelessInterfaces ||
+        std::count_if(
+            owner->bases.begin(), owner->bases.end(),
+            [](const HirBaseInstance &base) { return !base.interface; }) != 1 ||
         owner->bases != owner->structuralBases ||
         !constructorBaseRollbackCovered(constructor, *owner) ||
         baseStage->constructorInitializer != 1 || baseStage->result ||

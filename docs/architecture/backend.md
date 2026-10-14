@@ -2712,23 +2712,24 @@ The family composes with a selected base initializer and with owned-parameter
 fields in the same native member-initializer list. The base keeps its own exact
 native binding: one failure-free selected constructor whose scalar arguments are
 the only instructions before its `InitializeBase` stage. That stage arms the
-base's construction rollback, and the shared transfer retires it with the
-field rollbacks. An owned-parameter field keeps its exact `Move`. Either its
-adjacent `Initialize` hands the formal's drop to the field's rollback, or a
-cleanup-free carrier, such as a moved closure, publishes from the constructor
-record. The consumed formal keeps one unconditional scope-end `Drop` of its
-moved-from shell. The owned-parameter proof accepts a move that this schedule
-claims as its complete prefix, even where an impossible child failure splits
-the prologue into blocks. That failure's route may retire the native base after
-the published fields, and the formals that the native list consumed before the
-body ran. Such a retirement may also be a fallible destructor whose failure
-only terminates cleanup failure. The route cannot execute, and C++ performs
-each of these retirements itself. Passive closure shells are natively trivial
-on this route too. In the status form, a native constructed field with no active
-cleanup needs no rollback beside any sibling, because ending the native object
-destroys it without observation. A computed or prepared base argument, a
-fallible base constructor and a child constructor that stages further fields
-in its body remain outside this family.
+base's construction rollback, and the shared transfer retires it with the field
+rollbacks. Any other base must be a stateless interface. An owned-parameter
+field keeps its exact `Move`. Either its adjacent `Initialize` hands the
+formal's drop to the field's rollback, or a cleanup-free carrier, such as a
+moved closure, publishes from the constructor record. The consumed formal keeps
+one unconditional scope-end `Drop` of its moved-from shell. The owned-parameter
+proof accepts a move that this schedule claims as its complete prefix, even
+where an impossible child failure splits the prologue into blocks. That
+failure's route may retire the native base after the published fields, and the
+formals that the native list consumed before the body ran. Such a retirement
+may also be a fallible destructor whose failure only terminates cleanup
+failure. The route cannot execute, and C++ performs each of these retirements
+itself. Passive closure shells are natively trivial on this route too. In the
+status form, a native constructed field with no active cleanup needs no
+rollback beside any sibling, because ending the native object destroys it
+without observation. A computed or prepared base argument, a fallible base
+constructor and a child constructor that stages further fields in its body
+remain outside this family.
 
 A fieldless class with an exactly empty returning constructor body also has
 that ordinary overload, including concrete implementations of stateless

@@ -16,7 +16,8 @@ for what minor and patch releases mean.
   instantiated with a lambda type builds another such class in a member
   initializer next to one of these:
   - a base-class initializer, such as `Derived(F f) : Base(10), inner(Holder<F>(f)) {}`,
-    including a base taking a parameter or an implicit default base
+    including a base taking a parameter, an implicit default base and a base
+    beside an interface
   - a field that takes ownership of another parameter, such as
     `Named(F f, std::string name) : inner(Holder<F>(f)), name(std::move(name)) {}`,
     in either order, including a second lambda moved into a field

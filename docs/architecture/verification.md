@@ -6,7 +6,8 @@
 Lambda-typed classes build `Holder<F>(f)` or `Moved<F>(std::move(f))` as a
 member initializer beside each of these:
 
-- a literal, a forwarded and an implicit default base
+- a literal, a forwarded and an implicit default base, and a base beside an
+  interface
 - an owned string field before or after it
 - two owned string fields
 - a base, an owned string field and a literal field together
