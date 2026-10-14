@@ -56,7 +56,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
-| Borrow surrounding state in a callback or signature-erased view | [154: borrowing callbacks](156-borrowing-callbacks.gti) |
+| Borrow surrounding state in a callback or signature-erased view | [156: borrowing callbacks](156-borrowing-callbacks.gti) |
 | Model an absent value and initialize it later | [84: optional values](084-optional-values.gti) |
 | Read program arguments | [43: hosted arguments](043-program-arguments.gti) |
 | Traverse, search, or modify containers | [90: algorithms](090-generic-algorithms.gti), [87: dictionaries](087-associative-containers.gti) |
