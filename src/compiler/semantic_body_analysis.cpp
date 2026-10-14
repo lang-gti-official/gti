@@ -10157,10 +10157,15 @@ auto SemanticVisitor::Impl::analyzePropagationProtocol(
                : info.id;
   };
   if (returnOwner == nullptr || family(*returnOwner) != family(*owner)) {
+    std::string familyName;
+    for (const std::string &scope : owner->namespaceScope) {
+      familyName += scope + "::";
+    }
+    familyName += owner->name.lexeme;
     return reject(
         "Propagation through '" + typeSpelling(operandType) +
             "' is only available in a function or lambda returning '" +
-            owner->name.lexeme +
+            familyName +
             (currentReturnType == SemanticType::Unknown
                  ? std::string("'.")
                  : "', but this one returns '" +

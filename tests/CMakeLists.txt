@@ -4287,6 +4287,12 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     add_test(
+      NAME propagation_protocol_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/propagation_protocol_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    add_test(
       NAME expected_transform_error_lsp
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/expected_transform_error_lsp_test.py"
