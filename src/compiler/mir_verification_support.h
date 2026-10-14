@@ -16,10 +16,20 @@ namespace lang::mir_detail {
 // that repeated check; every other step, and so every result, is unchanged.
 //
 // rewriteMirDeadInstruction for a program that already passed
-// verifyMirProgram.
+// verifyMirProgram. The program is unchanged when the rewrite is refused,
+// and only the rewritten body is verified afterwards: tombstoning an unused,
+// effect-free computation touches nothing another body or the program
+// metadata refers to, and callers that apply a batch verify the whole
+// program once at its end.
 [[nodiscard]] std::optional<MirDeadInstructionRewrite>
 rewriteVerifiedMirDeadInstruction(MirProgram &program, MirBodyAddress body,
                                   MirInstructionId instruction);
+// Whether rewriteVerifiedMirDeadInstruction would accept the instruction,
+// without mutating or copying the program: the rewrite's exact preconditions.
+[[nodiscard]] bool
+canRewriteVerifiedMirDeadInstruction(const MirProgram &program,
+                                     MirBodyAddress body,
+                                     MirInstructionId instruction);
 // verifyMirOptimizationCoherence where `sourceVerified` or
 // `optimizedVerified` records that the program already passed
 // verifyMirProgram.
