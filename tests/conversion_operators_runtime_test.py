@@ -4,9 +4,10 @@
 `Target(value)`, and a declaration through an `implicit` operator, call the
 operator with the converted value as the receiver. The fixture traces each
 conversion in every mode: the fresh result's construction and destruction, a
-temporary receiver released at the end of its full expression, a consuming
-receiver whose state moves out exactly once, a mutable receiver's update, and
-the failure cleanup of a receiver when the operator fails. The expected traces
+temporary receiver released at the end of its full expression (a field
+default's before the constructor body), a consuming receiver whose state moves
+out exactly once, a mutable receiver's update, and the failure cleanup of a
+receiver when the operator fails. The expected traces
 follow from the fixture's source alone (construction prints the id,
 destruction its negation), so they are independent of the lowering.
 """
@@ -23,6 +24,7 @@ CASES = [
     (0, 0, [1, 101, 101, 203, -101, -101, -1,
             2, 102, -2, 102, -102,
             3, 4, 7, -4, -3,
+            6, 106, -6, 107, 106, -106,
             28], None),
     (1, 70, [7, -7], ("ordinary", "failing")),
     (2, 70, [8, -8], ("ordinary", "handle")),
