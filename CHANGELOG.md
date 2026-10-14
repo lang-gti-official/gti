@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.431.2 — Generic classes instantiated with lambda types
+
+- Fix the internal compiler error that 0.431.1 still listed (`GTI-B0001`,
+  "backend failed while generating a representation") when a generic class
+  instantiated with a lambda type copies the lambda into a field, such as
+  `Holder(F f) : callback(f) {}` for a `Holder<F>` created in `use<F>(F f)`
+  called with a lambda. This works for lambdas without captures and lambdas
+  capturing numbers, plain enums or plain structs, with or without a base
+  class, beside other fields including ones that take ownership of a
+  parameter, and when one class is used with several lambdas. The copy leaves
+  the original lambda usable.
+- A lambda capturing a fixed array, a payload enum or another lambda, a class
+  built from a lambda inside another class's member initializer, and a
+  computed base-class argument in such a class still stop with this error.
+
 ## 0.431.1 — Base arguments of generic classes
 
 - Fix the internal compiler error that 0.430.1 still listed (`GTI-B0001`,

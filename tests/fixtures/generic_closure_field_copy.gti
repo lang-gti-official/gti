@@ -1,0 +1,160 @@
+// A generic class instantiated with a closure type copies a closure parameter
+// into its field. The copy keeps the closure's captures, leaves the source
+// closure usable, and composes with a base class, a moved sibling field, owned
+// string fields, a second closure type, a returned owner and a copied owner.
+#include <std/string>
+#include <std/utility>
+
+class Holder<F> {
+public:
+  F callback;
+  int value;
+  Holder(F f) : callback(f), value(10) {}
+  int invoke() { return callback(); }
+};
+
+int use<F>(F f) {
+  Holder<F> h = Holder<F>(f);
+  return h.value;
+}
+
+int invoke_held<F>(F f) {
+  Holder<F> h = Holder<F>(f);
+  return h.value + h.invoke();
+}
+
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+
+class Base {
+public:
+  int amount;
+  Base(int amount) : amount(amount) {}
+};
+
+class Fixed<F> : public Base {
+public:
+  F callback;
+  Fixed(F f) : Base(20), callback(f) {}
+  int invoke() { return callback(); }
+};
+
+class Forwarded<F> : public Base {
+public:
+  F callback;
+  Forwarded(int amount, F f) : Base(amount), callback(f) {}
+  int invoke() { return callback(); }
+};
+
+class Defaulted {
+public:
+  int amount = 40;
+};
+
+class Implicit<F> : public Defaulted {
+public:
+  F callback;
+  Implicit(F f) : callback(f) {}
+  int invoke() { return callback(); }
+};
+
+int derived<F>(F f) {
+  Fixed<F> fixed = Fixed<F>(f);
+  Forwarded<F> forwarded = Forwarded<F>(30, f);
+  Implicit<F> implicit = Implicit<F>(f);
+  return fixed.amount + fixed.invoke() + forwarded.amount +
+         forwarded.invoke() + implicit.amount + implicit.invoke();
+}
+
+// The formal remains available after its copy, so the next field moves it.
+class Pair<F> {
+public:
+  F first;
+  F second;
+  Pair(F f) : first(f), second(std::move(f)) {}
+  int one() { return first(); }
+  int two() { return second(); }
+};
+
+int pair<F>(F f) {
+  Pair<F> p = Pair<F>(f);
+  return p.one() + p.two();
+}
+
+class Two<F, G> {
+public:
+  F first;
+  G second;
+  Two(F f, G g) : first(f), second(g) {}
+  int one() { return first(); }
+  int two() { return second(); }
+};
+
+int two<F, G>(F f, G g) {
+  Two<F, G> t = Two<F, G>(f, g);
+  return t.one() + t.two();
+}
+
+Holder<F> make<F>(F f) { return Holder<F>(f); }
+
+int copied<F>(F f) {
+  Holder<F> h = Holder<F>(f);
+  Holder<F> copy = h;
+  return copy.invoke() + h.invoke();
+}
+
+// Owned siblings move in the native member-initializer list beside the copy.
+class Named<F> {
+public:
+  F callback;
+  std::string name;
+  int value;
+  Named(F f, std::string name) : callback(f), name(std::move(name)), value(5) {}
+  int invoke() { return callback(); }
+};
+
+int named<F>(F f) {
+  std::string label{"hello"};
+  Named<F> n = Named<F>(f, std::move(label));
+  return n.value + n.invoke() + (n.name.size() == 5 ? 5 : 0);
+}
+
+class Labelled<F> {
+public:
+  std::string first;
+  F callback;
+  std::string second;
+  Labelled(std::string a, F f, std::string b)
+      : first(std::move(a)), callback(f), second(std::move(b)) {}
+  int invoke() { return callback(); }
+};
+
+int labelled<F>(F f) {
+  std::string a{"ab"};
+  std::string b{"cde"};
+  Labelled<F> l = Labelled<F>(std::move(a), f, std::move(b));
+  return l.invoke() + (l.first.size() == 2 ? 2 : 0) +
+         (l.second.size() == 3 ? 3 : 0);
+}
+
+int main() {
+  std::println(use([]() -> int { return 1; }));
+  int k = 3;
+  std::println(invoke_held([k]() -> int { return k; }));
+  Offset offset{4};
+  std::println(invoke_held([offset]() -> int { return offset.amount; }));
+  std::println(derived([k]() -> int { return k; }));
+  std::println(pair([k]() -> int { return k + 1; }));
+  std::println(two([k]() -> int { return k; },
+                   [offset]() -> int { return offset.amount; }));
+  auto held = make([k]() -> int { return k * 2; });
+  std::println(held.value + held.invoke());
+  std::println(copied([offset]() -> int { return offset.amount; }));
+  std::println(named([k]() -> int { return k; }));
+  std::println(named([offset]() -> int { return offset.amount; }));
+  std::println(labelled([k]() -> int { return k; }));
+  std::println(labelled([offset]() -> int { return offset.amount; }));
+  return 0;
+}
