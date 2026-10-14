@@ -169,7 +169,8 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::FunctionPointerFromItem:
     return supported("exact stateless invocation address; signature retained");
   case IntrinsicKind::FunctionPointerInvoke:
-    return barrier("signature-erased GTI call preserves failure and user-code effects");
+    return barrier(
+        "signature-erased GTI call preserves failure and user-code effects");
   case IntrinsicKind::NumericTypeParameterConversion:
   case IntrinsicKind::NumericAliasConversion:
   case IntrinsicKind::RawPointerConversion:

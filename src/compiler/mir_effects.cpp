@@ -226,8 +226,10 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     // Stateless target formation has no runtime environment.
     MirEffectTraits{.initializesValue = true},
     // Signature erasure hides target effects but preserves its failure ABI.
-    MirEffectTraits{.readsUnknownMemory = true, .writesUnknownMemory = true,
-                    .mayTrap = true, .invokesUserCode = true},
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .mayTrap = true,
+                    .invokesUserCode = true},
     // StringViewSize: a pure read of the view's stored length.
     MirEffectTraits{},
     // StringViewEmpty
@@ -1907,7 +1909,8 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
     auto result = RelocationKind::Bitwise;
     if (owner->compilerCapability == CompilerCapabilityTypeKind::TextView ||
         owner->compilerCapability == CompilerCapabilityTypeKind::CString ||
-        owner->compilerCapability == CompilerCapabilityTypeKind::FunctionPointer) {
+        owner->compilerCapability ==
+            CompilerCapabilityTypeKind::FunctionPointer) {
       result = RelocationKind::Bitwise;
     } else if (owner->compilerCapability ==
                    CompilerCapabilityTypeKind::SharedOwner ||

@@ -16802,15 +16802,15 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!invalidOwnedMoveCapture.canGenerateCode() &&
-             hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
-                           "already been moved") &&
-             hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
-                           "limited to the explicit owned-move form") &&
-             hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
-                           "is not movable"),
-         "owned move capture should update source availability and reject "
-         "general or non-movable init captures");
+  expect(
+      !invalidOwnedMoveCapture.canGenerateCode() &&
+          hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
+                        "already been moved") &&
+          hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
+                        "limited to the explicit owned-move form") &&
+          hasDiagnostic(invalidOwnedMoveCapture.diagnostics, "is not movable"),
+      "owned move capture should update source availability and reject "
+      "general or non-movable init captures");
 
   lang::Lexer lexer;
   lang::Parser parser(lexer.scan(R"(
@@ -16825,8 +16825,10 @@ int main() {
   const lang::Program recovered = parser.parse();
   expect(parser.hadError() && !recovered.declarations().empty() &&
              hasDiagnostic(parser.errors(), "capture defaults") &&
-             hasDiagnostic(parser.errors(), "borrowing capture names an existing binding"),
-         "the parser should reject capture defaults and borrowing init captures while "
+             hasDiagnostic(parser.errors(),
+                           "borrowing capture names an existing binding"),
+         "the parser should reject capture defaults and borrowing init "
+         "captures while "
          "recovering around the supported move-capture syntax");
 
   const std::string formatted = lang::Formatter().format(

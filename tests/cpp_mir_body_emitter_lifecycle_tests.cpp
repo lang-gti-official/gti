@@ -7410,7 +7410,8 @@ int main() {
     return;
   }
   const std::optional<std::vector<lang::CppMirStoredReferenceBinding>>
-      bindings = lang::cppMirStoredReferenceBindings(*constructor);
+      bindings =
+          lang::cppMirStoredReferenceBindings(frontend.mir, *constructor);
   expect(bindings.has_value() && bindings->size() == 1 &&
              (*bindings)[0].parameter == 0,
          "the schedule should pair the reference field with the reference "
@@ -12438,7 +12439,8 @@ void testPhysicalCarrierReferencePublication() {
           loan.storedField == 0 || loan.storedDependency == 0)
         continue;
       ++fields;
-      const auto bindings = lang::cppMirStoredReferenceBindings(constructor);
+      const auto bindings =
+          lang::cppMirStoredReferenceBindings(frontend.mir, constructor);
       expect(bindings && bindings->size() == 1,
              "shared physical reference binds the exact native formal");
       for (int mutation = 0; mutation != 6; ++mutation) {
@@ -12465,7 +12467,7 @@ void testPhysicalCarrierReferencePublication() {
                 instruction.operands.front().place = 0;
         if (mutation == 5)
           changed.parameterTypes.front() = lang::SemanticType::Int32;
-        expect(!lang::cppMirStoredReferenceBindings(changed),
+        expect(!lang::cppMirStoredReferenceBindings(frontend.mir, changed),
                "physical formal publication rejects forged source/dependency, "
                "shell, producer or parameter type " +
                    std::to_string(mutation));
