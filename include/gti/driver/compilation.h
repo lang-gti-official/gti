@@ -163,6 +163,7 @@ struct CompilationResult {
   std::optional<BackendArtifact> artifact;
   SourceManager sources;
   std::vector<Diagnostic> diagnostics;
+  std::vector<std::string> testCases;
   std::vector<MirVerificationError> mirErrors;
   std::optional<std::string> preOptimizationMir;
   std::optional<std::string> postOptimizationMir;

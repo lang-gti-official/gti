@@ -104,6 +104,36 @@ record, and terminates with status 70. Infallible allocation exhaustion instead
 reports best-effort and aborts at its detector, as specified in
 [Execution And Runtime Semantics](execution.md#410-defined-runtime-failure).
 
+### Annotated test suites
+
+`[[test]]` marks a defined, safe, non-generic namespace-scope function with no
+parameters and an exact `void` result. Namespaced functions are eligible;
+file-static functions, instance/static methods, operators, hosted `main`, foreign/runtime
+declarations, unsafe functions, bodyless declarations and attribute arguments
+are rejected with `GTI-S2099`. Duplicate annotations are also rejected.
+Returning normally indicates success; a defined runtime failure, panic or
+abnormal process exit fails that test.
+
+A manifest target with `kind = "test"` selects one explicit suite root. Its
+source graph supplies the tests in the selected package; dependency and trusted
+standard-library tests are not automatically run. Qualified names determine
+stable ordering and reporting. One native executable is built for the suite,
+then each test runs in a fresh process with fresh globals and normal hosted
+initialization/cleanup. A panic terminates its child, and later tests continue.
+The command reports every result and returns the first failing child status.
+
+Annotated suites supply their entry point automatically and cannot also define
+their own hosted `main`. A legacy target with `main` and no annotations still
+runs once as before. A root with neither form is diagnosed before native
+compilation. Ordinary executable/fragment compilation does not discover or
+invoke tests merely because a function is annotated.
+
+`<std/testing>` provides `std::testing::check(bool, string_view message =
+"Test check failed")`, a source-defined caller-tracked wrapper over `std::panic`.
+Failure reports the user's check location and preserves normal deterministic
+cleanup. The library does not catch or resume a panic.
+See [`examples/annotated-tests`](../../examples/annotated-tests/README.md).
+
 ## 6.2 Target And Configuration Selection
 
 `#if`, `#elif`, and `#else` select declarations, class members, or block items

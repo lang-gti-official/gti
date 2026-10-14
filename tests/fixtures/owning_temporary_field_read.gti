@@ -54,6 +54,29 @@ expected<counted, int32_t> make_counted_result(bool ok) {
 
 int32_t bump(int32_t value) { return value + 1; }
 
+// A constructed temporary is read in place the same way. These destructors
+// make its destruction visible on the failure paths below.
+class traced {
+public:
+  int32_t number;
+  traced(int32_t number) : number(number) {}
+  ~traced() {
+    std::print("destroyed ");
+    std::println(this.number);
+  }
+};
+
+// A constructor that can fail publishes its result on its success edge.
+class checked_traced {
+public:
+  int32_t number;
+  checked_traced(int32_t number) : number(number + 1) {}
+  ~checked_traced() {
+    std::print("destroyed ");
+    std::println(this.number);
+  }
+};
+
 int main(int argc, std::vector<std::string> argv) {
   bool yes = argc > 0;
   bool no = !yes;
@@ -65,6 +88,12 @@ int main(int argc, std::vector<std::string> argv) {
   }
   if (argc == 4) {
     return make_checked(2147483647).number;
+  }
+  if (argc == 5) {
+    return traced(4).number + bump(2147483647);
+  }
+  if (argc == 6) {
+    return checked_traced(2147483647).number;
   }
   if (make_counted(5).number != 5) { return 1; }
   if (destroyed != 1) { return 2; }
@@ -83,5 +112,11 @@ int main(int argc, std::vector<std::string> argv) {
     total += make_counted(index).number;
   }
   if (total != 3 || destroyed != 7) { return 13; }
+  if (counted(9).number != 9) { return 14; }
+  if (nested(6).inner.code != 6) { return 15; }
+  if (int32_t(named_value(std::string("abcd")).text.size()) != 4) {
+    return 16;
+  }
+  if (destroyed != 9) { return 17; }
   return 0;
 }

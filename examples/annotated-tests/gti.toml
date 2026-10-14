@@ -1,0 +1,17 @@
+manifest-version = 1
+
+[package]
+name = "annotated-tests"
+version = "0.1.0"
+
+[targets.engine-tests]
+kind = "test"
+root = "tests/main.gti"
+
+[profiles.dev]
+optimization = 0
+cpp-standard = "c++23"
+
+[profiles.release]
+optimization = 3
+cpp-standard = "c++23"

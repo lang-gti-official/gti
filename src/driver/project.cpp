@@ -1099,6 +1099,7 @@ const std::vector<ProjectExport> &ProjectBuildPlan::exports() const {
 
 ProgramRequest ProjectBuildPlan::programRequest() const {
   ProgramRequest request;
+  request.testSuite = projectTargetKind == ProjectTargetKind::Test;
   request.kind = projectTargetKind == ProjectTargetKind::Library
                      ? ProgramKind::Library
                      : ProgramKind::Executable;

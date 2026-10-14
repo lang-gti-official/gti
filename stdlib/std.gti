@@ -40,6 +40,7 @@ export import std.source_location;
 export import std.span;
 export import std.string;
 export import std.string_view;
+export import std.testing;
 export import std.thread;
 export import std.unordered_map;
 export import std.unordered_set;

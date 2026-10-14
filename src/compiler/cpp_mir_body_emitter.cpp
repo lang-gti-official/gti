@@ -8806,11 +8806,17 @@ classValuePublicationSlot(const MirProgram &program, const MirBody &body,
   return conditionalClassBindingJoinSlotForValue(program, body, valueId);
 }
 
+[[nodiscard]] const MirPlace *fieldViewedConstructionSlot(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const MirBody &body, const MirInstruction &construct);
+
 // A destination-less class Construct can publish only into the one exact
 // storage consumer represented in MIR. Keep this classifier shared by the
 // support probe and writer so newly admitted slot families cannot diverge.
 [[nodiscard]] MirPlaceId
-constructDestinationSlot(const MirBody &body, const MirInstruction &construct) {
+constructDestinationSlot(const MirProgram &program,
+                         const CppMirBodyEmissionMap &representations,
+                         const MirBody &body, const MirInstruction &construct) {
   if (!construct.result) {
     return 0;
   }
@@ -8828,6 +8834,9 @@ constructDestinationSlot(const MirBody &body, const MirInstruction &construct) {
   if (temporary.producer == &construct && temporary.slot != nullptr) {
     return temporary.slot->id;
   }
+  if (const MirPlace *owned = fieldViewedConstructionSlot(
+          program, representations, body, construct))
+    return owned->id;
   MirPlaceId selected = 0;
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
@@ -21948,7 +21957,8 @@ struct ValueRootedClassCallResultSlot {
 // the latter case MIR replaces the destination's live state with the result
 // before ending the moved-from shell. Preserve that exact slot and schedule
 // instead of inventing an initialized C++ SSA local whose destructor would run
-// again.
+// again. A construction whose result is read only through field views owns
+// its result in the same slot.
 [[nodiscard]] ValueRootedClassCallResultSlot
 valueRootedClassCallResultSlot(const MirProgram &program,
                                const CppMirBodyEmissionMap &representations,
@@ -22115,13 +22125,45 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       ownedExpectedClassExtractionProducer(body, valueId).call == producer &&
       producer->successResultDrop == drop->id &&
       invokeSuccessActivates(body, *producer, drop->id);
+  // A construction owns its result in the same value-rooted slot. A
+  // failure-free constructor arms the result's obligation with its own
+  // Initialize event and a raising one on its Invoke success edge, after every
+  // by-value input it consumed has transferred out.
+  const MirConstructorInstance *constructor =
+      producer != nullptr && producer->constructorTarget
+          ? program.findConstructorInstance(*producer->constructorTarget)
+          : nullptr;
+  const MirClassInstance *constructedOwner =
+      constructor == nullptr ? nullptr
+                             : program.findClassInstance(constructor->owner);
+  const bool constructionProducer =
+      producer != nullptr && producer->kind == MirInstructionKind::Construct &&
+      producer->result && *producer->result == valueId &&
+      !producer->destination && !producer->receiver &&
+      producer->constructorKind == ConstructorKind::Ordinary &&
+      constructedOwner != nullptr && value != nullptr &&
+      constructedOwner->type == value->info.type && !producer->functionTarget &&
+      !producer->lambdaTarget && !producer->bodyTarget &&
+      !producer->callableInvocation &&
+      producer->intrinsic == IntrinsicKind::None &&
+      producer->objectAllocation == 0 && producer->localFailureSites.empty() &&
+      (producer->definedFailure.empty() ||
+       producer->definedFailure.propagation ==
+           FailurePropagationKind::Constructor) &&
+      producer->definedFailure.localOrigins.empty() && completeInputTransfers &&
+      !producer->successResultDestination &&
+      constructor->parameterTypes == producer->parameterTypes &&
+      constructor->parameterTypes.size() == producer->operands.size() &&
+      hasCompleteCallInputSchedule(body, *producer) && drop != nullptr &&
+      callSuccessActivates(body, *producer, drop->id);
   if (value == nullptr || value->info.type.kind != SemanticType::Class ||
       value->info.category != ValueCategory::Value ||
       value->info.traits.drop != DropKind::Lexical || producer == nullptr ||
       !producer->result || *producer->result != valueId ||
       producer->info.type != value->info.type ||
       (!transformedCallProducer && !plainCallProducer &&
-       !defaultConstructionProducer && !ownedExtractionProducer) ||
+       !defaultConstructionProducer && !ownedExtractionProducer &&
+       !constructionProducer) ||
       drop == nullptr || drop->kind != MirDropObligationKind::Value ||
       drop->initiallyActive || drop->dropType.type != value->info.type ||
       slot == nullptr || slot->root != MirPlaceRootKind::Value ||
@@ -22157,7 +22199,9 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       // One assignment uses the same exact Replace/drop proof as an ordinary
       // class-returning call below, including failure of old-value cleanup.
       (ownedExtractionProducer && fieldViews == 0 &&
-       executableUses.size() != 1)) {
+       executableUses.size() != 1) ||
+      // Every other construction consumer keeps its own publication route.
+      (constructionProducer && fieldViews == 0)) {
     return {};
   }
 
@@ -22266,7 +22310,8 @@ valueRootedClassCallResultSlot(const MirProgram &program,
           continue;
         }
         const bool defaultActivation =
-            (defaultConstructionProducer || plainCallProducer) &&
+            (defaultConstructionProducer || plainCallProducer ||
+             constructionProducer) &&
             &instruction == producer &&
             event.kind == MirLifecycleEventKind::Initialize &&
             event.source == 0 && event.target == drop->id &&
@@ -22327,7 +22372,8 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       if (event.source != drop->id && event.target != drop->id) {
         continue;
       }
-      if (!(transformedCallProducer || ownedExtractionProducer) ||
+      if (!(transformedCallProducer || ownedExtractionProducer ||
+            constructionProducer) ||
           block.terminator.kind != MirTerminatorKind::Invoke ||
           block.terminator.invokeInstruction != producer->id ||
           event.kind != MirLifecycleEventKind::Initialize ||
@@ -22526,6 +22572,23 @@ owningTemporaryMoveAlias(const MirProgram &program,
       return nullptr;
   }
   return (views != 0) != (assignment != nullptr) ? temporary : nullptr;
+}
+
+// The storage a construction publishes into when its result is read only
+// through field views: the conditional temporary holding its obligation inside
+// a short-circuit operand or conditional arm, and otherwise its own owned
+// result slot.
+[[nodiscard]] const MirPlace *fieldViewedConstructionSlot(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const MirBody &body, const MirInstruction &construct) {
+  if (construct.kind != MirInstructionKind::Construct || !construct.result)
+    return nullptr;
+  if (const MirPlace *temporary = conditionalTemporaryViewedResult(
+          program, representations, body, *construct.result))
+    return temporary;
+  const ValueRootedClassCallResultSlot owned = valueRootedClassCallResultSlot(
+      program, representations, body, *construct.result);
+  return owned.producer == &construct ? owned.slot : nullptr;
 }
 
 // The owned result's slot when this place is one of its field views.
@@ -34935,10 +34998,11 @@ private:
            currentFamilyLabel.starts_with("deduced-callable");
   }
 
-  [[nodiscard]] static MirPlaceId
+  [[nodiscard]] MirPlaceId
   constructDestination(const ScalarBodyFacts &facts,
-                       const MirInstruction &construct) {
-    return constructDestinationSlot(facts.body, construct);
+                       const MirInstruction &construct) const {
+    return constructDestinationSlot(program, representations, facts.body,
+                                    construct);
   }
 
   // The slot protocol owns any construct whose value a slot-place
@@ -40844,11 +40908,18 @@ private:
       }
       const DirectTemporaryBorrow temporary =
           directTemporaryBorrowForValue(facts.body, *instruction.result);
-      if (temporary.producer == &instruction && temporary.slot != nullptr &&
+      // A result read only through field views constructs in its own owned
+      // result slot exactly as a borrowed temporary does.
+      const MirPlace *temporarySlot =
+          temporary.producer == &instruction
+              ? temporary.slot
+              : fieldViewedConstructionSlot(program, representations,
+                                            facts.body, instruction);
+      if (temporarySlot != nullptr &&
           (!failureForm || transformedConstructor(instruction) == nullptr)) {
         writeIndent();
         output << "__gti_mir_p_"
-               << canonicalSlotPlaceId(facts.body, *temporary.slot)
+               << canonicalSlotPlaceId(facts.body, *temporarySlot)
                << ".construct(";
         const auto special = generatedSpecialMemberConstruction(
             program, facts.body, instruction, true);
@@ -41023,6 +41094,12 @@ private:
           if (prvalue.producer == &instruction) {
             slot = prvalue.slot;
           }
+        }
+        if (slot == nullptr && !publishesReturn && !expectedPayload) {
+          // A result read only through field views constructs in its own
+          // owned result slot, armed on the Invoke success edge.
+          slot = fieldViewedConstructionSlot(program, representations,
+                                             facts.body, instruction);
         }
         if (!publishesReturn && !expectedPayload && slot == nullptr &&
             !publishesConstructionSlot) {
@@ -53500,7 +53577,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     return found != representations_.bodies().end() && !found->spelling.empty();
   };
   const auto constructSlot = [&](const MirInstruction &construct) {
-    return constructDestinationSlot(body, construct);
+    return constructDestinationSlot(program_, representations_, body,
+                                    construct);
   };
   const auto syntheticBool = [](const MirOperand &operand) {
     return operand.kind == MirOperandKind::Constant && operand.value == 0 &&
@@ -55625,6 +55703,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             if (prvalue.producer == &instruction) {
               slot = prvalue.slot;
             }
+          }
+          if (slot == nullptr && !publishesReturn) {
+            // A result read only through field views constructs in its own
+            // owned result slot, armed on the Invoke success edge.
+            slot = fieldViewedConstructionSlot(program_, representations_, body,
+                                               instruction);
           }
           const ClassSsaLifetimeSlot constructionSlot =
               !publishesReturn && instruction.result
