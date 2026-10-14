@@ -3426,6 +3426,9 @@ it reproduces on the independent 0.380.0 callback release too.
 
 `native_callback_pipeline` also covers explicit thread-confined contracts,
 target/adapter role mutations, non-removable binding effects and formatting.
+Paired factory summaries require runtime binding effects only in the concurrent
+profile; passive legacy conversions remain passive in whole-function summaries
+as well as instruction queries.
 `thread_confined_callback_runtime` covers same-thread nesting, managed/manual
 workers, unused cross-thread registration, foreign entry, stopped scopes and
 runtime shutdown, and target cleanup/termination on both initial and managed
