@@ -508,7 +508,10 @@ struct CppMirBaseParameterInitializerBinding {
 };
 // Exact pre-base MIR partition. No source expressions are reconstructed by
 // its representation writer; scalar values and places cross the native
-// delegation boundary through a pointer-free preparation carrier.
+// delegation boundary by copy through the preparation carrier. A class
+// temporary of the base initializer's full expression instead lives in one of
+// the carrier's lifetime slots, which the carrier's constructor builds in
+// place, so its MIR Drop still runs after native base construction.
 struct CppMirBasePreparation {
   MirInstructionId stage = 0;
   MirBlockId stageBlock = 0;
@@ -517,6 +520,7 @@ struct CppMirBasePreparation {
   std::vector<MirValueId> values;
   std::vector<MirValueId> carriedValues;
   std::vector<MirPlaceId> places;
+  std::vector<MirPlaceId> slots;
 };
 [[nodiscard]] bool
 cppMirBaseGateEligible(const MirProgram &program,

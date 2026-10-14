@@ -105,6 +105,38 @@ struct Split {
   int32_t lap = Gauge(12).reading().value;
 };
 
+// A temporary bound to a reference parameter also ends with its own
+// initializer, whether or not it has a destructor.
+class Probe {
+public:
+  Probe(int32_t id) : id(id) {}
+
+  ~Probe() {
+    drops += 1;
+  }
+
+  int32_t id;
+};
+
+Reading measure(Probe& probe) { return Reading(probe.id + drops); }
+
+Reading twice(Reading& reading) { return Reading(reading.value * 2); }
+
+class Ruler {
+public:
+  Reading mark = measure(Probe(20));
+  int32_t after_mark = drops;
+  Reading other;
+  int32_t after_other = drops;
+  Reading doubled = twice(Reading(4));
+
+  Ruler() : other(measure(Probe(30))) {}
+};
+
+struct Gauged {
+  Reading mark = measure(Probe(40));
+};
+
 int main() {
   int32_t first = Tracker(1).update(2);
   if (first != 3 || drops != 1) {
@@ -148,6 +180,18 @@ int main() {
   if (split.lap != 12 || drops != 10) {
     return 8;
   }
+
+  Ruler ruler{};
+  if (ruler.mark.value != 30 || ruler.after_mark != 11 ||
+      ruler.other.value != 41 || ruler.after_other != 12 ||
+      ruler.doubled.value != 8 || drops != 12) {
+    return 9;
+  }
+
+  Gauged gauged{};
+  if (gauged.mark.value != 52 || drops != 13) {
+    return 10;
+  }
   return 0;
 }
 """
@@ -177,8 +221,8 @@ int main() {
                 executed = run([str(executable)])
                 if executed.returncode != 0:
                     sys.stderr.write(
-                        "temporary receiver cleanup, overload selection or "
-                        "initializer ordering "
+                        "temporary receiver or reference argument cleanup, "
+                        "overload selection or initializer ordering "
                         f"failed for {standard} {optimization}: "
                         f"exit={executed.returncode} stdout={executed.stdout!r} "
                         f"stderr={executed.stderr!r}\n"
