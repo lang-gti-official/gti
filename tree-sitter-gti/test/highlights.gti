@@ -333,3 +333,5 @@ struct ConversionHighlight {
   int raw;
   implicit operator int() { return this.raw; }
 };
+
+[[test]] void annotated_test_highlight() {}

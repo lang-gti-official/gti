@@ -1,0 +1,7 @@
+#include <std/testing>
+
+int main() {
+  std::testing::check(2 + 2 == 4, "Addition changed");
+  std::testing::check(true);
+  return 0;
+}

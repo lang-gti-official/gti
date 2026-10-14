@@ -1558,10 +1558,10 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   const std::string firstKey = first.cache.key;
   const std::filesystem::path firstEntry = first.cache.entry;
   expect(
-      firstEntry.parent_path() == cache.root / "v3" &&
-          readFile(firstEntry / "metadata").starts_with("gti-build-cache-v3\n"),
-      "the current one-root driver request should publish only the v3 "
-      "symbol-aware cache schema");
+      firstEntry.parent_path() == cache.root / "v4" &&
+          readFile(firstEntry / "metadata").starts_with("gti-build-cache-v4\n"),
+      "the current one-root driver request should publish only the v4 "
+      "symbol- and test-aware ordered-prelude cache schema");
 
   std::error_code removeError;
   std::filesystem::remove(output, removeError);
@@ -2299,9 +2299,9 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   std::filesystem::remove_all(firstEntry, removeError);
   expect(!removeError && readFile(output) == publishedExecutable,
          "deleting a cache entry should not damage the published executable");
-  const std::filesystem::path legacyEntry = cache.root / "v2" / firstKey;
+  const std::filesystem::path legacyEntry = cache.root / "v3" / firstKey;
   std::filesystem::create_directories(legacyEntry);
-  expect(writeFile(legacyEntry / "metadata", "gti-build-cache-v2\n") &&
+  expect(writeFile(legacyEntry / "metadata", "gti-build-cache-v3\n") &&
              writeFile(legacyEntry / "generated.cpp", "stale") &&
              writeFile(legacyEntry / "executable", "stale"),
          "the legacy cache-schema fixture should be writable");
@@ -2311,8 +2311,8 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              afterDeletion.cache.status ==
                  lang::driver::BuildCacheStatus::Miss &&
              afterDeletion.nativeProcess &&
-             afterDeletion.cache.entry.parent_path() == cache.root / "v3",
-         "a deleted v3 cache entry should ignore a same-key v2 entry and "
+             afterDeletion.cache.entry.parent_path() == cache.root / "v4",
+         "a deleted v4 cache entry should ignore a same-key v3 entry and "
          "degrade to a clean rebuild");
 
   const lang::driver::ExecutableBuildResult unmanagedCache =

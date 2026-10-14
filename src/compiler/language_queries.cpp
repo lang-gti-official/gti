@@ -66,6 +66,9 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (info.neverReturns) {
     result += "[[noreturn]] ";
   }
+  if (info.testFunction) {
+    result += "[[test]] ";
+  }
   if (info.tracksCaller) {
     result += "[[track_caller]] ";
   }

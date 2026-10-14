@@ -655,6 +655,39 @@ tool-owned subtree. When a package has one executable plus test targets, that
 executable remains the default for `build`, `check`, and `run`. `metadata` is
 read-only.
 
+Annotated test targets compile one suite, then execute each semantically selected
+`[[test]] void` function in a separate captured child process. The driver retains
+the sorted qualified-name catalog from compilation, including on whole-program
+cache hits; cache schema `gti-build-cache-v4` stores and verifies its digest.
+Test mode is a distinct cache input. CLI presentation reports each function's
+status, elapsed time and captured diagnostics/output, with aggregate counts.
+Panic and signal termination stay confined to that child, and later cases run.
+Legacy test executables with `main` and no annotated functions execute once.
+
+The frontend validates the attributes and selected-package source identities,
+then generates a dispatcher as ordinary GTI source in the suite's lexical
+entry context. A second semantic pass resolves that dispatcher before existing
+HIR/MIR lowering and verification. The hosted argv adapter, selected calls and
+cleanup remain existing MIR operations; neither the backend nor process runner
+infers source test semantics. The generated source is request-local and does
+not edit the user's root. Test builds load the standard owned-argument units
+needed by that hosted dispatcher. This staging deliberately incurs a second
+semantic pass for annotated suites, while native compilation still runs once.
+The compiler-owned entry resolves the selected package's annotated declarations
+by their semantic identities across unit/module visibility boundaries.
+This permission is attached to fresh generated syntax and exact semantic test
+identities; ordinary user bodies retain their normal visibility rules.
+
+The cost model is one GTI/native build per suite and one process launch per
+selected function, including normal hosted argument ownership and capture of
+that child's output. Successful cases do not enter the panic path. Isolation
+intentionally repeats global initialization and teardown; resources are not
+shared between cases. The initial dispatcher compares qualified-name selectors
+once per child. No test-specific runtime, extra worker thread, or exception
+mechanism is involved. Ordinary non-test builds do not run test discovery or
+the second semantic pass. Build/run comparisons must retain equivalent process
+isolation rather than compare this workflow with an in-process test harness.
+
 The verified hosted `ReturnEntry` adapter preserves returned integers in
 0..255 and maps every other integer to status 1, after invocation cleanup.
 Consequently, a test returning a nonzero failure count such as 256 cannot be
@@ -1898,18 +1931,18 @@ external ownership make those paths semantically observable.
 Prelude-root order is execution-semantic input, so it is hashed before the
 otherwise canonicalized unit/dependency facts; reordering roots changes the
 cache key even when their contents and edge set are identical. Current direct
-and project requests intentionally resolve one canonical standard-library
-prelude root and expose no free-form override. `SourceGraph` already preserves
-multiple roots for frontend callers. A later manifest/profile feature may
-supply more than one only through an immutable resolved policy, with direct,
-project, and CLI coverage for that ordering contract.
+and project executable requests resolve one canonical standard-library prelude.
+Test-suite requests additionally select the owned-argument units needed by the
+dispatcher. Secondary prelude roots have distinct configuration-order logical
+identities. There is no user free-form override.
 
-Schema-v3 entries live beneath `build/gti/cache/v3/<sha256>/` and begin with the
-`gti-build-cache-v3` metadata marker. Older `v1` and `v2` entries and metadata
-are not interpreted. Each v3 entry contains generated C++, the executable, for
-a Darwin debug build a `symbols.dSYM` copy of the published bundle, and strict
+Schema-v4 entries live beneath `build/gti/cache/v4/<sha256>/` and begin with the
+`gti-build-cache-v4` metadata marker. Older entries and metadata are not
+interpreted under this schema. Each v4 entry contains generated C++, the
+executable, for a Darwin debug build a `symbols.dSYM` copy of the published
+bundle, and strict
 metadata recording the digest and size of the first two and a digest over the
-bundle's files (or `symbols none`).
+bundle's files (or `symbols none`), followed by the digested sorted test catalog.
 Executable permissions are recorded as well. Metadata is published last and
 acts as the commit marker. A hit verifies every digest and the executable mode
 before atomically copying the executable to the requested output; it
