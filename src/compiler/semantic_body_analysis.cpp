@@ -1,7 +1,5 @@
 #include "semantic_analyzer_impl.h"
 
-#include "gti/support.h"
-
 #include <iterator>
 
 namespace lang {
