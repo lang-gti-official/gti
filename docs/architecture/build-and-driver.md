@@ -1852,7 +1852,8 @@ The current key includes:
   consumes the compiler's own make-style dependency report for the exact
   discovered input set, hashes every discovered file's content and path
   identity, and hashes the preprocessed translation unit itself so include
-  resolution is captured as the compiler saw it at lookup time;
+  resolution is captured as the compiler saw it at lookup time (memoized as
+  described below, so an unchanged source does not rerun the preprocessor);
 - exact link files and file link operands classified content-complete by
   magic (regular archives and relocatable objects), with content identity; and
 - bounded scalar native-toolchain environment values that affect policy without
@@ -1865,6 +1866,25 @@ that no input content identity can record. The scan is a conservative byte
 match; a spelling inside a comment costs a rebuild, never a stale hit. A
 failed probe, unreadable discovered input, or unparseable dependency report
 likewise bypasses with an `identity unavailable` reason.
+
+Discovery is memoized beneath `build/gti/cache/native-discovery/`, one
+`gti-native-discovery-v1` record per probe, keyed on the native environment
+values, the compilers' command, executable content and version, and the exact
+probe argument vector with its staged output paths blanked. A record holds the
+preprocessed unit's digest, every discovered file with its content digest and
+a stat stamp (size, modification time, inode), and the entry-name digest of
+every directory where a new file could change include resolution: the parent
+of every discovered file (quote lookup) and every declared and toolchain
+include directory (angle lookup). At lookup the driver relists those
+directories and checks every dependency: an unchanged stamp that settled at
+least two seconds before the record was written vouches for its digest,
+anything else is rehashed and must match. A record that holds contributes
+exactly the identity bytes the probe would have and the preprocessor is not
+run; otherwise the probe runs and rewrites the record. Writing a record is
+best effort; a missing or unparseable one only costs a probe. The residual
+difference from re-running the preprocessor is a new file in a system include
+directory that contributed nothing before and now shadows another system
+header; toolchain changes of that kind are the compiler identity's domain.
 
 Application GTI paths in a resolved package graph use package
 `name@version` plus the package-relative unit path; standalone application
