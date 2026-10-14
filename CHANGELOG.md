@@ -30,6 +30,19 @@ for what minor and patch releases mean.
   changes meaning.
 - Example 156 demonstrates a concrete and a generic block.
 
+## 0.432.3 — Copies of lambdas kept in locals
+
+- Fix the native C++ compile failure (`no member named 'construct'` in the
+  saved backend log) when a generic function copies a lambda parameter into a
+  local of its own type, such as `F g = f;`, and then passes that local on: by
+  copy or move into another call or class, after copying it again, or from a
+  lambda-returning call such as `F g = pass(f);`. This failed for lambdas
+  without captures and lambdas capturing numbers; lambdas capturing plain
+  structs already worked.
+- Fix the runtime error "verified MIR lifetime slot was constructed twice"
+  when a loop copies a lambda into a local on each iteration, such as
+  `auto copy = f;` inside a `for` loop, in any function.
+
 ## 0.432.2 — Lambda-typed member classes beside bases and owned fields
 
 - Fix the internal compiler error that 0.432.1 still listed (`GTI-B0001`,
