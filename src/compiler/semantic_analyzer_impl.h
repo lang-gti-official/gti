@@ -2618,7 +2618,63 @@ private:
       std::optional<CallableBoundary> boundary = std::nullopt,
       std::optional<OperatorReceiverState> receiverState = std::nullopt,
       bool projection = false, bool preferReadOnlyReceiver = false,
-      ContextualCallArguments *contextualArguments = nullptr);
+      ContextualCallArguments *contextualArguments = nullptr,
+      std::optional<SemanticType> conversionTarget = std::nullopt,
+      bool implicitOnly = false);
+
+  // The operator a conversion to `target` names: operator bool for bool and
+  // the general conversion operator for every other target.
+  [[nodiscard]] static OverloadedOperator
+  conversionOperatorKind(const SemanticType &target) {
+    return target == SemanticType::Bool ? OverloadedOperator::ContextualBool
+                                        : OverloadedOperator::Conversion;
+  }
+
+  // A reference, a text view, or a value carrying a borrow: converting to it
+  // needs stored-borrow provenance a conversion site does not yet record.
+  [[nodiscard]] bool conversionTargetCarriesBorrow(const SemanticType &target) {
+    return target.kind == SemanticType::Reference ||
+           target.kind == SemanticType::StringView ||
+           target.kind == SemanticType::CString ||
+           typeTraits(target).containsBorrowedState;
+  }
+
+  // The conversion operators of the class `source` to exactly `target`.
+  [[nodiscard]] std::vector<CallableCandidate>
+  conversionOperatorCandidates(const SemanticType &source,
+                               const SemanticType &target, bool implicitOnly);
+
+  // The constructors of the class `target` that take `argument` as their one
+  // explicit argument by type; null stands for a union's first member.
+  [[nodiscard]] std::vector<const ConstructorInfo *>
+  conversionConstructorCandidates(const Expr &site, const ExprPtr &argument,
+                                  const SemanticType &argumentType,
+                                  const SemanticType &target,
+                                  const Token &token, bool implicitOnly);
+
+  void reportMissingConversionOperator(const Token &token,
+                                       const SemanticType &source,
+                                       const SemanticType &target);
+
+  void reportAmbiguousConversion(
+      const Token &token, const SemanticType &source,
+      const SemanticType &target, std::span<const CallableCandidate> operators,
+      std::span<const ConstructorInfo *const> constructors, bool declaration);
+
+  // Selects and records `source`'s conversion operator to `target`: on `site`
+  // for an explicit conversion, and as `source`'s contextual conversion for a
+  // declaration, which considers only implicit operators.
+  std::optional<CallableCandidate> selectConversionOperator(
+      const Expr &site, const ExprPtr &source, const SemanticType &sourceType,
+      const SemanticType &target, const Token &token, bool declaration);
+
+  // `Target(source)` or `int(source)` when `source`'s class declares a
+  // conversion operator to the target. Returns false, having done nothing,
+  // when it declares none.
+  bool analyzeExplicitConversion(const Expr &site, const ExprPtr &source,
+                                 const SemanticType &sourceType,
+                                 const SemanticType &target,
+                                 const Token &token);
 
   SemanticType arrowTargetType(const Expr &site, const ExprPtr &receiver,
                                const SemanticType &receiverType,
@@ -2827,7 +2883,8 @@ private:
       const std::vector<CompileTimeValue> &valueArguments,
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter = false,
-      bool contextualConstruction = false);
+      bool contextualConstruction = false,
+      std::vector<const ConstructorInfo *> *candidateProbe = nullptr);
 
   void analyzeExpectedMemberCall(const Call &call, const Get &member,
                                  const SemanticType &expected,
@@ -3675,6 +3732,11 @@ private:
                                    const SourceSpan &span,
                                    bool includeDirectDestructor = true);
 
+  // The effect edge of a selected overloaded operator's target function.
+  void
+  recordProgramOperatorTargetEffects(const Expr &expression,
+                                     const ResolvedOperatorInfo &operation);
+
   void recordProgramCallEffects(const Expr &expression);
 
   // Whether the construction's closed effects were open and recording stopped.
@@ -3814,17 +3876,37 @@ private:
                                  const SemanticType &declaredType,
                                  const SemanticType &initializerType);
 
+  // Whether a declaration's initializer of another type could convert to the
+  // declared type through an implicit conversion operator of its class.
+  [[nodiscard]] bool
+  declarationConversionApplies(const ExprPtr &expr,
+                               const SemanticType &declaredType,
+                               const SemanticType &initializerType);
+
+  SemanticType analyzeDeclarationConversion(const ExprPtr &expr,
+                                            const SemanticType &declaredType,
+                                            const SemanticType &initializerType,
+                                            bool constructionApplies);
+
+  // A declaration initializer whose value an implicit constructor or implicit
+  // conversion operator converts to the declared type.
+  [[nodiscard]] bool
+  recordsDeclarationConversion(const Expr &initializer) const {
+    return semanticModel.recordsContextualConstruction(initializer) ||
+           semanticModel.recordsContextualConversion(initializer);
+  }
+
   [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
   contextualConstructionRawFields(const Expr &initializer,
                                   const SemanticType &type);
 
-  // The hint for a declaration no implicit constructor accepts, with the
-  // explicit spelling that selects any constructor.
+  // The hint for a declaration no implicit conversion accepts, with the
+  // explicit spelling that selects any constructor or conversion operator.
   [[nodiscard]] static std::string
   implicitConstructionHint(const std::string &explicitSpelling) {
-    return "Only a constructor declared 'implicit' constructs a declaration "
-           "from another type; write '" +
-           explicitSpelling + "' to call a constructor explicitly.";
+    return "Only a constructor or conversion operator declared 'implicit' "
+           "converts a declaration's initializer; write '" +
+           explicitSpelling + "' to convert explicitly.";
   }
 
   [[nodiscard]] bool isDefaultLibraryUnit(SourceUnitId sourceUnit) const;
@@ -4102,6 +4184,14 @@ private:
   [[nodiscard]] static bool
   sameFunctionSignature(const CallableCandidate &left,
                         const CallableCandidate &right);
+
+  [[nodiscard]] static bool
+  isConversionOperator(const CallableCandidate &candidate) {
+    return candidate.declaration != nullptr &&
+           candidate.declaration->operatorName() &&
+           candidate.declaration->operatorName()->kind ==
+               OverloadedOperator::Conversion;
+  }
 
   [[nodiscard]] static bool
   sameConstructorSignature(const ConstructorInfo &left,
