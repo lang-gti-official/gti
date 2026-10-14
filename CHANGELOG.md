@@ -21,8 +21,9 @@ for what minor and patch releases mean.
   whole MIR program for every removed instruction, and the lowered-program
   builder no longer repeats the optimization pipeline's own input verification
   and coherence replay. `examples/093-http-json-client.gti` compiles in about
-  3.8 s instead of 5.1 s at `-O3`. Generated C++ and every verification result
-  are unchanged.
+  3.8 s instead of 5.1 s at `-O3`. Over the whole example corpus, total
+  compile time falls to about 72% at `-O0` and 71% at `-O3`. Generated C++
+  and every verification result are unchanged.
 - `gti --time-trace` now covers the optimizer passes, the lowered-program
   builder, the backend plan, instance analyses, staged constant evaluation and
   the coherence replays (see "Compile-time telemetry" in the driver
