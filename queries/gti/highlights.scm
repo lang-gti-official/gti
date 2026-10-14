@@ -227,6 +227,7 @@
 [
   "public"
   "private"
+  "protected"
   "const"
   "constexpr"
   "mut"

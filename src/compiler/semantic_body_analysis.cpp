@@ -1935,6 +1935,11 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   std::unordered_set<std::string> initializedFields;
   std::optional<std::size_t> previousFieldIndex;
   const ClassBaseTypeInfo *base = concreteBase(owner);
+  const SemanticType baseType =
+      base == nullptr
+          ? SemanticType::Unknown
+          : substituteType(base->type,
+                           classSubstitution(openClassType(owner.id)));
   bool initializedBase = false;
   bool sawFieldInitializer = false;
   for (const ConstructorInitializer &initializer : stmt.initializers()) {
@@ -1954,7 +1959,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     }
 
     if (field == nullptr && base != nullptr &&
-        typeOf(initializer.target, owner.namespaceScope) == base->type) {
+        typeOf(initializer.target, owner.namespaceScope) == baseType) {
       validateType(initializer.target);
       if (initializedBase) {
         report(target,
@@ -1969,7 +1974,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                "GTI-S2040");
       }
       initializedBase = true;
-      analyzeBaseConstructorInitializer(initializer, base->type);
+      analyzeBaseConstructorInitializer(initializer, baseType);
       continue;
     }
 
@@ -5518,15 +5523,21 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     currentType = analyze(expr.value());
     return;
   }
-  if (qualified && symbol.ownerClass != 0 &&
-      symbol.access == AccessModifier::Private &&
-      !isWithinClass(symbol.ownerClass)) {
+  if (symbol.ownerClass != 0 &&
+      !canAccessMember(symbol.access, symbol.ownerClass,
+                       symbol.staticMember || !currentClass
+                           ? SemanticType::Unknown
+                           : openClassType(*currentClass))) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, expr.name(),
-        "Static member '" + expr.name().lexeme + "' of '" +
-            classInfo(symbol.ownerClass).name.lexeme + "' is private.");
+        std::string(symbol.staticMember ? "Static member '" : "Member '") +
+            expr.name().lexeme + "' of '" +
+            classInfo(symbol.ownerClass).name.lexeme + "' is " +
+            std::string(accessModifierSpelling(symbol.access)) + ".");
     diagnostic.related.push_back(
-        {tokenSpan(symbol.declaration), "Static member declared here."});
+        {tokenSpan(symbol.declaration), symbol.staticMember
+                                            ? "Static member declared here."
+                                            : "Member declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
   }
   const SemanticType targetType = symbol.type.kind == SemanticType::Reference &&
@@ -9497,12 +9508,15 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
     return;
   }
   if (symbol->ownerClass != 0 && symbol->type != SemanticType::Function &&
-      symbol->access == AccessModifier::Private &&
-      !isWithinClass(symbol->ownerClass)) {
+      !canAccessMember(symbol->access, symbol->ownerClass,
+                       SemanticType::Unknown,
+                       expr.ownerType() ? typeOf(*expr.ownerType())
+                                        : SemanticType::Unknown)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, expr.name().last(),
         "Static member '" + expr.name().last().lexeme + "' of '" +
-            classInfo(symbol->ownerClass).name.lexeme + "' is private.");
+            classInfo(symbol->ownerClass).name.lexeme + "' is " +
+            std::string(accessModifierSpelling(symbol->access)) + ".");
     diagnostic.related.push_back(
         {tokenSpan(symbol->declaration), "Static member declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
@@ -10220,13 +10234,17 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
                             : "Class and struct members cannot be referenced "
                               "from field initializers yet.");
   }
-  if (symbol->ownerClass != 0 && symbol->access == AccessModifier::Private &&
-      !isWithinClass(symbol->ownerClass)) {
+  if (symbol->ownerClass != 0 &&
+      !canAccessMember(symbol->access, symbol->ownerClass,
+                       symbol->staticMember || !currentClass
+                           ? SemanticType::Unknown
+                           : openClassType(*currentClass))) {
     const ClassInfo &declaringOwner = classInfo(symbol->ownerClass);
-    Diagnostic diagnostic =
-        makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, expr.name(),
-                       "Member '" + expr.name().lexeme + "' of '" +
-                           declaringOwner.name.lexeme + "' is private.");
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2007", DiagnosticPhase::Semantics, expr.name(),
+        "Member '" + expr.name().lexeme + "' of '" +
+            declaringOwner.name.lexeme + "' is " +
+            std::string(accessModifierSpelling(symbol->access)) + ".");
     diagnostic.related.push_back(
         {tokenSpan(symbol->declaration), "Member declared here."});
     diagnostics.emplace_back(std::move(diagnostic));

@@ -597,6 +597,10 @@
             "named": false
           },
           {
+            "type": "protected",
+            "named": false
+          },
+          {
             "type": "public",
             "named": false
           }
@@ -6211,6 +6215,10 @@
   },
   {
     "type": "private",
+    "named": false
+  },
+  {
+    "type": "protected",
     "named": false
   },
   {

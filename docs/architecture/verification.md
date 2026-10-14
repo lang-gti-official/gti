@@ -1,5 +1,18 @@
 # Compiler Verification
 
+## Protected member visibility
+
+`protected_members` covers frontend admission and rejection for declaring,
+derived, transitive, nested, base and sibling access; fields, methods, statics,
+aliases, nested types, constructors, generic substitutions, out-of-class bodies,
+public overrides and unchanged mutation restrictions. Access diagnostics retain
+`GTI-S2007` and use/declaration provenance. `protected_member_runtime` executes
+example 150 through the existing MIR backend in C++20/C++23 at O0/O1/O3,
+without elision and with ASan/UBSan. `protected_member_lsp` checks protected
+keyword tokens, hover/definition, receiver-aware completion, UTF-16 diagnostic
+locations and clearing after an unsaved edit. The example is registered by the
+ordinary shipped-source corpus and reviewed MIR/LoweredProgram inventories.
+
 ## Owning field replacement through raw pointers (#122)
 
 `raw_owned_field_replacement_runtime` covers returned, direct, indexed and nested
