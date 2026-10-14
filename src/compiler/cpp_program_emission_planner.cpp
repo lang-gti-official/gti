@@ -7074,9 +7074,9 @@ public:
             separator = true;
           }
           for (const std::size_t parameter : varying) {
-            const std::string spelling = cppSemanticTypeSpelling(
-                loweredProgram, standard,
-                constructor.parameters[parameter].type);
+            const std::string spelling =
+                cppSemanticTypeSpelling(loweredProgram, standard,
+                                        constructor.parameters[parameter].type);
             // A closure identity already fixes the instance built from that
             // parameter, including its MIR drop decision; native
             // destructibility would disagree for a closure capturing a
@@ -7086,9 +7086,9 @@ public:
                 std::any_of(body.closureConditions.begin(),
                             body.closureConditions.end(),
                             [&](const std::string &condition) {
-                              return condition.find(
-                                         "mir_lambda_identity_v<" + spelling +
-                                         ">") != std::string::npos;
+                              return condition.find("mir_lambda_identity_v<" +
+                                                    spelling + ">") !=
+                                     std::string::npos;
                             })) {
               continue;
             }
