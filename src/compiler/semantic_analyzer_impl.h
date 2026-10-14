@@ -5465,6 +5465,26 @@ private:
   // code. Closed executable/library requests need every actual GTI call target.
   bool requireFunctionDefinitions = false;
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
+
+  // ---- Staged constant evaluation worker --------------------------------
+  // The analyzer a staged constexpr evaluation lowers its constant instance
+  // through. It copies the sealed catalog and the staging model, which is
+  // most of an evaluation's cost, so it is kept and reused while nothing it
+  // copied can have changed: the staging model, the current declaration
+  // order, and the constexpr definitions and constructors declared before
+  // it. Per-evaluation context (the work budget, raw result queries, the
+  // lambda identity floor) is refreshed on every use.
+  struct StagedWorker {
+    std::unique_ptr<Impl> impl;
+    const SemanticModel *stagingModel = nullptr;
+    std::size_t declarationOrder = 0;
+    std::size_t definitions = 0;
+    std::size_t constructors = 0;
+  };
+  StagedWorker stagedWorker;
+  [[nodiscard]] Impl &
+  stagedWorkerFor(const SemanticModel &stagingModel,
+                  const std::shared_ptr<ConstexprWorkBudget> &work);
 };
 
 // The frozen analyzer of a trusted prefix (see semantic_preamble.h). It owns
