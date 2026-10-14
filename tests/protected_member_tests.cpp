@@ -148,6 +148,13 @@ int main() { Derived d{}; Base& b = d; return b.read() - 2; })");
   reject(R"(class Base { public: virtual int read() { return 1; } };
 class Derived : public Base { protected: int read() override { return 2; } };
 int main() { Derived d{}; return d.read(); })");
+  accept(
+      R"(class Base<T, uint64_t N> { protected: T value; public: Base(T x) : value(x) {} };
+struct Derived<T, uint64_t N> : public Base<T, N> {
+  Derived(T x) : Base<T, N>(x) {}
+  unsafe T read_raw(Derived<T, N>* peer) { unsafe { return peer->value; } }
+};
+int use(Derived<int, 7>* peer) { Derived<int, 7> d{1}; unsafe { return d.read_raw(peer); } })");
   const lang::Formatter formatter;
   const auto formatted = formatter.format(example);
   check(formatter.format(formatted) == formatted &&
