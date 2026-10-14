@@ -8,6 +8,8 @@
 #include "gti/optimization/sccp.h"
 #include "mir_verification_support.h"
 
+#include "gti/support.h"
+
 #include <algorithm>
 #include <functional>
 #include <iterator>
@@ -98,6 +100,7 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
 
   MirProgram candidate = source;
   const auto verifyCandidate = [&] {
+    const PhaseTimeScope timeScope("coherence-verify-candidate");
     return candidate == source || candidate == optimized
                ? MirVerificationResult{}
                : verifyMirProgram(candidate);
@@ -170,6 +173,24 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
   struct InstructionLocation {
     MirBlock *block = nullptr;
     MirInstruction *instruction = nullptr;
+  };
+  struct ConstInstructionLocation {
+    const MirBlock *block = nullptr;
+    const MirInstruction *instruction = nullptr;
+  };
+  const auto findConstInstruction =
+      [](const MirBody &body, MirInstructionId id) -> ConstInstructionLocation {
+    for (const MirBlock &block : body.blocks) {
+      const auto found =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const MirInstruction &instruction) {
+                         return instruction.id == id;
+                       });
+      if (found != block.instructions.end()) {
+        return {&block, &*found};
+      }
+    }
+    return {};
   };
   const auto findInstruction = [](MirBody &body,
                                   MirInstructionId id) -> InstructionLocation {
@@ -269,9 +290,8 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
     consumed[index] = true;
 
     for (const MirInstructionId instructionId : rewrite->replacedInstructions) {
-      MirBody beforeCopy = before;
-      const InstructionLocation sourceLocation =
-          findInstruction(beforeCopy, instructionId);
+      const ConstInstructionLocation sourceLocation =
+          findConstInstruction(before, instructionId);
       const InstructionLocation targetLocation =
           findInstruction(*body, instructionId);
       std::vector<MirValueId> values;
@@ -314,9 +334,8 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
       }
     }
     for (const MirInstructionId instructionId : rewrite->removedInstructions) {
-      MirBody beforeCopy = before;
-      const InstructionLocation sourceLocation =
-          findInstruction(beforeCopy, instructionId);
+      const ConstInstructionLocation sourceLocation =
+          findConstInstruction(before, instructionId);
       const MirTransformRecord *record =
           claim([&](const auto &candidateRecord) {
             return candidateRecord.body == placeRecord.body &&
@@ -611,6 +630,7 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
                   [](const MirTransformRecord &record) {
                     return record.kind == MirTransformKind::DevirtualizeCall;
                   })) {
+    const PhaseTimeScope timeScope("coherence-closed-world-replay");
     replayClosedWorld = analyzeMirClosedWorldFacts(candidate);
   }
   for (std::size_t index = 0; index < records.size(); ++index) {
@@ -649,6 +669,7 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
           records.begin(), records.end(), [](const MirTransformRecord &record) {
             return record.kind == MirTransformKind::DischargeSafetyCheck;
           })) {
+    const PhaseTimeScope timeScope("coherence-safety-replay");
     replaySafety = analyzeMirClosedCallSafetyChecks(candidate);
   }
   for (std::size_t index = 0; index < records.size(); ++index) {
@@ -769,9 +790,9 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
       if (!*candidateVerified) {
         continue;
       }
-      MirProgram replay = candidate;
+      // A refused rewrite leaves the candidate unchanged.
       const std::optional<MirDeadInstructionRewrite> rewrite =
-          mir_detail::rewriteVerifiedMirDeadInstruction(replay, record.body,
+          mir_detail::rewriteVerifiedMirDeadInstruction(candidate, record.body,
                                                         record.instruction);
       const std::vector<MirValueId> values =
           rewrite && rewrite->result ? std::vector<MirValueId>{*rewrite->result}
@@ -792,7 +813,6 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
                record.block, record.instruction);
         return result;
       }
-      candidate = std::move(replay);
       consumed[index] = true;
       progress = true;
     }
