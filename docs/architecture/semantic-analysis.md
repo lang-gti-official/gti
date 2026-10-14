@@ -15,7 +15,10 @@ field/call/constructor identities and execution operations; the declaration
 planner preserves section spelling, while lifetime-slot constructor helpers
 retain their existing semantic-authorized native-public representation.
 Generic constructor initializer matching compares the substituted direct base
-with the resolved initializer type during concrete reanalysis.
+with the resolved initializer type during concrete reanalysis. Value-dependent
+default eligibility is deferred only after proving an accessible default
+constructor exists, so an open base argument cannot manufacture one beside an
+argument-taking constructor.
 
 ## Unsafe expression permission
 

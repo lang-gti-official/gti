@@ -5254,20 +5254,24 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
     const ClassInfo *fieldOwner = classInfo(fieldType);
     if (fieldOwner == nullptr || (fieldOwner->abstract && !baseSubobject))
       return false;
-    // An open value expression is a deferred instance obligation, not a
-    // usable construction operation. Concrete analysis checks it afresh.
-    if (std::any_of(fieldType.valueArguments.begin(),
-                    fieldType.valueArguments.end(),
-                    [](const CompileTimeValue &value) {
-                      return value.kind != CompileTimeValue::Kind::UInt64;
-                    }))
-      return true;
     const ConstructorInfo *constructor = defaultConstructor(*fieldOwner);
     if (constructor != nullptr) {
-      return (constructor->access == AccessModifier::Public ||
-              (baseSubobject &&
-               constructor->access == AccessModifier::Protected)) &&
-             resolveDefaultConstruction(fieldType, baseSubobject) &&
+      if (constructor->requiresUnsafe ||
+          !constructor->genericParameters.empty() ||
+          (constructor->access != AccessModifier::Public &&
+           !(baseSubobject &&
+             constructor->access == AccessModifier::Protected)))
+        return false;
+      // Value-dependent eligibility is deferred only for an existing accessible
+      // default constructor. An open argument cannot manufacture a default
+      // operation beside a base's argument-taking constructor.
+      if (std::any_of(fieldType.valueArguments.begin(),
+                      fieldType.valueArguments.end(),
+                      [](const CompileTimeValue &value) {
+                        return value.kind != CompileTimeValue::Kind::UInt64;
+                      }))
+        return true;
+      return resolveDefaultConstruction(fieldType, baseSubobject) &&
              (!requestsStructuralDefaultConstruction(*constructor) ||
               classCanUseStructuralDefaultConstruction(fieldType, visiting));
     }

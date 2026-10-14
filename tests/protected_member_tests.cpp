@@ -155,6 +155,11 @@ struct Derived<T, uint64_t N> : public Base<T, N> {
   unsafe T read_raw(Derived<T, N>* peer) { unsafe { return peer->value; } }
 };
 int use(Derived<int, 7>* peer) { Derived<int, 7> d{1}; unsafe { return d.read_raw(peer); } })");
+  reject(
+      R"(class Base<T, uint64_t N> { protected: T value; public: Base(T x) : value(x) {} };
+struct Derived<T, uint64_t N> : public Base<T, N> { Derived(T x) : Base<T, N>(x) {} };
+int main() { Derived<int, 7> d{}; return 0; })",
+      "GTI-S2012");
   const lang::Formatter formatter;
   const auto formatted = formatter.format(example);
   check(formatter.format(formatted) == formatted &&
