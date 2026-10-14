@@ -511,12 +511,87 @@ int main() { return 0; }
          "return constructions should receive focused GTI-S2086 diagnostics");
 }
 
+void testPropagationContexts() {
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "protocol-propagation-contexts.gti", R"(
+struct Failure {
+  int code;
+  constexpr Failure(int code) : code(code) {}
+};
+
+class Reply {
+  int code;
+public:
+  constexpr Reply(int code) : code(code) {}
+  implicit constexpr Reply(Failure failure) : code(failure.code) {}
+  constexpr bool has_value() { return this.code == 0; }
+  constexpr int value() { return 1; }
+  constexpr Failure residual() { return Failure(this.code); }
+};
+
+// Another family with the same residual type is still another family.
+class Ticket {
+  int code;
+public:
+  Ticket(int code) : code(code) {}
+  implicit Ticket(Failure failure) : code(failure.code) {}
+  bool has_value() { return this.code == 0; }
+  int value() { return 2; }
+  Failure residual() { return Failure(this.code); }
+};
+
+Reply shared_residual() {
+  Ticket ticket = Ticket(0);
+  int value = ?ticket;
+  return Reply(value);
+}
+
+constexpr Reply constant_context() {
+  Reply reply = Reply(0);
+  int value = ?reply;
+  return Reply(value);
+}
+
+class Holder {
+  int stored;
+public:
+  Holder(Reply reply) : stored(0) {
+    int value = ?reply;
+  }
+};
+
+int global = ?Reply(0);
+
+int main() { return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const bool contract =
+      !invalid.canGenerateCode() &&
+      countDiagnosticCode(invalid.diagnostics, "GTI-S2086") == 4 &&
+      hasDiagnostic(invalid.diagnostics,
+                    "returning 'Ticket', but this one returns 'Reply'") &&
+      hasDiagnostic(invalid.diagnostics,
+                    "not yet available in a constexpr function") &&
+      hasDiagnostic(invalid.diagnostics,
+                    "returning 'Reply', but this one returns 'void'") &&
+      hasDiagnostic(invalid.diagnostics,
+                    "only available in a function or lambda returning "
+                    "'Reply'.");
+  if (!contract) {
+    reportDiagnostics(invalid, "protocol propagation contexts");
+  }
+  expect(contract,
+         "protocol propagation should reject another family sharing the "
+         "residual type, constexpr functions, constructors and module scope");
+}
+
 } // namespace
 
 int main() {
   testUserProtocolPropagation();
   testOptionalPropagation();
   testPropagationDiagnostics();
+  testPropagationContexts();
   if (failures != 0) {
     std::cerr << failures << " propagation protocol test(s) failed\n";
     return 1;

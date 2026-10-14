@@ -66,9 +66,13 @@ evaluates `residual()` and the residual constructor, prepares the constructed
 value's return ownership, ends the expression's loans, drops the full
 expression's temporaries created so far behind an early-exit boundary, runs
 the lexical scope exit and returns the value, exactly as expected
-propagation's error edge does. The success block evaluates `value()`, copies
-a read-only reference result through its call-result loan, and moves the value
-into the expression's result temporary. Each step is an ordinary `Call` or
+propagation's error edge does. In the success block a result without a
+cleanup obligation is the `value()` call's own result (emitted with the
+expression's identity), or the copy loaded through the call-result loan of a
+read-only reference result; a result with an obligation moves through a
+result temporary whose obligation the call's result is reparented into.
+Passive classes without a default constructor therefore never need a join
+temporary the C++ representation could not declare. Each step is an ordinary `Call` or
 `Construct` with its own failure edge; the existing verifier checks receivers,
 loans, lifecycle events, cleanup order and the exactly-one primary
 full-expression boundary. A temporary operand is a call- or

@@ -96,9 +96,10 @@ if (!s.has_value()) {
 s.value()                        // the result; copied when a reference
 ```
 
-A named operand is the place itself; a consumed operand is one full-expression
-temporary that every call borrows or consumes in place, destroyed at the end
-of its full expression on the continuing path. Only one of `value()` and
+A named operand is the place itself; a temporary operand is one
+full-expression temporary that every call borrows or consumes in place,
+destroyed at the end of its full expression on the continuing path; an
+explicitly moved place is described under [Ownership](#ownership). Only one of `value()` and
 `residual()` runs per evaluation. Values that would be created after the
 operator are never evaluated on the residual exit. Several `?` in one
 expression run left to right and each exit cleans only the obligations active
@@ -114,10 +115,17 @@ This mirrors `expected` propagation:
   borrow of the place, which stays available afterwards. A reference output
   is copied. The ordinary loan rules reject a named operand that a live
   mutable borrow overlaps.
-- A **consumed operand** transfers its contents through consuming overloads
-  where the class declares them. Its shell is still destroyed by the
-  full-expression cleanup; a consuming member owns leaving that shell
-  destructible.
+- A **temporary operand** is one full-expression temporary. Consuming
+  overloads transfer its contents; its shell is still destroyed by the
+  full-expression cleanup, and a consuming member owns leaving that shell
+  destructible (moved-out fields are not destroyed twice).
+- An **explicitly moved place**, `?std::move(name)`, stays in its place:
+  read-only members borrow it and a consuming member receives it by move.
+  On a path where no selected member consumes it (for example the residual
+  exit when `residual()` is read-only), `name` keeps its ordinary lexical
+  cleanup; semantics still treats `name` as moved afterwards. This mirrors
+  what `std::move(name).member()` already means and needs no new temporary
+  materialization in MIR.
 - The residual is a fresh value moved into the implicit constructor. The
   constructed return value is published by the return, never dropped.
 
@@ -200,12 +208,14 @@ or changing a return type changes program intent.
   selected constructor instance. HIR plan verification ties each call to the
   semantic declaration, the operand, its receiver kind and the full
   expression.
-- **MIR** branches on the `has_value()` result, lowers the residual exit as
-  the existing early-exit return (early full-expression boundary, reverse
-  temporary drops, scope exit, returned value transfer) and the success path
-  as the call's value moved into the expression's result. No new MIR
-  operation exists; the existing verifier checks calls, loans, lifecycle,
-  cleanup and boundaries.
+- **MIR** branches on the `has_value()` result and lowers the residual exit
+  as the existing early-exit return (early full-expression boundary, reverse
+  temporary drops, scope exit, returned value transfer). On the success path
+  a result without a cleanup obligation is the `value()` call's own result,
+  or the copy read through its call-result loan; a result with an obligation
+  moves through a result temporary that takes over the call's obligation, as
+  expected propagation does. No new MIR operation exists; the existing
+  verifier checks calls, loans, lifecycle, cleanup and boundaries.
 - **Backend:** no change; the C++ is emitted from verified MIR as for any
   call, construction, branch and return.
 - **Tooling:** the LSP publishes the shared diagnostics; no editor surface
