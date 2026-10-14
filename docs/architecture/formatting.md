@@ -170,7 +170,7 @@ and the closing brace has no semicolon. Comments and conditional directives are
 retained, and formatting never expands the group into repeated `mut` prefixes.
 
 A class-scoped `using Name = Type;` declaration uses ordinary member
-indentation. `public:` and `private:` retain the configured access offset, and
+indentation. `public:`, `protected:`, and `private:` retain the configured access offset, and
 formatting neither moves an alias across an access label nor rewrites its
 qualified target. The same token-spacing rule around `=` is used at namespace
 and class scope.

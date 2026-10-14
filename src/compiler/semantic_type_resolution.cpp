@@ -1605,8 +1605,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
           conflicting != nullptr ? conflicting : missingParameter;
       if (failed != nullptr &&
           (isCompilerTrustedRequester(paren) || !constructor.compilerPrivate) &&
-          (constructor.access != AccessModifier::Private ||
-           currentClass == classId)) {
+          canAccessMember(constructor.access, classId, constructedType)) {
         rejectedInferences.push_back(
             {.constructor = &constructor,
              .parameter = failed,
@@ -1700,8 +1699,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     } else if (rejectedArgument &&
                (isCompilerTrustedRequester(paren) ||
                 !constructor.compilerPrivate) &&
-               (constructor.access != AccessModifier::Private ||
-                currentClass == classId)) {
+               canAccessMember(constructor.access, classId, constructedType)) {
       rejectedArguments.push_back(
           {&constructor, std::move(parameterTypes), *rejectedArgument});
     }
@@ -2035,11 +2033,13 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   }
 
   if (selected.constructor != nullptr &&
-      selected.constructor->access == AccessModifier::Private &&
-      !isWithinClass(classId)) {
+      !canAccessMember(selected.constructor->access, classId,
+                       constructedType)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, paren,
-        "Constructor of '" + owner.name.lexeme + "' is private.");
+        "Constructor of '" + owner.name.lexeme + "' is " +
+            std::string(accessModifierSpelling(selected.constructor->access)) +
+            ".");
     diagnostic.related.push_back(
         {tokenSpan(selected.constructor->declaration->name()),
          "Constructor declared here."});
@@ -2833,8 +2833,8 @@ auto SemanticVisitor::Impl::resolveDefaultConstruction(const SemanticType &type,
                                     .generatedDefault = true};
   }
   if (constructor->requiresUnsafe || !constructor->genericParameters.empty() ||
-      (constructor->access == AccessModifier::Private &&
-       !isWithinClass(owner->id))) {
+      (!(baseSubobject && constructor->access == AccessModifier::Protected) &&
+       !canAccessMember(constructor->access, owner->id, type))) {
     return std::nullopt;
   }
 
@@ -3207,6 +3207,61 @@ auto SemanticVisitor::Impl::isWithinClass(ClassId owner) const -> bool {
   return false;
 }
 
+auto SemanticVisitor::Impl::memberDeclaringType(const SemanticType &type,
+                                                ClassId owner) const
+    -> SemanticType {
+  std::vector<SemanticType> pending{type};
+  std::vector<SemanticType> visited;
+  while (!pending.empty()) {
+    SemanticType current = pending.back();
+    pending.pop_back();
+    if (current.kind != SemanticType::Class || current.classId == 0 ||
+        current.classId > classes.size() ||
+        std::find(visited.begin(), visited.end(), current) != visited.end())
+      continue;
+    if (current.classId == owner)
+      return current;
+    visited.push_back(current);
+    // Invalid inheritance cycles are diagnosed independently. Bound recovery
+    // even when such a cycle transforms its generic arguments at each step.
+    if (visited.size() > classes.size())
+      return SemanticType::Unknown;
+    const auto substitution = classSubstitution(current);
+    for (const auto &base : classInfo(current.classId).bases)
+      pending.push_back(substituteType(base.type, substitution));
+  }
+  return SemanticType::Unknown;
+}
+
+auto SemanticVisitor::Impl::canAccessMember(
+    AccessModifier access, ClassId owner, const SemanticType &receiver,
+    const SemanticType &lookupType) const -> bool {
+  if (owner == 0 || access == AccessModifier::Public)
+    return true;
+  if (access == AccessModifier::Private)
+    return isWithinClass(owner);
+  const SemanticType *unwrapped = &receiver;
+  while ((unwrapped->kind == SemanticType::Reference ||
+          unwrapped->kind == SemanticType::RawPointer) &&
+         unwrapped->arguments.size() == 1)
+    unwrapped = &unwrapped->arguments.front();
+  const SemanticType &object = *unwrapped;
+  const SemanticType declaringType = memberDeclaringType(
+      lookupType == SemanticType::Unknown ? object : lookupType, owner);
+  for (ClassId context = currentClass.value_or(0); context != 0;
+       context = classInfo(context).enclosingClass) {
+    const SemanticType contextType = openClassType(context);
+    const SemanticType contextOwner = memberDeclaringType(contextType, owner);
+    if (contextOwner != SemanticType::Unknown &&
+        (declaringType == SemanticType::Unknown ||
+         declaringType == contextOwner) &&
+        (context == owner || object == SemanticType::Unknown ||
+         object == contextType || isPublicBaseConversion(object, contextType)))
+      return true;
+  }
+  return false;
+}
+
 auto SemanticVisitor::Impl::validateNestedClassAccess(ClassId id,
                                                       const Token &use)
     -> bool {
@@ -3214,12 +3269,13 @@ auto SemanticVisitor::Impl::validateNestedClassAccess(ClassId id,
        current = classInfo(current).enclosingClass) {
     const ClassInfo &nested = classInfo(current);
     if (nested.enclosingClass != 0 &&
-        nested.enclosingAccess == AccessModifier::Private &&
-        !isWithinClass(nested.enclosingClass)) {
+        !canAccessMember(nested.enclosingAccess, nested.enclosingClass)) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2007", DiagnosticPhase::Semantics, use,
           "Nested type '" + nested.name.lexeme + "' of '" +
-              classInfo(nested.enclosingClass).name.lexeme + "' is private.");
+              classInfo(nested.enclosingClass).name.lexeme + "' is " +
+              std::string(accessModifierSpelling(nested.enclosingAccess)) +
+              ".");
       diagnostic.related.push_back(
           {tokenSpan(nested.name), "Nested type is declared here."});
       diagnostics.emplace_back(std::move(diagnostic));
@@ -3253,13 +3309,15 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
     reportCompilerPrivateAccess(use, alias.qualifiedName);
     return false;
   }
-  if (alias.ownerClass != 0 && alias.access == AccessModifier::Private &&
-      !isWithinClass(alias.ownerClass)) {
+  if (alias.ownerClass != 0 &&
+      !canAccessMember(alias.access, alias.ownerClass, SemanticType::Unknown,
+                       alias.ownerType)) {
     const ClassInfo &owner = classInfo(alias.ownerClass);
-    Diagnostic diagnostic =
-        makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, use,
-                       "Type alias '" + alias.declaration->name().lexeme +
-                           "' of '" + owner.name.lexeme + "' is private.");
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2007", DiagnosticPhase::Semantics, use,
+        "Type alias '" + alias.declaration->name().lexeme + "' of '" +
+            owner.name.lexeme + "' is " +
+            std::string(accessModifierSpelling(alias.access)) + ".");
     diagnostic.related.push_back(
         {tokenSpan(alias.declaration->name()), "Type alias is declared here."});
     diagnostics.emplace_back(std::move(diagnostic));

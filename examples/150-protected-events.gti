@@ -1,0 +1,57 @@
+// A base event exposes a public observation and protected implementation state.
+// Derived handlers can update their own state; mut and borrowing still apply.
+class Event {
+protected:
+  mut bool handled = false;
+  int category;
+  Event(int kind) : category(kind) {}
+  void mark_handled() mut { handled = true; }
+  static int input_category() { return 7; }
+public:
+  bool is_handled() { return handled; }
+  int kind() { return category; }
+};
+
+class KeyEvent : public Event {
+public:
+  KeyEvent() : Event(7) {}
+  void handle() mut { mark_handled(); }
+  // The receiver is KeyEvent, so this peer access is permitted.
+  bool same_state(KeyEvent& peer) { return handled == peer.handled; }
+  static int category_code() { return Event::input_category(); }
+};
+
+// Access extends transitively through public inheritance.
+class RepeatedKeyEvent : public KeyEvent {
+public:
+  RepeatedKeyEvent() : KeyEvent() {}
+  void repeat() mut { this.handled = true; }
+};
+
+// The same rule applies to an unrelated, source-defined generic abstraction.
+class CounterStorage<T> {
+protected:
+  T stored;
+  CounterStorage(T value) : stored(value) {}
+};
+class Counter<T> : public CounterStorage<T> {
+public:
+  Counter(T value) : CounterStorage<T>(value) {}
+  T read() { return this.stored; }
+};
+
+int main() {
+  mut KeyEvent event{};
+  KeyEvent peer{};
+  if (!event.same_state(peer) || event.is_handled()) { return 1; }
+  event.handle();
+  if (!event.is_handled() || event.same_state(peer)) { return 2; }
+  if (event.kind() != KeyEvent::category_code()) { return 3; }
+  mut RepeatedKeyEvent repeated{};
+  repeated.repeat();
+  if (!repeated.is_handled()) { return 4; }
+  Counter<int> count{42};
+  if (count.read() != 42) { return 5; }
+  std::println("protected events work");
+  return 0;
+}
