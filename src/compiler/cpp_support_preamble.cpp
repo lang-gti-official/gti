@@ -125,6 +125,30 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "byte_expected",
       "byte_unexpected",
       "byte_transport",
+      "Candidate",
+      "Input",
+      "Other",
+      "assign_from",
+      "borrowed_expected",
+      "construct_from",
+      "destroy_active",
+      "emplace",
+      "error_type",
+      "expected_trivial_copy_assign_v",
+      "expected_trivial_copy_v",
+      "expected_trivial_destroy_v",
+      "expected_trivial_move_assign_v",
+      "expected_trivial_move_v",
+      "fallback",
+      "has_value",
+      "has_value_",
+      "is_unexpected",
+      "unexpect",
+      "unexpect_t",
+      "unexpected_type",
+      "value_",
+      "value_or",
+      "value_type",
       "byte_field",
       "__gti_byte_transport_tag",
       "make_byte_unexpected",
@@ -336,6 +360,11 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "const",
       "constexpr",
       "construct_at",
+      "addressof",
+      "in_place_t",
+      "is_assignable_v",
+      "is_convertible_v",
+      "is_trivially_copy_constructible_v",
       "data",
       "decltype",
       "delete",
@@ -371,7 +400,6 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "isfinite",
       "launder",
       "ldexp",
-      "make_unexpected",
       "make_unsigned_t",
       "max_exponent",
       "memcpy",
@@ -380,7 +408,6 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "new",
       "nodiscard",
       "noexcept",
-      "nonstd",
       "noreturn",
       "nothrow",
       "nullptr",
@@ -475,11 +502,6 @@ void writeCppSupportPreamble(std::ostream &output,
   }
   if (usesExpected) {
     output << "#include <optional>\n";
-    if (features.standard == CppStandard::Cpp23) {
-      output << "#include <expected>\n";
-    } else {
-      output << "#include <nonstd/expected.hpp>\n";
-    }
   }
   if (features.runtimeBinding) {
     output << "#include <gti/runtime.hpp>\n";
@@ -977,6 +999,426 @@ using byte_field = std::conditional_t<byte_transport<T>::value,
 )";
   if (usesExpected) {
     output << R"(
+// GTI's representation of MIR Expected and Unexpected, identical for every
+// C++ standard and independent of the host library's std::expected. Verified
+// MIR tests the state before each extraction and raises GTI's own
+// invalid-access failure, so the observers are unchecked: there are no
+// exceptions and no valueless state. Each special member is trivial exactly
+// when both alternatives' are, so scalar results keep their register ABI.
+struct unexpect_t {
+  explicit unexpect_t() = default;
+};
+inline constexpr unexpect_t unexpect{};
+
+template <typename Error> class unexpected;
+template <typename Candidate> struct is_unexpected : std::false_type {};
+template <typename Error>
+struct is_unexpected<unexpected<Error>> : std::true_type {};
+
+template <typename Error>
+class unexpected {
+  Error error_;
+
+public:
+  template <typename Input = Error>
+    requires(!std::is_same_v<std::remove_cvref_t<Input>, unexpected> &&
+             !std::is_same_v<std::remove_cvref_t<Input>, std::in_place_t> &&
+             std::is_constructible_v<Error, Input>)
+  constexpr explicit unexpected(Input &&error)
+      : error_(std::forward<Input>(error)) {}
+  constexpr Error &error() & noexcept { return error_; }
+  constexpr const Error &error() const & noexcept { return error_; }
+  constexpr Error &&error() && noexcept { return std::move(error_); }
+  constexpr const Error &&error() const && noexcept {
+    return std::move(error_);
+  }
+};
+template <typename Error> unexpected(Error) -> unexpected<Error>;
+
+template <typename Value, typename Error>
+inline constexpr bool expected_trivial_copy_v =
+    std::is_trivially_copy_constructible_v<Value> &&
+    std::is_trivially_copy_constructible_v<Error>;
+template <typename Value, typename Error>
+inline constexpr bool expected_trivial_move_v =
+    std::is_trivially_move_constructible_v<Value> &&
+    std::is_trivially_move_constructible_v<Error>;
+template <typename Value, typename Error>
+inline constexpr bool expected_trivial_destroy_v =
+    std::is_trivially_destructible_v<Value> &&
+    std::is_trivially_destructible_v<Error>;
+template <typename Value, typename Error>
+inline constexpr bool expected_trivial_copy_assign_v =
+    expected_trivial_copy_v<Value, Error> &&
+    expected_trivial_destroy_v<Value, Error> &&
+    std::is_trivially_copy_assignable_v<Value> &&
+    std::is_trivially_copy_assignable_v<Error>;
+template <typename Value, typename Error>
+inline constexpr bool expected_trivial_move_assign_v =
+    expected_trivial_move_v<Value, Error> &&
+    expected_trivial_destroy_v<Value, Error> &&
+    std::is_trivially_move_assignable_v<Value> &&
+    std::is_trivially_move_assignable_v<Error>;
+
+template <typename Value, typename Error>
+class expected {
+  union {
+    Value value_;
+    Error error_;
+  };
+  bool has_value_;
+
+  template <typename Other>
+  constexpr void construct_from(Other &&other) {
+    if (other.has_value_)
+      std::construct_at(std::addressof(value_),
+                        std::forward<Other>(other).value_);
+    else
+      std::construct_at(std::addressof(error_),
+                        std::forward<Other>(other).error_);
+    has_value_ = other.has_value_;
+  }
+  constexpr void destroy_active() noexcept {
+    if (has_value_)
+      std::destroy_at(std::addressof(value_));
+    else
+      std::destroy_at(std::addressof(error_));
+  }
+  template <typename Other>
+  constexpr void assign_from(Other &&other) {
+    if (has_value_ && other.has_value_) {
+      value_ = std::forward<Other>(other).value_;
+    } else if (!has_value_ && !other.has_value_) {
+      error_ = std::forward<Other>(other).error_;
+    } else {
+      destroy_active();
+      construct_from(std::forward<Other>(other));
+    }
+  }
+
+public:
+  using value_type = Value;
+  using error_type = Error;
+  using unexpected_type = unexpected<Error>;
+
+  constexpr expected()
+    requires std::is_default_constructible_v<Value>
+      : value_(), has_value_(true) {}
+  constexpr expected(const expected &)
+    requires expected_trivial_copy_v<Value, Error>
+  = default;
+  constexpr expected(const expected &other)
+    requires(std::is_copy_constructible_v<Value> &&
+             std::is_copy_constructible_v<Error> &&
+             !expected_trivial_copy_v<Value, Error>)
+  {
+    construct_from(other);
+  }
+  constexpr expected(expected &&)
+    requires expected_trivial_move_v<Value, Error>
+  = default;
+  constexpr expected(expected &&other) noexcept(
+      std::is_nothrow_move_constructible_v<Value> &&
+      std::is_nothrow_move_constructible_v<Error>)
+    requires(std::is_move_constructible_v<Value> &&
+             std::is_move_constructible_v<Error> &&
+             !expected_trivial_move_v<Value, Error>)
+  {
+    construct_from(std::move(other));
+  }
+  template <typename Input = Value>
+    requires(!std::is_same_v<std::remove_cvref_t<Input>, expected> &&
+             !std::is_same_v<std::remove_cvref_t<Input>, std::in_place_t> &&
+             !std::is_same_v<std::remove_cvref_t<Input>, unexpect_t> &&
+             !is_unexpected<std::remove_cvref_t<Input>>::value &&
+             std::is_constructible_v<Value, Input>)
+  constexpr explicit(!std::is_convertible_v<Input, Value>)
+      expected(Input &&value)
+      : value_(std::forward<Input>(value)), has_value_(true) {}
+  template <typename Other>
+    requires std::is_constructible_v<Error, const Other &>
+  constexpr explicit(!std::is_convertible_v<const Other &, Error>)
+      expected(const unexpected<Other> &error)
+      : error_(error.error()), has_value_(false) {}
+  template <typename Other>
+    requires std::is_constructible_v<Error, Other>
+  constexpr explicit(!std::is_convertible_v<Other, Error>)
+      expected(unexpected<Other> &&error)
+      : error_(std::move(error).error()), has_value_(false) {}
+  template <typename... Args>
+    requires std::is_constructible_v<Value, Args...>
+  constexpr explicit expected(std::in_place_t, Args &&...args)
+      : value_(std::forward<Args>(args)...), has_value_(true) {}
+  template <typename... Args>
+    requires std::is_constructible_v<Error, Args...>
+  constexpr explicit expected(unexpect_t, Args &&...args)
+      : error_(std::forward<Args>(args)...), has_value_(false) {}
+
+  constexpr ~expected()
+    requires expected_trivial_destroy_v<Value, Error>
+  = default;
+  constexpr ~expected() { destroy_active(); }
+
+  constexpr expected &operator=(const expected &)
+    requires expected_trivial_copy_assign_v<Value, Error>
+  = default;
+  constexpr expected &operator=(const expected &other)
+    requires(std::is_copy_constructible_v<Value> &&
+             std::is_copy_assignable_v<Value> &&
+             std::is_copy_constructible_v<Error> &&
+             std::is_copy_assignable_v<Error> &&
+             !expected_trivial_copy_assign_v<Value, Error>)
+  {
+    assign_from(other);
+    return *this;
+  }
+  constexpr expected &operator=(expected &&)
+    requires expected_trivial_move_assign_v<Value, Error>
+  = default;
+  constexpr expected &operator=(expected &&other) noexcept(
+      std::is_nothrow_move_constructible_v<Value> &&
+      std::is_nothrow_move_assignable_v<Value> &&
+      std::is_nothrow_move_constructible_v<Error> &&
+      std::is_nothrow_move_assignable_v<Error>)
+    requires(std::is_move_constructible_v<Value> &&
+             std::is_move_assignable_v<Value> &&
+             std::is_move_constructible_v<Error> &&
+             std::is_move_assignable_v<Error> &&
+             !expected_trivial_move_assign_v<Value, Error>)
+  {
+    assign_from(std::move(other));
+    return *this;
+  }
+  template <typename Input = Value>
+    requires(!std::is_same_v<std::remove_cvref_t<Input>, expected> &&
+             !is_unexpected<std::remove_cvref_t<Input>>::value &&
+             std::is_constructible_v<Value, Input> &&
+             std::is_assignable_v<Value &, Input>)
+  constexpr expected &operator=(Input &&value) {
+    if (has_value_) {
+      value_ = std::forward<Input>(value);
+    } else {
+      std::destroy_at(std::addressof(error_));
+      std::construct_at(std::addressof(value_), std::forward<Input>(value));
+      has_value_ = true;
+    }
+    return *this;
+  }
+  template <typename Other>
+    requires(std::is_constructible_v<Error, const Other &> &&
+             std::is_assignable_v<Error &, const Other &>)
+  constexpr expected &operator=(const unexpected<Other> &error) {
+    if (!has_value_) {
+      error_ = error.error();
+    } else {
+      std::destroy_at(std::addressof(value_));
+      std::construct_at(std::addressof(error_), error.error());
+      has_value_ = false;
+    }
+    return *this;
+  }
+  template <typename Other>
+    requires(std::is_constructible_v<Error, Other> &&
+             std::is_assignable_v<Error &, Other>)
+  constexpr expected &operator=(unexpected<Other> &&error) {
+    if (!has_value_) {
+      error_ = std::move(error).error();
+    } else {
+      std::destroy_at(std::addressof(value_));
+      std::construct_at(std::addressof(error_), std::move(error).error());
+      has_value_ = false;
+    }
+    return *this;
+  }
+
+  constexpr bool has_value() const noexcept { return has_value_; }
+  constexpr explicit operator bool() const noexcept { return has_value_; }
+  constexpr Value *operator->() noexcept { return std::addressof(value_); }
+  constexpr const Value *operator->() const noexcept {
+    return std::addressof(value_);
+  }
+  constexpr Value &operator*() & noexcept { return value_; }
+  constexpr const Value &operator*() const & noexcept { return value_; }
+  constexpr Value &&operator*() && noexcept { return std::move(value_); }
+  constexpr const Value &&operator*() const && noexcept {
+    return std::move(value_);
+  }
+  constexpr Value &value() & noexcept { return value_; }
+  constexpr const Value &value() const & noexcept { return value_; }
+  constexpr Value &&value() && noexcept { return std::move(value_); }
+  constexpr const Value &&value() const && noexcept {
+    return std::move(value_);
+  }
+  constexpr Error &error() & noexcept { return error_; }
+  constexpr const Error &error() const & noexcept { return error_; }
+  constexpr Error &&error() && noexcept { return std::move(error_); }
+  constexpr const Error &&error() const && noexcept {
+    return std::move(error_);
+  }
+  template <typename Input>
+  constexpr Value value_or(Input &&fallback) const & {
+    return has_value_ ? value_
+                      : static_cast<Value>(std::forward<Input>(fallback));
+  }
+  template <typename Input>
+  constexpr Value value_or(Input &&fallback) && {
+    return has_value_ ? std::move(value_)
+                      : static_cast<Value>(std::forward<Input>(fallback));
+  }
+};
+
+template <typename Error>
+class expected<void, Error> {
+  union {
+    Error error_;
+  };
+  bool has_value_;
+
+  template <typename Other>
+  constexpr void construct_from(Other &&other) {
+    if (!other.has_value_)
+      std::construct_at(std::addressof(error_),
+                        std::forward<Other>(other).error_);
+    has_value_ = other.has_value_;
+  }
+  constexpr void destroy_active() noexcept {
+    if (!has_value_)
+      std::destroy_at(std::addressof(error_));
+  }
+  template <typename Other>
+  constexpr void assign_from(Other &&other) {
+    if (!has_value_ && !other.has_value_) {
+      error_ = std::forward<Other>(other).error_;
+    } else if (has_value_ != other.has_value_) {
+      destroy_active();
+      construct_from(std::forward<Other>(other));
+    }
+  }
+
+public:
+  using value_type = void;
+  using error_type = Error;
+  using unexpected_type = unexpected<Error>;
+
+  constexpr expected() noexcept : has_value_(true) {}
+  constexpr explicit expected(std::in_place_t) noexcept : has_value_(true) {}
+  constexpr expected(const expected &)
+    requires std::is_trivially_copy_constructible_v<Error>
+  = default;
+  constexpr expected(const expected &other)
+    requires(std::is_copy_constructible_v<Error> &&
+             !std::is_trivially_copy_constructible_v<Error>)
+  {
+    construct_from(other);
+  }
+  constexpr expected(expected &&)
+    requires std::is_trivially_move_constructible_v<Error>
+  = default;
+  constexpr expected(expected &&other) noexcept(
+      std::is_nothrow_move_constructible_v<Error>)
+    requires(std::is_move_constructible_v<Error> &&
+             !std::is_trivially_move_constructible_v<Error>)
+  {
+    construct_from(std::move(other));
+  }
+  template <typename Other>
+    requires std::is_constructible_v<Error, const Other &>
+  constexpr explicit(!std::is_convertible_v<const Other &, Error>)
+      expected(const unexpected<Other> &error)
+      : error_(error.error()), has_value_(false) {}
+  template <typename Other>
+    requires std::is_constructible_v<Error, Other>
+  constexpr explicit(!std::is_convertible_v<Other, Error>)
+      expected(unexpected<Other> &&error)
+      : error_(std::move(error).error()), has_value_(false) {}
+  template <typename... Args>
+    requires std::is_constructible_v<Error, Args...>
+  constexpr explicit expected(unexpect_t, Args &&...args)
+      : error_(std::forward<Args>(args)...), has_value_(false) {}
+
+  constexpr ~expected()
+    requires std::is_trivially_destructible_v<Error>
+  = default;
+  constexpr ~expected() { destroy_active(); }
+
+  constexpr expected &operator=(const expected &)
+    requires(std::is_trivially_copy_constructible_v<Error> &&
+             std::is_trivially_copy_assignable_v<Error> &&
+             std::is_trivially_destructible_v<Error>)
+  = default;
+  constexpr expected &operator=(const expected &other)
+    requires(std::is_copy_constructible_v<Error> &&
+             std::is_copy_assignable_v<Error> &&
+             !(std::is_trivially_copy_constructible_v<Error> &&
+               std::is_trivially_copy_assignable_v<Error> &&
+               std::is_trivially_destructible_v<Error>))
+  {
+    assign_from(other);
+    return *this;
+  }
+  constexpr expected &operator=(expected &&)
+    requires(std::is_trivially_move_constructible_v<Error> &&
+             std::is_trivially_move_assignable_v<Error> &&
+             std::is_trivially_destructible_v<Error>)
+  = default;
+  constexpr expected &operator=(expected &&other) noexcept(
+      std::is_nothrow_move_constructible_v<Error> &&
+      std::is_nothrow_move_assignable_v<Error>)
+    requires(std::is_move_constructible_v<Error> &&
+             std::is_move_assignable_v<Error> &&
+             !(std::is_trivially_move_constructible_v<Error> &&
+               std::is_trivially_move_assignable_v<Error> &&
+               std::is_trivially_destructible_v<Error>))
+  {
+    assign_from(std::move(other));
+    return *this;
+  }
+  template <typename Other>
+    requires(std::is_constructible_v<Error, const Other &> &&
+             std::is_assignable_v<Error &, const Other &>)
+  constexpr expected &operator=(const unexpected<Other> &error) {
+    if (!has_value_) {
+      error_ = error.error();
+    } else {
+      std::construct_at(std::addressof(error_), error.error());
+      has_value_ = false;
+    }
+    return *this;
+  }
+  template <typename Other>
+    requires(std::is_constructible_v<Error, Other> &&
+             std::is_assignable_v<Error &, Other>)
+  constexpr expected &operator=(unexpected<Other> &&error) {
+    if (!has_value_) {
+      error_ = std::move(error).error();
+    } else {
+      std::construct_at(std::addressof(error_), std::move(error).error());
+      has_value_ = false;
+    }
+    return *this;
+  }
+  constexpr void emplace() noexcept {
+    destroy_active();
+    has_value_ = true;
+  }
+
+  constexpr bool has_value() const noexcept { return has_value_; }
+  constexpr explicit operator bool() const noexcept { return has_value_; }
+  constexpr void operator*() const noexcept {}
+  constexpr void value() const & noexcept {}
+  constexpr void value() && noexcept {}
+  constexpr Error &error() & noexcept { return error_; }
+  constexpr const Error &error() const & noexcept { return error_; }
+  constexpr Error &&error() && noexcept { return std::move(error_); }
+  constexpr const Error &&error() const && noexcept {
+    return std::move(error_);
+  }
+};
+
+static_assert(std::is_trivially_copyable_v<expected<std::int32_t, std::int32_t>> &&
+                  std::is_trivially_copyable_v<expected<void, std::int32_t>>,
+              "GTI's expected must keep scalar results trivially copyable");
+
 template <typename Value, typename Error> class byte_expected;
 template <typename Error> class byte_unexpected;
 template <typename Value, typename Error> class borrowed_expected;
@@ -984,8 +1426,12 @@ template <typename Value, typename Error> class borrowed_expected;
 // These are representations of MIR Expected/Unexpected, not native C-ABI
 // records. Their own alternative storage preserves any required payload bytes;
 // the enclosing carrier follows the ordinary value ABI. Classifying it here
-// also avoids ADL instantiating a native expected with an incomplete payload
-// while a retained source-template member signature is being declared.
+// also avoids ADL instantiating an expected with an incomplete payload while a
+// retained source-template member signature is being declared.
+template <typename Value, typename Error>
+struct byte_transport<expected<Value, Error>> : std::false_type {};
+template <typename Error>
+struct byte_transport<unexpected<Error>> : std::false_type {};
 template <typename Value, typename Error>
 struct byte_transport<byte_expected<Value, Error>> : std::false_type {};
 template <typename Error>
@@ -993,50 +1439,23 @@ struct byte_transport<byte_unexpected<Error>> : std::false_type {};
 template <typename Value, typename Error>
 struct byte_transport<borrowed_expected<Value, Error>> : std::false_type {};
 template <typename Error> auto make_byte_unexpected(Error &&error);
-)";
-    output << (features.standard == CppStandard::Cpp23 ? R"(
-template <typename Value, typename Error>
-struct byte_transport<std::expected<Value, Error>> : std::false_type {};
-template <typename Error>
-struct byte_transport<std::unexpected<Error>> : std::false_type {};
-template <typename Value, typename Error>
-using native_expected_result = std::expected<Value, Error>;
+
 template <typename Error>
 using unexpected_result = std::conditional_t<byte_transport<Error>::value,
-    byte_unexpected<Error>, std::unexpected<Error>>;
+    byte_unexpected<Error>, unexpected<Error>>;
 
 template <typename Error>
 inline constexpr auto make_unexpected_result(Error &&error) {
   if constexpr (byte_transport<std::remove_cvref_t<Error>>::value)
     return make_byte_unexpected(std::forward<Error>(error));
   else
-    return std::unexpected<std::remove_cvref_t<Error>>(std::forward<Error>(error));
+    return unexpected<std::remove_cvref_t<Error>>(std::forward<Error>(error));
 }
-)"
-                                                       : R"(
-template <typename Value, typename Error>
-struct byte_transport<::nonstd::expected<Value, Error>> : std::false_type {};
-template <typename Error>
-struct byte_transport<::nonstd::unexpected_type<Error>> : std::false_type {};
-template <typename Value, typename Error>
-using native_expected_result = ::nonstd::expected<Value, Error>;
-template <typename Error>
-using unexpected_result = std::conditional_t<byte_transport<Error>::value,
-    byte_unexpected<Error>, ::nonstd::unexpected_type<Error>>;
 
-template <typename Error>
-inline constexpr auto make_unexpected_result(Error &&error) {
-  if constexpr (byte_transport<std::remove_cvref_t<Error>>::value)
-    return make_byte_unexpected(std::forward<Error>(error));
-  else
-    return ::nonstd::make_unexpected(std::forward<Error>(error));
-}
-)");
-    output << R"(
 template <typename Value, typename Error>
 using expected_result = std::conditional_t<
     byte_transport<Value>::value || byte_transport<Error>::value,
-    byte_expected<Value, Error>, native_expected_result<Value, Error>>;
+    byte_expected<Value, Error>, expected<Value, Error>>;
 )";
   }
   if (usesExpected) {
@@ -1077,11 +1496,8 @@ public:
   byte_expected(U &&error)
       : state_(std::in_place_index<2>, std::forward<U>(error).error()) {}
 )";
-    output << "  template <typename U> byte_expected("
-           << (features.standard == CppStandard::Cpp23 ? "std::unexpect_t"
-                                                       : "::nonstd::unexpect_t")
-           << ", U &&error) : state_(std::in_place_index<2>, "
-              "std::forward<U>(error)) {}\n";
+    output << "  template <typename U> byte_expected(unexpect_t, U &&error) "
+              ": state_(std::in_place_index<2>, std::forward<U>(error)) {}\n";
     output << R"(
   bool has_value() const noexcept { return state_.index() == 1; }
   explicit operator bool() const noexcept { return has_value(); }
@@ -1115,22 +1531,18 @@ struct mir_empty_state_factory_v1<byte_expected<Value, Error>> {
 // empty state before using this factory for unpublished fields. In particular,
 // this never runs the success alternative's source default constructor.
 template <typename Value, typename Error>
-struct mir_empty_state_factory_v1<native_expected_result<Value, Error>> {
-  [[nodiscard]] static native_expected_result<Value, Error> make() noexcept {
-    return native_expected_result<Value, Error>(
-)";
-    output << (features.standard == CppStandard::Cpp23
-                   ? "        std::unexpect, "
-                   : "        ::nonstd::unexpect, ");
-    output << R"(mir_empty_state_factory_v1<Error>::make());
+struct mir_empty_state_factory_v1<expected<Value, Error>> {
+  [[nodiscard]] static expected<Value, Error> make() noexcept {
+    return expected<Value, Error>(unexpect,
+                                  mir_empty_state_factory_v1<Error>::make());
   }
 };
 )";
     output << R"(
 
-// std::expected deliberately forbids reference payloads. GTI's
-// expected<T&, E> is a checked read-only borrow, so its native carrier keeps
-// the address while MIR remains authoritative for the referent lifetime.
+// GTI's expected<T&, E> is a checked read-only borrow rather than an expected
+// holding a reference, so its carrier keeps the address while MIR remains
+// authoritative for the referent lifetime.
 template <typename Value, typename Error>
 class borrowed_expected final {
 public:

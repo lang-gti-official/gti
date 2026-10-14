@@ -1280,11 +1280,11 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
         [&](const auto &argument) {
           return cppRequiresIndirectValueTransport(program.mir(), argument);
         });
+    // GTI's own representation, the same under every C++ standard.
     std::string result =
         dependent(dependent, type) ? "::gti_internal::backend::expected_result<"
         : byteTransport            ? "::gti_internal::backend::byte_expected<"
-        : standard == CppStandard::Cpp23 ? "std::expected<"
-                                         : "::nonstd::expected<";
+                                   : "::gti_internal::backend::expected<";
     if (type.arguments.size() == 2) {
       result += spell(type.arguments[0]);
       result += ", ";
@@ -1297,12 +1297,11 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     const bool byteTransport =
         !type.arguments.empty() && cppRequiresIndirectValueTransport(
                                        program.mir(), type.arguments.front());
-    std::string result =
-        dependent(dependent, type)
-            ? "::gti_internal::backend::unexpected_result<"
-        : byteTransport ? "::gti_internal::backend::byte_unexpected<"
-        : standard == CppStandard::Cpp23 ? "std::unexpected<"
-                                         : "::nonstd::unexpected_type<";
+    std::string result = dependent(dependent, type)
+                             ? "::gti_internal::backend::unexpected_result<"
+                         : byteTransport
+                             ? "::gti_internal::backend::byte_unexpected<"
+                             : "::gti_internal::backend::unexpected<";
     if (type.arguments.size() == 1)
       result += spell(type.arguments.front());
     result += '>';

@@ -1004,8 +1004,8 @@ void testStandardLibraryImports() {
       tcpCpp.find("class socket") != std::string::npos &&
           tcpCpp.find("runtime::" + gti_test::nativeSpelling(tcpCpp, "socket") +
                       "(") != std::string::npos &&
-          tcpCpp.find("open__gti_mir_failure(std::expected") !=
-              std::string::npos &&
+          tcpCpp.find("open__gti_mir_failure(::gti_internal::backend::"
+                      "expected") != std::string::npos &&
           tcpCpp.find("runtime::" + gti_test::nativeSpelling(tcpCpp, "close") +
                       "(") != std::string::npos &&
           tcpCpp.find("socket(socket &&other) noexcept") != std::string::npos &&

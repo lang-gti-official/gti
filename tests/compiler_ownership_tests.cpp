@@ -16330,8 +16330,8 @@ int main() {
           ? gti_test::emitCppText(expectedLambda, lang::CppStandard::Cpp20)
           : std::string{};
   expect(expectedLambda.canGenerateCode() &&
-             cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos,
-         "backend support includes should account for types nested in lambda "
+             cpp20.find("struct unexpect_t {") != std::string::npos,
+         "backend support should account for types nested in lambda "
          "signatures");
 
   const lang::FrontendResult invalid =
@@ -18685,20 +18685,22 @@ int main() {
          "expected construction and observers should pass semantic checks");
 
   const std::string cpp23 = gti_test::emitCppText(frontend);
-  expect(cpp23.find("#include <expected>") != std::string::npos &&
-             cpp23.find("std::expected<std::int32_t, std::string_view>") !=
-                 std::string::npos &&
-             cpp23.find("std::unexpected(") != std::string::npos &&
-             cpp23.find("return {};") != std::string::npos,
-         "C++23 should lower expected values to the standard library");
-
   const std::string cpp20 =
       gti_test::emitCppText(frontend, lang::CppStandard::Cpp20);
-  expect(cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
-             cpp20.find("::nonstd::expected<std::int32_t, std::string_view>") !=
-                 std::string::npos &&
-             cpp20.find("::nonstd::make_unexpected(") != std::string::npos,
-         "C++20 should lower expected values to the vendored implementation");
+  for (const std::string *cpp : {&cpp23, &cpp20}) {
+    expect(cpp->find("#include <expected>") == std::string::npos &&
+               cpp->find("nonstd/expected.hpp") == std::string::npos &&
+               cpp->find("::nonstd::") == std::string::npos &&
+               cpp->find("std::expected<") == std::string::npos &&
+               cpp->find("::gti_internal::backend::expected<std::int32_t, "
+                         "std::string_view>") != std::string::npos &&
+               cpp->find("::gti_internal::backend::unexpected(") !=
+                   std::string::npos,
+           "both C++ standards should lower expected values to GTI's own "
+           "representation rather than a host or vendored library");
+  }
+  expect(cpp23.find("return {};") != std::string::npos,
+         "a void success should still return its empty value");
 
   auto invalidTokens = lexer.scan(R"(
 expected<int, void> invalid_error() { return 1; }
@@ -19028,7 +19030,7 @@ int main() {
           cpp20.find(
               "::gti_internal::backend::borrowed_expected<std::int32_t") !=
               std::string::npos &&
-          cpp23.find("std::expected<std::int32_t &") == std::string::npos &&
+          cpp23.find("expected<std::int32_t &") == std::string::npos &&
           cpp23.find(" = *__gti_mir_loan_") != std::string::npos &&
           cpp23.find("construct_representation_at(__gti_mir_out_result, "
                      "*__gti_mir_loan_") != std::string::npos,
@@ -19409,9 +19411,11 @@ int main() { return manual_extract(false) - 44; }
   const std::string cpp20 =
       gti_test::emitCppText(frontend, lang::CppStandard::Cpp20);
   expect(cpp23.find(".has_value()") != std::string::npos &&
-             cpp23.find("std::unexpected(") != std::string::npos &&
+             cpp23.find("::gti_internal::backend::unexpected(") !=
+                 std::string::npos &&
              cpp20.find(".has_value()") != std::string::npos &&
-             cpp20.find("::nonstd::make_unexpected(") != std::string::npos,
+             cpp20.find("::gti_internal::backend::unexpected(") !=
+                 std::string::npos,
          "both C++ backends should emit checked propagation branches instead "
          "of delegating the operator to C++");
 
