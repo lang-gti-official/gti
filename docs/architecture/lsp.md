@@ -45,6 +45,13 @@ library or a constructor. Related locations still identify the selected internal
 call and its bodyless declaration. The LSP performs only source URI and UTF-16
 range conversion; it does not infer caller attribution from public type names.
 
+Protected sections use the lexical keyword token and ordinary formatter/Tree-sitter
+syntax. Compiler-owned completion filters fields and each selected overload with
+the same declaring-class and static receiver rules as source analysis; base and
+sibling receivers do not advertise inaccessible protected members. Hover and
+navigation retain the original declaration identity, and `GTI-S2007` retains
+use/declaration spans through ordinary snapshot and UTF-16 conversion.
+
 ## Semantic Source Of Truth
 
 Source modules use the same manifest module maps, source graph, export

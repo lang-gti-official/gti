@@ -219,6 +219,7 @@ is a teaching helper, not a production server.
 | `147-standard-library-import.gti` | one portable standard-library import, vector, owning strings and formatting, without importing platform-only APIs |
 | `148-nested-configuration.gti` | named nested structs/classes, public qualified type paths, three-level nesting, and recursive reflected JSON configuration decoding and encoding |
 | `149-interface-static-factories.gti` | concrete static interface factories, recoverable backend selection, explicit owning upcasts and ordinary virtual dispatch |
+| `150-protected-events.gti` | protected event state, derived peer and transitive access, protected base construction, public observations and generic counter storage |
 | `150-out-of-class-methods.gti` | optional split method definitions, private receiver state, declaration defaults, constexpr statics and receiver-borrowed results |
 | `151-c-string-import.gti` | unsafe C-string construction, recoverable null/allocation errors, independent owned copies and an unrelated unsafe constructor |
 | `152-unsafe-expressions.gti` | directly initialized owned results from unsafe expressions, checked factory results, and an unrelated raw reader |
