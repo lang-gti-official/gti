@@ -8,7 +8,7 @@ automatic per-function reports, cache reuse and corrupted-catalog recovery.
 Panic/check failures preserve destructor cleanup and source attribution; signal
 termination and later tests are reported independently. Invalid function shapes,
 mixed hosted main/annotations, empty suites and legacy executables are covered.
-The `function-contract` LSP case checks exact UTF-16 spans, unsaved correction
+The `function-contracts` LSP case checks exact UTF-16 spans, unsaved correction
 and annotated signatures in hover; Tree-sitter covers the same attribute syntax.
 The stdlib surface census records `std::testing::check` with O0/O3 execution.
 
