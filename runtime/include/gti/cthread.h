@@ -83,6 +83,15 @@ void gti_rt_cthread_end_v1(void);
 void gti_rt_cthread_enter_v1(gti_cthread_entry_v1 entry);
 void gti_rt_cthread_leave_v1(gti_cthread_entry_v1 entry);
 
+// Compiler-generated thread-confined adapters. Identity observation here
+// additionally requires an active initial/managed/registered GTI thread; it
+// never attaches a foreign thread. The adapter atomically binds once to this
+// never-reused identity. Entry checks ownership before GTI code; balanced leave
+// restores the enclosing failure boundary. Invalid use terminates.
+uint64_t gti_rt_confined_callback_thread_v1(void);
+void gti_rt_confined_callback_enter_v1(uint64_t owner);
+void gti_rt_confined_callback_leave_v1(void);
+
 #ifdef __cplusplus
 }
 #endif

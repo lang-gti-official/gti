@@ -319,6 +319,7 @@ struct LoweredFunctionDeclaration {
   bool requiresUnsafe = false;
   bool neverReturns = false;
   bool tracksCaller = false;
+  bool threadConfinedCallback = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   ProcessMemoryRuntimeOperation processMemoryOperation =
       ProcessMemoryRuntimeOperation::None;

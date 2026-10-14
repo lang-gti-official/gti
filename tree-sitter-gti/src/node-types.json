@@ -6168,6 +6168,10 @@
     "named": false
   },
   {
+    "type": "thread_confined_callback",
+    "named": false
+  },
+  {
     "type": "track_caller",
     "named": false
   },

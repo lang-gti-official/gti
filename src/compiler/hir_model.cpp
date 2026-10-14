@@ -776,12 +776,19 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                     target->parameterTypes.end(), parameterTypes.begin()) ||
         adapter.cThreadCallback !=
             (program.executionProfile() == ExecutionProfile::Concurrent
-                 ? adapter.type.cThreadCallbackKind()
+                 ? (target->threadConfinedCallback
+                        ? CThreadCallbackKind::ThreadConfined
+                        : adapter.type.cThreadCallbackKind())
                  : CThreadCallbackKind::None) ||
         (program.executionProfile() == ExecutionProfile::Concurrent &&
          adapter.cThreadCallback == CThreadCallbackKind::None)) {
       result.errors.emplace_back(
           "native callback adapter has no exact free-function target");
+    }
+    if (target && declaration &&
+        target->threadConfinedCallback != declaration->threadConfinedCallback) {
+      result.errors.emplace_back(
+          "native callback target differs from its semantic entry contract");
     }
   }
   const auto verifyNativeCallbackValues = [&](const HirBody &body) {

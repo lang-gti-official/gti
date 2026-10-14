@@ -74,7 +74,7 @@
     "073-constructor-local-generics.gti": 129,
     "074-read-only-range-loans.gti": 93,
     "075-bounded-arena-pool.gti": 99,
-    "076-scalar-atomics.gti": 48,
+    "076-scalar-atomics.gti": 71,
     "077-callable-concepts.gti": 114,
     "078-owning-payload-enums.gti": 11,
     "079-class-scoped-type-aliases.gti": 12,
@@ -151,5 +151,5 @@
     "152-unsafe-expressions.gti": 117,
     "153-constexpr-allocation.gti": 45
   },
-  "total": 16410
+  "total": 16433
 }

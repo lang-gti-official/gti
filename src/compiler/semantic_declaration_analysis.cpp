@@ -4390,6 +4390,8 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .neverReturns = function->hasFunctionAttribute("noreturn"),
           .tracksCaller = function->hasFunctionAttribute("track_caller"),
           .discardableResult = function->hasFunctionAttribute("discardable"),
+          .threadConfinedCallback =
+              function->hasFunctionAttribute("thread_confined_callback"),
           .linkage = function->linkage(),
           .externalSymbol =
               function->hasCLinkage()
@@ -8600,6 +8602,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .neverReturns = declaration.neverReturns,
       .tracksCaller = declaration.tracksCaller,
       .discardableResult = declaration.discardableResult,
+      .threadConfinedCallback = declaration.threadConfinedCallback,
       .cThreadOperation = declaration.cThreadOperation,
       .processMemoryOperation = declaration.processMemoryOperation,
       .requiresCThreadRuntime =

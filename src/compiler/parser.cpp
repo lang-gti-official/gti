@@ -816,11 +816,12 @@ private:
                       "Only [[discardable]] may be combined with native "
                       "function attributes.");
         }
-        functionAttributeList = functionAttributeList ||
-                                attribute.name.lexeme == "noreturn" ||
-                                attribute.name.lexeme == "track_caller" ||
-                                attribute.name.lexeme == "discardable" ||
-                                attribute.name.lexeme == "borrowed_from";
+        functionAttributeList =
+            functionAttributeList || attribute.name.lexeme == "noreturn" ||
+            attribute.name.lexeme == "track_caller" ||
+            attribute.name.lexeme == "thread_confined_callback" ||
+            attribute.name.lexeme == "discardable" ||
+            attribute.name.lexeme == "borrowed_from";
       }
       if (functionAttributeList) {
         for (FunctionAttribute &attribute : attributes) {

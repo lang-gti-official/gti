@@ -1517,8 +1517,15 @@ earlier one. `FrontendWorkMetrics` reports reuse hits, misses (with rejected
 entries), ineligible requests, stores and the time spent validating and
 copying entries. The `instance_reuse` test analyses every example fresh and
 then twice through one cache and requires identical diagnostics, HIR inventory
-and MIR modulo a single program-wide alpha-renaming of concrete-only local
-symbols, keyed by exact HIR binding identity. Base symbols, fields, all non-symbol
+and MIR modulo a single program-wide alpha-renaming of body-local symbols,
+keyed by exact HIR binding identity and source declaration identity/role.
+A shared source declaration retains its complete sorted set of concrete HIR
+bindings; distinct symbols may not claim the same binding. Concrete-only locals
+still require their original one-symbol/one-binding bijection.
+This includes ordinary locals and parameters in late-demanded bodies: reserving
+a cached concrete range can shift their subsequent allocation too. The earlier
+concrete-only comparison incorrectly treated such harmless shifts as changes.
+Non-local base symbols, fields, all non-symbol
 identities and every instruction/loan/cleanup fact remain exact; swapped,
 aliased or cross-body references are not equivalent. Its fixtures cover edited
 bodies, changed declarations, an

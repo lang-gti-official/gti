@@ -724,6 +724,7 @@ struct FunctionInfo {
   bool neverReturns = false;
   bool tracksCaller = false;
   bool discardableResult = false;
+  bool threadConfinedCallback = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   ProcessMemoryRuntimeOperation processMemoryOperation =
       ProcessMemoryRuntimeOperation::None;

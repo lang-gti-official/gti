@@ -3424,6 +3424,18 @@ it reproduces on the independent 0.380.0 callback release too.
 
 ## Native function-pointer invocation
 
+`native_callback_pipeline` also covers explicit thread-confined contracts,
+target/adapter role mutations, non-removable binding effects and formatting.
+Paired factory summaries require runtime binding effects only in the concurrent
+profile; passive legacy conversions remain passive in whole-function summaries
+as well as instruction queries.
+`thread_confined_callback_runtime` covers same-thread nesting, managed/manual
+workers, unused cross-thread registration, foreign entry, stopped scopes and
+runtime shutdown, and target cleanup/termination on both initial and managed
+threads. It runs C++20/C++23 O0/O1/O3 and O1 ASan/UBSan; example 076 exercises
+the source contract. These gates are acceptance obligations, not a claim that
+an unexecuted platform has passed.
+
 The C-08A candidate uses an optimized Release/Ninja compiler on macOS arm64,
 AppleClang and LLVM 22.1.8. `native_callback_pipeline` checks semantic selection,
 HIR/MIR, generic specialization, exact call signatures, conservative foreign

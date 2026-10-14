@@ -4373,6 +4373,10 @@
               "value": "discardable"
             },
             {
+              "type": "STRING",
+              "value": "thread_confined_callback"
+            },
+            {
               "type": "SYMBOL",
               "name": "borrow_origin_attribute"
             }
@@ -4401,6 +4405,10 @@
                   {
                     "type": "STRING",
                     "value": "discardable"
+                  },
+                  {
+                    "type": "STRING",
+                    "value": "thread_confined_callback"
                   },
                   {
                     "type": "SYMBOL",
