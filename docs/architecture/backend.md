@@ -1461,6 +1461,21 @@ the existing fused-closure representation without a native type row, but only
 when its exact initialization and complete use chain satisfy that proof.
 Neither change reconstructs a call or its evaluation order from source syntax.
 
+A lambda local's storage follows the instruction that produces its value.
+`constructedLambdaDestination` names the exact binding that a lambda value
+publishes into, unless an admitted fused closure chain carries that value. Such
+a producer can be a materialized Closure, a copy `Load`, a `Move` or a
+closure-returning call. The declaration (`lifetimeSlotPlace`), the producer's
+construction, the destination `Initialize` and the vocabulary admission all
+consult this one proof. So `F g = f;` in a deduced-callable body declares and
+constructs one lifetime slot even though the body creates no literal of type
+`F`. A passive closure's slot is representation-only. Before each construction,
+its producer retires any previous representation, as a representation-only
+class publication does, so a loop can rebuild the local without a semantic
+Drop. A fused chain's carriers still allocate no storage. When neither a
+template overlay row nor a materialized closure can name a constructed local's
+type, the body is refused instead of emitting an undeclared slot.
+
 An exact typed lambda invocation stages a by-value class argument through the
 same ordered `CallInput` plan as a function call. When a later argument can
 fail, a MIR failure edge drops that argument's prepared-parameter obligation.

@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.432.2 — Copies of lambdas kept in locals
+
+- Fix the native C++ compile failure (`no member named 'construct'` in the
+  saved backend log) when a generic function copies a lambda parameter into a
+  local of its own type, such as `F g = f;`, and then passes that local on: by
+  copy or move into another call or class, after copying it again, or from a
+  lambda-returning call such as `F g = pass(f);`. This failed for lambdas
+  without captures and lambdas capturing numbers; lambdas capturing plain
+  structs already worked.
+- Fix the runtime error "verified MIR lifetime slot was constructed twice"
+  when a loop copies a lambda into a local on each iteration, such as
+  `auto copy = f;` inside a `for` loop, in any function.
+
 ## 0.432.1 — Lambda-typed classes built in member initializers
 
 - Fix the internal compiler error that 0.431.2 still listed (`GTI-B0001`,
