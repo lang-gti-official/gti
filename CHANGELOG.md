@@ -21,9 +21,10 @@ for what minor and patch releases mean.
   - a field that takes ownership of another parameter, such as
     `Named(F f, std::string name) : inner(Holder<F>(f)), name(std::move(name)) {}`,
     in either order, including a second lambda moved into a field
-- Classes that are not lambda-typed now also build such member fields directly
-  in the generated C++ constructor when a base or owned field sits beside them.
-  Program behavior is unchanged.
+- For any class, generated C++ constructors now initialize such member fields,
+  and literal fields beside them, directly in the member-initializer list when
+  a base or an owned field sits beside them, as in the standard library's list
+  nodes and arenas. Program behavior is unchanged.
 - Such a member initializer still stops with this error in these cases:
   - beside a base class whose constructor arguments are computed
   - beside a base class whose constructor can fail
