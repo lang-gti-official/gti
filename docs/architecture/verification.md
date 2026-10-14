@@ -1,5 +1,33 @@
 # Compiler Verification
 
+## Constructed closure fields beside bases and owned fields (0.432.2)
+
+`generic_callable_transport_runtime` adds `generic_closure_field_composition.gti`.
+Lambda-typed classes build `Holder<F>(f)` or `Moved<F>(std::move(f))` as a
+member initializer beside each of these:
+
+- a literal, a forwarded and an implicit default base, and a base beside an
+  interface
+- an owned string field before or after it
+- two owned string fields
+- a base, an owned string field and a literal field together
+
+These run for captureless, scalar-capturing and struct-capturing lambdas of one
+class, in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+
+`stored_callable_types` requires one native constructed-field binding next to
+the base binding, the owned string binding and the record-published owned
+closure binding. It also requires each constructor's shared native initializer
+list, and admission under the closure overlay. It rejects these mutations for
+both closure instances of each class:
+
+- a conditional base activation
+- a retained base rollback
+- a conditional failure rollback
+- an unconsumed or foreign owned move
+- a conditional formal drop
+- a staged record publication
+
 ## Constructed closure fields of generic classes (0.432.1)
 
 `generic_callable_transport_runtime` adds `generic_closure_field_construction.gti`.
