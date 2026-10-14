@@ -1,12 +1,20 @@
+#include "compiler_test_fixture.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
-#include "compiler_test_fixture.h"
 
 #include <algorithm>
 #include <iostream>
 
 int main() {
-  const auto erased = analyzeTrustedPreludeFixture("erased-user-wrapper-mir.gti", R"gti(
+  const auto application = [](const std::string &name,
+                              const std::string &source) {
+    const auto entry = std::filesystem::temp_directory_path() / name;
+    return lang::Frontend().analyze(
+        entry, source, {standardLibraryPrelude()},
+        {{std::filesystem::weakly_canonical(entry).string(), source}},
+        {standardLibraryRoot()});
+  };
+  const auto erased = application("erased-user-wrapper-mir.gti", R"gti(
 #include <std/memory>
 #include <std/functional>
 class Inspection {
@@ -17,8 +25,21 @@ public:
     unsafe { int& value = std::restore_ref<int>(this.object); return value; }
   }
 };
+class Reader {
+  int& value;
+public:
+  Reader(int& value) : value(value) {}
+  int read() { return this.value; }
+};
+Reader& restore_reader(std::erased_object& object) {
+  unsafe { Reader& reader = std::restore_ref<Reader>(object); return reader; }
+}
 int main() {
   int owner = 7; Inspection view{owner};
+  Reader original{owner};
+  std::erased_object& hidden = std::erase_ref(original);
+  Reader& restored = restore_reader(hidden);
+  if (restored.read() != 7) return 1;
   auto reader = [&owner](int value) -> int { return owner + value; };
   std::function_ref<int(int)> callback{reader};
   mut int count = 0;
@@ -32,62 +53,103 @@ int main() {
       std::cerr << diagnostic.message << '\n';
     const auto verification = lang::verifyMirProgram(erased.mir);
     for (const auto &error : verification.errors)
-      std::cerr << "verify " << int(error.bodyKind) << ':' << error.owner << " b" << error.block << " i" << error.instruction << ' ' << error.message << '\n';
+      std::cerr << "verify " << int(error.bodyKind) << ':' << error.owner
+                << " b" << error.block << " i" << error.instruction << ' '
+                << error.message << '\n';
     const auto dump = [&](const auto &instance) {
       const auto &body = instance.body;
       if (std::none_of(verification.errors.begin(), verification.errors.end(),
-                      [&](const auto &error) { return error.bodyKind == body.kind && error.owner == instance.id; }))
+                       [&](const auto &error) {
+                         return error.bodyKind == body.kind &&
+                                error.owner == instance.id;
+                       }))
         return;
       std::cerr << "body " << int(body.kind) << ':' << instance.id << '\n';
       for (const auto &loan : body.loans)
-        std::cerr << "  loan " << loan.id << " kind=" << int(loan.kind) << " source=" << loan.source
-                  << " parent=" << loan.parent << " access=" << int(loan.access)
-                  << " entry=" << loan.entry << " escapes=" << loan.escapes << " producer=" << loan.producedBy << '\n';
+        std::cerr << "  loan " << loan.id << " kind=" << int(loan.kind)
+                  << " source=" << loan.source << " parent=" << loan.parent
+                  << " access=" << int(loan.access) << " entry=" << loan.entry
+                  << " escapes=" << loan.escapes
+                  << " producer=" << loan.producedBy << '\n';
       for (const auto &block : body.blocks)
         for (const auto &instruction : block.instructions) {
           std::cerr << "  i" << instruction.id << " k=" << int(instruction.kind)
-                    << " intrinsic=" << int(instruction.intrinsic) << " op=" << int(instruction.operation)
-                    << " result=" << instruction.result.value_or(0) << " loan=" << instruction.loan.value_or(0)
-                    << " type=" << int(instruction.info.type.kind) << " operands=";
+                    << " intrinsic=" << int(instruction.intrinsic)
+                    << " op=" << int(instruction.operation)
+                    << " result=" << instruction.result.value_or(0)
+                    << " loan=" << instruction.loan.value_or(0)
+                    << " type=" << int(instruction.info.type.kind)
+                    << " restore=" << instruction.restoresReferenceResult
+                    << " fields=" << instruction.restoredBorrowFields.size()
+                    << " target=" << instruction.functionTarget.value_or(0)
+                    << " origin=" << int(instruction.borrowOrigin) << ':'
+                    << instruction.borrowArgument << " operands=";
           for (const auto &operand : instruction.operands)
-            std::cerr << int(operand.kind) << ':' << int(operand.type.kind) << ":v" << operand.value << ":p" << operand.place << ":l" << operand.loan << ',';
+            std::cerr << int(operand.kind) << ':' << int(operand.type.kind)
+                      << ":v" << operand.value << ":p" << operand.place << ":l"
+                      << operand.loan << ',';
           std::cerr << '\n';
         }
     };
-    for (const auto &instance : erased.mir.functionInstances()) dump(instance);
-    for (const auto &instance : erased.mir.constructorInstances()) dump(instance);
-    for (const auto &instance : erased.mir.lambdaInstances()) dump(instance);
+    for (const auto &instance : erased.mir.functionInstances())
+      dump(instance);
+    for (const auto &instance : erased.mir.constructorInstances())
+      dump(instance);
+    for (const auto &instance : erased.mir.lambdaInstances())
+      dump(instance);
     return 7;
   }
   bool erasedChecked = false;
+  bool restoredFieldsChecked = false;
   for (const auto &function : erased.mir.functionInstances())
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions) {
         if (instruction.intrinsic != lang::IntrinsicKind::RestoreReference)
           continue;
         erasedChecked = true;
-        for (int mutation = 0; mutation != 3; ++mutation) {
+        const bool hasFields = !instruction.restoredBorrowFields.empty();
+        restoredFieldsChecked = restoredFieldsChecked || hasFields;
+        for (int mutation = 0; mutation != (hasFields ? 7 : 3); ++mutation) {
           auto changed = erased.mir;
           auto *target = const_cast<lang::MirFunctionInstance *>(
               changed.findFunctionInstance(function.id));
           auto &instructions = target->body.blocks[block.id - 1].instructions;
           auto selected = std::find_if(instructions.begin(), instructions.end(),
-              [&](const auto &candidate) { return candidate.id == instruction.id; });
+                                       [&](const auto &candidate) {
+                                         return candidate.id == instruction.id;
+                                       });
           if (mutation == 0)
             selected->unsafeOperation = lang::UnsafeOperationKind::None;
           else if (mutation == 1)
-            selected->parameterTypes.front().referenceAccess = lang::AccessMode::Mutable;
-          else
+            selected->parameterTypes.front().referenceAccess =
+                lang::AccessMode::Mutable;
+          else if (mutation == 2)
             selected->borrowOrigin = lang::BorrowOriginKind::None;
+          else if (mutation == 3)
+            selected->restoredBorrowFields.clear();
+          else if (mutation == 4)
+            selected->restoredBorrowFields.front().fields.front() = 0;
+          else if (mutation == 5)
+            selected->restoredBorrowFields.front()
+                .referenceType.referenceAccess =
+                selected->restoredBorrowFields.front()
+                            .referenceType.referenceAccess ==
+                        lang::AccessMode::Mutable
+                    ? lang::AccessMode::ReadOnly
+                    : lang::AccessMode::Mutable;
+          else
+            target->body.loans[*selected->loan - 1].storedDependency = 0;
           if (lang::verifyMirProgram(changed).valid()) {
-            std::cerr << "accepted forged erased reference " << mutation << '\n';
+            std::cerr << "accepted forged erased reference " << mutation
+                      << '\n';
             return 8;
           }
         }
       }
-  if (!erasedChecked)
+  if (!erasedChecked || !restoredFieldsChecked)
     return 9;
-  const auto exclusive = lang::Frontend().analyze("exclusive-borrowed-callback-mir.gti", R"gti(
+  const auto exclusive =
+      lang::Frontend().analyze("exclusive-borrowed-callback-mir.gti", R"gti(
 int main() {
   mut int value = 4;
   mut auto change = [mut &value]() -> void { value += 1; };
@@ -100,7 +162,8 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return 6;
   }
-  const auto analyzed = lang::Frontend().analyze("borrowed-callback-mir.gti", R"gti(
+  const auto analyzed =
+      lang::Frontend().analyze("borrowed-callback-mir.gti", R"gti(
 int main() {
   int first = 4;
   int second = 9;
@@ -118,7 +181,8 @@ int main() {
   const auto &lambda = analyzed.mir.lambdaInstances().front();
   for (int mutation = 0; mutation < 3; ++mutation) {
     auto changed = analyzed.mir;
-    auto *target = const_cast<lang::MirLambdaInstance *>(changed.findLambda(lambda.id));
+    auto *target =
+        const_cast<lang::MirLambdaInstance *>(changed.findLambda(lambda.id));
     if (mutation == 0)
       target->captureModes.front() = lang::LambdaCaptureMode::Copy;
     else if (mutation == 1)
@@ -126,7 +190,8 @@ int main() {
     else
       target->captureTypes.front().referenceAccess = lang::AccessMode::Mutable;
     if (lang::verifyMirProgram(changed).valid()) {
-      std::cerr << "accepted forged capture representation " << mutation << '\n';
+      std::cerr << "accepted forged capture representation " << mutation
+                << '\n';
       return 3;
     }
   }
@@ -134,7 +199,8 @@ int main() {
   for (const auto &function : analyzed.mir.functionInstances())
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions) {
-        if (instruction.operation != lang::MirOperation::Closure || !instruction.loan)
+        if (instruction.operation != lang::MirOperation::Closure ||
+            !instruction.loan)
           continue;
         checked = true;
         for (int mutation = 0; mutation < 4; ++mutation) {
@@ -143,18 +209,22 @@ int main() {
               changed.findFunctionInstance(function.id));
           auto &instructions = target->body.blocks[block.id - 1].instructions;
           auto selected = std::find_if(instructions.begin(), instructions.end(),
-              [&](const auto &candidate) { return candidate.id == instruction.id; });
+                                       [&](const auto &candidate) {
+                                         return candidate.id == instruction.id;
+                                       });
           auto &loan = target->body.loans[*instruction.loan - 1];
           if (mutation == 0)
             selected->loan.reset();
           else if (mutation == 1)
             loan.additionalDependencies.clear();
           else if (mutation == 2)
-            loan.additionalDependencies.front().designatedFields = loan.designatedFields;
+            loan.additionalDependencies.front().designatedFields =
+                loan.designatedFields;
           else
             selected->operands.front().kind = lang::MirOperandKind::Copy;
           if (lang::verifyMirProgram(changed).valid()) {
-            std::cerr << "accepted forged closure dependency " << mutation << '\n';
+            std::cerr << "accepted forged closure dependency " << mutation
+                      << '\n';
             return 4;
           }
         }

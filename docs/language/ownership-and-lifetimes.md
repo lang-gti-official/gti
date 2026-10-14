@@ -1288,6 +1288,11 @@ Two general facilities support this ordinary source wrapper:
   `unsafe`: the caller must supply precisely the original type. Shared erasure
   cannot be restored with mutable access. Restoration retains checked lifetime
   dependencies; `unsafe` does not make them disappear.
+  When the restored object itself contains borrows, those field dependencies
+  remain conservatively bounded by the erased reference's checked witness.
+  Ordinary helper functions can forward that restoration contract when every
+  return is proven to restore the same opaque input. A matching signature
+  alone does not grant restoration authority.
 - `std::function_ptr<R(Args...)>` is a non-null, typed GTI invocation pointer
   constructed from an exact namespace-function item or captureless lambda.
   It preserves GTI's failure and argument/result ownership convention. It is

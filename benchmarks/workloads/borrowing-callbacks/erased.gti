@@ -9,5 +9,5 @@ int main() {
   mut std::function_ref<void(uint64_t) mut> view{update};
   run(view);
   report(state);
-  return 0;
+  return state == uint64_t(0xa4e8) ? 0 : 1;
 }

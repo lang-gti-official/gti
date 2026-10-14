@@ -38,6 +38,133 @@ struct MirStoredCarrierReference {
 findStoredCarrierReferences(const MirProgram &program,
                             const SemanticType &type);
 
+[[nodiscard]] bool
+exactRestoredBorrowFields(const MirProgram &program, const SemanticType &type,
+                          const std::vector<RestoredBorrowField> &fields) {
+  const auto paths = findStoredCarrierReferences(program, type);
+  if (paths.size() != fields.size())
+    return false;
+  for (std::size_t index = 0; index < paths.size(); ++index)
+    if (paths[index].fields != fields[index].fields ||
+        paths[index].reference != fields[index].referenceType)
+      return false;
+  return true;
+}
+
+// Follow only executable reference publications. A summary flag or matching
+// signature alone never establishes restoration authority, including through
+// recursive helpers: every finite proof must reach the checked intrinsic.
+[[nodiscard]] const MirInstruction *
+restorationProducer(const MirBody &body, MirLoanId loan,
+                    std::unordered_set<MirLoanId> &seen) {
+  if (!seen.insert(loan).second)
+    return nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.loan != loan)
+        continue;
+      if (instruction.kind == MirInstructionKind::Call)
+        return instruction.restoresReferenceResult ? &instruction : nullptr;
+      if (instruction.kind == MirInstructionKind::Borrow &&
+          instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::Loan)
+        return restorationProducer(body, instruction.operands.front().loan,
+                                   seen);
+    }
+  const auto *record = body.findLoan(loan);
+  return record && record->parent
+             ? restorationProducer(body, record->parent, seen)
+             : nullptr;
+}
+
+[[nodiscard]] bool
+verifiedRestoreSummary(const MirProgram &program,
+                       const MirFunctionInstance &function,
+                       std::unordered_set<HirFunctionInstanceId> &visiting) {
+  if (!function.restoresReferenceResult ||
+      function.definitionKind != MirDefinitionKind::Source ||
+      function.returnType.kind != SemanticType::Reference ||
+      function.returnType.arguments.size() != 1 ||
+      function.returnBorrowOrigin != BorrowOriginKind::Argument ||
+      function.returnBorrowParameter >= function.parameterBindings.size() ||
+      !function.returnBorrowFields.empty() ||
+      !function.returnBorrowParameters.empty() || function.returnBorrowPlace ||
+      !exactRestoredBorrowFields(program, function.returnType.arguments.front(),
+                                 function.restoredBorrowFields) ||
+      !visiting.insert(function.id).second)
+    return false;
+  const auto &body = function.body;
+  bool returned = false;
+  for (const auto &block : body.blocks) {
+    if (block.terminator.kind != MirTerminatorKind::Return)
+      continue;
+    returned = true;
+    if (!block.terminator.returnLoan)
+      return false;
+    std::unordered_set<MirLoanId> seen;
+    const auto *producer =
+        restorationProducer(body, *block.terminator.returnLoan, seen);
+    const auto *loan =
+        producer && producer->loan ? body.findLoan(*producer->loan) : nullptr;
+    const auto *source = loan ? body.findPlace(loan->source) : nullptr;
+    if (!producer || !source || source->root != MirPlaceRootKind::Binding ||
+        source->binding !=
+            function.parameterBindings[function.returnBorrowParameter] ||
+        !source->projections.empty() ||
+        producer->info.type != function.returnType.arguments.front() ||
+        producer->borrowAccess != function.returnType.referenceAccess ||
+        producer->restoredBorrowFields != function.restoredBorrowFields)
+      return false;
+    if (producer->functionTarget) {
+      const auto *target =
+          program.findFunctionInstance(*producer->functionTarget);
+      if (!target || !verifiedRestoreSummary(program, *target, visiting))
+        return false;
+    } else if ((producer->intrinsic != IntrinsicKind::RestoreReference &&
+                producer->intrinsic != IntrinsicKind::RestoreReferenceMut) ||
+               !mir_detail::erasedReferenceResultLoan(program, body,
+                                                      *producer)) {
+      return false;
+    }
+  }
+  visiting.erase(function.id);
+  return returned;
+}
+
+[[nodiscard]] bool verifiedRestoreCall(const MirProgram &program,
+                                       const MirBody &body,
+                                       const MirInstruction &instruction) {
+  if (!instruction.restoresReferenceResult ||
+      instruction.kind != MirInstructionKind::Call || !instruction.loan ||
+      instruction.borrowOrigin != BorrowOriginKind::Argument ||
+      instruction.borrowArgument >= instruction.parameterTypes.size() ||
+      instruction.borrowArgument >= instruction.operands.size() ||
+      !instruction.borrowFields.empty() ||
+      !instruction.borrowArguments.empty() || instruction.borrowPlace ||
+      !exactRestoredBorrowFields(program, instruction.info.type,
+                                 instruction.restoredBorrowFields))
+    return false;
+  const auto &witness = instruction.parameterTypes[instruction.borrowArgument];
+  if (witness.kind != SemanticType::Reference ||
+      witness.arguments.size() != 1 ||
+      !exactMirCapabilityClass(program, witness.arguments.front(),
+                               CompilerCapabilityTypeKind::ErasedObject) ||
+      (instruction.borrowAccess == AccessMode::Mutable &&
+       witness.referenceAccess != AccessMode::Mutable))
+    return false;
+  if (!instruction.functionTarget)
+    return (instruction.intrinsic == IntrinsicKind::RestoreReference ||
+            instruction.intrinsic == IntrinsicKind::RestoreReferenceMut) &&
+           mir_detail::erasedReferenceResultLoan(program, body, instruction);
+  const auto *target =
+      program.findFunctionInstance(*instruction.functionTarget);
+  std::unordered_set<HirFunctionInstanceId> visiting;
+  return target &&
+         instruction.restoredBorrowFields == target->restoredBorrowFields &&
+         instruction.borrowArgument == target->returnBorrowParameter &&
+         verifiedRestoreSummary(program, *target, visiting);
+}
+
 [[nodiscard]] std::optional<SemanticType>
 mirFieldProjectionType(const MirProgram &program, const SemanticType &receiver,
                        SymbolId symbol);
@@ -2677,8 +2804,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             const AccessMode access = mode == LambdaCaptureMode::BorrowMut
                                           ? AccessMode::Mutable
                                           : AccessMode::ReadOnly;
-            const bool exactBorrow = borrowed &&
-                capture.type.kind == SemanticType::Reference &&
+            const bool exactBorrow =
+                borrowed && capture.type.kind == SemanticType::Reference &&
                 capture.type.arguments.size() == 1 &&
                 capture.type.referenceAccess == access && place &&
                 place->type == capture.type.arguments.front() &&
@@ -2691,7 +2818,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                  (capture.kind == MirOperandKind::Loan && loan &&
                   (access == AccessMode::ReadOnly ||
                    loan->access == AccessMode::Mutable)));
-            const bool exactMode = borrowed ? exactBorrow
+            const bool exactMode =
+                borrowed ? exactBorrow
                 : mode == LambdaCaptureMode::Copy
                     ? capture.kind == MirOperandKind::Copy && capture.place != 0
                     : movedValueInto(body, capture, instruction.id, index);
@@ -2704,67 +2832,83 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             }
           }
           std::vector<std::pair<std::size_t, MirLoanDependency>> borrows;
-          for (std::size_t index = 0; index < lambda->captureModes.size(); ++index) {
+          for (std::size_t index = 0; index < lambda->captureModes.size();
+               ++index) {
             if (isBorrowingCapture(lambda->captureModes[index])) {
-              borrows.emplace_back(index, MirLoanDependency{
-                  .source = instruction.operands[index].place,
-                  .designatedFields = {lambda->captureSymbols[index]},
-                  .access = lambda->captureTypes[index].referenceAccess});
+              borrows.emplace_back(
+                  index,
+                  MirLoanDependency{
+                      .source = instruction.operands[index].place,
+                      .designatedFields = {lambda->captureSymbols[index]},
+                      .access = lambda->captureTypes[index].referenceAccess});
               continue;
             }
-            const auto paths = findStoredCarrierReferences(program,
-                                                           lambda->captureTypes[index]);
+            const auto paths = findStoredCarrierReferences(
+                program, lambda->captureTypes[index]);
             if (paths.empty())
               continue;
-            const auto inputs = dependencySources(dependencySources,
-                instruction.operands[index], 0, true);
+            const auto inputs = dependencySources(
+                dependencySources, instruction.operands[index], 0, true);
             for (const auto &path : paths) {
-              const auto input = std::find_if(inputs.begin(), inputs.end(),
-                  [&](const auto &candidate) {
+              const auto input = std::find_if(
+                  inputs.begin(), inputs.end(), [&](const auto &candidate) {
                     return candidate.designatedFields == path.fields &&
                            candidate.access == path.reference.referenceAccess;
                   });
               if (input == inputs.end() || input->source == 0)
-                return verificationFailure(body, owner,
+                return verificationFailure(
+                    body, owner,
                     "captured carrier does not relay its exact stored origins",
                     block.id, instruction.id);
               auto dependency = *input;
-              dependency.designatedFields.insert(dependency.designatedFields.begin(),
-                                                   lambda->captureSymbols[index]);
+              dependency.designatedFields.insert(
+                  dependency.designatedFields.begin(),
+                  lambda->captureSymbols[index]);
               borrows.emplace_back(index, std::move(dependency));
             }
           }
-          const auto *retained = instruction.loan
-              ? body.findLoan(*instruction.loan) : nullptr;
+          const auto *retained =
+              instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
           if (borrows.empty() != (retained == nullptr) ||
-              (retained && (retained->kind != MirLoanKind::Stored ||
-                  retained->entry || retained->escapes ||
-                  retained->producedBy != instruction.hirValue ||
-                  retained->additionalDependencies.size() + 1 != borrows.size() ||
-                  instruction.borrowOrigin != BorrowOriginKind::Argument ||
-                  instruction.borrowArgument != borrows.front().first)))
-            return verificationFailure(body, owner,
+              (retained &&
+               (retained->kind != MirLoanKind::Stored || retained->entry ||
+                retained->escapes ||
+                retained->producedBy != instruction.hirValue ||
+                retained->additionalDependencies.size() + 1 != borrows.size() ||
+                instruction.borrowOrigin != BorrowOriginKind::Argument ||
+                instruction.borrowArgument != borrows.front().first)))
+            return verificationFailure(
+                body, owner,
                 "closure does not retain its exact capture dependencies",
                 block.id, instruction.id);
           for (std::size_t ordinal = 0; ordinal < borrows.size(); ++ordinal) {
             const auto &[index, expected] = borrows[ordinal];
             const auto *input = body.findPlace(expected.source);
-            const auto source = ordinal == 0 ? retained->source
-                : retained->additionalDependencies[ordinal - 1].source;
-            const auto access = ordinal == 0 ? retained->access
-                : retained->additionalDependencies[ordinal - 1].access;
-            const auto &fields = ordinal == 0 ? retained->designatedFields
-                : retained->additionalDependencies[ordinal - 1].designatedFields;
+            const auto source =
+                ordinal == 0
+                    ? retained->source
+                    : retained->additionalDependencies[ordinal - 1].source;
+            const auto access =
+                ordinal == 0
+                    ? retained->access
+                    : retained->additionalDependencies[ordinal - 1].access;
+            const auto &fields =
+                ordinal == 0 ? retained->designatedFields
+                             : retained->additionalDependencies[ordinal - 1]
+                                   .designatedFields;
             const auto *origin = body.findPlace(source);
             if (!input || !origin || origin->root != input->root ||
-                origin->binding != input->binding || origin->symbol != input->symbol ||
-                origin->capture != input->capture || origin->value != input->value ||
-                origin->loan != input->loan || origin->projections != input->projections ||
-                origin->type != input->type ||
-                access != expected.access || fields != expected.designatedFields)
+                origin->binding != input->binding ||
+                origin->symbol != input->symbol ||
+                origin->capture != input->capture ||
+                origin->value != input->value || origin->loan != input->loan ||
+                origin->projections != input->projections ||
+                origin->type != input->type || access != expected.access ||
+                fields != expected.designatedFields)
               return verificationFailure(body, owner,
-                  "closure capture dependency differs from its exact input place",
-                  block.id, instruction.id);
+                                         "closure capture dependency differs "
+                                         "from its exact input place",
+                                         block.id, instruction.id);
           }
         }
         if (instruction.borrowOrigin != BorrowOriginKind::None &&
@@ -3002,7 +3146,10 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             instruction.borrowArguments != target->returnBorrowParameters ||
             instruction.borrowFields != target->returnBorrowFields ||
             instruction.borrowAccess != target->returnBorrowAccess ||
-            instruction.borrowPlace != target->returnBorrowPlace) {
+            instruction.borrowPlace != target->returnBorrowPlace ||
+            instruction.restoresReferenceResult !=
+                target->restoresReferenceResult ||
+            instruction.restoredBorrowFields != target->restoredBorrowFields) {
           return verificationFailure(
               body, owner,
               "call-result borrow origin does not match the target "
@@ -3876,20 +4023,22 @@ findStoredCarrierReferences(const MirProgram &program,
     }
     visiting.push_back(current);
     if (current.kind == SemanticType::Lambda) {
-      const auto instance = std::find_if(program.lambdaInstances().begin(),
-          program.lambdaInstances().end(), [&](const auto &row) {
-            return row.type == current;
-          });
+      const auto instance = std::find_if(
+          program.lambdaInstances().begin(), program.lambdaInstances().end(),
+          [&](const auto &row) { return row.type == current; });
       std::vector<MirStoredCarrierReference> paths;
       if (instance != program.lambdaInstances().end() &&
           instance->captureSymbols.size() == instance->captureTypes.size()) {
-        for (std::size_t index = 0; index < instance->captureTypes.size(); ++index) {
+        for (std::size_t index = 0; index < instance->captureTypes.size();
+             ++index) {
           const auto &field = instance->captureTypes[index];
-          auto children = field.kind == SemanticType::Reference
-              ? std::vector<MirStoredCarrierReference>{{.reference = field}}
-              : self(self, field);
+          auto children =
+              field.kind == SemanticType::Reference
+                  ? std::vector<MirStoredCarrierReference>{{.reference = field}}
+                  : self(self, field);
           for (auto &child : children) {
-            child.fields.insert(child.fields.begin(), instance->captureSymbols[index]);
+            child.fields.insert(child.fields.begin(),
+                                instance->captureSymbols[index]);
             paths.push_back(std::move(child));
           }
         }
@@ -4300,7 +4449,14 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
     if (!localShell && loan.storedDependency == 0)
       continue;
     MirLoanId expected = 0;
-    if (source->root == MirPlaceRootKind::Loan) {
+    const auto *restoration = mir_detail::restoredBorrowAuthority(body, loan);
+    if (restoration != nullptr &&
+        verifiedRestoreCall(program, body, *restoration)) {
+      const auto *result = body.findLoan(*restoration->loan);
+      const auto *witness = result ? body.findLoan(result->parent) : nullptr;
+      if (witness && result->storedDependency == witness->id)
+        expected = witness->id;
+    } else if (source->root == MirPlaceRootKind::Loan) {
       const auto *parent = body.findLoan(source->loan);
       expected = parent == nullptr ? 0 : parent->storedDependency;
     } else if (source->root == MirPlaceRootKind::Value ||
@@ -4366,12 +4522,12 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
                                       source->type.arguments.size() == 1
                                   ? source->type.arguments.front()
                                   : source->type;
-    const bool abstractEntry = source->root == MirPlaceRootKind::This ||
-                               (body.kind == MirBodyKind::Lambda &&
-                                source->root == MirPlaceRootKind::Symbol &&
-                                source->capture != 0) ||
-                               (source->root == MirPlaceRootKind::Binding &&
-                                source->type.kind == SemanticType::Reference);
+    const bool abstractEntry =
+        source->root == MirPlaceRootKind::This ||
+        (body.kind == MirBodyKind::Lambda &&
+         source->root == MirPlaceRootKind::Symbol && source->capture != 0) ||
+        (source->root == MirPlaceRootKind::Binding &&
+         source->type.kind == SemanticType::Reference);
     if (abstractEntry && loan.lifecycleBound)
       return verificationFailure(body, owner,
                                  "abstract stored dependency cannot own a "
@@ -4425,13 +4581,15 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
                            ((*parameterBindings)[index] == source->binding &&
                             (*parameterTypes)[index] == source->type);
       }
-      const bool captureEntry = lambda &&
-          source->root == MirPlaceRootKind::Symbol && source->capture != 0 &&
+      const bool captureEntry =
+          lambda && source->root == MirPlaceRootKind::Symbol &&
+          source->capture != 0 &&
           source->capture <= lambda->captureTypes.size() &&
           source->capture <= lambda->captureSymbols.size() &&
           source->symbol == lambda->captureSymbols[source->capture - 1] &&
           source->type == lambda->captureTypes[source->capture - 1];
-      if ((!receiverEntry && !parameterEntry && !captureEntry) || !source->projections.empty())
+      if ((!receiverEntry && !parameterEntry && !captureEntry) ||
+          !source->projections.empty())
         return verificationFailure(body, owner,
                                    "abstract stored dependency must name the "
                                    "exact receiver or reference formal");
@@ -4763,6 +4921,15 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
   const auto invalidSummary = [&](std::string message) {
     return verificationFailure(body, instance.id, std::move(message));
   };
+  if (instance.restoresReferenceResult) {
+    std::unordered_set<HirFunctionInstanceId> visiting;
+    if (!verifiedRestoreSummary(program, instance, visiting))
+      return invalidSummary("restored reference summary lacks a complete typed "
+                            "intrinsic/witness proof");
+  } else if (!instance.restoredBorrowFields.empty()) {
+    return invalidSummary(
+        "ordinary reference summary carries unproved restored fields");
+  }
   if (!instance.returnBorrowFields.empty()) {
     const auto paths =
         findStoredCarrierReferences(program, instance.returnType);
@@ -5068,9 +5235,18 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           physical.binding ==
               instance.parameterBindings[instance.returnBorrowParameter] &&
           dependencySource->binding == physical.binding;
+      const auto *restoredAuthority =
+          mir_detail::restoredBorrowAuthority(body, *loan);
+      const bool exactRestoredParameter =
+          instance.restoresReferenceResult && exactParameter && dependency &&
+          dependency->kind == MirLoanKind::Parameter &&
+          dependency->access == instance.returnBorrowAccess &&
+          restoredAuthority &&
+          verifiedRestoreCall(program, body, *restoredAuthority);
       if (physical.ambiguous || dependency == nullptr || !dependency->entry ||
-          dependency->kind != MirLoanKind::Stored || dependency->parent != 0 ||
-          dependency->storedDependency != 0 ||
+          (dependency->kind != MirLoanKind::Stored &&
+           !exactRestoredParameter) ||
+          dependency->parent != 0 || dependency->storedDependency != 0 ||
           (!exactReceiver && !exactParameter))
         return verificationFailure(
             body, instance.id,
@@ -8612,7 +8788,10 @@ exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
                  instance->declaration != 0 &&
                  instance->type.kind == SemanticType::Class &&
                  instance->type.classId == instance->declaration &&
-                 instance->type.arguments.size() == 1 &&
+                 instance->type.arguments.size() ==
+                     (capability == CompilerCapabilityTypeKind::ErasedObject
+                          ? 0u
+                          : 1u) &&
                  instance->compilerCapability == capability
              ? instance
              : nullptr;
@@ -10714,14 +10893,14 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
 mirFieldProjectionType(const MirProgram &program, const SemanticType &receiver,
                        SymbolId symbol) {
   if (receiver.kind == SemanticType::Lambda) {
-    const auto instance = std::find_if(program.lambdaInstances().begin(),
-        program.lambdaInstances().end(), [&](const auto &candidate) {
-          return candidate.type == receiver;
-        });
+    const auto instance = std::find_if(
+        program.lambdaInstances().begin(), program.lambdaInstances().end(),
+        [&](const auto &candidate) { return candidate.type == receiver; });
     if (instance == program.lambdaInstances().end() ||
         instance->captureSymbols.size() != instance->captureTypes.size())
       return std::nullopt;
-    for (std::size_t index = 0; index < instance->captureSymbols.size(); ++index)
+    for (std::size_t index = 0; index < instance->captureSymbols.size();
+         ++index)
       if (instance->captureSymbols[index] == symbol)
         return instance->captureTypes[index];
     return std::nullopt;
@@ -11344,10 +11523,27 @@ verifyMirProgramContracts(const MirProgram &program) {
               instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke) &&
              !mir_detail::functionPointerOperation(program, instruction)) ||
             (instruction.intrinsic != IntrinsicKind::FunctionPointerFromItem &&
-             (instruction.functionPointerFunctionTarget || instruction.functionPointerLambdaTarget)))
-          result.errors.push_back({.bodyKind = body.kind, .owner = owner,
-              .instruction = instruction.id,
-              .message = "GTI invocation pointer loses its exact safe signature, stateless target or failure contract"});
+             (instruction.functionPointerFunctionTarget ||
+              instruction.functionPointerLambdaTarget)))
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .instruction = instruction.id,
+               .message = "GTI invocation pointer loses its exact safe "
+                          "signature, stateless target or failure contract"});
+        const bool restoringIntrinsic =
+            instruction.intrinsic == IntrinsicKind::RestoreReference ||
+            instruction.intrinsic == IntrinsicKind::RestoreReferenceMut;
+        if (((instruction.restoresReferenceResult || restoringIntrinsic) &&
+             !verifiedRestoreCall(program, body, instruction)) ||
+            (!instruction.restoresReferenceResult &&
+             !instruction.restoredBorrowFields.empty()))
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .instruction = instruction.id,
+               .message = "restored reference loses its verified type, fields, "
+                          "access or opaque witness"});
         if ((instruction.intrinsic == IntrinsicKind::RawBorrow ||
              instruction.intrinsic == IntrinsicKind::RawBorrowMut) &&
             mir_detail::rawBorrowResultLoan(body, instruction) == nullptr) {
@@ -11363,9 +11559,12 @@ verifyMirProgramContracts(const MirProgram &program) {
              instruction.intrinsic == IntrinsicKind::RestoreReference ||
              instruction.intrinsic == IntrinsicKind::RestoreReferenceMut) &&
             !mir_detail::erasedReferenceResultLoan(program, body, instruction))
-          result.errors.push_back({.bodyKind = body.kind, .owner = owner,
-              .instruction = instruction.id,
-              .message = "checked reference erasure loses its exact opaque type, access, origin or restoration permission"});
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .instruction = instruction.id,
+               .message = "checked reference erasure loses its exact opaque "
+                          "type, access, origin or restoration permission"});
         if ((instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
              instruction.intrinsic == IntrinsicKind::CStringFromAddress) &&
             !mir_detail::textAddressResultLoan(body, instruction)) {
@@ -12137,25 +12336,39 @@ verifyMirProgramContracts(const MirProgram &program) {
            .message =
                "class active-drop state is missing active-cleanup metadata"});
     }
-    if (instance.compilerCapability == CompilerCapabilityTypeKind::ErasedObject ||
-        instance.compilerCapability == CompilerCapabilityTypeKind::FunctionPointer) {
-      const bool pointer = instance.compilerCapability == CompilerCapabilityTypeKind::FunctionPointer;
-      const SemanticTypeTraits expected{.ownership = OwnershipKind::Value,
-          .drop = DropKind::Trivial, .copyable = pointer, .movable = pointer,
-          .copyAssignable = pointer, .moveAssignable = pointer,
-          .containsBorrowedState = false, .transferCapable = false, .shareCapable = false,
-          .relocation = pointer ? RelocationKind::Bitwise : RelocationKind::Unavailable};
+    if (instance.compilerCapability ==
+            CompilerCapabilityTypeKind::ErasedObject ||
+        instance.compilerCapability ==
+            CompilerCapabilityTypeKind::FunctionPointer) {
+      const bool pointer = instance.compilerCapability ==
+                           CompilerCapabilityTypeKind::FunctionPointer;
+      const SemanticTypeTraits expected{
+          .ownership = OwnershipKind::Value,
+          .drop = DropKind::Trivial,
+          .copyable = pointer,
+          .movable = pointer,
+          .copyAssignable = pointer,
+          .moveAssignable = pointer,
+          .containsBorrowedState = false,
+          .transferCapable = false,
+          .shareCapable = false,
+          .relocation =
+              pointer ? RelocationKind::Bitwise : RelocationKind::Unavailable};
       if (instance.traits != expected || !instance.bases.empty() ||
-          !instance.structuralBases.empty() || !instance.declaredFields.empty() ||
-          !instance.fields.empty() || !instance.fieldDropOrder.empty() ||
-          instance.requiresActiveCleanup || instance.requiresActiveDropState ||
-          instance.destructor || instance.polymorphic || instance.cAbiRecord ||
-          instance.cAbiLayout || instance.unionLayout ||
-          (pointer ? !mir_detail::functionPointerSignature(program, instance.type)
-                   : !instance.type.arguments.empty()))
-        result.errors.push_back({.bodyKind = MirBodyKind::FieldInitializers,
-            .owner = instance.id,
-            .message = "opaque referent or invocation-pointer capability loses its exact private shape and traits"});
+          !instance.structuralBases.empty() ||
+          !instance.declaredFields.empty() || !instance.fields.empty() ||
+          !instance.fieldDropOrder.empty() || instance.requiresActiveCleanup ||
+          instance.requiresActiveDropState || instance.destructor ||
+          instance.polymorphic || instance.cAbiRecord || instance.cAbiLayout ||
+          instance.unionLayout ||
+          (pointer
+               ? !mir_detail::functionPointerSignature(program, instance.type)
+               : !instance.type.arguments.empty()))
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message = "opaque referent or invocation-pointer capability "
+                        "loses its exact private shape and traits"});
     }
     if (instance.compilerCapability ==
             CompilerCapabilityTypeKind::MutexStorage ||
@@ -14178,9 +14391,11 @@ verifyMirProgramContracts(const MirProgram &program) {
               ? CallableInvocationCapability::Mutable
               : CallableInvocationCapability::Read;
       if (instance.capability != expectedCapability)
-        result.errors.push_back({.bodyKind = MirBodyKind::Lambda,
-            .owner = instance.id,
-            .message = "lambda invocation capability does not match its captures"});
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::Lambda,
+             .owner = instance.id,
+             .message =
+                 "lambda invocation capability does not match its captures"});
       for (std::size_t capture = 0; capture < instance.captureTypes.size();
            ++capture) {
         if ((instance.captureModes[capture] != LambdaCaptureMode::Copy &&
@@ -14198,13 +14413,15 @@ verifyMirProgramContracts(const MirProgram &program) {
         const auto mode = instance.captureModes[capture];
         const auto &type = instance.captureTypes[capture];
         if (isBorrowingCapture(mode) &&
-            (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
+            (type.kind != SemanticType::Reference ||
+             type.arguments.size() != 1 ||
              type.referenceAccess != (mode == LambdaCaptureMode::BorrowMut
                                           ? AccessMode::Mutable
                                           : AccessMode::ReadOnly))) {
           result.errors.push_back({.bodyKind = MirBodyKind::Lambda,
-              .owner = instance.id,
-              .message = "borrowed capture mode does not match its reference access"});
+                                   .owner = instance.id,
+                                   .message = "borrowed capture mode does not "
+                                              "match its reference access"});
         }
         const std::optional<bool> exactActiveCleanup =
             typeRequiresActiveCleanup(instance.captureTypes[capture],
@@ -14240,7 +14457,8 @@ verifyMirProgramContracts(const MirProgram &program) {
              (place.root != MirPlaceRootKind::Symbol || !exactPlaceType ||
               place.type != *exactPlaceType ||
               (place.access == AccessMode::Mutable &&
-               instance.captureModes[exactCapture - 1] != LambdaCaptureMode::BorrowMut)))) {
+               instance.captureModes[exactCapture - 1] !=
+                   LambdaCaptureMode::BorrowMut)))) {
           result.errors.push_back(
               {.bodyKind = MirBodyKind::Lambda,
                .owner = instance.id,

@@ -1588,6 +1588,14 @@ captures remain rejected; a named local reference may select a field first.
 Checked reference erasure is a declaration-bound capability over the existing
 borrow model. Erase/restore calls publish exact argument-origin and access facts;
 restoration additionally records an unsafe exact-referent-type obligation.
+Resolved restoration records the referent's exact checked field paths, types
+and access modes. The checked opaque input is the conservative witness for
+these nested dependencies. A body-derived `restoresReferenceResult` summary
+propagates that proof through ordinary helpers only when every return restores
+the same declared borrow argument, including reference-local aliases. Concrete
+instances recompute their field paths. HIR preserves the summary and MIR
+independently verifies the restore operation, witness and helper-return chain;
+a reference-return signature alone never establishes it.
 The erased referent is opaque and nonconstructible. A typed GTI invocation
 pointer admits only exact safe stateless targets and records their function or
 lambda identities before HIR. Its erased signature retains GTI failure and

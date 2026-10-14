@@ -9,9 +9,10 @@
 
 namespace lang::mir_detail {
 
-const MirInstruction *referenceInitializerCall(
-    const MirProgram &program, const MirConstructorInstance &constructor,
-    const MirConstructorInitializer &initializer) {
+const MirInstruction *
+referenceInitializerCall(const MirProgram &program,
+                         const MirConstructorInstance &constructor,
+                         const MirConstructorInitializer &initializer) {
   if (!initializer.storesReference || initializer.field == 0 ||
       initializer.arguments.size() != 1 ||
       initializer.targetType.kind != SemanticType::Reference ||
@@ -29,8 +30,8 @@ const MirInstruction *referenceInitializerCall(
           return nullptr;
         call = &instruction;
       }
-      const auto *loan = instruction.loan ? body.findLoan(*instruction.loan)
-                                           : nullptr;
+      const auto *loan =
+          instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
       if (instruction.kind == MirInstructionKind::Borrow && loan &&
           loan->kind == MirLoanKind::Stored &&
           loan->storedField == initializer.field) {
@@ -1203,56 +1204,195 @@ const MirLoan *rawBorrowResultLoan(const MirBody &body,
   return loan;
 }
 
+bool callResultReferenceAliases(const MirBody &body, const MirLoan &loan,
+                                const MirBlock &consumer) {
+  if (loan.kind != MirLoanKind::CallResult || loan.entry || loan.escapes ||
+      loan.carriers.empty())
+    return false;
+  for (const auto binding : loan.carriers) {
+    const MirPlace *root = nullptr;
+    for (const auto &place : body.places)
+      if (place.root == MirPlaceRootKind::Binding && place.binding == binding &&
+          place.projections.empty()) {
+        if (root)
+          return false;
+        root = &place;
+      }
+    if (!root || root->initiallyAvailable ||
+        root->type.kind != SemanticType::Reference ||
+        root->type.arguments.size() != 1 ||
+        (root->type.referenceAccess == AccessMode::Mutable &&
+         loan.access != AccessMode::Mutable))
+      return false;
+    const auto exposesStorage = [&](const MirOperand &operand) {
+      const auto *place = body.findPlace(operand.place);
+      return place && place->root == MirPlaceRootKind::Binding &&
+             place->binding == binding && place->projections.empty();
+    };
+    const MirInstruction *initializer = nullptr;
+    const MirBlock *initialBlock = nullptr;
+    for (const auto &block : body.blocks) {
+      if ((block.terminator.value && exposesStorage(*block.terminator.value)) ||
+          std::any_of(block.terminator.targetArguments.begin(),
+                      block.terminator.targetArguments.end(), exposesStorage) ||
+          std::any_of(block.terminator.elseArguments.begin(),
+                      block.terminator.elseArguments.end(), exposesStorage))
+        return false;
+      for (const auto &instruction : block.instructions) {
+        if ((instruction.receiver && exposesStorage(*instruction.receiver)) ||
+            std::any_of(instruction.operands.begin(),
+                        instruction.operands.end(), exposesStorage))
+          return false;
+        const auto *destination = instruction.destination
+                                      ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+        if (!destination || destination->root != MirPlaceRootKind::Binding ||
+            destination->binding != binding ||
+            !destination->projections.empty())
+          continue;
+        if (initializer || instruction.kind != MirInstructionKind::Initialize ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != MirOperandKind::Loan ||
+            instruction.operands.front().loan != loan.id ||
+            instruction.operands.front().value != 0 ||
+            instruction.operands.front().place != 0 ||
+            instruction.operands.front().type != root->type.arguments.front())
+          return false;
+        initializer = &instruction;
+        initialBlock = &block;
+      }
+    }
+    if (!initializer)
+      return false;
+    if (initialBlock->id != consumer.id) {
+      const auto dominance = computeMirDominance(body);
+      if (!dominance || !dominance->dominates(initialBlock->id, consumer.id))
+        return false;
+    }
+  }
+  return true;
+}
+
+const MirInstruction *restoredBorrowAuthority(const MirBody &body,
+                                              const MirLoan &loan) {
+  const auto *witness = body.findLoan(loan.storedDependency);
+  if (!witness || witness->id == loan.id ||
+      (loan.access == AccessMode::Mutable &&
+       witness->access != AccessMode::Mutable))
+    return nullptr;
+  std::unordered_set<MirLoanId> visiting;
+  const auto trace = [&](const auto &self,
+                         const MirLoan &current) -> const MirInstruction * {
+    if (!visiting.insert(current.id).second ||
+        current.storedDependency != witness->id)
+      return nullptr;
+    const MirInstruction *producer = nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.loan == current.id &&
+            (instruction.kind == MirInstructionKind::Call ||
+             instruction.kind == MirInstructionKind::Borrow)) {
+          if (producer)
+            return nullptr;
+          producer = &instruction;
+        }
+    if (producer && producer->kind == MirInstructionKind::Call &&
+        producer->restoresReferenceResult &&
+        !producer->restoredBorrowFields.empty() &&
+        producer->borrowOrigin == BorrowOriginKind::Argument &&
+        producer->borrowArgument < producer->operands.size() &&
+        producer->borrowArgument < producer->parameterTypes.size() &&
+        producer->parameterTypes[producer->borrowArgument].kind ==
+            SemanticType::Reference &&
+        current.kind == MirLoanKind::CallResult && !current.entry &&
+        !current.escapes && current.parent == witness->id &&
+        current.producedBy == producer->hirValue &&
+        current.source == witness->source &&
+        borrowSourceForOperand(body,
+                               producer->operands[producer->borrowArgument]) ==
+            witness->source)
+      return producer;
+    if (producer && producer->kind == MirInstructionKind::Borrow &&
+        producer->operands.size() == 1 &&
+        producer->operands.front().kind == MirOperandKind::Loan) {
+      const auto *input = body.findLoan(producer->operands.front().loan);
+      if (input && input->source == current.source &&
+          (current.access == AccessMode::ReadOnly ||
+           input->access == AccessMode::Mutable))
+        if (const auto *authority = self(self, *input))
+          return authority;
+    }
+    const auto *parent = body.findLoan(current.parent);
+    return parent && parent->id != witness->id ? self(self, *parent) : nullptr;
+  };
+  return trace(trace, loan);
+}
+
 const MirLoan *erasedReferenceResultLoan(const MirProgram &program,
                                          const MirBody &body,
                                          const MirInstruction &instruction) {
-  const bool restoring = instruction.intrinsic == IntrinsicKind::RestoreReference ||
-                         instruction.intrinsic == IntrinsicKind::RestoreReferenceMut;
-  const bool erasing = instruction.intrinsic == IntrinsicKind::EraseReference ||
-                       instruction.intrinsic == IntrinsicKind::EraseReferenceMut;
-  const auto access = instruction.intrinsic == IntrinsicKind::EraseReferenceMut ||
-                              instruction.intrinsic == IntrinsicKind::RestoreReferenceMut
-                          ? AccessMode::Mutable : AccessMode::ReadOnly;
-  if ((!restoring && !erasing) || instruction.kind != MirInstructionKind::Call ||
-      !instruction.result || !instruction.loan || instruction.functionTarget ||
-      instruction.receiver || instruction.destination ||
-      instruction.operands.size() != 1 || instruction.parameterTypes.size() != 1 ||
+  const bool restoring =
+      instruction.intrinsic == IntrinsicKind::RestoreReference ||
+      instruction.intrinsic == IntrinsicKind::RestoreReferenceMut;
+  const bool erasing =
+      instruction.intrinsic == IntrinsicKind::EraseReference ||
+      instruction.intrinsic == IntrinsicKind::EraseReferenceMut;
+  const auto access =
+      instruction.intrinsic == IntrinsicKind::EraseReferenceMut ||
+              instruction.intrinsic == IntrinsicKind::RestoreReferenceMut
+          ? AccessMode::Mutable
+          : AccessMode::ReadOnly;
+  if ((!restoring && !erasing) ||
+      instruction.kind != MirInstructionKind::Call || !instruction.result ||
+      !instruction.loan || instruction.functionTarget || instruction.receiver ||
+      instruction.destination || instruction.operands.size() != 1 ||
+      instruction.parameterTypes.size() != 1 ||
       instruction.parameterTypes.front().kind != SemanticType::Reference ||
       instruction.parameterTypes.front().arguments.size() != 1 ||
       instruction.parameterTypes.front().referenceAccess != access ||
       instruction.operands.front().type != instruction.parameterTypes.front() ||
-      instruction.info.category != ValueCategory::Place || instruction.info.access != access ||
-      instruction.borrowOrigin != BorrowOriginKind::Argument || instruction.borrowArgument != 0 ||
-      instruction.borrowAccess != access || !instruction.borrowArguments.empty() ||
+      instruction.info.category != ValueCategory::Place ||
+      instruction.info.access != access ||
+      instruction.borrowOrigin != BorrowOriginKind::Argument ||
+      instruction.borrowArgument != 0 || instruction.borrowAccess != access ||
+      !instruction.borrowArguments.empty() ||
       !instruction.borrowFields.empty() || instruction.borrowPlace ||
-      !instruction.definedFailure.empty() || !instruction.localFailureSites.empty() ||
-      instruction.unsafeOperation != (restoring ? UnsafeOperationKind::ErasedReferenceRestore
-                                               : UnsafeOperationKind::None))
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty() ||
+      instruction.unsafeOperation !=
+          (restoring ? UnsafeOperationKind::ErasedReferenceRestore
+                     : UnsafeOperationKind::None))
     return nullptr;
-  const auto &opaque = restoring ? instruction.parameterTypes.front().arguments.front()
-                                 : instruction.info.type;
-  const bool exactOpaque = opaque.kind == SemanticType::Class && opaque.arguments.empty() &&
-      std::any_of(program.classInstances().begin(), program.classInstances().end(),
-          [&](const auto &owner) {
-            return owner.type == opaque && owner.compilerCapability == CompilerCapabilityTypeKind::ErasedObject;
-          });
-  const auto source = borrowSourceForOperand(body, instruction.operands.front());
+  const auto &opaque =
+      restoring ? instruction.parameterTypes.front().arguments.front()
+                : instruction.info.type;
+  const bool exactOpaque =
+      opaque.kind == SemanticType::Class && opaque.arguments.empty() &&
+      std::any_of(program.classInstances().begin(),
+                  program.classInstances().end(), [&](const auto &owner) {
+                    return owner.type == opaque &&
+                           owner.compilerCapability ==
+                               CompilerCapabilityTypeKind::ErasedObject;
+                  });
+  const auto source =
+      borrowSourceForOperand(body, instruction.operands.front());
   const auto *loan = body.findLoan(*instruction.loan);
-  if (!exactOpaque || !source || !loan || loan->kind != MirLoanKind::CallResult ||
-      loan->source != *source || loan->access != access ||
-      loan->producedBy != instruction.hirValue || loan->entry || loan->escapes || loan->lifecycleBound)
+  if (!exactOpaque || !source || !loan ||
+      loan->kind != MirLoanKind::CallResult || loan->source != *source ||
+      loan->access != access || loan->producedBy != instruction.hirValue ||
+      loan->entry || loan->escapes || loan->lifecycleBound)
     return nullptr;
   return loan;
 }
 
 const SemanticType *functionPointerSignature(const MirProgram &program,
-                                               const SemanticType &type) {
+                                             const SemanticType &type) {
   if (type.kind != SemanticType::Class || type.arguments.size() != 1 ||
       !type.valueArguments.empty())
     return nullptr;
-  const auto owner = std::find_if(program.classInstances().begin(),
-                                  program.classInstances().end(),
-                                  [&](const auto &row) { return row.type == type; });
+  const auto owner = std::find_if(
+      program.classInstances().begin(), program.classInstances().end(),
+      [&](const auto &row) { return row.type == type; });
   if (owner == program.classInstances().end() ||
       owner->compilerCapability != CompilerCapabilityTypeKind::FunctionPointer)
     return nullptr;
@@ -1260,13 +1400,16 @@ const SemanticType *functionPointerSignature(const MirProgram &program,
   return signature.kind == SemanticType::FunctionSignature &&
                  !signature.arguments.empty() &&
                  signature.signatureReceiver == ReceiverMutability::ReadOnly
-             ? &signature : nullptr;
+             ? &signature
+             : nullptr;
 }
 
 bool functionPointerOperation(const MirProgram &program,
-                                const MirInstruction &instruction) {
-  const bool forming = instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem;
-  if ((!forming && instruction.intrinsic != IntrinsicKind::FunctionPointerInvoke) ||
+                              const MirInstruction &instruction) {
+  const bool forming =
+      instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem;
+  if ((!forming &&
+       instruction.intrinsic != IntrinsicKind::FunctionPointerInvoke) ||
       instruction.kind != MirInstructionKind::Call ||
       instruction.functionTarget || instruction.lambdaTarget ||
       instruction.constructorTarget || instruction.bodyTarget ||
@@ -1274,8 +1417,9 @@ bool functionPointerOperation(const MirProgram &program,
       instruction.unsafeOperation != UnsafeOperationKind::None ||
       instruction.dispatch != CallDispatch::Static ||
       instruction.borrowOrigin != BorrowOriginKind::None ||
-      !instruction.borrowFields.empty() || !instruction.borrowArguments.empty() ||
-      instruction.borrowPlace || instruction.parameterTypes.size() != instruction.operands.size())
+      !instruction.borrowFields.empty() ||
+      !instruction.borrowArguments.empty() || instruction.borrowPlace ||
+      instruction.parameterTypes.size() != instruction.operands.size())
     return false;
   const SemanticType *signature = nullptr;
   if (forming) {
@@ -1283,20 +1427,24 @@ bool functionPointerOperation(const MirProgram &program,
     if (!instruction.result || !signature || instruction.operands.size() != 1 ||
         instruction.functionPointerFunctionTarget.has_value() ==
             instruction.functionPointerLambdaTarget.has_value() ||
-        !instruction.definedFailure.empty() || !instruction.localFailureSites.empty())
+        !instruction.definedFailure.empty() ||
+        !instruction.localFailureSites.empty())
       return false;
   } else {
-    if (instruction.parameterTypes.empty() || instruction.functionPointerFunctionTarget ||
+    if (instruction.parameterTypes.empty() ||
+        instruction.functionPointerFunctionTarget ||
         instruction.functionPointerLambdaTarget)
       return false;
     const auto &receiver = instruction.parameterTypes.front();
-    if (receiver.kind != SemanticType::Reference || receiver.arguments.size() != 1 ||
+    if (receiver.kind != SemanticType::Reference ||
+        receiver.arguments.size() != 1 ||
         receiver.referenceAccess != AccessMode::ReadOnly)
       return false;
     signature = functionPointerSignature(program, receiver.arguments.front());
     if (!signature || instruction.info.type != signature->arguments.front() ||
         instruction.info.traits.containsBorrowedState ||
-        instruction.definedFailure.propagation != FailurePropagationKind::Callable)
+        instruction.definedFailure.propagation !=
+            FailurePropagationKind::Callable)
       return false;
   }
   std::vector<SemanticType> parameters;
@@ -1305,23 +1453,29 @@ bool functionPointerOperation(const MirProgram &program,
   if (signature->arguments.front().kind == SemanticType::Reference)
     return false;
   if (!forming)
-    return parameters == std::vector<SemanticType>(instruction.parameterTypes.begin() + 1,
-                                                   instruction.parameterTypes.end());
+    return parameters ==
+           std::vector<SemanticType>(instruction.parameterTypes.begin() + 1,
+                                     instruction.parameterTypes.end());
   const auto &targetType = instruction.parameterTypes.front();
   if (instruction.functionPointerFunctionTarget) {
-    const auto *target = program.findFunctionInstance(*instruction.functionPointerFunctionTarget);
+    const auto *target = program.findFunctionInstance(
+        *instruction.functionPointerFunctionTarget);
     return target && targetType.hasFunctionItemShape() &&
            targetType.functionId == target->declaration && !target->owner &&
            target->linkage == LanguageLinkage::Gti && !target->requiresUnsafe &&
            target->definitionKind == MirDefinitionKind::Source &&
            target->returnBorrowOrigin == BorrowOriginKind::None &&
-           !target->tracksCaller && target->entryKind == ProgramEntryKind::None &&
-           target->returnType == signature->arguments.front() && target->parameterTypes == parameters;
+           !target->tracksCaller &&
+           target->entryKind == ProgramEntryKind::None &&
+           target->returnType == signature->arguments.front() &&
+           target->parameterTypes == parameters;
   }
-  const auto *target = program.findLambda(*instruction.functionPointerLambdaTarget);
+  const auto *target =
+      program.findLambda(*instruction.functionPointerLambdaTarget);
   return target && target->type == targetType && target->captureTypes.empty() &&
          target->capability == CallableInvocationCapability::Read &&
-         target->returnType == signature->arguments.front() && target->parameterTypes == parameters;
+         target->returnType == signature->arguments.front() &&
+         target->parameterTypes == parameters;
 }
 
 const MirLoan *textAddressResultLoan(const MirBody &body,

@@ -1847,8 +1847,7 @@ private:
       std::span<const SemanticType> parameterTypes) const;
 
   [[nodiscard]] std::vector<SymbolId>
-  storedFieldSymbols(SemanticType type,
-                     std::span<const StoredField> fields);
+  storedFieldSymbols(SemanticType type, std::span<const StoredField> fields);
 
   // Enumerate every independently checked dependency in declaration order.
   // An empty result means either no reference or an unsupported carrier shape.
@@ -2458,11 +2457,9 @@ private:
   [[nodiscard]] static bool containsExactType(const SemanticType &type,
                                               const SemanticType &candidate);
 
-  [[nodiscard]] bool
-  containsDisallowedCallableCaptureState(const SemanticType &type,
-                                         std::unordered_set<ClassId> &visiting,
-                                         bool reviewedRawState = false,
-                                         bool checkedBorrows = false) const;
+  [[nodiscard]] bool containsDisallowedCallableCaptureState(
+      const SemanticType &type, std::unordered_set<ClassId> &visiting,
+      bool reviewedRawState = false, bool checkedBorrows = false) const;
 
   [[nodiscard]] bool
   containsDisallowedCallableCaptureState(const SemanticType &type,
@@ -3587,6 +3584,11 @@ private:
   void
   collectBorrowReturnExpressions(const Stmt *statement,
                                  std::vector<const ExprPtr *> &returns) const;
+
+  [[nodiscard]] std::optional<std::vector<RestoredBorrowField>>
+  restoredReferenceFields(const SemanticType &referent);
+
+  void recordRestoredReferenceResult(const FunctionInfo &function);
 
   struct PredeclaredTextBorrowSource {
     bool known = false;

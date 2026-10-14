@@ -1,29 +1,32 @@
 #include "compiler_test_fixture.h"
 
 int main() {
-  const auto application = [](const std::string &name, const std::string &source,
+  const auto application = [](const std::string &name,
+                              const std::string &source,
                               lang::FrontendOptions options = {}) {
-    const auto entry = std::filesystem::temp_directory_path() / ("gti-app-" + name);
-    return lang::Frontend(std::move(options)).analyze(
-        entry, source, {standardLibraryPrelude()},
-        {{std::filesystem::weakly_canonical(entry).string(), source}},
-        {standardLibraryRoot()});
+    const auto entry =
+        std::filesystem::temp_directory_path() / ("gti-app-" + name);
+    return lang::Frontend(std::move(options))
+        .analyze(entry, source, {standardLibraryPrelude()},
+                 {{std::filesystem::weakly_canonical(entry).string(), source}},
+                 {standardLibraryRoot()});
   };
-  const auto positive = [&](const std::string &name, const std::string &source) {
+  const auto positive = [&](const std::string &name,
+                            const std::string &source) {
     auto result = application(name + ".gti", source);
     if (!result.canGenerateCode())
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << name << ": " << diagnostic.code << " ("
-                  << diagnostic.primary.source << ":" << diagnostic.primary.line << "): "
-                  << diagnostic.message << '\n';
+                  << diagnostic.primary.source << ":" << diagnostic.primary.line
+                  << "): " << diagnostic.message << '\n';
     expect(result.canGenerateCode(), name);
     lang::FrontendOptions reachableOptions;
     reachableOptions.toolingOccurrences = false;
     reachableOptions.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
     reachableOptions.lowerReachableOnly = true;
     reachableOptions.lowerLibraryReachableOnly = true;
-    const auto reachable = application(
-        name + "-reachable.gti", source, std::move(reachableOptions));
+    const auto reachable = application(name + "-reachable.gti", source,
+                                       std::move(reachableOptions));
     if (!reachable.canGenerateCode())
       for (const auto &diagnostic : reachable.diagnostics)
         std::cerr << name << " (reachable): " << diagnostic.code << ": "
@@ -32,9 +35,10 @@ int main() {
     return result;
   };
   const auto negative = [&](const std::string &name, const std::string &source,
-                           const std::string &code) {
+                            const std::string &code) {
     const auto result = application(name + ".gti", source);
-    if (result.canGenerateCode() || !hasDiagnosticCode(result.diagnostics, code))
+    if (result.canGenerateCode() ||
+        !hasDiagnosticCode(result.diagnostics, code))
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << name << ": " << diagnostic.code << ": "
                   << diagnostic.message << '\n';
@@ -143,7 +147,8 @@ int main() {
   owner += 1;
   return reference;
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("ordinary-reference-block-loop-backedge", R"(
 int main() {
   mut int owner = 3;
@@ -154,7 +159,8 @@ int main() {
   }
   return 0;
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("exclusive-reentrant-arguments", R"(
 int invoke<F>(mut F& callback, mut int& value) { value += 1; return callback(); }
 int main() {
@@ -162,7 +168,8 @@ int main() {
   mut auto update = [mut &value]() -> int { value += 1; return value; };
   return invoke(update, value);
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("borrow-then-move-capture", R"(
 int main() {
   mut int value = 3;
@@ -171,14 +178,16 @@ int main() {
   };
   return read();
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("shared-capture-mutation", R"(
 int main() {
   mut int value = 0;
   auto callback = [&value]() -> int { value += 1; return value; };
   return callback();
 }
-)", "GTI-S2002");
+)",
+           "GTI-S2002");
   positive("erased-reference-round-trip", R"(
 #include <std/memory>
 int main() {
@@ -212,6 +221,32 @@ int main() {
   return first(3) + second(4) - 10;
 }
 )");
+  positive("restore-through-ordinary-helper-chain", R"(
+#include <std/memory>
+struct Reader {
+  int& value;
+  Reader(int& source) : value(source) {}
+  int read() { return this.value; }
+};
+int main() {
+  int value = 9;
+  Reader reader{value};
+  std::erased_object& erased = std::erase_ref(reader);
+  unsafe {
+    Reader& restored = forward<Reader>(erased);
+    return restored.read() - 9;
+  }
+}
+unsafe T& forward<T>(std::erased_object& object) {
+  unsafe {
+    T& restored = restore<T>(object);
+    return restored;
+  }
+}
+unsafe T& restore<T>(std::erased_object& object) {
+  unsafe { return std::restore_ref<T>(object); }
+}
+)");
   positive("read-function-ref", R"(
 #include <std/functional>
 int apply(std::function_ref<int(int)>& operation) { return operation(4); }
@@ -233,6 +268,22 @@ int main() {
   return first + second - 13;
 }
 )");
+  positive("function-ref-preserves-independent-capture-origins", R"(
+#include <std/functional>
+int main() {
+  mut int left = 2;
+  mut int right = 3;
+  int limit = 8;
+  mut auto callback = [mut &left, mut &right, &limit]() -> int {
+    left += 1;
+    right += 2;
+    return left + right + limit;
+  };
+  mut std::function_ref<int() mut> view{callback};
+  int result = view();
+  return result + left + right - 24;
+}
+)");
   negative("restore-requires-unsafe", R"(
 #include <std/memory>
 int main() {
@@ -241,11 +292,13 @@ int main() {
   int& restored = std::restore_ref<int>(erased);
   return restored;
 }
-)", "GTI-S2055");
+)",
+           "GTI-S2055");
   negative("erased-referent-cannot-be-constructed", R"(
 #include <std/memory>
 int main() { std::erased_object forged{}; return 0; }
-)", "GTI-S2019");
+)",
+           "GTI-S2019");
   negative("erased-private-factory-remains-private", R"(
 #include <std/memory>
 int main() {
@@ -253,11 +306,19 @@ int main() {
   auto& erased = gti_internal::erase_reference(owner);
   return 0;
 }
-)", "GTI-S2058");
+)",
+           "GTI-S2058");
+  negative("erased-referent-cannot-be-a-base", R"(
+#include <std/memory>
+class Derived : public std::erased_object {};
+int main() { Derived forged{}; return 0; }
+)",
+           "GTI-S2040");
   negative("invocation-pointer-has-no-default", R"(
 #include <std/functional>
 int main() { std::function_ptr<int()> pointer{}; return pointer(); }
-)", "GTI-S2012");
+)",
+           "GTI-S2012");
   negative("erased-reference-owner-conflict", R"(
 #include <std/memory>
 int main() {
@@ -266,7 +327,8 @@ int main() {
   owner = 5;
   unsafe { int& restored = std::restore_ref<int>(erased); return restored; }
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("erased-reference-retains-capture-origin", R"(
 #include <std/memory>
 int main() {
@@ -276,12 +338,14 @@ int main() {
   owner = 5;
   unsafe { int& wrong = std::restore_ref<int>(erased); return wrong; }
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("erased-reference-is-not-layout-storage", R"(
 #include <std/memory>
-static_assert(!std::layout_queryable<std::erased_object>);
-int main() { std::erased_object forged{}; return 0; }
-)", "GTI-S2019");
+void require_layout<T>() requires std::layout_queryable<T> {}
+int main() { require_layout<std::erased_object>(); return 0; }
+)",
+           "GTI-S2029");
   negative("function-ref-cannot-outlive-local-callable", R"(
 #include <std/functional>
 std::function_ref<int()> bad() {
@@ -289,7 +353,8 @@ std::function_ref<int()> bad() {
   return std::function_ref<int()>(callback);
 }
 int main() { return 0; }
-)", "GTI-S2045");
+)",
+           "GTI-S2045");
   negative("function-ref-retains-shared-capture-origin", R"(
 #include <std/functional>
 int main() {
@@ -299,7 +364,8 @@ int main() {
   owner = 5;
   return view();
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("invocation-pointer-capturing-target", R"(
 #include <std/functional>
 int main() {
@@ -308,14 +374,16 @@ int main() {
   std::function_ptr<int()> pointer{callback};
   return pointer();
 }
-)", "GTI-S2093");
+)",
+           "GTI-S2093");
   negative("invocation-pointer-signature-mismatch", R"(
 #include <std/functional>
 int main() {
   std::function_ptr<int(int)> pointer{[](bool value) -> int { return value ? 1 : 0; }};
   return pointer(3);
 }
-)", "GTI-S2093");
+)",
+           "GTI-S2093");
   negative("invocation-pointer-borrowed-result", R"(
 #include <std/functional>
 int& identity(int& value) { return value; }
@@ -323,7 +391,8 @@ int main() {
   std::function_ptr<int&(int&)> pointer{identity};
   return 0;
 }
-)", "GTI-S2093");
+)",
+           "GTI-S2093");
   negative("erased-reference-cannot-invent-mutable-access", R"(
 #include <std/memory>
 int main() {
@@ -335,7 +404,8 @@ int main() {
   }
   return owner;
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("borrowed-callable-outlives-owner", R"(
 #include <std/functional>
 std::function_ref<int()> bad() {
@@ -344,7 +414,8 @@ std::function_ref<int()> bad() {
   return std::function_ref<int()>(callback);
 }
 int main() { auto escaped = bad(); return escaped(); }
-)", "GTI-S2045");
+)",
+           "GTI-S2045");
   negative("exclusive-function-ref-conflicting-call", R"(
 #include <std/functional>
 int invoke(mut std::function_ref<int() mut>& callback, mut int& owner) {
@@ -357,7 +428,8 @@ int main() {
   mut std::function_ref<int() mut> view{callback};
   return invoke(view, owner);
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("mutable-function-ref-copy", R"(
 #include <std/functional>
 int main() {
@@ -367,21 +439,24 @@ int main() {
   mut auto copy = view;
   return copy();
 }
-)", "GTI-S2003");
+)",
+           "GTI-S2003");
   negative("exclusive-capture-readonly-source", R"(
 int main() {
   int value = 0;
   mut auto callback = [mut &value]() -> int { return value; };
   return callback();
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("exclusive-capture-readonly-call", R"(
 int main() {
   mut int value = 0;
   auto callback = [mut &value]() -> int { value += 1; return value; };
   return callback();
 }
-)", "GTI-S2046");
+)",
+           "GTI-S2046");
   negative("capture-owner-conflict", R"(
 int main() {
   mut int value = 0;
@@ -389,7 +464,8 @@ int main() {
   value = 4;
   return callback();
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("exclusive-capture-alias", R"(
 int main() {
   mut int value = 0;
@@ -398,7 +474,8 @@ int main() {
   mut auto callback = [mut &first, mut &second]() -> int { return first + second; };
   return callback();
 }
-)", "GTI-S2017");
+)",
+           "GTI-S2017");
   negative("exclusive-capture-copy", R"(
 int main() {
   mut int value = 0;
@@ -406,6 +483,7 @@ int main() {
   mut auto copy = callback;
   return copy();
 }
-)", "GTI-S2003");
+)",
+           "GTI-S2003");
   return failures == 0 ? 0 : 1;
 }
