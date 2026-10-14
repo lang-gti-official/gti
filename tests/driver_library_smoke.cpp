@@ -138,7 +138,6 @@ int main() {
       .standardLibrary = lang::standardLibraryLayout("stdlib"),
       .runtimeInclude = "include",
       .runtimeLibrary = "libgti_runtime.a",
-      .vendorInclude = "vendor",
   };
   const lang::driver::ExecutableBuildRequest buildRequest(
       compilation, toolchain, "generated.cpp", "program", "c++", {}, false,

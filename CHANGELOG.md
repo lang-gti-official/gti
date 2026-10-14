@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.431.4 — Lambda-typed classes built in member initializers
+## 0.432.1 — Lambda-typed classes built in member initializers
 
 - Fix the internal compiler error that 0.431.2 still listed (`GTI-B0001`,
   "backend failed while generating a representation") when a generic class
@@ -22,6 +22,23 @@ for what minor and patch releases mean.
 - Such a member initializer still stops with this error beside a field that
   takes ownership of another parameter, such as `name(std::move(name))`, or
   beside an explicit base-class initializer.
+
+## 0.432.0 — No vendored expected-lite
+
+- The toolchain no longer ships expected-lite. Generated C++ has used GTI's own
+  `expected` representation since 0.431.3, so the installed `include/nonstd`
+  headers and the expected-lite license are gone, C++20 builds add no extra
+  include directory, and `GTI_VENDOR_INCLUDE` is no longer read.
+- C++20 builds emit constant `expected` values, and constant records holding
+  one, as native `constexpr` storage, the same as C++23. Program behavior is
+  unchanged.
+- Build reports record only `runtime` headers. A report from a C++20 build
+  before 0.431.3 lists expected-lite as a `compatibility` header and no longer
+  parses, so `gti verify` rejects it; rebuild to record a new report.
+- The driver library drops `ToolchainLayout::vendorInclude`,
+  `ToolchainResourceError::ExpectedCompatibilityHeaderMissing` and
+  `BuildRuntimeHeaderKind::Compatibility`, and `validateToolchainLayout` no
+  longer takes a C++ standard.
 
 ## 0.431.3 — GTI's own expected representation
 

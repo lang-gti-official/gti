@@ -186,7 +186,6 @@ struct BuildSourceProvenance {
 
 enum class BuildRuntimeHeaderKind {
   Runtime,
-  Compatibility,
 };
 
 [[nodiscard]] std::string_view
