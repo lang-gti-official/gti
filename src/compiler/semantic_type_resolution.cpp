@@ -82,16 +82,21 @@ auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
     const SemanticType &expectedType, const Token &location) -> SemanticType {
   const bool concurrent =
       target.executionProfile == ExecutionProfile::Concurrent;
-  if (concurrent &&
+  const std::vector<const CallableCandidate *> matches =
+      matchingNativeFunctionCandidates(symbol, expectedType);
+  const bool confined =
+      matches.size() == 1 && matches.front()->record().threadConfinedCallback;
+  if (concurrent && !confined &&
       expectedType.cThreadCallbackKind() == CThreadCallbackKind::None) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2076", DiagnosticPhase::Semantics, location,
         "Concurrent GTI callbacks require a registered C-thread entry "
-        "'(void*) -> int32_t' or once initializer '() -> void'.");
+        "'(void*) -> int32_t', once initializer '() -> void', or an explicit "
+        "[[thread_confined_callback]] target.");
     diagnostic.hints.emplace_back(
         "Use std::thrd_create for a worker or std::call_once for an "
         "initializer; "
-        "other native callback signatures remain single-threaded.");
+        "other signatures require a thread-confined callback contract.");
     diagnostics.emplace_back(std::move(diagnostic));
     return SemanticType::Unknown;
   }
@@ -112,14 +117,13 @@ auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
         "A concurrent GTI callback requires the C-thread runtime boundary.");
     diagnostic.hints.emplace_back(
         "Include <std/cthread> and invoke the callback only through "
-        "std::thrd_create or std::call_once; general foreign-thread attachment "
+        "std::thrd_create, std::call_once, or its explicit thread-confined "
+        "boundary; general foreign-thread attachment "
         "is unavailable.");
     diagnostics.emplace_back(std::move(diagnostic));
     return SemanticType::Unknown;
   }
 
-  const std::vector<const CallableCandidate *> matches =
-      matchingNativeFunctionCandidates(symbol, expectedType);
   if (matches.size() != 1) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2076", DiagnosticPhase::Semantics, location,
@@ -167,8 +171,10 @@ auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
           .function = selected.id,
           .declaration = selected.declaration,
           .type = expectedType,
-          .cThreadCallback = concurrent ? expectedType.cThreadCallbackKind()
-                                        : CThreadCallbackKind::None});
+          .cThreadCallback =
+              concurrent ? (confined ? CThreadCallbackKind::ThreadConfined
+                                     : expectedType.cThreadCallbackKind())
+                         : CThreadCallbackKind::None});
   return expectedType;
 }
 

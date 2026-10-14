@@ -105,11 +105,15 @@ std::string diagnosticKey(const lang::Diagnostic &diagnostic) {
 }
 
 using ConcreteSymbols = std::unordered_map<lang::SymbolId, lang::SymbolId>;
+using LocalBindings =
+    std::unordered_map<lang::SymbolId, std::vector<lang::HirBindingId>>;
 
-// Cached concrete-only locals retain their original disjoint identity ranges.
+// Cached concrete-only locals retain their original disjoint identity ranges;
+// reserving those ranges also shifts locals in subsequently demanded bodies.
 // Bind them to the program-wide HIR binding identity, never independently per
 // MIR body or merely by source spelling (generic instances can share both).
-ConcreteSymbols concreteSymbols(const lang::FrontendResult &result) {
+ConcreteSymbols concreteSymbols(const lang::FrontendResult &result,
+                                LocalBindings &localBindings) {
   std::unordered_set<lang::SymbolId> concrete;
   for (const auto &symbol : result.hir.instanceSymbols())
     concrete.insert(symbol.id);
@@ -117,14 +121,26 @@ ConcreteSymbols concreteSymbols(const lang::FrontendResult &result) {
   ConcreteSymbols owners;
   const auto bindings = [&](const lang::HirBody &body) {
     for (const auto &binding : body.bindings) {
-      if (!concrete.contains(binding.info.symbol))
+      const auto *source =
+          result.semantics.database().findSymbol(binding.info.symbol);
+      const bool bodyLocal =
+          source && (source->kind == lang::SymbolKind::LocalVariable ||
+                     source->kind == lang::SymbolKind::Parameter);
+      if (!concrete.contains(binding.info.symbol) && !bodyLocal)
         continue;
       const auto canonical =
           std::numeric_limits<lang::SymbolId>::max() - binding.id;
       const auto [found, inserted] =
           names.emplace(binding.info.symbol, canonical);
-      expect(inserted || found->second == canonical,
-             "one concrete symbol has one program-wide binding identity");
+      if (concrete.contains(binding.info.symbol)) {
+        expect(inserted || found->second == canonical,
+               "one concrete symbol has one program-wide binding identity");
+      } else {
+        // A source declaration can supply bindings to several concrete
+        // bodies. Preserve the entire binding set, not one arbitrary body.
+        found->second = std::min(found->second, canonical);
+        localBindings[binding.info.symbol].push_back(binding.id);
+      }
       const auto [owner, unique] =
           owners.emplace(canonical, binding.info.symbol);
       expect(unique || owner->second == binding.info.symbol,
@@ -147,7 +163,25 @@ ConcreteSymbols concreteSymbols(const lang::FrontendResult &result) {
     bindings(destructor.body);
   for (const auto &lambda : result.hir.lambdaInstances())
     bindings(lambda.body);
+  for (auto &[_, ids] : localBindings) {
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+  }
   return names;
+}
+
+// Alpha-renaming must not hide a changed declaration behind a matching HIR
+// binding. Concrete instance records are checked separately below; ordinary
+// body locals retain their exact source identity and declaration role here.
+std::string localDeclarationKey(const lang::SymbolRecord &symbol) {
+  std::ostringstream key;
+  key << static_cast<int>(symbol.kind) << ':' << symbol.sourceUnit << ':'
+      << symbol.expansion << ':' << symbol.nameSpan.start << ':'
+      << symbol.nameSpan.end << ':' << symbol.declarationSpan.start << ':'
+      << symbol.declarationSpan.end << ':' << symbol.name << ':'
+      << symbol.qualifiedName << ':' << symbol.mutableBinding << ':'
+      << static_cast<int>(symbol.access) << ':' << symbol.staticMember;
+  return key.str();
 }
 
 void canonicalizeLocalSymbols(lang::MirBody &body,
@@ -170,7 +204,7 @@ void canonicalizeLocalSymbols(lang::MirBody &body,
 }
 
 // Everything a snapshot exposes downstream of semantic analysis, modulo the
-// explicitly request-local concrete-symbol allocation ranges.
+// explicitly request-local body-local symbol allocation ranges.
 std::string outcome(const lang::FrontendResult &result) {
   std::ostringstream text;
   text << "semantic=" << result.semanticValid << " hir=" << result.hirValid
@@ -184,8 +218,18 @@ std::string outcome(const lang::FrontendResult &result) {
   // Concrete-only symbol identities are request-local: a reused delta keeps
   // the range it was first analysed with, so only the declarations (and, by
   // HIR verification, their distinctness) must agree.
-  const auto names = concreteSymbols(result);
+  LocalBindings localBindings;
+  const auto names = concreteSymbols(result, localBindings);
   std::vector<std::string> symbols;
+  for (const auto &[id, canonical] : names) {
+    if (const auto *symbol = result.semantics.database().findSymbol(id)) {
+      std::string identity = "local " + std::to_string(canonical) + ':' +
+                             localDeclarationKey(*symbol) + ":bindings=";
+      for (const auto binding : localBindings[id])
+        identity += std::to_string(binding) + ',';
+      symbols.push_back(std::move(identity));
+    }
+  }
   for (const lang::SymbolRecord &symbol : result.hir.instanceSymbols()) {
     const auto found = names.find(symbol.id);
     symbols.push_back(
@@ -206,6 +250,24 @@ std::string outcome(const lang::FrontendResult &result) {
 }
 
 void checkConcreteSymbolComparison() {
+  const lang::SymbolRecord declaration{.kind = lang::SymbolKind::LocalVariable,
+                                       .name = "local",
+                                       .qualifiedName = "local",
+                                       .sourceUnit = 1,
+                                       .nameSpan = {.start = 10, .end = 15}};
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto changed = declaration;
+    if (mutation == 0)
+      changed.kind = lang::SymbolKind::Parameter;
+    if (mutation == 1)
+      ++changed.sourceUnit;
+    if (mutation == 2)
+      ++changed.nameSpan.start;
+    if (mutation == 3)
+      changed.qualifiedName = "other";
+    expect(localDeclarationKey(changed) != localDeclarationKey(declaration),
+           "local alpha-renaming preserves declaration identity and role");
+  }
   lang::MirBody original;
   original.places = {{.id = 1,
                       .binding = 1,

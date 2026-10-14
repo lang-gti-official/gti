@@ -10,6 +10,8 @@ enum class CThreadCallbackKind : std::uint8_t {
   None,
   ThreadEntry,
   OnceInitializer,
+  // Explicit source contract; does not grant foreign-thread attachment.
+  ThreadConfined,
 };
 
 // Selected only from exact compiler-private C-thread runtime declarations in

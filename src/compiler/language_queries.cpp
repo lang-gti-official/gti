@@ -72,6 +72,9 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (info.discardableResult) {
     result += "[[discardable]] ";
   }
+  if (info.threadConfinedCallback) {
+    result += "[[thread_confined_callback]] ";
+  }
   if (info.explicitReturnBorrowOrigin) {
     if (info.returnBorrowOrigin == BorrowOriginKind::Receiver) {
       result += "[[borrowed_from(this)]] ";

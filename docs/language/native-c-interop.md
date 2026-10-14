@@ -366,7 +366,7 @@ If the GTI target reports a defined failure, the thunk completes the target's
 verified cleanup and terminates through the runtime failure boundary; a native
 exception is caught and terminates rather than crossing C.
 
-General callbacks remain single-threaded. In the concurrent profile, GTI
+Unannotated general callbacks remain single-threaded. In the concurrent profile, GTI
 adapters support the exact `(void*) -> int32_t` C-thread entry and `() -> void`
 once initializer, with target
 thread support and `<std/cthread>` included. The adapter requires once-only
@@ -379,6 +379,48 @@ for context lifetime, synchronization, hosted shutdown, and failure containment.
 Concurrent code may still describe and transport other callback values received
 from C without exposing a GTI target. `GTI-S2076` owns invalid callback type
 shapes and conversions; `GTI-S2084` owns unavailable thread capability.
+
+### Explicitly thread-confined callbacks
+
+`[[thread_confined_callback]]` on an eligible non-generic, safe namespace-scope
+GTI function permits native adaptation with any already-supported C callback
+signature in the concurrent profile. It requires thread capability and
+`<std/cthread>`, like other concurrent adapters. It cannot annotate a method,
+hosted entry, unsafe/native/bodyless function, or caller-tracked function, and
+takes no arguments. Invalid contracts use `GTI-S2099`. Ordinary direct GTI calls
+are unchanged. Single-threaded consumers retain their existing callback policy.
+
+```gti
+#include <std/cthread>
+using ResizeHook = (int32_t, int32_t) -> void;
+[[thread_confined_callback]] void on_resize(int32_t width, int32_t height) {}
+// Inside main or an attached worker:
+// ResizeHook hook = on_resize;
+```
+
+The first **evaluated conversion** binds the exact process-lifetime adapter to
+the current initial, managed, or entered manual GTI thread. Repeated conversions
+and nested/reentrant invocations on that same thread are supported. Converting
+the same target/signature on another thread, invoking it elsewhere, or invoking
+outside the active runtime/managed scope terminates before the target body.
+Registration is observable even when the produced pointer is unused. There is
+no unbind/rebind operation; an exited owner's identity is never reused. Different
+threads needing independent registrations must use distinct function targets
+in this bounded slice, not repeatedly bind one global adapter.
+
+This is not foreign-thread attachment, a per-object capturing closure, or a
+promise that a C library is thread-safe. A library may retain the function
+address, but callers still obey its registration/unregistration rules and keep
+userdata alive and correctly synchronized under the ordinary unsafe contract.
+Conversions during global initialization precede hosted runtime startup and
+therefore fail the runtime boundary; initialize registrations inside the entry
+function or an attached worker. Callbacks must cease before runtime shutdown.
+Failures and native exceptions retain the terminating callback firewall; a
+callback failure on a managed worker does not become a recoverable join error.
+
+Each adapter requires one atomic thread identity, no heap allocation, and a
+bounded thread-local entry/leave check. The identity protects entry permission,
+not publication of user memory. See example 076 for a runnable mixed-worker use.
 
 ### Invoking Native Function Pointers
 

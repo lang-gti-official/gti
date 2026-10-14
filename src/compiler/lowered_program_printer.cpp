@@ -667,6 +667,7 @@ private:
     output << ";definition=" << number(value.definitionKind)
            << ";never-returns=" << value.neverReturns
            << ";tracks-caller=" << value.tracksCaller
+           << ";thread-confined-callback=" << value.threadConfinedCallback
            << ";linkage=" << number(value.linkage)
            << ";external=" << std::quoted(value.externalSymbol) << ";c-array=";
     if (value.cArrayCountParameter) {
@@ -816,7 +817,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v18\n";
+  output << "lowered-program-v19\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

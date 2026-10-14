@@ -1,5 +1,12 @@
 #include <std/atomic>
 #include <std/thread>
+#include <std/cthread>
+
+// A native event hook may re-enter on this same attached GTI thread, even
+// while other workers run. First conversion binds this process-lifetime
+// adapter to the current thread; calling it from another thread terminates.
+using EventHook = (int32_t) -> int32_t;
+[[thread_confined_callback]] int32_t event_hook(int32_t value) { return value; }
 
 std::atomic<int32_t> shared_count{0};
 
@@ -9,6 +16,8 @@ void add_one() {
 }
 
 int main() {
+  EventHook hook = event_hook;
+  unsafe { if (hook(7) != 7) { return 4; } }
   auto first_started = std::thread::start([]() -> void { add_one(); });
   auto second_started = std::thread::start([]() -> void { add_one(); });
   if (!first_started.has_value() || !second_started.has_value()) {

@@ -1259,6 +1259,20 @@ verified local cleanup precedes the original diagnostic and termination rather
 than throwing a handoff across the native callback. Leaving a successful
 initializer restores ordinary managed-worker failure transport.
 
+Explicit thread-confined native adapters bind an atomic owner identity at their
+verified MIR conversion. Repeated conversion first uses a relaxed owner load;
+first registration uses a relaxed CAS. This publishes no user data. The owner
+uses the existing never-reused C-thread identity space. Private
+`gti_rt_confined_callback_*_v1` operations require an active initial/managed/
+registered manual execution scope and check identity before target entry.
+They perform no heap allocation or registry locking. Runtime phase is atomic
+for this lock-free observation; existing service transitions remain mutex-owned.
+Nested entries maintain a thread-local depth so all callback failures keep the
+terminal firewall, including on managed workers. Leaving restores the outer
+failure policy. No operation attaches a foreign thread or rebinds an adapter.
+The per-adapter atomic and native signature are backend representation choices;
+the entry contract and non-removable conversion effect are verified MIR facts.
+
 ## Defined-Failure Boundary
 
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure) assigns
