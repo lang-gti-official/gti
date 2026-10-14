@@ -117,6 +117,11 @@ auto SemanticVisitor::Impl::lambdaTraitsForCaptures(
     }
     result.copyable = result.copyable && capture.copyable;
     result.movable = result.movable && capture.movable;
+    result.containsBorrowedState =
+        result.containsBorrowedState || capture.containsBorrowedState;
+    if (captureType.kind == SemanticType::Reference &&
+        captureType.referenceAccess == AccessMode::Mutable)
+      result.copyable = false;
     if (capture.relocation == RelocationKind::Unavailable ||
         capture.containsBorrowedState)
       result.relocation = RelocationKind::Unavailable;
@@ -125,6 +130,10 @@ auto SemanticVisitor::Impl::lambdaTraitsForCaptures(
       result.relocation = RelocationKind::Structural;
     result.transferCapable = result.transferCapable && capture.transferCapable;
     result.shareCapable = result.shareCapable && capture.shareCapable;
+  }
+  if (result.containsBorrowedState) {
+    result.copyAssignable = false;
+    result.moveAssignable = false;
   }
   return result;
 }
@@ -1254,6 +1263,34 @@ auto SemanticVisitor::Impl::storedReferencePaths(const SemanticType &type) const
   const auto visit =
       [&](const auto &self,
           const SemanticType &current) -> std::vector<StoredReferencePath> {
+    if (current.hasLambdaShape()) {
+      const auto *lambda = semanticModel.findLambda(current.lambdaId);
+      const auto types = current.lambdaCaptureTypes();
+      if (lambda == nullptr || lambda->declaration == nullptr ||
+          lambda->captures.size() != types.size() ||
+          lambda->declaration->captures().size() != types.size() ||
+          std::find(visiting.begin(), visiting.end(), current) != visiting.end())
+        return {};
+      visiting.push_back(current);
+      std::vector<StoredReferencePath> paths;
+      bool invalid = false;
+      for (std::size_t index = 0; index < types.size(); ++index) {
+        std::vector<StoredReferencePath> children;
+        if (types[index].kind == SemanticType::Reference)
+          children.push_back({.reference = types[index]});
+        else if (typeTraits(types[index]).containsBorrowedState) {
+          children = self(self, types[index]);
+          invalid = invalid || children.empty();
+        }
+        for (auto &child : children) {
+          child.fields.insert(child.fields.begin(),
+                              &lambda->declaration->captures()[index]);
+          paths.push_back(std::move(child));
+        }
+      }
+      visiting.pop_back();
+      return invalid ? std::vector<StoredReferencePath>{} : paths;
+    }
     const ClassInfo *owner = classInfo(current);
     if (owner == nullptr || owner->kind == ClassKind::Union ||
         owner->cAbiRecord || owner->cOpaqueHandle ||
@@ -1504,7 +1541,9 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       if (path.fields.empty()) {
         return {};
       }
-      const VariableDecl *field = path.fields.front();
+      const VariableDecl *field = path.fields.front().declaration;
+      if (field == nullptr)
+        return {};
       const auto member = owner->members.find(field->name().lexeme);
       if (member == owner->members.end()) {
         return {};
@@ -1512,8 +1551,8 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       const SemanticType fieldType =
           substituteType(member->second.symbol.type, classSubstitution(type));
       std::optional<std::size_t> selected;
-      std::vector<const VariableDecl *> sourceFields(path.fields.begin() + 1,
-                                                     path.fields.end());
+      std::vector<StoredField> sourceFields(path.fields.begin() + 1,
+                                           path.fields.end());
       for (const ConstructorInitializer &initializer :
            constructor->initializers()) {
         if (initializer.target.name.segments.size() != 1 ||
@@ -1553,14 +1592,35 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
 }
 
 auto SemanticVisitor::Impl::storedFieldSymbols(
-    SemanticType type, std::span<const VariableDecl *const> fields)
+    SemanticType type, std::span<const StoredField> fields)
     -> std::vector<SymbolId> {
   std::vector<SymbolId> result;
-  for (const auto *field : fields) {
+  for (const auto &field : fields) {
+    if (field.capture != nullptr) {
+      const auto *lambda = type.hasLambdaShape()
+                               ? semanticModel.findLambda(type.lambdaId)
+                               : nullptr;
+      if (lambda == nullptr)
+        return {};
+      const auto capture = std::find_if(
+          lambda->captures.begin(), lambda->captures.end(),
+          [&](const auto &candidate) {
+            return candidate.capture.lexeme == field.name().lexeme;
+          });
+      if (capture == lambda->captures.end() || capture->bindingSymbol == 0)
+        return {};
+      const auto index = std::size_t(capture - lambda->captures.begin());
+      const auto types = type.lambdaCaptureTypes();
+      if (index >= types.size())
+        return {};
+      result.push_back(capture->bindingSymbol);
+      type = types[index];
+      continue;
+    }
     const auto *owner = classInfo(type);
     if (owner == nullptr)
       return {};
-    const auto member = owner->members.find(field->name().lexeme);
+    const auto member = owner->members.find(field.name().lexeme);
     if (member == owner->members.end())
       return {};
     const auto symbol = toolingSymbolFor(member->second.symbol);
@@ -2500,6 +2560,9 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
   if (const auto *group = exprAs<Grouping>(expression.get())) {
     return storedBorrowDependencies(group->expression());
   }
+  if (const auto dependencies = semanticModel.findBorrowDependencies(*expression);
+      !dependencies.empty())
+    return {dependencies.begin(), dependencies.end()};
   if (const auto *construction = semanticModel.findConstruction(*expression);
       construction != nullptr && construction->directInitialization) {
     if (const auto *call = exprAs<Call>(expression.get()))
@@ -2958,8 +3021,8 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     if (paths.size() != 1)
       return std::nullopt;
     std::vector<SymbolId> fields;
-    for (const auto *field : paths.front().fields) {
-      const auto symbol = symbolForDeclaration(field->name());
+    for (const auto &field : paths.front().fields) {
+      const auto symbol = symbolForDeclaration(field.name());
       if (symbol == 0)
         return std::nullopt;
       fields.push_back(symbol);
@@ -3330,14 +3393,22 @@ auto SemanticVisitor::Impl::loanIsAncestor(SemanticLoanId ancestor,
   if (ancestor == 0 || descendant == 0) {
     return false;
   }
-  SemanticLoanId current = descendant;
+  std::vector<SemanticLoanId> pending{descendant};
   std::unordered_set<SemanticLoanId> visited;
-  while (current != 0 && visited.insert(current).second) {
+  while (!pending.empty()) {
+    const auto current = pending.back();
+    pending.pop_back();
+    if (current == 0 || !visited.insert(current).second)
+      continue;
     if (current == ancestor) {
       return true;
     }
     const SemanticLoanInfo *loan = semanticModel.findLoan(current);
-    current = loan == nullptr ? 0 : loan->parent;
+    if (loan != nullptr) {
+      pending.push_back(loan->parent);
+      for (const auto &dependency : loan->additionalDependencies)
+        pending.push_back(dependency.parent);
+    }
   }
   return false;
 }
@@ -4293,7 +4364,7 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
       continue;
     }
     if (borrowedCarrierParameter &&
-        storedReferencePaths(parameter).size() > 1) {
+        !storedReferencePaths(parameter).empty()) {
       for (const auto &dependency :
            storedBorrowDependencies(*arguments[index])) {
         places.push_back({.place = dependency.place,
@@ -4622,22 +4693,9 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
   std::vector<SymbolId> designatedFields;
   std::vector<SemanticLoanDependency> additional;
   for (const auto &path : paths) {
-    SemanticType ownerType = type;
-    std::vector<SymbolId> fields;
-    for (const VariableDecl *field : path.fields) {
-      const ClassInfo *owner = classInfo(ownerType);
-      if (owner == nullptr)
-        return 0;
-      const auto member = owner->members.find(field->name().lexeme);
-      if (member == owner->members.end())
-        return 0;
-      const SymbolId symbol = toolingSymbolFor(member->second.symbol);
-      if (symbol == 0)
-        return 0;
-      fields.push_back(symbol);
-      ownerType = substituteType(member->second.symbol.type,
-                                 classSubstitution(ownerType));
-    }
+    auto fields = storedFieldSymbols(type, path.fields);
+    if (fields.size() != path.fields.size())
+      return 0;
     if (designatedFields.empty())
       designatedFields = std::move(fields);
     else
@@ -4885,6 +4943,37 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   const SymbolId carrierSymbol = toolingSymbolFor(*carrier);
   const ExpressionInfo *info =
       expression ? semanticModel.findExpression(*expression) : nullptr;
+  if (expression) {
+    const auto dependencies = semanticModel.findBorrowDependencies(*expression);
+    if (!dependencies.empty()) {
+      for (const auto &dependency : dependencies)
+        reportBorrowConflict(
+            expressionToken(expression),
+            conflictingLoans(dependency.place, dependency.access,
+                              dependency.parent),
+            "Cannot retain this value while an overlapping borrow may still "
+            "be live.");
+      const auto &primary = dependencies.front();
+      const auto id = createRetainedLoan(
+          *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
+          expression.get(), primary.place, primary.place.root,
+          primary.place.receiver, primary.access, primary.protectsStorage,
+          primary.parent, false, primary.designatedFields);
+      auto loan = *semanticModel.findLoan(id);
+      loan.additionalDependencies.assign(dependencies.begin() + 1,
+                                         dependencies.end());
+      semanticModel.recordLoan(std::move(loan));
+      for (const auto &dependency : dependencies) {
+        if (dependency.protectsStorage)
+          registerStorageLoan(dependency.place.root, dependency.place.receiver,
+                              id);
+        if (dependency.parent != 0)
+          recordSemanticLoanUseForLoan(dependency.parent);
+      }
+      semanticModel.recordBindingLoan(binding, id);
+      return;
+    }
+  }
   const auto *symbolicRangeCall =
       binding.isRangeIterator() ? exprAs<Call>(expression.get()) : nullptr;
   const ResolvedCallInfo *symbolicRangeResolution =
@@ -5564,6 +5653,8 @@ auto SemanticVisitor::Impl::recordSemanticLoanUse(SymbolId carrier) -> void {
     if (info != nullptr) {
       pending.push_back(info->parent);
       pending.push_back(info->storedDependency);
+      for (const auto &dependency : info->additionalDependencies)
+        pending.push_back(dependency.parent);
     }
   }
 }
@@ -6192,6 +6283,8 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
     if (loan == nullptr)
       continue;
     std::vector<SemanticLoanId> pending{loan->parent, loan->storedDependency};
+    for (const auto &dependency : loan->additionalDependencies)
+      pending.push_back(dependency.parent);
     std::unordered_set<SemanticLoanId> visited;
     while (!pending.empty()) {
       const auto ancestor = pending.back();
@@ -6204,6 +6297,8 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
       if (const auto *record = semanticModel.findLoan(ancestor)) {
         pending.push_back(record->parent);
         pending.push_back(record->storedDependency);
+        for (const auto &dependency : record->additionalDependencies)
+          pending.push_back(dependency.parent);
       }
     }
   }

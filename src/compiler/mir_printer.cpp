@@ -67,6 +67,10 @@ lambdaCaptureModeName(LambdaCaptureMode mode) {
     return "copy";
   case LambdaCaptureMode::Move:
     return "move";
+  case LambdaCaptureMode::BorrowRead:
+    return "borrow-read";
+  case LambdaCaptureMode::BorrowMut:
+    return "borrow-mut";
   }
   return "invalid";
 }
@@ -1365,6 +1369,7 @@ private:
       separator(index);
       const auto &dependency = value.additionalDependencies[index];
       output << "{source=p" << dependency.source
+             << " parent=l" << dependency.parent
              << " access=" << number(dependency.access) << " fields=[";
       for (std::size_t field = 0; field < dependency.designatedFields.size();
            ++field) {

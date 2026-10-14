@@ -6563,7 +6563,7 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                      AccessMode::Mutable ||
                  right.destination.reference.referenceAccess ==
                      AccessMode::Mutable)) {
-              report(right.destination.fields.front()->name(),
+              report(right.destination.fields.front().name(),
                      "Stored reference fields cannot duplicate an exclusive "
                      "dependency from the same constructor parameter.",
                      "GTI-S2045");
@@ -6617,7 +6617,7 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       const auto path = storedReferencePath(ownerType);
       if (path) {
         if (owner.constructors.empty()) {
-          report(path->fields.front()->name(),
+          report(path->fields.front().name(),
                  "A nested stored-reference field requires a declared "
                  "constructor that binds it from one exact carrier parameter.",
                  "GTI-S2045");

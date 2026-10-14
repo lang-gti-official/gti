@@ -537,6 +537,23 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
     return;
   }
   bool valid = true;
+  const auto access = lambda->capability == CallableInvocationCapability::Mutable
+                          ? AccessMode::Mutable
+                          : AccessMode::ReadOnly;
+  if (access == AccessMode::Mutable && !isMutableObject(call.callee())) {
+    report(expressionToken(call.callee()),
+           "A callback with an exclusive mutable capture requires mutable "
+           "access to the callback.",
+           "GTI-S2046");
+    valid = false;
+  }
+  const auto receiver = loanPlace(call.callee());
+  reportLoanPlaceConflict(
+      expressionToken(call.callee()), receiver, access,
+      "Callback invocation overlaps a borrow that may still be live.",
+      accessLoan(call.callee()));
+  if (access == AccessMode::Mutable)
+    recordMutableBindingUse(receiver.root);
   const CallableParameterContract *contract =
       callableParameterContract(call.callee());
   const std::optional<CallableBoundary> boundary =
@@ -595,10 +612,10 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
     }
   }
   validateCallPlaceExclusivityImpl(ordinaryParameterTypes, ordinaryArguments,
-                                   call.paren());
+                                   call.paren(), receiver, access);
   valid = validateCallableReturn(call, lambda->returnType) && valid;
   valid =
-      validateCallableCapability(call, CallableInvocationCapability::Read) &&
+      validateCallableCapability(call, lambda->capability) &&
       valid;
   if (valid) {
     semanticModel.recordLambdaCall(
@@ -606,7 +623,7 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
         ResolvedLambdaCallInfo{.lambda = lambda->id,
                                .returnType = lambda->returnType,
                                .parameterTypes = lambda->parameterTypes,
-                               .capability = CallableInvocationCapability::Read,
+                               .capability = lambda->capability,
                                .boundary = boundary});
   }
   currentType =
@@ -5191,7 +5208,10 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     if (lambda != nullptr) {
       result.push_back({.returnType = lambda->returnType,
                         .parameterTypes = lambda->parameterTypes,
-                        .receiverMutability = ReceiverMutability::ReadOnly,
+                        .receiverMutability =
+                            lambda->capability == CallableInvocationCapability::Mutable
+                                ? ReceiverMutability::Mutable
+                                : ReceiverMutability::ReadOnly,
                         .access = AccessModifier::Public});
     }
     return result;

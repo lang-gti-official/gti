@@ -52,6 +52,9 @@ struct SemanticLoanDependency {
   std::vector<SymbolId> designatedFields;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
+  // The exact capability reborrowed to create this dependency, if any.
+  // Composed carriers can retain independently borrowed parents.
+  SemanticLoanId parent = 0;
 
   friend bool operator==(const SemanticLoanDependency &,
                          const SemanticLoanDependency &) = default;
@@ -799,6 +802,7 @@ struct LambdaInfo {
   std::vector<SemanticType> parameterTypes;
   std::vector<LambdaCaptureInfo> captures;
   SemanticTypeTraits traits{};
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
   // Exact concrete instance proven by ordinary body analysis to perform no
   // raw memory/address-arithmetic access. Unknown remains conservative.
   SemanticType rawAccessFreeType = SemanticType::Unknown;
@@ -1929,6 +1933,8 @@ public:
   [[nodiscard]] const BindingInfo *findPayloadBinding(const Token &name) const;
 
   [[nodiscard]] const SemanticLoanInfo *findLoan(SemanticLoanId id) const;
+  [[nodiscard]] std::span<const SemanticLoanDependency>
+  findBorrowDependencies(const Expr &expression) const;
 
   [[nodiscard]] const std::vector<SemanticLoanInfo> &loans() const;
 
@@ -2291,6 +2297,8 @@ private:
   void recordPayloadBinding(const Token &name, BindingInfo info);
 
   void recordLoan(SemanticLoanInfo info);
+  void recordBorrowDependencies(
+      const Expr &expression, std::vector<SemanticLoanDependency> dependencies);
 
   void recordBindingLoan(const VariableDecl &declaration, SemanticLoanId loan);
 
@@ -2509,6 +2517,8 @@ private:
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const Token *, BindingInfo> payloadBindings;
   std::vector<SemanticLoanInfo> retainedLoans;
+  std::unordered_map<const Expr *, std::vector<SemanticLoanDependency>>
+      expressionBorrowDependencies;
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
       conditionalLoanEnds;

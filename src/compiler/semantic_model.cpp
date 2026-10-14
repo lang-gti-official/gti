@@ -1783,6 +1783,7 @@ void SemanticModel::clear() {
   parameterBindings.clear();
   payloadBindings.clear();
   retainedLoans.clear();
+  expressionBorrowDependencies.clear();
   loanEnds.clear();
   conditionalLoanEnds.clear();
   constexprBranches.clear();
@@ -2234,6 +2235,21 @@ void SemanticModel::recordPayloadBinding(const Token &name, BindingInfo info) {
   payloadBindings.insert_or_assign(&name, std::move(info));
 }
 
+std::span<const SemanticLoanDependency>
+SemanticModel::findBorrowDependencies(const Expr &expression) const {
+  if (const auto found = expressionBorrowDependencies.find(&expression);
+      found != expressionBorrowDependencies.end())
+    return found->second;
+  return base == nullptr ? std::span<const SemanticLoanDependency>{}
+                         : base->findBorrowDependencies(expression);
+}
+
+void SemanticModel::recordBorrowDependencies(
+    const Expr &expression, std::vector<SemanticLoanDependency> dependencies) {
+  expressionBorrowDependencies.insert_or_assign(&expression,
+                                                std::move(dependencies));
+}
+
 void SemanticModel::recordLoan(SemanticLoanInfo info) {
   if (info.id == 0) {
     return;
@@ -2356,6 +2372,7 @@ void SemanticModel::removeLoanCarrier(SemanticLoanId id, SymbolId carrier) {
 
 void SemanticModel::clearLoans() {
   retainedLoans.clear();
+  expressionBorrowDependencies.clear();
   loanEnds.clear();
   conditionalLoanEnds.clear();
   switchArmLoanEnds.clear();
