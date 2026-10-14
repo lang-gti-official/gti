@@ -122,6 +122,9 @@ def main():
         assert skipped.stdout == "program-output\n" and "Loading" not in skipped.stderr
         checked = run(["check", "--progress=plain"])
         assert "Checking" in checked.stderr and "Native" not in checked.stderr
+        assert re.search(r"^\s*Checking  progress \(dev,", checked.stderr), checked.stderr
+        assert "Building" not in checked.stderr, checked.stderr
+        assert original == (executable.read_bytes(), generated.read_bytes())
         global_policy = run(["--progress=never", "check"])
         assert global_policy.stderr == ""
         overridden = run(["--progress=never", "check", "--progress=plain"])
@@ -134,6 +137,9 @@ def main():
         assert "\x1b" not in uncolored.stderr
         detailed = run(["check", "--verbose", "--progress=plain"])
         assert "main.gti" in detailed.stderr
+        assert "Lowering  HIR" in detailed.stderr and "Lowering  MIR" in detailed.stderr
+        for result in (overridden, colored, uncolored, detailed):
+            assert "Building" not in result.stderr, result.stderr
 
         # Direct emit mode is still silent unless progress is requested.
         direct = run(["main.gti", "--emit-cpp", "-o", "direct.cpp"])
@@ -164,6 +170,10 @@ def main():
         assert "Finished" not in failed.stderr and "Native" not in failed.stderr
         assert "error[GTI-" in failed.stderr
         assert executable.read_bytes() == original[0]
+        failed_check = run(["check", "--progress=plain"], 65)
+        assert "Checking" in failed_check.stderr and "Failed" in failed_check.stderr
+        assert "Building" not in failed_check.stderr, failed_check.stderr
+        assert "Native" not in failed_check.stderr and "Finished" not in failed_check.stderr
 
         # Parent target waits are live; captured child telemetry stays disabled
         # and completed diagnostic/output replay remains name-ordered.
@@ -179,7 +189,60 @@ def main():
 
         if os.name != "nt":
             live_native_probe(gti, root, env)
+            if len(sys.argv) > 2:
+                live_lowering_probe(str(Path(sys.argv[2]).resolve()), env)
     print("CLI progress: phases, cache, quiet/colour, streams, failures, and live TTY passed")
+
+
+def live_lowering_probe(probe, env):
+    import fcntl
+    import pty
+    import select
+    import struct
+    import termios
+
+    for operation, verb in (("check", "Checking"), ("build", "Building")):
+        for phase in ("hir", "mir"):
+            master, slave = pty.openpty()
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 72, 0, 0))
+            process = subprocess.Popen([probe, operation, phase], env=env,
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=slave)
+            os.close(slave)
+            chunks = []
+            try:
+                deadline = time.monotonic() + 15
+                observed = False
+                while time.monotonic() < deadline:
+                    ready, _, _ = select.select([master], [], [], 0.1)
+                    if ready:
+                        try:
+                            data = os.read(master, 65536)
+                        except OSError as error:
+                            if error.errno == errno.EIO: break
+                            raise
+                        if not data: break
+                        chunks.append(data)
+                    text = b"".join(chunks).decode(errors="replace")
+                    if re.search(rf"{verb}  label-probe \([0-9.]+s elapsed\)", text):
+                        assert process.poll() is None, "heartbeat arrived after exit"
+                        observed = True
+                        break
+                assert observed, (operation, phase, chunks)
+                process.stdin.write(b"\n")
+                process.stdin.flush()
+                stdout, _ = process.communicate(timeout=5)
+                text = b"".join(chunks).decode(errors="replace")
+                assert process.returncode == 0 and stdout == b"", (process.returncode, stdout)
+                assert f"{verb}  label-probe (test)" in text, text
+                assert "\x1b[2K" in text, text
+                assert ("Building" if operation == "check" else "Checking") not in text, text
+                assert_no_backend_rows(text.replace("\r", "\n").replace("\x1b[2K", ""))
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+                os.close(master)
 
 
 def live_native_probe(gti, root, env):
