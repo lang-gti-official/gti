@@ -5592,9 +5592,16 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     // another spelling of the reference itself. Retain its StoredValue loan
     // below even for shared inputs, so a later reference to that carrier can
     // protect its physical storage independently from its external referent.
+    // Range-for bindings (range owner, cursor, element) keep the shared path
+    // and their ancestry: the range verifier pairs the element loan with the
+    // range loan and requires the cursor to carry no binding of its own.
+    const bool rangeForBinding =
+        binding.isRangeBinding() || binding.isRangeOwner() ||
+        binding.isRangeIterator() || binding.isRangeElementOwner();
     if (sourceLoan->access == AccessMode::ReadOnly &&
         !(retainedStoredBorrow &&
-          sourceLoan->kind == SemanticLoanKind::Reference)) {
+          sourceLoan->kind == SemanticLoanKind::Reference &&
+          !rangeForBinding)) {
       if (lifecycleBoundBorrowCarrierFor(carrier->type) ||
           sourceLoan->lifecycleBound) {
         // A new cleanup-bearing value owns a distinct release obligation even
@@ -5675,10 +5682,11 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     // A root shared reference can be copied into an independent value
     // dependency. A child or cleanup-bound reference still retains ancestry:
     // copying its read permission cannot release an exclusive ancestor or
-    // extend a cleanup-protected lifetime.
+    // extend a cleanup-protected lifetime. Range-for bindings always keep
+    // their ancestry so the element loan stays under its range loan.
     const auto parent = sourceLoan->access == AccessMode::ReadOnly &&
                                 sourceLoan->parent == 0 &&
-                                !sourceLoan->lifecycleBound
+                                !sourceLoan->lifecycleBound && !rangeForBinding
                             ? SemanticLoanId{0}
                             : sourceLoan->id;
     const SemanticLoanId child = createRetainedLoan(
