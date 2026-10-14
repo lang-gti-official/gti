@@ -5306,6 +5306,28 @@ private:
          value.info.type.kind == SemanticType::Lambda) &&
         value.info.traits.containsBorrowedState)
       return true;
+    // Erasure removes the visible referent layout, not the addressable
+    // shell's lifetime or its inherited owners. Preserve the selected
+    // borrowed carrier just as for a reference with a visible layout.
+    if (value.info.type.kind == SemanticType::Class &&
+        value.borrowOrigin == BorrowOriginKind::Argument &&
+        value.borrowArgument < value.parameterTypes.size() &&
+        value.parameterTypes[value.borrowArgument].kind ==
+            SemanticType::Reference &&
+        std::any_of(
+            program.classInstances().begin(), program.classInstances().end(),
+            [&](const HirClassInstance &owner) {
+              return owner.type == value.info.type &&
+                     owner.compilerCapability ==
+                         CompilerCapabilityTypeKind::ErasedObject;
+            })) {
+      const auto arguments = callArgumentValues(value);
+      const auto *input = value.borrowArgument < arguments.size()
+                              ? findValue(arguments[value.borrowArgument])
+                              : nullptr;
+      if (input && input->info.traits.containsBorrowedState)
+        return true;
+    }
     // A reference returned from an ordinary receiver borrows its storage
     // unless semantics selected an exact stored-reference field instead.
     // The referent need not itself contain a borrow (for example an int field
@@ -12550,9 +12572,15 @@ private:
             while (transient != 0 && transient <= output.loans.size() &&
                    visited.insert(transient).second) {
               const MirLoan &candidate = output.loans[transient - 1];
+              const bool restoredAliases =
+                  function->restoresReferenceResult &&
+                  mir_detail::restoredReferenceReturnWitness(output, candidate);
+              // This builder has an unfinished CFG. Preserve the checked
+              // caller-witness contract now; independent verification proves
+              // unique alias initialization and dominance on the final CFG.
               if (candidate.kind != MirLoanKind::CallResult ||
-                  !candidate.carriers.empty() || candidate.escapes ||
-                  !loanIsActive(scopes, transient)) {
+                  (!candidate.carriers.empty() && !restoredAliases) ||
+                  candidate.escapes || !loanIsActive(scopes, transient)) {
                 break;
               }
               transientChain.push_back(transient);

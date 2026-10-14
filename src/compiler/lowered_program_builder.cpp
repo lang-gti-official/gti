@@ -422,6 +422,40 @@ lowerParameters(const std::vector<Parameter> &parameters,
   return result;
 }
 
+[[nodiscard]] std::vector<LoweredParameter>
+lowerLambdaParameters(const HirLambda &lambda) {
+  std::vector<LoweredParameter> result;
+  if (!lambda.source)
+    return result;
+  const auto &parameters = lambda.source->parameters();
+  result.reserve(parameters.size());
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    const auto &parameter = parameters[index];
+    const auto binding =
+        std::find_if(lambda.body.bindings.begin(), lambda.body.bindings.end(),
+                     [&](const HirBinding &candidate) {
+                       return index < lambda.parameterBindings.size() &&
+                              candidate.id == lambda.parameterBindings[index] &&
+                              candidate.parameter == &parameter;
+                     });
+    // Preserve the lexical binding's concrete pack, including an empty pack.
+    // The flattened function signature is a separate ABI contract; indexing
+    // it with lexical parameter positions drops tails or invents Unknown.
+    const auto *info =
+        binding == lambda.body.bindings.end() ? nullptr : &binding->info;
+    result.push_back({.symbol = info ? info->symbol : 0,
+                      .name = parameter.name.lexeme,
+                      .type = info ? info->type : SemanticType::Unknown,
+                      .access = info ? info->access : AccessMode::ReadOnly,
+                      .mutability = parameter.mutability,
+                      .pack = parameter.pack.has_value(),
+                      .hasDefault = parameter.hasDefault(),
+                      .explicitlyMoved = info && info->explicitlyMoved,
+                      .source = tokenSpan(parameter.name)});
+  }
+  return result;
+}
+
 [[nodiscard]] std::vector<LoweredCallableParameter> lowerCallableParameters(
     const std::vector<CallableParameterContract> &parameters) {
   std::vector<LoweredCallableParameter> result;
@@ -1385,10 +1419,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
         .declaration = instance.declaration,
         .type = instance.type,
         .returnType = instance.returnType,
-        .parameters = instance.source == nullptr
-                          ? std::vector<LoweredParameter>{}
-                          : lowerParameters(instance.source->parameters(),
-                                            instance.parameterTypes, semantics),
+        .parameters = lowerLambdaParameters(instance),
         .traits = instance.traits,
         .source = instance.source == nullptr
                       ? SourceSpan{}

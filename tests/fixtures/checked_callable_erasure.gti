@@ -21,6 +21,22 @@ Reader& restore_reader(std::erased_object& object) {
   unsafe { Reader& reader = std::restore_ref<Reader>(object); return reader; }
 }
 
+struct Selection {
+  mut int calls;
+  mut int selected;
+  Selection(int calls, int selected) : calls(calls), selected(selected) {}
+};
+mut int& select_value(mut Selection& source) {
+  source.calls += 1;
+  return source.selected;
+}
+class SelectedView {
+  mut int& value;
+public:
+  SelectedView(mut Selection& source) : value(select_value(source)) {}
+  void increment() mut { this.value += 1; }
+};
+
 int next(int value) { return value + 1; }
 std::string echo(std::string value) { return std::move(value); }
 int apply(std::function_ref<int(int)>& callback, int input) { return callback(input); }
@@ -41,6 +57,10 @@ int main() {
   std::erased_object& erased = std::erase_ref(original);
   Reader& restored = restore_reader(erased);
   if (restored.read() != 4) return 8;
+  mut Selection selection{0, 10};
+  mut SelectedView selected{selection};
+  selected.increment();
+  if (selection.calls != 1 || selection.selected != 11) return 10;
   std::function_ptr<int(int)> named{next};
   std::function_ptr<int(int)> lambda{[](int input) -> int { return input + 2; }};
   if (named(3) != 4 || lambda(3) != 5) return 2;

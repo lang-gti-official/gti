@@ -468,9 +468,9 @@ Source prefix-capacity checks are ordinary control flow. Their selected calls,
 ordered inputs and object-lifetime operations remain visible to deterministic
 inspection and replay; the retired private construction-preflight identity is
 not serialized.
-The new loan contract separates a physical carrier reference from its inherited
-external-owner authority. `storedDependency` names one exact `Stored` loan;
-unlike `parent`, it does not denote containment or suspend that loan. Dependency
+The loan contract separates a physical carrier reference from its inherited
+external-owner authority. Ordinarily `storedDependency` names one exact `Stored`
+loan; unlike `parent`, it does not denote containment or suspend that loan. Dependency
 identity, liveness, permission capping and child-before-dependency retirement
 are verified independently. Dependencies may form an acyclic chain when an
 adapter borrows another adapter. Protected-source and call-conflict queries
@@ -481,9 +481,29 @@ the ultimate owner. Reference formals and receivers seed an abstract
 physical reference loan. Program verification independently binds function,
 lambda and constructor-reference-formal entries to the exact formal (or the
 function/lambda receiver) and checks field access against
-the concrete class layout. Each local value copy attached to an entry requires
+the concrete class layout. Concrete parameter packs retain a separate entry for
+each opaque checked reference, including read-only references: the verified
+element index, referent type, access, source, and entry identity must all agree.
+A constructor reference initializer may execute a checked reference-returning
+helper, then publish its result while retaining the original caller-owned
+`Stored` dependency. The helper's body-derived origin, exact call result, and
+field publication must agree; matching forged call/field metadata cannot invent
+or erase the original owner authority. Each local value copy attached to an entry requires
 an independently proven, dominating same-type initialization; merely adding a
 binding to the carrier list grants no authority.
+Checked restoration of an opaque reference has a separate explicit proof:
+the concrete restored field paths and access must match a verified restore
+operation or body-proven helper summary. Its hidden dependencies remain bounded
+by the original checked witness rather than becoming invented `Stored` owners.
+A named restored-reference return may retain that exact caller-parameter witness
+only when its source and access agree, there are no additional, designated, or
+cleanup-bound dependencies, and every local reference carrier has a unique
+typed initialization from the original call result. Producer, initialization,
+and return publication must occur in that order on every path. The pointer
+carrier cannot be reseated, moved, addressed, or forwarded through a CFG edge.
+The fresh `Return` loan preserves the witness and immediately retires the
+body-local call result; ordinary origin, liveness, escape, and permission checks
+remain mandatory. An alias identity proof alone grants no escape authority.
 An abstract entry describes declared field access, not a capability-produced
 loan or the caller's cleanup ownership. In particular, borrowing a guard does
 not acquire its lock-release obligation. Local bindings of stored referents
