@@ -2799,25 +2799,18 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
   };
   const lang::driver::ExecutableBuildResult sharedCpp20 = build(
       "cpp20-shared", entry, sharedRootToolchain, lang::CppStandard::Cpp20);
-  const bool sharedCompatibility =
+  // GTI owns its expected representation, so a C++20 build uses no vendored
+  // compatibility header even when the shared root still provides one.
+  const bool usesCompatibilityHeader =
       sharedCpp20.provenance &&
       std::any_of(
           sharedCpp20.provenance->runtime.headers.begin(),
           sharedCpp20.provenance->runtime.headers.end(),
           [](const lang::driver::BuildRuntimeHeaderProvenance &header) {
             return header.kind ==
-                       lang::driver::BuildRuntimeHeaderKind::Compatibility &&
+                       lang::driver::BuildRuntimeHeaderKind::Compatibility ||
                    header.logicalIdentity.starts_with("nonstd/");
           });
-  const bool misclassifiedCompatibility =
-      sharedCpp20.provenance &&
-      std::any_of(sharedCpp20.provenance->runtime.headers.begin(),
-                  sharedCpp20.provenance->runtime.headers.end(),
-                  [](const lang::driver::BuildRuntimeHeaderProvenance &header) {
-                    return header.kind ==
-                               lang::driver::BuildRuntimeHeaderKind::Runtime &&
-                           header.logicalIdentity.starts_with("nonstd/");
-                  });
   const auto runtimeSummary =
       [](const lang::driver::ExecutableBuildResult &value) {
         std::string summary;
@@ -2838,11 +2831,11 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
   expect(
       separateCpp20.succeeded() && separateCpp20.provenance &&
           sharedCpp20.succeeded() && sharedCpp20.provenance &&
-          sharedCompatibility && !misclassifiedCompatibility &&
+          !usesCompatibilityHeader &&
           sharedCpp20.provenance->runtime.materialsSha256 ==
               separateCpp20.provenance->runtime.materialsSha256,
-      "a shared installed C++20 include root should classify nonstd as "
-      "compatibility and preserve normalized runtime identity (separate "
+      "a shared installed C++20 include root should preserve normalized "
+      "runtime identity without a compatibility header (separate "
       "status=" +
           std::to_string(static_cast<int>(separateCpp20.status)) +
           ", shared status=" +
