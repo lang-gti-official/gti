@@ -12,6 +12,29 @@ The `function-contracts` LSP case checks exact UTF-16 spans, unsaved correction
 and annotated signatures in hover; Tree-sitter covers the same attribute syntax.
 The stdlib surface census records `std::testing::check` with O0/O3 execution.
 
+## Field reads from constructed temporaries with destructors (0.430.2)
+
+`issue_127_constructor_temporary_field_runtime` also reads fields directly from
+constructed temporaries whose class has a destructor: in condition, `while`,
+`switch`, argument, return, index, initializer, compound-assignment,
+short-circuit and loop positions, through a nested field and a field lent to a
+member call, from a raising and a generated default constructor, and in a field
+default, a member initializer and a base initializer. It checks that every read
+precedes the temporary's end-of-full-expression destruction and that all 20
+temporaries are destroyed exactly once, in C++20/C++23 at O0–O3 with disabled
+elision and at O1 with ASan/UBSan. The emitted C++ reads all 18 views through
+MIR's own result slots, the base argument's through its preparation carrier,
+and none through a cleanup-free value slot.
+`owning_temporary_field_read_runtime` adds plain, nested and by-value-argument
+constructions in its eight native modes. It observes that a failure after the
+read destroys the constructed temporary once, and that a failed construction is
+never destroyed.
+`testOwningConstructionFieldView` checks plain, raising and generated-default
+publication, a short-circuit conditional temporary and constructor-body reads,
+and rejects a view moved out of its temporary and an obligation armed before
+its construction. The cleanup-free near miss now requires the explicit-destructor
+temporary to use its owned slot rather than the cleanup-free value slot.
+
 ## Constructor-initializer temporaries (0.430.1)
 
 `mutable_temporary_receiver_runtime` binds temporaries, with and without a
