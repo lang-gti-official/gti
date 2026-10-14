@@ -477,17 +477,24 @@ auto SemanticVisitor::Impl::validateCallableReturn(
       deferred && deferred->receiverBinding != 0
           ? semanticModel.database().findSymbol(deferred->receiverBinding)
           : nullptr;
-  Diagnostic diagnostic = makeDiagnostic(
-      "GTI-S2046", DiagnosticPhase::Semantics, location,
-      std::string(field ? "Callable binding '" : "Callable parameter '") +
-          location.lexeme + "' must return '" +
-          typeSpelling(requirement->returnType) +
-          "' for this invocation, "
-          "but the selected callable returns '" +
-          typeSpelling(returnType) + "'.");
+  // The stored callable is a class field or a closure capture; name the
+  // binding by what it is.
+  const std::string storedKind = field == nullptr ? "Callable parameter '"
+                                 : field->kind == SymbolKind::LambdaCapture
+                                     ? "Callable capture '"
+                                     : "Callable field '";
+  Diagnostic diagnostic =
+      makeDiagnostic("GTI-S2046", DiagnosticPhase::Semantics, location,
+                     storedKind + location.lexeme + "' must return '" +
+                         typeSpelling(requirement->returnType) +
+                         "' for this invocation, "
+                         "but the selected callable returns '" +
+                         typeSpelling(returnType) + "'.");
   if (field) {
     diagnostic.related.push_back(
-        {field->nameSpan, "Callable binding declared here."});
+        {field->nameSpan, field->kind == SymbolKind::LambdaCapture
+                              ? "Callable capture declared here."
+                              : "Callable field declared here."});
   }
   if (variable != nullptr) {
     if (const Symbol *symbol = resolve(variable->name());

@@ -1518,7 +1518,7 @@ int main() {
         continue;
       const auto &binding = bindings->front();
       const auto *lambda =
-          lowered.mir().findLambda(instance.parameterTypes.front().lambdaId);
+          lowered.mir().findLambdaForType(instance.parameterTypes.front());
       const bool recordCapture =
           lambda != nullptr && !lambda->captureTypes.empty() &&
           lambda->captureTypes.front().kind == lang::SemanticType::Class;
