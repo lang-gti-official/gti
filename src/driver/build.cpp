@@ -95,7 +95,7 @@ publishDebugBundle(const std::filesystem::path &staged,
   return std::nullopt;
 }
 
-constexpr std::string_view cacheSchema = "gti-build-cache-v2";
+constexpr std::string_view cacheSchema = "gti-build-cache-v3";
 using detail::IdentityBuilder;
 
 struct FileDigest {
@@ -964,6 +964,30 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
       static_cast<std::uint64_t>(request.compilation().requiresEntryPoint()));
   identity.add("optimization", static_cast<std::uint64_t>(
                                    request.compilation().optimization()));
+  // Source-level debug artifacts embed the loaded units' paths (the
+  // backend's line directives, native DWARF, the symbol bundle), so a debug
+  // build is keyed on them where a plain build is keyed on logical names and
+  // may move with its checkout. Darwin's symbol bundle is produced by
+  // dsymutil, which joins the identity like the compilers do.
+  const bool debugInfo = request.compilation().debugInfo();
+  identity.add("debug-info", static_cast<std::uint64_t>(debugInfo));
+  if (debugInfo) {
+    std::vector<std::string> sourcePaths;
+    for (const SourceUnit &unit : inputs.sourceGraph.sourceUnits()) {
+      sourcePaths.push_back(unit.path.string());
+    }
+    std::sort(sourcePaths.begin(), sourcePaths.end());
+    identity.add("debug.source-paths",
+                 static_cast<std::uint64_t>(sourcePaths.size()));
+    for (const std::string &path : sourcePaths) {
+      identity.add("debug.source-path", path);
+    }
+    if (request.compilation().target().os == "macos" &&
+        !addCompilerIdentity(identity, "debug.dsymutil", "dsymutil",
+                             errorMessage)) {
+      return std::nullopt;
+    }
+  }
   identity.add(
       "raw-pointer-audit",
       rawPointerAuditModeName(request.compilation().rawPointerAudit()));
@@ -1288,7 +1312,85 @@ struct CacheMetadata {
   FileDigest generated;
   FileDigest executable;
   std::uint32_t executablePermissions = 0;
+  // The debug symbol bundle published beside a source-level debug
+  // executable (Darwin's `.dSYM`), as a tree digest over its files, or
+  // absent when the build published none.
+  std::optional<FileDigest> symbols;
 };
+
+constexpr std::string_view cacheSymbolsDirectory = "symbols.dSYM";
+
+// A content digest of a directory tree: every regular file by its relative
+// path, content hash and size, in sorted path order. Symlinks and other
+// entries make the tree unidentifiable.
+std::optional<FileDigest> digestTree(const std::filesystem::path &root,
+                                     std::string &errorMessage) {
+  std::error_code error;
+  std::vector<std::filesystem::path> files;
+  for (std::filesystem::recursive_directory_iterator
+           iterator(root, std::filesystem::directory_options::none, error),
+       end;
+       iterator != end; iterator.increment(error)) {
+    if (error) {
+      break;
+    }
+    const auto status = iterator->symlink_status(error);
+    if (error) {
+      break;
+    }
+    if (std::filesystem::is_directory(status)) {
+      continue;
+    }
+    if (!std::filesystem::is_regular_file(status)) {
+      errorMessage = "debug symbol bundle contains a non-regular entry '" +
+                     iterator->path().string() + "'";
+      return std::nullopt;
+    }
+    files.push_back(iterator->path());
+  }
+  if (error) {
+    errorMessage =
+        "cannot enumerate '" + root.string() + "': " + error.message();
+    return std::nullopt;
+  }
+  std::sort(files.begin(), files.end());
+  IdentityBuilder identity;
+  std::uintmax_t total = 0;
+  for (const std::filesystem::path &file : files) {
+    const std::optional<FileDigest> digest = digestFile(file, errorMessage);
+    if (!digest) {
+      return std::nullopt;
+    }
+    identity.add("tree.path", file.lexically_relative(root).generic_string());
+    identity.add("tree.sha256", digest->hash);
+    identity.add("tree.size", static_cast<std::uint64_t>(digest->size));
+    total += digest->size;
+  }
+  return FileDigest{.hash = identity.finish(), .size = total};
+}
+
+// Copies a directory tree of regular files, failing on anything else.
+bool copyTree(const std::filesystem::path &source,
+              const std::filesystem::path &destination,
+              std::string &errorMessage) {
+  std::error_code error;
+  std::filesystem::remove_all(destination, error);
+  if (error) {
+    errorMessage =
+        "cannot clear '" + destination.string() + "': " + error.message();
+    return false;
+  }
+  std::filesystem::copy(source, destination,
+                        std::filesystem::copy_options::recursive |
+                            std::filesystem::copy_options::copy_symlinks,
+                        error);
+  if (error) {
+    errorMessage = "cannot copy '" + source.string() + "' to '" +
+                   destination.string() + "': " + error.message();
+    return false;
+  }
+  return true;
+}
 
 bool validDigest(std::string_view digest) {
   return digest.size() == 64 &&
@@ -1311,16 +1413,26 @@ readCacheMetadata(const std::filesystem::path &path,
   CacheMetadata metadata;
   std::string generatedLabel;
   std::string executableLabel;
+  std::string symbolsLabel;
+  std::string symbolsHash;
   if (!(input >> schema >> metadata.key >> generatedLabel >>
         metadata.generated.hash >> metadata.generated.size >> executableLabel >>
         metadata.executable.hash >> metadata.executable.size >>
-        metadata.executablePermissions) ||
+        metadata.executablePermissions >> symbolsLabel >> symbolsHash) ||
       schema != cacheSchema || generatedLabel != "generated" ||
-      executableLabel != "executable" || !validDigest(metadata.key) ||
-      !validDigest(metadata.generated.hash) ||
+      executableLabel != "executable" || symbolsLabel != "symbols" ||
+      !validDigest(metadata.key) || !validDigest(metadata.generated.hash) ||
       !validDigest(metadata.executable.hash)) {
     errorMessage = "metadata has an invalid schema or digest";
     return std::nullopt;
+  }
+  if (symbolsHash != "none") {
+    std::uintmax_t symbolsSize = 0;
+    if (!validDigest(symbolsHash) || !(input >> symbolsSize)) {
+      errorMessage = "metadata has an invalid symbol bundle digest";
+      return std::nullopt;
+    }
+    metadata.symbols = FileDigest{.hash = symbolsHash, .size = symbolsSize};
   }
   std::string trailing;
   if (input >> trailing) {
@@ -1336,7 +1448,11 @@ std::string renderCacheMetadata(const CacheMetadata &metadata) {
          std::to_string(metadata.generated.size) + "\n" + "executable " +
          metadata.executable.hash + " " +
          std::to_string(metadata.executable.size) + " " +
-         std::to_string(metadata.executablePermissions) + "\n";
+         std::to_string(metadata.executablePermissions) + "\n" + "symbols " +
+         (metadata.symbols ? metadata.symbols->hash + " " +
+                                 std::to_string(metadata.symbols->size)
+                           : std::string("none")) +
+         "\n";
 }
 
 enum class CacheLookupStatus {
@@ -1350,6 +1466,8 @@ struct CacheLookupResult {
   std::string generated;
   FileDigest executableDigest;
   std::filesystem::perms executablePermissions = std::filesystem::perms::none;
+  // The verified debug symbol bundle inside the entry, when it holds one.
+  std::optional<std::filesystem::path> symbols;
   std::string detail;
 };
 
@@ -1426,11 +1544,30 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
                                 permissionError.message()
                           : "executable permissions do not match metadata"};
   }
+  std::optional<std::filesystem::path> symbols;
+  if (metadata->symbols) {
+    const std::filesystem::path symbolsPath = entry / cacheSymbolsDirectory;
+    const std::optional<FileDigest> symbolsDigest =
+        digestTree(symbolsPath, detail);
+    if (!symbolsDigest || *symbolsDigest != *metadata->symbols) {
+      return {.status = CacheLookupStatus::Corrupt,
+              .detail = symbolsDigest
+                            ? "debug symbol bundle digest does not match "
+                              "metadata"
+                            : std::move(detail)};
+    }
+    symbols = symbolsPath;
+  }
+  const std::string detailText =
+      symbols ? "verified backend representation, executable and debug "
+                "symbol digests"
+              : "verified backend representation and executable digests";
   return {.status = CacheLookupStatus::Hit,
           .generated = std::move(*generated),
           .executableDigest = *executableDigest,
           .executablePermissions = executablePermissions,
-          .detail = "verified backend representation and executable digests"};
+          .symbols = std::move(symbols),
+          .detail = detailText};
 }
 
 bool writeBinaryFile(const std::filesystem::path &path,
@@ -1557,12 +1694,29 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
     return false;
   }
 
-  const CacheMetadata metadata{
-      .key = std::string(key),
-      .generated = generatedDigest,
-      .executable = *executableDigest,
-      .executablePermissions =
-          static_cast<std::uint32_t>(executablePermissions)};
+  CacheMetadata metadata{.key = std::string(key),
+                         .generated = generatedDigest,
+                         .executable = *executableDigest,
+                         .executablePermissions =
+                             static_cast<std::uint32_t>(executablePermissions)};
+  // A source-level debug build on Darwin published its symbol bundle beside
+  // the executable; the entry keeps a copy so a hit can restore both.
+  const std::filesystem::path symbolsPath = entry / cacheSymbolsDirectory;
+  std::error_code symbolsError;
+  std::filesystem::remove_all(symbolsPath, symbolsError);
+  if (request.compilation().debugInfo() &&
+      request.compilation().target().os == "macos") {
+    const std::filesystem::path published(request.output().string() + ".dSYM");
+    if (std::filesystem::is_directory(published, symbolsError)) {
+      if (!copyTree(published, symbolsPath, errorMessage)) {
+        return false;
+      }
+      metadata.symbols = digestTree(symbolsPath, errorMessage);
+      if (!metadata.symbols) {
+        return false;
+      }
+    }
+  }
   // Metadata is the commit marker. Readers ignore incomplete entries until it
   // has been atomically replaced after both payloads have been published.
   return publishTextAtomically(metadataPath, renderCacheMetadata(metadata),
@@ -1748,10 +1902,6 @@ std::optional<std::string>
 nativeCacheBypassDetail(const ExecutableBuildRequest &request,
                         NativeLinkIdentityPlan &plan) {
   plan = {};
-  if (request.compilation().debugInfo()) {
-    return "source-level debug artifacts retain checkout paths and native "
-           "symbol sidecars; caching these is not yet supported";
-  }
   const NativeInputs &inputs = request.nativeInputs();
   if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||
       !inputs.linkerArguments.empty() || !inputs.trailingArguments.empty()) {
@@ -2661,7 +2811,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = "cache requires a managed project output policy";
     } else {
-      const std::filesystem::path versionRoot = request.cache()->root / "v2";
+      const std::filesystem::path versionRoot = request.cache()->root / "v3";
       const std::filesystem::path cacheProbe = versionRoot / "probe/metadata";
       if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
               *request.managedOutput(), cacheProbe, false)) {
@@ -2750,6 +2900,29 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
                 "gti: failed to restore cached executable: " + restoreError;
             result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
             return result;
+          }
+          if (lookup.symbols) {
+            // Restore the symbol bundle through the same staged publication
+            // a fresh build uses, so ownership and collision rules hold.
+            const std::filesystem::path symbols(request.output().string() +
+                                                ".dSYM");
+            const std::filesystem::path staged = stagedArtifactPath(symbols);
+            if (!copyTree(*lookup.symbols, staged, restoreError)) {
+              result.driverDiagnostic =
+                  "gti: failed to restore cached debug symbols: " +
+                  restoreError;
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+              return result;
+            }
+            if (const auto diagnostic = publishDebugBundle(staged, symbols)) {
+              std::error_code cleanupError;
+              std::filesystem::remove_all(staged, cleanupError);
+              result.driverDiagnostic =
+                  "gti: failed to publish cached debug bundle '" +
+                  symbols.string() + "': " + *diagnostic;
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+              return result;
+            }
           }
           result.generatedSourceRetained = request.keepGeneratedSource();
           result.status = ExecutableBuildStatus::Success;
