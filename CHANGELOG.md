@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.428.1 — Temporaries in constructor initializers
+
+- Fix an internal compiler error ("failed to construct valid MIR") when a
+  constructor initializer creates a temporary that ends with that initializer,
+  such as a method called on a temporary: `Meters lap = Feet(30).to_meters();`
+  as a field default, the same call in a `: lap(...)` initializer, or a field
+  default run by a generated default constructor. The temporary is destroyed
+  right after its field is initialized, before the next initializer and the
+  constructor body.
+
 ## 0.428.0 — Memoized native dependency discovery
 
 - Project cache lookups no longer rerun the native preprocessor for every
