@@ -264,7 +264,11 @@ public:
                initializer.targetType.kind == SemanticType::Expected ||
                initializer.targetType.kind == SemanticType::Array ||
                initializer.targetType.kind == SemanticType::Class ||
-               initializer.targetType.kind == SemanticType::Lambda ||
+               // Only a borrow-carrying closure takes the explicit stage; a
+               // closure copied or moved without borrowed state publishes
+               // through the constructor record, as the backend expects.
+               (initializer.targetType.kind == SemanticType::Lambda &&
+                field->info.traits.containsBorrowedState) ||
                (initializer.targetType.kind == SemanticType::Enum &&
                 std::any_of(program.enumDeclarations().begin(),
                             program.enumDeclarations().end(),

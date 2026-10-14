@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.432.0 — Borrowing callbacks and callable views
+## 0.433.0 — Borrowing callbacks and callable views
 
 - Lambdas can borrow surrounding bindings instead of copying or moving them:
   `[&value]` takes a shared read-only reference and `[mut &value]` an

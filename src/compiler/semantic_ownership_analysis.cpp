@@ -5819,9 +5819,14 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                            return self(self, argument.get());
                          });
     };
+    // A carrier whose cleanup reads its referent keeps its ancestry too: the
+    // referent must outlive the carrier's destructor, which MIR proves
+    // through the paired parent loan.
     const auto parent =
         sourceLoan->access == AccessMode::ReadOnly && sourceLoan->parent == 0 &&
-                !sourceLoan->lifecycleBound && !rangeForBinding &&
+                !sourceLoan->lifecycleBound &&
+                !lifecycleBoundBorrowCarrierFor(carrier->type) &&
+                !rangeForBinding &&
                 ((sourceLoan->entry &&
                   directCarrierSource(directCarrierSource, expression.get())) ||
                  opaqueCarrier)

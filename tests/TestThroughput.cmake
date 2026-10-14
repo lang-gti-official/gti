@@ -26,7 +26,8 @@ if(Python3_Interpreter_FOUND)
     ordered_search_runtime
     abstract_generic_failure_contract_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
-    associative_ownership_runtime borrow_origin_runtime borrowing_composition charconv_runtime
+    associative_ownership_runtime borrow_origin_runtime borrowing_composition
+    borrowing_callbacks_runtime charconv_runtime
     cleanup_bound_borrow_runtime complete_containers composable_io_runtime
     conditional_capability_runtime conditional_converted_receiver_runtime
     conditional_owning_argument_runtime borrowed_callable_conditionals_runtime
