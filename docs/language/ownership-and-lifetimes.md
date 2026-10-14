@@ -1293,6 +1293,10 @@ Two general facilities support this ordinary source wrapper:
   Ordinary helper functions can forward that restoration contract when every
   return is proven to restore the same opaque input. A matching signature
   alone does not grant restoration authority.
+  A named restored-reference local may be returned only while retaining the
+  exact selected reference-parameter witness and access permission, without
+  another local-owned or cleanup-bound dependency. This does not authorize
+  general local child-reborrow escapes or returning a local object's storage.
 - `std::function_ptr<R(Args...)>` is a non-null, typed GTI invocation pointer
   constructed from an exact namespace-function item or captureless lambda.
   It preserves GTI's failure and argument/result ownership convention. It is

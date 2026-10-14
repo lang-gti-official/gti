@@ -6658,6 +6658,7 @@ public:
       std::string text;
       std::string initializers;
       std::vector<std::string> banners;
+      std::vector<std::string> closureConditions;
     };
     std::vector<GenericNormalBody> genericNormalBodies;
     for (const MirConstructorInstance *instance : instances) {
@@ -6762,26 +6763,76 @@ public:
           emitGeneralMirConstructorInitializerList(*instance);
           std::string initializers = output.str();
           output = std::move(saved);
+          // Unnamed callable parameters can select distinct verified bodies
+          // even when their cleanup shapes agree. The native type carries the
+          // exact artifact-local MIR identity; it does not select GTI
+          // overloads.
+          std::string closureCondition;
+          const auto prepared = constructorTemplatePlans.find(instance->id);
+          if (prepared != constructorTemplatePlans.end()) {
+            for (const auto &type : prepared->second->representations.types()) {
+              if (!type.bodyTypeOverlay ||
+                  type.type.kind != SemanticType::Lambda)
+                continue;
+              const auto lambda = std::find_if(
+                  mir.lambdaInstances().begin(), mir.lambdaInstances().end(),
+                  [&](const auto &candidate) {
+                    return candidate.type == type.type;
+                  });
+              if (lambda == mir.lambdaInstances().end())
+                throw std::logic_error(
+                    "constructor selector lost its exact lambda identity");
+              if (!closureCondition.empty())
+                closureCondition += " && ";
+              closureCondition +=
+                  "(::gti_internal::backend::mir_lambda_identity_v<" +
+                  type.spelling + "> == " + std::to_string(lambda->id) + ")";
+            }
+          }
+          if (!closureCondition.empty() && ownerInstance &&
+              loweredTypeIsNameable(ownerInstance->type)) {
+            closureCondition +=
+                " && std::is_same_v<" + loweredPrimaryClassSpelling(owner) +
+                ", " +
+                cppSemanticTypeSpelling(loweredProgram, standard,
+                                        ownerInstance->type) +
+                ">";
+          }
           const auto previous = std::find_if(
               genericNormalBodies.begin(), genericNormalBodies.end(),
               [&](const GenericNormalBody &body) {
-                return body.cleanup == cleanup;
+                return body.cleanup == cleanup && body.text == normalized;
               });
-          if ((!genericNormalBodies.empty() &&
-               genericNormalBodies.front().initializers != initializers) ||
-              (previous != genericNormalBodies.end() &&
-               previous->text != normalized)) {
+          if (!genericNormalBodies.empty() &&
+              genericNormalBodies.front().initializers != initializers) {
             throw std::logic_error("generic-owner constructor instances have "
                                    "incompatible MIR representations");
           }
+          for (const auto &body : genericNormalBodies) {
+            if (body.cleanup != cleanup || body.text == normalized)
+              continue;
+            if (closureCondition.empty() || body.closureConditions.empty() ||
+                std::find(body.closureConditions.begin(),
+                          body.closureConditions.end(),
+                          closureCondition) != body.closureConditions.end())
+              throw std::logic_error(
+                  "generic constructor bodies lack distinct exact selectors");
+          }
           if (previous == genericNormalBodies.end()) {
-            genericNormalBodies.push_back({instance,
-                                           std::move(cleanup),
-                                           normalized,
-                                           std::move(initializers),
-                                           {banner}});
+            genericNormalBodies.push_back(
+                {instance,
+                 std::move(cleanup),
+                 normalized,
+                 std::move(initializers),
+                 {banner},
+                 closureCondition.empty()
+                     ? std::vector<std::string>{}
+                     : std::vector<std::string>{closureCondition}});
           } else {
             previous->banners.push_back(banner);
+            if (!closureCondition.empty())
+              previous->closureConditions.push_back(
+                  std::move(closureCondition));
           }
         }
         continue;
@@ -6908,6 +6959,9 @@ public:
       if (genericNormalBodies.size() == 1) {
         output << assemble(first);
       } else {
+        const bool exactClosures = std::all_of(
+            genericNormalBodies.begin(), genericNormalBodies.end(),
+            [](const auto &body) { return !body.closureConditions.empty(); });
         std::vector<std::size_t> varying;
         for (std::size_t index = 0; index < first.cleanup.size(); ++index) {
           if (std::any_of(genericNormalBodies.begin(),
@@ -6924,7 +6978,7 @@ public:
             varying.push_back(index);
           }
         }
-        if (varying.empty()) {
+        if (varying.empty() && !exactClosures) {
           throw std::logic_error(
               "generic constructor body variants lack a cleanup discriminator");
         }
@@ -6936,6 +6990,17 @@ public:
           writeIndent();
           output << (index == 0 ? "if constexpr (" : "else if constexpr (");
           bool separator = false;
+          if (exactClosures) {
+            output << '(';
+            for (std::size_t condition = 0;
+                 condition < body.closureConditions.size(); ++condition) {
+              if (condition)
+                output << " || ";
+              output << '(' << body.closureConditions[condition] << ')';
+            }
+            output << ')';
+            separator = true;
+          }
           for (const std::size_t parameter : varying) {
             if (separator) {
               output << " && ";
@@ -6958,9 +7023,11 @@ public:
           writeIndent();
           output << "}\n";
         }
-        const std::string discriminator = cppSemanticTypeSpelling(
-            loweredProgram, standard,
-            constructor.parameters[varying.front()].type);
+        const std::string discriminator =
+            exactClosures ? loweredPrimaryClassSpelling(owner)
+                          : cppSemanticTypeSpelling(
+                                loweredProgram, standard,
+                                constructor.parameters[varying.front()].type);
         writeIndent();
         output << "else { static_assert(!std::is_same_v<" << discriminator
                << ", " << discriminator
@@ -8513,12 +8580,16 @@ public:
       if (initializer.referenceFunction) {
         const MirBodyAddress address{.kind = MirBodyKind::Function,
                                      .owner = *initializer.referenceFunction};
-        const auto row = std::find_if(
-            generalEmissionMap->bodies().begin(), generalEmissionMap->bodies().end(),
-            [&](const auto &candidate) { return candidate.address == address; });
-        if (row == generalEmissionMap->bodies().end() || row->spelling.empty() ||
-            row->conditionalResultParameter || row->callSiteTemplateArguments)
-          throw std::logic_error("checked reference initializer lost its exact helper spelling");
+        const auto row = std::find_if(generalEmissionMap->bodies().begin(),
+                                      generalEmissionMap->bodies().end(),
+                                      [&](const auto &candidate) {
+                                        return candidate.address == address;
+                                      });
+        if (row == generalEmissionMap->bodies().end() ||
+            row->spelling.empty() || row->conditionalResultParameter ||
+            row->callSiteTemplateArguments)
+          throw std::logic_error(
+              "checked reference initializer lost its exact helper spelling");
         output << row->spelling << '(';
       }
       if (initializer.moved) {

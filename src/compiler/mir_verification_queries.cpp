@@ -1216,15 +1216,18 @@ const MirInstruction *callResultReferenceAliases(const MirBody &body,
   const MirBlock *producerBlock = nullptr;
   std::size_t producerPosition = 0;
   for (const auto &block : body.blocks)
-    for (std::size_t position = 0; position < block.instructions.size(); ++position) {
+    for (std::size_t position = 0; position < block.instructions.size();
+         ++position) {
       const auto &instruction = block.instructions[position];
-      if (instruction.loan != loan.id || instruction.kind == MirInstructionKind::EndBorrow ||
+      if (instruction.loan != loan.id ||
+          instruction.kind == MirInstructionKind::EndBorrow ||
           instruction.kind == MirInstructionKind::ActivateBorrow)
         continue;
       if (producer || instruction.kind != MirInstructionKind::Call ||
           !instruction.result || instruction.hirValue != loan.producedBy ||
           instruction.info.category != ValueCategory::Place ||
-          instruction.info.access != loan.access || instruction.borrowAccess != loan.access)
+          instruction.info.access != loan.access ||
+          instruction.borrowAccess != loan.access)
         return nullptr;
       producer = &instruction;
       producerBlock = &block;
@@ -1233,7 +1236,8 @@ const MirInstruction *callResultReferenceAliases(const MirBody &body,
   if (!producer)
     return nullptr;
   const auto precedes = [&](const MirBlock &first, std::size_t firstPosition,
-                            const MirBlock &second, std::size_t secondPosition) {
+                            const MirBlock &second,
+                            std::size_t secondPosition) {
     if (first.id == second.id)
       return firstPosition < secondPosition;
     const auto dominance = computeMirDominance(body);
@@ -1272,13 +1276,15 @@ const MirInstruction *callResultReferenceAliases(const MirBody &body,
                       block.terminator.targetArguments.end(), exposesStorage) ||
           std::any_of(block.terminator.elseArguments.begin(),
                       block.terminator.elseArguments.end(), exposesStorage) ||
-          std::any_of(block.terminator.switchTargets.begin(),
-                      block.terminator.switchTargets.end(), [&](const auto &target) {
-                        return std::any_of(target.arguments.begin(), target.arguments.end(),
-                                           exposesStorage);
-                      }))
+          std::any_of(
+              block.terminator.switchTargets.begin(),
+              block.terminator.switchTargets.end(), [&](const auto &target) {
+                return std::any_of(target.arguments.begin(),
+                                   target.arguments.end(), exposesStorage);
+              }))
         return nullptr;
-      for (std::size_t position = 0; position < block.instructions.size(); ++position) {
+      for (std::size_t position = 0; position < block.instructions.size();
+           ++position) {
         const auto &instruction = block.instructions[position];
         if ((instruction.receiver && exposesStorage(*instruction.receiver)) ||
             std::any_of(instruction.operands.begin(),
@@ -1296,20 +1302,59 @@ const MirInstruction *callResultReferenceAliases(const MirBody &body,
             instruction.operands.front().kind != MirOperandKind::Loan ||
             instruction.operands.front().loan != loan.id ||
             instruction.operands.front().value != 0 ||
-            instruction.operands.front().place != 0 ||
             instruction.operands.front().type != root->type.arguments.front())
           return nullptr;
+        // A lowered reference initializer may publish its runtime address
+        // explicitly. It must be the very same unprojected CallResult, never
+        // another carrier or a selected subobject with the same owner loan.
+        if (instruction.operands.front().place != 0) {
+          const auto *referent =
+              body.findPlace(instruction.operands.front().place);
+          if (!referent || referent->root != MirPlaceRootKind::Loan ||
+              referent->loan != loan.id || !referent->projections.empty() ||
+              referent->type != producer->info.type ||
+              referent->access != loan.access)
+            return nullptr;
+        }
         initializer = &instruction;
         initialBlock = &block;
         initialPosition = position;
       }
     }
     if (!initializer ||
-        !precedes(*producerBlock, producerPosition, *initialBlock, initialPosition) ||
+        !precedes(*producerBlock, producerPosition, *initialBlock,
+                  initialPosition) ||
         !precedes(*initialBlock, initialPosition, consumer, consumerPosition))
       return nullptr;
   }
   return producer;
+}
+
+bool restoredReferenceReturnWitness(const MirBody &body, const MirLoan &loan) {
+  const auto *witness = body.findLoan(loan.storedDependency);
+  const auto *source = witness ? body.findPlace(witness->source) : nullptr;
+  return witness && source && !loan.lifecycleBound &&
+         loan.additionalDependencies.empty() && loan.parent == witness->id &&
+         witness->kind == MirLoanKind::Parameter && witness->entry &&
+         !witness->escapes && !witness->lifecycleBound &&
+         witness->additionalDependencies.empty() && witness->parent == 0 &&
+         witness->storedDependency == 0 && loan.source == witness->source &&
+         loan.access == witness->access && loan.designatedFields.empty() &&
+         witness->designatedFields.empty() &&
+         source->root == MirPlaceRootKind::Binding &&
+         source->projections.empty() && source->initiallyAvailable &&
+         source->type.kind == SemanticType::Reference &&
+         source->type.arguments.size() == 1 &&
+         source->type.referenceAccess == witness->access &&
+         witness->carriers == std::vector<HirBindingId>{source->binding} &&
+         restoredBorrowAuthority(body, loan);
+}
+
+bool restoredReferenceReturnAliases(const MirBody &body, const MirLoan &loan,
+                                    const MirBlock &consumer,
+                                    std::size_t consumerPosition) {
+  return restoredReferenceReturnWitness(body, loan) &&
+         callResultReferenceAliases(body, loan, consumer, consumerPosition);
 }
 
 const MirInstruction *restoredBorrowAuthority(const MirBody &body,

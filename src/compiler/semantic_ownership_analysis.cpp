@@ -2002,11 +2002,16 @@ auto SemanticVisitor::Impl::nestsBorrowedState(const SemanticType &type) const
 
 auto SemanticVisitor::Impl::isBorrowedCarrierReference(
     const SemanticType &type) const -> bool {
-  if (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
-      !isDirectStoredReferenceType(type.arguments.front())) {
+  if (type.kind != SemanticType::Reference || type.arguments.size() != 1) {
     return false;
   }
-  return true;
+  const auto *referent = classInfo(type.arguments.front());
+  // Checked erasure hides the referent's layout, not its physical lifetime.
+  // Treat the opaque reference as a shell borrow even when its original
+  // object's nested reference fields are no longer visible in the type.
+  return isDirectStoredReferenceType(type.arguments.front()) ||
+         (referent != nullptr && referent->compilerCapability ==
+                                     CompilerCapabilityTypeKind::ErasedObject);
 }
 
 auto SemanticVisitor::Impl::isDirectOwnerType(const SemanticType &type)
@@ -5451,6 +5456,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     if (((carrier->type.kind == SemanticType::Reference &&
           carrier->type.arguments.size() == 1 &&
           (typeTraits(carrier->type.arguments.front()).containsBorrowedState ||
+           isBorrowedCarrierReference(carrier->type) ||
            receiverStorageBorrow(expression)) &&
           sourceLoan->kind == SemanticLoanKind::StoredValue) ||
          (storedReceiverShell &&
@@ -5461,6 +5467,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       // Protect the addressable shell and retain its existing external-owner
       // authority through a separate edge. Neither permission upgrades the
       // other; ordinary reference binding already checks shell access.
+      // Opaque checked erasure hides fields, not the original object's
+      // identity: it must retain both its shell and its nested dependencies.
       SemanticLoanPlace shell = retainedLoanPlace(expression);
       if (shell.root == 0 && !shell.receiver) {
         report(expressionToken(expression),
@@ -5580,7 +5588,13 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       // loan graph for the same declaration.
       return;
     }
-    if (sourceLoan->access == AccessMode::ReadOnly) {
+    // A value containing a reference is a distinct carrier publication, not
+    // another spelling of the reference itself. Retain its StoredValue loan
+    // below even for shared inputs, so a later reference to that carrier can
+    // protect its physical storage independently from its external referent.
+    if (sourceLoan->access == AccessMode::ReadOnly &&
+        !(retainedStoredBorrow &&
+          sourceLoan->kind == SemanticLoanKind::Reference)) {
       if (lifecycleBoundBorrowCarrierFor(carrier->type) ||
           sourceLoan->lifecycleBound) {
         // A new cleanup-bearing value owns a distinct release obligation even
@@ -5658,12 +5672,21 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     const auto fields = dependencies.size() == 1
                             ? dependencies.front().designatedFields
                             : std::vector<SymbolId>{};
+    // A root shared reference can be copied into an independent value
+    // dependency. A child or cleanup-bound reference still retains ancestry:
+    // copying its read permission cannot release an exclusive ancestor or
+    // extend a cleanup-protected lifetime.
+    const auto parent = sourceLoan->access == AccessMode::ReadOnly &&
+                                sourceLoan->parent == 0 &&
+                                !sourceLoan->lifecycleBound
+                            ? SemanticLoanId{0}
+                            : sourceLoan->id;
     const SemanticLoanId child = createRetainedLoan(
         *carrier, carrierSymbol, kind, expression.get(), std::move(childPlace),
         sourceLoan->owner, sourceLoan->receiverOrigin, carrierAccess,
         sourceLoan->protectsStorage ||
             (source->dependency && sourceLoan->access == AccessMode::Mutable),
-        sourceLoan->id, false, fields);
+        parent, false, fields);
     if (dependency != 0) {
       SemanticLoanInfo loan = *semanticModel.findLoan(child);
       loan.storedDependency = dependency;

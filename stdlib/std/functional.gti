@@ -191,34 +191,34 @@ public:
 /// The callable and everything it borrows must outlive this view's uses.
 class function_ref<R(Args...)> {
   std::erased_object& object;
-  std::function_ptr<R(std::erased_object&, Args...)> invoke;
+  gti_internal::function_pointer<R(std::erased_object&, Args...)> invoke;
 public:
   function_ref<F>(F& target)
       : object(std::erase_ref(target)),
-        invoke(std::function_ptr<R(std::erased_object&, Args...)>([](std::erased_object& object, Args... args) -> R {
+        invoke(gti_internal::function_pointer_from_item<R(std::erased_object&, Args...)>([](std::erased_object& object, Args... args) -> R {
           unsafe {
             F& callable = std::restore_ref<F>(object);
             return callable(args...);
           }
         })) {}
-  R operator()(Args... args) { return this.invoke(this.object, args...); }
+  R operator()(Args... args) { return gti_internal::function_pointer_invoke(this.invoke, this.object, args...); }
 };
 
 /// An exclusive, move-only borrowed callback. Invocation requires mutable
 /// access to the view; overlapping invocation/reentry remains rejected.
 class function_ref<R(Args...) mut> {
   mut std::erased_object& object;
-  std::function_ptr<R(mut std::erased_object&, Args...)> invoke;
+  gti_internal::function_pointer<R(mut std::erased_object&, Args...)> invoke;
 public:
   function_ref<F>(mut F& target)
       : object(std::erase_mut(target)),
-        invoke(std::function_ptr<R(mut std::erased_object&, Args...)>([](mut std::erased_object& object, Args... args) -> R {
+        invoke(gti_internal::function_pointer_from_item<R(mut std::erased_object&, Args...)>([](mut std::erased_object& object, Args... args) -> R {
           unsafe {
             mut F& callable = std::restore_mut<F>(object);
             return callable(args...);
           }
         })) {}
-  R operator()(Args... args) mut { return this.invoke(this.object, args...); }
+  R operator()(Args... args) mut { return gti_internal::function_pointer_invoke(this.invoke, this.object, args...); }
 };
 
   /// A move-only owned callback whose erased target remains transferable.

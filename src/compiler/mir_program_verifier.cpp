@@ -3688,6 +3688,17 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           (instruction.info.category == ValueCategory::Place &&
            ((instruction.info.type.kind == SemanticType::Class &&
              instruction.info.traits.containsBorrowedState) ||
+            (exactMirCapabilityClass(
+                 program, instruction.info.type,
+                 CompilerCapabilityTypeKind::ErasedObject) &&
+             instruction.borrowOrigin == BorrowOriginKind::Argument &&
+             instruction.borrowArgument < instruction.parameterTypes.size() &&
+             instruction.parameterTypes[instruction.borrowArgument].kind ==
+                 SemanticType::Reference &&
+             !findStoredCarrierReferences(
+                  program,
+                  instruction.parameterTypes[instruction.borrowArgument])
+                  .empty()) ||
             receiverStorageResult));
       if (shellResult &&
           instruction.borrowOrigin == BorrowOriginKind::Receiver &&
@@ -4409,10 +4420,31 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                  program, field.type.arguments.front())
                                  .has_value();
                     });
+    const auto *originalDependency = body.findLoan(loan.storedDependency);
+    const bool transformedReferenceField =
+        constructor && originalDependency &&
+        originalDependency->kind == MirLoanKind::Stored &&
+        originalDependency->entry &&
+        std::any_of(
+            constructor->initializers.begin(), constructor->initializers.end(),
+            [&](const auto &initializer) {
+              if (initializer.field != loan.storedField)
+                return false;
+              const auto *call =
+                  referenceInitializerCall(program, *constructor, initializer);
+              const auto *result =
+                  call && call->loan ? body.findLoan(*call->loan) : nullptr;
+              return result && loan.producedBy == call->hirValue &&
+                     loan.source == result->source &&
+                     loan.access == result->access &&
+                     loan.storedDependency == result->storedDependency &&
+                     loan.additionalDependencies ==
+                         result->additionalDependencies;
+            });
     const bool publishedShell =
         body.kind == MirBodyKind::Constructor &&
         loan.kind == MirLoanKind::Stored && loan.storedField != 0 &&
-        loan.escapes && carrierReferenceField &&
+        loan.escapes && (carrierReferenceField || transformedReferenceField) &&
         findStoredCarrierReference(program, sourceType).has_value();
     bool constructedShell = false;
     if (loan.kind == MirLoanKind::Stored && !loan.entry && !loan.escapes &&
@@ -11339,6 +11371,13 @@ verifyMirProgramContracts(const MirProgram &program) {
           const bool mutableReference =
               type.kind == SemanticType::Reference &&
               type.referenceAccess == AccessMode::Mutable;
+          // An opaque checked reference carries its hidden owners even when
+          // read-only. Preserve the exact semantic per-element entry witness.
+          const bool erasedReference =
+              type.kind == SemanticType::Reference &&
+              type.arguments.size() == 1 &&
+              exactMirCapabilityClass(program, type.arguments.front(),
+                                      CompilerCapabilityTypeKind::ErasedObject);
           const auto storedPaths = findStoredCarrierReferences(program, type);
           const bool storedCarrier =
               type.kind == SemanticType::Class && !storedPaths.empty();
@@ -11354,8 +11393,9 @@ verifyMirProgramContracts(const MirProgram &program) {
               continue;
             ++entryLoans;
             const bool exactAccess =
-                (mutableReference && loan.kind == MirLoanKind::Parameter &&
-                 loan.access == AccessMode::Mutable) ||
+                ((mutableReference || erasedReference) &&
+                 loan.kind == MirLoanKind::Parameter &&
+                 loan.access == type.referenceAccess) ||
                 (storedCarrier && loan.kind == MirLoanKind::Stored &&
                  loan.access == storedPaths.front().reference.referenceAccess);
             if (!exactAccess || loan.semanticLoan == 0 || loan.escapes ||
@@ -11369,7 +11409,9 @@ verifyMirProgramContracts(const MirProgram &program) {
                        "borrowed pack element has invalid entry capability"});
             }
           }
-          if (entryLoans != (mutableReference || storedCarrier ? 1u : 0u)) {
+          if (entryLoans !=
+              (mutableReference || erasedReference || storedCarrier ? 1u
+                                                                    : 0u)) {
             result.errors.push_back(
                 {.bodyKind = body.kind,
                  .owner = owner,

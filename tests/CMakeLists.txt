@@ -168,6 +168,8 @@ add_test(NAME borrowing_callback_alias_proof
          COMMAND gti_borrowing_callbacks_mir_tests --alias-proof-only)
 add_test(NAME borrowing_callback_relay_proof
          COMMAND gti_borrowing_callbacks_mir_tests --relay-proof-only)
+add_test(NAME borrowing_callback_restoration_return
+         COMMAND gti_borrowing_callbacks_mir_tests --restoration-proof-only)
 add_executable(gti_resource_memory_runtime_tests resource_memory_runtime_tests.cpp)
 target_link_libraries(gti_resource_memory_runtime_tests PRIVATE gti_runtime)
 add_test(NAME resource_memory_runtime COMMAND gti_resource_memory_runtime_tests)

@@ -12105,8 +12105,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               retained->kind != MirLoanKind::CallResult || retained->entry ||
               retained->escapes || retained->producedBy == 0 ||
               retained->producedBy != instruction.hirValue ||
-              !retained->carriers.empty() ||
               retained->source != produced.source ||
+              retained->storedDependency != produced.storedDependency ||
               retained->additionalDependencies !=
                   produced.additionalDependencies ||
               (retained->access != produced.access &&
@@ -12122,6 +12122,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               std::next(current) == block.instructions.end()) {
             return false;
           }
+          if (!retained->carriers.empty() &&
+              (field || !mir_detail::restoredReferenceReturnAliases(
+                            body, *retained, block,
+                            static_cast<std::size_t>(
+                                current - block.instructions.begin()))))
+            return false;
           const MirInstruction &retire = *std::next(current);
           return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&
                  *retire.loan == source.loan &&

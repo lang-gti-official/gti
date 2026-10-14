@@ -2101,6 +2101,13 @@ When equivalent constructor instances share one source-template body, only the
 representation comparison omits instance markers. The emitted body retains
 every admitted instance's exact marker, including separate cleanup-shape
 variants, so coalescing cannot silently remove an instance from corpus evidence.
+When lexical closure parameters select different verified constructor bodies
+with the same cleanup shape, the template uses their exact artifact-local MIR
+lambda identities and nameable owner identity as compile-time selectors.
+Distinct bodies require distinct selectors; unrepresented combinations fail
+at instantiation rather than choosing a fallback body. The selectors carry no
+runtime state and do not perform GTI overload resolution. Initializer-list
+representations must still agree before bodies can share this template.
 
 Within one immutable emission plan, constructor and callable-template body
 plans are cached by concrete instance identity together with their exact

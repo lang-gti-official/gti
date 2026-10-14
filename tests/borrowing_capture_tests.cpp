@@ -396,6 +396,41 @@ int main() {
 }
 )",
            "GTI-S2017");
+  positive("erased-reference-local-shell-in-scope", R"(
+#include <std/memory>
+struct Reader {
+  int& value;
+  Reader(int& value) : value(value) {}
+};
+int read(int& value) {
+  Reader local{value};
+  std::erased_object& erased = std::erase_ref(local);
+  unsafe { Reader& restored = std::restore_ref<Reader>(erased); return restored.value; }
+}
+int main() { int value = 3; return read(value) - 3; }
+)");
+  positive("shared-reference-value-carrier-return", R"(
+struct Reader {
+  int& value;
+  Reader(int& value) : value(value) {}
+};
+Reader borrow(int& value) { Reader local{value}; return local; }
+int main() { int value = 3; auto reader = borrow(value); return reader.value - 3; }
+)");
+  negative("erased-reference-cannot-escape-local-shell", R"(
+#include <std/memory>
+struct Reader {
+  int& value;
+  Reader(int& value) : value(value) {}
+};
+std::erased_object& bad(int& value) {
+  Reader local{value};
+  std::erased_object& erased = std::erase_ref(local);
+  return erased;
+}
+int main() { return 0; }
+)",
+           "GTI-S2017");
   negative("erased-reference-is-not-layout-storage", R"(
 #include <std/memory>
 void require_layout<T>() requires std::layout_queryable<T> {}

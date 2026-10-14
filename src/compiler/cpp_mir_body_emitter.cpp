@@ -56234,12 +56234,34 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   : nullptr;
           const bool fused = lambda != nullptr &&
                              closureChainAdmits(program_, body, instruction);
+          // A captureless literal consumed only by the exact invocation
+          // address factory has no environment to materialize. Its verified
+          // body is emitted by that factory with the GTI failure ABI.
+          const auto pointerUses =
+              instruction.result ? nonRootRecordUses(body, *instruction.result)
+                                 : std::vector<MirValueUse>{};
+          const auto *pointerFactory =
+              pointerUses.size() == 1
+                  ? findInstruction(body, pointerUses.front().instruction)
+                  : nullptr;
+          const bool invocationAddress =
+              lambda && lambda->captureTypes.empty() &&
+              instruction.operands.empty() && pointerFactory &&
+              pointerUses.front().kind == MirValueUseKind::InstructionOperand &&
+              pointerUses.front().operandIndex == 0 &&
+              pointerFactory->intrinsic ==
+                  IntrinsicKind::FunctionPointerFromItem &&
+              pointerFactory->functionPointerLambdaTarget == lambda->id &&
+              mir_detail::functionPointerOperation(program_, *pointerFactory) &&
+              pointerFactory->operands.front().kind == MirOperandKind::Value &&
+              pointerFactory->operands.front().value == *instruction.result;
           const MaterializedClosure materialized =
               !fused ? materializedClosure(program_, body, instruction)
                      : MaterializedClosure{};
           if (lambda == nullptr ||
               !capabilityRow(CppMirEmissionCapabilityKind::Closure) ||
-              !lambdaBodyRow(lambda->id) || (!fused && !materialized) ||
+              !lambdaBodyRow(lambda->id) ||
+              (!fused && !materialized && !invocationAddress) ||
               !typeRow(lambda->returnType)) {
             {
               return false;
@@ -56264,7 +56286,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // literal consumed directly by a transformed callable parameter is
           // itself emitted with that failure convention.
           const bool lambdaFailureForm =
-              materialized
+              invocationAddress ? true
+              : materialized
                   ? failureForm
                   : failureForm && fusedClosureUsesFailureCallableBoundary(
                                        program_, body, instruction);
