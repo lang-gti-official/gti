@@ -1600,8 +1600,9 @@ cppCallableFreeFunctionSpelling(const LoweredProgram &program,
       selected == nullptr || selectedMir == nullptr ||
       (selected != &instance && *selected != instance) ||
       (selectedMir != &mirInstance && *selectedMir != mirInstance) ||
-      cppConcreteFunctionInstanceIsNameable(program, instance, mirInstance))
+      cppConcreteFunctionInstanceIsNameable(program, instance, mirInstance)) {
     return std::nullopt;
+  }
   const auto containsClosure = [](const auto &self,
                                   const SemanticType &type) -> bool {
     return type.kind == SemanticType::Lambda ||

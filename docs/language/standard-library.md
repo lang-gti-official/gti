@@ -391,7 +391,8 @@ The current implemented foundation includes:
   signature-level origin contract; a view does not infer cross-thread capability.
   `std::function_ptr<R(Args...)>` provides non-null GTI invocation addresses for
   exact namespace-function items and captureless lambdas, preserving GTI failure
-  and argument/result ownership rules rather than the native C ABI.
+  and argument/result ownership rules rather than the native C ABI; an owning
+  class result through an invocation pointer is a later slice.
   The source-defined views use general checked-reference erasure from
   `<std/memory>`: `erase_ref`/`erase_mut` preserve a borrow as an opaque
   `erased_object` reference, and unsafe `restore_ref<T>`/`restore_mut<T>` restore

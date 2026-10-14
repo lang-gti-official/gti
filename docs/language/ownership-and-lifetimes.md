@@ -1306,7 +1306,11 @@ Two general facilities support this ordinary source wrapper:
   constructed from an exact namespace-function item or captureless lambda.
   It preserves GTI's failure and argument/result ownership convention. It is
   not a C ABI pointer and cannot turn unsafe, receiver-dependent or
-  caller-context-dependent functions into ordinary safe targets.
+  caller-context-dependent functions into ordinary safe targets. In this
+  slice an invocation pointer accepts arguments of any value type, including
+  owning class values, and returns scalar, reference, view and `void`
+  results; an owning class value returned through the pointer is not yet
+  representable in the backend and is rejected before native compilation.
 
 The reference projection and invocation pointer capabilities are bound to
 trusted declarations; no public wrapper spelling has compiler meaning.

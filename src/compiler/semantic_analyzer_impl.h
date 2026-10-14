@@ -1903,6 +1903,8 @@ private:
 
   [[nodiscard]] bool nestsBorrowedState(const SemanticType &type) const;
 
+  [[nodiscard]] bool
+  composedCarrierPaths(std::span<const StoredReferencePath> paths) const;
   [[nodiscard]] bool isBorrowedCarrierReference(const SemanticType &type) const;
 
   [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type);

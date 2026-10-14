@@ -1,6 +1,6 @@
 #include <std/memory>
 #include <std/functional>
-#include <std/string>
+#include <std/numeric>
 
 class Inspection {
   std::erased_object& object;
@@ -26,8 +26,11 @@ struct Selection {
   mut int selected;
   Selection(int calls, int selected) : calls(calls), selected(selected) {}
 };
+// A reference-initializer helper must have no failure edge to bind a native
+// reference member before the constructor body; wrapping arithmetic keeps
+// the once-counter free of a checked overflow site.
 mut int& select_value(mut Selection& source) {
-  source.calls += 1;
+  source.calls = std::wrapping_add(source.calls, 1);
   return source.selected;
 }
 class SelectedView {
@@ -38,7 +41,6 @@ public:
 };
 
 int next(int value) { return value + 1; }
-std::string echo(std::string value) { return std::move(value); }
 int apply(std::function_ref<int(int)>& callback, int input) { return callback(input); }
 
 class Handler<F> {
@@ -85,9 +87,5 @@ int main() {
   mut auto stored = store(std::move(update));
   if (stored.run() != 5) return 6;
 
-  std::function_ptr<std::string(std::string)> owning{echo};
-  std::string input{"owned argument"};
-  auto returned = owning(std::move(input));
-  if (returned != "owned argument") return 7;
   return 0;
 }

@@ -35,9 +35,11 @@ for what minor and patch releases mean.
   so an unrelated user-defined borrowed wrapper can use the same mechanisms.
   Captureless thunks may expand a surrounding parameter pack. Semantics, HIR,
   verified MIR, the backend, formatter, Tree-sitter and the LSP carry the new
-  capture facts; [example 154](examples/156-borrowing-callbacks.gti) and a
+  capture facts; [example 156](examples/156-borrowing-callbacks.gti) and a
   `borrowing-callbacks` benchmark workload accompany the feature. Borrowed
-  results still need a signature-level origin contract.
+  results still need a signature-level origin contract, and an owning class
+  result through `std::function_ptr` is rejected before native compilation
+  in this slice (owning arguments stage through the thunk).
 
 ## 0.430.1 — Temporaries in constructor initializers
 

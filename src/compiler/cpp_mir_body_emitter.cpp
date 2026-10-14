@@ -2119,6 +2119,9 @@ movedValueCallableReceiverStage(const MirBody &body,
 // deduced-callable template emission carries a type row for the place's
 // concrete callable type, so this shape stays dormant under production
 // rows.
+[[nodiscard]] const MirLoan *loanCarriedByBinding(const MirBody &body,
+                                                  HirBindingId binding);
+
 [[nodiscard]] const MirInstruction *callableReceiverStage(const MirBody &body,
                                                           MirValueId id) {
   const MirValue *value = body.findValue(id);
@@ -2164,7 +2167,24 @@ movedValueCallableReceiverStage(const MirBody &body,
       body.kind == MirBodyKind::Function &&
       place->root == MirPlaceRootKind::This && place->projections.size() == 1 &&
       place->projections.front().kind == MirProjectionKind::Field;
-  if (!parameter && !referenceParameter && !receiverField) {
+  // A local reference binding to a callable (a restored opaque referent in
+  // a signature-erasing thunk) names existing object storage through the
+  // one loan it carries, exactly like a reference parameter does through
+  // its signature argument; the emitter spells it through that pointer.
+  const bool referenceLocal =
+      !referenceParameter && place->root == MirPlaceRootKind::Binding &&
+      place->projections.size() == 1 &&
+      place->projections.front().kind == MirProjectionKind::Dereference &&
+      loanCarriedByBinding(body, place->binding) != nullptr &&
+      std::any_of(
+          body.places.begin(), body.places.end(), [&](const MirPlace &base) {
+            return base.root == MirPlaceRootKind::Binding &&
+                   base.binding == place->binding && base.projections.empty() &&
+                   base.type.kind == SemanticType::Reference &&
+                   base.type.arguments.size() == 1 &&
+                   base.type.arguments.front() == place->type;
+          });
+  if (!parameter && !referenceParameter && !receiverField && !referenceLocal) {
     return nullptr;
   }
   return definition;
@@ -42648,8 +42668,10 @@ private:
       ScalarBodyTextEmitter thunk(program, representations, indentation, true,
                                   indentationPlaceholder,
                                   deducedCallableFamilyOverride, debugBodies);
-      output << (function ? thunk.emit(*function, currentFamilyLabel)
-                          : thunk.emit(*lambda, currentFamilyLabel));
+      // The thunk always carries the target's failure form, whatever family
+      // the enclosing body belongs to, so its marker names that form.
+      output << (function ? thunk.emit(*function, "scalar-cfg-failure-v1")
+                          : thunk.emit(*lambda, "scalar-cfg-failure-v1"));
       output << (slot ? "}; });\n" : "};\n");
       return;
     }

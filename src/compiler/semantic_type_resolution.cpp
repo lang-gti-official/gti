@@ -4555,7 +4555,32 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
     return exprAs<Variable>(witness) != nullptr &&
            semanticModel.findResolvedSymbol(*witness) == parameter->symbol;
   };
-  if (callerOwnedRestoration())
+  // A loan whose ancestry runs only through carrier-less transients (an
+  // accessor's call result, a constructed temporary) up to an entry loan is
+  // caller-owned authority relayed through this value, not a reborrow of a
+  // local object: the referent outlives the body. A local carrier or a
+  // cleanup-bound ancestor anywhere on that chain still blocks the escape.
+  const auto callerOwnedAncestry = [&]() {
+    std::unordered_set<SemanticLoanId> seen;
+    for (SemanticLoanId current = loan->parent;
+         current != 0 && seen.insert(current).second;) {
+      const auto *ancestor = semanticModel.findLoan(current);
+      if (ancestor == nullptr || ancestor->lifecycleBound)
+        return false;
+      if (ancestor->entry)
+        return true;
+      for (const auto &scope : scopes)
+        for (const auto &[_, candidate] : scope)
+          if (candidate.bindingKind == SemanticBindingKind::LocalVariable &&
+              std::find(ancestor->carriers.begin(), ancestor->carriers.end(),
+                        toolingSymbolFor(candidate)) !=
+                  ancestor->carriers.end())
+            return false;
+      current = ancestor->parent;
+    }
+    return false;
+  };
+  if (callerOwnedRestoration() || callerOwnedAncestry())
     return false;
   report(expressionToken(value),
          "A local child reborrow cannot escape through " +
