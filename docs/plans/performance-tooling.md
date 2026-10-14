@@ -1123,8 +1123,10 @@ cost, not evidence that arrays intrinsically require a second of analysis.
 The retained `compiler.sample.txt` and `compiler-O0.sample.txt` profiles show
 two remaining clients: repeated closed-call analysis/replay, and backend
 representation admission, plan construction, text-capability checks and
-library emission. Existing `--time-trace` covers frontend stages only; it must
-not be mistaken for a complete optimizer/backend profile. Profiling overhead
+library emission. `--time-trace` now covers the optimizer passes, the
+lowered-program builder, the backend plan and the coherence replays as well
+(see "Compile-time telemetry" in
+[build-and-driver.md](../architecture/build-and-driver.md)). Profiling overhead
 is excluded from the timing table. No verification bypass, persistent semantic
 cache, demand-driven instantiation redesign, or backend authority shortcut was
 introduced. Further reuse must be scoped to immutable validated inputs and

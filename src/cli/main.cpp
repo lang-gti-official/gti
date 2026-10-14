@@ -3174,7 +3174,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
     lang::cli::BuildProgress progress(
         terminalStyle, progressMode, plan.targetName(),
         plan.profileName() + ", " + lang::driver::targetTriple(plan.target()),
-        lang::cli::optimizationNumber(plan.optimization()), options.verbose);
+        lang::cli::optimizationNumber(plan.optimization()), options.verbose,
+        true, lang::cli::ProgressOperation::Check);
     const lang::driver::CheckResult result = lang::driver::checkCompilation(
         lang::driver::CompilationRequest(
             plan.entry(), toolchain.standardLibrary, plan.target(),
