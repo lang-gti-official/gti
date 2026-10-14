@@ -6635,7 +6635,11 @@ scalar arguments such as `Base(s + 1)` using a verified pre-native-base partitio
 carrying the selected scalar values and original failure record before native
 base entry. It preserves argument order, scalar parameter mutations, once-only
 global effects, and prefix/base/body failure cleanup without reconstructing
-source expressions. This is not closure of the full base-initializer goal:
+source expressions. Class temporaries of the base initializer's own full
+expression, such as `Base(Feet(30).third())`, now live in lifetime slots of
+that carrier, which its constructor builds in place as the delegated
+constructor's parameter, so each one's MIR drop still follows native base
+construction. This is not closure of the full base-initializer goal:
 owned derived parameters need one reference-bound frame with no extra native
 moves/copies/drops; owned base arguments need exact `CallInput` transfer and
 prepared-drop facts; borrowed arguments need original places/access/loan
