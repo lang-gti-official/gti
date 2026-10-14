@@ -95,7 +95,7 @@ publishDebugBundle(const std::filesystem::path &staged,
   return std::nullopt;
 }
 
-constexpr std::string_view cacheSchema = "gti-build-cache-v2";
+constexpr std::string_view cacheSchema = "gti-build-cache-v3";
 using detail::IdentityBuilder;
 
 struct FileDigest {
@@ -585,7 +585,14 @@ projectBuildSourceMaterials(const CompilationInputs &inputs,
   projection.logicalNamesById.resize(inputs.sourceGraph.sourceUnits().size() +
                                      1);
   for (const SourceUnit &unit : inputs.sourceGraph.sourceUnits()) {
-    const std::optional<std::string> name = logicalSourceName(unit, sourceRoot);
+    std::optional<std::string> name = logicalSourceName(unit, sourceRoot);
+    if (name && *name == "prelude") {
+      const auto &roots = inputs.sourceGraph.preludeRoots();
+      const auto position = std::find(roots.begin(), roots.end(), unit.id);
+      if (position != roots.end() && position != roots.begin()) {
+        *name += ":" + std::to_string(std::distance(roots.begin(), position));
+      }
+    }
     if (!name) {
       errorMessage = "cannot derive a logical source name for '" +
                      unit.path.string() + "'";
@@ -962,6 +969,9 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   identity.add(
       "frontend.requires-entry-point",
       static_cast<std::uint64_t>(request.compilation().requiresEntryPoint()));
+  identity.add(
+      "frontend.test-suite",
+      static_cast<std::uint64_t>(request.compilation().program().testSuite));
   identity.add("optimization", static_cast<std::uint64_t>(
                                    request.compilation().optimization()));
   identity.add(
@@ -1288,7 +1298,15 @@ struct CacheMetadata {
   FileDigest generated;
   FileDigest executable;
   std::uint32_t executablePermissions = 0;
+  std::vector<std::string> testCases;
 };
+
+std::string testCatalogText(const std::vector<std::string> &names) {
+  std::string text;
+  for (const std::string &name : names)
+    text += name + '\n';
+  return text;
+}
 
 bool validDigest(std::string_view digest) {
   return digest.size() == 64 &&
@@ -1322,6 +1340,34 @@ readCacheMetadata(const std::filesystem::path &path,
     errorMessage = "metadata has an invalid schema or digest";
     return std::nullopt;
   }
+  std::string testsLabel;
+  std::size_t testCount = 0;
+  std::string testDigest;
+  if (!(input >> testsLabel >> testCount >> testDigest) ||
+      testsLabel != "tests" || testCount > 100000 || !validDigest(testDigest)) {
+    errorMessage = "metadata has an invalid test catalog";
+    return std::nullopt;
+  }
+  for (std::size_t i = 0; i < testCount; ++i) {
+    std::string label, name;
+    if (!(input >> label >> name) || label != "case" || name.empty() ||
+        name.size() > 4096 ||
+        !std::all_of(name.begin(), name.end(),
+                     [](unsigned char c) {
+                       return (c >= 'a' && c <= 'z') ||
+                              (c >= 'A' && c <= 'Z') ||
+                              (c >= '0' && c <= '9') || c == '_' || c == ':';
+                     }) ||
+        (!metadata.testCases.empty() && name <= metadata.testCases.back())) {
+      errorMessage = "metadata has an invalid or unordered test name";
+      return std::nullopt;
+    }
+    metadata.testCases.push_back(std::move(name));
+  }
+  if (digestText(testCatalogText(metadata.testCases)) != testDigest) {
+    errorMessage = "test catalog digest does not match metadata";
+    return std::nullopt;
+  }
   std::string trailing;
   if (input >> trailing) {
     errorMessage = "metadata contains unexpected trailing fields";
@@ -1331,12 +1377,17 @@ readCacheMetadata(const std::filesystem::path &path,
 }
 
 std::string renderCacheMetadata(const CacheMetadata &metadata) {
-  return std::string(cacheSchema) + "\n" + metadata.key + "\n" + "generated " +
-         metadata.generated.hash + " " +
-         std::to_string(metadata.generated.size) + "\n" + "executable " +
-         metadata.executable.hash + " " +
-         std::to_string(metadata.executable.size) + " " +
-         std::to_string(metadata.executablePermissions) + "\n";
+  std::string text = std::string(cacheSchema) + "\n" + metadata.key + "\n" +
+                     "generated " + metadata.generated.hash + " " +
+                     std::to_string(metadata.generated.size) + "\n" +
+                     "executable " + metadata.executable.hash + " " +
+                     std::to_string(metadata.executable.size) + " " +
+                     std::to_string(metadata.executablePermissions) + "\n";
+  text += "tests " + std::to_string(metadata.testCases.size()) + " " +
+          digestText(testCatalogText(metadata.testCases)) + "\n";
+  for (const std::string &name : metadata.testCases)
+    text += "case " + name + '\n';
+  return text;
 }
 
 enum class CacheLookupStatus {
@@ -1351,6 +1402,7 @@ struct CacheLookupResult {
   FileDigest executableDigest;
   std::filesystem::perms executablePermissions = std::filesystem::perms::none;
   std::string detail;
+  std::vector<std::string> testCases;
 };
 
 std::optional<std::string> readTextFile(const std::filesystem::path &path,
@@ -1430,7 +1482,9 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
           .generated = std::move(*generated),
           .executableDigest = *executableDigest,
           .executablePermissions = executablePermissions,
-          .detail = "verified backend representation and executable digests"};
+          .detail = "verified backend representation, executable and test "
+                    "catalog digests",
+          .testCases = metadata->testCases};
 }
 
 bool writeBinaryFile(const std::filesystem::path &path,
@@ -1518,7 +1572,9 @@ ArtifactPublishResult copyFileAtomically(
 
 bool storeCacheEntry(const ExecutableBuildRequest &request,
                      const std::filesystem::path &entry, std::string_view key,
-                     std::string_view generated, std::string &errorMessage) {
+                     std::string_view generated,
+                     const std::vector<std::string> &testCases,
+                     std::string &errorMessage) {
   if (!request.managedOutput()) {
     errorMessage = "cache publication requires a managed project output";
     return false;
@@ -1562,7 +1618,8 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
       .generated = generatedDigest,
       .executable = *executableDigest,
       .executablePermissions =
-          static_cast<std::uint32_t>(executablePermissions)};
+          static_cast<std::uint32_t>(executablePermissions),
+      .testCases = testCases};
   // Metadata is the commit marker. Readers ignore incomplete entries until it
   // has been atomically replaced after both payloads have been published.
   return publishTextAtomically(metadataPath, renderCacheMetadata(metadata),
@@ -2661,7 +2718,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = "cache requires a managed project output policy";
     } else {
-      const std::filesystem::path versionRoot = request.cache()->root / "v2";
+      const std::filesystem::path versionRoot = request.cache()->root / "v3";
       const std::filesystem::path cacheProbe = versionRoot / "probe/metadata";
       if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
               *request.managedOutput(), cacheProbe, false)) {
@@ -2709,6 +2766,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
           }
 
           result.compilation.status = CompilationStatus::Success;
+          result.compilation.testCases = lookup.testCases;
           result.compilation.sources = std::move(compilationInputs.sources);
           result.compilation.diagnostics =
               std::move(compilationInputs.diagnostics);
@@ -3176,7 +3234,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     std::string cacheStoreError;
     if (storeCacheEntry(request, *cacheEntry, result.cache.key,
                         result.compilation.artifact->contents,
-                        cacheStoreError)) {
+                        result.compilation.testCases, cacheStoreError)) {
       if (corruptCacheEntry) {
         result.cache.status = BuildCacheStatus::RecoveredCorruption;
         result.cache.detail =

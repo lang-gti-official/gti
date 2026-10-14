@@ -1,0 +1,3 @@
+// Module std.testing: the public surface of <std/testing>.
+export module testing;
+export #include <std/testing>

@@ -1,0 +1,30 @@
+====================
+Annotated test functions
+====================
+
+[[test]]
+void simple_case() {}
+
+namespace application {
+  [[test, track_caller]]
+  void tracked_case() {}
+}
+
+---
+
+(source_file
+  (function_declaration
+    (function_contract_attribute)
+    (type)
+    (identifier)
+    (parameter_clause)
+    (block))
+  (namespace_declaration
+    (identifier)
+    (namespace_body
+      (function_declaration
+        (function_contract_attribute)
+        (type)
+        (identifier)
+        (parameter_clause)
+        (block)))))

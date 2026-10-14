@@ -1556,9 +1556,9 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   const std::string firstKey = first.cache.key;
   const std::filesystem::path firstEntry = first.cache.entry;
   expect(
-      firstEntry.parent_path() == cache.root / "v2" &&
-          readFile(firstEntry / "metadata").starts_with("gti-build-cache-v2\n"),
-      "the current one-root driver request should publish only the v2 "
+      firstEntry.parent_path() == cache.root / "v3" &&
+          readFile(firstEntry / "metadata").starts_with("gti-build-cache-v3\n"),
+      "the current one-root driver request should publish only the v3 "
       "ordered-prelude cache schema");
 
   std::error_code removeError;
@@ -2175,7 +2175,7 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              afterDeletion.cache.status ==
                  lang::driver::BuildCacheStatus::Miss &&
              afterDeletion.nativeProcess &&
-             afterDeletion.cache.entry.parent_path() == cache.root / "v2",
+             afterDeletion.cache.entry.parent_path() == cache.root / "v3",
          "a deleted v2 cache entry should ignore a same-key v1 entry and "
          "degrade to a clean rebuild");
 

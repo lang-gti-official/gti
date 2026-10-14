@@ -4672,7 +4672,37 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
   semanticModel.recordCompletion(std::move(context));
 }
 
+auto SemanticVisitor::Impl::resolveGeneratedTestReference(
+    const NamePath &path) const -> const Symbol * {
+  if (sourceGraph == nullptr || currentFunctionDeclaration == nullptr ||
+      !currentFunctionDeclaration->generatedTestEntry())
+    return nullptr;
+  std::string qualified;
+  for (const Token &segment : path.segments) {
+    if (!qualified.empty())
+      qualified += "::";
+    qualified += segment.lexeme;
+  }
+  const auto &symbols = activeNamespaceSymbols();
+  const auto found = symbols.find(qualified);
+  if (found == symbols.end() || found->second.type != SemanticType::Function)
+    return nullptr;
+  const SourceUnit *caller = sourceGraph->findUnit(currentSourceUnit);
+  for (const CallableCandidate &candidate : found->second.overloads) {
+    const CallableDeclaration &function = candidate.record();
+    const SourceUnit *callee = sourceGraph->findUnit(function.sourceUnit);
+    if (function.testFunction && !function.internalLinkage &&
+        caller != nullptr && callee != nullptr &&
+        !sourceGraph->isCompilerTrusted(callee->id) &&
+        caller->packageIdentity == callee->packageIdentity)
+      return &found->second;
+  }
+  return nullptr;
+}
+
 auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
+  if (const Symbol *test = resolveGeneratedTestReference(NamePath(name)))
+    return test;
   for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
     if (const auto found = scope->find(name.lexeme); found != scope->end()) {
       return &found->second;
@@ -4787,6 +4817,8 @@ auto SemanticVisitor::Impl::resolveNamespacePath(const NamePath &path) const
 
 auto SemanticVisitor::Impl::resolveQualified(const NamePath &path) const
     -> const Symbol * {
+  if (const Symbol *test = resolveGeneratedTestReference(path))
+    return test;
   if (path.segments.size() < 2) {
     return resolve(path.last());
   }
