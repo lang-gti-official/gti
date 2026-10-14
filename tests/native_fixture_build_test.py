@@ -37,8 +37,7 @@ class NativeFixtureBuildTests(unittest.TestCase):
     def test_provider_precedes_archive_and_preserves_driver_and_flags(self):
         environment = {"GTI_CXX": "/native/clang++",
                        "GTI_RUNTIME_LIBRARY": "/runtime/libgti_runtime.a",
-                       "GTI_RUNTIME_INCLUDE": "/runtime/include",
-                       "GTI_VENDOR_INCLUDE": "/compat/include"}
+                       "GTI_RUNTIME_INCLUDE": "/runtime/include"}
         emitted = subprocess.CompletedProcess([], 0, "emit\n", "warning\n")
         compiled = subprocess.CompletedProcess([], 9, "native\n", "link failure\n")
         with patch("native_fixture_build.subprocess.run",
@@ -55,7 +54,8 @@ class NativeFixtureBuildTests(unittest.TestCase):
         native = run.call_args_list[1].args[0]
         self.assertEqual(native[0], "/native/clang++")
         self.assertEqual(native[1:3], ["-std=c++20", "-O1"])
-        self.assertIn("-I/compat/include", native)
+        self.assertEqual([argument for argument in native if argument.startswith("-I")],
+                         ["-I/runtime/include"])
         self.assertLess(native.index("provider one.cpp"), native.index("two.o"))
         self.assertLess(native.index("two.o"), native.index("/runtime/libgti_runtime.a"))
         self.assertLess(native.index("-ffast-math"), native.index("-fno-fast-math"))

@@ -1306,9 +1306,6 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
     environment = os.environ.copy()
     environment["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     environment.setdefault("GTI_RUNTIME_INCLUDE", str(repository / "runtime/include"))
-    environment.setdefault(
-        "GTI_VENDOR_INCLUDE", str(repository / "vendor/expected_lite/include")
-    )
     runtime_library = gti.parent / "libgti_runtime.a"
     if runtime_library.is_file():
         environment.setdefault("GTI_RUNTIME_LIBRARY", str(runtime_library))
@@ -1993,9 +1990,6 @@ def test_fixed_native_smoke(
     environment = os.environ.copy()
     environment["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     environment.setdefault("GTI_RUNTIME_INCLUDE", str(repository / "runtime/include"))
-    environment.setdefault(
-        "GTI_VENDOR_INCLUDE", str(repository / "vendor/expected_lite/include")
-    )
     runtime_library = gti.parent / "libgti_runtime.a"
     if runtime_library.is_file():
         environment.setdefault("GTI_RUNTIME_LIBRARY", str(runtime_library))
@@ -2144,9 +2138,6 @@ def test_arithmetic_success_proxy_smoke(
     environment = os.environ.copy()
     environment["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     environment.setdefault("GTI_RUNTIME_INCLUDE", str(repository / "runtime/include"))
-    environment.setdefault(
-        "GTI_VENDOR_INCLUDE", str(repository / "vendor/expected_lite/include")
-    )
     runtime_library = gti.parent / "libgti_runtime.a"
     if runtime_library.is_file():
         environment.setdefault("GTI_RUNTIME_LIBRARY", str(runtime_library))

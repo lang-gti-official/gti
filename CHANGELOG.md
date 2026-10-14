@@ -41,6 +41,37 @@ for what minor and patch releases mean.
   result through `std::function_ptr` is rejected before native compilation
   in this slice (owning arguments stage through the thunk).
 
+## 0.432.1 — Lambda-typed classes built in member initializers
+
+- Fix the internal compiler error that 0.431.2 still listed (`GTI-B0001`,
+  "backend failed while generating a representation") when a generic class
+  instantiated with a lambda type builds another such class in a member
+  initializer, such as `Outer(F f) : inner(Holder<F>(f)) {}`. The lambda can be
+  copied or moved into the inner class, which can itself be built inside
+  another class, fill two fields, or take extra arguments. This works for
+  lambdas without captures and lambdas capturing numbers, plain enums or plain
+  structs, and when one class is used with several lambdas.
+- Such a member initializer still stops with this error beside a field that
+  takes ownership of another parameter, such as `name(std::move(name))`, or
+  beside an explicit base-class initializer.
+
+## 0.432.0 — No vendored expected-lite
+
+- The toolchain no longer ships expected-lite. Generated C++ has used GTI's own
+  `expected` representation since 0.431.3, so the installed `include/nonstd`
+  headers and the expected-lite license are gone, C++20 builds add no extra
+  include directory, and `GTI_VENDOR_INCLUDE` is no longer read.
+- C++20 builds emit constant `expected` values, and constant records holding
+  one, as native `constexpr` storage, the same as C++23. Program behavior is
+  unchanged.
+- Build reports record only `runtime` headers. A report from a C++20 build
+  before 0.431.3 lists expected-lite as a `compatibility` header and no longer
+  parses, so `gti verify` rejects it; rebuild to record a new report.
+- The driver library drops `ToolchainLayout::vendorInclude`,
+  `ToolchainResourceError::ExpectedCompatibilityHeaderMissing` and
+  `BuildRuntimeHeaderKind::Compatibility`, and `validateToolchainLayout` no
+  longer takes a C++ standard.
+
 ## 0.431.3 — GTI's own expected representation
 
 - Generated C++ no longer uses `std::expected` under C++23 or the vendored

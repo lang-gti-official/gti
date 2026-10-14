@@ -55,7 +55,6 @@ int main() {{ return native_identity(identity(local_value)); }}
                     run([cxx, f"-std={standard}", f"-{level}",
                          "-D__gti_strict_ieee754=1",
                          "-I", repository / "runtime/include",
-                         "-I", repository / "vendor/expected_lite/include",
                          "-c", generated, "-o", obj])
                     objects.append(obj)
                 executable = root / f"linkage-{standard}-{level}"

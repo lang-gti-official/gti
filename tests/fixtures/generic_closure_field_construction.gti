@@ -1,0 +1,109 @@
+// A generic class instantiated with a closure type constructs another
+// closure-carrying generic class as a member initializer, as in
+// `inner(Holder<F>(f))`. The closure is copied or moved from the formal into
+// the constructed field, beside a scalar field, through two levels, into two
+// fields, with an extra argument, and for captureless, scalar-capturing and
+// struct-capturing closures of one class.
+#include <std/utility>
+
+class Holder<F> {
+public:
+  F callback;
+  Holder(F f) : callback(f) {}
+  int invoke() { return callback(); }
+};
+
+class Moved<F> {
+public:
+  F callback;
+  Moved(F f) : callback(std::move(f)) {}
+  int invoke() { return callback(); }
+};
+
+class Pair<F> {
+public:
+  F callback;
+  int bias;
+  Pair(F f, int bias) : callback(f), bias(bias) {}
+  int invoke() { return callback(); }
+};
+
+class Outer<F> {
+public:
+  Holder<F> inner;
+  int extra;
+  Outer(F f) : inner(Holder<F>(f)), extra(1) {}
+};
+
+class MovingOuter<F> {
+public:
+  Moved<F> inner;
+  int extra;
+  MovingOuter(F f) : inner(Moved<F>(std::move(f))), extra(2) {}
+};
+
+class Top<F> {
+public:
+  Outer<F> outer;
+  int extra;
+  Top(F f) : outer(Outer<F>(f)), extra(3) {}
+};
+
+class Twin<F> {
+public:
+  Holder<F> first;
+  Holder<F> second;
+  Twin(F f) : first(Holder<F>(f)), second(Holder<F>(f)) {}
+};
+
+class Biased<F> {
+public:
+  Pair<F> inner;
+  int extra;
+  Biased(F f, int extra) : inner(Pair<F>(f, 4)), extra(extra) {}
+};
+
+int copied<F>(F f) {
+  Outer<F> value = Outer<F>(f);
+  return value.inner.invoke() + value.extra;
+}
+
+int moved<F>(F f) {
+  MovingOuter<F> value = MovingOuter<F>(std::move(f));
+  return value.inner.invoke() + value.extra;
+}
+
+int nested<F>(F f) {
+  Top<F> value = Top<F>(f);
+  return value.outer.inner.invoke() + value.outer.extra + value.extra;
+}
+
+int twin<F>(F f) {
+  Twin<F> value = Twin<F>(f);
+  return value.first.invoke() + value.second.invoke();
+}
+
+int biased<F>(F f) {
+  Biased<F> value = Biased<F>(f, 5);
+  return value.inner.invoke() + value.inner.bias + value.extra;
+}
+
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+
+int main() {
+  int k = 3;
+  Offset offset{4};
+  std::println(copied([]() -> int { return 1; }));
+  std::println(copied([k]() -> int { return k; }));
+  std::println(copied([offset]() -> int { return offset.amount; }));
+  std::println(moved([k]() -> int { return k; }));
+  std::println(moved([offset]() -> int { return offset.amount; }));
+  std::println(nested([k]() -> int { return k; }));
+  std::println(nested([offset]() -> int { return offset.amount; }));
+  std::println(twin([k]() -> int { return k; }));
+  std::println(biased([offset]() -> int { return offset.amount; }));
+  return 0;
+}

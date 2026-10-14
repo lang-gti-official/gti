@@ -1604,5 +1604,170 @@ int main() {
     expect(ownedSiblings == 2,
            "both closure instances move their owned sibling natively");
   }
+  // A closure-typed class constructed as another one's member initializer,
+  // `inner(Holder<F>(f))`, publishes natively: the constructed-field proof
+  // copies or moves the passive closure formal into that construction, and
+  // the planner spells the field by its own declared type.
+  const auto constructedField =
+      analyzeTrustedPreludeFixture("constructed-closure-field.gti", R"(
+#include <std/utility>
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+class Holder<F> {
+public:
+  F callback;
+  Holder(F f) : callback(f) {}
+  int invoke() { return callback(); }
+};
+class Moved<F> {
+public:
+  F callback;
+  Moved(F f) : callback(std::move(f)) {}
+  int invoke() { return callback(); }
+};
+class Outer<F> {
+public:
+  Holder<F> inner;
+  int extra;
+  Outer(F f) : inner(Holder<F>(f)), extra(1) {}
+};
+class MovingOuter<F> {
+public:
+  Moved<F> inner;
+  int extra;
+  MovingOuter(F f) : inner(Moved<F>(std::move(f))), extra(2) {}
+};
+int copied<F>(F f) {
+  Outer<F> value = Outer<F>(f);
+  return value.inner.invoke() + value.extra;
+}
+int moved<F>(F f) {
+  MovingOuter<F> value = MovingOuter<F>(std::move(f));
+  return value.inner.invoke() + value.extra;
+}
+int main() {
+  int k = 3;
+  Offset offset{4};
+  return copied([k]() -> int { return k; }) +
+         copied([offset]() -> int { return offset.amount; }) +
+         moved([k]() -> int { return k; }) +
+         moved([offset]() -> int { return offset.amount; }) - 20;
+}
+)");
+  expect(constructedField.canGenerateCode(),
+         "constructed closure fields verify");
+  if (constructedField.canGenerateCode()) {
+    const auto text = gti_test::emitCppText(constructedField);
+    expect(text.find("inner(std::remove_cv_t<decltype(inner)>("
+                     "__gti_mir_arg_0))") != std::string::npos &&
+               text.find("inner(std::remove_cv_t<decltype(inner)>(std::move("
+                         "__gti_mir_arg_0)))") != std::string::npos,
+           "a closure-typed constructed field spells its declared type");
+    const auto lowered = gti_test::lowerProgram(
+        constructedField, constructedField.mir, constructedField.mir);
+    std::size_t copiedFields = 0;
+    std::size_t movedFields = 0;
+    std::size_t mutations = 0;
+    for (const auto &instance : lowered.mir().constructorInstances()) {
+      const auto *owner = lowered.mir().findClassInstance(instance.owner);
+      if (owner == nullptr || owner->declaredFields.size() != 2 ||
+          instance.parameterTypes.size() != 1 ||
+          instance.parameterTypes.front().kind != lang::SemanticType::Lambda)
+        continue;
+      const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
+          lowered.mir(), instance);
+      expect(bindings.size() == 2 && bindings.front().arguments.size() == 1 &&
+                 bindings.front().arguments.front().parameter == 0 &&
+                 bindings.front().argumentInstructions.size() == 2 &&
+                 !bindings.front().argumentValues.empty(),
+             "the closure formal reaches the native field construction");
+      if (bindings.size() != 2 || bindings.front().arguments.size() != 1 ||
+          bindings.front().argumentInstructions.size() != 2)
+        continue;
+      const auto &binding = bindings.front();
+      const bool movedArgument = binding.arguments.front().moved;
+      ++(movedArgument ? movedFields : copiedFields);
+      const auto *source = lowered.findConstructorInstance(instance.id);
+      const auto *declaration =
+          source == nullptr
+              ? nullptr
+              : lowered.findConstructorDeclaration(source->declaration);
+      auto rows = lang::buildCppMirBodyEmissionMapRows(
+          lowered, lang::CppStandard::Cpp23);
+      const auto overlays =
+          declaration == nullptr
+              ? std::nullopt
+              : lang::cppMirApplyGenericOwnerConstructorTypeOverlays(
+                    rows, lowered, *declaration, instance);
+      expect(overlays && *overlays != 0,
+             "the outer constructor spells F through its overlay");
+      const lang::CppMirBodyEmissionMap map(std::move(rows));
+      const lang::CppMirBodyEmitter emitter(lowered.mir(), map);
+      const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                         instance.id};
+      expect(emitter.supportsBodyText(address) ||
+                 emitter.supportsFailureBodyText(address),
+             "the outer constructor body is in the C++ vocabulary");
+      const lang::HirBindingId formal = instance.parameterBindings.front();
+      for (int mutation = 0; mutation != 5; ++mutation) {
+        auto forged = lowered.mir();
+        auto *body = lang::findMirBody(forged, address);
+        bool applied = false;
+        for (auto &block : body->blocks)
+          for (auto &candidate : block.instructions) {
+            if (candidate.id == binding.argumentInstructions[1]) {
+              if (mutation == 0) {
+                candidate.lifecycle.clear();
+                applied = true;
+              }
+              if (mutation == 1) {
+                candidate.callInputIndex = 1;
+                applied = true;
+              }
+              if (mutation == 3 && !movedArgument && candidate.ownership) {
+                candidate.ownership->after = lang::OwnershipStateSet::Moved;
+                applied = true;
+              }
+            }
+            const auto *drop =
+                candidate.kind == lang::MirInstructionKind::Drop &&
+                        candidate.lifecycle.size() == 1
+                    ? body->findDropObligation(
+                          candidate.lifecycle.front().source)
+                    : nullptr;
+            if (mutation == 4 && !movedArgument && drop != nullptr &&
+                drop->kind == lang::MirDropObligationKind::Binding &&
+                drop->binding == formal &&
+                !candidate.lifecycle.front().failureCleanup) {
+              candidate.lifecycle.front().conditional = true;
+              applied = true;
+            }
+          }
+        if (mutation == 2)
+          for (auto &value : body->values)
+            if (std::find(binding.argumentValues.begin(),
+                          binding.argumentValues.end(),
+                          value.id) != binding.argumentValues.end()) {
+              value.info.traits.copyable = false;
+              applied = true;
+            }
+        if (!applied)
+          continue;
+        ++mutations;
+        const auto rejected = lang::cppMirConstructedFieldInitializerBindings(
+            forged, *forged.findConstructorInstance(instance.id));
+        expect(rejected.empty(),
+               "a constructed closure field rejects a dropped staging "
+               "lifecycle, a foreign argument index, a noncopyable closure, "
+               "a consuming copy and a conditional formal drop " +
+                   std::to_string(mutation));
+      }
+    }
+    expect(copiedFields == 2 && movedFields == 2 && mutations == 15,
+           "copied and moved closure fields were each checked twice, the "
+           "struct capture's formal drop included");
+  }
   return failures == 0 ? 0 : 1;
 }
