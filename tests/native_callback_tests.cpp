@@ -570,6 +570,7 @@ void testThreadConfinedCallbacks() {
 #include <std/cthread>
 using Transform = (int32_t) -> int32_t;
 [[thread_confined_callback]] int32_t transform(int32_t value) { return value; }
+Transform obtain_transform() { return transform; }
 int main() {
   Transform first = transform;
   Transform second = transform;
@@ -625,6 +626,26 @@ int main() {
          "production MIR emission consumes thread binding and entry policy");
   expect(analyze("confined-single.gti", source).canGenerateCode(),
          "contract remains usable in single-threaded consumers");
+  for (const auto profile : {lang::ExecutionProfile::SingleThreaded,
+                             lang::ExecutionProfile::Concurrent}) {
+    const auto converted = analyze("callback-summary.gti", source, profile);
+    bool checkedSummary = false;
+    for (const auto &function : converted.mir.functionInstances()) {
+      const auto *declaration =
+          converted.semantics.findFunction(function.declaration);
+      if (!declaration || declaration->qualifiedName != "obtain_transform")
+        continue;
+      const auto &traits = function.effectSummary.traits;
+      const bool confined = profile == lang::ExecutionProfile::Concurrent;
+      expect(traits.invokesRuntime == confined && traits.mayTrap == confined &&
+                 traits.readsUnknownMemory == confined &&
+                 traits.writesUnknownMemory == confined,
+             "callback factory summaries preserve the selected entry policy "
+             "without penalizing passive legacy conversions");
+      checkedSummary = true;
+    }
+    expect(checkedSummary, "callback factory summary must be exercised");
+  }
   const auto formatted = lang::Formatter().format(source);
   expect(lang::Formatter().format(formatted) == formatted &&
              analyze("formatted-confined.gti", formatted,

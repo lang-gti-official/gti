@@ -2352,15 +2352,20 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
             node.callees.push_back(*targetNode);
           }
         } else {
+          const auto structural =
+              structuralInstructionEffects(program, instruction);
           const MirEffectTraits instructionEffects = cleanupEffects(
-              finishInstructionEffects(
-                  instruction,
-                  isMirStructuralValueDrop(program, instruction)
-                      ? MirEffectTraits{.writesPlace = true, .dropsValue = true}
-                      : MirEffectTraits{},
-                  isMirStructuralValueTransfer(program, instruction),
-                  isMirStructuralFinalAddressConstruction(program,
-                                                          instruction)),
+              structural
+                  ? *structural
+                  : finishInstructionEffects(
+                        instruction,
+                        isMirStructuralValueDrop(program, instruction)
+                            ? MirEffectTraits{.writesPlace = true,
+                                              .dropsValue = true}
+                            : MirEffectTraits{},
+                        isMirStructuralValueTransfer(program, instruction),
+                        isMirStructuralFinalAddressConstruction(program,
+                                                                instruction)),
               targets);
           node.local.traits = merge(node.local.traits, instructionEffects);
           if (isInvocation(instruction) &&
