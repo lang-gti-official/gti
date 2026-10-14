@@ -2603,6 +2603,32 @@ not cross base construction, computations, later owned publication or failure
 edges. Native initialization realizes only that proved prefix; subsequent owned
 fields remain empty until their original MIR publication and rollback execute.
 
+A closure copied from its by-value constructor parameter into a field, as in
+`Holder(F f) : callback(f)` instantiated with a lambda type, uses the same copy
+route. MIR stages no `Initialize` for a closure-typed field: the constructor
+record publishes the parameter's copy `Load` under the shared
+`mirRecordPublishedConstructorInitializer` rule, which optimization also
+preserves. The copy proof accepts that record publication in place of the
+explicit `Initialize` when the field has no active cleanup, the loaded value
+has no other use, and the closure is copyable and borrow-free with only scalar,
+payload-free enum or passive generated-copy class captures. Copying the native
+closure object then replays the GTI copy exactly, and destroying it runs no
+source code. A closure has no native default state or assignment, so the field
+is copy-constructed in the member-initializer list and the body aliases the
+formal instead of copying it again. A class capture leaves a lexical drop on
+the formal; it stays in MIR and emits as a trivial drop. Every closure instance
+of a class shares one native constructor template, so a record-published
+closure copy keeps its sibling fields body-staged, as the owned-parameter form
+does. All instances then have one member-initializer list, and their bodies
+differ only behind the existing destructibility dispatch. Owned-parameter
+fields around the copy still move natively: the copy's exact `Load` and
+boundary form an effect-free prefix of a later owned move, like a passive
+scalar sibling, and the formal's unconditional scope-end `Drop` is one of the
+complete owned prologue's lexical parameter drop records. Closures capturing
+fixed arrays, payload enums or other closures, and a closure-typed generic
+class constructed as another class's member initializer, remain outside this
+route.
+
 A shared-reference carrier with generated, observation-free destruction may
 retain its bound native shell during constructor rollback. This is not an
 empty-state capability: its references must already be bound by the exact
