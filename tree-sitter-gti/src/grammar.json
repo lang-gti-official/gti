@@ -3714,6 +3714,22 @@
               "members": [
                 {
                   "type": "FIELD",
+                  "name": "implicit",
+                  "content": {
+                    "type": "STRING",
+                    "value": "implicit"
+                  }
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "FIELD",
                   "name": "virtual",
                   "content": {
                     "type": "STRING",
@@ -3749,8 +3765,8 @@
               "type": "FIELD",
               "name": "conversion_type",
               "content": {
-                "type": "STRING",
-                "value": "bool"
+                "type": "SYMBOL",
+                "name": "_non_function_type"
               }
             },
             {
@@ -3765,12 +3781,25 @@
               "type": "CHOICE",
               "members": [
                 {
-                  "type": "FIELD",
-                  "name": "mutable",
-                  "content": {
-                    "type": "STRING",
-                    "value": "mut"
-                  }
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "FIELD",
+                      "name": "mutable",
+                      "content": {
+                        "type": "STRING",
+                        "value": "mut"
+                      }
+                    },
+                    {
+                      "type": "FIELD",
+                      "name": "consuming",
+                      "content": {
+                        "type": "STRING",
+                        "value": "&&"
+                      }
+                    }
+                  ]
                 },
                 {
                   "type": "BLANK"
