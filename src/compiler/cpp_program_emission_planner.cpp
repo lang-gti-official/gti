@@ -8409,7 +8409,13 @@ public:
         // prvalue: one construction, no intermediate object, and no invented
         // copy or move. The proof already fixed declaration order.
         output << fieldName << '(';
-        emitSemanticType(initializer.fieldType);
+        // A closure-dependent field type has no program-wide spelling. The
+        // member's declared type names this exact instance's class in every
+        // instantiation of a retained constructor template.
+        if (loweredContainsLambdaType(initializer.fieldType))
+          output << "std::remove_cv_t<decltype(" << fieldName << ")>";
+        else
+          emitSemanticType(initializer.fieldType);
         const bool sequencedArguments = std::any_of(
             initializer.constructedArguments.begin(),
             initializer.constructedArguments.end(), [](const auto &argument) {
