@@ -20,6 +20,13 @@ const HirValue *HirBody::valueForSource(const Expr &source) const {
   return nullptr;
 }
 
+const HirValue *HirBody::initializerValueForSource(const Expr &source) const {
+  for (const HirContextualConstruction &construction : contextualConstructions)
+    if (construction.source == &source)
+      return findValue(construction.value);
+  return valueForSource(source);
+}
+
 namespace {
 
 [[nodiscard]] bool sameSpan(const SourceSpan &left, const SourceSpan &right) {
@@ -491,23 +498,23 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             initializer != nullptr && initializer->arguments.size() == 1
                 ? instance.body.findValue(initializer->arguments.front())
                 : nullptr;
-        exact &= field.declaration != nullptr && selectedSource != nullptr &&
-                 initializer != nullptr &&
-                 initializer->kind == ConstructorInitializerTargetKind::Field &&
-                 initializer->source == nullptr &&
-                 initializer->field == field.info.symbol &&
-                 initializer->targetType == field.info.type &&
-                 initializer->explicitArgumentCount == 1 &&
-                 !initializer->base && !initializer->constructorTarget &&
-                 !initializer->generatedDefault &&
-                 !initializer->storesReference &&
-                 !initializer->ownedParameter && value != nullptr &&
-                 instance.body.valueForSource(*selectedSource) == value &&
-                 (value->info.type == field.info.type ||
-                  isImplicitScalarInitializationConversion(field.info.type,
-                                                           value->info.type) ||
-                  isImplicitExpectedInitializationConversion(field.info.type,
-                                                             value->info.type));
+        exact &=
+            field.declaration != nullptr && selectedSource != nullptr &&
+            initializer != nullptr &&
+            initializer->kind == ConstructorInitializerTargetKind::Field &&
+            initializer->source == nullptr &&
+            initializer->field == field.info.symbol &&
+            initializer->targetType == field.info.type &&
+            initializer->explicitArgumentCount == 1 && !initializer->base &&
+            !initializer->constructorTarget && !initializer->generatedDefault &&
+            !initializer->storesReference && !initializer->ownedParameter &&
+            value != nullptr &&
+            instance.body.initializerValueForSource(*selectedSource) == value &&
+            (value->info.type == field.info.type ||
+             isImplicitScalarInitializationConversion(field.info.type,
+                                                      value->info.type) ||
+             isImplicitExpectedInitializationConversion(field.info.type,
+                                                        value->info.type));
         ++position;
       }
       if (!exact)
@@ -826,6 +833,82 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const HirClassInstance &instance : program.classInstances()) {
     verifyNativeCallbackValues(instance.fieldInitializers);
     verifyNativeCallbackValues(instance.staticFieldInitializers);
+  }
+  // A contextual construction is the declared value its initializer's own
+  // value is consumed by: exactly the semantic selection, with no result
+  // borrow, the initializer first and the selected defaults after it.
+  const auto verifyContextualConstructions = [&](const HirBody &body) {
+    std::unordered_set<HirValueId> listed;
+    for (const HirContextualConstruction &entry :
+         body.contextualConstructions) {
+      const HirValue *value = body.findValue(entry.value);
+      const HirValue *argument = value == nullptr || value->operands.empty()
+                                     ? nullptr
+                                     : body.findValue(value->operands.front());
+      const ResolvedConstructionInfo *construction =
+          entry.source == nullptr
+              ? nullptr
+              : semantics.findContextualConstruction(*entry.source);
+      const HirConstructorInstance *target =
+          value != nullptr && value->constructorTarget
+              ? program.findConstructorInstance(*value->constructorTarget)
+              : nullptr;
+      const HirClassInstance *owner =
+          target == nullptr || target->owner == 0 ||
+                  target->owner > program.classInstances().size()
+              ? nullptr
+              : &program.classInstances()[target->owner - 1];
+      if (value == nullptr || construction == nullptr || target == nullptr ||
+          owner == nullptr || !listed.insert(entry.value).second ||
+          value->kind != HirValueKind::DirectInitializer ||
+          value->source != nullptr || argument == nullptr ||
+          argument->source != entry.source ||
+          body.valueForSource(*entry.source) != argument ||
+          construction->constructor == 0 || construction->generatedDefault ||
+          construction->kind != ConstructorKind::Ordinary ||
+          construction->borrowOrigin != BorrowOriginKind::None ||
+          !construction->borrowFields.empty() ||
+          target->declaration != construction->constructor ||
+          owner->type != construction->constructedType ||
+          value->info != ExpressionInfo{.type = owner->type,
+                                        .category = ValueCategory::Value,
+                                        .access = AccessMode::ReadOnly,
+                                        .traits = owner->traits} ||
+          value->parameterTypes != construction->parameterTypes ||
+          value->operands.size() != value->parameterTypes.size() ||
+          value->operands.size() != 1 + construction->defaultArguments.size() ||
+          value->defaultArguments.size() !=
+              construction->defaultArguments.size() ||
+          !std::equal(value->defaultArguments.begin(),
+                      value->defaultArguments.end(),
+                      value->operands.begin() + 1) ||
+          value->constructorKind != ConstructorKind::Ordinary ||
+          value->definedFailure.propagation !=
+              FailurePropagationKind::Constructor ||
+          value->borrowOrigin != BorrowOriginKind::None ||
+          !value->borrowFields.empty() || !value->callPlan ||
+          value->callPlan->receiver ||
+          value->callPlan->arguments.size() != value->operands.size()) {
+        result.errors.emplace_back(
+            "contextual construction HIR value differs from its semantic "
+            "construction");
+      }
+    }
+  };
+  verifyContextualConstructions(program.module());
+  for (const HirClassInstance &instance : program.classInstances()) {
+    verifyContextualConstructions(instance.fieldInitializers);
+    verifyContextualConstructions(instance.staticFieldInitializers);
+  }
+  for (const HirFunctionInstance &instance : program.functionInstances()) {
+    verifyContextualConstructions(instance.body);
+  }
+  for (const HirConstructorInstance &instance :
+       program.constructorInstances()) {
+    verifyContextualConstructions(instance.body);
+  }
+  for (const HirDestructorInstance &instance : program.destructorInstances()) {
+    verifyContextualConstructions(instance.body);
   }
   for (const HirFunctionInstance &instance : program.functionInstances()) {
     verifyNativeCallbackValues(instance.body);
@@ -1802,8 +1885,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                          : nullptr;
     if (!step.initializer || initializer == nullptr ||
         semantic.declaration->initializer() == nullptr ||
-        program.module().valueForSource(*semantic.declaration->initializer()) !=
-            initializer) {
+        program.module().initializerValueForSource(
+            *semantic.declaration->initializer()) != initializer) {
       result.errors.emplace_back(
           "executable program initializer has no exact source HIR value");
     }
@@ -2055,8 +2138,18 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     return initializer != nullptr &&
            semantics.findArrayElementConstruction(*initializer) != nullptr;
   };
+  const auto listedContextualConstruction = [&](const HirValue &value) {
+    const auto &entries = program.module().contextualConstructions;
+    return value.source == nullptr &&
+           value.kind == HirValueKind::DirectInitializer &&
+           std::any_of(entries.begin(), entries.end(),
+                       [&](const HirContextualConstruction &entry) {
+                         return entry.value == value.id;
+                       });
+  };
   const auto exactSyntheticValue = [&](const HirValue &value) {
-    if (exactDefaultArrayElement(value) || exactDefaultArrayLevel(value)) {
+    if (exactDefaultArrayElement(value) || exactDefaultArrayLevel(value) ||
+        listedContextualConstruction(value)) {
       return true;
     }
     const auto parents = valueParents.find(value.id);

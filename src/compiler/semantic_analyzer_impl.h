@@ -2820,12 +2820,15 @@ private:
   forwardedPackArgumentMatches(const SemanticType &parameter,
                                const SemanticType &argument) const;
 
+  // A contextual construction consumes `construction` as its sole argument;
+  // the selection is recorded beside the expression's own records.
   void analyzeConstructorCallArguments(
       const Expr &construction, ClassId classId,
       const std::vector<SemanticType> &typeArguments,
       const std::vector<CompileTimeValue> &valueArguments,
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
-      bool requireExactNullParameter = false);
+      bool requireExactNullParameter = false,
+      bool contextualConstruction = false);
 
   void analyzeExpectedMemberCall(const Call &call, const Get &member,
                                  const SemanticType &expected,
@@ -3684,6 +3687,12 @@ private:
 
   void recordProgramCallEffects(const Expr &expression);
 
+  // Whether the construction's closed effects were open and recording stopped.
+  [[nodiscard]] bool
+  recordProgramConstructionEffects(const Expr &site,
+                                   const ResolvedConstructionInfo &construction,
+                                   std::size_t suppliedArguments);
+
   [[nodiscard]] std::vector<SourceUnitId>
   programInitializationUnitOrder() const;
 
@@ -3802,7 +3811,31 @@ private:
 
   SemanticType analyzeInitializer(const ExprPtr &expr,
                                   const SemanticType &expectedType,
-                                  bool allowExactNullConstruction = false);
+                                  bool allowExactNullConstruction = false,
+                                  bool allowDeclarationConstruction = false);
+
+  [[nodiscard]] bool
+  declarationConstructionApplies(const ExprPtr &expr,
+                                 const SemanticType &declaredType,
+                                 const SemanticType &initializerType);
+
+  SemanticType
+  analyzeDeclarationConstruction(const ExprPtr &expr,
+                                 const SemanticType &declaredType,
+                                 const SemanticType &initializerType);
+
+  [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
+  contextualConstructionRawFields(const Expr &initializer,
+                                  const SemanticType &type);
+
+  // The hint for a declaration no implicit constructor accepts, with the
+  // explicit spelling that selects any constructor.
+  [[nodiscard]] static std::string
+  implicitConstructionHint(const std::string &explicitSpelling) {
+    return "Only a constructor declared 'implicit' constructs a declaration "
+           "from another type; write '" +
+           explicitSpelling + "' to call a constructor explicitly.";
+  }
 
   [[nodiscard]] bool isDefaultLibraryUnit(SourceUnitId sourceUnit) const;
 
@@ -5476,6 +5509,26 @@ private:
   // code. Closed executable/library requests need every actual GTI call target.
   bool requireFunctionDefinitions = false;
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
+
+  // ---- Staged constant evaluation worker --------------------------------
+  // The analyzer a staged constexpr evaluation lowers its constant instance
+  // through. It copies the sealed catalog and the staging model, which is
+  // most of an evaluation's cost, so it is kept and reused while nothing it
+  // copied can have changed: the staging model, the current declaration
+  // order, and the constexpr definitions and constructors declared before
+  // it. Per-evaluation context (the work budget, raw result queries, the
+  // lambda identity floor) is refreshed on every use.
+  struct StagedWorker {
+    std::unique_ptr<Impl> impl;
+    const SemanticModel *stagingModel = nullptr;
+    std::size_t declarationOrder = 0;
+    std::size_t definitions = 0;
+    std::size_t constructors = 0;
+  };
+  StagedWorker stagedWorker;
+  [[nodiscard]] Impl &
+  stagedWorkerFor(const SemanticModel &stagingModel,
+                  const std::shared_ptr<ConstexprWorkBudget> &work);
 };
 
 // The frozen analyzer of a trusted prefix (see semantic_preamble.h). It owns

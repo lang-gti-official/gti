@@ -2,6 +2,7 @@
 
 #include "diagnostic_registry.h"
 #include "gti/semantic_analyzer.h"
+#include "gti/support.h"
 
 #include <unordered_set>
 
@@ -147,6 +148,7 @@ public:
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
                             lifecycleValid;
+    const PhaseTimeScope verifyScope("hir-verify-plans");
     if (output.program.valid_ &&
         !verifyHirProgramPlans(*baseModel, output.program).valid()) {
       output.program.valid_ = false;
@@ -1851,6 +1853,8 @@ private:
     if (!concreteInstance) {
       return nullptr;
     }
+    const PhaseTimeScope timeScope("hir-instance-analysis",
+                                   declaration->qualifiedName);
     auto analysis = std::make_unique<SemanticInstanceAnalysis>(
         instanceProvider->analyzeFunctionInstance(
             declaration->id, classArguments, classValueArguments,
@@ -1881,6 +1885,7 @@ private:
       return nullptr;
     }
     const HirClassInstance &owner = output.program.classes[snapshot.owner - 1];
+    const PhaseTimeScope timeScope("hir-instance-analysis", "constructor");
     auto analysis = std::make_unique<SemanticInstanceAnalysis>(
         instanceProvider->analyzeConstructorInstance(
             snapshot.declaration, owner.typeArguments, owner.valueArguments,
@@ -2416,6 +2421,7 @@ private:
     SemanticInstanceAnalysis fieldAnalysis;
     const SemanticModel *fieldModel = baseModel;
     if (!classArguments.empty() || !classValueArguments.empty()) {
+      const PhaseTimeScope timeScope("hir-instance-analysis", "fields");
       fieldAnalysis = instanceProvider->analyzeClassFieldInitializers(
           owner.declaration, classArguments, classValueArguments);
       retainInstanceSymbols(fieldAnalysis.model);
@@ -2503,6 +2509,7 @@ private:
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (!owner.typeArguments.empty() || !owner.valueArguments.empty()) {
+      const PhaseTimeScope timeScope("hir-instance-analysis", "destructor");
       analysis = instanceProvider->analyzeDestructorInstance(
           owner.declaration, owner.typeArguments, owner.valueArguments);
       retainInstanceSymbols(analysis.model);
@@ -2837,6 +2844,10 @@ private:
       for (const HirBody::SourceAlias &alias : body.sourceAliases) {
         aliases[alias.source] = alias.value;
       }
+      for (const HirContextualConstruction &construction :
+           body.contextualConstructions) {
+        contextual[construction.source] = construction.value;
+      }
     }
 
     [[nodiscard]] HirValue *find(HirBody &body, HirValueId id) const {
@@ -2858,9 +2869,22 @@ private:
       return found == positions.end() ? nullptr : &body.values[found->second];
     }
 
+    // A declaration initializer's full expression ends with the contextual
+    // construction that consumes its value.
+    [[nodiscard]] const HirValue *forRoot(const HirBody &body,
+                                          const Expr &source) const {
+      const auto construction = contextual.find(&source);
+      if (construction == contextual.end()) {
+        return forSource(body, source);
+      }
+      const auto found = positions.find(construction->second);
+      return found == positions.end() ? nullptr : &body.values[found->second];
+    }
+
     std::unordered_map<HirValueId, std::size_t> positions;
     std::unordered_map<const Expr *, std::size_t> sourceValues;
     std::unordered_map<const Expr *, HirValueId> aliases;
+    std::unordered_map<const Expr *, HirValueId> contextual;
   };
 
   void assignFullExpression(HirBody &body, const FullExpressionLookup &lookup,
@@ -2922,7 +2946,7 @@ private:
     roots.reserve(expression.roots.size());
     for (const Expr *source : expression.roots) {
       const HirValue *found =
-          source == nullptr ? nullptr : lookup.forSource(body, *source);
+          source == nullptr ? nullptr : lookup.forRoot(body, *source);
       if (found == nullptr) {
         lifecycleValid = false;
         continue;
@@ -4957,12 +4981,115 @@ private:
     return result;
   }
 
+  // A declaration initializer whose own type differs from its declared class
+  // type. The initializer lowers as itself; the constructor selected for it
+  // consumes that value. The construction has no source expression of its
+  // own, and the initializer is its sole explicit operand.
+  [[nodiscard]] std::optional<HirValueId> lowerContextualConstruction(
+      const Expr &initializer, const ResolvedConstructionInfo &construction,
+      const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
+    const Expr *const enclosing = contextualConstructionInner;
+    contextualConstructionInner = &initializer;
+    const std::optional<HirValueId> argument = lowerExpression(
+        initializer, model, classArguments, classValueArguments, body);
+    contextualConstructionInner = enclosing;
+    const std::optional<Token> site =
+        model.contextualConstructionSite(initializer);
+    if (!argument || !site || construction.parameterTypes.empty() ||
+        construction.kind != ConstructorKind::Ordinary ||
+        construction.constructor == 0 || construction.generatedDefault) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+    HirValue value{
+        .id = nextValueId++,
+        .kind = HirValueKind::DirectInitializer,
+        .source = nullptr,
+        .info = {.type = construction.constructedType,
+                 .category = ValueCategory::Value,
+                 .access = AccessMode::ReadOnly,
+                 .traits =
+                     instanceProvider->traitsFor(construction.constructedType)},
+        .parameterTypes = construction.parameterTypes,
+        .definedFailure = {.propagation = FailurePropagationKind::Constructor},
+        .borrowOrigin = construction.borrowOrigin,
+        .borrowArgument = construction.borrowArgument,
+        .borrowAccess = construction.borrowAccess,
+        .borrowArguments = construction.borrowArguments,
+        .borrowFields = construction.borrowFields,
+        .constructorKind = construction.kind,
+    };
+    value.operands.push_back(*argument);
+    const HirConstructorInstanceId target =
+        enqueueConstructor(construction, tokenSpan(*site));
+    if (target == 0) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+    value.constructorTarget = target;
+    if (!construction.defaultArguments.empty() &&
+        target <= output.program.constructors.size()) {
+      const HirConstructorInstance &targetInstance =
+          output.program.constructors[target - 1];
+      std::vector<SemanticType> targetClassArguments;
+      std::vector<CompileTimeValue> targetClassValueArguments;
+      if (targetInstance.owner != 0 &&
+          targetInstance.owner <= output.program.classes.size()) {
+        const HirClassInstance &owner =
+            output.program.classes[targetInstance.owner - 1];
+        targetClassArguments = owner.typeArguments;
+        targetClassValueArguments = owner.valueArguments;
+      }
+      const SemanticInstanceAnalysis *targetAnalysis =
+          ensureConstructorAnalysis(target);
+      const SemanticModel &defaultModel =
+          targetAnalysis == nullptr ? *baseModel : targetAnalysis->model;
+      for (const Expr *defaultArgument : construction.defaultArguments) {
+        const std::optional<HirValueId> lowered = lowerDefaultArgument(
+            defaultArgument, defaultModel, targetClassArguments,
+            targetClassValueArguments, body, sourceLocationAt(*site));
+        if (!lowered) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        value.operands.push_back(*lowered);
+        value.defaultArguments.push_back(*lowered);
+      }
+    }
+    std::optional<std::vector<HirCallArgument>> arguments =
+        value.operands.size() == value.parameterTypes.size()
+            ? orderedConstructorArguments(value, value.operands,
+                                          value.parameterTypes, body, 1)
+            : std::nullopt;
+    if (!arguments) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+    value.callPlan = HirCallPlan{.receiver = std::nullopt,
+                                 .arguments = std::move(*arguments)};
+    const HirValueId id = value.id;
+    body.values.push_back(std::move(value));
+    body.contextualConstructions.push_back(
+        {.source = &initializer, .value = id});
+    return id;
+  }
+
   [[nodiscard]] std::optional<HirValueId>
   lowerExpression(const Expr &expression, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     ensurePlaceDomain(body);
+    if (contextualConstructionInner != &expression) {
+      if (const ResolvedConstructionInfo *construction =
+              model.findContextualConstruction(expression)) {
+        return lowerContextualConstruction(expression, *construction, model,
+                                           classArguments, classValueArguments,
+                                           body);
+      }
+    }
     if (const Expr *alias = model.findExpressionAlias(expression)) {
       // A reflected field access lowers as the field projection it denotes.
       const auto id = lowerExpression(*alias, model, classArguments,
@@ -6614,6 +6741,9 @@ private:
       constructorAnalyses;
   std::unordered_set<const Expr *> activeDefaultArguments;
   std::optional<SourceLocationLiteral> activeDefaultSourceLocation;
+  // The initializer whose own value is being lowered beneath its contextual
+  // construction.
+  const Expr *contextualConstructionInner = nullptr;
   std::unordered_set<HirValueId> collectionResults;
 };
 

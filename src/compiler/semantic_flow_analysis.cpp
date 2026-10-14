@@ -641,6 +641,42 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
   recordProgramCleanupEffects(type, span, visiting, includeDirectDestructor);
 }
 
+auto SemanticVisitor::Impl::recordProgramConstructionEffects(
+    const Expr &site, const ResolvedConstructionInfo &construction,
+    std::size_t suppliedArguments) -> bool {
+  recordProgramConstructorDefaultArgumentEffects(
+      programConstructor(construction.constructor), suppliedArguments,
+      tokenSpan(expressionToken(site)));
+  if (construction.constructedType.kind != SemanticType::Class ||
+      construction.constructedType.classId == 0) {
+    return false;
+  }
+  if (hasOpenProgramCleanupShape(construction.constructedType)) {
+    addUnknownProgramEffect(site, "a generic construction has no closed "
+                                  "program-storage effect summary");
+    return true;
+  }
+  const SourceSpan span = tokenSpan(expressionToken(site));
+  if (construction.generatedDefault || construction.constructor == 0) {
+    recordProgramDefaultConstructionEffects(construction.constructedType, span);
+  } else {
+    const ProgramEffectOwner fields{
+        .kind = ProgramEffectOwnerKind::FieldInitializers,
+        .id = construction.constructedType.classId};
+    if (!classInfo(construction.constructedType.classId)
+             .genericParameters.empty())
+      recordConcreteProgramEffect(fields, construction.constructedType, {}, {},
+                                  span);
+    else
+      addProgramEffectEdge(fields, span);
+    recordProgramSelectedConstructorEffect(
+        programConstructor(construction.constructor),
+        construction.constructedType, span, construction.typeArguments,
+        construction.valueArguments);
+  }
+  return false;
+}
+
 auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     -> void {
   if (!currentProgramEffectOwner.valid()) {
@@ -666,37 +702,9 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
       recordProgramArgumentBoundaryEffects(construction->parameterTypes,
                                            initializer->arguments());
     }
-    recordProgramConstructorDefaultArgumentEffects(
-        programConstructor(construction->constructor), suppliedArguments,
-        tokenSpan(expressionToken(expression)));
-    if (construction->constructedType.kind == SemanticType::Class &&
-        construction->constructedType.classId != 0) {
-      if (hasOpenProgramCleanupShape(construction->constructedType)) {
-        addUnknownProgramEffect(
-            expression,
-            "a generic construction has no closed program-storage effect "
-            "summary");
-        return;
-      }
-      const SourceSpan span = tokenSpan(expressionToken(expression));
-      if (construction->generatedDefault || construction->constructor == 0) {
-        recordProgramDefaultConstructionEffects(construction->constructedType,
-                                                span);
-      } else {
-        const ProgramEffectOwner fields{
-            .kind = ProgramEffectOwnerKind::FieldInitializers,
-            .id = construction->constructedType.classId};
-        if (!classInfo(construction->constructedType.classId)
-                 .genericParameters.empty())
-          recordConcreteProgramEffect(fields, construction->constructedType, {},
-                                      {}, span);
-        else
-          addProgramEffectEdge(fields, span);
-        recordProgramSelectedConstructorEffect(
-            programConstructor(construction->constructor),
-            construction->constructedType, span, construction->typeArguments,
-            construction->valueArguments);
-      }
+    if (recordProgramConstructionEffects(expression, *construction,
+                                         suppliedArguments)) {
+      return;
     }
   }
   if (const auto *initializer = exprAs<ArrayInitializer>(&expression)) {
@@ -2848,9 +2856,9 @@ auto SemanticVisitor::Impl::analyzeExpectedCallableResult(
   return result;
 }
 
-auto SemanticVisitor::Impl::analyzeInitializer(const ExprPtr &expr,
-                                               const SemanticType &expectedType,
-                                               bool allowExactNullConstruction)
+auto SemanticVisitor::Impl::analyzeInitializer(
+    const ExprPtr &expr, const SemanticType &expectedType,
+    bool allowExactNullConstruction, bool allowDeclarationConstruction)
     -> SemanticType {
   const std::optional<SemanticType> enclosingType = contextualInitializerType;
   const Expr *enclosingExpression = contextualInitializerExpression;
@@ -2879,10 +2887,104 @@ auto SemanticVisitor::Impl::analyzeInitializer(const ExprPtr &expr,
     semanticModel.record(*expr, info);
     semanticModel.recordDefinedFailure(*expr,
                                        classifyDefinedFailure(*expr, info));
+  } else if (allowDeclarationConstruction &&
+             declarationConstructionApplies(expr, expectedType, result)) {
+    result = analyzeDeclarationConstruction(expr, expectedType, result);
   }
   contextualInitializerType = enclosingType;
   contextualInitializerExpression = enclosingExpression;
   return result;
+}
+
+auto SemanticVisitor::Impl::declarationConstructionApplies(
+    const ExprPtr &expr, const SemanticType &declaredType,
+    const SemanticType &initializerType) -> bool {
+  if (!expr || declaredType.kind != SemanticType::Class ||
+      declaredType.classId == 0 || declaredType.classId > classes.size() ||
+      initializerType == SemanticType::Unknown ||
+      initializerType == SemanticType::NullPtr ||
+      initializerType == declaredType) {
+    return false;
+  }
+  // A union's initializer selects a member rather than a constructor, an
+  // abstract class has no complete object, and a borrow-carrying result needs
+  // the stored-borrow bookkeeping of a construction expression.
+  const ClassInfo &owner = classInfo(declaredType.classId);
+  if (owner.kind == ClassKind::Union || owner.abstract ||
+      typeTraits(declaredType).containsBorrowedState) {
+    return false;
+  }
+  // An initializer typed by its destination has no type of its own with which
+  // to select a constructor.
+  if (isContextualArrayArgument(expr) ||
+      isContextualCallableResultArgument(expr) ||
+      isContextualNativeFunctionArgument(expr)) {
+    return false;
+  }
+  return !isOwnershipAssignable(declaredType, initializerType, expr);
+}
+
+auto SemanticVisitor::Impl::analyzeDeclarationConstruction(
+    const ExprPtr &expr, const SemanticType &declaredType,
+    const SemanticType &initializerType) -> SemanticType {
+  // The declaration selects the constructor `T name{initializer}` would: one
+  // exact parameter list with the initializer as the sole argument.
+  semanticModel.forgetContextualConstruction(*expr);
+  const std::size_t diagnosticStart = diagnostics.size();
+  const SourceSpan site = tokenSpan(expressionToken(expr));
+  analyzeConstructorCallArguments(
+      *expr, declaredType.classId, declaredType.arguments,
+      declaredType.valueArguments,
+      {{.type = initializerType, .expression = &expr}}, expressionToken(expr),
+      false, true);
+  if (!semanticModel.recordsContextualConstruction(*expr)) {
+    // No constructor takes exactly this argument: the declaration keeps its
+    // exact-type initialization error. Any other rejection, such as an
+    // ambiguity or a required move, is the selection's own diagnostic.
+    if (diagnostics.size() == diagnosticStart + 1 &&
+        diagnostics.back().code == "GTI-S2012" &&
+        diagnostics.back().primary == site) {
+      diagnostics.pop_back();
+    }
+    return diagnostics.size() == diagnosticStart ? initializerType
+                                                 : SemanticType::Unknown;
+  }
+  const ResolvedConstructionInfo &construction =
+      *semanticModel.findContextualConstruction(*expr);
+  if (currentProgramEffectOwner.valid()) {
+    if (!construction.parameterTypes.empty() &&
+        (construction.parameterTypes.front().kind == SemanticType::Reference ||
+         construction.parameterTypes.front().kind ==
+             SemanticType::RawPointer)) {
+      forceProgramStorageBoundaryAccess(expr);
+    }
+    static_cast<void>(recordProgramConstructionEffects(*expr, construction, 1));
+  }
+  // The constructed value is the declaration's own, so its cleanup belongs
+  // to the enclosing effects exactly as a direct initializer's does.
+  if (requiresActiveCleanupFor(construction.constructedType)) {
+    recordProgramCleanupEffects(construction.constructedType, site);
+    applyRawCleanupWrites(
+        construction.constructedType, site,
+        contextualConstructionRawFields(*expr, construction.constructedType));
+  }
+  return construction.constructedType;
+}
+
+auto SemanticVisitor::Impl::contextualConstructionRawFields(
+    const Expr &initializer, const SemanticType &type)
+    -> std::vector<ProjectedRawPointerOrigins> {
+  // The selected constructor may store any address it receives or creates,
+  // and no query of its body is recorded here: every raw field is unresolved.
+  std::vector<ProjectedRawPointerOrigins> fields;
+  for (auto path : rawPointerFieldPaths(type)) {
+    mergeRawPointerFields(
+        fields,
+        {{std::move(path),
+          {{.addressSite = tokenSpan(expressionToken(initializer)),
+            .sourceResultQuery = std::numeric_limits<std::size_t>::max()}}}});
+  }
+  return fields;
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryUnit(SourceUnitId sourceUnit) const

@@ -1828,6 +1828,16 @@
           }
         ]
       },
+      "implicit": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "implicit",
+            "named": false
+          }
+        ]
+      },
       "initializers": {
         "multiple": false,
         "required": false,
@@ -6029,6 +6039,10 @@
   },
   {
     "type": "if",
+    "named": false
+  },
+  {
+    "type": "implicit",
     "named": false
   },
   {

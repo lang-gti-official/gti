@@ -1519,7 +1519,8 @@ private:
 
   StmtPtr constructorDeclaration(Token name,
                                  std::optional<Token> constexprKeyword = {},
-                                 std::optional<Token> unsafeKeyword = {}) {
+                                 std::optional<Token> unsafeKeyword = {},
+                                 std::optional<Token> implicitKeyword = {}) {
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
@@ -1580,6 +1581,10 @@ private:
         throw error(*unsafeKeyword,
                     "Only constructors with a source body may be unsafe.");
       }
+      if (implicitKeyword) {
+        throw error(*implicitKeyword,
+                    "Only constructors with a source body may be implicit.");
+      }
       return std::make_shared<ConstructorDecl>(
           std::move(constexprKeyword), std::move(name),
           std::move(genericParameters), std::move(parameters),
@@ -1596,7 +1601,66 @@ private:
         std::move(constexprKeyword), std::move(name),
         std::move(genericParameters), std::move(parameters),
         std::move(requiresClause), std::move(initializers), std::nullopt,
-        std::move(body), std::move(unsafeKeyword));
+        std::move(body), std::move(unsafeKeyword), std::move(implicitKeyword));
+  }
+
+  // The length of a constructor modifier run containing the contextual
+  // `implicit`, when one starts here. `implicit` is a modifier only there.
+  [[nodiscard]] std::optional<std::size_t>
+  implicitConstructorModifiers() const {
+    bool implicitSeen = false;
+    bool unsafeSeen = false;
+    bool constexprSeen = false;
+    for (std::size_t offset = 0; offset < 3; ++offset) {
+      const Token &token = peekAt(offset);
+      bool *seen =
+          token.kind == TokenKind::IDENTIFIER && token.lexeme == "implicit"
+              ? &implicitSeen
+          : token.kind == TokenKind::UNSAFE    ? &unsafeSeen
+          : token.kind == TokenKind::CONSTEXPR ? &constexprSeen
+                                               : nullptr;
+      if (seen == nullptr) {
+        return implicitSeen && isConstructorStart(offset)
+                   ? std::optional<std::size_t>(offset)
+                   : std::nullopt;
+      }
+      if (*seen) {
+        return std::nullopt;
+      }
+      *seen = true;
+    }
+    return implicitSeen && isConstructorStart(3) ? std::optional<std::size_t>(3)
+                                                 : std::nullopt;
+  }
+
+  // Misordered or conflicting modifiers are reported, and the constructor
+  // they introduce is still parsed so that recovery consumes it.
+  StmtPtr implicitConstructorDeclaration(std::size_t modifiers) {
+    std::optional<Token> implicitKeyword;
+    std::optional<Token> unsafeKeyword;
+    std::optional<Token> constexprKeyword;
+    for (std::size_t index = 0; index < modifiers; ++index) {
+      Token modifier = advance();
+      if (modifier.kind == TokenKind::CONSTEXPR) {
+        constexprKeyword = std::move(modifier);
+      } else if (modifier.kind == TokenKind::UNSAFE) {
+        unsafeKeyword = std::move(modifier);
+      } else {
+        if (constexprKeyword) {
+          (void)error(modifier, "Write 'implicit' before 'constexpr'.");
+        }
+        implicitKeyword = std::move(modifier);
+      }
+    }
+    if (implicitKeyword && unsafeKeyword) {
+      (void)error(*implicitKeyword,
+                  "An implicit constructor cannot be unsafe; construct the "
+                  "value explicitly in an unsafe context instead.");
+      implicitKeyword.reset();
+    }
+    return constructorDeclaration(advance(), std::move(constexprKeyword),
+                                  std::move(unsafeKeyword),
+                                  std::move(implicitKeyword));
   }
 
   StmtPtr destructorDeclaration(Token tilde) {
@@ -2200,6 +2264,10 @@ private:
         Token operatorKeyword = advance();
         return conversionOperatorDeclaration(std::move(operatorKeyword),
                                              std::move(virtualKeyword));
+      }
+      if (const std::optional<std::size_t> modifiers =
+              implicitConstructorModifiers()) {
+        return implicitConstructorDeclaration(*modifiers);
       }
       if (check(TokenKind::UNSAFE) &&
           (isConstructorStart(1) ||

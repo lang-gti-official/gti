@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include "gti/support.h"
+
 #include <iterator>
 
 namespace lang {
@@ -60,6 +62,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   resumeDeclarations.clear();
   reachedPreambleBodies.clear();
   registrationFloor = {};
+  stagedWorker = {};
   currentNamespace.clear();
   currentSourceUnit = 0;
   structuredBindingElements.clear();
@@ -900,6 +903,7 @@ auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
 // reanalysis, exactly like a dependent `if constexpr` condition.
 auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
     -> void {
+  const PhaseTimeScope timeScope("constexpr-for");
   const SemanticType sequenceType = analyze(stmt.sequence());
   if (sequenceType == SemanticType::Unknown) {
     semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
@@ -1914,13 +1918,20 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
         continue;
       const auto fieldType =
           substituteSymbol(member->second.symbol, openClassType(owner.id)).type;
-      analyzeInitializer(declaration.initializer(), fieldType);
-      assignRawPointerFields(
-          {.root = receiverStateSymbol(),
-           .projections = {{.kind = PlaceProjectionKind::Field,
-                            .field = toolingSymbolFor(member->second.symbol)}},
-           .receiver = true},
-          declaration.initializer().get());
+      analyzeInitializer(declaration.initializer(), fieldType, false, true);
+      const SemanticPlace fieldPlace{
+          .root = receiverStateSymbol(),
+          .projections = {{.kind = PlaceProjectionKind::Field,
+                           .field = toolingSymbolFor(member->second.symbol)}},
+          .receiver = true};
+      if (semanticModel.recordsContextualConstruction(
+              *declaration.initializer()))
+        applyRawPointerFields(fieldPlace,
+                              contextualConstructionRawFields(
+                                  *declaration.initializer(), fieldType),
+                              true);
+      else
+        assignRawPointerFields(fieldPlace, declaration.initializer().get());
     }
   }
 
@@ -2050,8 +2061,9 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
               : fieldType;
       valueType = field == nullptr
                       ? analyze(initializer.arguments.front())
-                      : analyzeInitializer(initializer.arguments.front(),
-                                           initializerTarget, true);
+                      : analyzeInitializer(
+                            initializer.arguments.front(), initializerTarget,
+                            true, fieldType.kind != SemanticType::Reference);
     }
     analyzingConstructorInitializer = enclosingConstructorInitializer;
     if (field != nullptr && initializer.arguments.size() == 1 &&
@@ -2061,6 +2073,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                                initializer.arguments.front());
     } else if (field != nullptr && initializer.arguments.size() == 1 &&
                !recursiveLayoutFields.contains(field) &&
+               !semanticModel.recordsContextualConstruction(
+                   *initializer.arguments.front()) &&
                !isOwnershipAssignable(fieldType, valueType,
                                       initializer.arguments.front())) {
       if (fieldType == valueType && isMoveOnlyOwnerType(fieldType)) {
@@ -2084,6 +2098,11 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                    typeSpelling(fieldType) + "' with a value of type '" +
                    typeSpelling(valueType) + "'.",
                "GTI-S2003");
+        if (declarationConstructionApplies(initializer.arguments.front(),
+                                           fieldType, valueType)) {
+          diagnostics.back().hints.emplace_back(implicitConstructionHint(
+              target.lexeme + "(" + typeSpelling(fieldType) + "(...))"));
+        }
       }
     } else if (field != nullptr && initializer.arguments.size() == 1 &&
                fieldType != valueType && isInteger(fieldType) &&
@@ -2113,13 +2132,22 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     }
     if (field != nullptr && fieldSymbol != 0 &&
         initializer.arguments.size() == 1) {
-      if (collectingRawFields)
-        assignRawPointerFields(
-            {.root = receiverStateSymbol(),
-             .projections = {{.kind = PlaceProjectionKind::Field,
-                              .field = fieldSymbol}},
-             .receiver = true},
-            initializer.arguments.front().get());
+      if (collectingRawFields) {
+        const SemanticPlace fieldPlace{
+            .root = receiverStateSymbol(),
+            .projections = {{.kind = PlaceProjectionKind::Field,
+                             .field = fieldSymbol}},
+            .receiver = true};
+        if (semanticModel.recordsContextualConstruction(
+                *initializer.arguments.front()))
+          applyRawPointerFields(fieldPlace,
+                                contextualConstructionRawFields(
+                                    *initializer.arguments.front(), fieldType),
+                                true);
+        else
+          assignRawPointerFields(fieldPlace,
+                                 initializer.arguments.front().get());
+      }
       std::optional<std::size_t> ownedParameter;
       if (const ExprPtr *moved =
               explicitMoveSource(initializer.arguments.front())) {
@@ -5251,7 +5279,10 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       ++suppressLoanPlaceAccessDepth;
       ++programStoragePlaceUseDepth;
     }
-    initializerType = analyzeInitializer(initializer, declaredType, true);
+    // Constant and synthesized range-element bindings keep exact types.
+    initializerType =
+        analyzeInitializer(initializer, declaredType, true,
+                           !stmt.isConstexpr() && !stmt.isRangeBinding());
     if (declaredType.kind == SemanticType::Reference &&
         declaredType.referenceAccess == AccessMode::Mutable) {
       recordMutableBindingUse(initializer);
@@ -5296,8 +5327,11 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     semanticModel.record(stmt, std::move(updated));
   }
 
+  // A contextual construction is a fresh value of the declared type.
+  const bool contextualConstruction =
+      initializer && semanticModel.recordsContextualConstruction(*initializer);
   const bool initializerAssignable =
-      !initializer ||
+      !initializer || contextualConstruction ||
       isOwnershipAssignable(declaredType, initializerType, initializer);
   const std::optional<ConstantValue> constant =
       constexprBindingValue(stmt, declaredType,
@@ -5312,9 +5346,12 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   const auto rawOrigins = declaredType.kind == SemanticType::RawPointer
                               ? rawPointerOrigins(initializer)
                               : std::vector<RawPointerOrigin>{};
-  const auto rawFields = declaredType.kind != SemanticType::RawPointer
-                             ? rawPointerFields(initializer.get())
-                             : std::vector<ProjectedRawPointerOrigins>{};
+  const auto rawFields =
+      declaredType.kind == SemanticType::RawPointer
+          ? std::vector<ProjectedRawPointerOrigins>{}
+      : contextualConstruction
+          ? contextualConstructionRawFields(*initializer, declaredType)
+          : rawPointerFields(initializer.get());
   if (!predeclaredVariables.contains(&stmt)) {
     if (functionDepth == 0 && !currentClass) {
       declareNamespaceSymbol(currentNamespace, stmt.name(), declaredType,
@@ -5360,6 +5397,11 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
         diagnostics.back().hints.emplace_back(
             "Move-only owners cannot be copied; transfer ownership "
             "explicitly with std::move(owner).");
+      } else if (!stmt.isConstexpr() && !stmt.isRangeBinding() &&
+                 declarationConstructionApplies(initializer, declaredType,
+                                                initializerType)) {
+        diagnostics.back().hints.emplace_back(implicitConstructionHint(
+            typeSpelling(declaredType) + " " + stmt.name().lexeme + "{...}"));
       }
     }
   }

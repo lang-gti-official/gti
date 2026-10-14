@@ -85,8 +85,9 @@ namespace std {
       path(path& other) = delete;
       path(path&& other) = default;
 
-      /// Constructs a path containing `source` exactly as supplied.
-      path(std::string_view source) {
+      /// Constructs a path containing `source` exactly as supplied. A
+      /// declaration such as `std::filesystem::path root = "/tmp";` uses it.
+      implicit path(std::string_view source) {
         this.text.append(source);
       }
 

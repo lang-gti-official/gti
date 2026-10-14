@@ -2220,6 +2220,21 @@
         "concrete_instance_adapter": 34
       }
     },
+    "152-unsafe-expressions.gti": {
+      "declarations": 1110,
+      "bodies": 117,
+      "generated_items": 78,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 26,
+        "callable_adapter": 13,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 34
+      }
+    },
     "153-constexpr-allocation.gti": {
       "declarations": 569,
       "bodies": 45,
@@ -2235,10 +2250,10 @@
         "concrete_instance_adapter": 3
       }
     },
-    "152-unsafe-expressions.gti": {
-      "declarations": 1110,
-      "bodies": 117,
-      "generated_items": 78,
+    "154-declaration-construction.gti": {
+      "declarations": 1121,
+      "bodies": 127,
+      "generated_items": 80,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -2247,7 +2262,7 @@
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 34
+        "concrete_instance_adapter": 36
       }
     },
     "150-protected-events.gti": {
@@ -2267,8 +2282,8 @@
     }
   },
   "totals": {
-    "declarations": 107112,
-    "bodies": 16478,
-    "generated_items": 10117
+    "declarations": 108233,
+    "bodies": 16605,
+    "generated_items": 10197
   }
 }
