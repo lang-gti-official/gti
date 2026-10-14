@@ -3390,9 +3390,13 @@ auto SemanticVisitor::Impl::recordFunctionSymbol(
   const FunctionInfo *info = semanticModel.findFunction(declaration);
   if (info != nullptr && info->declaration != &declaration)
     return recordFunctionSymbol(*info->declaration);
-  const Token &name = declaration.operatorName()
-                          ? declaration.operatorName()->symbol
-                          : declaration.name();
+  // A conversion operator's target tokens are type references of their own;
+  // its declaration is the `operator` keyword.
+  const Token &name =
+      !declaration.operatorName() ? declaration.name()
+      : declaration.operatorName()->kind == OverloadedOperator::Conversion
+          ? declaration.operatorName()->keyword
+          : declaration.operatorName()->symbol;
   const bool method = info != nullptr && info->ownerClass != 0;
   const SymbolKind kind =
       declaration.operatorName()

@@ -212,6 +212,57 @@ int main() {
 )gti",
            "inherited and generic conversions must resolve");
 
+  // Constant evaluation calls a constexpr operator through the same selected
+  // call, and reflection names each operator by its target.
+  accepted(R"gti(
+#include <std/meta>
+#include <std/string>
+struct UserId {
+  int64_t value;
+  UserId(int64_t raw) : value(raw) {}
+};
+struct Meters {
+  int value;
+  constexpr Meters(int amount) : value(amount) {}
+  constexpr operator int() { return this.value * 2; }
+  implicit constexpr operator int64_t() { return int64_t(this.value); }
+  operator UserId() { return UserId(int64_t(this.value)); }
+  implicit operator std::string() { return std::string("meters"); }
+  implicit operator bool() { return true; }
+};
+constexpr int folded = int(Meters(4));
+static_assert(folded == 8);
+int main() {
+  constexpr for (auto op : std::meta::operators_of<Meters>()) {
+    if constexpr (op.result().is_bool()) {
+      static_assert(op.name() == "operatorbool");
+    } else if constexpr (op.index() == uint64_t(0)) {
+      static_assert(op.name() == "operator int32_t");
+    } else if constexpr (op.index() == uint64_t(1)) {
+      static_assert(op.name() == "operator int64_t");
+    } else if constexpr (op.index() == uint64_t(2)) {
+      static_assert(op.name() == "operator UserId");
+    } else {
+      static_assert(op.name() == "operator std::string");
+    }
+  }
+  Meters meters{3};
+  int64_t runtime = meters;
+  return folded + int(runtime) + int(UserId(meters).value);
+}
+)gti",
+           "constexpr conversions and reflected operator names must resolve");
+  rejected(R"gti(
+struct Meters {
+  int value;
+  constexpr Meters(int amount) : value(amount) {}
+  implicit constexpr operator int64_t() { return int64_t(this.value); }
+};
+constexpr int64_t widened = Meters(5);
+int main() { return 0; }
+)gti",
+           "GTI-S2003", "Cannot initialize 'widened'");
+
   // No other context converts.
   rejected(ids + "int take(UserId id) { return 0; }\n"
                  "int main() { RawId raw{int64_t(1)}; return take(raw); }\n",
