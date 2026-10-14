@@ -13,6 +13,7 @@ if __name__ == "__main__":
         "generic_callable_transport": root / "fixtures/generic_callable_transport.gti",
         "generic_closure_field_copy": root / "fixtures/generic_closure_field_copy.gti",
         "generic_closure_field_construction": root / "fixtures/generic_closure_field_construction.gti",
+        "generic_closure_field_composition": root / "fixtures/generic_closure_field_composition.gti",
         "generic_closure_local_copy": root / "fixtures/generic_closure_local_copy.gti",
         "nested_callable_results": root / "fixtures/nested_callable_results.gti",
         "loop_closure_reconstruction": root / "fixtures/loop_closure_reconstruction.gti",
@@ -24,6 +25,11 @@ if __name__ == "__main__":
             ((), (0, "10\n13\n14\n99\n8\n7\n16\n8\n13\n14\n8\n9\n", ""))],
         "generic_closure_field_construction": [
             ((), (0, "2\n4\n5\n5\n6\n7\n8\n6\n13\n", ""))],
+        "generic_closure_field_composition": [
+            ((), (0, "11\n13\n14\n15\n16\n43\n44\n53\n54\n23\n24\n"
+                     "named\n1\nnamed\n3\nnamed\n4\nlabeled\n3\nlabeled\n4\n"
+                     "first\nsecond\n3\nfirst\nsecond\n4\nboth\n36\nboth\n37\n",
+                  ""))],
         "generic_closure_local_copy": [
             ((), (0, "2\n6\n8\n6\n8\n3\n4\n9\n12\n5\n3\n", ""))],
         "nested_callable_reproducer": [((), (0, "12\n", ""))],
