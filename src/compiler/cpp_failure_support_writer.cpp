@@ -455,8 +455,8 @@ inline mir_failure_status_v1 mir_expected_value_v1(Expected &expected,
     return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
             GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
   }
-  // GTI's state check owns the failure. The host value() accessor additionally
-  // requires a copyable error for bad_expected_access, even on the success path.
+  // GTI's state check owns the failure; the representation's observers are
+  // unchecked.
   *result = *expected;
   return mir_failure_success_v1;
 }

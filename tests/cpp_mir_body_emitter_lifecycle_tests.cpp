@@ -978,12 +978,8 @@ void testExpectedRetainedTemplateLayout() {
              "retained Expected layout reaches production emission");
       expect(output.find("struct byte_transport<byte_expected<Value, Error>> : "
                          "std::false_type") != std::string::npos &&
-                 output.find(
-                     standard == lang::CppStandard::Cpp23
-                         ? "struct byte_transport<std::expected<Value, Error>> "
-                           ": std::false_type"
-                         : "struct byte_transport<::nonstd::expected<Value, "
-                           "Error>> : std::false_type") != std::string::npos,
+                 output.find("struct byte_transport<expected<Value, Error>> "
+                             ": std::false_type") != std::string::npos,
              "trusted Expected envelope classification does not depend on "
              "payload layout");
     }

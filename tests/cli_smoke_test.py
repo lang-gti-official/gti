@@ -184,7 +184,9 @@ def main():
         assert "-MD" in native["argv"] and "-MF" in native["argv"]
         runtime = native["runtime"]
         assert any(header["kind"] == "runtime" for header in runtime["headers"])
-        assert any(
+        # GTI owns its expected representation, so even this C++20 build of a
+        # program using expected includes no vendored compatibility header.
+        assert not any(
             header["kind"] == "compatibility" for header in runtime["headers"]
         )
         assert runtime["archive"]["canonical_path"] in native["argv"]
@@ -661,7 +663,8 @@ def main():
             )
             assert "class socket" in emitted_extern_c
             assert (
-                "static std::expected<::__gti_program::__gti_std::tcp::socket, "
+                "static ::gti_internal::backend::expected<"
+                "::__gti_program::__gti_std::tcp::socket, "
                 "::__gti_program::__gti_std::tcp::errc>"
                 in emitted_extern_c
             )
@@ -3077,8 +3080,11 @@ def main():
         # literal stages as a typed MIR value instead of a named local.
         assert "// GTI verified-MIR body: scalar-cfg-failure-v1" in emitted_source
         assert "static_cast<std::int32_t>(42)" in emitted_source
-        assert "#include <expected>" in emitted_source
-        assert "std::expected<std::int32_t, std::int32_t>" in emitted_source
+        assert "#include <expected>" not in emitted_source
+        assert (
+            "::gti_internal::backend::expected<std::int32_t, std::int32_t>"
+            in emitted_source
+        )
         # Source target branches must be resolved before program emission.
         # The backend support preamble independently guards its native ABI;
         # those host preprocessor checks are not unlowered GTI conditionals.
@@ -3102,9 +3108,10 @@ def main():
             ]
         )
         emitted_cpp20_source = emitted_cpp20.read_text(encoding="utf-8")
-        assert "#include <nonstd/expected.hpp>" in emitted_cpp20_source
+        # Both standards share GTI's own expected representation.
+        assert "nonstd/expected.hpp" not in emitted_cpp20_source
         assert (
-            "nonstd::expected<std::int32_t, std::int32_t>"
+            "::gti_internal::backend::expected<std::int32_t, std::int32_t>"
             in emitted_cpp20_source
         )
 
