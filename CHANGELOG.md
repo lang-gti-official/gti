@@ -9,6 +9,26 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.432.2 — Lambda-typed member classes beside bases and owned fields
+
+- Fix the internal compiler error that 0.432.1 still listed (`GTI-B0001`,
+  "backend failed while generating a representation") when a generic class
+  instantiated with a lambda type builds another such class in a member
+  initializer next to one of these:
+  - a base-class initializer, such as `Derived(F f) : Base(10), inner(Holder<F>(f)) {}`,
+    including a base taking a parameter or an implicit default base
+  - a field that takes ownership of another parameter, such as
+    `Named(F f, std::string name) : inner(Holder<F>(f)), name(std::move(name)) {}`,
+    in either order, including a second lambda moved into a field
+- Classes that are not lambda-typed now also build such member fields directly
+  in the generated C++ constructor when a base or owned field sits beside them.
+  Program behavior is unchanged.
+- Such a member initializer still stops with this error in these cases:
+  - beside a base class whose constructor arguments are computed
+  - beside a base class whose constructor can fail
+  - when the inner class's constructor stores more than its lambda, such as
+    `Holder(F f) : callback(f), value(10) {}`
+
 ## 0.432.1 — Lambda-typed classes built in member initializers
 
 - Fix the internal compiler error that 0.431.2 still listed (`GTI-B0001`,
