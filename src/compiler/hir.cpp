@@ -97,6 +97,8 @@ std::uint64_t hashSemanticType(const SemanticType &type, std::uint64_t seed) {
   result = combine(result, static_cast<std::uint64_t>(type.referenceAccess));
   result = combine(result, static_cast<std::uint64_t>(type.pointerAccess));
   result = combine(result, static_cast<std::uint64_t>(type.concretePack));
+  result = combine(result, type.projectionConcept);
+  result = combine(result, type.projectionMember);
   return result;
 }
 

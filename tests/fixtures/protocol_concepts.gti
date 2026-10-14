@@ -1,0 +1,82 @@
+// A protocol concept's operation runs the selected conformance block's
+// function as an ordinary call. Construction prints a tracked id and
+// destruction its negation, so each phase's trace follows from this source
+// alone. Phase 0 covers a concrete and a generic block, calls through a
+// requirement in generic code, block functions calling each other, associated
+// types used for locals and results, and operations that take ownership of
+// an owning operand, which is released when the operation returns. Phase 1
+// fails inside a block operation, which releases its operand exactly once.
+#include <std/string>
+#include <std/vector>
+
+class Tracked {
+  int id;
+
+public:
+  Tracked(int value) : id(value) { std::println(std::to_string(value)); }
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+concept container<T> {
+  typename element_type;
+  element_type make(T& box);
+  int consume(T box);
+};
+
+class Single {
+  Tracked item;
+
+public:
+  Single(int value) : item(Tracked(value)) {}
+  int peek() { return this.item.read(); }
+};
+
+class Pair<T> {
+  T first;
+  int divisor;
+
+public:
+  Pair(T value, int by) : first(std::move(value)), divisor(by) {}
+  int scale() { return 10 / this.divisor; }
+};
+
+for concept container<Single> {
+  using element_type = Tracked;
+  Tracked make(Single& box) { return Tracked(box.peek() + 100); }
+  int consume(Single box) { return box.peek(); }
+};
+
+for <T> concept container<Pair<T>> {
+  using element_type = int;
+  element_type make(Pair<T>& box) { return box.scale(); }
+  int consume(Pair<T> box) { return make(box) * 2; }
+};
+
+container<T>::element_type build<T>(T& box) requires container<T> {
+  return container<T>::make(box);
+}
+
+int finish<T>(T box) requires container<T> {
+  return container<T>::consume(std::move(box));
+}
+
+int run(int phase) {
+  if (phase == 0) {
+    Single single{1};
+    container<Single>::element_type made = build(single);
+    std::println(std::to_string(made.read()));
+    std::println(std::to_string(finish(std::move(single))));
+    Pair<Tracked> pair{Tracked(2), 1};
+    int scaled = build(pair);
+    std::println(std::to_string(scaled));
+    std::println(std::to_string(finish(std::move(pair))));
+    return 0;
+  }
+  Pair<Tracked> failing{Tracked(3), 0};
+  return finish(std::move(failing));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return run(argc - 1);
+}

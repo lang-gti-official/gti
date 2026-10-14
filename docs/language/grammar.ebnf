@@ -86,6 +86,7 @@ declaration            = conditional-declaration
                        | compile-error-directive
                        | static-assert-declaration
                        | concept-declaration
+                       | conformance-declaration
                        | compiler-concept-declaration
                        | class-declaration
                        | enum-declaration
@@ -193,8 +194,30 @@ type-alias-declaration = "using" IDENTIFIER "=" type ";" ;
 native-function-type   = "(" [ type { "," type } ] ")" "->" type ;
 
 concept-declaration    = "concept" IDENTIFIER
-                         "<" concept-parameter-list ">" "="
-                         constraint-expression ";" ;
+                         "<" concept-parameter-list ">"
+                         ( "=" constraint-expression | concept-body ) ";" ;
+
+concept-body           = "{" { concept-member } "}" ;
+concept-member         = "typename" IDENTIFIER ";"
+                       | function-declaration ;
+(* A concept with a body takes one type parameter. A member function is a
+   prototype ending in ';' with no generic parameters, requires clause,
+   defaults, modifiers, attributes or receiver qualifier. *)
+
+conformance-declaration
+                       = "for" [ generic-parameter-clause ] "concept"
+                         concept-application
+                         "{" { conformance-member } "}" ";" ;
+conformance-member     = type-alias-declaration
+                       | function-declaration ;
+(* A conformance block appears at namespace scope. Its pattern is one
+   concrete type or one class template applied to each block parameter
+   exactly once. It defines each associated type with a type alias and each
+   operation with a function body; the block's parameters and concept
+   application apply to every function, which therefore declares no generic
+   parameters or requires clause of its own. A projection
+   `Concept<Type>::name` is a qualified type, and `Concept<Type>::operation`
+   is a call target. *)
 
 concept-parameter-list = IDENTIFIER { "," IDENTIFIER } ;
 
@@ -238,8 +261,8 @@ compiler-constraint-binding
    supplies the referenced concept's exact arity and may map, reorder, or reuse
    the enclosing parameters. Concepts may be referenced
    before their declaration; cycles are invalid. Negation, arbitrary expression
-   requirements beyond the member signature above, concept specialization, and constraint-based
-   overload ranking are not part of this layer.
+   requirements beyond the member signature above, concept specialization, and
+   constraint-based overload ranking are not part of this layer.
 
    `@compiler_constraint` is reserved syntax. Semantic analysis accepts it only
    for compiler-owned concepts in the trusted prelude's `gti_internal`

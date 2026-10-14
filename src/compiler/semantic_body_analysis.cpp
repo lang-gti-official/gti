@@ -216,6 +216,7 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   }
   registerClassSpecializations(declarations, {});
   resolveConcepts();
+  registerConformances(declarations, {});
   recordClassTypeIdentities();
   resolveEnumPayloads();
   resolveClassInheritance();
@@ -223,6 +224,7 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   registerFunctionGenericParameters(declarations, {}, false);
   genericDefaultConstants.clear();
   registerNamespaceSymbols(declarations, {});
+  bindConformanceOperations();
   collectRootNativeStorageSymbols(declarations);
   collectClassMembers(declarations, {});
   bindOutOfClassDefinitions(declarations, {});
@@ -6259,6 +6261,19 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     }
     return;
   }
+  // `C<X>::operation(...)`: through a requirement it is analyzed here; for a
+  // concrete X it is an ordinary call to the selected block's function.
+  std::optional<ProtocolOperationTarget> protocolTarget;
+  if (const auto *qualified = exprAs<QualifiedName>(expr.callee().get());
+      qualified != nullptr && qualified->ownerType()) {
+    if (const std::optional<ConceptId> protocol =
+            protocolConceptOwner(*qualified->ownerType(), currentNamespace)) {
+      if (analyzeProtocolOperationCall(expr, *qualified, *protocol)) {
+        return;
+      }
+      protocolTarget = protocolOperationTarget(*qualified);
+    }
+  }
   const bool enclosingCallCallee = analyzingCallCallee;
   analyzingCallCallee = true;
   const SemanticType calleeType = analyze(expr.callee());
@@ -6491,7 +6506,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
-  const std::optional<Symbol> callee = resolveExpressionSymbol(expr.callee());
+  const std::optional<Symbol> callee =
+      protocolTarget ? std::optional<Symbol>(protocolTarget->symbol)
+                     : resolveExpressionSymbol(expr.callee());
   const std::size_t genericDiagnosticStart = diagnostics.size();
   std::vector<SemanticType> explicitTypeArguments;
   explicitTypeArguments.reserve(expr.typeArguments().size());
@@ -6551,6 +6568,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     validateType(argument);
     const SemanticType argumentType = typeOf(argument);
     explicitTypeArguments.emplace_back(argumentType);
+  }
+  if (protocolTarget) {
+    // The block's parameters, bound by the concept argument's pattern.
+    explicitTypeArguments = protocolTarget->typeArguments;
   }
   const bool hasExplicitGenericArguments =
       !explicitTypeArguments.empty() || !explicitValueArguments.empty();
@@ -9438,6 +9459,17 @@ auto SemanticVisitor::Impl::visitPostfixExpr(const Postfix &expr) -> void {
 
 auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
     -> void {
+  if (expr.ownerType() &&
+      protocolConceptOwner(*expr.ownerType(), currentNamespace)) {
+    // `C<X>::operation` names a concept operation, which only a call uses.
+    if (!analyzingCallCallee) {
+      report(expr.name().last(), "A concept operation can only be called.",
+             "GTI-S2123");
+    }
+    currentType =
+        analyzingCallCallee ? SemanticType::Function : SemanticType::Unknown;
+    return;
+  }
   if (reportCompilerPrivatePath(expr.name())) {
     currentType = SemanticType::Unknown;
     return;

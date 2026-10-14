@@ -819,6 +819,27 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   for coherence, explain that the package must own the primary or one
   top-level nominal type argument. Do not offer a fix-it: changing the target,
   argument type, package ownership, or declaration location requires intent.
+- `GTI-S2123` owns concepts with a body, conformance blocks, and their uses.
+  - **Declarations:** a body with other than one type parameter, a duplicate
+    member name, or an operation with a body-only feature (generic
+    parameters, requires clause, default, pack, modifier or receiver
+    qualifier).
+  - **Blocks:** an unknown concept or one without a body, a wrong arity, a
+    pattern that is not one concrete type or one class template over each
+    block parameter once, an overlap with another block, and package
+    coherence failure.
+  - **Block members:** a missing, extra or duplicate associated type or
+    operation, and an operation whose signature differs from the concept's.
+  - **Uses:** `C<X>::name` or `C<X>::operation(...)` with no matching block,
+    an unknown member, explicit generic arguments, an open `X` without
+    `requires C<X>`, and an operation used other than as a call.
+
+  Point at the concept-name segment of a block or use, or at the offending
+  member. Relate an overlapping block or the concept's declaration of an
+  operation. For coherence, explain that the package must own the concept or
+  the pattern's type. Do not offer a fix-it: choosing a pattern, a package or
+  a missing definition requires intent. An unsatisfied `requires C<X>` at a
+  call stays `GTI-S2029`, with a hint naming the missing block.
 - `GTI-S2079` owns an exact-`bool` static assertion that evaluates to false.
   Point at the complete condition, begin with the stable text `Static assertion
   failed.`, append the decoded user message when present, and attach concrete

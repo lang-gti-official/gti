@@ -69,6 +69,8 @@ struct SemanticConstraintFailure {
   std::optional<Token> callArgument;
   SemanticType callArgumentType = SemanticType::Unknown;
   std::optional<Token> candidate;
+  // A concept with a body that no conformance block supplies for argument.
+  bool missingConformance = false;
 };
 
 class SemanticDiagnosticReporter {

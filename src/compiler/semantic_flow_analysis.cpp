@@ -11628,6 +11628,30 @@ auto SemanticVisitor::Impl::baseTypeOf(
         typeOf(type.arguments.back(), fromScope), parameters);
   }
   if (type.qualifiedOwner) {
+    if (const std::optional<ConceptId> protocol =
+            protocolConceptOwner(*type.qualifiedOwner, fromScope)) {
+      const RegisteredConcept &conceptInfo = concepts[*protocol - 1];
+      const auto member =
+          std::find(conceptInfo.associatedTypes.begin(),
+                    conceptInfo.associatedTypes.end(), type.name.last().lexeme);
+      if (member == conceptInfo.associatedTypes.end() ||
+          type.qualifiedOwner->arguments.size() != 1 ||
+          !type.arguments.empty()) {
+        return SemanticType::Unknown;
+      }
+      const auto index = static_cast<std::uint32_t>(
+          member - conceptInfo.associatedTypes.begin());
+      const SemanticType argument =
+          typeOf(type.qualifiedOwner->arguments.front(), fromScope);
+      if (const std::optional<SemanticType> own =
+              ownBlockProjection(*protocol, index, argument, fromScope)) {
+        return *own;
+      }
+      return substituteType(
+          associatedTypeProjection(*protocol, index, argument),
+          GenericSubstitution{.types = instanceTypeSubstitution,
+                              .values = instanceValueSubstitution});
+    }
     const auto alias = resolveTypeAliasPath(type, fromScope);
     if (!alias || !type.arguments.empty() || alias->id == 0 ||
         alias->id > typeAliases.size() ||
@@ -11708,6 +11732,12 @@ auto SemanticVisitor::Impl::baseTypeOf(
     if (const std::optional<SemanticType> parameter =
             resolveTypeParameter(type.name)) {
       return type.arguments.empty() ? *parameter : SemanticType::Unknown;
+    }
+    if (type.name.segments.size() == 1) {
+      if (const std::optional<SemanticType> associated =
+              blockAssociatedType(type.name.last().lexeme, fromScope)) {
+        return type.arguments.empty() ? *associated : SemanticType::Unknown;
+      }
     }
     if (const std::optional<ResolvedTypeAlias> alias =
             resolveTypeAliasPath(type.name, fromScope)) {

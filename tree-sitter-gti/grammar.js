@@ -71,6 +71,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "sizeof",
   "switch",
   "true",
+  "typename",
   "uint",
   "uint8_t",
   "uint16_t",
@@ -172,6 +173,7 @@ module.exports = grammar({
         $.namespace_declaration,
         $.namespace_alias_declaration,
         $.concept_declaration,
+        $.conformance_declaration,
         $.type_alias_declaration,
         $.enum_declaration,
         $.class_declaration,
@@ -400,6 +402,42 @@ module.exports = grammar({
           field("requirements", $.constraint_expression),
           ";",
         ),
+        seq(
+          "concept",
+          field("name", $.identifier),
+          "<",
+          commaSep1(field("parameter", $.identifier)),
+          ">",
+          field("body", $.concept_body),
+          ";",
+        ),
+      ),
+
+    concept_body: ($) =>
+      seq(
+        "{",
+        repeat(choice($.associated_type_declaration, $.function_declaration)),
+        "}",
+      ),
+
+    associated_type_declaration: ($) =>
+      seq("typename", field("name", $.identifier), ";"),
+
+    conformance_declaration: ($) =>
+      seq(
+        "for",
+        optional(field("type_parameters", $.generic_parameter_clause)),
+        "concept",
+        field("concept", $.concept_application),
+        field("body", $.conformance_body),
+        ";",
+      ),
+
+    conformance_body: ($) =>
+      seq(
+        "{",
+        repeat(choice($.type_alias_declaration, $.function_declaration)),
+        "}",
       ),
 
     concept_application: ($) =>

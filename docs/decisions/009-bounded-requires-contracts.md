@@ -9,6 +9,11 @@ explicit unsafe requirements. The result remains exact and owned; no expression
 execution, overload ranking or conditional operator availability is implied.
 See [the current concept contract](../language/concepts.md#exact-member-signature-requirements).
 
+Revision (2026-10-14): [ADR 028](028-protocol-concepts.md) adds concepts with a
+body, whose associated types and operations are supplied by conformance
+blocks. The exclusion of associated types below now applies only to concepts
+without a body.
+
 ## Context
 
 Unary concepts can describe properties of one generic type but cannot state

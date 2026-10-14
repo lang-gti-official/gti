@@ -151,6 +151,10 @@ while canonical language documents continue to describe actual support.
   — conversion operators called only by `Target(value)` unless declared
   `implicit`, one shared selection with constructors and no ranking, one
   step, and member-call receivers.
+- [028: Protocol concepts and conformance blocks](decisions/028-protocol-concepts.md)
+  — concepts with associated types and operations, supplied for a type by a
+  `for concept` block outside it, with exact selection, ADR 020 coherence and
+  no remapping.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

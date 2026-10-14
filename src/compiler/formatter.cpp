@@ -390,6 +390,12 @@ public:
                    previous->text == "operator") {
           state.trimSpaces();
           state.append("<");
+        } else if (previous != nullptr && previous->kind == Kind::Word &&
+                   previous->text == "for") {
+          // `for <Parameters> concept`: a loop is always `for (`.
+          state.space();
+          state.append("<");
+          ++state.templateDepth;
         } else if (state.templateDepth > 0 ||
                    isGenericAngleStart(lexemes, index, declaredTypes)) {
           state.trimSpaces();
@@ -1200,11 +1206,21 @@ private:
     };
 
     for (std::size_t index = 0; index < lexemes.size(); ++index) {
+      // A conformance block's `for <Parameters>` declares its parameters.
+      if (lexemes[index].kind == Kind::Word && lexemes[index].text == "for") {
+        const Lexeme *generic = nextSyntaxLexeme(lexemes, index);
+        if (generic != nullptr && generic->kind == Kind::Less) {
+          collectGenericParameters(
+              static_cast<std::size_t>(generic - lexemes.data()));
+        }
+        continue;
+      }
       if (lexemes[index].kind != Kind::Word ||
           (lexemes[index].text != "class" && lexemes[index].text != "concept" &&
            lexemes[index].text != "interface" &&
            lexemes[index].text != "struct" && lexemes[index].text != "union" &&
-           lexemes[index].text != "enum" && lexemes[index].text != "using")) {
+           lexemes[index].text != "enum" && lexemes[index].text != "using" &&
+           lexemes[index].text != "typename")) {
         continue;
       }
       const Lexeme *name = nextSignificant(lexemes, index);

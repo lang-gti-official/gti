@@ -335,3 +335,11 @@ struct ConversionHighlight {
 };
 
 [[test]] void annotated_test_highlight() {}
+concept protocol_shape<T> {
+  typename measure_type;
+  measure_type measure(T& item);
+};
+for <T> concept protocol_shape<Crate<T>> {
+  using measure_type = int;
+  measure_type measure(Crate<T>& item) { return 0; }
+};
