@@ -1,7 +1,5 @@
 #include "semantic_analyzer_impl.h"
 
-#include "gti/support.h"
-
 #include "gti/failure_metadata.h"
 #include "gti/hir.h"
 #include "gti/mir_constant_evaluator.h"
