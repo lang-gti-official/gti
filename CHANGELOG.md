@@ -15,7 +15,8 @@ for what minor and patch releases mean.
   generating a representation") when a program reads a field directly from a
   temporary whose class has a destructor, such as
   `int32_t v = Holder(3).value;`. The same read now also works in field
-  defaults and member initializers (`int32_t width = Holder(3).value;`), inside
+  defaults and member initializers (`int32_t width = Holder(3).value;`), in
+  base-class initializers (`Derived() : Base(Holder(3).value) {}`), inside
   `&&` and `||` operands, through nested fields, and when a method is called on
   the field (`Outer(4).inner.twice()`). The temporary is destroyed exactly
   once, at the end of its full expression, after the field is read.

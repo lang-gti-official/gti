@@ -7,11 +7,12 @@ constructed temporaries whose class has a destructor: in condition, `while`,
 `switch`, argument, return, index, initializer, compound-assignment,
 short-circuit and loop positions, through a nested field and a field lent to a
 member call, from a raising and a generated default constructor, and in a field
-default and a member initializer. It checks that every read precedes the
-temporary's end-of-full-expression destruction and that all 19 temporaries are
-destroyed exactly once, in C++20/C++23 at O0–O3 with disabled elision and at O1
-with ASan/UBSan. The emitted C++ reads all 17 views through MIR's own result
-slots and none through a cleanup-free value slot.
+default, a member initializer and a base initializer. It checks that every read
+precedes the temporary's end-of-full-expression destruction and that all 20
+temporaries are destroyed exactly once, in C++20/C++23 at O0–O3 with disabled
+elision and at O1 with ASan/UBSan. The emitted C++ reads all 18 views through
+MIR's own result slots, the base argument's through its preparation carrier,
+and none through a cleanup-free value slot.
 `owning_temporary_field_read_runtime` adds plain, nested and by-value-argument
 constructions in its eight native modes. It observes that a failure after the
 read destroys the constructed temporary once, and that a failed construction is

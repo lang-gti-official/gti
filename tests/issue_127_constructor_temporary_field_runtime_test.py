@@ -106,7 +106,7 @@ def main() -> int:
         cleanup_free_owned_reads = re.findall(
             r"__gti_mir_v_\d+\.get\(\)\.(?:count|tag)\b", generated
         )
-        if len(owned_field_reads) != 17 or cleanup_free_owned_reads:
+        if len(owned_field_reads) != 18 or cleanup_free_owned_reads:
             sys.stderr.write(
                 "generated C++ lost the owned result slots of destructor-"
                 "bearing constructor temporaries\n"
