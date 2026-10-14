@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.430.1 — Fields of temporaries with destructors
+## 0.430.2 — Fields of temporaries with destructors
 
 - Fix an internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a program reads a field directly from a
@@ -19,6 +19,24 @@ for what minor and patch releases mean.
   `&&` and `||` operands, through nested fields, and when a method is called on
   the field (`Outer(4).inner.twice()`). The temporary is destroyed exactly
   once, at the end of its full expression, after the field is read.
+
+## 0.430.1 — Temporaries in constructor initializers
+
+- Fix an internal compiler error ("backend failed while generating a
+  representation") when a member initializer or field default binds a
+  temporary to a reference parameter, such as `lap(convert(Feet(30)))` or
+  `Meters lap = convert(Feet(30));` with `Meters convert(Feet& feet)`, with or
+  without a destructor on the temporary. The temporary is destroyed right
+  after its field is initialized.
+- Fix the same error when a base-class initializer computes its argument
+  through a temporary: calling a method on it, as in
+  `Derived() : Base(Feet(30).third()) {}`, binding it to a reference
+  parameter, or reading one of its fields. The temporary stays alive until the
+  base is constructed and is destroyed before the next initializer. If the
+  argument, the base constructor or the constructor body fails, each
+  temporary is still destroyed exactly once.
+- Computing a base argument through a call in a generic class still stops
+  with this error.
 
 ## 0.430.0 — Protected members
 

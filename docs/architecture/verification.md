@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Field reads from constructed temporaries with destructors (0.430.1)
+## Field reads from constructed temporaries with destructors (0.430.2)
 
 `issue_127_constructor_temporary_field_runtime` also reads fields directly from
 constructed temporaries whose class has a destructor: in condition, `while`,
@@ -21,6 +21,22 @@ publication, a short-circuit conditional temporary and constructor-body reads,
 and rejects a view moved out of its temporary and an obligation armed before
 its construction. The cleanup-free near miss now requires the explicit-destructor
 temporary to use its owned slot rather than the cleanup-free value slot.
+
+## Constructor-initializer temporaries (0.430.1)
+
+`mutable_temporary_receiver_runtime` binds temporaries, with and without a
+destructor, to reference parameters in an explicit member initializer, field
+defaults and a generated default constructor. Its C++20/C++23 O0/O3 builds
+check that each temporary ends before the next initializer observes the drop
+count. `base_constructor_stage_runtime` adds `base_initializer_temporaries.gti`:
+a destructor-bearing base built from a temporary receiver, a reference argument
+and field reads of a returned and a constructed value. In C++20/C++23 at
+O0/O1/O3, no-elide and ASan/UBSan it checks that both probes end in reverse
+order right after the base, and that a failure in an argument, the base
+constructor or the derived body ends each exactly once. `base_constructor_stage`
+requires two carrier slots for that fixture and rejects a forged initially
+active obligation, a post-base drop of another obligation, a borrow stage from
+another call site and an edge re-entering the preparation.
 
 ## Protected member visibility
 
