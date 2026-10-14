@@ -41,6 +41,7 @@ const std::unordered_map<std::string_view, TokenKind> keywords{
     {"sizeof", TokenKind::SIZEOF},
     {"switch", TokenKind::SWITCH},
     {"true", TokenKind::TRUE},
+    {"typename", TokenKind::TYPENAME},
     {"union", TokenKind::UNION},
     {"unsafe", TokenKind::UNSAFE},
     {"using", TokenKind::USING},

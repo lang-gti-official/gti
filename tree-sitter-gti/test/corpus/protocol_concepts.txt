@@ -1,0 +1,171 @@
+================================================================================
+Protocol concept bodies
+================================================================================
+
+concept measurable<T> {
+  typename unit_type;
+  unit_type measure(T& item);
+};
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (concept_body
+      (associated_type_declaration
+        (identifier))
+      (function_declaration
+        (type
+          (user_type
+            (identifier)))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier)))))))
+
+================================================================================
+Conformance blocks
+================================================================================
+
+for <T> concept measurable<Crate<T>> {
+  using unit_type = int;
+  unit_type measure(Crate<T>& item) { return item.count; }
+};
+
+for concept measurable<Rope> {
+  using unit_type = int;
+  int measure(Rope& item) { return 0; }
+};
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (conformance_declaration
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (concept_application
+      (identifier)
+      (type
+        (user_type
+          (identifier)
+          (type_argument_clause
+            (type
+              (user_type
+                (identifier)))))))
+    (conformance_body
+      (type_alias_declaration
+        (identifier)
+        (type
+          (primitive_type)))
+      (function_declaration
+        (type
+          (user_type
+            (identifier)))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier)
+                (type_argument_clause
+                  (type
+                    (user_type
+                      (identifier)))))
+              (reference_declarator))
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (member_expression
+                (primary_expression
+                  (identifier))
+                (identifier))))))))
+  (conformance_declaration
+    (concept_application
+      (identifier)
+      (type
+        (user_type
+          (identifier))))
+    (conformance_body
+      (type_alias_declaration
+        (identifier)
+        (type
+          (primitive_type)))
+      (function_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal))))))))))
+
+================================================================================
+Associated type projections and operation calls
+================================================================================
+
+measurable<T>::unit_type total<T>(T& item) requires measurable<T> {
+  return measurable<T>::measure(item);
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (type
+      (user_type
+        (identifier)
+        (type_argument_clause
+          (type
+            (user_type
+              (identifier))))
+        (identifier)))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)))
+    (requires_clause
+      (constraint_expression
+        (concept_application
+          (identifier)
+          (type
+            (user_type
+              (identifier))))))
+    (block
+      (return_statement
+        (initializer_expression
+          (call_expression
+            (primary_expression
+              (generic_scoped_identifier
+                (identifier)
+                (type_argument_clause
+                  (type
+                    (user_type
+                      (identifier))))
+                (identifier)))
+            (argument_list
+              (primary_expression
+                (identifier)))))))))

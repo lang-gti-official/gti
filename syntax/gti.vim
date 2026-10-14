@@ -25,6 +25,7 @@ syntax keyword gtiEnumKeyword enum nextgroup=gtiClassKeyword skipwhite
 syntax keyword gtiAccess public private protected
 syntax keyword gtiNamespaceKeyword namespace module nextgroup=gtiNamespaceDeclaration skipwhite
 syntax keyword gtiTypeAliasKeyword using nextgroup=gtiTypeAliasName skipwhite
+syntax keyword gtiTypeAliasKeyword typename nextgroup=gtiTypeAliasName skipwhite
 syntax keyword gtiConceptKeyword concept nextgroup=gtiConceptName skipwhite
 syntax keyword gtiStorageClass const constexpr export extern implicit mut override static virtual
 syntax keyword gtiOperatorKeyword operator

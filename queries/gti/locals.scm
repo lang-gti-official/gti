@@ -29,6 +29,11 @@
   name: (identifier) @local.definition.type
   parameter: (identifier) @local.definition.type) @local.scope
 
+(associated_type_declaration
+  name: (identifier) @local.definition.type)
+
+(conformance_declaration) @local.scope
+
 (generic_parameter
   !value_type
   name: (identifier) @local.definition.type)

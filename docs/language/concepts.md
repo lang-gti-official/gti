@@ -629,15 +629,119 @@ It accepts an exact reusable `void()` target or `operator() &&`, consumes the
 local once, and retains that choice through concrete HIR/MIR. It does not
 create escaping callable storage.
 
+## Protocol concepts and conformance blocks
+
+A concept may have a body instead of `= constraint;`. The body declares
+associated types with `typename name;` and operations as function
+prototypes:
+
+```gti
+concept measurable<T> {
+  typename unit_type;
+  unit_type measure(T& item);
+  bool is_empty(T& item);
+};
+```
+
+A type satisfies such a concept only through a conformance block, declared
+at namespace scope:
+
+```gti
+for concept measurable<Rope> {
+  using unit_type = Meters;
+  Meters measure(Rope& item) { return Meters(item.length); }
+  bool is_empty(Rope& item) { return item.length == 0; }
+};
+
+for <T> concept measurable<Crate<T>> {
+  using unit_type = int;
+  unit_type measure(Crate<T>& item) { return item.count; }
+  bool is_empty(Crate<T>& item) { return item.count == 0; }
+};
+```
+
+Users write `C<X>::name` for an associated type and `C<X>::operation(...)`
+for an operation:
+
+```gti
+measurable<T>::unit_type total<T>(T& item) requires measurable<T> {
+  return measurable<T>::measure(item);
+}
+```
+
+### Declaring a concept with a body
+
+A concept with a body takes exactly one type parameter. Its member names are
+distinct from each other, from the parameter and from the concept.
+
+An operation is a free function signature. It has no body, generic
+parameters, requires clause, defaults, packs, modifiers, attributes or
+receiver qualifier. Its types may name the parameter, the concept's
+associated names, and visible types.
+
+### Conformance blocks
+
+The block's pattern is either a concrete type, or one class template applied
+to each of the block's type parameters exactly once, in any order. The block
+defines every associated type with one `using`, and every operation with one
+function. Each function has exactly the concept's signature after
+substituting the pattern for the parameter and the block's types for the
+associated types. A block defines nothing else.
+
+A block function is an ordinary function definition. The block's parameters
+apply to it, and it cannot declare its own generic parameters or a requires
+clause. Inside the block:
+- the block's associated types are transparent, whether written as
+  `unit_type` or as `measurable<Crate<T>>::unit_type`;
+- each operation requires the block's own application;
+- the block's functions can call each other by name.
+
+### Selection and coherence
+
+Selection is exact:
+- a concrete type matches at most one block of a concept, and overlapping
+  blocks are rejected;
+- there is no specialization or ranking between blocks;
+- the block's type-parameter constraints must hold for the bound types.
+
+The declaring package must own the concept or the pattern's top-level
+nominal type, as for
+[exact class specializations](../decisions/020-exact-qualified-class-specializations.md).
+All blocks register before bodies are analyzed, so the block that applies
+does not depend on include order.
+
+### Uses in generic code
+
+In generic code, `C<T>::name` and `C<T>::operation(...)` require `C<T>` as a
+conjunct of the enclosing `requires` clause, not inside a disjunction. The
+generic body sees the associated type as an opaque type and checks calls
+against the declared signature. Each concrete instance then resolves both to
+the selected block.
+
+A concept with a body may be composed into an ordinary concept for concrete
+checks. Its associated types are reachable only through a direct conjunct.
+An inline constraint such as `<measurable T>` is rejected; write a trailing
+`requires` clause.
+
+### No remapping
+
+A block function is reachable only through its concept. It never takes part
+in member or ordinary name lookup, so a block cannot change what
+`value.member()` means. Calls to block functions are ordinary calls,
+including evaluation order, ownership transfer and failure cleanup.
+
+Violations are reported as `GTI-S2123`; an unsatisfied requirement at a call
+is `GTI-S2029`. See [ADR 028](../decisions/028-protocol-concepts.md).
+
 ## Deliberate exclusions and extension rule
 
 The implemented language does not provide general C++ requires-expressions,
-arbitrary expression requirements, negation, associated types, value
-constraints, concept or partial specialization, constraint subsumption,
-constraint-based overload ordering, conditionally available operators,
-constrained polymorphic contracts, or unrestricted compile-time reflection.
-Variadic callable relations, generic `operator()` requirements and native
-function pointers in these public callable relations remain outside the
+arbitrary expression requirements, negation, associated types outside a concept
+with a body, value constraints, concept or partial specialization, constraint
+subsumption, constraint-based overload ordering, conditionally available
+operators, constrained polymorphic contracts, or unrestricted compile-time
+reflection. Variadic callable relations, generic `operator()` requirements and
+native function pointers in these public callable relations remain outside the
 current bounded surface. Eligible namespace-scope GTI function items are
 supported; an unresolved overload set still needs one exact context, and
 unsafe/native/generic declarations do not automatically become stored items.

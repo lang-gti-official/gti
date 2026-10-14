@@ -557,6 +557,7 @@ public:
   void visitTypeAliasDecl(const TypeAliasDecl &stmt) override;
 
   void visitConceptDecl(const ConceptDecl &stmt) override;
+  void visitConformanceDecl(const ConformanceDecl &stmt) override;
 
   void visitVariableDecl(const VariableDecl &stmt) override;
 
@@ -1539,6 +1540,49 @@ private:
     std::vector<SymbolId> parameterSymbols;
     std::vector<GenericParameterId> parameterIds;
     bool compilerPrivate = false;
+    // A concept with a body is satisfied only through conformance blocks.
+    // Operation types are in the concept parameter's space, where an
+    // associated name types as a projection of that parameter.
+    struct ProtocolOperation {
+      std::string name;
+      const FunctionDecl *declaration = nullptr;
+      SemanticType returnType = SemanticType::Unknown;
+      std::vector<SemanticType> parameterTypes;
+    };
+    bool protocol = false;
+    std::vector<std::string> associatedTypes;
+    std::vector<ProtocolOperation> operations;
+  };
+
+  // One `for <Parameters> concept Concept<Pattern>` block. Its pattern and
+  // associated types are in the block's parameter space; selecting the block
+  // for a concrete type binds those parameters.
+  struct RegisteredConformance {
+    ConceptId conceptId = 0;
+    SourceUnitId sourceUnit = 0;
+    const ConformanceDecl *declaration = nullptr;
+    // The enclosing namespace, and the generated namespace holding the
+    // block's functions.
+    std::vector<std::string> namespaceScope;
+    std::vector<std::string> functionScope;
+    std::vector<GenericParameterInfo> genericParameters;
+    SemanticType pattern = SemanticType::Unknown;
+    // Nonzero when the pattern is a class template applied to every block
+    // parameter once; zero for a closed concrete pattern.
+    ClassId patternTemplate = 0;
+    std::vector<SemanticType> associatedTypes;
+    std::vector<Symbol> operations;
+    bool operationsBound = false;
+  };
+
+  struct ConformanceMatch {
+    std::size_t conformance = 0;
+    std::vector<SemanticType> binding;
+  };
+
+  struct ProtocolOperationTarget {
+    Symbol symbol;
+    std::vector<SemanticType> typeArguments;
   };
 
   struct FlowSummary {
@@ -3476,6 +3520,47 @@ private:
                                       std::string message,
                                       const ClassInfo *primary = nullptr);
 
+  // Protocol concepts and conformance blocks.
+  void resolveProtocolConcept(RegisteredConcept &conceptInfo, bool &valid);
+  void registerConformances(const StmtList &statements,
+                            std::vector<std::string> scope);
+  void bindConformanceOperations();
+  [[nodiscard]] std::optional<ConformanceMatch>
+  matchConformance(ConceptId id, const SemanticType &argument) const;
+  [[nodiscard]] std::optional<ConceptId>
+  protocolConceptOwner(const TypeRef &owner,
+                       const std::vector<std::string> &fromScope) const;
+  [[nodiscard]] SemanticType
+  associatedTypeProjection(ConceptId id, std::uint32_t member,
+                           SemanticType argument) const;
+  [[nodiscard]] SemanticType
+  reduceAssociatedTypeProjection(SemanticType projection) const;
+  [[nodiscard]] SemanticType
+  protocolOperationType(ConceptId id, const SemanticType &type,
+                        const SemanticType &argument) const;
+  [[nodiscard]] const RegisteredConformance *
+  enclosingConformance(const std::vector<std::string> &fromScope) const;
+  [[nodiscard]] SemanticType
+  blockScopeType(const RegisteredConformance &conformance,
+                 const SemanticType &type) const;
+  [[nodiscard]] std::optional<SemanticType>
+  blockAssociatedType(std::string_view name,
+                      const std::vector<std::string> &fromScope) const;
+  [[nodiscard]] std::optional<SemanticType>
+  ownBlockProjection(ConceptId id, std::uint32_t member,
+                     const SemanticType &argument,
+                     const std::vector<std::string> &fromScope) const;
+  [[nodiscard]] std::optional<ConstraintFailure> protocolConformanceFailure(
+      const AppliedConceptRequirement &requirement) const;
+  void validateAssociatedTypePath(const TypeRef &type, ConceptId id);
+  [[nodiscard]] std::optional<ProtocolOperationTarget>
+  protocolOperationTarget(const QualifiedName &callee) const;
+  [[nodiscard]] bool analyzeProtocolOperationCall(const Call &expr,
+                                                  const QualifiedName &callee,
+                                                  ConceptId id);
+  void reportConformanceError(const Token &site, std::string message,
+                              const Token *related = nullptr,
+                              std::string relatedMessage = {});
   void registerClassSpecializations(const StmtList &statements,
                                     std::vector<std::string> scope);
 
@@ -4908,6 +4993,7 @@ private:
     std::unordered_map<GenericParameterId, ConceptId> genericConstraintConcepts;
     std::vector<ClassInfo> classes;
     std::vector<ExactClassSpecialization> exactClassSpecializations;
+    std::vector<RegisteredConformance> conformances;
     std::vector<EnumInfo> enums;
     std::unordered_set<const VariableDecl *> predeclaredVariables;
     std::unordered_map<const VariableDecl *, const Token *>
@@ -5000,6 +5086,7 @@ private:
               genericConstraintConcepts.size(),
               classes.size(),
               exactClassSpecializations.size(),
+              conformances.size(),
               enums.size(),
               predeclaredVariables.size(),
               mutableFieldGroupOrigins.size(),
@@ -5351,6 +5438,8 @@ private:
   std::vector<ClassInfo> &classes = requestSession.catalog.classes;
   std::vector<ExactClassSpecialization> &exactClassSpecializations =
       requestSession.catalog.exactClassSpecializations;
+  std::vector<RegisteredConformance> &conformances =
+      requestSession.catalog.conformances;
   std::vector<EnumInfo> &enums = requestSession.catalog.enums;
   std::vector<std::unordered_map<std::string, SemanticType>>
       &typeParameterScopes = requestSession.typeParameterScopes;

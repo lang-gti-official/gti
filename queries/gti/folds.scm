@@ -5,6 +5,8 @@
     body: (class_body))
   (mutable_field_group)
   (enum_declaration)
+  (concept_body)
+  (conformance_body)
   (function_declaration)
   (method_declaration)
   (operator_declaration)
