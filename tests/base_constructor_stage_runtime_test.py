@@ -22,6 +22,7 @@ def main():
     checked = repository / "tests/fixtures/checked_base_arguments.gti"
     forwarded = repository / "tests/fixtures/forwarded_base_view.gti"
     temporaries = repository / "tests/fixtures/base_initializer_temporaries.gti"
+    generic = repository / "tests/fixtures/generic_base_arguments.gti"
     success = "1\n5\n2\n3\n6\n16\n13\n12\n15\n11\n"
     sources = [
         (reproducer / "a45-base-state-rollback-unsupported.gti", "2\n"),
@@ -36,7 +37,9 @@ def main():
         (repository / "examples/005-objects.gti", "objects use explicit construction\n"),
         (forwarded, "derived\nforwarded\nderived\nheap\n"),
         (temporaries, "1\n2\n30\n102\n101\n50\n150\n130\n"),
+        (generic, "2\n30\n102\n50\n3\n30\n103\n50\n150\n130\n150\n130\n"),
     ]
+    outputs = dict(sources)
     failures = [
         (1, "1\n5\n11\n", "GTI-R0002", 27),
         (2, "1\n5\n2\n3\n6\n13\n12\n15\n11\n", "GTI-R0002", 48),
@@ -70,6 +73,18 @@ def main():
                 result = run([str(executable)] + ["phase"] * phase, 70)
                 assert result.stdout == output, result
                 assert f"base_initializer_temporaries.gti:{line}: runtime error[GTI-R0002]" in result.stderr, result
+            return
+        if source == generic:
+            # Each concrete instance of a generic derived class prepares its
+            # generic base's arguments, including a temporary receiver.
+            for phase, output, line in (
+                (1, "2\n102\n", 13),
+                (2, "2\n30\n102\n", 26),
+                (3, "2\n30\n102\n50\n130\n", 42),
+            ):
+                result = run([str(executable)] + ["phase"] * phase, 70)
+                assert result.stdout == output, result
+                assert f"generic_base_arguments.gti:{line}: runtime error[GTI-R0002]" in result.stderr, result
             return
         if source == effectful:
             for phase, output, line in (
@@ -107,14 +122,17 @@ def main():
         verify(executable, success, strong)
         run([str(compiler), str(effectful), "-O1", "--progress", "never", "-o", str(executable),
              "--", "-fsanitize=address,undefined", "-fno-elide-constructors"])
-        verify(executable, sources[7][1], effectful)
+        verify(executable, outputs[effectful], effectful)
         run([str(compiler), str(forwarded), "-O1", "--progress", "never", "-o", str(executable),
              "--", "-fsanitize=address,undefined", "-fno-elide-constructors"])
-        verify(executable, sources[-2][1], forwarded)
+        verify(executable, outputs[forwarded], forwarded)
         run([str(compiler), str(temporaries), "-O1", "--progress", "never", "-o", str(executable),
              "--", "-fsanitize=address,undefined", "-fno-elide-constructors"])
-        verify(executable, sources[-1][1], temporaries)
-    print("base constructor stage: 72 native cases, 78 failures and 16 sanitizer runs passed")
+        verify(executable, outputs[temporaries], temporaries)
+        run([str(compiler), str(generic), "-O1", "--progress", "never", "-o", str(executable),
+             "--", "-fsanitize=address,undefined", "-fno-elide-constructors"])
+        verify(executable, outputs[generic], generic)
+    print("base constructor stage: 78 native cases, 96 failures and 20 sanitizer runs passed")
 
 
 if __name__ == "__main__":

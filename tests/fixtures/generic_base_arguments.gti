@@ -1,0 +1,52 @@
+#include <std/string>
+#include <std/vector>
+
+mut int phase = 0;
+class Probe {
+  int id;
+public:
+  Probe(int id) : id(id) { std::println(id); }
+  ~Probe() { std::println(this.id + 100); }
+  int scaled(int factor) {
+    if (phase == 1 && this.id == 2) {
+      int zero = 0;
+      int failed = factor / zero;
+    }
+    return this.id * factor;
+  }
+};
+int checked(int value) { return value + 1; }
+class Foundation<T> {
+public:
+  int score;
+  Foundation(int first, int second) : score(first + second) {
+    std::println(30);
+    if (phase == 2) {
+      int zero = 0;
+      int failed = score / zero;
+    }
+  }
+  ~Foundation() { std::println(130); }
+};
+// A generic derived class computes its generic base's arguments through a
+// checked call and a temporary receiver. Each concrete instance prepares its
+// own arguments before its own base is built.
+class Building<T> : public Foundation<T> {
+public:
+  T tag;
+  Building(int seed, T tag)
+      : Foundation<T>(checked(seed), Probe(seed + 1).scaled(10)), tag(tag) {
+    std::println(50);
+    if (phase == 3) {
+      int zero = 0;
+      int failed = phase / zero;
+    }
+  }
+  ~Building() { std::println(150); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Building<int> number = Building<int>(1, 7);
+  Building<bool> flag = Building<bool>(2, true);
+  return number.score + flag.score - 55 + number.tag - 7 + (flag.tag ? 0 : 1);
+}

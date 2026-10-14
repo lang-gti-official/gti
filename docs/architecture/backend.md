@@ -1507,8 +1507,15 @@ non-field projections, cleanup-owning temporaries, and incoherent type rows
 reject this route rather than falling back to native temporary behavior.
 A cleanup-owning class result keeps MIR's value-rooted slot and its
 full-expression Drop, and may instead be read through field views of that
-slot. That covers `make_tracked(7).number`, nested fields, and a field lent to
-one member call as in `make_named().text.size()`. A view is a pure field
+slot. The result may come from a call, as in `make_tracked(7).number`, or from
+an ordinary `Construct`, as in `tracked(7).number`. A failure-free constructor
+constructs the slot in place and arms the result's obligation with its own
+`Initialize`. A raising one places the object at the slot's construction
+address and arms the obligation on its Invoke success edge. Either way the
+construction's only other uses must be field views. Views cover nested fields
+and a field lent to one member call as in `make_named().text.size()`, in
+function bodies as well as field defaults, member initializers and base
+argument preparations, whose carrier holds the slot. A view is a pure field
 projection of the result's value root with exact field rows. It carries no
 loan or drop and is touched only by copying `Load`s or by read-only borrow
 stages consumed by one call. It declares no local and spells
@@ -1518,14 +1525,14 @@ result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.
 An owning Expected temporary's payload whose fields alone are read moves into
 the payload's own result slot on the checked extraction's success edge, then is
 read the same way, as in `make_named(true).value().text.size()`.
-Inside a short-circuit operand or a conditional arm, the producer instead
-constructs the result in a conditional temporary that holds the result's own
-obligation. A failure-free producer does so at its destination; a transformed
-one arms the temporary on its Invoke success edge. When the result is read only
-through field views, that temporary is its storage: the views spell
-`temporary.get().field`, the result declares no local, and MIR's conditional
-Drop destroys the temporary exactly once if its operand ran, on the normal path
-or on a failure-cleanup edge.
+Inside a short-circuit operand or a conditional arm, the producer, a call or a
+construction, instead constructs the result in a conditional temporary that
+holds the result's own obligation. A failure-free producer does so at its
+destination; a transformed one arms the temporary on its Invoke success edge.
+When the result is read only through field views, that temporary is its
+storage: the views spell `temporary.get().field`, the result declares no local,
+and MIR's conditional Drop destroys the temporary exactly once if its operand
+ran, on the normal path or on a failure-cleanup edge.
 An owning Expected call result in such a position is held by its own
 conditional temporary. A checked extraction of a class alternative whose
 result is read only through field views moves that alternative into the
@@ -2265,11 +2272,20 @@ later edge may re-enter the prefix, whose instructions the resumed body skips.
 
 This preparation family requires scalar derived parameters and scalar base
 arguments, with a passive non-borrowing base whose declared cleanup is guarded
-and whose representation has no state-bearing ancestor. Owned or borrowed
-derived parameters and base arguments, generic carrier families and recursively
-inactive owning/nested bases need the frame, transfer/loan and shell
-prerequisites recorded in the implementation sequence. They are not accepted
-through native C++ delegation shortcuts.
+and whose representation has no state-bearing ancestor. The derived class and
+the selected base may be generic instances, such as `Building<int>` built over
+`Foundation<int>`: the MIR proofs treat a generic instance like any class. The
+carrier and the gate constructor, however, are members of each class's own C++
+definition. The representation snapshot therefore marks a generic application
+that is emitted as its own concrete class (`concreteGenericClass`), and the
+emitter admits a preparation or gate only for such a class or a non-generic
+one. A generic class retained as a native class template, such as one
+instantiated with a lexical closure type, would need template specialization of
+those members and remains refused. Owned or borrowed derived parameters and
+base arguments, retained generic carrier templates and recursively inactive
+owning/nested bases need the frame, transfer/loan and shell prerequisites
+recorded in the implementation sequence. They are not accepted through native
+C++ delegation shortcuts.
 
 When a field or static initializer selects a failure-capable source
 constructor, the private C++ representation snapshot derives one exact
@@ -2597,6 +2613,32 @@ carriers retain their additional publication/loan-end witness. The prefix may
 not cross base construction, computations, later owned publication or failure
 edges. Native initialization realizes only that proved prefix; subsequent owned
 fields remain empty until their original MIR publication and rollback execute.
+
+A closure copied from its by-value constructor parameter into a field, as in
+`Holder(F f) : callback(f)` instantiated with a lambda type, uses the same copy
+route. MIR stages no `Initialize` for a closure-typed field: the constructor
+record publishes the parameter's copy `Load` under the shared
+`mirRecordPublishedConstructorInitializer` rule, which optimization also
+preserves. The copy proof accepts that record publication in place of the
+explicit `Initialize` when the field has no active cleanup, the loaded value
+has no other use, and the closure is copyable and borrow-free with only scalar,
+payload-free enum or passive generated-copy class captures. Copying the native
+closure object then replays the GTI copy exactly, and destroying it runs no
+source code. A closure has no native default state or assignment, so the field
+is copy-constructed in the member-initializer list and the body aliases the
+formal instead of copying it again. A class capture leaves a lexical drop on
+the formal; it stays in MIR and emits as a trivial drop. Every closure instance
+of a class shares one native constructor template, so a record-published
+closure copy keeps its sibling fields body-staged, as the owned-parameter form
+does. All instances then have one member-initializer list, and their bodies
+differ only behind the existing destructibility dispatch. Owned-parameter
+fields around the copy still move natively: the copy's exact `Load` and
+boundary form an effect-free prefix of a later owned move, like a passive
+scalar sibling, and the formal's unconditional scope-end `Drop` is one of the
+complete owned prologue's lexical parameter drop records. Closures capturing
+fixed arrays, payload enums or other closures, and a closure-typed generic
+class constructed as another class's member initializer, remain outside this
+route.
 
 A shared-reference carrier with generated, observation-free destruction may
 retain its bound native shell during constructor rollback. This is not an

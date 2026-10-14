@@ -168,9 +168,28 @@ auto SemanticVisitor::Impl::sourceUnitFor(const Token &token) const
 
 bool SemanticVisitor::Impl::declarationVisible(SourceUnitId declaration,
                                                const Token &name) const {
-  return sourceGraph == nullptr ||
-         sourceGraph->isDeclarationVisible(currentSourceUnit, declaration,
-                                           name.position);
+  if (sourceGraph == nullptr ||
+      sourceGraph->isDeclarationVisible(currentSourceUnit, declaration,
+                                        name.position))
+    return true;
+  // Registration authorizes the generated suite entry to invoke an exact
+  // annotated declaration in its package, including private module tests.
+  // Ordinary user functions retain the normal include/import visibility.
+  if (sourceGraph != nullptr && currentFunctionDeclaration != nullptr &&
+      currentFunctionDeclaration->generatedTestEntry()) {
+    const SourceUnit *caller = sourceGraph->findUnit(currentSourceUnit);
+    const SourceUnit *callee = sourceGraph->findUnit(declaration);
+    if (caller != nullptr && callee != nullptr &&
+        caller->packageIdentity == callee->packageIdentity) {
+      for (const FunctionInfo *function : semanticModel.testFunctions()) {
+        if (function->sourceUnit == declaration &&
+            function->declaration != nullptr &&
+            function->declaration->name().position == name.position)
+          return true;
+      }
+    }
+  }
+  return false;
 }
 
 void SemanticVisitor::Impl::validateModuleExports(const StmtList &statements,
@@ -4412,6 +4431,7 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .discardableResult = function->hasFunctionAttribute("discardable"),
           .threadConfinedCallback =
               function->hasFunctionAttribute("thread_confined_callback"),
+          .testFunction = function->hasFunctionAttribute("test"),
           .linkage = function->linkage(),
           .externalSymbol =
               function->hasCLinkage()
@@ -8668,6 +8688,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .tracksCaller = declaration.tracksCaller,
       .discardableResult = declaration.discardableResult,
       .threadConfinedCallback = declaration.threadConfinedCallback,
+      .testFunction = declaration.testFunction,
       .cThreadOperation = declaration.cThreadOperation,
       .processMemoryOperation = declaration.processMemoryOperation,
       .requiresCThreadRuntime =

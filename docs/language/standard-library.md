@@ -216,6 +216,10 @@ The current implemented foundation includes:
   deterministic cleanup. Formatting and stdout convenience APIs use the same
   facility; see [panic reporting](io.md#surface) and
   [defined runtime failure](execution.md#410-defined-runtime-failure); and
+- `<std/testing>` provides caller-tracked `std::testing::check`, reporting a
+  failed condition through cleanup-preserving panic. Manifest test suites
+  discover `[[test]] void` functions and run each in its own process; see
+  [annotated test suites](programs-and-targets.md#annotated-test-suites); and
 - `<std/build>` host-side package build-program support through
   `std::build::context`, exact-argv `std::build::command`, and structured
   `std::build::outputs`. This unit is intended for consumer-approved

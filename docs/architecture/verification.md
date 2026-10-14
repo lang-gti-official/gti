@@ -1,5 +1,71 @@
 # Compiler Verification
 
+## Copied closure fields of generic classes (0.431.2)
+
+`generic_callable_transport_runtime` adds `generic_closure_field_copy.gti`.
+Generic classes instantiated with captureless, scalar-capturing and
+struct-capturing lambda types copy the closure parameter into a field beside a
+literal, a forwarded and a defaulted base, a moved sibling of the same formal,
+owned string fields before and after it, a second closure type, a returned
+owner and a copied owner. Its C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan
+builds check every result. `stored_callable_types` requires one
+record-published copy binding and no hoisted sibling for each of three closure
+instances of one class, admits each constructor body under its closure
+overlay, and rejects a moved Load, a noncopyable or borrowing value, active
+field cleanup, a lost initializer record, and a captured class without a
+generated copy. It also requires the owned move after a closure copy to keep
+its native binding, and rejects it once the copy's Load and boundary are
+reordered. Under the real closure overlays, `base_constructor_stage` admits a
+lambda-typed class that copies its closure beside a literal base argument.
+A lambda-typed class that computes its base argument keeps its MIR preparation
+but receives no carrier, because its `concreteGenericClass` fact is clear.
+
+## Generic base arguments (0.431.1)
+
+`base_constructor_stage_runtime` adds `generic_base_arguments.gti`. In it, two
+concrete instances of a generic derived class compute their generic base's
+arguments through a checked call and a temporary receiver. In C++20/C++23 at
+O0/O1/O3, no-elide and ASan/UBSan it checks the temporary's drop after each
+base, and an argument, base-constructor or body failure ending each value
+exactly once. `base_constructor_stage` requires a preparation for both
+instances. It rejects the carrier and the gate when the `concreteGenericClass`
+representation fact of either the derived or the base class is cleared.
+
+## Annotated test suites
+
+`annotated_test_suites` checks the runnable `examples/annotated-tests` project
+at O0/C++20 and O3/C++23, included test declarations, independent global state,
+automatic per-function reports, cache reuse and corrupted-catalog recovery.
+Panic/check failures preserve destructor cleanup and source attribution; signal
+termination and later tests are reported independently. Invalid function shapes,
+mixed hosted main/annotations, empty suites and legacy executables are covered.
+The `function-contracts` LSP case checks exact UTF-16 spans, unsaved correction
+and annotated signatures in hover; Tree-sitter covers the same attribute syntax.
+The stdlib surface census records `std::testing::check` with O0/O3 execution.
+
+## Field reads from constructed temporaries with destructors (0.430.2)
+
+`issue_127_constructor_temporary_field_runtime` also reads fields directly from
+constructed temporaries whose class has a destructor: in condition, `while`,
+`switch`, argument, return, index, initializer, compound-assignment,
+short-circuit and loop positions, through a nested field and a field lent to a
+member call, from a raising and a generated default constructor, and in a field
+default, a member initializer and a base initializer. It checks that every read
+precedes the temporary's end-of-full-expression destruction and that all 20
+temporaries are destroyed exactly once, in C++20/C++23 at O0–O3 with disabled
+elision and at O1 with ASan/UBSan. The emitted C++ reads all 18 views through
+MIR's own result slots, the base argument's through its preparation carrier,
+and none through a cleanup-free value slot.
+`owning_temporary_field_read_runtime` adds plain, nested and by-value-argument
+constructions in its eight native modes. It observes that a failure after the
+read destroys the constructed temporary once, and that a failed construction is
+never destroyed.
+`testOwningConstructionFieldView` checks plain, raising and generated-default
+publication, a short-circuit conditional temporary and constructor-body reads,
+and rejects a view moved out of its temporary and an obligation armed before
+its construction. The cleanup-free near miss now requires the explicit-destructor
+temporary to use its owned slot rather than the cleanup-free value slot.
+
 ## Constructor-initializer temporaries (0.430.1)
 
 `mutable_temporary_receiver_runtime` binds temporaries, with and without a

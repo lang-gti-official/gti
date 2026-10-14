@@ -98,6 +98,20 @@ def main() -> int:
                 "field-read slots\n"
             )
             return 1
+        # A temporary whose class has a destructor is read through MIR's own
+        # result slot, never through a cleanup-free value slot.
+        owned_field_reads = re.findall(
+            r"__gti_mir_p_\d+\.get\(\)\.(?:count|tag)\b", generated
+        )
+        cleanup_free_owned_reads = re.findall(
+            r"__gti_mir_v_\d+\.get\(\)\.(?:count|tag)\b", generated
+        )
+        if len(owned_field_reads) != 18 or cleanup_free_owned_reads:
+            sys.stderr.write(
+                "generated C++ lost the owned result slots of destructor-"
+                "bearing constructor temporaries\n"
+            )
+            return 1
 
     return 0
 

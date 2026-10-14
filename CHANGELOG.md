@@ -41,6 +41,63 @@ for what minor and patch releases mean.
   result through `std::function_ptr` is rejected before native compilation
   in this slice (owning arguments stage through the thunk).
 
+## 0.431.2 — Generic classes instantiated with lambda types
+
+- Fix the internal compiler error that 0.431.1 still listed (`GTI-B0001`,
+  "backend failed while generating a representation") when a generic class
+  instantiated with a lambda type copies the lambda into a field, such as
+  `Holder(F f) : callback(f) {}` for a `Holder<F>` created in `use<F>(F f)`
+  called with a lambda. This works for lambdas without captures and lambdas
+  capturing numbers, plain enums or plain structs, with or without a base
+  class, beside other fields including ones that take ownership of a
+  parameter, and when one class is used with several lambdas. The copy leaves
+  the original lambda usable.
+- A lambda capturing a fixed array, a payload enum or another lambda, a class
+  built from a lambda inside another class's member initializer, and a
+  computed base-class argument in such a class still stop with this error.
+
+## 0.431.1 — Base arguments of generic classes
+
+- Fix the internal compiler error that 0.430.1 still listed (`GTI-B0001`,
+  "backend failed while generating a representation") when a generic class
+  computes its base-class argument through a call or a temporary, such as
+  `Derived(T extra) : Base(third_of(30)), extra(extra) {}` in
+  `class Derived<T> : public Base`. The same holds when any class computes the
+  argument of a generic base, such as `Derived() : Foundation<int>(third_of(30)) {}`.
+  Each instance, such as `Derived<int>` and `Derived<bool>`, computes its own
+  arguments before its base is built. Temporaries and failures are cleaned up
+  as for a non-generic class.
+- A generic class instantiated with a lambda type, such as `Holder<F>` created
+  in `use<F>(F f)` called with a lambda, still stops with this error, with or
+  without a base class.
+
+## 0.431.0 — Annotated isolated test suites
+
+- Explicit test targets collect safe, non-generic, non-static `[[test]] void`
+  functions with no parameters, including selected-package included and private
+  module declarations. One executable is built per suite; each function runs
+  in a fresh child process with automatic reporting, timings and captured output.
+  Panic and signal failures do not stop later tests. Dependency tests are excluded.
+- `<std/testing>` supplies caller-tracked `std::testing::check` over the existing
+  cleanup-preserving panic facility. Existing test targets with their own `main`
+  remain supported; annotated suites supply their entry point automatically.
+- Whole-program cache schema v4 retains a verified test catalog and distinguishes
+  ordered additional prelude roots. Compiler diagnostics, editor hover and
+  Tree-sitter recognise the attribute. `examples/annotated-tests` demonstrates
+  the complete workflow.
+
+## 0.430.2 — Fields of temporaries with destructors
+
+- Fix an internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a program reads a field directly from a
+  temporary whose class has a destructor, such as
+  `int32_t v = Holder(3).value;`. The same read now also works in field
+  defaults and member initializers (`int32_t width = Holder(3).value;`), in
+  base-class initializers (`Derived() : Base(Holder(3).value) {}`), inside
+  `&&` and `||` operands, through nested fields, and when a method is called on
+  the field (`Outer(4).inner.twice()`). The temporary is destroyed exactly
+  once, at the end of its full expression, after the field is read.
+
 ## 0.430.1 — Temporaries in constructor initializers
 
 - Fix an internal compiler error ("backend failed while generating a
@@ -56,9 +113,8 @@ for what minor and patch releases mean.
   base is constructed and is destroyed before the next initializer. If the
   argument, the base constructor or the constructor body fails, each
   temporary is still destroyed exactly once.
-- Reading a field of a constructed temporary that has a destructor, such as
-  `Holder(3).value`, and computing a base argument through a call in a generic
-  class still stop with this error.
+- Computing a base argument through a call in a generic class still stops
+  with this error.
 
 ## 0.430.0 — Protected members
 

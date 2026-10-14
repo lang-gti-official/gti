@@ -1,0 +1,12 @@
+#include <std/panic>
+
+namespace std::testing {
+  /// Fails the current isolated test with a source-located terminal message.
+  /// Ordinary return from a [[test]] function indicates success.
+  [[track_caller]]
+  void check(bool condition, std::string_view message = "Test check failed") {
+    if (!condition) {
+      std::panic(message);
+    }
+  }
+}

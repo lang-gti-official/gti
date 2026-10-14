@@ -14326,9 +14326,39 @@ int32_t main() { return cleanup_t().value - 7; }
       const lang::CppMirBodyEmissionMap cleanupMap(
           buildRows(cleanup, cleanup.mir, lang::CppStandard::Cpp23));
       const lang::CppMirBodyEmitter cleanupEmitter(cleanup.mir, cleanupMap);
+      const lang::MirBodyAddress cleanupAddress{
+          .kind = lang::MirBodyKind::Function, .owner = cleanupEntry->id};
+      // The explicit destructor keeps the result in MIR's own value-rooted
+      // slot, which its Drop retires, rather than the cleanup-free SSA slot.
+      lang::MirValueId cleanupResult = 0;
+      for (const lang::MirBlock &block : cleanupEntry->body.blocks)
+        for (const lang::MirInstruction &instruction : block.instructions)
+          if (instruction.kind == lang::MirInstructionKind::Construct &&
+              instruction.result)
+            cleanupResult = *instruction.result;
+      const bool supported =
+          cleanupEmitter.supportsFailureBodyText(cleanupAddress);
+      const std::string cleanupText =
+          supported ? cleanupEmitter
+                          .emitFailureBodyText(
+                              cleanupAddress, "constructor-cleanup-field-v0", 1)
+                          .text
+                    : std::string();
+      const std::size_t read = cleanupText.find(".get().value;");
+      const std::size_t slotStart =
+          read == std::string::npos ? std::string::npos
+                                    : cleanupText.rfind("__gti_mir_p_", read);
+      const std::string slot =
+          slotStart == std::string::npos
+              ? std::string()
+              : cleanupText.substr(slotStart, read - slotStart);
       expect(
-          !cleanupEmitter.supportsFailureBodyText(
-              {.kind = lang::MirBodyKind::Function, .owner = cleanupEntry->id}),
+          supported && cleanupResult != 0 && !slot.empty() &&
+              cleanupText.find("__gti_mir_v_" + std::to_string(cleanupResult) +
+                               ".") == std::string::npos &&
+              std::min(cleanupText.find(slot + ".construct("),
+                       cleanupText.find(slot + ".mark_constructed()")) < read &&
+              cleanupText.find(slot + ".destroy") != std::string::npos,
           "an explicit-destructor constructor temporary should remain "
           "outside the cleanup-free slot representation");
     }
@@ -14338,6 +14368,191 @@ int32_t main() { return cleanup_t().value - 7; }
 void testCleanupFreeConstructorTemporaryFieldRead() {
   checkCleanupFreeConstructorTemporaryFieldRead(false);
   checkCleanupFreeConstructorTemporaryFieldRead(true);
+}
+
+// A field read straight off a constructed temporary whose class owns cleanup
+// is a view of the construction's own result slot. Plain, raising and
+// generated-default constructions publish once into MIR's value-rooted slot,
+// or into the conditional temporary of a short-circuit operand; MIR's Drop
+// destroys it after every read, also in field defaults and member
+// initializers. A view moved out of, or an obligation armed before its
+// construction, leaves the body unsupported. (Regression: GTI-B0001.)
+void testOwningConstructionFieldView() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-owning-construction-field-view.gti", R"(
+mut int32_t drops = 0;
+
+struct inner_value {
+  int32_t code;
+  inner_value(int32_t code) : code(code) {}
+};
+
+class tracked {
+public:
+  inner_value inner;
+  int32_t number;
+  tracked(int32_t code) : inner(inner_value(code)), number(code) {}
+  ~tracked() { drops += 1; }
+};
+
+class checked {
+public:
+  int32_t number;
+  checked(int32_t number) : number(number + 1) {}
+  ~checked() { drops += 1; }
+};
+
+class defaulted {
+public:
+  mut int32_t number = 5;
+  ~defaulted() { drops += 1; }
+};
+
+class box {
+public:
+  int32_t width = tracked(2).number;
+  int32_t height;
+  box() : height(checked(3).number) {}
+};
+
+int32_t read() {
+  return tracked(7).inner.code + checked(4).number + defaulted().number;
+}
+
+int32_t gate(bool skip) {
+  if (skip || tracked(1).number == 1) {
+    return 1;
+  }
+  return 0;
+}
+
+int main() {
+  box made{};
+  return read() + gate(false) + made.width + made.height - 24;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the owning construction field view fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::HirFunctionInstanceId readId = 0;
+  lang::HirFunctionInstanceId gateId = 0;
+  for (const auto &function : frontend.hir.functionInstances()) {
+    if (function.source && function.source->name().lexeme == "read")
+      readId = function.id;
+    if (function.source && function.source->name().lexeme == "gate")
+      gateId = function.id;
+  }
+  lang::HirConstructorInstanceId boxId = 0;
+  for (const auto &constructor : frontend.hir.constructorInstances()) {
+    const auto &owner = frontend.hir.classInstances()[constructor.owner - 1];
+    if (owner.source && owner.source->name().lexeme == "box")
+      boxId = constructor.id;
+  }
+  expect(readId != 0 && gateId != 0 && boxId != 0,
+         "the fixture should lower read, gate and the box constructor");
+  const lang::MirBodyAddress readAddress{.kind = lang::MirBodyKind::Function,
+                                         .owner = readId};
+  const lang::MirBodyAddress gateAddress{.kind = lang::MirBodyKind::Function,
+                                         .owner = gateId};
+  const lang::MirBodyAddress boxAddress{.kind = lang::MirBodyKind::Constructor,
+                                        .owner = boxId};
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const std::vector<std::string> owners{"tracked", "checked", "defaulted"};
+  // Each view reads a declared slot of its owning class after the slot's one
+  // publication, and MIR's Drop destroys that slot. (A short-circuit join that
+  // drops the temporary may precede the operand block in the text.) No owning
+  // class value is declared as an SSA local.
+  const auto ownedViews = [&](const lang::MirBodyAddress &address,
+                              std::string_view label) {
+    std::size_t views = 0;
+    if (!emitter.supportsFailureBodyText(address))
+      return views;
+    const std::string text =
+        emitter.emitFailureBodyText(address, label, 1).text;
+    for (const std::string &owner : owners)
+      if (text.find("::__gti_program::" + owner + " __gti_mir_v_") !=
+          std::string::npos)
+        return views;
+    const std::string read = ".get().";
+    const std::string prefix = "__gti_mir_p_";
+    for (std::size_t at = text.find(read); at != std::string::npos;
+         at = text.find(read, at + read.size())) {
+      const std::size_t start = text.rfind(prefix, at);
+      if (start == std::string::npos || at - start <= prefix.size() ||
+          !std::all_of(text.begin() +
+                           static_cast<std::ptrdiff_t>(start + prefix.size()),
+                       text.begin() + static_cast<std::ptrdiff_t>(at),
+                       [](char c) { return c >= '0' && c <= '9'; }))
+        continue;
+      const std::string slot = text.substr(start, at - start);
+      const bool declared = std::any_of(
+          owners.begin(), owners.end(), [&](const std::string &owner) {
+            return text.find("mir_lifetime_slot<::__gti_program::" + owner +
+                             "> " + slot + ";") != std::string::npos;
+          });
+      const std::size_t published =
+          std::min(text.find(slot + ".construct("),
+                   text.find(slot + ".mark_constructed()"));
+      if (declared && published < at &&
+          text.find(slot + ".destroy") != std::string::npos)
+        ++views;
+    }
+    return views;
+  };
+  expect(ownedViews(readAddress, "owning-construction-read-v0") == 3,
+         "plain, raising and generated-default constructions should each be "
+         "read in place from their own result slot");
+  expect(ownedViews(gateAddress, "owning-construction-gate-v0") == 1,
+         "a short-circuit operand should read its construction in place from "
+         "the conditional temporary");
+  expect(ownedViews(boxAddress, "owning-construction-box-v0") == 2,
+         "a field default and a member initializer should read their "
+         "constructions in place before MIR destroys them");
+
+  for (int mutation = 0; mutation != 2; ++mutation) {
+    lang::MirProgram malformed = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        malformed.functionInstances());
+    bool changed = false;
+    for (lang::MirFunctionInstance &function : functions) {
+      if (function.id != readId)
+        continue;
+      lang::MirBody &body = function.body;
+      for (lang::MirBlock &block : body.blocks)
+        for (lang::MirInstruction &instruction : block.instructions) {
+          const lang::MirPlace *view =
+              instruction.kind == lang::MirInstructionKind::Load &&
+                      instruction.operands.size() == 1 &&
+                      instruction.operands.front().kind ==
+                          lang::MirOperandKind::Copy
+                  ? body.findPlace(instruction.operands.front().place)
+                  : nullptr;
+          if (mutation == 0 && !changed && view != nullptr &&
+              view->root == lang::MirPlaceRootKind::Value &&
+              !view->projections.empty()) {
+            instruction.operands.front().kind = lang::MirOperandKind::Move;
+            changed = true;
+          }
+        }
+      for (lang::MirDropObligation &drop : body.dropObligations)
+        if (mutation == 1 && !changed &&
+            drop.kind == lang::MirDropObligationKind::Value) {
+          drop.initiallyActive = true;
+          changed = true;
+        }
+      (void)lang::rebuildMirValueUses(body);
+    }
+    const lang::CppMirBodyEmitter rejected(malformed, map);
+    expect(changed && !rejected.supportsFailureBodyText(readAddress),
+           mutation == 0 ? "a field view moved out of its owning construction "
+                           "must not use the owned result slot"
+                         : "an owned construction slot must be armed by its "
+                           "own construction");
+  }
 }
 
 // A generated constructor with two or more owned-parameter fields, one of
@@ -14563,6 +14778,7 @@ constexpr NamedTest kTests[] = {
      testFailureCapableClassReturnFieldRead},
     {"testCleanupFreeConstructorTemporaryFieldRead",
      testCleanupFreeConstructorTemporaryFieldRead},
+    {"testOwningConstructionFieldView", testOwningConstructionFieldView},
     {"testDiscardedCleanupFreeClassResult",
      testDiscardedCleanupFreeClassResult},
     {"testNestedCleanupFreeClassResult", testNestedCleanupFreeClassResult},

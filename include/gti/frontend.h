@@ -117,6 +117,8 @@ struct FrontendResult {
   SourceGraph sourceGraph;
   SourceManager sources;
   std::vector<Diagnostic> diagnostics;
+  // Sorted semantic test names; empty for ordinary and legacy main programs.
+  std::vector<std::string> testCases;
   bool sourceValid = false;
   bool syntaxValid = false;
   bool semanticValid = false;

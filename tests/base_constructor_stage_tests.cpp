@@ -402,12 +402,154 @@ void checkBaseInitializerTemporaries(const std::filesystem::path &fixtures) {
   expect(exercised, "the base initializer fixture prepared owned temporaries");
 }
 
+// Each concrete instance of a generic derived class prepares its generic
+// base's arguments. The carrier and the base gate are members of the two
+// classes' own concrete C++ definitions; a class without one, such as a
+// retained native class template, is refused rather than mis-spelled.
+void checkGenericBaseArguments(const std::filesystem::path &fixtures) {
+  const auto path = fixtures / "fixtures/generic_base_arguments.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(), "generic base arguments analyze");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto rows = buildRows(frontend, frontend.mir);
+  expect(
+      lang::CppMirBodyEmitter(frontend.mir, lang::CppMirBodyEmissionMap(rows))
+          .analyzeProgram()
+          .ready(),
+      "generic base arguments have complete backend authority");
+  std::size_t prepared = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    if (!lang::cppMirBasePreparation(frontend.mir, constructor))
+      continue;
+    ++prepared;
+    const lang::MirConstructorInstance *target = nullptr;
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::InitializeBase &&
+            instruction.constructorTarget)
+          target = frontend.mir.findConstructorInstance(
+              *instruction.constructorTarget);
+    expect(target != nullptr, "a prepared generic base keeps its target");
+    if (target == nullptr)
+      continue;
+    for (const auto owner : {constructor.owner, target->owner}) {
+      const auto *instance = frontend.mir.findClassInstance(owner);
+      auto forged = rows;
+      bool marked = false;
+      for (auto &row : forged.types)
+        if (row.type == instance->type) {
+          marked = row.concreteGenericClass;
+          row.concreteGenericClass = false;
+        }
+      expect(marked, "a generic derived or base instance is a concrete class");
+      expect(!lang::CppMirBodyEmitter(frontend.mir,
+                                      lang::CppMirBodyEmissionMap(forged))
+                  .analyzeProgram()
+                  .ready(),
+             "a generic class without its own C++ definition never receives "
+             "a preparation carrier or base gate");
+    }
+  }
+  expect(prepared == 2,
+         "each concrete generic derived instance prepares its base");
+}
+
+// A class instantiated with a lambda type is a retained native class template.
+// Its constructors emit under the closure overlay, including one that copies
+// the closure into a field beside a literal base argument. A computed base
+// argument would need a per-instance preparation carrier, which only a class
+// with its own concrete C++ definition declares, so it stays refused.
+void checkClosureGenericBaseArguments() {
+  const auto frontend =
+      analyzeWithStandardLibrary("closure-generic-base.gti", R"(
+class Base {
+public:
+  int amount;
+  Base(int amount) : amount(amount) {}
+};
+int third_of(int value) { return value / 3; }
+class Fixed<F> : public Base {
+public:
+  F callback;
+  Fixed(F f) : Base(20), callback(f) {}
+};
+class Computed<F> : public Base {
+public:
+  int extra;
+  Computed(int extra) : Base(third_of(30)), extra(extra) {}
+};
+int fixed<F>(F f) {
+  Fixed<F> value = Fixed<F>(f);
+  return value.amount;
+}
+int computed<F>(F f) {
+  Computed<F> value = Computed<F>(5);
+  return value.amount + value.extra;
+}
+int main() {
+  return fixed([]() -> int { return 1; }) +
+         computed([]() -> int { return 2; }) - 35;
+}
+)");
+  expect(frontend.canGenerateCode(), "closure-typed derived classes analyze");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  std::size_t admitted = 0;
+  std::size_t refused = 0;
+  for (const auto &constructor : lowered.mir().constructorInstances()) {
+    const auto *owner = lowered.mir().findClassInstance(constructor.owner);
+    if (owner == nullptr || owner->type.arguments.size() != 1 ||
+        owner->type.arguments.front().kind != lang::SemanticType::Lambda)
+      continue;
+    const auto *source = lowered.findConstructorInstance(constructor.id);
+    const auto *declaration =
+        source == nullptr
+            ? nullptr
+            : lowered.findConstructorDeclaration(source->declaration);
+    auto rows =
+        lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
+    const auto overlays =
+        declaration == nullptr
+            ? std::nullopt
+            : lang::cppMirApplyGenericOwnerConstructorTypeOverlays(
+                  rows, lowered, *declaration, constructor);
+    expect(overlays && *overlays != 0,
+           "a closure-typed owner's constructor spells F through its overlay");
+    const auto row = std::find_if(
+        rows.types.begin(), rows.types.end(),
+        [&](const auto &candidate) { return candidate.type == owner->type; });
+    expect(row != rows.types.end() && !row->concreteGenericClass,
+           "a closure-typed generic class has no concrete C++ definition");
+    const bool prepared =
+        lang::cppMirBasePreparation(lowered.mir(), constructor).has_value();
+    const lang::CppMirBodyEmissionMap map(std::move(rows));
+    const lang::CppMirBodyEmitter emitter(lowered.mir(), map);
+    const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                       constructor.id};
+    const bool text = emitter.supportsBodyText(address) ||
+                      emitter.supportsFailureBodyText(address);
+    expect(text != prepared,
+           "a closure-typed class copies its closure beside a literal base "
+           "but never receives a base preparation carrier");
+    ++(text ? admitted : refused);
+  }
+  expect(admitted == 1 && refused == 1,
+         "one literal and one computed closure-typed base were checked");
+}
+
 int main() {
   checkSelectedGeneratedBaseSchedule();
   checkFieldArgumentOrder();
   checkOwningEnumBaseArgumentAuthority();
   const auto fixtures = std::filesystem::path(__FILE__).parent_path();
   checkBaseInitializerTemporaries(fixtures);
+  checkGenericBaseArguments(fixtures);
+  checkClosureGenericBaseArguments();
   for (const auto name :
        {"coverage/reproducers/a45-base-state-rollback-unsupported.gti",
         "coverage/reproducers/a45-base-plus-string-field-unsupported.gti",
@@ -417,7 +559,8 @@ int main() {
         "fixtures/base_constructor_stages.gti",
         "fixtures/checked_base_arguments.gti",
         "fixtures/effectful_base_arguments.gti",
-        "fixtures/base_initializer_temporaries.gti"}) {
+        "fixtures/base_initializer_temporaries.gti",
+        "fixtures/generic_base_arguments.gti"}) {
     const auto path = fixtures / name;
     std::ifstream input(path);
     const std::string source{std::istreambuf_iterator<char>(input), {}};
@@ -438,7 +581,8 @@ int main() {
       if (std::string_view(name) == "fixtures/checked_base_arguments.gti" ||
           std::string_view(name) == "fixtures/effectful_base_arguments.gti" ||
           std::string_view(name) ==
-              "fixtures/base_initializer_temporaries.gti") {
+              "fixtures/base_initializer_temporaries.gti" ||
+          std::string_view(name) == "fixtures/generic_base_arguments.gti") {
         const auto preparation =
             lang::cppMirBasePreparation(frontend.mir, constructor);
         expect(
