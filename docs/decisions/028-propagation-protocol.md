@@ -172,6 +172,10 @@ deliberately parallel only until `expected` becomes a client:
 
 The implicit constructor's exact parameter `unexpected<E>` reproduces today's
 exact-`E` rule, and the receiver rules reproduce today's copy/move transport.
+The runtime fixture already exercises that owning shape with an application
+class: a consuming `value() &&` moves the payload and a consuming
+`residual() &&` moves an owning cause out of temporary and explicitly moved
+operands, with exact cleanup on both exits.
 Two `expected` behaviours need protocol extensions first: `expected<void, E>`
 needs a `void` output, and `expected<T&, E>` needs a *borrowed output* that
 forwards the read-only loan with its receiver-origin authority instead of

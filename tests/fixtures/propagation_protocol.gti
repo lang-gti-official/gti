@@ -68,6 +68,48 @@ Reply moved_chain(bool fail) {
   return Reply(Noisy(got.get() + 1));
 }
 
+// A residual that owns data: a consumed operand moves its payload out
+// through value() && and its cause out through residual() &&, as an owning
+// expected's error would. An explicitly moved operand is moved into
+// whichever consuming member runs.
+struct Fault {
+  mut Noisy cause;
+  Fault(Noisy cause) : cause(std::move(cause)) {}
+};
+
+class Outcome {
+  mut Noisy payload;
+  mut Noisy cause;
+  bool ok;
+public:
+  Outcome(Noisy payload)
+      : payload(std::move(payload)), cause(Noisy(0)), ok(true) {}
+  implicit Outcome(mut Fault fault)
+      : payload(Noisy(1)), cause(std::move(fault.cause)), ok(false) {}
+  bool has_value() { return this.ok; }
+  Noisy value() && { return std::move(this.payload); }
+  Fault residual() && { return Fault(std::move(this.cause)); }
+  int cause_id() { return this.cause.get(); }
+};
+
+Outcome attempt(bool fail) {
+  if (fail) {
+    return Outcome(Fault(Noisy(70)));
+  }
+  return Outcome(Noisy(60));
+}
+
+Outcome relay(bool fail) {
+  Outcome outcome = attempt(fail);
+  Noisy got = ?std::move(outcome);
+  return Outcome(Noisy(got.get() + 1));
+}
+
+Outcome relay_temporary(bool fail) {
+  Noisy got = ?attempt(fail);
+  return Outcome(Noisy(got.get() + 2));
+}
+
 // A defined failure inside a protocol member is not a propagation: it takes
 // the call's ordinary failure edge and cleanup.
 Reply unlucky() {
@@ -267,5 +309,22 @@ int main(int argc, std::vector<std::string> argv) {
   std::println(ticket.id());
   Ticket refused = reissue(4, -9);
   std::println(refused.code_of());
+  std::println(900);
+  {
+    Outcome moved = relay(false);
+    std::println(moved.cause_id());
+  }
+  {
+    Outcome faulted = relay(true);
+    std::println(faulted.cause_id());
+  }
+  {
+    Outcome fresh = relay_temporary(false);
+    std::println(fresh.cause_id());
+  }
+  {
+    Outcome fresh_fault = relay_temporary(true);
+    std::println(fresh_fault.cause_id());
+  }
   return 0;
 }
