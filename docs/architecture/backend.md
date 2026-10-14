@@ -1527,11 +1527,11 @@ read the same way, as in `make_named(true).value().text.size()`.
 Inside a short-circuit operand or a conditional arm, the producer, a call or a
 construction, instead constructs the result in a conditional temporary that
 holds the result's own obligation. A failure-free producer does so at its
-destination; a transformed one arms the temporary on its Invoke success edge. When the result is read only
-through field views, that temporary is its storage: the views spell
-`temporary.get().field`, the result declares no local, and MIR's conditional
-Drop destroys the temporary exactly once if its operand ran, on the normal path
-or on a failure-cleanup edge.
+destination; a transformed one arms the temporary on its Invoke success edge.
+When the result is read only through field views, that temporary is its
+storage: the views spell `temporary.get().field`, the result declares no local,
+and MIR's conditional Drop destroys the temporary exactly once if its operand
+ran, on the normal path or on a failure-cleanup edge.
 An owning Expected call result in such a position is held by its own
 conditional temporary. A checked extraction of a class alternative whose
 result is read only through field views moves that alternative into the

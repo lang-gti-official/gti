@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.430.1 — Fields of temporaries with destructors
+
+- Fix an internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a program reads a field directly from a
+  temporary whose class has a destructor, such as
+  `int32_t v = Holder(3).value;`. The same read now also works in field
+  defaults and member initializers (`int32_t width = Holder(3).value;`), inside
+  `&&` and `||` operands, through nested fields, and when a method is called on
+  the field (`Outer(4).inner.twice()`). The temporary is destroyed exactly
+  once, at the end of its full expression, after the field is read.
+
 ## 0.430.0 — Protected members
 
 - Class members can use `protected:` sections for base implementation state,
