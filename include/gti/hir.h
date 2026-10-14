@@ -81,6 +81,7 @@ enum class HirValueKind {
   DereferenceSet,
   PlaceSet,
   ExpectedPropagation,
+  Propagation,
   MemberAccess,
   Grouping,
   Index,
@@ -201,6 +202,25 @@ struct HirExpectedPropagationPlan {
   bool moves = false;
 };
 
+// Prefix `?` through the structural propagation protocol. Every step is an
+// ordinary selected call: `test` is the operand's has_value(), `output` its
+// value() (a read-only reference place when `copiesOutput`), `residual` its
+// residual(), and `residualReturn` the enclosing return type's implicit
+// construction from that residual. The operand is evaluated once. A consumed
+// temporary is borrowed or consumed in place by every call. For an explicit
+// `std::move(place)`, `movedPlace` names that place: read-only steps borrow
+// it and a consuming step receives the move.
+struct HirPropagationPlan {
+  HirValueId operand = 0;
+  HirValueId movedPlace = 0;
+  HirValueId test = 0;
+  HirValueId output = 0;
+  HirValueId residual = 0;
+  HirValueId residualReturn = 0;
+  bool consumesOperand = false;
+  bool copiesOutput = false;
+};
+
 struct HirValue {
   HirValueId id = 0;
   HirValueKind kind = HirValueKind::Literal;
@@ -243,6 +263,7 @@ struct HirValue {
   std::optional<HirValueId> receiver;
   std::optional<HirCallPlan> callPlan;
   std::optional<HirExpectedPropagationPlan> expectedPropagation;
+  std::optional<HirPropagationPlan> propagation;
   // Eager call inputs evaluated in source order before a synthesized branch.
   // Unlike branch operands these retain their full-expression cleanup on both
   // paths, including when the conditional mapper is never invoked.

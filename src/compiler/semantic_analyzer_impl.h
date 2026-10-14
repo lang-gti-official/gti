@@ -567,6 +567,16 @@ public:
   void visitArrayInitializerExpr(const ArrayInitializer &expr) override;
   void analyzeCollectionInitializer(const ArrayInitializer &expr,
                                     const SemanticType &target);
+  [[nodiscard]] SemanticType
+  analyzePropagationProtocol(const Unary &expr,
+                             const SemanticType &operandType);
+  [[nodiscard]] std::optional<PropagationMemberCall>
+  selectPropagationMember(const Unary &expr, const SemanticType &operandType,
+                          std::string_view name, bool consumesOperand);
+  [[nodiscard]] std::optional<ResolvedConstructionInfo>
+  selectPropagationReturnConstruction(const Unary &expr,
+                                      const SemanticType &returnType,
+                                      const SemanticType &residualType);
 
   void visitBinaryExpr(const Binary &expr) override;
 

@@ -1267,6 +1267,44 @@ struct ResolvedCollectionInfo {
   FunctionId insert = 0;
 };
 
+// One zero-argument member call the propagation protocol selects on the
+// operand of prefix `?`. Ordinary receiver selection chose the overload; the
+// exact declared result (a read-only reference for a copied output) and the
+// receiver contract stay authoritative through lowering.
+struct PropagationMemberCall {
+  FunctionId function = 0;
+  const FunctionDecl *declaration = nullptr;
+  SemanticType dispatchOwner = SemanticType::Unknown;
+  ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
+  CallReceiverMode receiverMode = CallReceiverMode::None;
+  SemanticType returnType = SemanticType::Unknown;
+  BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
+
+  friend bool operator==(const PropagationMemberCall &,
+                         const PropagationMemberCall &) = default;
+};
+
+// Prefix `?` on a class implementing the structural propagation protocol.
+// The operand is evaluated once and tested with `has_value()`. On success
+// `value()` supplies the result, copied when it is a read-only reference. On
+// failure `residual()` produces the residual, which initializes the enclosing
+// callable's return type through its implicit constructor before the callable
+// returns. The first slice requires the operand and return types to belong to
+// one class family. Built-in `expected<T, E>` keeps its dedicated plan.
+struct ResolvedPropagationInfo {
+  SemanticType operandType = SemanticType::Unknown;
+  SemanticType resultType = SemanticType::Unknown;
+  SemanticType residualType = SemanticType::Unknown;
+  SemanticType returnType = SemanticType::Unknown;
+  bool consumesOperand = false;
+  bool copiesOutput = false;
+  PropagationMemberCall test;
+  PropagationMemberCall output;
+  PropagationMemberCall residual;
+  ResolvedConstructionInfo returnConstruction;
+};
+
 struct NativeFunctionConversionInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
@@ -2110,6 +2148,8 @@ public:
   findExpectedCombinator(const Call &call) const;
   [[nodiscard]] const ResolvedCollectionInfo *
   findCollection(const ArrayInitializer &initializer) const;
+  [[nodiscard]] const ResolvedPropagationInfo *
+  findPropagation(const Unary &propagation) const;
 
   [[nodiscard]] const NativeFunctionConversionInfo *
   findNativeFunctionConversion(const Expr &expression) const;
@@ -2436,6 +2476,8 @@ private:
   void recordExpectedCombinator(const Call &call, ExpectedCombinatorInfo info);
   void recordCollection(const ArrayInitializer &initializer,
                         ResolvedCollectionInfo info);
+  void recordPropagation(const Unary &propagation,
+                         ResolvedPropagationInfo info);
 
   void recordNativeFunctionConversion(const Expr &expression,
                                       NativeFunctionConversionInfo info);
@@ -2653,6 +2695,7 @@ private:
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
   std::unordered_map<const ArrayInitializer *, ResolvedCollectionInfo>
       collections;
+  std::unordered_map<const Unary *, ResolvedPropagationInfo> propagations;
   std::unordered_map<const ArrayInitializer *, ResolvedConstructionInfo>
       arrayElementConstructions;
   std::unordered_map<const Expr *, ResolvedConstructionInfo>

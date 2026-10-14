@@ -31,6 +31,12 @@ void optional_storage_reset<std::move_constructible T>(
 }
 
 namespace std {
+/// The residual of an empty optional: it carries no value.
+///
+/// Prefix `?` on an empty optional returns the enclosing function's
+/// `optional<U>` constructed from this residual, which is empty.
+struct nullopt_t {};
+
 /// A move-only owner of an optional `T`.
 ///
 /// Empty construction does not allocate. Moving transfers engagement and the
@@ -46,6 +52,9 @@ class optional<std::move_constructible T> {
 public:
   /// Constructs an empty optional.
   optional() {}
+
+  /// Constructs an empty optional from the empty residual.
+  implicit optional(nullopt_t empty) {}
 
   /// Moves one completed value into the optional.
   optional(T value) {
@@ -64,6 +73,14 @@ public:
   /// Equivalent to `has_value()`.
   operator bool() {
     return this.has_value();
+  }
+
+  /// The propagation residual: an empty optional carries no value.
+  ///
+  /// Prefix `?` calls this only when `has_value()` is false. A successful
+  /// `?` copies the live value through the read-only `value()`.
+  nullopt_t residual() {
+    return nullopt_t();
   }
 
   /// Returns a checked read-only reference to the live value.

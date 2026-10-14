@@ -1488,10 +1488,38 @@ Contextual `operator bool` participates only in the contexts enumerated by the
 language contract. Logical `and`/`or` and `&&`/`||` are equivalent spellings
 with identical short-circuit semantics.
 
-### 3.9.1 Expected Propagation
+### 3.9.1 Propagation
 
-For a prefix expression `?operand`, `operand` must have type `expected<T, E>`
-and the immediately enclosing function or lambda must return
+A prefix expression `?operand` propagates either a built-in
+`expected<T, E>` (below) or a class implementing the structural
+**propagation protocol** ([ADR 028](../decisions/028-propagation-protocol.md)).
+
+For an operand of class type `S`, ordinary member lookup on `S` must find
+three public (or otherwise accessible), non-static, non-generic, non-virtual
+member functions without parameters, each with a GTI body and none `unsafe`,
+caller-tracking or non-returning:
+
+- `bool has_value()` with a read-only receiver;
+- `value()`, whose selected overload returns an owned non-`void` value
+  without borrowed state, or a read-only reference whose referent is
+  copyable;
+- `residual()`, whose selected overload returns an owned, movable residual
+  type `Res` without borrowed state.
+
+A named operand selects read-only overloads. An operand whose expression
+category is a value (a temporary or `std::move(name)`) prefers a consuming
+`&&` overload and otherwise uses the read-only one. Mutable receivers never
+participate. The immediately enclosing function or lambda must return a class
+`R` that is an instance of the same class declaration as `S` (an exact
+specialization counts as its primary), and `R` must declare exactly one
+`implicit` constructor whose only parameter is exactly `Res` by value. No
+other conversion, family or overload is considered. The expression has the
+output type: the selected `value()`'s result, or the referent of a reference
+result. `?` through the protocol is not yet available in a `constexpr`
+function, and the operand type cannot carry borrowed state.
+
+For a prefix expression `?operand` whose operand has type `expected<T, E>`,
+the immediately enclosing function or lambda must return
 `expected<U, E>`. The error types are identical semantic types; propagation
 does not consider conversions or overloads. The expression has type `T`, or
 `void` when `T` is `void`.
@@ -1513,7 +1541,10 @@ The selected move or copy must be available for every non-`void` alternative.
 Consequently a named expected with a move-only value or error is rejected;
 `?std::move(result)` is the explicit consuming form. `GTI-S2086` owns invalid
 operand types, enclosing return contexts, mismatched error types, and
-unavailable alternative transport.
+unavailable alternative transport, and for the protocol also missing or
+ill-formed members, a named operand whose overloads only consume, an output
+that cannot be copied, a return type outside the operand's family, and a
+missing residual constructor.
 
 ### 3.9.2 Conversion Operators
 

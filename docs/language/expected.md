@@ -199,6 +199,14 @@ the callable immediately returns `unexpected(error)` after cleaning up the
 live full-expression and lexical obligations on that path. Propagation never
 performs an implicit error conversion.
 
+Other result types, including `std::optional` and application classes, use
+the same operator through the structural
+[propagation protocol](static-semantics.md#391-propagation): ordinary
+`has_value()`, `value()` and `residual()` members and an implicit residual
+constructor of the enclosing return type. Built-in `expected` keeps its
+dedicated rules in this version; [ADR 028](../decisions/028-propagation-protocol.md)
+records how it becomes a client of the protocol.
+
 ## Requiring a successful result
 
 `expect(message)` is explicit consuming extraction with panic-on-error policy:

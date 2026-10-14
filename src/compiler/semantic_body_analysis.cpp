@@ -9795,6 +9795,405 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
   currentType = targetType;
 }
 
+// The propagation protocol's members are ordinary zero-argument member
+// functions found by name on the operand's class. A named operand is only
+// observed, so it selects read-only overloads; a consumed operand (a
+// temporary or an explicit std::move) prefers a consuming overload, exactly as
+// ordinary receiver selection does for an owned temporary. Mutable receivers
+// are never part of the protocol.
+auto SemanticVisitor::Impl::selectPropagationMember(
+    const Unary &expr, const SemanticType &operandType, std::string_view name,
+    bool consumesOperand) -> std::optional<PropagationMemberCall> {
+  const Token &site = expr.oper();
+  const ClassInfo *owner = classInfo(operandType);
+  const std::string member(name);
+  const auto reject = [&](std::string message, std::string hint,
+                          const FunctionDecl *candidate = nullptr) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2086", DiagnosticPhase::Semantics, site, std::move(message));
+    if (candidate != nullptr) {
+      diagnostic.related.push_back(
+          {tokenSpan(candidate->name()), "Candidate declared here."});
+    } else if (owner != nullptr) {
+      diagnostic.related.push_back(
+          {tokenSpan(owner->name), "The operand's class is declared here."});
+    }
+    diagnostic.hints.emplace_back(std::move(hint));
+    diagnostics.emplace_back(std::move(diagnostic));
+    return std::optional<PropagationMemberCall>{};
+  };
+  const std::string protocolHint =
+      "A class propagates with '?' when it declares read-only 'bool "
+      "has_value()', a 'value()' observer (a consuming 'T value() &&' moves "
+      "it out of a consumed operand), and 'residual()', and the enclosing "
+      "return type of the same class accepts that residual through an "
+      "implicit constructor.";
+  if (owner == nullptr) {
+    return reject("Propagation through '" + typeSpelling(operandType) +
+                      "' requires a class implementing the propagation "
+                      "protocol.",
+                  protocolHint);
+  }
+  const auto found = owner->members.find(member);
+  if (found == owner->members.end() ||
+      found->second.symbol.type != SemanticType::Function) {
+    return reject("Propagation through '" + typeSpelling(operandType) +
+                      "' requires a member function '" + member + "()'.",
+                  protocolHint);
+  }
+  const Symbol overloads = substituteSymbol(found->second.symbol, operandType);
+  std::vector<CallableCandidate> viable;
+  bool consumingOnly = false;
+  bool rejectedPrivate = false;
+  for (const CallableCandidate &candidate : overloads.overloads) {
+    if (candidate.staticMember || candidate.declaration == nullptr ||
+        !candidate.parameterTypes.empty() || candidate.parameterPack ||
+        !candidate.record().genericParameters.empty() ||
+        candidate.receiverMutability == ReceiverMutability::Mutable) {
+      continue;
+    }
+    if (candidate.receiverMutability == ReceiverMutability::Consuming &&
+        !consumesOperand) {
+      consumingOnly = true;
+      continue;
+    }
+    if (candidate.compilerPrivate && !isCompilerTrustedRequester(site)) {
+      rejectedPrivate = true;
+      continue;
+    }
+    viable.push_back(candidate);
+  }
+  const auto consuming = [](const CallableCandidate &candidate) {
+    return candidate.receiverMutability == ReceiverMutability::Consuming;
+  };
+  if (consumesOperand && std::any_of(viable.begin(), viable.end(), consuming)) {
+    std::erase_if(viable, [&](const CallableCandidate &candidate) {
+      return !consuming(candidate);
+    });
+  }
+  if (viable.empty()) {
+    if (rejectedPrivate) {
+      reportCompilerPrivateAccess(site, "'" + member + "()'");
+      return std::nullopt;
+    }
+    if (consumingOnly) {
+      return reject("Propagation through a named '" +
+                        typeSpelling(operandType) + "' requires a read-only '" +
+                        member + "()'; its overloads consume the operand.",
+                    "Apply '?' to std::move(name) to consume a named "
+                    "operand explicitly.");
+    }
+    return reject("Propagation through '" + typeSpelling(operandType) +
+                      "' requires '" + member +
+                      "()' to take no arguments and have a read-only" +
+                      (consumesOperand ? " or consuming" : "") + " receiver.",
+                  protocolHint);
+  }
+  if (viable.size() != 1) {
+    return reject("Propagation through '" + typeSpelling(operandType) +
+                      "' found more than one '" + member +
+                      "()' for this receiver.",
+                  protocolHint);
+  }
+  const CallableCandidate &selected = viable.front();
+  if (selected.record().requiresUnsafe || selected.virtualMethod ||
+      selected.record().tracksCaller || selected.record().neverReturns ||
+      selected.record().linkage != LanguageLinkage::Gti ||
+      selected.record().intrinsic != IntrinsicKind::None) {
+    return reject("Propagation through '" + typeSpelling(operandType) +
+                      "' requires '" + member +
+                      "()' to be a safe, non-virtual, returning GTI member "
+                      "function.",
+                  "Declare the protocol member as an ordinary member with a "
+                  "GTI body; it may call virtual or tracked functions "
+                  "itself.",
+                  selected.declaration);
+  }
+  if (!selected.requirements.empty()) {
+    if (const auto failure = firstRequirementFailure(selected.requirements)) {
+      reportConstraintFailure(site, *failure);
+      return std::nullopt;
+    }
+  }
+  if (!canAccessMember(selected.access, selected.ownerClass, operandType,
+                       selected.dispatchOwner)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2007", DiagnosticPhase::Semantics, site,
+        "Member '" + member + "()' of '" + owner->name.lexeme + "' is " +
+            std::string(accessModifierSpelling(selected.access)) +
+            "; propagation calls it from this function.");
+    diagnostic.related.push_back(
+        {tokenSpan(selected.declaration->name()), "Member declared here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+    return std::nullopt;
+  }
+  requireFunctionDefinition(selected, site);
+  return PropagationMemberCall{
+      .function = selected.id,
+      .declaration = selected.declaration,
+      .dispatchOwner = memberDeclaringType(operandType, selected.ownerClass),
+      .receiverMutability = selected.receiverMutability,
+      // An explicitly moved place stays in place for a read-only step.
+      .receiverMode = consuming(selected) ? CallReceiverMode::Consuming
+                      : consumesOperand && !isExplicitMoveReceiver(expr.right())
+                          ? CallReceiverMode::FreshTemporaryRead
+                          : CallReceiverMode::ReadOnlyPlace,
+      .returnType = selected.returnType,
+      .borrowOrigin = selected.returnBorrowOrigin,
+      .borrowAccess = selected.returnBorrowAccess};
+}
+
+// The residual initializes the enclosing return type exactly as the
+// declaration `R result = residual;` would: through the one implicit
+// constructor of R whose sole parameter is the residual's exact type.
+auto SemanticVisitor::Impl::selectPropagationReturnConstruction(
+    const Unary &expr, const SemanticType &returnType,
+    const SemanticType &residualType)
+    -> std::optional<ResolvedConstructionInfo> {
+  const Token &site = expr.oper();
+  const SemanticType target = selectExactClassSpecialization(returnType);
+  const ClassInfo *owner = classInfo(target);
+  if (owner == nullptr) {
+    return std::nullopt;
+  }
+  const GenericSubstitution substitution = classSubstitution(target);
+  std::vector<const ConstructorInfo *> matches;
+  for (const ConstructorInfo &constructor : owner->constructors) {
+    if (!constructor.implicitConstruction || constructor.parameterPack ||
+        !constructor.genericParameters.empty() ||
+        constructor.kind != ConstructorKind::Ordinary ||
+        constructor.parameterTypes.size() != 1 ||
+        constructor.declaration == nullptr) {
+      continue;
+    }
+    if (substituteType(constructor.parameterTypes.front(), substitution) ==
+        residualType) {
+      matches.push_back(&constructor);
+    }
+  }
+  const auto reject = [&](std::string message, std::string hint) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2086", DiagnosticPhase::Semantics, site, std::move(message));
+    diagnostic.related.push_back(
+        {tokenSpan(owner->name),
+         "The enclosing return type is declared here."});
+    diagnostic.hints.emplace_back(std::move(hint));
+    diagnostics.emplace_back(std::move(diagnostic));
+    return std::optional<ResolvedConstructionInfo>{};
+  };
+  if (matches.size() != 1) {
+    return reject(
+        "Propagation returns the residual '" + typeSpelling(residualType) +
+            "' as '" + typeSpelling(target) + "', which " +
+            (matches.empty() ? "declares no" : "declares more than one") +
+            " implicit constructor taking exactly that residual.",
+        "Declare one 'implicit " + owner->name.lexeme + "(" +
+            typeSpelling(residualType) +
+            " residual)' constructor without further parameters.");
+  }
+  const ConstructorInfo &selected = *matches.front();
+  if (!selected.requirements.empty() || selected.requiresUnsafe ||
+      selected.declaration->body() == nullptr) {
+    return reject("Propagation cannot construct '" + typeSpelling(target) +
+                      "' through a constrained or bodyless implicit "
+                      "constructor.",
+                  "Declare the residual constructor without a requires "
+                  "clause, with a GTI body.");
+  }
+  if (!canAccessMember(selected.access, owner->id, target)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2007", DiagnosticPhase::Semantics, site,
+        "The residual constructor of '" + owner->name.lexeme + "' is " +
+            std::string(accessModifierSpelling(selected.access)) + ".");
+    diagnostic.related.push_back({tokenSpan(selected.declaration->name()),
+                                  "Constructor declared here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+    return std::nullopt;
+  }
+  return ResolvedConstructionInfo{.constructor = selected.id,
+                                  .declaration = selected.declaration,
+                                  .constructedType = target,
+                                  .parameterTypes = {residualType},
+                                  .kind = ConstructorKind::Ordinary};
+}
+
+// Prefix `?` on a class operand uses the structural propagation protocol:
+// `has_value()` selects the continuation, `value()` supplies the result, and
+// `residual()` initializes the enclosing return value. The first slice admits
+// one exact family: the enclosing callable returns another instance of the
+// operand's class declaration, so no cross-family residual conversion exists.
+auto SemanticVisitor::Impl::analyzePropagationProtocol(
+    const Unary &expr, const SemanticType &operandType) -> SemanticType {
+  const Token &site = expr.oper();
+  const ClassInfo *owner = classInfo(operandType);
+  const ExpressionInfo *operandInfo =
+      semanticModel.findExpression(*expr.right());
+  const bool consumes =
+      operandInfo != nullptr && operandInfo->category == ValueCategory::Value;
+  const auto reject = [&](std::string message, std::string hint) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2086", DiagnosticPhase::Semantics, site, std::move(message));
+    if (owner != nullptr) {
+      diagnostic.related.push_back(
+          {tokenSpan(owner->name), "The operand's class is declared here."});
+    }
+    diagnostic.hints.emplace_back(std::move(hint));
+    diagnostics.emplace_back(std::move(diagnostic));
+    return SemanticType(SemanticType::Unknown);
+  };
+  if (owner == nullptr || owner->kind == ClassKind::Union) {
+    return reject("Error propagation requires an 'expected<T, E>' operand or "
+                  "a class implementing the propagation protocol, but "
+                  "received '" +
+                      typeSpelling(operandType) + "'.",
+                  "Apply '?' to a fallible result, or handle this value "
+                  "without propagation.");
+  }
+  if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr &&
+      currentFunctionDeclaration->isConstexpr()) {
+    return reject("Propagation through '" + typeSpelling(operandType) +
+                      "' is not yet available in a constexpr function.",
+                  "Test has_value() explicitly in constant code; protocol "
+                  "propagation runs only at run time in this version.");
+  }
+  const SemanticTypeTraits operandTraits = typeTraits(operandType);
+  if (operandTraits.containsBorrowedState ||
+      (consumes && !operandTraits.movable)) {
+    return reject("Propagation through '" + typeSpelling(operandType) +
+                      "' requires an owned, movable operand without stored "
+                      "borrows.",
+                  "Propagate an owning result type, or test the value "
+                  "explicitly.");
+  }
+
+  const std::optional<PropagationMemberCall> test =
+      selectPropagationMember(expr, operandType, "has_value", consumes);
+  if (!test) {
+    return SemanticType::Unknown;
+  }
+  if (test->returnType != SemanticType::Bool ||
+      test->receiverMutability != ReceiverMutability::ReadOnly) {
+    return reject("Propagation through '" + typeSpelling(operandType) +
+                      "' requires 'has_value()' to be a read-only member "
+                      "returning 'bool'.",
+                  "Declare 'bool has_value()' to report whether the operand "
+                  "continues.");
+  }
+
+  const std::optional<PropagationMemberCall> output =
+      selectPropagationMember(expr, operandType, "value", consumes);
+  if (!output) {
+    return SemanticType::Unknown;
+  }
+  SemanticType resultType = output->returnType;
+  bool copiesOutput = false;
+  if (resultType.kind == SemanticType::Reference) {
+    if (resultType.referenceAccess != AccessMode::ReadOnly ||
+        resultType.arguments.size() != 1 ||
+        output->receiverMutability != ReceiverMutability::ReadOnly) {
+      return reject("Propagation through '" + typeSpelling(operandType) +
+                        "' requires 'value()' to return an owned value or a "
+                        "read-only reference.",
+                    "Return the success value by value, or by read-only "
+                    "reference to have '?' copy it.");
+    }
+    SemanticType referent = resultType.arguments.front();
+    resultType = std::move(referent);
+    copiesOutput = true;
+  }
+  if (resultType == SemanticType::Void || resultType == SemanticType::Unknown ||
+      typeTraits(resultType).containsBorrowedState ||
+      (!copiesOutput && output->borrowOrigin != BorrowOriginKind::None)) {
+    return reject("Propagation through '" + typeSpelling(operandType) +
+                      "' requires 'value()' to produce an owned, non-void "
+                      "value without borrowed state.",
+                  "Propagation of void or borrowed outputs is not yet "
+                  "supported; test the value explicitly.");
+  }
+  if (copiesOutput && !typeTraits(resultType).copyable) {
+    return reject(
+        "Propagation cannot copy the '" + typeSpelling(resultType) +
+            "' output of '" + typeSpelling(operandType) +
+            "' that its read-only 'value()' observes.",
+        consumes ? "The class provides no consuming 'value() &&' that would "
+                   "move the output out of a consumed operand; propagate a "
+                   "copyable value or test has_value() explicitly."
+                 : "Apply '?' to std::move(name) when the class provides a "
+                   "consuming 'value() &&', or propagate a copyable value.");
+  }
+
+  const std::optional<PropagationMemberCall> residual =
+      selectPropagationMember(expr, operandType, "residual", consumes);
+  if (!residual) {
+    return SemanticType::Unknown;
+  }
+  const SemanticType residualType = residual->returnType;
+  if (residualType == SemanticType::Void ||
+      residualType == SemanticType::Unknown ||
+      residualType.kind == SemanticType::Reference ||
+      residual->borrowOrigin != BorrowOriginKind::None ||
+      typeTraits(residualType).containsBorrowedState ||
+      !typeTraits(residualType).movable) {
+    return reject("Propagation through '" + typeSpelling(operandType) +
+                      "' requires 'residual()' to return an owned, movable "
+                      "residual without borrowed state.",
+                  "Return the residual by value; an empty residual can be "
+                  "a field-less struct.");
+  }
+
+  // Inside a callable an Unknown return type is an already-reported error.
+  if (currentReturnType == SemanticType::Unknown && functionDepth != 0) {
+    return SemanticType::Unknown;
+  }
+  const ClassInfo *returnOwner = currentReturnType.kind == SemanticType::Class
+                                     ? classInfo(currentReturnType)
+                                     : nullptr;
+  const auto family = [](const ClassInfo &info) {
+    return info.exactSpecializationPrimary != 0
+               ? info.exactSpecializationPrimary
+               : info.id;
+  };
+  if (returnOwner == nullptr || family(*returnOwner) != family(*owner)) {
+    return reject(
+        "Propagation through '" + typeSpelling(operandType) +
+            "' is only available in a function or lambda returning '" +
+            owner->name.lexeme +
+            (currentReturnType == SemanticType::Unknown
+                 ? std::string("'.")
+                 : "', but this one returns '" +
+                       typeSpelling(currentReturnType) + "'."),
+        "Return the same class family from this callable, or test "
+        "has_value() and convert the residual explicitly; propagation "
+        "performs no cross-family conversion.");
+  }
+  std::optional<ResolvedConstructionInfo> construction =
+      selectPropagationReturnConstruction(expr, currentReturnType,
+                                          residualType);
+  if (!construction) {
+    return SemanticType::Unknown;
+  }
+
+  if (!consumes) {
+    // A named operand is observed in place, like any read-only receiver.
+    reportLoanPlaceConflict(site, loanPlace(expr.right()), AccessMode::ReadOnly,
+                            "Propagation reads an operand that overlaps a "
+                            "mutable borrow that may still be live.",
+                            accessLoan(expr.right()));
+  }
+  semanticModel.recordPropagation(
+      expr, {.operandType = operandType,
+             .resultType = resultType,
+             .residualType = residualType,
+             .returnType = construction->constructedType,
+             .consumesOperand = consumes,
+             .copiesOutput = copiesOutput,
+             .test = *test,
+             .output = *output,
+             .residual = *residual,
+             .returnConstruction = std::move(*construction)});
+  return resultType;
+}
+
 auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
   if (expr.oper().kind == TokenKind::QUESTION) {
     const SemanticType operandType = analyze(expr.right());
@@ -9802,12 +10201,16 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
       currentType = SemanticType::Unknown;
       return;
     }
+    if (operandType.kind == SemanticType::Class) {
+      currentType = analyzePropagationProtocol(expr, operandType);
+      return;
+    }
     if (operandType.kind != SemanticType::Expected ||
         operandType.arguments.size() != 2) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
-          "Error propagation requires an 'expected<T, E>' operand, but "
-          "received '" +
+          "Error propagation requires an 'expected<T, E>' operand or a "
+          "class implementing the propagation protocol, but received '" +
               typeSpelling(operandType) + "'.");
       diagnostic.hints.emplace_back(
           "Apply '?' to a fallible result, or handle this value without "

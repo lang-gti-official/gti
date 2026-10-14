@@ -833,6 +833,24 @@ dependency; it does not copy or move the referent. The error follows the same
 copy/move rule above. Retention and forwarding remain subject to the exact
 borrow-origin contract in [Expected values](expected.md#fallible-borrows).
 
+A class operand implementing the
+[propagation protocol](static-semantics.md#391-propagation) executes the same
+way through its selected members. The operand is evaluated once, then
+`has_value()` runs. When it returns `true`, `value()` runs and its result
+(copied when it is a read-only reference) is the expression's value. When it
+returns `false`, `residual()` runs, the enclosing return type is constructed
+from the residual through its implicit constructor, the full-expression
+temporaries created so far are destroyed in reverse construction order, the
+ordinary lexical return cleanup runs, and the callable returns that value.
+Only one of `value()` and `residual()` runs. A temporary operand is one
+full-expression temporary that the calls borrow or consume in place; it is
+destroyed at the end of its full expression on the continuing path. A named
+operand is only observed. For `?std::move(name)`, read-only members borrow
+`name` in place and a consuming member receives it by move, so a path on
+which no member consumes it keeps the binding's ordinary lexical cleanup.
+A defined runtime failure inside a protocol member or the residual
+constructor follows that call's ordinary failure edge and cleanup.
+
 GTI does not provide language exceptions.
 
 ## 4.9 Concurrency Boundary

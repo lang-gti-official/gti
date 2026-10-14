@@ -1,0 +1,107 @@
+// Prefix `?` beyond expected: std::optional and an application result type.
+//
+// `?` works on any class that implements the propagation protocol:
+//
+//   bool has_value()   continue (true) or propagate (false)
+//   value()            the result of `?x`: a consuming `value() &&` moves it
+//                      out of a temporary or std::move(x), and a read-only
+//                      `T& value()` is copied
+//   residual()         what a failed operand hands back to its caller
+//
+// The enclosing function must return the same class family, and that type
+// accepts the residual through an `implicit` constructor. std::optional is
+// such a class: its residual is `std::nullopt_t`, so `?` on an empty optional
+// returns an empty optional of the enclosing type. Propagation never converts
+// between families. This version copies an optional's payload (it must be
+// copyable), and `?` is not yet available in constexpr functions.
+#include <std/optional>
+
+struct Point {
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+
+std::optional<int> digit(int code) {
+  if (code < 0 || code > 9) {
+    return std::optional<int>();
+  }
+  return std::optional<int>(code);
+}
+
+// Each `?` returns an empty optional<Point> as soon as a digit is invalid.
+std::optional<Point> point(int x, int y) {
+  int checked_x = ?digit(x);
+  int checked_y = ?digit(y);
+  return std::optional<Point>(Point(checked_x, checked_y));
+}
+
+// A named optional is only observed: its value is copied out.
+std::optional<int> distance_squared(std::optional<Point> p) {
+  Point q = ?p;
+  return std::optional<int>(q.x * q.x + q.y * q.y);
+}
+
+// An application result type owning a move-only payload. The residual
+// carries the failure code; nothing in the compiler knows this class.
+class Buffer {
+  int bytes;
+public:
+  Buffer(int bytes) : bytes(bytes) {}
+  Buffer(Buffer& other) = delete;
+  Buffer(Buffer&& other) = default;
+  int size() { return this.bytes; }
+};
+
+struct LoadFailure {
+  int code;
+  LoadFailure(int code) : code(code) {}
+};
+
+class Loaded {
+  mut Buffer buffer;
+  int code;
+public:
+  Loaded(Buffer buffer) : buffer(std::move(buffer)), code(0) {}
+  implicit Loaded(LoadFailure failure) : buffer(Buffer(0)), code(failure.code) {}
+
+  bool has_value() { return this.code == 0; }
+  // A consumed operand moves its buffer out; nothing is copied.
+  Buffer value() && { return std::move(this.buffer); }
+  LoadFailure residual() { return LoadFailure(this.code); }
+
+  int error_code() { return this.code; }
+  int size() { return this.buffer.size(); }
+};
+
+Loaded load(int bytes) {
+  if (bytes < 0) {
+    return Loaded(LoadFailure(2));
+  }
+  return Loaded(Buffer(bytes));
+}
+
+Loaded load_pair(int first, int second) {
+  Buffer a = ?load(first);
+  Buffer b = ?load(second);
+  return Loaded(Buffer(a.size() + b.size()));
+}
+
+int main() {
+  std::optional<int> distance = distance_squared(point(3, 4));
+  std::println(distance.value());
+  std::optional<int> missing = distance_squared(point(3, 12));
+  if (!missing.has_value()) {
+    std::println("no point");
+  }
+  // A declaration also accepts the residual through the implicit constructor.
+  std::optional<int> none = std::nullopt_t();
+  if (!none.has_value()) {
+    std::println("empty");
+  }
+  Loaded both = load_pair(16, 32);
+  std::println(both.size());
+  Loaded failed = load_pair(16, -1);
+  std::println(failed.error_code());
+  return 0;
+}

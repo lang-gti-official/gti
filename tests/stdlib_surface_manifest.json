@@ -30,7 +30,7 @@
     "stdlib/std/meta.gti": "a153608856dee42b8a5e72d66b6af77167b0e226c6893147158a130400a26a3e",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
-    "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
+    "stdlib/std/optional.gti": "e14db0e1dfce32c24b7a4c3b921c1024d73d200895b6b64652c96cf4d0dc3ad5",
     "stdlib/std/paired_span.gti": "cc4ebd074bb8149a2accc863df73d845ca16451e6f23fdc0e64249da566b72f1",
     "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
     "stdlib/std/polymorphic.gti": "a2194db76d6e36b30e813e6fa46baf4a31937b8362c49764f20ed7f9589a8a77",
@@ -994,6 +994,13 @@
       "id": "optional-nested",
       "mode": "run",
       "source": "tests/fixtures/optional_nested.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "optional-propagation",
+      "mode": "run",
+      "source": "tests/fixtures/optional_propagation.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -3101,10 +3108,10 @@
       "id": "optional.executable",
       "source": "stdlib/std/optional.gti",
       "status": "executable",
-      "operations": ["std::optional::clone", "std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::value", "std::optional::value_or"],
-      "case_ids": ["optional", "optional-clone", "optional-nested", "optional-expected-composition", "vector-construction-only", "optional-value-or-contract"],
+      "operations": ["std::nullopt_t", "std::optional::clone", "std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::residual", "std::optional::value", "std::optional::value_or"],
+      "case_ids": ["optional", "optional-clone", "optional-nested", "optional-expected-composition", "vector-construction-only", "optional-value-or-contract", "optional-propagation"],
       "required_instantiations": ["std::optional<int32_t>", "std::optional<move_only>", "std::optional<std::optional<std::string>>"],
-      "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/fixtures/optional_clone.gti", "tests/fixtures/optional_nested.gti", "tests/fixtures/optional_expected_composition.gti", "tests/fixtures/expected_constructor_payload.gti", "tests/fixtures/optional_constructor_failure.gti", "tests/fixtures/optional_reset_failure.gti", "tests/constructor_field_publication_test.py", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
+      "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/fixtures/optional_clone.gti", "tests/fixtures/optional_nested.gti", "tests/fixtures/optional_expected_composition.gti", "tests/fixtures/expected_constructor_payload.gti", "tests/fixtures/optional_constructor_failure.gti", "tests/fixtures/optional_reset_failure.gti", "tests/constructor_field_publication_test.py", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti", "tests/fixtures/optional_propagation.gti", "tests/fixtures/propagation_protocol.gti", "tests/propagation_protocol_tests.cpp", "tests/propagation_protocol_runtime_test.py"]
     },
     {
       "id": "paired-span.checked-proxy-iteration",

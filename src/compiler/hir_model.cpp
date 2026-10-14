@@ -940,6 +940,115 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     verifyNativeCallbackValues(instance.body);
   }
 
+  // Protocol propagation keeps the semantic selection: each step calls the
+  // selected declaration on the one operand, in the same full expression, and
+  // the residual return constructs through the selected implicit constructor.
+  // Declaration identities are shared by every concrete instance, while types
+  // are checked for internal consistency against the concrete operand.
+  const auto verifyPropagation = [&](const HirBody &body,
+                                     const HirValue &value) {
+    const auto *unary =
+        value.source == nullptr ? nullptr : exprAs<Unary>(value.source);
+    const ResolvedPropagationInfo *selected =
+        unary == nullptr ? nullptr : semantics.findPropagation(*unary);
+    if (value.kind != HirValueKind::Propagation || !value.propagation ||
+        selected == nullptr || unary->oper().kind != TokenKind::QUESTION) {
+      result.errors.emplace_back(
+          "protocol propagation lost its selected semantic plan");
+      return;
+    }
+    const HirPropagationPlan &plan = *value.propagation;
+    const HirValue *operand = body.findValue(plan.operand);
+    const HirValue *test = body.findValue(plan.test);
+    const HirValue *output = body.findValue(plan.output);
+    const HirValue *residual = body.findValue(plan.residual);
+    const HirValue *residualReturn = body.findValue(plan.residualReturn);
+    if (operand == nullptr || test == nullptr || output == nullptr ||
+        residual == nullptr || residualReturn == nullptr ||
+        value.operands != std::vector<HirValueId>{plan.operand, plan.test,
+                                                  plan.output, plan.residual,
+                                                  plan.residualReturn}) {
+      result.errors.emplace_back(
+          "protocol propagation references missing protocol steps");
+      return;
+    }
+    // An explicit move of a place is borrowed in place by read-only steps;
+    // a consuming step receives a move of exactly that place.
+    const bool movedTransport =
+        plan.movedPlace != 0 && operand->kind == HirValueKind::Move &&
+        operand->operands == std::vector<HirValueId>{plan.movedPlace};
+    const auto movesPlace = [&](HirValueId id) {
+      const HirValue *move = body.findValue(id);
+      return move != nullptr && move->kind == HirValueKind::Move &&
+             move->operands == std::vector<HirValueId>{plan.movedPlace} &&
+             move->info.type == operand->info.type &&
+             move->fullExpression == value.fullExpression;
+    };
+    const auto selectedCall = [&](const HirValue &call,
+                                  const PropagationMemberCall &member) {
+      const HirFunctionInstance *target =
+          call.functionTarget
+              ? program.findFunctionInstance(*call.functionTarget)
+              : nullptr;
+      const bool consuming =
+          member.receiverMutability == ReceiverMutability::Consuming;
+      HirCallInputKind receiver =
+          !plan.consumesOperand ? HirCallInputKind::ReadBorrow
+          : consuming           ? HirCallInputKind::MutableTemporaryBorrow
+                                : HirCallInputKind::ReadTemporaryBorrow;
+      bool receiverValue = call.receiver == operand->id;
+      if (movedTransport) {
+        receiver = consuming ? HirCallInputKind::MoveValue
+                             : HirCallInputKind::ReadBorrow;
+        receiverValue =
+            call.receiver && (consuming ? movesPlace(*call.receiver)
+                                        : *call.receiver == plan.movedPlace);
+      }
+      return call.kind == HirValueKind::Call && call.source == nullptr &&
+             call.intrinsic == IntrinsicKind::None && target != nullptr &&
+             target->declaration == member.function && receiverValue &&
+             call.operands == std::vector<HirValueId>{*call.receiver} &&
+             call.callPlan && call.callPlan->arguments.empty() &&
+             call.callPlan->receiver &&
+             call.callPlan->receiver->value == *call.receiver &&
+             call.callPlan->receiver->kind == receiver &&
+             call.fullExpression == value.fullExpression;
+    };
+    const bool consumed = operand->info.category == ValueCategory::Value;
+    const HirConstructorInstance *construction =
+        residualReturn->constructorTarget
+            ? program.findConstructorInstance(
+                  *residualReturn->constructorTarget)
+            : nullptr;
+    if (plan.consumesOperand != consumed ||
+        plan.consumesOperand != selected->consumesOperand ||
+        (plan.movedPlace != 0 && !movedTransport) ||
+        plan.copiesOutput != selected->copiesOutput ||
+        operand->info.type.kind != SemanticType::Class ||
+        value.info.category != ValueCategory::Value ||
+        !selectedCall(*test, selected->test) ||
+        test->info.type != SemanticType::Bool ||
+        !selectedCall(*output, selected->output) ||
+        output->info.type != value.info.type ||
+        (output->info.category == ValueCategory::Place) != plan.copiesOutput ||
+        !selectedCall(*residual, selected->residual) ||
+        residual->info.category != ValueCategory::Value ||
+        residualReturn->kind != HirValueKind::DirectInitializer ||
+        residualReturn->source != nullptr || construction == nullptr ||
+        construction->declaration != selected->returnConstruction.constructor ||
+        residualReturn->operands != std::vector<HirValueId>{residual->id} ||
+        residualReturn->parameterTypes !=
+            std::vector<SemanticType>{residual->info.type} ||
+        residualReturn->info.type.kind != SemanticType::Class ||
+        residualReturn->fullExpression != value.fullExpression ||
+        !residualReturn->callPlan || residualReturn->callPlan->receiver ||
+        residualReturn->callPlan->arguments.size() != 1) {
+      result.errors.emplace_back(
+          "protocol propagation lost its selected protocol calls, operand "
+          "transport, or residual construction");
+    }
+  };
+
   const auto verifyCallableValues = [&](const HirBody &body) {
     for (const HirValue &value : body.values) {
       if (value.kind == HirValueKind::ExpectedPropagation ||
@@ -1011,6 +1120,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             }
           }
         }
+      }
+      if (value.kind == HirValueKind::Propagation || value.propagation) {
+        verifyPropagation(body, value);
       }
       const HirFunctionInstance *contractTarget =
           value.kind == HirValueKind::Call && value.functionTarget

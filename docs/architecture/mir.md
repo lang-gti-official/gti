@@ -57,6 +57,26 @@ extraction producer while retiring body-local loans. MIR verification and
 the existing production reference representation remain authoritative; no
 AST/HIR-only backend path is introduced.
 
+### Protocol propagation
+
+Prefix `?` through the propagation protocol adds no MIR operation. The
+operand and its `has_value()` call complete on the incoming path and a
+`Branch` on the call's result selects one of two blocks. The residual block
+evaluates `residual()` and the residual constructor, prepares the constructed
+value's return ownership, ends the expression's loans, drops the full
+expression's temporaries created so far behind an early-exit boundary, runs
+the lexical scope exit and returns the value, exactly as expected
+propagation's error edge does. The success block evaluates `value()`, copies
+a read-only reference result through its call-result loan, and moves the value
+into the expression's result temporary. Each step is an ordinary `Call` or
+`Construct` with its own failure edge; the existing verifier checks receivers,
+loans, lifecycle events, cleanup order and the exactly-one primary
+full-expression boundary. A temporary operand is a call- or
+construction-materialized temporary, and an explicit `std::move(place)` is
+borrowed or moved at each call, so no new temporary materialization rule is
+needed. Protocol exits do not use shared exit ladders; they keep their own
+cleanup like other class-valued returns.
+
 ### Terminal calls and caller locations
 
 Concrete functions and calls retain semantic `neverReturns` and `tracksCaller`

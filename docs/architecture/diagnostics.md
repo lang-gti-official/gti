@@ -910,9 +910,20 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   `GTI-S2017`. The LSP publishes `GTI-S2085` unchanged, including its source
   range, phase data, and related parameter.
 - `GTI-S2086` owns an invalid prefix `?` propagation expression. Point at the
-  operator and distinguish a non-`expected<T, E>` operand, a callable that does
-  not return `expected<U, E>`, a non-identical enclosing error type, and an
-  unavailable copy or move for either owned active alternative. Implemented
+  operator and distinguish an operand that is neither `expected<T, E>` nor a
+  class, a callable that does not return `expected<U, E>`, a non-identical
+  enclosing error type, and an unavailable copy or move for either owned
+  active alternative. For a class operand using the propagation protocol,
+  distinguish a missing `has_value()`, `value()` or `residual()` member; a
+  member with the wrong receiver, parameters, result or declaration contract
+  (relating the candidate); a named operand whose overloads only consume
+  (hint `?std::move(name)`); an output that cannot be copied; a residual that
+  is not an owned movable value; an enclosing return type outside the
+  operand's class family; a return type without exactly one implicit
+  constructor taking the residual (relating the return type); and use in a
+  `constexpr` function. Inaccessible protocol members and constructors use
+  `GTI-S2007`, and member constraints their ordinary constraint diagnostic.
+  Implemented
   `expected<T&, E>` propagation preserves the checked read-only success
   dependency rather than copying or moving its referent; ordinary borrow
   diagnostics reject invalid origins, lifetimes or conflicting access. Its

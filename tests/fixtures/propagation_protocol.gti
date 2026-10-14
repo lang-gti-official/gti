@@ -1,0 +1,271 @@
+// Prefix `?` through the structural propagation protocol. Every result type
+// below is ordinary GTI: has_value(), value() and residual() are members, and
+// the family's implicit constructor accepts the residual. Destructors print
+// their identity so the cleanup order on each exit is observable.
+#include <std/optional>
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+class Noisy {
+  int id;
+public:
+  Noisy(int id) : id(id) {}
+  Noisy(Noisy& other) = delete;
+  Noisy(Noisy&& other) = default;
+  ~Noisy() { std::println(this.id); }
+  int get() { return this.id; }
+};
+
+struct Failure {
+  int code;
+  Failure(int code) : code(code) {}
+};
+
+// An owning, move-only result: a consumed operand moves its payload out.
+class Reply {
+  mut Noisy payload;
+  int code;
+public:
+  Reply(Noisy payload) : payload(std::move(payload)), code(0) {}
+  implicit Reply(Failure failure)
+      : payload(Noisy(900 + failure.code)), code(failure.code) {}
+  bool has_value() { return this.code == 0; }
+  Noisy value() && {
+    if (this.payload.get() == 13) {
+      std::panic("unlucky protocol value");
+    }
+    return std::move(this.payload);
+  }
+  Failure residual() { return Failure(this.code); }
+  int code_of() { return this.code; }
+};
+
+Reply make(int id, bool fail) {
+  if (fail) {
+    return Reply(Failure(id));
+  }
+  return Reply(Noisy(id));
+}
+
+int combine(Noisy left, Noisy right) { return left.get() + right.get(); }
+
+// Two propagations in one full expression: an exit ends only the temporaries
+// created before it, newest first, then the lexical locals.
+Reply chain(bool first, bool second) {
+  Noisy guard = Noisy(1);
+  int total = combine(?make(10, first), ?make(20, second));
+  return Reply(Noisy(total));
+}
+
+// An explicitly moved named operand: the consuming value() receives it, and
+// on the residual exit it keeps its ordinary lexical cleanup.
+Reply moved_chain(bool fail) {
+  Noisy guard = Noisy(2);
+  Reply reply = make(30, fail);
+  Noisy late = Noisy(3);
+  Noisy got = ?std::move(reply);
+  return Reply(Noisy(got.get() + 1));
+}
+
+// A defined failure inside a protocol member is not a propagation: it takes
+// the call's ordinary failure edge and cleanup.
+Reply unlucky() {
+  Noisy guard = Noisy(4);
+  Noisy got = ?make(13, false);
+  return Reply(std::move(got));
+}
+
+// A copyable generic family: a named operand is observed through its
+// read-only value(), and Parsed<int> propagates into Parsed<bool>.
+struct ParseError {
+  int position;
+  ParseError(int position) : position(position) {}
+};
+
+class Parsed<std::move_constructible T> {
+  mut std::optional<T> payload;
+  int position;
+public:
+  Parsed(T value)
+      : payload(std::optional<T>(std::move(value))), position(-1) {}
+  implicit Parsed(ParseError error)
+      : payload(std::optional<T>()), position(error.position) {}
+  bool has_value() { return this.position < 0; }
+  T& value() { return this.payload.value(); }
+  ParseError residual() { return ParseError(this.position); }
+  int error_position() { return this.position; }
+};
+
+Parsed<int> digit(int position, int code) {
+  if (code < 0 || code > 9) {
+    return Parsed<int>(ParseError(position));
+  }
+  return Parsed<int>(code);
+}
+
+Parsed<int> number(int high, int low) {
+  int tens = ?digit(0, high);
+  int ones = ?digit(1, low);
+  return Parsed<int>(tens * 10 + ones);
+}
+
+Parsed<bool> even(int high, int low) {
+  Parsed<int> parsed = number(high, low);
+  int value = ?parsed;
+  return Parsed<bool>(value % 2 == 0);
+}
+
+// std::optional is a client of the same rule: emptiness propagates as an
+// empty optional<U>, and success copies the payload.
+std::optional<int> find(int key) {
+  if (key > 0) {
+    return std::optional<int>(key * 10);
+  }
+  return std::optional<int>();
+}
+
+std::optional<bool> large(int key) {
+  int found = ?find(key);
+  return std::optional<bool>(found > 15);
+}
+
+std::optional<int> forward(std::optional<int> input) {
+  return std::optional<int>(?input + 1);
+}
+
+std::optional<int> consume(std::optional<int> input) {
+  return std::optional<int>(?std::move(input) + 2);
+}
+
+std::optional<T> first<std::move_constructible T>(std::optional<T> input)
+    requires std::copy_constructible<T> {
+  T value = ?input;
+  return std::optional<T>(value);
+}
+
+// Passive class outputs have no cleanup obligation and no default
+// constructor: a copied point and a moved trivially destructible token.
+struct Point {
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+
+std::optional<Point> corner(bool present) {
+  if (!present) {
+    return std::optional<Point>();
+  }
+  return std::optional<Point>(Point(6, 7));
+}
+
+std::optional<int> area(std::optional<Point> point) {
+  Point copied = ?point;
+  return std::optional<int>(copied.x * copied.y);
+}
+
+class Token {
+  int id;
+public:
+  Token(int id) : id(id) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  int get() { return this.id; }
+};
+
+class Ticket {
+  mut Token token;
+  int code;
+public:
+  Ticket(Token token) : token(std::move(token)), code(0) {}
+  implicit Ticket(Failure failure) : token(Token(0)), code(failure.code) {}
+  bool has_value() { return this.code == 0; }
+  Token value() && { return std::move(this.token); }
+  Failure residual() { return Failure(this.code); }
+  int code_of() { return this.code; }
+  int id() { return this.token.get(); }
+};
+
+Ticket issue(int id) {
+  if (id < 0) {
+    return Ticket(Failure(-id));
+  }
+  return Ticket(Token(id));
+}
+
+Ticket reissue(int first, int second) {
+  Token a = ?issue(first);
+  Token b = ?issue(second);
+  return Ticket(Token(a.get() * 100 + b.get()));
+}
+
+int flag(bool value) {
+  if (value) {
+    return 1;
+  }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) {
+    Reply failed = unlucky();
+    return failed.code_of();
+  }
+  std::println(100);
+  {
+    Reply ok = chain(false, false);
+    std::println(ok.code_of());
+  }
+  std::println(200);
+  {
+    Reply early = chain(true, false);
+    std::println(early.code_of());
+  }
+  std::println(300);
+  {
+    Reply late = chain(false, true);
+    std::println(late.code_of());
+  }
+  std::println(400);
+  {
+    Reply moved = moved_chain(false);
+    std::println(moved.code_of());
+  }
+  std::println(500);
+  {
+    Reply kept = moved_chain(true);
+    std::println(kept.code_of());
+  }
+  std::println(600);
+  Parsed<int> parsed = number(4, 2);
+  Parsed<int> rejected = number(4, 12);
+  Parsed<bool> yes = even(4, 2);
+  Parsed<bool> no = even(13, 2);
+  std::println(parsed.value());
+  std::println(rejected.error_position());
+  std::println(flag(yes.value()));
+  std::println(no.error_position());
+  std::println(700);
+  auto offset = [](int key) -> std::optional<int> {
+    return std::optional<int>(?find(key) + 5);
+  };
+  std::optional<int> empty = std::nullopt_t();
+  std::println(flag(large(2).value()));
+  std::println(flag(large(-2).has_value()));
+  std::println(forward(find(3)).value());
+  std::println(flag(forward(find(-3)).has_value()));
+  std::println(consume(find(4)).value());
+  std::println(first(find(5)).value());
+  std::println(flag(first(find(-5)).has_value()));
+  std::println(offset(6).value());
+  std::println(flag(offset(-6).has_value()));
+  std::println(flag(empty.has_value()));
+  std::println(800);
+  std::println(area(corner(true)).value());
+  std::println(flag(area(corner(false)).has_value()));
+  Ticket ticket = reissue(4, 5);
+  std::println(ticket.id());
+  Ticket refused = reissue(4, -9);
+  std::println(refused.code_of());
+  return 0;
+}

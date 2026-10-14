@@ -2796,6 +2796,7 @@ private:
     case HirValueKind::Conversion:
     case HirValueKind::DirectInitializer:
     case HirValueKind::ExpectedPropagation:
+    case HirValueKind::Propagation:
     case HirValueKind::Grouping:
     case HirValueKind::Lambda:
     case HirValueKind::Literal:
@@ -4565,6 +4566,191 @@ private:
     return id;
   }
 
+  // Prefix `?` through the structural propagation protocol. Each step is an
+  // ordinary selected member call on the once-evaluated operand, and the
+  // residual return is the enclosing return type's implicit construction.
+  // MIR schedules the branch and the early return; no step is an intrinsic.
+  [[nodiscard]] std::optional<HirValueId>
+  lowerPropagation(const Unary &expression, const ResolvedPropagationInfo &plan,
+                   const SemanticModel &model,
+                   const std::vector<SemanticType> &classArguments,
+                   const std::vector<CompileTimeValue> &classValueArguments,
+                   HirBody &body) {
+    const std::optional<HirValueId> operand = lowerExpression(
+        expression.right(), model, classArguments, classValueArguments, body);
+    const HirValue *operandValue = operand ? body.findValue(*operand) : nullptr;
+    const ExpressionInfo *resultInfo = model.findExpression(expression);
+    if (!operand || operandValue == nullptr || resultInfo == nullptr ||
+        operandValue->info.type != plan.operandType ||
+        (operandValue->info.category == ValueCategory::Value) !=
+            plan.consumesOperand ||
+        resultInfo->type != plan.resultType ||
+        resultInfo->category != ValueCategory::Value) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+    const SourceSpan site = tokenSpan(expression.oper());
+    // Operand transport. A temporary is materialized once, and every call
+    // borrows or consumes that temporary in place; a named operand is only
+    // borrowed. An explicitly moved place stays in its place: read-only
+    // steps borrow it and a consuming step receives it by move, so a path on
+    // which no step consumes it keeps the place's ordinary lexical cleanup.
+    HirValueId movedPlace = 0;
+    if (plan.consumesOperand && operandValue->kind == HirValueKind::Move &&
+        operandValue->operands.size() == 1) {
+      const HirValue *place = body.findValue(operandValue->operands.front());
+      if (place != nullptr && place->info.category == ValueCategory::Place) {
+        movedPlace = place->id;
+      }
+    }
+    // Appending values can reallocate body.values; keep only copies.
+    const HirValue movedOperand = *operandValue;
+    bool operandMoveUsed = false;
+    const auto consumedMove = [&]() -> HirValueId {
+      if (!operandMoveUsed) {
+        operandMoveUsed = true;
+        return *operand;
+      }
+      HirValue clone = movedOperand;
+      clone.id = nextValueId++;
+      clone.source = nullptr;
+      const HirValueId id = clone.id;
+      body.values.push_back(std::move(clone));
+      return id;
+    };
+    const auto memberCall =
+        [&](const PropagationMemberCall &member) -> std::optional<HirValueId> {
+      const FunctionInfo *target = baseModel->findFunction(member.function);
+      if (target == nullptr ||
+          member.dispatchOwner.kind != SemanticType::Class) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+      const HirFunctionInstanceId instance =
+          enqueueFunction(*target, member.dispatchOwner.arguments,
+                          member.dispatchOwner.valueArguments, {}, {},
+                          member.returnType, {}, site);
+      if (instance == 0) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+      SemanticType type = member.returnType;
+      ValueCategory category = ValueCategory::Value;
+      AccessMode access = AccessMode::ReadOnly;
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
+        access = type.referenceAccess;
+        category = ValueCategory::Place;
+        SemanticType referent = type.arguments.front();
+        type = std::move(referent);
+      }
+      (void)enqueueClass(type);
+      const bool consumes =
+          member.receiverMutability == ReceiverMutability::Consuming;
+      HirValueId receiverValue = *operand;
+      HirCallInputKind receiver = HirCallInputKind::ReadBorrow;
+      if (movedPlace != 0) {
+        receiverValue = consumes ? consumedMove() : movedPlace;
+        receiver = consumes ? HirCallInputKind::MoveValue
+                            : HirCallInputKind::ReadBorrow;
+      } else if (plan.consumesOperand) {
+        receiver = consumes ? HirCallInputKind::MutableTemporaryBorrow
+                            : HirCallInputKind::ReadTemporaryBorrow;
+      }
+      HirValue call{
+          .id = nextValueId++,
+          .kind = HirValueKind::Call,
+          .info = {.type = type,
+                   .category = category,
+                   .access = access,
+                   .traits = instanceProvider->traitsFor(type)},
+          .operands = {receiverValue},
+          .definedFailure = {.propagation = FailurePropagationKind::DirectCall},
+          .borrowOrigin = member.borrowOrigin,
+          .borrowAccess = member.borrowAccess,
+          .dispatch = CallDispatch::Static,
+          .dispatchOwner = member.dispatchOwner,
+          .receiver = receiverValue,
+          .callPlan = HirCallPlan{.receiver =
+                                      HirCallReceiver{
+                                          .value = receiverValue,
+                                          .kind = receiver,
+                                          .type = plan.operandType,
+                                      },
+                                  .arguments = {}},
+          .functionTarget = instance,
+      };
+      if (consumes) {
+        call.callableInvocation =
+            callableInvocationCapability(member.receiverMutability);
+      }
+      const HirValueId id = call.id;
+      body.values.push_back(std::move(call));
+      return id;
+    };
+
+    const std::optional<HirValueId> test = memberCall(plan.test);
+    const std::optional<HirValueId> success = memberCall(plan.output);
+    const std::optional<HirValueId> residual = memberCall(plan.residual);
+    if (!test || !success || !residual) {
+      return std::nullopt;
+    }
+
+    // The residual initializes the return value as a declaration's implicit
+    // construction would; the construction has no source expression.
+    const ResolvedConstructionInfo &construction = plan.returnConstruction;
+    HirValue residualReturn{
+        .id = nextValueId++,
+        .kind = HirValueKind::DirectInitializer,
+        .info = {.type = construction.constructedType,
+                 .category = ValueCategory::Value,
+                 .access = AccessMode::ReadOnly,
+                 .traits =
+                     instanceProvider->traitsFor(construction.constructedType)},
+        .operands = {*residual},
+        .parameterTypes = construction.parameterTypes,
+        .definedFailure = {.propagation = FailurePropagationKind::Constructor},
+        .constructorKind = construction.kind,
+    };
+    const HirConstructorInstanceId constructor =
+        enqueueConstructor(construction, site);
+    if (constructor == 0) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+    residualReturn.constructorTarget = constructor;
+    const std::optional<std::vector<HirCallArgument>> arguments =
+        orderedConstructorArguments(residualReturn, residualReturn.operands,
+                                    residualReturn.parameterTypes, body, 1);
+    if (!arguments) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+    residualReturn.callPlan =
+        HirCallPlan{.receiver = std::nullopt, .arguments = *arguments};
+    const HirValueId residualReturnId = residualReturn.id;
+    body.values.push_back(std::move(residualReturn));
+
+    const HirValueId id = nextValueId++;
+    body.values.push_back(
+        {.id = id,
+         .kind = HirValueKind::Propagation,
+         .source = &expression,
+         .info = *resultInfo,
+         .operands = {*operand, *test, *success, *residual, residualReturnId},
+         .operation = TokenKind::QUESTION,
+         .propagation =
+             HirPropagationPlan{.operand = *operand,
+                                .movedPlace = movedPlace,
+                                .test = *test,
+                                .output = *success,
+                                .residual = *residual,
+                                .residualReturn = residualReturnId,
+                                .consumesOperand = plan.consumesOperand,
+                                .copiesOutput = plan.copiesOutput}});
+    output.program.sourceValueIds[&expression].push_back(id);
+    return id;
+  }
+
   [[nodiscard]] std::optional<HirValueId> lowerExpectedExpect(
       const Call &expression, const ExpectedCombinatorInfo &expect,
       const SemanticModel &model,
@@ -5165,6 +5351,11 @@ private:
     }
     if (const auto *unary = dynamic_cast<const Unary *>(&expression);
         unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
+      if (const ResolvedPropagationInfo *propagation =
+              model.findPropagation(*unary)) {
+        return lowerPropagation(*unary, *propagation, model, classArguments,
+                                classValueArguments, body);
+      }
       return lowerExpectedPropagation(*unary, model, classArguments,
                                       classValueArguments, body);
     }

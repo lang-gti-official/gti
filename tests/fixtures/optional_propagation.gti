@@ -1,0 +1,30 @@
+// std::optional propagates through prefix `?`: an empty operand returns an
+// empty optional<U> of the enclosing type, and success copies the payload.
+#include <std/optional>
+
+std::optional<int> find(int key) {
+  if (key > 0) {
+    return std::optional<int>(key * 10);
+  }
+  return std::optional<int>();
+}
+
+std::optional<bool> large(int key) {
+  int found = ?find(key);
+  return std::optional<bool>(found > 15);
+}
+
+std::optional<int> forward(std::optional<int> input) {
+  return std::optional<int>(?input + 1);
+}
+
+int main() {
+  std::optional<int> empty = std::nullopt_t();
+  if (empty.has_value() || large(-1).has_value() || !large(2).value()) {
+    return 1;
+  }
+  if (forward(find(-3)).has_value()) {
+    return 2;
+  }
+  return forward(find(3)).value() - 31;
+}

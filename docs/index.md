@@ -151,6 +151,11 @@ while canonical language documents continue to describe actual support.
   — conversion operators called only by `Target(value)` unless declared
   `implicit`, one shared selection with constructors and no ranking, one
   step, and member-call receivers.
+- [028: Structural propagation protocol for prefix `?`](decisions/028-propagation-protocol.md)
+  — *Proposed.* `?` on any class with `has_value()`, `value()` and
+  `residual()` members whose enclosing return type of the same family accepts
+  the residual through an implicit constructor; `std::optional` is the first
+  client and built-in `expected` its planned next one.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

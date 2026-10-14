@@ -1619,6 +1619,20 @@ void SemanticModel::recordCollection(const ArrayInitializer &initializer,
   collections.insert_or_assign(&initializer, std::move(info));
 }
 
+const ResolvedPropagationInfo *
+SemanticModel::findPropagation(const Unary &propagation) const {
+  const auto found = propagations.find(&propagation);
+  if (found != propagations.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr : base->findPropagation(propagation);
+}
+
+void SemanticModel::recordPropagation(const Unary &propagation,
+                                      ResolvedPropagationInfo info) {
+  propagations.insert_or_assign(&propagation, std::move(info));
+}
+
 [[nodiscard]] const ResolvedConstructorInitializerInfo *
 SemanticModel::findConstructorInitializer(
     const ConstructorInitializer &initializer) const {
@@ -1860,6 +1874,7 @@ void SemanticModel::clear() {
   contextualConstructions.clear();
   contextualConstructionSites.clear();
   collections.clear();
+  propagations.clear();
   constructorInitializers.clear();
   resolvedSymbols.clear();
   semanticDatabase.clear();
@@ -2067,7 +2082,7 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
   return sizeof(SemanticModel) + expressions.size() * 256 +
          (calls.size() + constructions.size() + contextualConstructions.size() +
           operators.size() + projectionOperators.size() +
-          contextualConversions.size()) *
+          contextualConversions.size() + propagations.size()) *
              768 +
          (variableBindings.size() + parameterBindings.size()) * 256 +
          (places.size() + ownershipEvents.size() + constants.size()) * 160 +

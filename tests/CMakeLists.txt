@@ -678,6 +678,14 @@ target_precompile_headers("gti_optional_compiler_tests"
                           REUSE_FROM gti_compiler_test_pch)
 add_test(NAME optional_compiler_contract COMMAND gti_optional_compiler_tests)
 
+add_executable("gti_propagation_protocol_tests"
+               "${PROJECT_SOURCE_DIR}/tests/propagation_protocol_tests.cpp")
+target_link_libraries("gti_propagation_protocol_tests" PRIVATE gti_cpp_backend)
+target_precompile_headers("gti_propagation_protocol_tests"
+                          REUSE_FROM gti_compiler_test_pch)
+add_test(NAME propagation_protocol_contract
+         COMMAND gti_propagation_protocol_tests)
+
 add_executable("gti_polymorphic_storage_compiler_tests"
                "${PROJECT_SOURCE_DIR}/tests/polymorphic_storage_compiler_tests.cpp")
 target_link_libraries("gti_polymorphic_storage_compiler_tests" PRIVATE gti_cpp_backend)
@@ -2598,6 +2606,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/borrowed_expected_extraction_runtime_test.py"
             "$<TARGET_FILE:gti>")
   set_tests_properties(borrowed_expected_extraction_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME propagation_protocol_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/propagation_protocol_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  # Includes one sanitized build; see SANITIZED_BUILD_TIMEOUT in
+  # tests/sanitizer_support.py.
+  set_tests_properties(propagation_protocol_runtime PROPERTIES TIMEOUT 1800)
   add_test(
     NAME expected_payload_range_runtime
     COMMAND "${Python3_EXECUTABLE}"

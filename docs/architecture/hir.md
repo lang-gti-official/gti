@@ -255,6 +255,25 @@ ordinary concrete classes containing aliases without substituting a
 representative instantiation's field type or construction operation into a
 source template.
 
+Prefix `?` on a class operand lowers the semantic `ResolvedPropagationInfo`
+into one `Propagation` value whose `HirPropagationPlan` names the operand and
+four ordinary steps: `Call` values for the selected `has_value()`, `value()`
+and `residual()` function instances, and a source-less `DirectInitializer` of
+the selected implicit residual constructor taking the `residual()` result.
+Nothing is an intrinsic. A temporary operand is the receiver of every call,
+as a read or mutable temporary borrow for a read-only or consuming member;
+a named operand is a read borrow. For `std::move(place)` the plan's
+`movedPlace` names the place: read-only steps borrow it and a consuming step
+receives a `Move` of it (a second consuming step gets its own `Move`), so a
+path that consumes nothing leaves the place to its lexical cleanup. A
+read-only reference `value()` result stays a place that MIR copies. Plan
+verification checks the semantic plan's presence, each call's selected
+declaration (shared by every concrete instance), receiver value and kind, the
+full expression, the output type, the copy flag and the constructor
+declaration. Built-in `expected` keeps its dedicated `ExpectedPropagation`
+plan, which [ADR 028](../decisions/028-propagation-protocol.md) schedules for
+removal when `expected` becomes a protocol client.
+
 Consuming `expected<T, E>` combinators receive their exact operation, mapper
 identity, and result type from semantics. `transform_error`, `transform`, and
 `and_then` share one expansion into a state test,

@@ -774,6 +774,39 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
       }
     }
   }
+  if (const auto *unary = exprAs<Unary>(&expression)) {
+    if (const ResolvedPropagationInfo *propagation =
+            semanticModel.findPropagation(*unary)) {
+      // The protocol's member calls and residual construction are ordinary
+      // static calls of this expression, recorded as an explicit call's are.
+      const SourceSpan span = tokenSpan(expressionToken(expression));
+      for (const PropagationMemberCall *member :
+           {&propagation->test, &propagation->output, &propagation->residual}) {
+        const FunctionInfo *target =
+            semanticModel.findFunction(member->function);
+        if (target == nullptr || target->declaration == nullptr ||
+            target->bodyDeclaration()->body() == nullptr) {
+          addUnknownProgramEffect(expression,
+                                  "a propagation protocol member has no "
+                                  "executable body");
+          continue;
+        }
+        const ProgramEffectOwner effect{
+            .kind = ProgramEffectOwnerKind::Function, .id = target->id};
+        if (target->ownerClass != 0 &&
+            !classInfo(target->ownerClass).genericParameters.empty()) {
+          recordConcreteProgramEffect(effect, member->dispatchOwner, {}, {},
+                                      span);
+        } else {
+          addProgramEffectEdge(effect, expression);
+        }
+      }
+      (void)recordProgramConstructionEffects(
+          expression, propagation->returnConstruction, 1);
+      recordProgramCleanupEffects(propagation->residualType, span);
+      return;
+    }
+  }
   if (const ResolvedOperatorInfo *operation =
           semanticModel.findOperator(expression)) {
     if (const auto *call = exprAs<Call>(&expression)) {

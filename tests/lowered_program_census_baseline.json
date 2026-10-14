@@ -1201,8 +1201,8 @@
       }
     },
     "084-optional-values.gti": {
-      "declarations": 144,
-      "bodies": 33,
+      "declarations": 147,
+      "bodies": 35,
       "generated_items": 18,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1306,8 +1306,8 @@
       }
     },
     "091-json-documents.gti": {
-      "declarations": 1878,
-      "bodies": 469,
+      "declarations": 1881,
+      "bodies": 471,
       "generated_items": 267,
       "generated_kinds": {
         "program_initialization": 1,
@@ -1321,8 +1321,8 @@
       }
     },
     "092-json-codecs.gti": {
-      "declarations": 1884,
-      "bodies": 445,
+      "declarations": 1887,
+      "bodies": 447,
       "generated_items": 249,
       "generated_kinds": {
         "program_initialization": 1,
@@ -1336,8 +1336,8 @@
       }
     },
     "093-http-json-client.gti": {
-      "declarations": 2026,
-      "bodies": 553,
+      "declarations": 2029,
+      "bodies": 555,
       "generated_items": 266,
       "generated_kinds": {
         "program_initialization": 1,
@@ -1441,8 +1441,8 @@
       }
     },
     "100-owned-error-pipelines.gti": {
-      "declarations": 1872,
-      "bodies": 325,
+      "declarations": 1875,
+      "bodies": 327,
       "generated_items": 167,
       "generated_kinds": {
         "program_initialization": 1,
@@ -1906,8 +1906,8 @@
       }
     },
     "131-inferred-references.gti": {
-      "declarations": 1863,
-      "bodies": 377,
+      "declarations": 1866,
+      "bodies": 379,
       "generated_items": 212,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2041,8 +2041,8 @@
       }
     },
     "140-environment-configuration.gti": {
-      "declarations": 1167,
-      "bodies": 129,
+      "declarations": 1170,
+      "bodies": 131,
       "generated_items": 86,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2056,8 +2056,8 @@
       }
     },
     "141-reflected-json.gti": {
-      "declarations": 1886,
-      "bodies": 517,
+      "declarations": 1889,
+      "bodies": 519,
       "generated_items": 293,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2146,8 +2146,8 @@
       }
     },
     "147-standard-library-import.gti": {
-      "declarations": 3189,
-      "bodies": 387,
+      "declarations": 3192,
+      "bodies": 389,
       "generated_items": 218,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2161,8 +2161,8 @@
       }
     },
     "148-nested-configuration.gti": {
-      "declarations": 1881,
-      "bodies": 428,
+      "declarations": 1884,
+      "bodies": 430,
       "generated_items": 229,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2203,6 +2203,21 @@
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 31
+      }
+    },
+    "150-protected-events.gti": {
+      "declarations": 122,
+      "bodies": 32,
+      "generated_items": 4,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 3
       }
     },
     "151-c-string-import.gti": {
@@ -2265,21 +2280,6 @@
         "concrete_instance_adapter": 36
       }
     },
-    "150-protected-events.gti": {
-      "declarations": 122,
-      "bodies": 32,
-      "generated_items": 4,
-      "generated_kinds": {
-        "program_initialization": 0,
-        "hosted_entry": 1,
-        "structural_operator_adapter": 0,
-        "callable_adapter": 0,
-        "lifecycle_cleanup": 0,
-        "native_interop_adapter": 0,
-        "thread_task_adapter": 0,
-        "concrete_instance_adapter": 3
-      }
-    },
     "155-conversion-operators.gti": {
       "declarations": 1123,
       "bodies": 130,
@@ -2294,11 +2294,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 35
       }
+    },
+    "156-propagation-protocol.gti": {
+      "declarations": 174,
+      "bodies": 59,
+      "generated_items": 18,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 1,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 16
+      }
     }
   },
   "totals": {
-    "declarations": 109358,
-    "bodies": 16735,
-    "generated_items": 10276
+    "declarations": 109562,
+    "bodies": 16814,
+    "generated_items": 10294
   }
 }

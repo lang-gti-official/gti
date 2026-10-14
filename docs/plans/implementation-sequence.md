@@ -325,6 +325,7 @@ workflow determine task scope and integration.
 | Reflection clients | ready after delivered phases 1–3 | Phase 3 is integrated in 0.400.0: structural construction, callable/source metadata, receiver/owner fixes and expansion-budget tests. The accepted next client is `std::experimental::json`; validate decoding, rollback, diagnostics and performance before the planned `std::json` deprecation. Metaobject invocation/runtime reflection remain separate goals in the [reflection plan](reflection.md). |
 | `L-UP-10` -> `L-UP-11` | acceptance closure, then adoption; may be co-validated | The retained borrowed-pack reproducer passes current O0/O3 probes. Complete the relevant constructor/cleanup composition matrix while adopting final-node emplacement; do not presume another compiler fix. |
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
+| `L-ERR-02` propagation protocol | first slice on a review branch; ADR 028 proposed | Owner review of the protocol shape, then consuming optional extraction (`optional_storage_take`), void/borrowed outputs, and `expected` as a client with its dedicated path deleted; see [L-ERR-02](#l-err-02-structural-propagation-protocol). |
 | `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
@@ -8263,6 +8264,47 @@ consumer, and release refreshes remain outstanding for the full campaign.
   result/error types, drop every live obligation once, retain source-facing
   spans through HIR/MIR, and pass formatter/parser/LSP/runtime plus full
   repository validation.
+
+### L-ERR-02: Structural Propagation Protocol
+
+- **State/role:** first slice implemented on the review branch
+  `codex/optional-propagation`; design proposed in
+  [ADR 028](../decisions/028-propagation-protocol.md), awaiting owner review.
+  Builds on `L-ERR-01`'s early-exit MIR and the implicit-construction rule.
+- **Outcome:** `?` on application result classes and `std::optional`,
+  without compiler knowledge of either, so that `expected` can later move to
+  source without changing user code.
+- **Implemented slice:** semantics selects `has_value()`, `value()` and
+  `residual()` with ordinary receiver rules and the enclosing return type's
+  implicit residual constructor within one class family, recording
+  `ResolvedPropagationInfo`; HIR lowers ordinary calls and a construction with
+  plan verification; MIR branches and reuses the early-exit return; the C++
+  backend is unchanged. `std::optional` adds `std::nullopt_t`, `residual()`
+  and `implicit optional(nullopt_t)`. Runnable example
+  `examples/156-propagation-protocol.gti`.
+- **Evidence so far:** `propagation_protocol_contract` (semantic, HIR, MIR,
+  forged HIR/MIR rejection, C++20/C++23 emission and eight `GTI-S2086`
+  diagnostics) and `propagation_protocol_runtime` (C++20/C++23 at O0/O1/O3
+  plus ASan/UBSan: cleanup order on both exits, two propagations in one
+  expression, moved operands, a generic family, optional clients, a panic
+  inside a protocol member and the example).
+- **Remaining, in order:**
+  1. consuming optional extraction: a trusted `optional_storage_take`
+     capability (move out, retire engagement, `empty_owner_access` when empty)
+     with backend storage support, then `T value() &&` on `std::optional`;
+  2. `void` outputs and borrowed outputs that forward a read-only loan, the
+     prerequisites for `expected<void, E>` and `expected<T&, E>`;
+  3. `expected` as a protocol client: express its members, lower its `?`
+     through the protocol plan and delete the dedicated semantic check,
+     `HirExpectedPropagationPlan` and MIR `emitExpectedPropagation` in the
+     same change;
+  4. later extensions with their own decisions: cross-family residuals,
+     a constraint naming the protocol for type-parameter operands, constant
+     evaluation through the MIR constant evaluator, inherited members and
+     residual constructors with defaults or reference parameters.
+- **Exit gate:** owner acceptance of ADR 028; full-suite and corpus
+  validation (census baselines move because `<std/optional>` grows); expected
+  migrated as in item 3 so one execution rule remains.
 
 ### L-OP-01: Broader Operators And Capability Policy
 

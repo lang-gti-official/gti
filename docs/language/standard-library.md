@@ -461,7 +461,16 @@ The current implemented foundation includes:
   An empty checked access raises `GTI-R0008` after ordinary cleanup. Copy
   construction and copy/move assignment are unavailable in this slice;
   replacement uses `reset()` or `emplace()`, and a moved source cannot be used
-  under GTI's ordinary ownership rules; and
+  under GTI's ordinary ownership rules. Optional implements the
+  [propagation protocol](static-semantics.md#391-propagation): its residual is
+  the field-less `std::nullopt_t`, `residual()` returns it, and
+  `implicit optional(std::nullopt_t)` constructs an empty optional, so
+  `std::optional<int> none = std::nullopt_t();` is a valid declaration and
+  prefix `?` on an empty optional returns an empty `optional<U>` of the
+  enclosing type. A successful `?` copies the payload through the read-only
+  `value()`, so it requires a copyable payload; moving a consumed optional's
+  payload out needs a consuming `value() &&`, which waits for a storage take
+  capability; and
 - `<std/cstdio>` counted stdout/stderr, bounded stdin reads, and unbuffered file
   open/read/write/seek/tell/close through recoverable source-defined wrappers
   and a move-only `std::FILE` owner; and
