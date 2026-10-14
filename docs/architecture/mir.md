@@ -684,6 +684,15 @@ publishes twice. Such a value is live for the record even though the body
 records no use of it; the verified dead-instruction rewrite refuses to remove
 it, and the C++ emitter publishes from the same query.
 
+The initializer index on an instruction names only that initializer's
+publication, its `Initialize` or `InitializeBase`. A temporary that ends with
+the initializer's full expression, such as a method receiver materialized for
+`Meters lap = Feet(30).to_meters();` as a field declaration default, is
+dropped by an ordinary `Drop` with no index before the initializer's
+full-expression boundary. Verification rejects the index on any other
+instruction, because program verification counts the instructions carrying it
+as that initializer's publications.
+
 Program v80/body v68 also serialize the resolved caller literal on each private
 source-location intrinsic. MIR verification requires the exact zero-argument,
 effect-free call shape, matching scalar/text result, and attached literal;
