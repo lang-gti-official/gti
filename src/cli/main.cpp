@@ -2603,7 +2603,8 @@ int buildProjectPlan(
     const lang::SourceManager *diagnosticSources = nullptr,
     const char *driver = nullptr,
     std::optional<lang::driver::BuildProvenance> *capturedProvenance = nullptr,
-    DiagnosticSummary *capturedDiagnostics = nullptr) {
+    DiagnosticSummary *capturedDiagnostics = nullptr,
+    std::vector<std::string> *capturedTestCases = nullptr) {
   lang::cli::BuildProgress progress(
       terminalStyle, progressMode, plan.targetName(),
       plan.profileName() + ", " + lang::driver::targetTriple(plan.target()),
@@ -2735,6 +2736,9 @@ int buildProjectPlan(
   }
   if (capturedProvenance != nullptr) {
     *capturedProvenance = result.provenance;
+  }
+  if (capturedTestCases != nullptr) {
+    *capturedTestCases = result.compilation.testCases;
   }
   progress.finish(status == exitCode(ExitStatus::Success));
   return status;
@@ -3462,9 +3466,10 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
               << terminalStyle.code(std::cerr, Style::Reset) << ' '
               << plan.targetName() << '\n';
     DiagnosticSummary buildSummary;
+    std::vector<std::string> testCases;
     const int buildStatus =
         buildProjectPlan(plan, options, toolchain, &resolution.sources, nullptr,
-                         nullptr, &buildSummary);
+                         nullptr, &buildSummary, &testCases);
     if (buildStatus != exitCode(ExitStatus::Success)) {
       return buildStatus;
     }
@@ -3478,6 +3483,46 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
     std::cerr << terminalStyle.code(std::cerr, Style::Note) << "Testing"
               << terminalStyle.code(std::cerr, Style::Reset) << ' '
               << plan.targetName() << '\n';
+    if (!testCases.empty()) {
+      for (const std::string &name : testCases) {
+        const auto started = std::chrono::steady_clock::now();
+        const lang::driver::ProcessResult process = lang::driver::invokeProcess(
+            {plan.output().string(), name},
+            {.outputMode = lang::driver::ProcessOutputMode::Capture,
+             .captureSuccessfulOutput = true,
+             .description = "test case '" + name + "'",
+             .environment = programColorEnvironment()});
+        const auto elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started)
+                .count();
+        std::cerr << "  " << name << " ... "
+                  << terminalStyle.code(std::cerr, process.succeeded()
+                                                       ? Style::Success
+                                                       : Style::Error)
+                  << (process.succeeded() ? "passed" : "failed")
+                  << terminalStyle.code(std::cerr, Style::Reset) << " ("
+                  << elapsed << " ms";
+        if (!process.succeeded())
+          std::cerr << ", exit code " << process.exitCode;
+        std::cerr << ")\n";
+        if (!process.output.empty()) {
+          std::istringstream lines(process.output);
+          for (std::string line; std::getline(lines, line);)
+            std::cerr << "    " << line << '\n';
+        }
+        if (process.driverDiagnostic)
+          std::cerr << "    " << *process.driverDiagnostic << '\n';
+        if (process.succeeded()) {
+          ++passed;
+        } else {
+          ++failed;
+          if (firstFailure == exitCode(ExitStatus::Success))
+            firstFailure = process.exitCode;
+        }
+      }
+      continue;
+    }
     const lang::driver::ProcessResult process = lang::driver::invokeProcess(
         {plan.output().string()},
         {.outputMode = lang::driver::ProcessOutputMode::Inherit,

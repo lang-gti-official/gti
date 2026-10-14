@@ -2146,7 +2146,7 @@
       }
     },
     "147-standard-library-import.gti": {
-      "declarations": 3187,
+      "declarations": 3189,
       "bodies": 387,
       "generated_items": 218,
       "generated_kinds": {
@@ -2297,7 +2297,7 @@
     }
   },
   "totals": {
-    "declarations": 109356,
+    "declarations": 109358,
     "bodies": 16735,
     "generated_items": 10276
   }

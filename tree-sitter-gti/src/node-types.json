@@ -6266,6 +6266,10 @@
     "named": false
   },
   {
+    "type": "test",
+    "named": false
+  },
+  {
     "type": "this",
     "named": false
   },

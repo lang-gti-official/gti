@@ -790,6 +790,10 @@ private:
           consume(TokenKind::RIGHT_PAREN,
                   "Expect ')' after the capability type parameter.");
         } else if (check(TokenKind::LEFT_PAREN)) {
+          if (attribute.name.lexeme == "test") {
+            throw error(attribute.name, "[[test]] takes no arguments; annotate "
+                                        "a zero-argument void function.");
+          }
           throw error(attribute.name, "Unknown function attribute '[[" +
                                           attribute.name.lexeme + "(...)]]'.");
         }
@@ -818,6 +822,7 @@ private:
         }
         functionAttributeList =
             functionAttributeList || attribute.name.lexeme == "noreturn" ||
+            attribute.name.lexeme == "test" ||
             attribute.name.lexeme == "track_caller" ||
             attribute.name.lexeme == "thread_confined_callback" ||
             attribute.name.lexeme == "discardable" ||
