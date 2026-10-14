@@ -548,5 +548,99 @@ int main() { Runner runner{}; return runner.Run(); }
     std::cerr << "a declaration default must retain semantic type checking\n";
     return 1;
   }
+
+  // A constructor initializer's full expression, explicit or from a field
+  // declaration default, may materialize a temporary method receiver. Its
+  // drop is ordinary cleanup before the initializer's boundary; only the
+  // stage's Initialize names the initializer index.
+  const auto temporaryReceivers =
+      lang::Frontend().analyze("/tmp/gti-initializer-temporary-receiver.gti",
+                               R"(
+struct Meters {
+  int value;
+  Meters(int amount) : value(amount) {}
+};
+struct Feet {
+  int value;
+  Feet(int amount) : value(amount) {}
+  Meters to_meters() { return Meters(this.value / 3); }
+};
+class Track {
+  Meters lap = Feet(30).to_meters();
+public:
+  Track() {}
+  Track(int feet) : lap(Feet(feet).to_meters()) {}
+  int total() { return this.lap.value; }
+};
+struct Split {
+  Meters lap = Feet(12).to_meters();
+};
+int main() {
+  Track declared{};
+  Track explicit_lap = Track(60);
+  Split generated{};
+  return declared.total() + explicit_lap.total() + generated.lap.value - 34;
+}
+)");
+  if (!temporaryReceivers.canGenerateCode() ||
+      !lang::verifyMirProgram(temporaryReceivers.mir).valid()) {
+    std::cerr << "constructor initializers must drop temporary receivers\n";
+    for (const auto &diagnostic : temporaryReceivers.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return 1;
+  }
+  std::size_t checkedReceivers = 0;
+  for (const auto &constructor :
+       temporaryReceivers.mir.constructorInstances()) {
+    const auto &body = constructor.body;
+    for (const auto &obligation : body.dropObligations) {
+      const auto expression =
+          std::find_if(body.fullExpressions.begin(), body.fullExpressions.end(),
+                       [&](const auto &candidate) {
+                         return obligation.fullExpression != 0 &&
+                                candidate.id == obligation.fullExpression;
+                       });
+      if (expression == body.fullExpressions.end() ||
+          expression->constructorInitializer == 0)
+        continue;
+      for (const auto &block : body.blocks) {
+        for (const auto &drop : block.instructions) {
+          if (drop.kind != lang::MirInstructionKind::Drop ||
+              std::none_of(drop.lifecycle.begin(), drop.lifecycle.end(),
+                           [&](const auto &event) {
+                             return event.kind ==
+                                        lang::MirLifecycleEventKind::Drop &&
+                                    event.source == obligation.id &&
+                                    !event.failureCleanup;
+                           }))
+            continue;
+          if (drop.constructorInitializer != 0) {
+            std::cerr << "a temporary receiver drop must not claim its "
+                         "initializer's stage\n";
+            return 1;
+          }
+          ++checkedReceivers;
+          auto forged = temporaryReceivers.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              forged.findConstructorInstance(constructor.id));
+          for (auto &instruction :
+               changed->body.blocks[block.id - 1].instructions)
+            if (instruction.id == drop.id)
+              instruction.constructorInitializer =
+                  expression->constructorInitializer;
+          if (lang::verifyMirProgram(forged).valid()) {
+            std::cerr << "a drop claiming an initializer stage was accepted\n";
+            return 1;
+          }
+        }
+      }
+    }
+  }
+  // The default, explicit and generated constructors each end one receiver.
+  if (checkedReceivers != 3) {
+    std::cerr << "expected three initializer temporary receiver drops, found "
+              << checkedReceivers << '\n';
+    return 1;
+  }
   return 0;
 }
