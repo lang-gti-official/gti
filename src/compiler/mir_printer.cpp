@@ -67,6 +67,10 @@ lambdaCaptureModeName(LambdaCaptureMode mode) {
     return "copy";
   case LambdaCaptureMode::Move:
     return "move";
+  case LambdaCaptureMode::BorrowRead:
+    return "borrow-read";
+  case LambdaCaptureMode::BorrowMut:
+    return "borrow-mut";
   }
   return "invalid";
 }
@@ -270,7 +274,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v103 valid=" << program.valid() << '\n';
+    output << "mir-v104 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -595,6 +599,9 @@ public:
       borrowOriginPlace(instance.returnBorrowPlace);
       output << " return-borrow-fields=";
       borrowFields(instance.returnBorrowFields);
+      output << " restores-reference=" << instance.restoresReferenceResult
+             << " restored-fields=";
+      restoredFields(instance.restoredBorrowFields);
       output << " owned-pointee=";
       if (instance.ownedPointeeProjection) {
         output << number(instance.ownedPointeeProjection->borrowIntrinsic)
@@ -747,7 +754,8 @@ public:
       type(instance.type);
       output << " returns=";
       type(instance.returnType);
-      output << " parameters=[";
+      output << " invocation=" << number(instance.capability)
+             << " parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
            ++index) {
         separator(index);
@@ -791,7 +799,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v84\n";
+    output << "mir-body-v85\n";
     body(value, 0);
   }
 
@@ -1212,6 +1220,22 @@ private:
     output << ']';
   }
 
+  void restoredFields(const std::vector<RestoredBorrowField> &fields) {
+    output << '[';
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+      separator(index);
+      output << "{path=[";
+      for (std::size_t part = 0; part < fields[index].fields.size(); ++part) {
+        separator(part);
+        output << fields[index].fields[part];
+      }
+      output << "];type=";
+      type(fields[index].referenceType);
+      output << '}';
+    }
+    output << ']';
+  }
+
   void ownershipEvent(const OwnershipEvent &value) {
     output << "event(kind=" << number(value.kind) << ";place=";
     placeKey(value.place);
@@ -1364,8 +1388,9 @@ private:
          ++index) {
       separator(index);
       const auto &dependency = value.additionalDependencies[index];
-      output << "{source=p" << dependency.source
-             << " access=" << number(dependency.access) << " fields=[";
+      output << "{source=p" << dependency.source << " parent=l"
+             << dependency.parent << " access=" << number(dependency.access)
+             << " fields=[";
       for (std::size_t field = 0; field < dependency.designatedFields.size();
            ++field) {
         separator(field);
@@ -1476,6 +1501,9 @@ private:
     borrowOriginPlace(value.borrowPlace);
     output << " borrow-fields=";
     borrowFields(value.borrowFields);
+    output << " restores-reference=" << value.restoresReferenceResult
+           << " restored-fields=";
+    restoredFields(value.restoredBorrowFields);
     output << " operation=" << name(value.operation) << " literal=";
     literal(value.literal);
     output << " literal-provenance=";
@@ -1528,7 +1556,11 @@ private:
     output << " payload-index=";
     optional(value.payloadIndex);
     output << " intrinsic=" << name(value.intrinsic)
-           << " noreturn=" << value.neverReturns
+           << " function-pointer-function=";
+    optional(value.functionPointerFunctionTarget);
+    output << " function-pointer-lambda=";
+    optional(value.functionPointerLambdaTarget);
+    output << " noreturn=" << value.neverReturns
            << " track-caller=" << value.tracksCaller
            << " caller-site=" << value.callerLocationSite
            << " forward-caller=" << value.forwardsCallerLocation

@@ -1361,12 +1361,22 @@ private:
 enum class LambdaCaptureMode : std::uint8_t {
   Copy,
   Move,
+  BorrowRead,
+  BorrowMut,
 };
 
+[[nodiscard]] constexpr bool isBorrowingCapture(LambdaCaptureMode mode) {
+  return mode == LambdaCaptureMode::BorrowRead ||
+         mode == LambdaCaptureMode::BorrowMut;
+}
+
 struct LambdaCapture {
-  LambdaCapture(Token name, std::optional<Token> equal, ExprPtr initializer)
+  LambdaCapture(Token name, std::optional<Token> equal, ExprPtr initializer,
+                std::optional<Token> borrow = {},
+                std::optional<Token> mutKeyword = {})
       : name(std::move(name)), equal(std::move(equal)),
-        initializer(std::move(initializer)) {}
+        initializer(std::move(initializer)), borrow(std::move(borrow)),
+        mutKeyword(std::move(mutKeyword)) {}
   LambdaCapture(LambdaCapture &&) = default;
   LambdaCapture(const LambdaCapture &) = delete;
   LambdaCapture &operator=(LambdaCapture &&) = default;
@@ -1377,6 +1387,8 @@ struct LambdaCapture {
   Token name;
   std::optional<Token> equal;
   ExprPtr initializer;
+  std::optional<Token> borrow;
+  std::optional<Token> mutKeyword;
 };
 
 class Lambda final : public ExprOfKind<ExprKind::Lambda> {

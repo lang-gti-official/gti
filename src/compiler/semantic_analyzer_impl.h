@@ -924,7 +924,7 @@ private:
     std::vector<ActiveLoanFlowSwitchArm> switchPath;
   };
 
-  struct LoanFlowConditionalBoundary {
+  struct LoanFlowStatementBoundary {
     std::size_t region = 0;
     std::size_t order = 0;
     const Stmt *statement = nullptr;
@@ -1034,7 +1034,7 @@ private:
     // or otherwise change the mandatory loan schedule.
     std::vector<PendingBorrowConflict> rawAuditConflicts;
     std::vector<LoanFlowUse> uses;
-    std::vector<LoanFlowConditionalBoundary> conditionalBoundaries;
+    std::vector<LoanFlowStatementBoundary> statementBoundaries;
     std::vector<LoanFlowSwitchBoundary> switchBoundaries;
     std::vector<LoanFlowLoop> loops;
     std::vector<std::size_t> activeLoops;
@@ -1815,8 +1815,24 @@ private:
 
   [[nodiscard]] bool isMoveOnlyOwnerType(const SemanticType &type) const;
 
+  // Declaration identity of one environment/record projection. Captures and
+  // ordinary fields participate in the same dependency paths; neither needs
+  // a separate lifetime checker or a fabricated source field declaration.
+  struct StoredField {
+    StoredField(const VariableDecl *field) : declaration(field) {}
+    StoredField(const LambdaCapture *field) : capture(field) {}
+
+    [[nodiscard]] const Token &name() const {
+      return declaration != nullptr ? declaration->name() : capture->name;
+    }
+    bool operator==(const StoredField &) const = default;
+
+    const VariableDecl *declaration = nullptr;
+    const LambdaCapture *capture = nullptr;
+  };
+
   struct StoredReferencePath {
-    std::vector<const VariableDecl *> fields;
+    std::vector<StoredField> fields;
     SemanticType reference = SemanticType::Unknown;
   };
 
@@ -1825,7 +1841,7 @@ private:
     std::size_t parameter = 0;
     // A nominal parameter contributes the same path below the initialized
     // field. A direct reference parameter contributes its referent itself.
-    std::vector<const VariableDecl *> sourceFields;
+    std::vector<StoredField> sourceFields;
   };
 
   [[nodiscard]] std::vector<StoredReferenceBinding>
@@ -1834,8 +1850,7 @@ private:
       std::span<const SemanticType> parameterTypes) const;
 
   [[nodiscard]] std::vector<SymbolId>
-  storedFieldSymbols(SemanticType type,
-                     std::span<const VariableDecl *const> fields);
+  storedFieldSymbols(SemanticType type, std::span<const StoredField> fields);
 
   // Enumerate every independently checked dependency in declaration order.
   // An empty result means either no reference or an unsupported carrier shape.
@@ -1889,6 +1904,8 @@ private:
 
   [[nodiscard]] bool nestsBorrowedState(const SemanticType &type) const;
 
+  [[nodiscard]] bool
+  composedCarrierPaths(std::span<const StoredReferencePath> paths) const;
   [[nodiscard]] bool isBorrowedCarrierReference(const SemanticType &type) const;
 
   [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type);
@@ -2217,6 +2234,8 @@ private:
 
   void analyzePolymorphicStorageIntrinsicCall(const Call &expr,
                                               IntrinsicKind intrinsic);
+  void analyzeReferenceErasureCall(const Call &expr, IntrinsicKind intrinsic);
+  void analyzeFunctionPointerCall(const Call &expr, IntrinsicKind intrinsic);
   [[nodiscard]] bool
   inlinePolymorphicPayload(const SemanticType &model,
                            const SemanticType &interface) const;
@@ -2443,13 +2462,13 @@ private:
   [[nodiscard]] static bool containsExactType(const SemanticType &type,
                                               const SemanticType &candidate);
 
-  [[nodiscard]] bool
-  containsDisallowedCallableCaptureState(const SemanticType &type,
-                                         std::unordered_set<ClassId> &visiting,
-                                         bool reviewedRawState = false) const;
+  [[nodiscard]] bool containsDisallowedCallableCaptureState(
+      const SemanticType &type, std::unordered_set<ClassId> &visiting,
+      bool reviewedRawState = false, bool checkedBorrows = false) const;
 
   [[nodiscard]] bool
-  containsDisallowedCallableCaptureState(const SemanticType &type) const;
+  containsDisallowedCallableCaptureState(const SemanticType &type,
+                                         bool checkedBorrows = false) const;
 
   [[nodiscard]] std::optional<std::size_t>
   movedFunctionParameter(const ExprPtr &expression,
@@ -3639,6 +3658,11 @@ private:
   void
   collectBorrowReturnExpressions(const Stmt *statement,
                                  std::vector<const ExprPtr *> &returns) const;
+
+  [[nodiscard]] std::optional<std::vector<RestoredBorrowField>>
+  restoredReferenceFields(const SemanticType &referent);
+
+  void recordRestoredReferenceResult(const FunctionInfo &function);
 
   struct PredeclaredTextBorrowSource {
     bool known = false;

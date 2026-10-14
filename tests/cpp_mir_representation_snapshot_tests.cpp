@@ -2751,7 +2751,47 @@ int main() { return inspect(true) + inspect(false); }
          "scope destruction must retire all indexes without changing output");
 }
 
+void testConstructorOnlyLexicalCarrier() {
+  const auto frontend =
+      lang::Frontend().analyze("constructor-only-closure.gti", R"gti(
+class Envelope<T> {
+public:
+  Envelope<F>(F callback) {}
+  int read() { return 3; }
+};
 int main() {
+  Envelope<int> value{[]() -> int { return 3; }};
+  return value.read() - 3;
+}
+)gti");
+  expect(frontend.canGenerateCode(), "a generic constructor accepts a lexical "
+                                     "closure without a function carrier");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  bool found = false;
+  for (const auto &instance : frontend.mir.classInstances()) {
+    const auto *declaration =
+        lowered.findClassDeclaration(instance.declaration);
+    if (!declaration || declaration->qualifiedName != "Envelope")
+      continue;
+    found = true;
+    expect(
+        !lang::cppConcreteClassName(lowered, instance.type),
+        "constructor-only lexical carriers retain one coherent template ABI");
+  }
+  expect(found, "the regression exercises the generic constructor owner");
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const auto text = gti_test::emitCpp(frontend, standard).contents;
+    expect(text.find("void __gti_mir_arg_0") == std::string::npos,
+           "a lexical closure parameter must not be represented as void");
+  }
+}
+
+int main() {
+  testConstructorOnlyLexicalCarrier();
   testScopedBodyQueryParity();
   testImmutableProgramPlanOwnsOrderedText();
   testExhaustiveSealedInventory();

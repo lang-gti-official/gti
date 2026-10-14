@@ -3551,11 +3551,14 @@ private:
                       "Lambda capture defaults are not supported; list each "
                       "captured local by name.");
         }
-        if (check(TokenKind::AMPERSAND)) {
-          throw error(peek(),
-                      "Lambda reference captures are not supported; captures "
-                      "are immutable value snapshots.");
-        }
+        std::optional<Token> mutKeyword;
+        std::optional<Token> borrow;
+        if (match({TokenKind::MUT}))
+          mutKeyword = previous();
+        if (match({TokenKind::AMPERSAND}))
+          borrow = previous();
+        else if (mutKeyword)
+          throw error(peek(), "Expect '&' after 'mut' in a borrowing capture.");
         Token name =
             consume(TokenKind::IDENTIFIER,
                     "Expect a local binding name in lambda capture list.");
@@ -3563,6 +3566,10 @@ private:
         ExprPtr initializer;
         if (match({TokenKind::EQUAL})) {
           equal = previous();
+          if (borrow)
+            throw error(*equal,
+                        "A borrowing capture names an existing binding; "
+                        "bind the selected place to a reference first.");
           initializer = assignment();
         } else {
           Token source =
@@ -3570,7 +3577,8 @@ private:
           initializer = generatedVariable(source);
         }
         captures.emplace_back(std::move(name), std::move(equal),
-                              std::move(initializer));
+                              std::move(initializer), std::move(borrow),
+                              std::move(mutKeyword));
       } while (match({TokenKind::COMMA}));
     }
     consume(TokenKind::RIGHT_BRACKET, "Expect ']' after lambda capture list.");

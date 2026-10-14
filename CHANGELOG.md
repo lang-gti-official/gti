@@ -9,6 +9,38 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.433.0 — Borrowing callbacks and callable views
+
+- Lambdas can borrow surrounding bindings instead of copying or moving them:
+  `[&value]` takes a shared read-only reference and `[mut &value]` an
+  exclusive mutable one, which needs a mutable binding and mutable invocation.
+  These are checked references with the ordinary place, access and loan rules:
+  disjoint fields and several independent parents work, an exclusive capture
+  makes the environment noncopyable, moving the environment transfers its
+  dependencies, and the borrow lasts through the last proven use or through
+  cleanup when a stored type's destructor needs it. Invalid escapes,
+  conflicting owner use, exclusive copies and conflicting reentrant mutable
+  access are rejected. Concrete generic parameters and user-defined fields can
+  store such environments without letting them escape their owners.
+- `<std/functional>` adds non-owning `std::function_ref<R(Args...)>` and
+  `std::function_ref<R(Args...) mut>`, constructed directly from a named
+  callable of the exact signature with no allocation, copy or empty state, and
+  `std::function_ptr<R(Args...)>`, a non-null typed GTI invocation pointer
+  from an exact namespace function or captureless lambda that keeps GTI's
+  failure and ownership convention rather than the C ABI.
+- The views are ordinary source over two general facilities in `<std/memory>`:
+  checked reference erasure (`std::erase_ref`/`std::erase_mut` to an opaque
+  `std::erased_object` reference that keeps its lifetime and access facts) and
+  unsafe exact-type restoration (`std::restore_ref<T>`/`std::restore_mut<T>`),
+  so an unrelated user-defined borrowed wrapper can use the same mechanisms.
+  Captureless thunks may expand a surrounding parameter pack. Semantics, HIR,
+  verified MIR, the backend, formatter, Tree-sitter and the LSP carry the new
+  capture facts; [example 156](examples/156-borrowing-callbacks.gti) and a
+  `borrowing-callbacks` benchmark workload accompany the feature. Borrowed
+  results still need a signature-level origin contract, and an owning class
+  result through `std::function_ptr` is rejected before native compilation
+  in this slice (owning arguments stage through the thunk).
+
 ## 0.432.3 — Copies of lambdas kept in locals
 
 - Fix the native C++ compile failure (`no member named 'construct'` in the

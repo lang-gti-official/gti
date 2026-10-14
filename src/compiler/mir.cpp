@@ -1173,6 +1173,21 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
     }
     if (place->root == MirPlaceRootKind::Loan) {
       throughLoan = place->loan;
+    } else if (place->root == MirPlaceRootKind::Symbol && place->capture != 0 &&
+               !place->projections.empty() &&
+               place->projections.front().kind ==
+                   MirProjectionKind::Dereference) {
+      for (const auto &loan : body.loans) {
+        const auto *origin = body.findPlace(loan.source);
+        if (loan.entry && loan.kind == MirLoanKind::Parameter && origin &&
+            origin->root == MirPlaceRootKind::Symbol &&
+            origin->symbol == place->symbol &&
+            origin->capture == place->capture && origin->projections.empty()) {
+          throughLoan = loan.id;
+          projectionOffset = 1;
+          break;
+        }
+      }
     } else if (place->root == MirPlaceRootKind::Binding &&
                !place->projections.empty() &&
                place->projections.front().kind ==
@@ -2277,7 +2292,9 @@ additionalLoanAuthorities(const MirBody &body, const MirLoan &loan) {
   if (loan.kind != MirLoanKind::Stored || loan.entry || loan.escapes)
     return result;
   for (const auto &dependency : loan.additionalDependencies) {
-    const auto authority = dependencyAuthority(body, dependency.source);
+    const auto authority = dependency.parent != 0
+                               ? dependency.parent
+                               : dependencyAuthority(body, dependency.source);
     if (authority != 0 && authority != loan.parent &&
         std::find(result.begin(), result.end(), authority) == result.end())
       result.push_back(authority);
@@ -2402,10 +2419,16 @@ soleInvokePredecessor(const MirBlockPredecessors &predecessors,
     return false;
   return (source->root == MirPlaceRootKind::This &&
           source->type.kind == SemanticType::Class) ||
+         (body.kind == MirBodyKind::Lambda &&
+          source->root == MirPlaceRootKind::Symbol && source->capture != 0 &&
+          (source->type.kind == SemanticType::Class ||
+           source->type.kind == SemanticType::Lambda ||
+           source->type.kind == SemanticType::Reference)) ||
          (source->root == MirPlaceRootKind::Binding &&
           source->type.kind == SemanticType::Reference &&
           source->type.arguments.size() == 1 &&
-          source->type.arguments.front().kind == SemanticType::Class &&
+          (source->type.arguments.front().kind == SemanticType::Class ||
+           source->type.arguments.front().kind == SemanticType::Lambda) &&
           std::find(loan.carriers.begin(), loan.carriers.end(),
                     source->binding) == loan.carriers.end());
 }
@@ -2646,7 +2669,15 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
             childSources.begin(), childSources.end(), [&](MirPlaceId child) {
               const auto childPlace =
                   canonicalPlace(body, child, bindingLoans, inactive);
-              const auto authority = dependencyAuthority(body, child);
+              const auto dependency = std::find_if(
+                  loan.additionalDependencies.begin(),
+                  loan.additionalDependencies.end(),
+                  [&](const auto &entry) { return entry.source == child; });
+              const auto authority =
+                  dependency != loan.additionalDependencies.end() &&
+                          dependency->parent != 0
+                      ? dependency->parent
+                      : dependencyAuthority(body, child);
               const auto *sourcePlace = body.findPlace(child);
               const bool independentOwnedInput =
                   authority == 0 && sourcePlace != nullptr &&
@@ -2701,7 +2732,9 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
       if (instruction.kind != MirInstructionKind::Borrow &&
           instruction.kind != MirInstructionKind::Call &&
           instruction.kind != MirInstructionKind::Construct &&
-          instruction.kind != MirInstructionKind::CallInput) {
+          instruction.kind != MirInstructionKind::CallInput &&
+          !(instruction.kind == MirInstructionKind::Compute &&
+            instruction.operation == MirOperation::Closure)) {
         return failure(body, owner,
                        "only borrow, call, construct, and call-input "
                        "instructions may produce a loan",
@@ -2807,6 +2840,12 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
 
     const auto abstractAuthorityForLoan = [&](const MirLoan &dependency,
                                               const MirLoan &derived) {
+      // A restoration's dependency is the same checked witness as its
+      // physical parent, not a competing independent borrow. The program
+      // verifier validates the concrete restoration contract separately.
+      if (derived.storedDependency == dependency.id &&
+          mir_detail::restoredBorrowAuthority(body, derived))
+        return true;
       if (!abstractStoredEntry(body, dependency))
         return false;
       const auto origin =
@@ -2871,7 +2910,15 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
         -> std::optional<MirVerificationResult> {
       MirLoanId dependency = body.loans[loan - 1].storedDependency;
       while (dependency != 0) {
-        if (active[dependency - 1] != MirLoanFlowState::Active) {
+        const auto *restoration =
+            mir_detail::restoredBorrowAuthority(body, body.loans[loan - 1]);
+        const bool reborrowedRestoreWitness =
+            active[dependency - 1] == MirLoanFlowState::Suspended &&
+            restoration && restoration->loan &&
+            active[*restoration->loan - 1] == MirLoanFlowState::Active &&
+            isLoanAncestor(body, dependency, *restoration->loan);
+        if (active[dependency - 1] != MirLoanFlowState::Active &&
+            !reborrowedRestoreWitness) {
           return failure(body, owner,
                          "carrier-shell loan " + std::to_string(loan) +
                              " requires active stored dependency loan " +
@@ -3691,7 +3738,10 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
         const auto &produced = body.loans[*instruction.loan - 1];
         const auto authorities = additionalLoanAuthorities(body, produced);
         for (const auto &dependency : produced.additionalDependencies) {
-          const auto authority = dependencyAuthority(body, dependency.source);
+          const auto authority =
+              dependency.parent != 0
+                  ? dependency.parent
+                  : dependencyAuthority(body, dependency.source);
           if (std::find(authorities.begin(), authorities.end(), authority) ==
               authorities.end())
             continue;
@@ -4401,7 +4451,9 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
               body.loans[loan - 1].kind == MirLoanKind::CallResult;
           const bool derivedStoredCarrier =
               (instruction.kind == MirInstructionKind::Call ||
-               instruction.kind == MirInstructionKind::Construct) &&
+               instruction.kind == MirInstructionKind::Construct ||
+               (instruction.kind == MirInstructionKind::Compute &&
+                instruction.operation == MirOperation::Closure)) &&
               body.loans[loan - 1].kind == MirLoanKind::Stored;
           if ((!derivedCallResult && !derivedStoredCarrier) ||
               !selectedOriginFromParent) {
@@ -4624,8 +4676,12 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                     block.terminator.returnLoan
                 ? body.findLoan(*block.terminator.returnLoan)
                 : nullptr;
-        if (abstractStoredEntry(body, loan) && returned != nullptr &&
-            returned->kind == MirLoanKind::Return && returned->escapes &&
+        const bool returnedRestoreWitness =
+            loan.entry && returned && returned->storedDependency == loan.id &&
+            mir_detail::restoredBorrowAuthority(body, *returned);
+        if ((abstractStoredEntry(body, loan) || returnedRestoreWitness) &&
+            returned != nullptr && returned->kind == MirLoanKind::Return &&
+            returned->escapes &&
             active[returned->id - 1] == MirLoanFlowState::Active &&
             returned->storedDependency == loan.id) {
           continue;
@@ -6337,7 +6393,8 @@ validFailureInstructionShape(const MirInstruction &instruction) {
   case FailurePropagationKind::Callable:
     return instruction.kind == MirInstructionKind::Call &&
            (instruction.lambdaTarget.has_value() ||
-            instruction.callableInvocation.has_value());
+            instruction.callableInvocation.has_value() ||
+            instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke);
   case FailurePropagationKind::TaskJoin:
     return instruction.kind == MirInstructionKind::Call &&
            (instruction.synchronization.kind ==
@@ -9989,7 +10046,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     };
     switch (instruction.kind) {
     case MirInstructionKind::Compute:
-      return !instruction.receiver && !instruction.loan &&
+      return !instruction.receiver &&
+             (!instruction.loan ||
+              instruction.operation == MirOperation::Closure) &&
              (instruction.operation == MirOperation::FunctionItem
                   ? instruction.functionTarget.has_value()
                   : !instruction.functionTarget) &&
@@ -10245,6 +10304,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                   instruction.intrinsic == IntrinsicKind::ThreadScope ||
                   instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
                   instruction.intrinsic == IntrinsicKind::CStringFromAddress ||
+                  instruction.intrinsic == IntrinsicKind::EraseReference ||
+                  instruction.intrinsic == IntrinsicKind::EraseReferenceMut ||
+                  instruction.intrinsic == IntrinsicKind::RestoreReference ||
+                  instruction.intrinsic == IntrinsicKind::RestoreReferenceMut ||
+                  instruction.intrinsic ==
+                      IntrinsicKind::FunctionPointerFromItem ||
+                  instruction.intrinsic ==
+                      IntrinsicKind::FunctionPointerInvoke ||
                   instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
                   instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
                   instruction.intrinsic ==
@@ -10559,6 +10626,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                       return (dependency.source == 0
                                   ? dependency.designatedFields.empty()
                                   : !validPlace(dependency.source)) ||
+                             (dependency.parent != 0 &&
+                              (!validLoan(dependency.parent) ||
+                               dependency.parent == loan.id)) ||
                              (dependency.access != AccessMode::ReadOnly &&
                               dependency.access != AccessMode::Mutable);
                     }) ||
@@ -10573,6 +10643,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     if (loan.storedDependency != 0) {
       const MirLoan &dependency = body.loans[loan.storedDependency - 1];
+      const bool restoredDependency =
+          mir_detail::restoredBorrowAuthority(body, loan) != nullptr;
       const bool derivedStoredDependency =
           loan.kind == MirLoanKind::Stored && loan.parent != 0 &&
           body.loans[loan.parent - 1].storedDependency == loan.storedDependency;
@@ -10589,8 +10661,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           source->traits.containsBorrowedState;
       if ((loan.kind == MirLoanKind::Stored && !derivedStoredDependency &&
            !publishedShellDependency && !constructedShellDependency) ||
-          dependency.kind != MirLoanKind::Stored ||
-          loan.storedDependency == loan.parent ||
+          (dependency.kind != MirLoanKind::Stored && !restoredDependency) ||
+          (loan.storedDependency == loan.parent && !restoredDependency) ||
           (loan.entry && !dependency.entry)) {
         return failure(body, owner,
                        "carrier-shell loan " + std::to_string(loan.id) +
@@ -10712,6 +10784,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     if (loan.entry) {
       const MirPlace *source = body.findPlace(loan.source);
+      const bool capturedReference =
+          body.kind == MirBodyKind::Lambda && source &&
+          source->root == MirPlaceRootKind::Symbol && source->capture != 0 &&
+          source->symbol != 0 && source->projections.empty() &&
+          source->initiallyAvailable &&
+          source->type.kind == SemanticType::Reference &&
+          source->type.referenceAccess == loan.access &&
+          loan.kind == MirLoanKind::Parameter && loan.semanticLoan != 0 &&
+          loan.producedBy == 0 && loan.parent == 0 && !loan.escapes &&
+          loan.carriers.empty();
       const bool packElement =
           source != nullptr && source->projections.size() == 1 &&
           source->projections.front().kind == MirProjectionKind::PackElement &&
@@ -10723,7 +10805,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             source->traits.containsBorrowedState &&
             loan.kind == MirLoanKind::Stored &&
             !loan.designatedFields.empty()));
-      if (!abstractStoredEntry(body, loan) &&
+      if (!abstractStoredEntry(body, loan) && !capturedReference &&
           (loan.producedBy != 0 || source == nullptr ||
            source->root != MirPlaceRootKind::Binding ||
            (!source->projections.empty() && !packElement) ||
@@ -12040,8 +12122,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         // loan renames only provenance) and retires that chain at this exact
         // instruction boundary.
         const bool callResultReturnTransfer = [&] {
-          if (produced.kind != MirLoanKind::Return || produced.entry ||
-              !produced.escapes || produced.parent != 0 ||
+          const bool field = body.kind == MirBodyKind::Constructor &&
+                             produced.kind == MirLoanKind::Stored &&
+                             produced.storedField != 0;
+          if ((!field && produced.kind != MirLoanKind::Return) ||
+              produced.entry || !produced.escapes || produced.parent != 0 ||
               source.kind != MirOperandKind::Loan || source.place != 0 ||
               source.value != 0 || instruction.hirValue == 0 ||
               instruction.hirValue != produced.producedBy ||
@@ -12053,8 +12138,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               retained->kind != MirLoanKind::CallResult || retained->entry ||
               retained->escapes || retained->producedBy == 0 ||
               retained->producedBy != instruction.hirValue ||
-              !retained->carriers.empty() ||
               retained->source != produced.source ||
+              retained->storedDependency != produced.storedDependency ||
+              retained->additionalDependencies !=
+                  produced.additionalDependencies ||
               (retained->access != produced.access &&
                retained->access != AccessMode::Mutable)) {
             return false;
@@ -12068,6 +12155,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               std::next(current) == block.instructions.end()) {
             return false;
           }
+          if (!retained->carriers.empty() &&
+              (field || !mir_detail::restoredReferenceReturnAliases(
+                            body, *retained, block,
+                            static_cast<std::size_t>(
+                                current - block.instructions.begin()))))
+            return false;
           const MirInstruction &retire = *std::next(current);
           return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&
                  *retire.loan == source.loan &&

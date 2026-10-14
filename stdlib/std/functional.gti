@@ -4,6 +4,12 @@
 // Callable relationships and source-defined owning callback policy.
 
 namespace gti_internal {
+// Non-null GTI invocation address with its defined-failure convention. This
+// is not a C function pointer and never retains a callable environment.
+class function_pointer<Signature> {};
+function_pointer<Signature> function_pointer_from_item<Signature, F>(F target);
+R function_pointer_invoke<R, Args...>(function_pointer<R(Args...)>& target,
+                                    Args... args);
 @compiler_constraint("read_callable") concept read_callable_capability<Callable, Argument, Result>;
 @compiler_constraint("mut_callable") concept mut_callable_capability<Callable, Argument, Result>;
 @compiler_constraint("once_callable") concept once_callable_capability<Callable, Argument, Result>;
@@ -168,6 +174,53 @@ public:
 }
 
 namespace std {
+/// A non-null, non-owning GTI invocation pointer. Construction accepts one
+/// exact namespace function item or zero-capture lambda; signatures match
+/// exactly. It does not borrow an environment or allocate storage.
+class function_ptr<R(Args...)> {
+  gti_internal::function_pointer<R(Args...)> target;
+public:
+  function_ptr<F>(F target)
+      : target(gti_internal::function_pointer_from_item<R(Args...)>(target)) {}
+  R operator()(Args... args) {
+    return gti_internal::function_pointer_invoke(this.target, args...);
+  }
+};
+
+/// A read-only, signature-erased checked borrow of an existing callable.
+/// The callable and everything it borrows must outlive this view's uses.
+class function_ref<R(Args...)> {
+  std::erased_object& object;
+  gti_internal::function_pointer<R(std::erased_object&, Args...)> invoke;
+public:
+  function_ref<F>(F& target)
+      : object(std::erase_ref(target)),
+        invoke(gti_internal::function_pointer_from_item<R(std::erased_object&, Args...)>([](std::erased_object& object, Args... args) -> R {
+          unsafe {
+            F& callable = std::restore_ref<F>(object);
+            return callable(args...);
+          }
+        })) {}
+  R operator()(Args... args) { return gti_internal::function_pointer_invoke(this.invoke, this.object, args...); }
+};
+
+/// An exclusive, move-only borrowed callback. Invocation requires mutable
+/// access to the view; overlapping invocation/reentry remains rejected.
+class function_ref<R(Args...) mut> {
+  mut std::erased_object& object;
+  gti_internal::function_pointer<R(mut std::erased_object&, Args...)> invoke;
+public:
+  function_ref<F>(mut F& target)
+      : object(std::erase_mut(target)),
+        invoke(gti_internal::function_pointer_from_item<R(mut std::erased_object&, Args...)>([](mut std::erased_object& object, Args... args) -> R {
+          unsafe {
+            mut F& callable = std::restore_mut<F>(object);
+            return callable(args...);
+          }
+        })) {}
+  R operator()(Args... args) mut { return gti_internal::function_pointer_invoke(this.invoke, this.object, args...); }
+};
+
   /// A move-only owned callback whose erased target remains transferable.
   /// Transfer does not grant concurrent invocation or shared mutation. Small
   /// eligible repeatable targets use the same inline slot as ordinary functions.

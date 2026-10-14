@@ -158,10 +158,19 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
                      "interpretation overdefined");
   case IntrinsicKind::RawBorrow:
   case IntrinsicKind::RawBorrowMut:
+  case IntrinsicKind::EraseReference:
+  case IntrinsicKind::EraseReferenceMut:
+  case IntrinsicKind::RestoreReference:
+  case IntrinsicKind::RestoreReferenceMut:
     return supported("verified owner-witness formation preserves memory; "
                      "pointee value/address unknown; loan schedule unchanged");
   case IntrinsicKind::None:
     return inapplicable("ordinary instruction/call effects");
+  case IntrinsicKind::FunctionPointerFromItem:
+    return supported("exact stateless invocation address; signature retained");
+  case IntrinsicKind::FunctionPointerInvoke:
+    return barrier(
+        "signature-erased GTI call preserves failure and user-code effects");
   case IntrinsicKind::NumericTypeParameterConversion:
   case IntrinsicKind::NumericAliasConversion:
   case IntrinsicKind::RawPointerConversion:
@@ -559,6 +568,7 @@ MirOptimizationCoverage optimizationCoverage(UnsafeOperationKind kind) {
   case UnsafeOperationKind::ForeignPointerCall:
   case UnsafeOperationKind::DeclaredUnsafeCall:
   case UnsafeOperationKind::DeclaredUnsafeConstruction:
+  case UnsafeOperationKind::ErasedReferenceRestore:
   case UnsafeOperationKind::ObjectLifetime:
     return barrier("unsafe/raw-memory alias and escape boundary");
   }

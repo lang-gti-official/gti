@@ -32,6 +32,7 @@ enum class UnsafeOperationKind {
   DeclaredUnsafeCall,
   ObjectLifetime,
   DeclaredUnsafeConstruction,
+  ErasedReferenceRestore,
 };
 
 struct SemanticLoanEndpoint {
@@ -52,6 +53,9 @@ struct SemanticLoanDependency {
   std::vector<SymbolId> designatedFields;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
+  // The exact capability reborrowed to create this dependency, if any.
+  // Composed carriers can retain independently borrowed parents.
+  SemanticLoanId parent = 0;
 
   friend bool operator==(const SemanticLoanDependency &,
                          const SemanticLoanDependency &) = default;
@@ -338,6 +342,12 @@ enum class IntrinsicKind {
   PolymorphicStorageRead,
   PolymorphicStorageReadMut,
   PolymorphicStorageReset,
+  EraseReference,
+  EraseReferenceMut,
+  RestoreReference,
+  RestoreReferenceMut,
+  FunctionPointerFromItem,
+  FunctionPointerInvoke,
   StringViewSize,
   StringViewEmpty,
   ExpectedValue,
@@ -545,6 +555,8 @@ enum class CompilerCapabilityTypeKind {
   CString,
   OptionalStorage,
   PolymorphicStorage,
+  ErasedObject,
+  FunctionPointer,
   ThreadHandle,
   AtomicStorage,
   MutexStorage,
@@ -656,6 +668,17 @@ struct BorrowedFieldOrigin {
                          const BorrowedFieldOrigin &) = default;
 };
 
+// A restored referent's abstract checked field dependency. The unsafe exact-T
+// restoration contract certifies these fields belong to the original object;
+// every dependency remains bounded by the input opaque reference witness.
+struct RestoredBorrowField {
+  std::vector<SymbolId> fields;
+  SemanticType referenceType = SemanticType::Unknown;
+
+  friend bool operator==(const RestoredBorrowField &,
+                         const RestoredBorrowField &) = default;
+};
+
 // An exact, domain-independent global/static storage origin. Callers qualify
 // this place into their own semantic/HIR/MIR body domain.
 struct BorrowOriginPlace {
@@ -746,6 +769,10 @@ struct FunctionInfo {
   std::vector<std::size_t> returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  // Body-proven restoration of a checked referent from the single opaque
+  // return-borrow argument. Never inferred from a signature or public name.
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   std::vector<FunctionId> virtualRoots;
   std::vector<CallableParameterContract> callableParameters;
@@ -800,6 +827,7 @@ struct LambdaInfo {
   std::vector<SemanticType> parameterTypes;
   std::vector<LambdaCaptureInfo> captures;
   SemanticTypeTraits traits{};
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
   // Exact concrete instance proven by ordinary body analysis to perform no
   // raw memory/address-arithmetic access. Unknown remains conservative.
   SemanticType rawAccessFreeType = SemanticType::Unknown;
@@ -1145,6 +1173,12 @@ struct ResolvedCallInfo {
   bool tracksCaller = false;
   SynchronizationOperation synchronization;
   std::optional<ResolvedThreadTaskEntry> threadTaskEntry;
+  // Exact stateless target selected before GTI signature erasure. The
+  // signature and concrete target type are retained in typeArguments.
+  FunctionId functionPointerFunction = 0;
+  LambdaId functionPointerLambda = 0;
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   std::vector<ResolvedScopedThreadTask> scopedThreadTasks;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
@@ -1319,9 +1353,9 @@ struct DeferredCallableCallInfo {
   AccessMode access = AccessMode::ReadOnly;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary = CallableBoundary::Confined;
-  // A stored receiver is checked again against its concrete field type.
+  // A field or local receiver is checked again against its concrete type.
   // It is not a confined parameter or an ownership-transfer boundary.
-  SymbolId receiverField = 0;
+  SymbolId receiverBinding = 0;
   bool inferResultFromInstantiation = false;
 };
 
@@ -1952,6 +1986,8 @@ public:
   [[nodiscard]] const BindingInfo *findPayloadBinding(const Token &name) const;
 
   [[nodiscard]] const SemanticLoanInfo *findLoan(SemanticLoanId id) const;
+  [[nodiscard]] std::span<const SemanticLoanDependency>
+  findBorrowDependencies(const Expr &expression) const;
 
   [[nodiscard]] const std::vector<SemanticLoanInfo> &loans() const;
 
@@ -2355,6 +2391,9 @@ private:
   void recordPayloadBinding(const Token &name, BindingInfo info);
 
   void recordLoan(SemanticLoanInfo info);
+  void
+  recordBorrowDependencies(const Expr &expression,
+                           std::vector<SemanticLoanDependency> dependencies);
 
   void recordBindingLoan(const VariableDecl &declaration, SemanticLoanId loan);
 
@@ -2580,6 +2619,8 @@ private:
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const Token *, BindingInfo> payloadBindings;
   std::vector<SemanticLoanInfo> retainedLoans;
+  std::unordered_map<const Expr *, std::vector<SemanticLoanDependency>>
+      expressionBorrowDependencies;
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
       conditionalLoanEnds;
