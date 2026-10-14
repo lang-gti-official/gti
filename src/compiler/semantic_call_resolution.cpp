@@ -4,6 +4,22 @@ namespace lang {
 
 namespace {
 
+// Merely projecting an existing reference does not invoke, copy or erase the
+// callable's invocation contract. Its normal checked borrow is the contract.
+[[nodiscard]] bool isCheckedReferenceRelay(const FunctionInfo &function,
+                                           std::size_t parameter) {
+  return function.declaration != nullptr &&
+         function.bodyDeclaration()->body() != nullptr &&
+         function.intrinsic == IntrinsicKind::None &&
+         function.returnType.kind == SemanticType::Reference &&
+         function.returnBorrowOrigin == BorrowOriginKind::Argument &&
+         function.returnBorrowParameter == parameter &&
+         function.returnBorrowParameters.empty() &&
+         function.returnBorrowFields.empty() &&
+         parameter < function.parameterTypes.size() &&
+         function.parameterTypes[parameter].kind == SemanticType::Reference;
+}
+
 enum class SymbolicRangeCarrier : ClassId {
   None = 0,
   ReadIterator = 1,
@@ -232,7 +248,7 @@ auto SemanticVisitor::Impl::callableSignatureRequirement(const Call &call) const
   if (contract == nullptr) {
     if (const DeferredCallableCallInfo *stored =
             semanticModel.findDeferredCallableCall(call);
-        stored != nullptr && stored->receiverField != 0) {
+        stored != nullptr && stored->receiverBinding != 0) {
       CallableSignatureRequirement result{
           .source = &call,
           .returnType =
@@ -282,7 +298,9 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
       semanticModel.findResolvedSymbol(**receiver));
   const ExpressionInfo *receiverInfo = semanticModel.findExpression(**receiver);
   const bool storedReceiver =
-      receiverSymbol != nullptr && receiverSymbol->kind == SymbolKind::Field &&
+      receiverSymbol != nullptr &&
+      (receiverSymbol->kind == SymbolKind::Field ||
+       receiverSymbol->kind == SymbolKind::LocalVariable) &&
       receiverInfo != nullptr &&
       receiverInfo->category == ValueCategory::Place &&
       receiverInfo->type.kind == SemanticType::TypeParameter;
@@ -298,7 +316,7 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
           makeDiagnostic("GTI-S2046", DiagnosticPhase::Semantics,
                          expressionToken(call.callee()),
                          std::string("The result type of generic callable ") +
-                             (storedReceiver ? "field '" : "parameter '") +
+                             (storedReceiver ? "binding '" : "parameter '") +
                              expressionToken(call.callee()).lexeme +
                              "' cannot be inferred with 'auto'.");
       diagnostic.hints.emplace_back(
@@ -330,8 +348,8 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
        function->declaration == nullptr || parameter->pack ||
        calleeType.kind != SemanticType::TypeParameter)) {
     report(call.paren(),
-           "Only a direct generic function parameter can be used "
-           "as a confined callable.",
+           "A deferred callable must be a named generic parameter, local "
+           "binding, or field whose exact type is checked at instantiation.",
            "GTI-S2046");
     valid = false;
   }
@@ -377,7 +395,7 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
                 consuming ? CallableInvocationCapability::Once
                           : callableInvocationCapability(receiverInfo->access),
             .boundary = std::nullopt,
-            .receiverField = receiverSymbol->id,
+            .receiverBinding = receiverSymbol->id,
             .inferResultFromInstantiation = inferResultFromInstantiation});
     currentType = returnType;
     return;
@@ -456,20 +474,27 @@ auto SemanticVisitor::Impl::validateCallableReturn(
   const DeferredCallableCallInfo *deferred =
       semanticModel.findDeferredCallableCall(call);
   const SymbolRecord *field =
-      deferred && deferred->receiverField != 0
-          ? semanticModel.database().findSymbol(deferred->receiverField)
+      deferred && deferred->receiverBinding != 0
+          ? semanticModel.database().findSymbol(deferred->receiverBinding)
           : nullptr;
-  Diagnostic diagnostic = makeDiagnostic(
-      "GTI-S2046", DiagnosticPhase::Semantics, location,
-      std::string(field ? "Callable field '" : "Callable parameter '") +
-          location.lexeme + "' must return '" +
-          typeSpelling(requirement->returnType) +
-          "' for this invocation, "
-          "but the selected callable returns '" +
-          typeSpelling(returnType) + "'.");
+  // The stored callable is a class field or a closure capture; name the
+  // binding by what it is.
+  const std::string storedKind = field == nullptr ? "Callable parameter '"
+                                 : field->kind == SymbolKind::LambdaCapture
+                                     ? "Callable capture '"
+                                     : "Callable field '";
+  Diagnostic diagnostic =
+      makeDiagnostic("GTI-S2046", DiagnosticPhase::Semantics, location,
+                     storedKind + location.lexeme + "' must return '" +
+                         typeSpelling(requirement->returnType) +
+                         "' for this invocation, "
+                         "but the selected callable returns '" +
+                         typeSpelling(returnType) + "'.");
   if (field) {
     diagnostic.related.push_back(
-        {field->nameSpan, "Stored callable field declared here."});
+        {field->nameSpan, field->kind == SymbolKind::LambdaCapture
+                              ? "Callable capture declared here."
+                              : "Callable field declared here."});
   }
   if (variable != nullptr) {
     if (const Symbol *symbol = resolve(variable->name());
@@ -537,6 +562,24 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
     return;
   }
   bool valid = true;
+  const auto access =
+      lambda->capability == CallableInvocationCapability::Mutable
+          ? AccessMode::Mutable
+          : AccessMode::ReadOnly;
+  if (access == AccessMode::Mutable && !isMutableObject(call.callee())) {
+    report(expressionToken(call.callee()),
+           "A callback with an exclusive mutable capture requires mutable "
+           "access to the callback.",
+           "GTI-S2046");
+    valid = false;
+  }
+  const auto receiver = loanPlace(call.callee());
+  reportLoanPlaceConflict(
+      expressionToken(call.callee()), receiver, access,
+      "Callback invocation overlaps a borrow that may still be live.",
+      accessLoan(call.callee()));
+  if (access == AccessMode::Mutable)
+    recordMutableBindingUse(receiver.root);
   const CallableParameterContract *contract =
       callableParameterContract(call.callee());
   const std::optional<CallableBoundary> boundary =
@@ -595,19 +638,16 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
     }
   }
   validateCallPlaceExclusivityImpl(ordinaryParameterTypes, ordinaryArguments,
-                                   call.paren());
+                                   call.paren(), receiver, access);
   valid = validateCallableReturn(call, lambda->returnType) && valid;
-  valid =
-      validateCallableCapability(call, CallableInvocationCapability::Read) &&
-      valid;
+  valid = validateCallableCapability(call, lambda->capability) && valid;
   if (valid) {
     semanticModel.recordLambdaCall(
-        call,
-        ResolvedLambdaCallInfo{.lambda = lambda->id,
-                               .returnType = lambda->returnType,
-                               .parameterTypes = lambda->parameterTypes,
-                               .capability = CallableInvocationCapability::Read,
-                               .boundary = boundary});
+        call, ResolvedLambdaCallInfo{.lambda = lambda->id,
+                                     .returnType = lambda->returnType,
+                                     .parameterTypes = lambda->parameterTypes,
+                                     .capability = lambda->capability,
+                                     .boundary = boundary});
   }
   currentType =
       valid ? callExpressionType(lambda->returnType) : SemanticType::Unknown;
@@ -2768,7 +2808,7 @@ auto SemanticVisitor::Impl::containsExactType(const SemanticType &type,
 
 auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
     const SemanticType &type, std::unordered_set<ClassId> &visiting,
-    bool reviewedRawState) const -> bool {
+    bool reviewedRawState, bool checkedBorrows) const -> bool {
   if (type.kind == SemanticType::FunctionItem) {
     // Parameters and results describe the selected target; they are not
     // stored state in the zero-state function-item value.
@@ -2778,7 +2818,7 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
     return !reviewedRawState;
   if (type.kind == SemanticType::Reference ||
       type.kind == SemanticType::StringView) {
-    return true;
+    return !checkedBorrows;
   }
   if (type.kind == SemanticType::Lambda) {
     return type.hasLambdaShape() &&
@@ -2786,7 +2826,8 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
                        type.lambdaCaptureTypes().end(),
                        [&](const SemanticType &capture) {
                          return containsDisallowedCallableCaptureState(
-                             capture, visiting, reviewedRawState);
+                             capture, visiting, reviewedRawState,
+                             checkedBorrows);
                        });
   }
   if (type.kind == SemanticType::Class && type.classId != 0 &&
@@ -2811,7 +2852,8 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
     bool found = false;
     if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
       found = containsDisallowedCallableCaptureState(
-          substituteType(base->type, substitution), visiting, reviewedRawState);
+          substituteType(base->type, substitution), visiting, reviewedRawState,
+          checkedBorrows);
     }
     for (const FieldInfo &field : owner.fields) {
       if (found || field.declaration == nullptr) {
@@ -2821,7 +2863,7 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
       if (member != owner.members.end()) {
         found = containsDisallowedCallableCaptureState(
             substituteType(member->second.symbol.type, substitution), visiting,
-            reviewedRawState);
+            reviewedRawState, checkedBorrows);
       }
     }
     visiting.erase(type.classId);
@@ -2832,28 +2874,30 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
     const auto concrete = enumTypeFor(type);
     if (!concrete)
       return false;
-    return std::any_of(concrete->enumerators.begin(),
-                       concrete->enumerators.end(), [&](const auto &entry) {
-                         return std::any_of(
-                             entry.payloadTypes.begin(),
-                             entry.payloadTypes.end(),
-                             [&](const SemanticType &payload) {
-                               return containsDisallowedCallableCaptureState(
-                                   payload, visiting, reviewedRawState);
-                             });
-                       });
+    return std::any_of(
+        concrete->enumerators.begin(), concrete->enumerators.end(),
+        [&](const auto &entry) {
+          return std::any_of(
+              entry.payloadTypes.begin(), entry.payloadTypes.end(),
+              [&](const SemanticType &payload) {
+                return containsDisallowedCallableCaptureState(
+                    payload, visiting, reviewedRawState, checkedBorrows);
+              });
+        });
   }
   return std::any_of(type.arguments.begin(), type.arguments.end(),
                      [&](const SemanticType &argument) {
                        return containsDisallowedCallableCaptureState(
-                           argument, visiting, reviewedRawState);
+                           argument, visiting, reviewedRawState,
+                           checkedBorrows);
                      });
 }
 
 auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
-    const SemanticType &type) const -> bool {
+    const SemanticType &type, bool checkedBorrows) const -> bool {
   std::unordered_set<ClassId> visiting;
-  return containsDisallowedCallableCaptureState(type, visiting);
+  return containsDisallowedCallableCaptureState(type, visiting, false,
+                                                checkedBorrows);
 }
 
 auto SemanticVisitor::Impl::movedFunctionParameter(
@@ -3200,13 +3244,18 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
         continue;
       }
       std::string failure;
+      // Moving an exact carrier transfers its checked dependency facts; it
+      // does not turn those dependencies into owned storage. Unbounded thread
+      // tasks and erased owning wrappers retain their distinct owning rules.
+      const bool checkedCarrier =
+          !threadTask && isDirectStoredReferenceType(concreteArgumentType);
       if (!consumed) {
         failure = "requires an explicit std::move ownership transfer";
       } else if (!traits.movable) {
         failure = "is not movable";
-      } else if (traits.containsBorrowedState ||
+      } else if ((traits.containsBorrowedState && !checkedCarrier) ||
                  (!threadTask && containsDisallowedCallableCaptureState(
-                                     concreteArgumentType))) {
+                                     concreteArgumentType, checkedCarrier))) {
         failure = "contains borrowed or raw-pointer capture state";
       } else if (!ownedTransportMatchesConcrete(*target, contract, resolved)) {
         failure = "does not preserve the callable's exact concrete type in "
@@ -3226,8 +3275,9 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
                          .sourceAnchor()),
            "Exact owned callable parameter declared here."});
       diagnostic.hints.emplace_back(
-          "Move an exact movable callable whose stored state contains no "
-          "references or tracked borrowed state. Raw implementation state "
+          "Move an exact movable callable; any checked dependencies must "
+          "outlive its destination. Unbounded thread tasks must own their "
+          "state. Raw implementation state "
           "must be encapsulated by an owner with a valid unsafe transfer "
           "contract; direct raw-pointer captures are not supported.");
       ownedDiagnostics.emplace_back(std::move(diagnostic));
@@ -3263,8 +3313,9 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
          resolved.callableArguments) {
       const bool provenBoundary =
           target != nullptr &&
-          callableParameterContract(target->id, argument.parameterIndex) !=
-              nullptr;
+          (callableParameterContract(target->id, argument.parameterIndex) !=
+               nullptr ||
+           isCheckedReferenceRelay(*target, argument.parameterIndex));
       if (provenBoundary ||
           argument.parameterIndex >= call->arguments().size()) {
         continue;
@@ -3807,6 +3858,10 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
     if (!lexicalClosure && !provenBoundary) {
       continue;
     }
+    if (const FunctionInfo *target = semanticModel.findFunction(candidate.id);
+        targetContract == nullptr && target != nullptr &&
+        isCheckedReferenceRelay(*target, index))
+      continue;
     const std::size_t formalIndex =
         candidate.parameterPack && !candidate.parameterTypes.empty()
             ? std::min(index, candidate.parameterTypes.size() - 1)
@@ -5198,10 +5253,14 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
       lambda = instanceBaseModel->findLambda(callable.lambdaId);
     }
     if (lambda != nullptr) {
-      result.push_back({.returnType = lambda->returnType,
-                        .parameterTypes = lambda->parameterTypes,
-                        .receiverMutability = ReceiverMutability::ReadOnly,
-                        .access = AccessModifier::Public});
+      result.push_back(
+          {.returnType = lambda->returnType,
+           .parameterTypes = lambda->parameterTypes,
+           .receiverMutability =
+               lambda->capability == CallableInvocationCapability::Mutable
+                   ? ReceiverMutability::Mutable
+                   : ReceiverMutability::ReadOnly,
+           .access = AccessModifier::Public});
     }
     return result;
   };
@@ -6708,6 +6767,8 @@ auto SemanticVisitor::Impl::recordCallableForwardings(
                : type;
   };
   for (std::size_t index = 0; index < count; ++index) {
+    if (isCheckedReferenceRelay(*targetInfo, index))
+      continue;
     if (index >= targetInfo->bodyDeclaration()->parameters().size() ||
         callableType(targetInfo->parameterTypes[index]).kind !=
             SemanticType::TypeParameter) {
@@ -7006,6 +7067,25 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   if (declarationInfo != nullptr) {
     ensureBodyAnalyzed(*declarationInfo);
   }
+  // Restoration authority is a checked-body fact, not part of the sealed
+  // overload signature. Refresh it after an on-demand body, and materialize
+  // the selected concrete referent's field dependencies at this call.
+  const FunctionInfo *restoreDeclaration =
+      semanticModel.findFunction(function.id);
+  if (restoreDeclaration == nullptr && instanceBaseModel != nullptr)
+    restoreDeclaration = instanceBaseModel->findFunction(function.id);
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredFields;
+  if (!function.virtualMethod && restoreDeclaration != nullptr &&
+      restoreDeclaration->restoresReferenceResult &&
+      function.returnType.kind == SemanticType::Reference &&
+      function.returnType.arguments.size() == 1) {
+    if (auto fields =
+            restoredReferenceFields(function.returnType.arguments.front())) {
+      restoresReferenceResult = true;
+      restoredFields = std::move(*fields);
+    }
+  }
   const FunctionReturnBorrowSummary concreteBorrow =
       functionReturnBorrowSummary(
           function.returnType, function.parameterTypes, function.ownerClass,
@@ -7042,6 +7122,19 @@ auto SemanticVisitor::Impl::recordResolvedCall(
                                     call.arguments().size() +
                                         (argumentReceiver != nullptr));
   recordDefaultArgumentDependencies(defaultArguments);
+  if (declarationInfo != nullptr) {
+    // A concrete lambda may have received a provisional confined-callable
+    // descriptor before selection. A checked reference relay does not invoke
+    // or own its referent; retain its ordinary borrow contract, not a callable
+    // permission absent from the selected function's body contract.
+    std::erase_if(callableArguments,
+                  [&](const CallableArgumentBoundary &argument) {
+                    return isCheckedReferenceRelay(*declarationInfo,
+                                                   argument.parameterIndex) &&
+                           callableParameterContract(
+                               function.id, argument.parameterIndex) == nullptr;
+                  });
+  }
   ResolvedCallInfo resolved{
       .function = function.id,
       .declaration = function.declaration,
@@ -7079,6 +7172,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
                           CThreadRuntimeOperation::ConditionBroadcast)
                        ? SynchronizationOperationKind::ConditionNotify
                        : SynchronizationOperationKind::None},
+      .restoresReferenceResult = restoresReferenceResult,
+      .restoredBorrowFields = std::move(restoredFields),
       .borrowOrigin = returnBorrowOrigin,
       .borrowArgument = returnBorrowParameter,
       .borrowAccess = returnBorrowAccess,

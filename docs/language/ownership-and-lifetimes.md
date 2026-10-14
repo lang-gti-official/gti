@@ -1167,8 +1167,10 @@ closure's move-only captures and cleanup obligation move with it; the source is
 unavailable and the final owner cleans the environment exactly once.
 
 This is not lambda-result inference or type erasure. A transported lambda must
-be movable and its capture state cannot contain a reference, tracked borrow, or
-unreviewed raw pointer. A class's effective `unsafe_transfer` assertion is an
+be movable. Checked borrowed captures retain their dependency places and access
+through concrete generic transport and field storage, as described below;
+unreviewed raw pointer captures remain unavailable. A class's effective
+`unsafe_transfer` assertion is an
 explicit unsafe boundary for its internal raw representation, including when
 that class is nested inside another owned capture. Its author must guarantee
 that movement preserves the represented ownership and pointer validity through
@@ -1183,9 +1185,9 @@ exact-transport minimum, not a restriction to one-field owners: ordinary direct 
 parameters, concrete field storage, final value packs, and explicit interface
 erasure also support source-defined owning callback wrappers. Each concrete
 body must retain its exact callable identity, ownership, and cleanup schedule.
-Fresh-lambda inferred returns, implicit ownership copies, namespace/static
-closure storage, borrowed captures, and callable-reference erasure remain
-outside this contract.
+Fresh-lambda inferred returns, implicit ownership copies, and namespace/static
+closure storage remain outside this contract. Checked borrowing and signature
+erasure are separate general facilities, not implicit owning transport.
 
 A raw pointer transports an address, not the closure object it may name. It
 holds no capture and invokes nothing, so passing `holder<Callable>*` to a
@@ -1200,6 +1202,9 @@ reference to a closure-bearing object is still a callable boundary. Direct
 forwarding, using ordinary checked loans and retaining caller ownership.
 An otherwise unclassified `int peek<T>(T& value) { return 1; }` still rejects
 a lambda argument with GTI-S2046 because it establishes no callable contract.
+An exact checked-reference relay may instead preserve the parameter's borrow
+without invoking or owning the callable. Its checked return-origin contract,
+not a public helper name, establishes that boundary.
 [`136-inline-closure-cells.gti`](../../examples/136-inline-closure-cells.gti)
 keeps a closure in an application-defined inline cell this way.
 
@@ -1232,6 +1237,88 @@ element retains an exclusive entry capability over its caller-owned referent,
 not ownership of that referent. Ordinary call-site exclusivity rules reject
 overlapping mutable/mutable and mutable/read-only inputs before the pack is
 formed. Forwarding does not make the immutable grouped binding reseatable.
+
+### Borrowing Captures And Callable Views
+
+An explicit `[&value]` capture takes a shared/read-only borrow of a named,
+addressable local or parameter. `[mut &value]` takes an exclusive mutable
+borrow and requires a mutable binding and mutable invocation of the closure:
+
+```gti
+mut int count = 0;
+mut auto increment = [mut &count](int amount) -> void { count += amount; };
+increment(2);
+```
+
+These are checked references, not raw pointer captures. Each environment field
+retains its origin place, access mode and parent loan. Multiple captures and
+disjoint fields use the same place-overlap rules as ordinary references. Copy
+and move captures retain any checked dependencies already present in the
+captured value. Shared environments can be copied when all their other fields
+can; an exclusive borrowed capture makes the environment noncopyable. Moving
+the environment transfers its dependencies without moving their referents.
+Borrowed environments cannot be assigned or relocated as independent objects.
+
+The restrictions last through the last proven use, or through cleanup when
+the stored type's destructor needs the dependency. An ordinary nested block
+can be the final-use endpoint after its cleanup. Loop backedges and later uses
+keep the dependency live. Concrete generic parameters and user-defined fields
+can store these environments, but cannot let them escape their owners. The
+owning `std::function` family does not acquire permission to erase borrowed
+state, nor can a borrowed environment cross a managed-thread boundary.
+
+Reentrancy follows exclusive access rather than a special callback flag. An
+invocation borrowing a mutable environment conflicts with another live mutable
+access to the same environment or captured origin, including another argument
+of that invocation. Shared/read-only calls may overlap when all dependencies
+are shared. Native callback retention and thread-confinement obligations are
+unchanged; a scoped callback is not an automatically safe native registration.
+
+`<std/functional>` provides source-defined, non-owning
+`std::function_ref<R(Args...)>` and `std::function_ref<R(Args...) mut>`.
+Construct a view from a named callable of the exact signature. A read view
+borrows it read-only; a mutable view borrows it exclusively and requires a
+mutable view binding for invocation. Neither construction allocates or copies
+the callable. There is no empty/null/default view. The callable and everything
+it borrows must remain valid for all uses of the view. Signature-erased borrowed
+results await an explicit result-origin contract and are not admitted here.
+
+Two general facilities support this ordinary source wrapper:
+
+- `std::erase_ref(object)` and `std::erase_mut(object)` return checked
+  `std::erased_object&` and `mut std::erased_object&` respectively. Erasure
+  preserves lifetime/access dependencies. The referent cannot be constructed,
+  read as a value, or used to acquire transfer/share capability.
+- `std::restore_ref<T>(erased)` and `std::restore_mut<T>(erased)` require
+  `unsafe`: the caller must supply precisely the original type. Shared erasure
+  cannot be restored with mutable access. Restoration retains checked lifetime
+  dependencies; `unsafe` does not make them disappear.
+  When the restored object itself contains borrows, those field dependencies
+  remain conservatively bounded by the erased reference's checked witness.
+  Ordinary helper functions can forward that restoration contract when every
+  return is proven to restore the same opaque input. A matching signature
+  alone does not grant restoration authority.
+  A named restored-reference local may be returned only while retaining the
+  exact selected reference-parameter witness and access permission, without
+  another local-owned or cleanup-bound dependency. This does not authorize
+  general local child-reborrow escapes or returning a local object's storage.
+- `std::function_ptr<R(Args...)>` is a non-null, typed GTI invocation pointer
+  constructed from an exact namespace-function item or captureless lambda.
+  It preserves GTI's failure and argument/result ownership convention. It is
+  not a C ABI pointer and cannot turn unsafe, receiver-dependent or
+  caller-context-dependent functions into ordinary safe targets. In this
+  slice an invocation pointer accepts arguments of any value type, including
+  owning class values, and returns scalar, reference, view and `void`
+  results; an owning class value returned through the pointer is not yet
+  representable in the backend and is rejected before native compilation.
+
+The reference projection and invocation pointer capabilities are bound to
+trusted declarations; no public wrapper spelling has compiler meaning.
+Captureless thunks may expand a surrounding generic parameter pack. Their
+concrete signature and each forwarded reference/value are checked normally.
+[`156-borrowing-callbacks.gti`](../../examples/156-borrowing-callbacks.gti)
+demonstrates direct view construction and unrelated user-defined callback
+storage.
 
 ### Stateless Namespace Function Items
 

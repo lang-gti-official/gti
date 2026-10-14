@@ -39,6 +39,50 @@ generatedUniqueConstruction(const MirInstruction &instruction);
 // access authority come from the explicit witness in operand one.
 [[nodiscard]] const MirLoan *
 rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
+[[nodiscard]] const MirLoan *
+erasedReferenceResultLoan(const MirProgram &program, const MirBody &body,
+                          const MirInstruction &instruction);
+// A restored borrow-carrying referent retains the exact opaque checked
+// witness. This body-local query traces explicit restore publications and
+// transfers only; program verification separately proves the concrete
+// intrinsic/helper contract and complete reference-field paths.
+[[nodiscard]] const MirInstruction *
+restoredBorrowAuthority(const MirBody &body, const MirLoan &loan);
+// Nonempty, exact local reference aliases of a CallResult. Every alias has
+// one dominating Initialize from this loan, after its unique typed producer
+// and before consumerPosition; its pointer storage is never reseated, moved,
+// copied, addressed or passed to another operation. Returns that exact
+// producer. Ordinary call, type, provenance and live-loan verification remain
+// mandatory; this query proves alias storage identity, not independent escape
+// authority.
+[[nodiscard]] const MirInstruction *
+callResultReferenceAliases(const MirBody &body, const MirLoan &loan,
+                           const MirBlock &consumer,
+                           std::size_t consumerPosition);
+// Direct caller-owned restoration shape, usable while lowering an incomplete
+// CFG. It grants no escape authority without the complete alias/order proof.
+[[nodiscard]] bool restoredReferenceReturnWitness(const MirBody &body,
+                                                  const MirLoan &loan);
+// A named restored reference may publish only the same direct caller-owned
+// opaque witness. This adds no origin or lifetime to the alias identity proof.
+[[nodiscard]] bool restoredReferenceReturnAliases(const MirBody &body,
+                                                  const MirLoan &loan,
+                                                  const MirBlock &consumer,
+                                                  std::size_t consumerPosition);
+// Exact safe GTI invocation signature and stateless selected body. These are
+// language-call boundaries, not native C function-pointer adaptation.
+[[nodiscard]] const SemanticType *
+functionPointerSignature(const MirProgram &program, const SemanticType &type);
+// A reference field may bind the exact reference returned by an ordinary
+// checked helper. This correlates the initializer call, argument-origin
+// contract and escaping Stored publication without assuming equal referent
+// types or replacing execution of the helper with its input address.
+[[nodiscard]] const MirInstruction *
+referenceInitializerCall(const MirProgram &program,
+                         const MirConstructorInstance &constructor,
+                         const MirConstructorInitializer &initializer);
+[[nodiscard]] bool functionPointerOperation(const MirProgram &program,
+                                            const MirInstruction &instruction);
 // Unsafe raw text assertions retain a checked witness without assigning
 // ownership or validity to the address itself. The exact ordered input
 // stages and resulting loan source are shared by verification and emission.

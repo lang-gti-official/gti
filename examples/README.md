@@ -53,10 +53,11 @@ You do not need to read the entire sequence to find an API pattern:
 | Use temporary owning allocations and deterministic cleanup during constant evaluation | [153: constexpr allocation](153-constexpr-allocation.gti) |
 | Initialize a string or class from one value of another type with an implicit constructor | [154: declaration construction](154-declaration-construction.gti) |
 | Convert a value to another type with an explicit or `implicit` conversion operator | [155: conversion operators](155-conversion-operators.gti) |
-| Give types associated types and operations from outside them, and use them from generic code | [156: protocol concepts](156-protocol-concepts.gti) |
+| Give types associated types and operations from outside them, and use them from generic code | [157: protocol concepts](157-protocol-concepts.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
+| Borrow surrounding state in a callback or signature-erased view | [156: borrowing callbacks](156-borrowing-callbacks.gti) |
 | Model an absent value and initialize it later | [84: optional values](084-optional-values.gti) |
 | Read program arguments | [43: hosted arguments](043-program-arguments.gti) |
 | Traverse, search, or modify containers | [90: algorithms](090-generic-algorithms.gti), [87: dictionaries](087-associative-containers.gti) |
@@ -213,7 +214,8 @@ is a teaching helper, not a production server.
 | `153-constexpr-allocation.gti` | transient exclusive allocation, source-defined destruction and a passive result that survives constant evaluation, with runtime parity |
 | `154-declaration-construction.gti` | `implicit` constructors letting declarations construct `std::string` from a literal and an application class from an `int`, a field default and constructor initializer doing the same, a constructor without `implicit` called explicitly, and `std::string` assignment from a view |
 | `155-conversion-operators.gti` | an explicit conversion operator to a strongly typed identifier, an `implicit` one that a declaration may use, and a consuming conversion from a temporary and an explicitly moved builder |
-| `156-protocol-concepts.gti` | a concept with an associated unit type and two operations, a conformance block for one class and a generic one for every instance of a class template, and a generic function that returns the associated type through `requires` |
+| `156-borrowing-callbacks.gti` | shared/exclusive captures, direct signature-erased callable views, generic stored callbacks, and stateless GTI invocation pointers |
+| `157-protocol-concepts.gti` | a concept with an associated unit type and two operations, a conformance block for one class and a generic one for every instance of a class template, and a generic function that returns the associated type through `requires` |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

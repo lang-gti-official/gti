@@ -115,6 +115,10 @@ void AstPrinter::visitLambdaExpr(const Lambda &expr) {
       stream << ",";
     }
     const LambdaCapture &capture = expr.captures()[index];
+    if (capture.mutKeyword)
+      stream << "mut ";
+    if (capture.borrow)
+      stream << '&';
     stream << capture.name.lexeme;
     if (capture.explicitInitializer()) {
       stream << "=" << printPtr(capture.initializer);

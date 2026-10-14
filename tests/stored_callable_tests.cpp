@@ -1348,7 +1348,7 @@ int main() {
       const auto *call = lang::exprAs<lang::Call>(returned->value().get());
       const auto *requirement =
           frontend.semantics.findDeferredCallableCall(*call);
-      if (requirement && requirement->receiverField != 0) {
+      if (requirement && requirement->receiverBinding != 0) {
         storedRequirement = true;
         expect(!requirement->boundary &&
                    requirement->returnType == lang::SemanticType::Int32,
@@ -1518,7 +1518,7 @@ int main() {
         continue;
       const auto &binding = bindings->front();
       const auto *lambda =
-          lowered.mir().findLambda(instance.parameterTypes.front().lambdaId);
+          lowered.mir().findLambdaForType(instance.parameterTypes.front());
       const bool recordCapture =
           lambda != nullptr && !lambda->captureTypes.empty() &&
           lambda->captureTypes.front().kind == lang::SemanticType::Class;

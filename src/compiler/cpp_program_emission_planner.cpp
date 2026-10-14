@@ -5754,6 +5754,12 @@ public:
           if (loweredClassUsesDirectRepresentation(*ownerInstance)) {
             continue;
           }
+          // An unnamed lexical parameter is represented by the constructor's
+          // admitted source-template overlay, not an explicit specialization
+          // with a concrete native parameter spelling.
+          if (!loweredConstructorInstanceIsNameable(*instance)) {
+            continue;
+          }
           if (!loweredOwnerIsGeneric(*owner) &&
               !constructor->genericParameters.empty() &&
               loweredConstructorInstanceIsNameable(*instance)) {
@@ -6658,6 +6664,13 @@ public:
       std::string text;
       std::string initializers;
       std::vector<std::string> banners;
+      std::vector<std::string> closureConditions;
+      // Each closure-selected instance's initializer fields (name,
+      // expression). Fields whose expressions differ between instances are
+      // dispatched on the same closure identities as the body variants.
+      std::vector<std::pair<std::string,
+                            std::vector<std::pair<std::string, std::string>>>>
+          initializerVariants;
     };
     std::vector<GenericNormalBody> genericNormalBodies;
     for (const MirConstructorInstance *instance : instances) {
@@ -6761,27 +6774,100 @@ public:
           output = std::ostringstream{};
           emitGeneralMirConstructorInitializerList(*instance);
           std::string initializers = output.str();
+          const std::vector<std::pair<std::string, std::string>>
+              initializerFields = lastInitializerFields_;
           output = std::move(saved);
+          // Unnamed callable parameters can select distinct verified bodies
+          // even when their cleanup shapes agree. The native type carries the
+          // exact artifact-local MIR identity; it does not select GTI
+          // overloads.
+          std::string closureCondition;
+          const auto prepared = constructorTemplatePlans.find(instance->id);
+          if (prepared != constructorTemplatePlans.end()) {
+            for (const auto &type : prepared->second->representations.types()) {
+              if (!type.bodyTypeOverlay ||
+                  type.type.kind != SemanticType::Lambda)
+                continue;
+              const auto lambda = std::find_if(
+                  mir.lambdaInstances().begin(), mir.lambdaInstances().end(),
+                  [&](const auto &candidate) {
+                    return candidate.type == type.type;
+                  });
+              if (lambda == mir.lambdaInstances().end())
+                throw std::logic_error(
+                    "constructor selector lost its exact lambda identity");
+              if (!closureCondition.empty())
+                closureCondition += " && ";
+              closureCondition +=
+                  "(::gti_internal::backend::mir_lambda_identity_v<" +
+                  type.spelling + "> == " + std::to_string(lambda->id) + ")";
+            }
+          }
+          if (!closureCondition.empty() && ownerInstance &&
+              loweredTypeIsNameable(ownerInstance->type)) {
+            closureCondition +=
+                " && std::is_same_v<" + loweredPrimaryClassSpelling(owner) +
+                ", " +
+                cppSemanticTypeSpelling(loweredProgram, standard,
+                                        ownerInstance->type) +
+                ">";
+          }
           const auto previous = std::find_if(
               genericNormalBodies.begin(), genericNormalBodies.end(),
               [&](const GenericNormalBody &body) {
-                return body.cleanup == cleanup;
+                return body.cleanup == cleanup && body.text == normalized;
               });
-          if ((!genericNormalBodies.empty() &&
-               genericNormalBodies.front().initializers != initializers) ||
-              (previous != genericNormalBodies.end() &&
-               previous->text != normalized)) {
-            throw std::logic_error("generic-owner constructor instances have "
-                                   "incompatible MIR representations");
+          if (!genericNormalBodies.empty() &&
+              genericNormalBodies.front().initializers != initializers) {
+            // A differing initializer expression (a checked helper spelled
+            // by its exact instance, say) is admissible only when this
+            // instance selects itself by closure identity and the field
+            // layout is the same; the assembly below dispatches each such
+            // field on those identities.
+            const auto &reference =
+                genericNormalBodies.front().initializerVariants;
+            const bool sameLayout =
+                !closureCondition.empty() && !reference.empty() &&
+                reference.front().second.size() == initializerFields.size() &&
+                std::equal(reference.front().second.begin(),
+                           reference.front().second.end(),
+                           initializerFields.begin(),
+                           [](const auto &left, const auto &right) {
+                             return left.first == right.first;
+                           });
+            if (!sameLayout)
+              throw std::logic_error(
+                  "generic-owner constructor instances have incompatible MIR "
+                  "representations");
+          }
+          for (const auto &body : genericNormalBodies) {
+            if (body.cleanup != cleanup || body.text == normalized)
+              continue;
+            if (closureCondition.empty() || body.closureConditions.empty() ||
+                std::find(body.closureConditions.begin(),
+                          body.closureConditions.end(),
+                          closureCondition) != body.closureConditions.end())
+              throw std::logic_error(
+                  "generic constructor bodies lack distinct exact selectors");
           }
           if (previous == genericNormalBodies.end()) {
-            genericNormalBodies.push_back({instance,
-                                           std::move(cleanup),
-                                           normalized,
-                                           std::move(initializers),
-                                           {banner}});
+            genericNormalBodies.push_back(
+                {instance,
+                 std::move(cleanup),
+                 normalized,
+                 initializers,
+                 {banner},
+                 closureCondition.empty()
+                     ? std::vector<std::string>{}
+                     : std::vector<std::string>{closureCondition},
+                 {{closureCondition, initializerFields}}});
           } else {
             previous->banners.push_back(banner);
+            previous->initializerVariants.push_back(
+                {closureCondition, initializerFields});
+            if (!closureCondition.empty())
+              previous->closureConditions.push_back(
+                  std::move(closureCondition));
           }
         }
         continue;
@@ -6888,16 +6974,66 @@ public:
         return text;
       };
       const GenericNormalBody &first = genericNormalBodies.front();
+      // Initializer fields that differ between closure-selected instances
+      // are chosen by the same identities inside an immediately invoked
+      // lambda; `decltype(auto)` keeps a reference initializer a reference
+      // and lets a prvalue initializer elide into the member.
+      const auto mergedInitializers = [&]() -> std::string {
+        std::vector<std::pair<std::string,
+                              std::vector<std::pair<std::string, std::string>>>>
+            variants;
+        for (const GenericNormalBody &body : genericNormalBodies)
+          for (const auto &variant : body.initializerVariants)
+            variants.push_back(variant);
+        if (variants.empty() ||
+            std::all_of(variants.begin(), variants.end(), [&](const auto &v) {
+              return v.second == variants.front().second;
+            }))
+          return first.initializers;
+        const std::size_t fields = variants.front().second.size();
+        for (const auto &variant : variants)
+          if (variant.first.empty() || variant.second.size() != fields)
+            throw std::logic_error("generic-owner constructor initializers "
+                                   "differ without an exact closure selector");
+        std::string text = " : ";
+        for (std::size_t field = 0; field < fields; ++field) {
+          if (field != 0)
+            text += ", ";
+          const auto &name = variants.front().second[field].first;
+          const bool same =
+              std::all_of(variants.begin(), variants.end(), [&](const auto &v) {
+                return v.second[field] == variants.front().second[field];
+              });
+          if (same) {
+            text += name + "(" + variants.front().second[field].second + ")";
+            continue;
+          }
+          text += name + "([&]() -> decltype(auto) { ";
+          for (std::size_t index = 0; index < variants.size(); ++index) {
+            text += (index == 0 ? "if constexpr (" : " else if constexpr (") +
+                    variants[index].first + ") { return " +
+                    variants[index].second[field].second + "; }";
+          }
+          const std::string discriminator = loweredPrimaryClassSpelling(owner);
+          text += " else { static_assert(!std::is_same_v<" + discriminator +
+                  ", " + discriminator +
+                  ">, \"unselected generic constructor initializer\"); } }())";
+        }
+        return text;
+      };
       emitLoweredClassTemplateHeaders(owner);
       emitLoweredTemplateDeclaration(constructor.genericParameters);
       writeIndent();
       output << loweredPrimaryClassSpelling(owner) << "::" << owner.name << '(';
       emitLoweredGenericOwnerConstructorParameters(constructor, *first.instance,
                                                    false);
-      output << ')' << first.initializers << ' ';
+      output << ')' << mergedInitializers() << ' ';
       if (genericNormalBodies.size() == 1) {
         output << assemble(first);
       } else {
+        const bool exactClosures = std::all_of(
+            genericNormalBodies.begin(), genericNormalBodies.end(),
+            [](const auto &body) { return !body.closureConditions.empty(); });
         std::vector<std::size_t> varying;
         for (std::size_t index = 0; index < first.cleanup.size(); ++index) {
           if (std::any_of(genericNormalBodies.begin(),
@@ -6914,7 +7050,7 @@ public:
             varying.push_back(index);
           }
         }
-        if (varying.empty()) {
+        if (varying.empty() && !exactClosures) {
           throw std::logic_error(
               "generic constructor body variants lack a cleanup discriminator");
         }
@@ -6926,18 +7062,43 @@ public:
           writeIndent();
           output << (index == 0 ? "if constexpr (" : "else if constexpr (");
           bool separator = false;
+          if (exactClosures) {
+            output << '(';
+            for (std::size_t condition = 0;
+                 condition < body.closureConditions.size(); ++condition) {
+              if (condition)
+                output << " || ";
+              output << '(' << body.closureConditions[condition] << ')';
+            }
+            output << ')';
+            separator = true;
+          }
           for (const std::size_t parameter : varying) {
+            const std::string spelling =
+                cppSemanticTypeSpelling(loweredProgram, standard,
+                                        constructor.parameters[parameter].type);
+            // A closure identity already fixes the instance built from that
+            // parameter, including its MIR drop decision; native
+            // destructibility would disagree for a closure capturing a
+            // passive class, which drops lexically yet is trivially
+            // destructible in C++.
+            if (exactClosures &&
+                std::any_of(body.closureConditions.begin(),
+                            body.closureConditions.end(),
+                            [&](const std::string &condition) {
+                              return condition.find("mir_lambda_identity_v<" +
+                                                    spelling + ">") !=
+                                     std::string::npos;
+                            })) {
+              continue;
+            }
             if (separator) {
               output << " && ";
             }
             if (body.cleanup[parameter]) {
               output << '!';
             }
-            output << "std::is_trivially_destructible_v<"
-                   << cppSemanticTypeSpelling(
-                          loweredProgram, standard,
-                          constructor.parameters[parameter].type)
-                   << '>';
+            output << "std::is_trivially_destructible_v<" << spelling << '>';
             separator = true;
           }
           output << ") {\n";
@@ -6948,9 +7109,11 @@ public:
           writeIndent();
           output << "}\n";
         }
-        const std::string discriminator = cppSemanticTypeSpelling(
-            loweredProgram, standard,
-            constructor.parameters[varying.front()].type);
+        const std::string discriminator =
+            exactClosures ? loweredPrimaryClassSpelling(owner)
+                          : cppSemanticTypeSpelling(
+                                loweredProgram, standard,
+                                constructor.parameters[varying.front()].type);
         writeIndent();
         output << "else { static_assert(!std::is_same_v<" << discriminator
                << ", " << discriminator
@@ -8202,7 +8365,7 @@ public:
     const bool preparedBase =
         failureForm && cppMirBasePreparation(mir, constructor).has_value();
     const std::optional<std::vector<CppMirStoredReferenceBinding>> bindings =
-        cppMirStoredReferenceBindings(constructor);
+        cppMirStoredReferenceBindings(mir, constructor);
     const std::optional<std::vector<CppMirBaseParameterInitializerBinding>>
         baseBindings = cppMirBaseParameterInitializerBindings(mir, constructor);
     const std::optional<std::vector<CppMirOwnedParameterFieldBinding>>
@@ -8228,6 +8391,7 @@ public:
       std::size_t initializer = 0;
       SymbolId field = 0;
       std::size_t parameter = 0;
+      std::optional<HirFunctionInstanceId> referenceFunction;
       bool moved = false;
       SemanticType fieldType = SemanticType::Unknown;
       SemanticType baseType = SemanticType::Unknown;
@@ -8254,7 +8418,8 @@ public:
     for (const CppMirStoredReferenceBinding &binding : *bindings) {
       initializers.push_back({.initializer = binding.initializer,
                               .field = binding.field,
-                              .parameter = binding.parameter});
+                              .parameter = binding.parameter,
+                              .referenceFunction = binding.functionTarget});
     }
     for (const CppMirCopyParameterFieldBinding &binding : *copiedBindings) {
       initializers.push_back({.initializer = binding.initializer,
@@ -8348,10 +8513,28 @@ public:
           return left.initializer < right.initializer;
         });
     output << " : ";
+    // Each initializer's text is kept apart as `name` and `expression` so a
+    // generic-owner constructor can dispatch fields whose expressions differ
+    // between closure-selected instances.
+    lastInitializerFields_.clear();
+    std::size_t segmentStart = static_cast<std::size_t>(output.tellp());
+    const auto flushSegment = [&]() {
+      const std::string text = output.str().substr(segmentStart);
+      const std::size_t open = text.find('(');
+      if (open == std::string::npos || text.empty() || text.back() != ')') {
+        lastInitializerFields_.push_back({text, std::string()});
+        return;
+      }
+      lastInitializerFields_.push_back(
+          {text.substr(0, open),
+           text.substr(open + 1, text.size() - open - 2)});
+    };
     for (std::size_t index = 0; index < initializers.size(); ++index) {
       if (index != 0) {
+        flushSegment();
         output << ", ";
       }
+      segmentStart = static_cast<std::size_t>(output.tellp());
       const InitializerBinding &initializer = initializers[index];
       if (initializer.kind == BindingKind::Base) {
         emitSemanticType(initializer.baseType);
@@ -8504,6 +8687,21 @@ public:
         continue;
       }
       output << fieldName << '(';
+      if (initializer.referenceFunction) {
+        const MirBodyAddress address{.kind = MirBodyKind::Function,
+                                     .owner = *initializer.referenceFunction};
+        const auto row = std::find_if(generalEmissionMap->bodies().begin(),
+                                      generalEmissionMap->bodies().end(),
+                                      [&](const auto &candidate) {
+                                        return candidate.address == address;
+                                      });
+        if (row == generalEmissionMap->bodies().end() ||
+            row->spelling.empty() || row->conditionalResultParameter ||
+            row->callSiteTemplateArguments)
+          throw std::logic_error(
+              "checked reference initializer lost its exact helper spelling");
+        output << row->spelling << '(';
+      }
       if (initializer.moved) {
         output << "std::move(";
       }
@@ -8512,7 +8710,12 @@ public:
       if (initializer.moved) {
         output << ')';
       }
+      if (initializer.referenceFunction)
+        output << ')';
       output << ')';
+    }
+    if (!initializers.empty()) {
+      flushSegment();
     }
   }
 
@@ -9399,6 +9602,9 @@ public:
       cppEmittedStandardNamespace;
 
   std::ostringstream output;
+  // Field name and expression text of the initializer list emitted last by
+  // emitGeneralMirConstructorInitializerList.
+  std::vector<std::pair<std::string, std::string>> lastInitializerFields_;
   CppStandard standard;
   const MirProgram &mir;
   const LoweredProgram &loweredProgram;

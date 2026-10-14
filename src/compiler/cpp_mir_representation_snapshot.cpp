@@ -749,10 +749,72 @@ specializedBodyTextIsReady(const LoweredProgram &program, CppStandard standard,
            (instance->mayRaiseDefinedFailure ? plan.supportsFailureText()
                                              : plan.supportsPlainText());
   }
+  case MirBodyKind::Lambda: {
+    // A lambda literal is spelled inline where its enclosing body creates
+    // it, so a literal inside a template body (a signature-erasing thunk in
+    // a callable-template constructor) is ready exactly when it holds under
+    // that enclosing body's type overlay.
+    const MirLambdaInstance *lambda =
+        program.mir().findLambda(analysis.body.owner);
+    if (lambda == nullptr)
+      return false;
+    const auto creates = [&](const MirBody &enclosing) {
+      return std::any_of(
+          enclosing.blocks.begin(), enclosing.blocks.end(),
+          [&](const MirBlock &block) {
+            return std::any_of(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const MirInstruction &instruction) {
+                  return instruction.kind == MirInstructionKind::Compute &&
+                         instruction.operation == MirOperation::Closure &&
+                         instruction.lambdaTarget &&
+                         *instruction.lambdaTarget == lambda->id;
+                });
+          });
+    };
+    for (const MirConstructorInstance &enclosing :
+         program.mir().constructorInstances()) {
+      if (!creates(enclosing.body))
+        continue;
+      const LoweredConstructorInstance *source =
+          program.findConstructorInstance(enclosing.id);
+      const LoweredConstructorDeclaration *declaration =
+          source == nullptr
+              ? nullptr
+              : program.findConstructorDeclaration(source->declaration);
+      if (declaration == nullptr ||
+          enclosing.definitionKind != MirDefinitionKind::Source)
+        return false;
+      overlayCount = cppMirApplyGenericOwnerConstructorTypeOverlays(
+          rows, program, *declaration, enclosing);
+      break;
+    }
+    if (!overlayCount) {
+      for (const MirFunctionInstance &enclosing :
+           program.mir().functionInstances()) {
+        if (!creates(enclosing.body))
+          continue;
+        const LoweredFunctionDeclaration *declaration =
+            program.findFunctionDeclaration(enclosing.declaration);
+        if (declaration == nullptr ||
+            enclosing.definitionKind != MirDefinitionKind::Source)
+          return false;
+        overlayCount = cppMirApplyCallableTemplateTypeOverlays(
+            rows, program, standard, *declaration, enclosing);
+        break;
+      }
+    }
+    if (!overlayCount || *overlayCount == 0)
+      return false;
+    const CppMirBodyEmissionMap overlay(std::move(rows));
+    const CppMirBodyEmissionPlan plan =
+        CppMirBodyEmitter(program.mir(), overlay).buildPlan(analysis.body);
+    return plan.analysis().ready() &&
+           (plan.supportsPlainText() || plan.supportsFailureText());
+  }
   case MirBodyKind::Module:
   case MirBodyKind::FieldInitializers:
   case MirBodyKind::StaticFieldInitializers:
-  case MirBodyKind::Lambda:
   case MirBodyKind::HostedStartup:
     return false;
   }
