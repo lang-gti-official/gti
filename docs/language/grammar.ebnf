@@ -503,14 +503,16 @@ access-specifier       = ( "public" | "protected" | "private" ) ":" ;
    A union is always public and semantic analysis restricts it to passive
    instance fields; the shared parser surface keeps malformed declarations
    recoverable for one focused diagnostic.
-   Private members are accessible from methods of their declaring type.
+   Private members are accessible in their declaring type and lexical nested
+   types. Protected members additionally admit derived contexts; instance
+   access requires a receiver of that accessing derived type or a descendant.
 
    Inheritance is intentionally narrower than C++. Every base must be written
    with explicit `public` access. A class or struct may have at most one
    state-bearing class/struct base and any number of interface bases. An
    interface may inherit only interfaces. Duplicate bases, inheritance cycles,
-   and diamonds are invalid. Private inheritance is accepted by the parser only
-   so semantics can recommend composition; `protected` is not a keyword.
+   and diamonds are invalid. Private and protected inheritance are accepted
+   by the parser only so semantics can require explicit public inheritance.
 
    An interface is a public instance behavior-only contract. It cannot contain
    fields, constructors, destructors or instance method bodies. Its static

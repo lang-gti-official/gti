@@ -306,8 +306,8 @@ shorthand, qualification, and alias spelling. Namespace- and class-scoped
 `using Name = Type;` aliases are declaration-order independent within their
 direct declaring scope after cycle validation. Every class-like body (`class`,
 `struct`, `interface`, and `union`) admits aliases as type members. An alias
-follows the owner's current `public:`, `protected:`, or `private:` section and the class key's
-default access, and its name cannot collide with a value, callable, or another
+follows the owner's current `public:`, `protected:`, or `private:` section and
+the class key's default access, and its name cannot collide with a value, callable, or another
 type alias in that owner. A public alias of a non-generic type may be named with
 `Owner::Name` outside the class.
 
