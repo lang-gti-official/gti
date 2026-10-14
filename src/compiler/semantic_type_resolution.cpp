@@ -3201,11 +3201,12 @@ auto SemanticVisitor::Impl::canAccessMember(
     return true;
   if (access == AccessModifier::Private)
     return isWithinClass(owner);
-  SemanticType object = receiver;
-  while ((object.kind == SemanticType::Reference ||
-          object.kind == SemanticType::RawPointer) &&
-         object.arguments.size() == 1)
-    object = object.arguments.front();
+  const SemanticType *unwrapped = &receiver;
+  while ((unwrapped->kind == SemanticType::Reference ||
+          unwrapped->kind == SemanticType::RawPointer) &&
+         unwrapped->arguments.size() == 1)
+    unwrapped = &unwrapped->arguments.front();
+  const SemanticType &object = *unwrapped;
   const SemanticType declaringType = memberDeclaringType(
       lookupType == SemanticType::Unknown ? object : lookupType, owner);
   for (ClassId context = currentClass.value_or(0); context != 0;
@@ -3216,7 +3217,7 @@ auto SemanticVisitor::Impl::canAccessMember(
         (declaringType == SemanticType::Unknown ||
          declaringType == contextOwner) &&
         (context == owner || object == SemanticType::Unknown ||
-         isSameOrDerivedClass(object, contextType)))
+         object == contextType || isPublicBaseConversion(object, contextType)))
       return true;
   }
   return false;
