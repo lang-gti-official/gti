@@ -1,5 +1,25 @@
 # Compiler Verification
 
+## Copied closure fields of generic classes (0.431.2)
+
+`generic_callable_transport_runtime` adds `generic_closure_field_copy.gti`.
+Generic classes instantiated with captureless, scalar-capturing and
+struct-capturing lambda types copy the closure parameter into a field beside a
+literal, a forwarded and a defaulted base, a moved sibling of the same formal,
+owned string fields before and after it, a second closure type, a returned
+owner and a copied owner. Its C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan
+builds check every result. `stored_callable_types` requires one
+record-published copy binding and no hoisted sibling for each of three closure
+instances of one class, admits each constructor body under its closure
+overlay, and rejects a moved Load, a noncopyable or borrowing value, active
+field cleanup, a lost initializer record, and a captured class without a
+generated copy. It also requires the owned move after a closure copy to keep
+its native binding, and rejects it once the copy's Load and boundary are
+reordered. Under the real closure overlays, `base_constructor_stage` admits a
+lambda-typed class that copies its closure beside a literal base argument.
+A lambda-typed class that computes its base argument keeps its MIR preparation
+but receives no carrier, because its `concreteGenericClass` fact is clear.
+
 ## Generic base arguments (0.431.1)
 
 `base_constructor_stage_runtime` adds `generic_base_arguments.gti`. In it, two

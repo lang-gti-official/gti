@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.431.2 — GTI's own expected representation
+## 0.431.3 — GTI's own expected representation
 
 - Generated C++ no longer uses `std::expected` under C++23 or the vendored
   `nonstd::expected` (expected-lite) under C++20. `expected` values use GTI's
@@ -17,6 +17,21 @@ for what minor and patch releases mean.
   standards, so a C++23 standard library without `<expected>` works and the
   two standards can no longer differ in how results behave. Program behavior
   is unchanged: wrong-state access still reports `GTI-R0009` after cleanup.
+
+## 0.431.2 — Generic classes instantiated with lambda types
+
+- Fix the internal compiler error that 0.431.1 still listed (`GTI-B0001`,
+  "backend failed while generating a representation") when a generic class
+  instantiated with a lambda type copies the lambda into a field, such as
+  `Holder(F f) : callback(f) {}` for a `Holder<F>` created in `use<F>(F f)`
+  called with a lambda. This works for lambdas without captures and lambdas
+  capturing numbers, plain enums or plain structs, with or without a base
+  class, beside other fields including ones that take ownership of a
+  parameter, and when one class is used with several lambdas. The copy leaves
+  the original lambda usable.
+- A lambda capturing a fixed array, a payload enum or another lambda, a class
+  built from a lambda inside another class's member initializer, and a
+  computed base-class argument in such a class still stop with this error.
 
 ## 0.431.1 — Base arguments of generic classes
 
