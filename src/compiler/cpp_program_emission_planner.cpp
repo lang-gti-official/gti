@@ -2086,42 +2086,13 @@ public:
     emitSemanticType(storage.type);
   }
 
-  // GTI has already computed these values. Native constexpr is only a
-  // representation qualifier: C++20 expected-lite is non-literal, including
-  // when nested in an array or source-defined record. Keep such storage const
-  // without asking the native compiler to repeat constant evaluation.
-  [[nodiscard]] bool nativeConstantStorage(const SemanticType &type,
-                                           std::size_t depth = 0) const {
-    if (standard != CppStandard::Cpp20)
-      return true;
-    if (depth > 128 || type.kind == SemanticType::Expected ||
-        type.kind == SemanticType::Unexpected)
-      return false;
-    if (type.kind == SemanticType::Class) {
-      const auto found = std::find_if(
-          mir.classInstances().begin(), mir.classInstances().end(),
-          [&](const auto &instance) { return instance.type == type; });
-      if (found == mir.classInstances().end())
-        return false;
-      return std::all_of(found->declaredFields.begin(),
-                         found->declaredFields.end(), [&](const auto &field) {
-                           return nativeConstantStorage(field.type, depth + 1);
-                         });
-    }
-    return std::all_of(type.arguments.begin(), type.arguments.end(),
-                       [&](const auto &argument) {
-                         return nativeConstantStorage(argument, depth + 1);
-                       });
-  }
-
   void emitLoweredStorageType(const LoweredStorageDeclaration &storage,
                               bool declarationOnly) {
     const bool runtime = loweredRuntimeProgramStorage(storage);
     const bool rawPointer = storage.type.kind == SemanticType::RawPointer;
     const bool moveOnly =
         isMoveOnlyOwner(storage.traits) || containsTypeParameter(storage.type);
-    const bool representationConstexpr =
-        storage.constexprStorage && nativeConstantStorage(storage.type);
+    const bool representationConstexpr = storage.constexprStorage;
     if (representationConstexpr && !runtime) {
       output << (declarationOnly ? "const " : "constexpr ");
     } else if (!runtime && (storage.constexprStorage ||
@@ -2304,8 +2275,7 @@ public:
     const bool rawPointer = storage.type.kind == SemanticType::RawPointer;
     const bool moveOnly =
         isMoveOnlyOwner(storage.traits) || containsTypeParameter(storage.type);
-    const bool representationConstexpr =
-        storage.constexprStorage && nativeConstantStorage(storage.type);
+    const bool representationConstexpr = storage.constexprStorage;
 
     writeIndent();
     if (!insideClass && storage.internalLinkage) {
@@ -3814,10 +3784,7 @@ public:
     writeIndent();
     output << "struct __gti_constexpr_value_tag_v1 {};\n";
     writeIndent();
-    const bool nativeConstexpr = nativeConstantStorage(exactType);
-    if (nativeConstexpr)
-      output << "constexpr ";
-    output << classRow.name << "(__gti_constexpr_value_tag_v1";
+    output << "constexpr " << classRow.name << "(__gti_constexpr_value_tag_v1";
     for (std::size_t index = 0; index < fields.size(); ++index) {
       output << ", ";
       emitSemanticType(fieldType(*fields[index]));
@@ -3837,8 +3804,8 @@ public:
     output << " {}\n";
     emitAccess(AccessModifier::Public);
     writeIndent();
-    output << (nativeConstexpr ? "static constexpr " : "static ")
-           << classRow.name << " __gti_constexpr_value_v1(";
+    output << "static constexpr " << classRow.name
+           << " __gti_constexpr_value_v1(";
     for (std::size_t index = 0; index < fields.size(); ++index) {
       if (index != 0) {
         output << ", ";
