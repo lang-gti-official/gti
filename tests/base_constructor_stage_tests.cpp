@@ -372,8 +372,7 @@ void checkBaseInitializerTemporaries(const std::filesystem::path &fixtures) {
               instruction.kind == lang::MirInstructionKind::Drop &&
               instruction.destination == slot->id) {
             // After the base, a slot is ended only by its own obligation.
-            instruction.lifecycle.front().source =
-                obligation->id == 1 ? 2 : 1;
+            instruction.lifecycle.front().source = obligation->id == 1 ? 2 : 1;
             applied = true;
           }
           if (mutation == 2 && !applied && inPreparation &&
