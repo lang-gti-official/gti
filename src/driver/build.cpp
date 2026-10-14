@@ -845,7 +845,6 @@ bool publishTextAtomically(const std::filesystem::path &destination,
 
 std::vector<std::filesystem::path>
 nativeCppIncludeDirectories(const ToolchainLayout &toolchain,
-                            CppStandard standard,
                             const NativeInputs &additional);
 
 struct ResolvedNativeLibrary {
@@ -1416,12 +1415,6 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                        errorMessage)) {
     return std::nullopt;
   }
-  if (request.compilation().cppStandard() == CppStandard::Cpp20 &&
-      !addDirectoryIdentity(identity, "toolchain.vendor-include",
-                            request.toolchain().vendorInclude, false,
-                            errorMessage)) {
-    return std::nullopt;
-  }
 
   const NativeInputs &native = request.nativeInputs();
   if (!addPathDirectorySequence(identity, "native.include-directory",
@@ -1610,8 +1603,7 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
         request.toolchain().runtimeInclude};
     append(cIncludeDirectories, native.includeDirectories);
     const std::vector<std::filesystem::path> cppIncludeDirectories =
-        nativeCppIncludeDirectories(
-            request.toolchain(), request.compilation().cppStandard(), native);
+        nativeCppIncludeDirectories(request.toolchain(), native);
     for (const std::filesystem::path &source : native.cSources) {
       if (!discover(source, "native.c-source.discovery", true,
                     cIncludeDirectories, native.cCompilerArguments,
@@ -1645,11 +1637,6 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
       }
       std::vector<std::filesystem::path> groupCppIncludes{
           request.toolchain().runtimeInclude};
-      if (request.compilation().cppStandard() == CppStandard::Cpp20 &&
-          request.toolchain().vendorInclude !=
-              request.toolchain().runtimeInclude) {
-        groupCppIncludes.push_back(request.toolchain().vendorInclude);
-      }
       append(groupCppIncludes, group.includeDirectories);
       for (const std::filesystem::path &source : group.cppSources) {
         if (!discover(source, "native.dependency-group.cpp-source.discovery",
@@ -2434,19 +2421,14 @@ bool hasDependencyInjectingNativeEnvironment() {
 
 std::vector<std::filesystem::path>
 nativeCppIncludeDirectories(const ToolchainLayout &toolchain,
-                            CppStandard standard,
                             const NativeInputs &additional) {
   std::vector<std::filesystem::path> directories{toolchain.runtimeInclude};
-  if (standard == CppStandard::Cpp20 &&
-      toolchain.vendorInclude != toolchain.runtimeInclude) {
-    directories.push_back(toolchain.vendorInclude);
-  }
   append(directories, additional.includeDirectories);
   return directories;
 }
 
 NativeInputs
-effectiveNativeInputs(const ToolchainLayout &toolchain, CppStandard standard,
+effectiveNativeInputs(const ToolchainLayout &toolchain,
                       const NativeInputs &additional,
                       const std::vector<std::filesystem::path> &nativeObjects) {
   NativeInputs inputs;
@@ -2455,7 +2437,7 @@ effectiveNativeInputs(const ToolchainLayout &toolchain, CppStandard standard,
   // declared cross compiler in its host configuration.
   inputs.targetPolicy = additional.targetPolicy;
   inputs.includeDirectories =
-      nativeCppIncludeDirectories(toolchain, standard, additional);
+      nativeCppIncludeDirectories(toolchain, additional);
   append(inputs.compilerArguments, additional.compilerArguments);
   append(inputs.libraryDirectories, additional.libraryDirectories);
   const bool groupLinkContribution = std::any_of(
@@ -2518,8 +2500,6 @@ std::optional<BuildRuntimeProvenance> captureBuildRuntimeProvenance(
   BuildRuntimeProvenance provenance;
   const std::filesystem::path runtimeRoot =
       normalizedAbsolute(toolchain.runtimeInclude / "gti");
-  const std::filesystem::path compatibilityRoot =
-      normalizedAbsolute(toolchain.vendorInclude / "nonstd");
   std::vector<std::string> seen;
   for (const std::filesystem::path &dependency : dependencies) {
     const std::filesystem::path canonical = normalizedAbsolute(dependency);
@@ -2529,10 +2509,6 @@ std::optional<BuildRuntimeProvenance> captureBuildRuntimeProvenance(
       kind = BuildRuntimeHeaderKind::Runtime;
       relative = std::filesystem::path("gti") /
                  canonical.lexically_relative(runtimeRoot);
-    } else if (pathIsWithin(compatibilityRoot, canonical)) {
-      kind = BuildRuntimeHeaderKind::Compatibility;
-      relative = std::filesystem::path("nonstd") /
-                 canonical.lexically_relative(compatibilityRoot);
     } else {
       continue;
     }
@@ -2624,8 +2600,6 @@ std::string_view buildRuntimeHeaderKindName(BuildRuntimeHeaderKind kind) {
   switch (kind) {
   case BuildRuntimeHeaderKind::Runtime:
     return "runtime";
-  case BuildRuntimeHeaderKind::Compatibility:
-    return "compatibility";
   }
   return "runtime";
 }
@@ -3253,8 +3227,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
           cacheProgress.update("hit; restoring executable");
           result.cache.status = BuildCacheStatus::Hit;
           result.cache.detail = lookup.detail;
-          result.resourceError = validateToolchainLayout(
-              request.toolchain(), request.compilation().cppStandard());
+          result.resourceError = validateToolchainLayout(request.toolchain());
           if (result.resourceError) {
             result.status =
                 ExecutableBuildStatus::ToolchainConfigurationFailure;
@@ -3377,8 +3350,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
 
   TemporaryArtifact generatedArtifact(request.generatedSource(),
                                       !request.keepGeneratedSource());
-  result.resourceError = validateToolchainLayout(
-      request.toolchain(), request.compilation().cppStandard());
+  result.resourceError = validateToolchainLayout(request.toolchain());
   if (result.resourceError) {
     result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
     return result;
@@ -3491,9 +3463,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   }
 
   const std::vector<std::filesystem::path> cppIncludeDirectories =
-      nativeCppIncludeDirectories(request.toolchain(),
-                                  request.compilation().cppStandard(),
-                                  request.nativeInputs());
+      nativeCppIncludeDirectories(request.toolchain(), request.nativeInputs());
   for (std::size_t index = 0; index < request.nativeInputs().cppSources.size();
        ++index) {
     if (!compileNativeCppSource(request.nativeInputs().cppSources[index],
@@ -3523,11 +3493,6 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     }
     std::vector<std::filesystem::path> groupCppIncludes{
         request.toolchain().runtimeInclude};
-    if (request.compilation().cppStandard() == CppStandard::Cpp20 &&
-        request.toolchain().vendorInclude !=
-            request.toolchain().runtimeInclude) {
-      groupCppIncludes.push_back(request.toolchain().vendorInclude);
-    }
     append(groupCppIncludes, group.includeDirectories);
     for (std::size_t index = 0; index < group.cppSources.size(); ++index) {
       if (!compileNativeCppSource(
@@ -3572,9 +3537,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   const NativeCompileRequest nativeRequest(
       request.nativeCompiler(), request.generatedSource(), stagedOutput,
       request.compilation().cppStandard(), request.compilation().optimization(),
-      effectiveNativeInputs(request.toolchain(),
-                            request.compilation().cppStandard(),
-                            request.nativeInputs(), nativeObjects),
+      effectiveNativeInputs(request.toolchain(), request.nativeInputs(),
+                            nativeObjects),
       request.buildReport()
           ? std::optional<std::filesystem::path>(nativeDependencyFile)
           : std::nullopt,

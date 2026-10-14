@@ -1042,9 +1042,8 @@ atomically replaces its prior intermediate and is placed before the runtime and
 declared libraries in the final C++ link.
 
 For every selected C++ source, `gti build` invokes the resolved C++ compiler
-with the project C++ standard and optimization, GTI's runtime include directory
-(plus the C++20 compatibility include when required), shared manifest include
-directories, and effective `compile-args`. Compiler discovery uses `--cxx`,
+with the project C++ standard and optimization, GTI's runtime include directory,
+shared manifest include directories, and effective `compile-args`. Compiler discovery uses `--cxx`,
 `GTI_CXX`, `CXX`, then `c++`; the same compiler performs the final link. C
 objects are linked first, followed by C++ objects, the runtime, and declared
 native operands. C++ source objects use the same atomic publication and failure

@@ -18,18 +18,16 @@ struct ToolchainLayout {
   StandardLibraryLayout standardLibrary;
   std::filesystem::path runtimeInclude;
   std::filesystem::path runtimeLibrary;
-  std::filesystem::path vendorInclude;
 };
 
 [[nodiscard]] ToolchainLayout discoverToolchainLayout(const char *driver);
 
 enum class ToolchainResourceError {
   RuntimeFilesMissing,
-  ExpectedCompatibilityHeaderMissing,
 };
 
 [[nodiscard]] std::optional<ToolchainResourceError>
-validateToolchainLayout(const ToolchainLayout &layout, CppStandard standard);
+validateToolchainLayout(const ToolchainLayout &layout);
 
 [[nodiscard]] std::string discoverNativeCompiler(
     const std::optional<std::string> &selected = std::nullopt);

@@ -87,9 +87,6 @@ def main() -> None:
         environment.setdefault(
             "GTI_RUNTIME_INCLUDE", str(repository / "runtime/include")
         )
-        environment.setdefault(
-            "GTI_VENDOR_INCLUDE", str(repository / "vendor/expected_lite/include")
-        )
         runtime = gti.parent / "libgti_runtime.a"
         if runtime.is_file():
             environment.setdefault("GTI_RUNTIME_LIBRARY", str(runtime))

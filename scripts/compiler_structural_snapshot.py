@@ -415,9 +415,10 @@ def compiler_environment(source_root: Path, build_root: Path) -> dict[str, str]:
     environment["GTI_STDLIB_PATH"] = str(source_root / "stdlib")
     environment["GTI_RUNTIME_INCLUDE"] = str(source_root / "runtime" / "include")
     environment["GTI_RUNTIME_LIBRARY"] = str(locate_runtime_library(build_root))
-    environment["GTI_VENDOR_INCLUDE"] = str(
-        source_root / "vendor" / "expected_lite" / "include"
-    )
+    # Toolchains before 0.432.0 require expected-lite for C++20 builds.
+    legacy_vendor_include = source_root / "vendor" / "expected_lite" / "include"
+    if legacy_vendor_include.is_dir():
+        environment["GTI_VENDOR_INCLUDE"] = str(legacy_vendor_include)
     return environment
 
 

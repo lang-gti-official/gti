@@ -162,9 +162,6 @@ parseRuntimeHeaderKindName(std::string_view name) {
   if (name == "runtime") {
     return BuildRuntimeHeaderKind::Runtime;
   }
-  if (name == "compatibility") {
-    return BuildRuntimeHeaderKind::Compatibility;
-  }
   return std::nullopt;
 }
 

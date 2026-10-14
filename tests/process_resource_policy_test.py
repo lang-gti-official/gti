@@ -29,13 +29,11 @@ def installed_resources(compiler):
         "GTI_STDLIB_PATH": prefix / "share/gti/stdlib",
         "GTI_RUNTIME_INCLUDE": prefix / "include",
         "GTI_RUNTIME_LIBRARY": libraries[0],
-        "GTI_VENDOR_INCLUDE": prefix / "include",
     }
     for required in (resources["GTI_STDLIB_PATH"] / "prelude.gti",
                      resources["GTI_STDLIB_PATH"] / "std/memory.gti",
                      resources["GTI_RUNTIME_INCLUDE"] / "gti/runtime.hpp",
-                     resources["GTI_RUNTIME_INCLUDE"] / "gti/memory.h",
-                     resources["GTI_VENDOR_INCLUDE"] / "nonstd/expected.hpp"):
+                     resources["GTI_RUNTIME_INCLUDE"] / "gti/memory.h"):
         if not required.is_file():
             raise RuntimeError(f"missing installed resource: {required}")
     return {name: str(path) for name, path in resources.items()}
@@ -54,8 +52,7 @@ def main():
     environment = dict(os.environ,
                        ASAN_OPTIONS="halt_on_error=1:detect_leaks=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
-    for name in ("GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY",
-                 "GTI_VENDOR_INCLUDE"):
+    for name in ("GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY"):
         environment.pop(name, None)
     if arguments.installed:
         environment.update(installed_resources(compiler))

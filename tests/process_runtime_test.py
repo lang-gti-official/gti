@@ -43,9 +43,6 @@ def main() -> int:
             "GTI_STDLIB_PATH": str(repository / "stdlib"),
             "GTI_RUNTIME_INCLUDE": str(repository / "runtime" / "include"),
             "GTI_RUNTIME_LIBRARY": str(runtime_library),
-            "GTI_VENDOR_INCLUDE": str(
-                repository / "vendor" / "expected_lite" / "include"
-            ),
         }
     )
 

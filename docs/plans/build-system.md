@@ -979,7 +979,7 @@ Native configuration should have structured representations for:
 - library directories;
 - library names;
 - platform frameworks;
-- runtime and compatibility include paths;
+- runtime include path;
 - runtime libraries.
 
 The implemented `NativeInputs` also retains an ordered tagged link-operand

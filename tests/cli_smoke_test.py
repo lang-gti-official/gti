@@ -183,11 +183,8 @@ def main():
         )
         assert "-MD" in native["argv"] and "-MF" in native["argv"]
         runtime = native["runtime"]
-        assert any(header["kind"] == "runtime" for header in runtime["headers"])
-        # GTI owns its expected representation, so even this C++20 build of a
-        # program using expected includes no vendored compatibility header.
-        assert not any(
-            header["kind"] == "compatibility" for header in runtime["headers"]
+        assert runtime["headers"] and all(
+            header["kind"] == "runtime" for header in runtime["headers"]
         )
         assert runtime["archive"]["canonical_path"] in native["argv"]
         assert not list(root.glob(".build-report.gti-stage-*"))
@@ -1218,7 +1215,6 @@ def main():
             "class MutualB { public: MutualB() {} int32_t read() { return 6; } "
             "int32_t construct_a() { MutualA value = MutualA(); return 0; } }; "
             "} "
-            "namespace nonstd { int32_t marker() { return 7; } } "
             "expected<int32_t, int32_t> checked() { return 8; } "
             "int main() { constexpr int32_t local_seed = 11; "
             "unsafe { const int32_t* constant_pointer = &constant_seed; "
@@ -1235,8 +1231,7 @@ def main():
             "if (!result) { return result.error(); } "
             "return null_value.value() + file_value.value() + "
             "size_value.value() + holder.value() + early.read() + "
-            "derived.read() + mutual.read() + nonstd::marker() + "
-            "result.value() - 52; }\n",
+            "derived.read() + mutual.read() + result.value() - 45; }\n",
             encoding="utf-8",
         )
         forced_backend_macros = root / "forced-backend-macros.hpp"
@@ -1270,12 +1265,10 @@ def main():
                 str(backend_isolation_executable),
                 "--std",
                 standard,
+                "--",
+                "-include",
+                str(forced_backend_macros),
             ]
-            if standard == "c++20":
-                command.extend(["--", "-include", "nonstd/expected.hpp"])
-            else:
-                command.append("--")
-            command.extend(["-include", str(forced_backend_macros)])
             run(command)
             run([str(backend_isolation_executable)])
 
