@@ -2241,12 +2241,30 @@ its passive native shell unpublished and suppressing the source base body and
 declared destructor. Native base success remains the existing MIR activation and
 rollback witness.
 
+A scalar base argument may be computed through class temporaries of the base
+initializer's own full expression: a constructed or returned value used as a
+method receiver, bound to a reference parameter, or read through a scalar
+field, as in `Base(Feet(30).third())`. MIR drops such a temporary after
+`InitializeBase`, at the end of that full expression, so it must outlive the
+delegation. A temporary with a value obligation keeps its exact Value-rooted
+slot, and the partition places that slot in the carrier as a lifetime slot.
+The carrier's constructor runs the preparation, and its prvalue initializes the
+delegated constructor's parameter directly, so the slot keeps one address from
+its construction in the prefix to its MIR `Drop` after the native base. The
+carrier is defined beside the constructor definitions, where each slot's class
+is complete. A cleanup-free value read only through its fields has no slot and
+ends inside the preparation, as it would in any body. The partition admits only
+the temporaries' own producers, borrow stages, fresh-argument loan ends, drops
+and field reads. After the stage only a slot's own `Drop` may name it, and no
+later edge may re-enter the prefix, whose instructions the resumed body skips.
+
 This preparation family requires scalar derived parameters and scalar base
 arguments, with a passive non-borrowing base whose declared cleanup is guarded
-and whose representation has no state-bearing ancestor. Owned/borrowed inputs,
-generic carrier families and recursively inactive owning/nested bases need the
-frame, transfer/loan and shell prerequisites recorded in the implementation
-sequence. They are not accepted through native C++ delegation shortcuts.
+and whose representation has no state-bearing ancestor. Owned or borrowed
+derived parameters and base arguments, generic carrier families and recursively
+inactive owning/nested bases need the frame, transfer/loan and shell
+prerequisites recorded in the implementation sequence. They are not accepted
+through native C++ delegation shortcuts.
 
 When a field or static initializer selects a failure-capable source
 constructor, the private C++ representation snapshot derives one exact
@@ -2456,7 +2474,12 @@ initializer whether or not the callee can fail. A cleanup-free result has no
 obligation. A failure-free call constructs it in representation-only storage
 immediately before the field `Initialize`, and a transformed call does so on
 the Invoke success edge leading to it. The field's empty representation is
-then replaced by the moved value. An owning result from a failure-free call
+then replaced by the moved value. A call that binds a temporary to a reference
+parameter, as in `lap(convert(Feet(30)))`, ends that fresh-argument
+(`CallArgument`) loan right after the invocation, so its `EndBorrow` precedes
+the field `Initialize`. Only the producer's own argument-loan ends may come
+between them: they carry no representation, and any other instruction still
+breaks adjacency. An owning result from a failure-free call
 arms its value obligation with the call's own `Initialize` event, as a
 failure-free constructor does, and the field `Initialize` reparents it into the
 field's rollback. The value then moves from its lifetime slot into the field.
