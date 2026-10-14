@@ -677,6 +677,38 @@ auto SemanticVisitor::Impl::recordProgramConstructionEffects(
   return false;
 }
 
+auto SemanticVisitor::Impl::recordProgramOperatorTargetEffects(
+    const Expr &expression, const ResolvedOperatorInfo &operation) -> void {
+  if (!currentProgramEffectOwner.valid()) {
+    return;
+  }
+  const FunctionInfo *target =
+      operation.function == 0 ? nullptr
+                              : semanticModel.findFunction(operation.function);
+  if (target != nullptr && target->linkage != LanguageLinkage::Gti) {
+    return;
+  }
+  if (operation.dispatch != CallDispatch::Static || target == nullptr ||
+      !target->genericParameters.empty()) {
+    addUnknownProgramEffect(
+        expression,
+        "an overloaded operation has no closed static GTI target set");
+  } else if (target->declaration != nullptr &&
+             target->declaration->runtimeBinding()) {
+    // Trusted runtime bindings cannot execute a hidden GTI body. Their
+    // explicit receiver/argument storage effects are the caller's.
+    return;
+  } else if (target->declaration == nullptr ||
+             target->bodyDeclaration()->body() == nullptr) {
+    addUnknownProgramEffect(expression,
+                            "a selected GTI operation has no executable body");
+  } else {
+    addProgramEffectEdge(
+        {.kind = ProgramEffectOwnerKind::Function, .id = target->id},
+        expression);
+  }
+}
+
 auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     -> void {
   if (!currentProgramEffectOwner.valid()) {
@@ -760,32 +792,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
         forceProgramStorageBoundaryAccess(index->index());
       }
     }
-    const FunctionInfo *target =
-        operation->function == 0
-            ? nullptr
-            : semanticModel.findFunction(operation->function);
-    if (target != nullptr && target->linkage != LanguageLinkage::Gti) {
-      return;
-    }
-    if (operation->dispatch != CallDispatch::Static || target == nullptr ||
-        !target->genericParameters.empty()) {
-      addUnknownProgramEffect(
-          expression,
-          "an overloaded operation has no closed static GTI target set");
-    } else if (target->declaration != nullptr &&
-               target->declaration->runtimeBinding()) {
-      // Trusted runtime bindings cannot execute a hidden GTI body. Their
-      // explicit receiver/argument storage effects were retained above.
-      return;
-    } else if (target->declaration == nullptr ||
-               target->bodyDeclaration()->body() == nullptr) {
-      addUnknownProgramEffect(
-          expression, "a selected GTI operation has no executable body");
-    } else {
-      addProgramEffectEdge(
-          {.kind = ProgramEffectOwnerKind::Function, .id = target->id},
-          expression);
-    }
+    recordProgramOperatorTargetEffects(expression, *operation);
     return;
   }
   const auto *call = exprAs<Call>(&expression);
@@ -2887,9 +2894,15 @@ auto SemanticVisitor::Impl::analyzeInitializer(
     semanticModel.record(*expr, info);
     semanticModel.recordDefinedFailure(*expr,
                                        classifyDefinedFailure(*expr, info));
-  } else if (allowDeclarationConstruction &&
-             declarationConstructionApplies(expr, expectedType, result)) {
-    result = analyzeDeclarationConstruction(expr, expectedType, result);
+  } else if (allowDeclarationConstruction) {
+    const bool construction =
+        declarationConstructionApplies(expr, expectedType, result);
+    if (declarationConversionApplies(expr, expectedType, result)) {
+      result = analyzeDeclarationConversion(expr, expectedType, result,
+                                            construction);
+    } else if (construction) {
+      result = analyzeDeclarationConstruction(expr, expectedType, result);
+    }
   }
   contextualInitializerType = enclosingType;
   contextualInitializerExpression = enclosingExpression;
@@ -2971,11 +2984,63 @@ auto SemanticVisitor::Impl::analyzeDeclarationConstruction(
   return construction.constructedType;
 }
 
+auto SemanticVisitor::Impl::declarationConversionApplies(
+    const ExprPtr &expr, const SemanticType &declaredType,
+    const SemanticType &initializerType) -> bool {
+  if (!expr || initializerType.kind != SemanticType::Class ||
+      declaredType == SemanticType::Unknown ||
+      declaredType.kind == SemanticType::Reference ||
+      declaredType == initializerType ||
+      isOwnershipAssignable(declaredType, initializerType, expr)) {
+    return false;
+  }
+  return !conversionOperatorCandidates(initializerType, declaredType, true)
+              .empty();
+}
+
+auto SemanticVisitor::Impl::analyzeDeclarationConversion(
+    const ExprPtr &expr, const SemanticType &declaredType,
+    const SemanticType &initializerType, bool constructionApplies)
+    -> SemanticType {
+  // The declaration converts as `Target(initializer)` would, through implicit
+  // operators only. An implicit constructor of the declared type that also
+  // takes the initializer is a second path, which makes it ambiguous.
+  semanticModel.forgetContextualConversion(*expr);
+  const Token site = expressionToken(expr);
+  if (const std::vector<const ConstructorInfo *> constructors =
+          constructionApplies
+              ? conversionConstructorCandidates(*expr, expr, initializerType,
+                                                declaredType, site, true)
+              : std::vector<const ConstructorInfo *>{};
+      !constructors.empty()) {
+    reportAmbiguousConversion(
+        site, initializerType, declaredType,
+        conversionOperatorCandidates(initializerType, declaredType, true),
+        constructors, true);
+    return SemanticType::Unknown;
+  }
+  if (!selectConversionOperator(*expr, expr, initializerType, declaredType,
+                                site, true) ||
+      !semanticModel.recordsContextualConversion(*expr)) {
+    return SemanticType::Unknown;
+  }
+  // The converted value is the declaration's own, so its cleanup belongs to
+  // the enclosing effects exactly as a constructed initializer's does.
+  if (requiresActiveCleanupFor(declaredType)) {
+    const SourceSpan span = tokenSpan(site);
+    recordProgramCleanupEffects(declaredType, span);
+    applyRawCleanupWrites(declaredType, span,
+                          contextualConstructionRawFields(*expr, declaredType));
+  }
+  return declaredType;
+}
+
 auto SemanticVisitor::Impl::contextualConstructionRawFields(
     const Expr &initializer, const SemanticType &type)
     -> std::vector<ProjectedRawPointerOrigins> {
-  // The selected constructor may store any address it receives or creates,
-  // and no query of its body is recorded here: every raw field is unresolved.
+  // The selected constructor or conversion operator may store any address it
+  // receives or creates, and no query of its body is recorded here: every raw
+  // field is unresolved.
   std::vector<ProjectedRawPointerOrigins> fields;
   for (auto path : rawPointerFieldPaths(type)) {
     mergeRawPointerFields(
@@ -3325,9 +3390,13 @@ auto SemanticVisitor::Impl::recordFunctionSymbol(
   const FunctionInfo *info = semanticModel.findFunction(declaration);
   if (info != nullptr && info->declaration != &declaration)
     return recordFunctionSymbol(*info->declaration);
-  const Token &name = declaration.operatorName()
-                          ? declaration.operatorName()->symbol
-                          : declaration.name();
+  // A conversion operator's target tokens are type references of their own;
+  // its declaration is the `operator` keyword.
+  const Token &name =
+      !declaration.operatorName() ? declaration.name()
+      : declaration.operatorName()->kind == OverloadedOperator::Conversion
+          ? declaration.operatorName()->keyword
+          : declaration.operatorName()->symbol;
   const bool method = info != nullptr && info->ownerClass != 0;
   const SymbolKind kind =
       declaration.operatorName()
@@ -3791,6 +3860,14 @@ auto SemanticVisitor::Impl::sameSignatureType(
 
 auto SemanticVisitor::Impl::sameFunctionSignature(
     const CallableCandidate &left, const CallableCandidate &right) -> bool {
+  // A conversion operator's target is part of its identity, although return
+  // types never distinguish ordinary overloads. Resolved types compare, so
+  // alias spellings of one target are one conversion.
+  if (isConversionOperator(left) && isConversionOperator(right) &&
+      !sameSignatureType(left.returnType, left.record().genericParameters,
+                         right.returnType, right.record().genericParameters)) {
+    return false;
+  }
   const auto unresolvedPack = [](const CallableCandidate &candidate) {
     return candidate.parameterPack &&
            (candidate.parameterTypes.empty() ||
@@ -3935,7 +4012,11 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
         sameFunctionSignature(previous, candidate)) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2011", DiagnosticPhase::Semantics, name,
-          "Duplicate overload signature for '" + name.lexeme + "'.");
+          isConversionOperator(candidate)
+              ? "Duplicate conversion operator to '" +
+                    typeSpelling(candidate.returnType) +
+                    "' with the same receiver."
+              : "Duplicate overload signature for '" + name.lexeme + "'.");
       diagnostic.related.push_back(
           {tokenSpan(previous.declaration->name()),
            "Previous overload with this parameter signature is here."});

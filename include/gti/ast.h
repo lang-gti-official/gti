@@ -185,6 +185,9 @@ enum class OverloadedOperator {
   Greater,
   GreaterEqual,
   ContextualBool,
+  // `operator Target()` for any target other than bool; the declaration's
+  // return type is the target.
+  Conversion,
 };
 
 struct OperatorName {
@@ -266,6 +269,8 @@ operatorFunctionName(OverloadedOperator kind) {
     return "__gti_operator_greater_equal";
   case OverloadedOperator::ContextualBool:
     return "__gti_operator_bool";
+  case OverloadedOperator::Conversion:
+    return "__gti_operator_conversion";
   }
   return "__gti_operator_unknown";
 }
@@ -343,6 +348,8 @@ operatorSourceSpelling(OverloadedOperator kind) {
     return "operator>=";
   case OverloadedOperator::ContextualBool:
     return "operator bool";
+  case OverloadedOperator::Conversion:
+    return "a conversion operator";
   }
   return "operator";
 }
@@ -2291,6 +2298,15 @@ public:
         functionAttributes_(std::move(functionAttributes)),
         definitionOwner_(std::move(definitionOwner)) {}
 
+  // The contextual `implicit` modifier of a conversion operator: an
+  // explicitly typed declaration may convert through it.
+  void setImplicitKeyword(Token keyword) {
+    implicitKeyword_ = std::move(keyword);
+  }
+  [[nodiscard]] const std::optional<Token> &implicitKeyword() const {
+    return implicitKeyword_;
+  }
+
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
   }
@@ -2398,6 +2414,7 @@ private:
   std::optional<Token> unsafeKeyword_;
   std::vector<FunctionAttribute> functionAttributes_;
   std::optional<NamePath> definitionOwner_;
+  std::optional<Token> implicitKeyword_;
 };
 
 class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {

@@ -1452,6 +1452,10 @@ SemanticModel::findContextualConversion(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findContextualConversion(expression);
 }
 
+bool SemanticModel::recordsContextualConversion(const Expr &expression) const {
+  return contextualConversions.contains(&expression);
+}
+
 [[nodiscard]] bool
 SemanticModel::isContextualIntegerOperand(const Expr &expression) const {
   if (contextualIntegerOperands.contains(&expression)) {
@@ -2684,6 +2688,10 @@ void SemanticModel::recordProjectionOperator(const Expr &expression,
 void SemanticModel::recordContextualConversion(const Expr &expression,
                                                ResolvedOperatorInfo info) {
   contextualConversions.insert_or_assign(&expression, std::move(info));
+}
+
+void SemanticModel::forgetContextualConversion(const Expr &expression) {
+  contextualConversions.erase(&expression);
 }
 
 void SemanticModel::recordContextualIntegerOperand(const Expr &expression) {

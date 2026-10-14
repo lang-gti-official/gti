@@ -5206,7 +5206,7 @@ private:
     std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
     std::optional<HirThreadTaskAdapterId> threadTaskAdapter;
     std::optional<HirFunctionInstanceId> functionItemTarget;
-    std::optional<HirFunctionInstanceId> contextualBoolTarget;
+    std::optional<HirFunctionInstanceId> contextualConversionTarget;
     std::optional<EnumId> enumOwner;
     std::optional<EnumConstant> enumValue;
     std::optional<std::size_t> enumVariant;
@@ -5284,6 +5284,17 @@ private:
       operation = binary->oper().kind;
       lowerOperand(binary->left());
       lowerOperand(binary->right());
+    } else if (const ResolvedOperatorInfo *conversion =
+                   model.findOperator(*raw);
+               conversion != nullptr &&
+               explicitConversionReceiver(*raw, *conversion) != nullptr) {
+      // `int(source)` and `Target(source)` call the source's conversion
+      // operator, whose receiver is the converted value.
+      kind = HirValueKind::Call;
+      lowerOperand(*explicitConversionReceiver(*raw, *conversion));
+      if (!operands.empty()) {
+        receiver = operands.front();
+      }
     } else if (const auto *call = exprAs<Call>(raw)) {
       const ResolvedCallInfo *resolved = model.findCall(*call);
       const ResolvedPayloadConstructionInfo *payload =
@@ -6300,7 +6311,13 @@ private:
       if (const FunctionInfo *target =
               baseModel->findFunction(resolved->function)) {
         SemanticType receiverType = resolved->dispatchOwner;
-        if (const auto *binary = exprAs<Binary>(raw)) {
+        if (const ExprPtr *converted =
+                explicitConversionReceiver(*raw, *resolved)) {
+          if (receiverType.kind != SemanticType::Class ||
+              receiverType.classId != target->ownerClass) {
+            receiverType = model.typeOf(**converted);
+          }
+        } else if (const auto *binary = exprAs<Binary>(raw)) {
           if (receiverType.kind != SemanticType::Class ||
               receiverType.classId != target->ownerClass) {
             receiverType = model.typeOf(*binary->left());
@@ -6346,14 +6363,11 @@ private:
                             {}, resolved->returnType, resolved->parameterTypes);
       }
     }
+    // The conversion applied to this value is a further call; its dispatch
+    // and borrow facts belong to that call, not to the converted value.
     if (const ResolvedOperatorInfo *resolved =
             model.findContextualConversion(*raw);
         resolved != nullptr && resolved->function != 0) {
-      value.dispatch = resolved->dispatch;
-      value.dispatchOwner = resolved->dispatchOwner;
-      value.borrowOrigin = resolved->borrowOrigin;
-      value.borrowArgument = resolved->borrowArgument;
-      value.borrowAccess = resolved->borrowAccess;
       if (const FunctionInfo *target =
               baseModel->findFunction(resolved->function)) {
         SemanticType receiverType = resolved->dispatchOwner;
@@ -6368,7 +6382,7 @@ private:
             receiverType.kind == SemanticType::Class
                 ? receiverType.valueArguments
                 : classValueArguments;
-        contextualBoolTarget =
+        contextualConversionTarget =
             enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
                             {}, resolved->returnType, resolved->parameterTypes);
       }
@@ -6591,6 +6605,11 @@ private:
     }
     if (!value.callPlan && value.functionTarget && !value.operands.empty()) {
       const ResolvedOperatorInfo *resolved = model.findOperator(*raw);
+      // A conversion is a receiver-only call, planned as the contextual
+      // conversion of a condition or declaration is.
+      const bool explicitConversion =
+          resolved != nullptr &&
+          explicitConversionReceiver(*raw, *resolved) != nullptr;
       const bool freshReceiver =
           resolved != nullptr &&
           (resolved->receiverMode == CallReceiverMode::FreshTemporaryRead ||
@@ -6606,7 +6625,7 @@ private:
           receiver->info.category == ValueCategory::Value &&
           receiver->info.type.kind == SemanticType::Class &&
           receiver->info.traits.containsBorrowedState;
-      if ((freshReceiver || borrowedValueReceiver) &&
+      if ((freshReceiver || borrowedValueReceiver || explicitConversion) &&
           value.operands.size() >= value.parameterTypes.size() + 1) {
         const HirValueId receiverValue = value.operands.front();
         std::vector<HirValueId> arguments(
@@ -6638,22 +6657,26 @@ private:
       }
     }
 
+    // A condition's operator bool, or a declaration's implicit conversion,
+    // calls the conversion operator on this value. Both share its source; the
+    // call is the source's last value, so the context consumes its result.
     if (const ResolvedOperatorInfo *resolved =
             model.findContextualConversion(*raw);
-        resolved != nullptr && contextualBoolTarget) {
+        resolved != nullptr && contextualConversionTarget) {
       const HirValueId receiverValue = value.id;
-      const HirFunctionInstanceId target = *contextualBoolTarget;
+      const HirFunctionInstanceId target = *contextualConversionTarget;
       body.values.push_back(std::move(value));
       output.program.sourceValueIds[raw].push_back(receiverValue);
 
+      (void)enqueueClass(resolved->returnType);
       HirValue conversion{
           .id = nextValueId++,
           .kind = HirValueKind::Call,
           .source = raw,
-          .info = {.type = SemanticType::Bool,
+          .info = {.type = resolved->returnType,
                    .category = ValueCategory::Value,
                    .access = AccessMode::ReadOnly,
-                   .traits = semanticTraits(SemanticType::Bool)},
+                   .traits = instanceProvider->traitsFor(resolved->returnType)},
           .operands = {receiverValue},
           .definedFailure = {.propagation =
                                  resolved->dispatch == CallDispatch::Virtual
@@ -6665,6 +6688,12 @@ private:
           .functionTarget = target,
           .callableBoundary = resolved->boundary,
       };
+      conversion.borrowOrigin = resolved->borrowOrigin;
+      conversion.borrowArgument = resolved->borrowArgument;
+      conversion.borrowAccess = resolved->borrowAccess;
+      if (resolved->receiverMode == CallReceiverMode::Consuming) {
+        conversion.callableInvocation = resolved->capability;
+      }
       if (const std::optional<HirCallReceiver> planned =
               orderedReceiver(receiverValue, resolved->receiverMutability,
                               resolved->receiverMode, body)) {
