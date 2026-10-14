@@ -409,9 +409,12 @@ building the GTI compiler.
   `new`/`delete`, placement construction, and manual lifetime;
 - textual macros and general-purpose preprocessing;
 - exceptions and native unwinding;
-- ADL, free operator lookup, rewritten equality, conversion operators, and
-  customization-point objects beyond exact domain-operator capabilities;
-- implicit user conversions and conversion-ranked overload resolution;
+- ADL, free operator lookup, rewritten equality, and customization-point
+  objects beyond exact domain-operator capabilities;
+- virtual or borrow-carrying conversion operators (explicit-by-default
+  conversion operators exist; see ADR 027);
+- implicit user conversions outside declaration initialization, and
+  conversion-ranked overload resolution;
 - unrestricted multiple state-bearing inheritance, diamonds, `protected`, and
   covariant virtual returns;
 - initializer-list preference, aggregate list conversion, CTAD, SFINAE,
