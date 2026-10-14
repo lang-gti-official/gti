@@ -1,5 +1,23 @@
 # Compiler Verification
 
+## Closure locals constructed by their producers (0.432.3)
+
+`generic_callable_transport_runtime` adds `generic_closure_local_copy.gti`.
+Generic functions keep their closure parameter in a local of the deduced
+type. They copy it beside a failure-form constructor (`Twice<F>(f,
+std::move(g))`), copy a copy into a class and a call, move a call-returned
+copy, and rebuild such locals in a loop. Captureless, scalar-capturing and
+struct-capturing closures run each shape. A non-generic body also copies a
+materialized closure and a per-iteration closure into a local on every loop
+iteration. Every result is checked in C++20/C++23 at O0/O1/O3, no-elide and
+ASan/UBSan. In `cpp_mir_body_emitter_text`, `testProducedClosureLocalSlots`
+requires production emission to declare each copied, call-returned and moved
+local of a deduced-callable body as a representation-only slot. Each slot must
+be rearmed immediately before its single construction, and only the parameter
+may stay a plain closure value. The materialized closure and its loop copy
+must be rearmed the same way. Against the 0.432.1 emitter all three checks
+fail.
+
 ## Constructed closure fields beside bases and owned fields (0.432.2)
 
 `generic_callable_transport_runtime` adds `generic_closure_field_composition.gti`.

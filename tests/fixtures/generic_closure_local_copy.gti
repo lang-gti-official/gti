@@ -1,0 +1,101 @@
+// A generic function keeps a copy of its closure parameter in a local of the
+// deduced closure type and passes that local on, as in `F g = f;` followed by
+// `Twice<F>(f, std::move(g))`. Copied, copied-again, moved and call-returned
+// closure locals are constructed where they are declared, for captureless,
+// scalar-capturing and struct-capturing closures, including when a loop
+// constructs the same local again. Closures created outside and inside a loop
+// of a non-generic body are also copied into a local on every iteration.
+#include <std/utility>
+
+class Holder<F> {
+public:
+  F callback;
+  Holder(F f) : callback(f) {}
+  int invoke() { return callback(); }
+};
+
+class Moved<F> {
+public:
+  F callback;
+  Moved(F f) : callback(std::move(f)) {}
+  int invoke() { return callback(); }
+};
+
+class Twice<F> {
+public:
+  Holder<F> inner;
+  Moved<F> other;
+  Twice(F f, F g) : inner(Holder<F>(f)), other(Moved<F>(std::move(g))) {}
+};
+
+F pass<F>(F f) { return f; }
+
+int call<F>(F f) { return f(); }
+
+int twice<F>(F f) {
+  F g = f;
+  Twice<F> value = Twice<F>(f, std::move(g));
+  return value.inner.invoke() + value.other.invoke();
+}
+
+int held<F>(F f) {
+  F g = f;
+  F h = g;
+  Holder<F> value = Holder<F>(h);
+  return value.invoke() + call(g);
+}
+
+int relayed<F>(F f) {
+  F g = pass(f);
+  F h = std::move(g);
+  return call(std::move(h));
+}
+
+int looped<F>(F f) {
+  mut int total = 0;
+  for (mut int index = 0; index < 3; index++) {
+    F g = f;
+    F h = pass(g);
+    total += call(std::move(h));
+  }
+  return total;
+}
+
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+
+int main() {
+  int k = 3;
+  Offset offset{4};
+  std::println(twice([]() -> int { return 1; }));
+  std::println(twice([k]() -> int { return k; }));
+  std::println(twice([offset]() -> int { return offset.amount; }));
+  std::println(held([k]() -> int { return k; }));
+  std::println(held([offset]() -> int { return offset.amount; }));
+  std::println(relayed([k]() -> int { return k; }));
+  std::println(relayed([offset]() -> int { return offset.amount; }));
+  std::println(looped([k]() -> int { return k; }));
+  std::println(looped([offset]() -> int { return offset.amount; }));
+  // Rewriting the capture keeps this closure in its own slot; every
+  // iteration copies that snapshot into a fresh local.
+  mut int x = 1;
+  auto local = [x]() -> int { return x; };
+  x = 2;
+  mut int copies = 0;
+  for (mut int index = 0; index < 3; index++) {
+    auto copy = local;
+    copies += call(std::move(copy));
+  }
+  std::println(copies + x);
+  // Each iteration creates a closure and copies it.
+  mut int rebuilt = 0;
+  for (mut int index = 0; index < 3; index++) {
+    auto fresh = [index]() -> int { return index; };
+    auto again = fresh;
+    rebuilt += call(again);
+  }
+  std::println(rebuilt);
+  return 0;
+}

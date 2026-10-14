@@ -11719,6 +11719,25 @@ lambdaValueDestination(const MirBody &body, MirValueId valueId) {
   return lambdaValueDestination(body, valueId).slot;
 }
 
+// The one storage authority for a lambda value's destination. A value carried
+// by an admitted fused closure chain spells as the inline literal at its
+// consumer and constructs nothing. Any other value with an exact
+// lambdaValueDestination() constructs that destination's lifetime slot at its
+// producing step: a materialized Closure, a copied or moved closure, or a
+// closure-returning call. lifetimeSlotPlace() declares a closure binding from
+// this proof and every producer writes its construction from it, so a closure
+// local is a slot exactly when its initialization constructs one, whether or
+// not this body also creates a literal of its type.
+[[nodiscard]] const MirPlace *
+constructedLambdaDestination(const MirProgram &program, const MirBody &body,
+                             MirValueId valueId) {
+  const MirPlace *destination = lambdaValueDestinationSlot(body, valueId);
+  return destination != nullptr &&
+                 fusedClosureForValue(program, body, valueId) == nullptr
+             ? destination
+             : nullptr;
+}
+
 struct MaterializedClosureCapture {
   const MirPlace *source = nullptr;
   LambdaCaptureMode mode = LambdaCaptureMode::Copy;
@@ -24409,20 +24428,20 @@ lifetimeSlotPlace(const MirProgram &program,
   }
   if (place.type.kind == SemanticType::Lambda &&
       place.traits.drop == DropKind::Trivial) {
-    const MaterializedClosure materialized =
-        materializedClosureForType(program, body, place.type);
-    return materialized &&
-           std::any_of(body.values.begin(), body.values.end(),
-                       [&](const MirValue &value) {
-                         const MirPlace *destination =
-                             lambdaValueDestinationSlot(body, value.id);
-                         return destination != nullptr &&
-                                destination->root ==
-                                    MirPlaceRootKind::Binding &&
-                                destination->binding == place.binding &&
-                                destination->type == place.type &&
-                                destination->projections.empty();
-                       });
+    // A passive closure binding is storage exactly when a producer constructs
+    // it. A fused chain's carrier stays representation-free.
+    return std::any_of(
+        body.values.begin(), body.values.end(), [&](const MirValue &value) {
+          const MirPlace *destination =
+              lambdaValueDestinationSlot(body, value.id);
+          return destination != nullptr &&
+                 destination->root == MirPlaceRootKind::Binding &&
+                 destination->binding == place.binding &&
+                 destination->type == place.type &&
+                 destination->projections.empty() &&
+                 constructedLambdaDestination(program, body, value.id) ==
+                     destination;
+        });
   }
   if (place.type.kind != SemanticType::Expected ||
       place.traits.drop != DropKind::Lexical) {
@@ -35363,11 +35382,14 @@ private:
   // Drop to disengage its C++ carrier between those executions, so retire the
   // prior representation immediately before constructing the exact paired
   // Initialize destination. Ordinary owning slots remain guarded by their MIR
-  // Drop schedule and never enter this route.
+  // Drop schedule and never enter this route. A passive closure binding that
+  // its producer constructs is the lambda form of the same publication.
   void emitRepresentationOnlyPublicationRearm(const ScalarBodyFacts &facts,
                                               MirValueId value,
                                               const MirPlace &destination) {
     const MirPlace *published = classValueDestinationSlot(facts.body, value);
+    if (published == nullptr)
+      published = constructedLambdaDestination(program, facts.body, value);
     if (published == nullptr || published->id != destination.id) {
       return;
     }
@@ -40306,10 +40328,20 @@ private:
           destination != nullptr &&
           destination->type.kind == SemanticType::Lambda) {
         writeIndent();
-        if (materializedClosureForType(program, facts.body,
-                                       destination->type)) {
+        const MirOperand *input = instruction.operands.size() == 1
+                                      ? &instruction.operands.front()
+                                      : nullptr;
+        const MirInstruction *producer =
+            input != nullptr && input->kind == MirOperandKind::Value &&
+                    constructedLambdaDestination(program, facts.body,
+                                                 input->value) == destination
+                ? definitionFor(facts.body, *input)
+                : nullptr;
+        if (producer != nullptr) {
           output << "// closure local " << destination->id
-                 << " was constructed at its Closure step\n";
+                 << (producer->operation == MirOperation::Closure
+                         ? " was constructed at its Closure step\n"
+                         : " was constructed at its producing step\n");
         } else {
           output << "// closure local " << destination->id
                  << " joins the fused chain\n";
@@ -40370,9 +40402,11 @@ private:
           output << ";\n";
           return;
         }
-        if (const MirPlace *destination =
-                lambdaValueDestinationSlot(facts.body, *instruction.result)) {
+        if (const MirPlace *destination = constructedLambdaDestination(
+                program, facts.body, *instruction.result)) {
           writeIndent();
+          emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
+                                                 *destination);
           output << "__gti_mir_p_"
                  << canonicalSlotPlaceId(facts.body, *destination)
                  << ".construct(";
@@ -40676,9 +40710,11 @@ private:
                  &instruction) ||
             plainReturnMoveSlot(facts.body, *instruction.result);
         if (!returnPublication) {
-          if (const MirPlace *destination =
-                  lambdaValueDestinationSlot(facts.body, *instruction.result)) {
+          if (const MirPlace *destination = constructedLambdaDestination(
+                  program, facts.body, *instruction.result)) {
             writeIndent();
+            emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
+                                                   *destination);
             output << "__gti_mir_p_"
                    << canonicalSlotPlaceId(facts.body, *destination)
                    << ".construct(std::move(";
@@ -44245,7 +44281,8 @@ private:
               : nullptr;
       const MirPlace *lambdaDestination =
           instruction.result && callee.returnType.kind == SemanticType::Lambda
-              ? lambdaValueDestinationSlot(facts.body, *instruction.result)
+              ? constructedLambdaDestination(program, facts.body,
+                                             *instruction.result)
               : nullptr;
       const bool owningPayloadEnumPlacement =
           cppMirOwningPayloadEnumPlacementResult(program, representations,
@@ -44308,6 +44345,10 @@ private:
       if (classDestination != nullptr && instruction.result) {
         emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
                                                *classDestination);
+      }
+      if (lambdaDestination != nullptr) {
+        emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
+                                               *lambdaDestination);
       }
       if (valueRootedExpectedDestination.slot != nullptr &&
           valueRootedExpectedDestination.drop == nullptr) {
@@ -44613,7 +44654,8 @@ private:
     const MirPlace *lambdaResultDestination =
         instruction.result && !classDestination &&
                 instruction.info.type.kind == SemanticType::Lambda
-            ? lambdaValueDestinationSlot(facts.body, *instruction.result)
+            ? constructedLambdaDestination(program, facts.body,
+                                           *instruction.result)
             : nullptr;
     const MirPlace *classResultDestination =
         classDestination != nullptr ? classDestination
@@ -44678,6 +44720,10 @@ private:
       if (classDestination && instruction.result)
         emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
                                                *classDestination);
+      else if (!directReturn && lambdaResultDestination != nullptr &&
+               classResultDestination == lambdaResultDestination)
+        emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
+                                               *lambdaResultDestination);
       if (receiverPlace) {
         emitReceiverExpression();
         output << '.';
@@ -44756,6 +44802,10 @@ private:
       if (classDestination != nullptr && instruction.result) {
         emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
                                                *classDestination);
+      } else if (lambdaResultDestination != nullptr &&
+                 classResultDestination == lambdaResultDestination) {
+        emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
+                                               *lambdaResultDestination);
       }
       output << "__gti_mir_p_"
              << canonicalSlotPlaceId(facts.body, *classResultDestination)
@@ -55308,7 +55358,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            stage->result &&
            materializedConstructorArgumentStage(body, *stage->result) == stage);
       if (closureChainDefinition(body, value.id) == nullptr &&
-          lambdaValueDestinationSlot(body, value.id) == nullptr &&
+          constructedLambdaDestination(program_, body, value.id) == nullptr &&
           materializedCallableReceiverPlace(program_, body, value.id) ==
               nullptr &&
           !movedToConsumer && !returned && !ownedConstructorField &&
@@ -58957,8 +59007,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                      materializedClosureForType(program_, body,
                                                 target->returnType)) &&
                     (!instruction.result ||
-                     lambdaValueDestinationSlot(body, *instruction.result) !=
-                         nullptr);
+                     constructedLambdaDestination(
+                         program_, body, *instruction.result) != nullptr);
                 break;
               case CppMirTypeRepresentationKind::FunctionItem:
                 returnReady = typeRow(target->returnType);
