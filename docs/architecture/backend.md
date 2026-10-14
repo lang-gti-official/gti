@@ -2638,9 +2638,9 @@ fields around the copy still move natively: the copy's exact `Load` and
 boundary form an effect-free prefix of a later owned move, like a passive
 scalar sibling, and the formal's unconditional scope-end `Drop` is one of the
 complete owned prologue's lexical parameter drop records. Closures capturing
-fixed arrays, payload enums or other closures, and a closure-typed generic
-class constructed as another class's member initializer, remain outside this
-route.
+fixed arrays, payload enums or other closures remain outside this route. A
+closure-typed class constructed as another class's member initializer uses
+the constructed-field family below.
 
 A shared-reference carrier with generated, observation-free destruction may
 retain its bound native shell during constructor rollback. This is not an
@@ -2691,6 +2691,24 @@ plain enum fields, like integer fields, must have explicit MIR Initialize
 stages; constructor metadata alone is not a substitute for that publication.
 The explicit operand use prevents dead-computation removal from discarding a
 grouped or forwarded enum initializer.
+
+A construction argument may also be a passive closure formal, as in
+`Outer(F f) : inner(Holder<F>(f))` for a lambda type `F`. MIR stages the
+closure in an exact prepared argument slot, and the construction transfers that
+slot out. A copy reads the formal place directly in one copy `CallInput` whose
+Read leaves the formal available. A move uses the exact `Move` and move
+`CallInput` of a moved passive class. The closure's native copy or move replays
+the GTI one (the shared closure-copy rule). A class capture gives the copied
+formal a lexical drop: its unconditional scope-end `Drop` and normal boundary,
+and its failure-route `Drop` after an impossible child failure, are natively
+trivial and stay in MIR. The child constructor is an ordinary target when its
+closure copy or move publication, including that formal drop, is its complete
+schedule. A closure-dependent field type has no program-wide spelling, so the
+initializer names the field's own declared type,
+`field(std::remove_cv_t<decltype(field)>(arguments...))`. That spelling is exact
+in every instance of the retained constructor template. A closure-typed field
+constructed beside an owned-parameter field or an explicit base initializer
+remains outside this family.
 
 A fieldless class with an exactly empty returning constructor body also has
 that ordinary overload, including concrete implementations of stateless

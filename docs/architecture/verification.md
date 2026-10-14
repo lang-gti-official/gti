@@ -1,5 +1,18 @@
 # Compiler Verification
 
+## Constructed closure fields of generic classes (0.432.1)
+
+`generic_callable_transport_runtime` adds `generic_closure_field_construction.gti`.
+Lambda-typed classes build `Holder<F>(f)` and `Moved<F>(std::move(f))` as
+member initializers, through two levels, into two fields from one formal, and
+with an extra argument. These run for captureless, scalar-capturing and
+struct-capturing lambdas of one class, in C++20/C++23 at O0/O1/O3, no-elide and
+ASan/UBSan. `stored_callable_types` requires the native constructed-field
+binding of each copied and moved instance, the `decltype` field spelling and
+admission under the closure overlay. It rejects a dropped staging lifecycle,
+a foreign argument index, a noncopyable closure, a consuming copy and a
+conditional formal drop.
+
 ## Copied closure fields of generic classes (0.431.2)
 
 `generic_callable_transport_runtime` adds `generic_closure_field_copy.gti`.
