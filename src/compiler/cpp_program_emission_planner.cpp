@@ -5776,6 +5776,12 @@ public:
           if (loweredClassUsesDirectRepresentation(*ownerInstance)) {
             continue;
           }
+          // An unnamed lexical parameter is represented by the constructor's
+          // admitted source-template overlay, not an explicit specialization
+          // with a concrete native parameter spelling.
+          if (!loweredConstructorInstanceIsNameable(*instance)) {
+            continue;
+          }
           if (!loweredOwnerIsGeneric(*owner) &&
               !constructor->genericParameters.empty() &&
               loweredConstructorInstanceIsNameable(*instance)) {

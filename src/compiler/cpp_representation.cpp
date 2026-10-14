@@ -391,6 +391,21 @@ computeConcreteClassIsCallableTemplateCarrier(const LoweredProgram &program) {
     // native carrier path rather than mixing direct and dependent class ABIs.
     return true;
   }
+  // A generic constructor can be the only boundary carrying a lexical
+  // closure. Its owner needs the same dependent-template representation as
+  // a function carrier; a concrete class declaration cannot name that local
+  // closure type in its parameter list.
+  for (const MirConstructorInstance &instance :
+       program.mir().constructorInstances()) {
+    if (std::any_of(instance.parameterTypes.begin(),
+                    instance.parameterTypes.end(),
+                    semanticTypeContainsLexicalClosure) ||
+        std::any_of(instance.typeArguments.begin(),
+                    instance.typeArguments.end(),
+                    semanticTypeContainsLexicalClosure)) {
+      return true;
+    }
+  }
   return false;
 }
 

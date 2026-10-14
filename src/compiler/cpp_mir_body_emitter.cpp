@@ -43512,7 +43512,10 @@ private:
       if (loan->access == AccessMode::ReadOnly)
         output << "const ";
       output << typeSpelling(instruction.info.type) << "*>(std::addressof(";
-      emitOperand(instruction.operands.front());
+      // The verified call schedule can carry a borrowed place or loan through
+      // a CallInput. Spell its referent with the ordinary argument transport,
+      // not as a scalar SSA value (which need not exist for a checked borrow).
+      emitCallArgument(instruction.operands.front(), false, false);
       output << "));\n";
       return;
     }

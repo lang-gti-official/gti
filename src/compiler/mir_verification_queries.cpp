@@ -1204,26 +1204,60 @@ const MirLoan *rawBorrowResultLoan(const MirBody &body,
   return loan;
 }
 
-bool callResultReferenceAliases(const MirBody &body, const MirLoan &loan,
-                                const MirBlock &consumer) {
+const MirInstruction *callResultReferenceAliases(const MirBody &body,
+                                                 const MirLoan &loan,
+                                                 const MirBlock &consumer,
+                                                 std::size_t consumerPosition) {
   if (loan.kind != MirLoanKind::CallResult || loan.entry || loan.escapes ||
-      loan.carriers.empty())
-    return false;
+      loan.carriers.empty() || loan.producedBy == 0 ||
+      consumerPosition > consumer.instructions.size())
+    return nullptr;
+  const MirInstruction *producer = nullptr;
+  const MirBlock *producerBlock = nullptr;
+  std::size_t producerPosition = 0;
+  for (const auto &block : body.blocks)
+    for (std::size_t position = 0; position < block.instructions.size(); ++position) {
+      const auto &instruction = block.instructions[position];
+      if (instruction.loan != loan.id || instruction.kind == MirInstructionKind::EndBorrow ||
+          instruction.kind == MirInstructionKind::ActivateBorrow)
+        continue;
+      if (producer || instruction.kind != MirInstructionKind::Call ||
+          !instruction.result || instruction.hirValue != loan.producedBy ||
+          instruction.info.category != ValueCategory::Place ||
+          instruction.info.access != loan.access || instruction.borrowAccess != loan.access)
+        return nullptr;
+      producer = &instruction;
+      producerBlock = &block;
+      producerPosition = position;
+    }
+  if (!producer)
+    return nullptr;
+  const auto precedes = [&](const MirBlock &first, std::size_t firstPosition,
+                            const MirBlock &second, std::size_t secondPosition) {
+    if (first.id == second.id)
+      return firstPosition < secondPosition;
+    const auto dominance = computeMirDominance(body);
+    return dominance && dominance->dominates(first.id, second.id);
+  };
+  std::unordered_set<HirBindingId> seen;
   for (const auto binding : loan.carriers) {
+    if (!binding || !seen.insert(binding).second)
+      return nullptr;
     const MirPlace *root = nullptr;
     for (const auto &place : body.places)
       if (place.root == MirPlaceRootKind::Binding && place.binding == binding &&
           place.projections.empty()) {
         if (root)
-          return false;
+          return nullptr;
         root = &place;
       }
     if (!root || root->initiallyAvailable ||
         root->type.kind != SemanticType::Reference ||
         root->type.arguments.size() != 1 ||
+        root->type.arguments.front() != producer->info.type ||
         (root->type.referenceAccess == AccessMode::Mutable &&
          loan.access != AccessMode::Mutable))
-      return false;
+      return nullptr;
     const auto exposesStorage = [&](const MirOperand &operand) {
       const auto *place = body.findPlace(operand.place);
       return place && place->root == MirPlaceRootKind::Binding &&
@@ -1231,18 +1265,25 @@ bool callResultReferenceAliases(const MirBody &body, const MirLoan &loan,
     };
     const MirInstruction *initializer = nullptr;
     const MirBlock *initialBlock = nullptr;
+    std::size_t initialPosition = 0;
     for (const auto &block : body.blocks) {
       if ((block.terminator.value && exposesStorage(*block.terminator.value)) ||
           std::any_of(block.terminator.targetArguments.begin(),
                       block.terminator.targetArguments.end(), exposesStorage) ||
           std::any_of(block.terminator.elseArguments.begin(),
-                      block.terminator.elseArguments.end(), exposesStorage))
-        return false;
-      for (const auto &instruction : block.instructions) {
+                      block.terminator.elseArguments.end(), exposesStorage) ||
+          std::any_of(block.terminator.switchTargets.begin(),
+                      block.terminator.switchTargets.end(), [&](const auto &target) {
+                        return std::any_of(target.arguments.begin(), target.arguments.end(),
+                                           exposesStorage);
+                      }))
+        return nullptr;
+      for (std::size_t position = 0; position < block.instructions.size(); ++position) {
+        const auto &instruction = block.instructions[position];
         if ((instruction.receiver && exposesStorage(*instruction.receiver)) ||
             std::any_of(instruction.operands.begin(),
                         instruction.operands.end(), exposesStorage))
-          return false;
+          return nullptr;
         const auto *destination = instruction.destination
                                       ? body.findPlace(*instruction.destination)
                                       : nullptr;
@@ -1257,20 +1298,18 @@ bool callResultReferenceAliases(const MirBody &body, const MirLoan &loan,
             instruction.operands.front().value != 0 ||
             instruction.operands.front().place != 0 ||
             instruction.operands.front().type != root->type.arguments.front())
-          return false;
+          return nullptr;
         initializer = &instruction;
         initialBlock = &block;
+        initialPosition = position;
       }
     }
-    if (!initializer)
-      return false;
-    if (initialBlock->id != consumer.id) {
-      const auto dominance = computeMirDominance(body);
-      if (!dominance || !dominance->dominates(initialBlock->id, consumer.id))
-        return false;
-    }
+    if (!initializer ||
+        !precedes(*producerBlock, producerPosition, *initialBlock, initialPosition) ||
+        !precedes(*initialBlock, initialPosition, consumer, consumerPosition))
+      return nullptr;
   }
-  return true;
+  return producer;
 }
 
 const MirInstruction *restoredBorrowAuthority(const MirBody &body,

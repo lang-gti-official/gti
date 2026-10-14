@@ -1,0 +1,36 @@
+#include <std/functional>
+#include <std/memory>
+
+struct Accumulator {
+  mut int value;
+  Accumulator(int value) : value(value) {}
+  int add(int amount) mut { this.value += amount; return this.value; }
+};
+
+int increment(int value) { return value + 1; }
+
+int main() {
+  std::function_ptr<int(int)> named{increment};
+  std::function_ptr<int(int)> lambda{
+    [](int value) -> int { return value + 2; }
+  };
+  if (named(3) != 4 || lambda(3) != 5) return 1;
+
+  std::function_ptr<int(mut Accumulator&, int)> typed{
+    [](mut Accumulator& object, int amount) -> int {
+      return object.add(amount);
+    }
+  };
+  std::function_ptr<int(mut std::erased_object&, int)> erased{
+    [](mut std::erased_object& object, int amount) -> int {
+      unsafe {
+        mut Accumulator& original = std::restore_mut<Accumulator>(object);
+        return original.add(amount);
+      }
+    }
+  };
+  mut Accumulator object{4};
+  if (typed(object, 3) != 7) return 2;
+  if (erased(std::erase_mut(object), 2) != 9) return 3;
+  return 0;
+}
