@@ -1399,7 +1399,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     const std::vector<SemanticType> &typeArguments,
     const std::vector<CompileTimeValue> &valueArguments,
     std::vector<AnalyzedCallArgument> arguments, const Token &paren,
-    bool requireExactNullParameter) -> void {
+    bool requireExactNullParameter, bool contextualConstruction) -> void {
   const SemanticType selectedClass = selectExactClassSpecialization(
       SemanticType::classType(classId, typeArguments, valueArguments));
   classId = selectedClass.classId;
@@ -1458,8 +1458,8 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   else if (const auto *direct = exprAs<DirectInitializer>(&construction);
            direct != nullptr && direct->arguments().size() == 1)
     writtenSource = &direct->arguments().front();
-  if (!requireExactNullParameter && arguments.size() == 1 &&
-      arguments.front().type == constructedType &&
+  if (!requireExactNullParameter && !contextualConstruction &&
+      arguments.size() == 1 && arguments.front().type == constructedType &&
       !arguments.front().forwardedPackElement && writtenSource != nullptr &&
       arguments.front().expression == writtenSource &&
       semanticModel.isFreshClassResult(**arguments.front().expression)) {
@@ -1515,6 +1515,10 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   }
   for (const ConstructorInfo *candidatePointer : candidates) {
     const ConstructorInfo &constructor = *candidatePointer;
+    // A declaration constructs only through a constructor declared implicit.
+    if (contextualConstruction && !constructor.implicitConstruction) {
+      continue;
+    }
     const std::size_t fixedCount =
         constructor.parameterPack && !constructor.parameterTypes.empty()
             ? constructor.parameterTypes.size() - 1
@@ -1972,8 +1976,9 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   }
 
   if (selected.constructor != nullptr && selected.constructor->requiresUnsafe) {
-    if (semanticModel.unsafeOperation(construction) ==
-        UnsafeOperationKind::ObjectLifetime) {
+    if (!contextualConstruction &&
+        semanticModel.unsafeOperation(construction) ==
+            UnsafeOperationKind::ObjectLifetime) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2055", DiagnosticPhase::Semantics, paren,
           "Raw in-place construction cannot invoke an unsafe constructor; "
@@ -2101,34 +2106,39 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
                storedFieldSymbols(selected.parameterTypes[binding.parameter],
                                   binding.sourceFields),
            .access = binding.destination.reference.referenceAccess});
-  semanticModel.record(
-      construction,
-      ResolvedConstructionInfo{
-          .constructor =
-              selected.constructor == nullptr ? 0 : selected.constructor->id,
-          .declaration = selected.constructor == nullptr
-                             ? nullptr
-                             : selected.constructor->declaration,
-          .constructedType = constructedType,
-          .typeArguments = selected.typeArguments,
-          .valueArguments = selected.valueArguments,
-          .requirements = selected.requirements,
-          .parameterTypes = selected.parameterTypes,
-          .defaultArguments = std::move(defaultArguments),
-          .borrowOrigin =
-              storedParameter
-                  ? BorrowOriginKind::Argument
-                  : (selected.kind != ConstructorKind::Ordinary &&
-                             typeTraits(constructedType).containsBorrowedState
-                         ? BorrowOriginKind::Argument
-                         : BorrowOriginKind::None),
-          .borrowArgument = storedParameter.value_or(0),
-          .borrowAccess = storedAccess,
-          .borrowArguments = std::move(storedParameters),
-          .borrowFields = std::move(storedFields),
-          .generatedDefault = selected.generatedDefault,
-          .kind = selected.kind});
-  recordSelectedConstructionOccurrence(construction);
+  ResolvedConstructionInfo resolved{
+      .constructor =
+          selected.constructor == nullptr ? 0 : selected.constructor->id,
+      .declaration = selected.constructor == nullptr
+                         ? nullptr
+                         : selected.constructor->declaration,
+      .constructedType = constructedType,
+      .typeArguments = selected.typeArguments,
+      .valueArguments = selected.valueArguments,
+      .requirements = selected.requirements,
+      .parameterTypes = selected.parameterTypes,
+      .defaultArguments = std::move(defaultArguments),
+      .borrowOrigin =
+          storedParameter
+              ? BorrowOriginKind::Argument
+              : (selected.kind != ConstructorKind::Ordinary &&
+                         typeTraits(constructedType).containsBorrowedState
+                     ? BorrowOriginKind::Argument
+                     : BorrowOriginKind::None),
+      .borrowArgument = storedParameter.value_or(0),
+      .borrowAccess = storedAccess,
+      .borrowArguments = std::move(storedParameters),
+      .borrowFields = std::move(storedFields),
+      .generatedDefault = selected.generatedDefault,
+      .kind = selected.kind};
+  if (contextualConstruction) {
+    // The initializer keeps its own construction, call and occurrence records.
+    semanticModel.recordContextualConstruction(construction,
+                                               std::move(resolved), paren);
+  } else {
+    semanticModel.record(construction, std::move(resolved));
+    recordSelectedConstructionOccurrence(construction);
+  }
   currentType = constructedType;
 }
 

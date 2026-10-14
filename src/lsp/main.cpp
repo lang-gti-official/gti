@@ -1027,6 +1027,15 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
     return std::nullopt;
   }
 
+  // `implicit` is a modifier only before a constructor's name or `constexpr`.
+  if (token.lexeme == "implicit" && index + 2 < tokens.size() &&
+      (tokens[index + 1].kind == CONSTEXPR ||
+       (tokens[index + 1].kind == IDENTIFIER &&
+        (tokens[index + 2].kind == LEFT_PAREN ||
+         tokens[index + 2].kind == LESS)))) {
+    return SemanticClassification{Keyword, 0};
+  }
+
   if (token.lexeme == "discard" && index >= 2 && index + 2 < tokens.size() &&
       tokens[index - 2].kind == LEFT_BRACKET &&
       tokens[index - 1].kind == LEFT_BRACKET &&

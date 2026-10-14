@@ -189,6 +189,8 @@ def test_inheritance_tooling(executable, root):
         "RangeIterator end(){return RangeIterator();}};\n"
         "int sum(Range& values){mut int result=0;"
         "for(auto& value:values){result+=value;}return result;}\n"
+        "struct Meter{int value;implicit Meter(int initial):value(initial){}};\n"
+        "int echo(int implicit){return implicit;}\n"
     )
     path = root / "inheritance-tooling.gti"
     path.write_text(source, encoding="utf-8")
@@ -251,6 +253,9 @@ def test_inheritance_tooling(executable, root):
         assert token_type("Base", sprite_base) == 4
         assert token_type("virtual") == 0
         assert token_type("override") == 0
+        # `implicit` is a keyword only as a constructor modifier.
+        assert token_type("implicit") == 0
+        assert token_type("implicit", source.index("int implicit")) != 0
         render_call = source.index("render", source.index("return value.render"))
         assert token_type("render", render_call) == 6
         range_binding = source.index("value", source.index("for(auto& value"))
