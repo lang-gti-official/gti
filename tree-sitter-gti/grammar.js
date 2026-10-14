@@ -60,6 +60,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "or",
   "override",
   "private",
+  "protected",
   "public",
   "requires",
   "return",
@@ -519,7 +520,7 @@ module.exports = grammar({
 
     base_specifier: ($) =>
       seq(
-        optional(field("access", choice("public", "private"))),
+        optional(field("access", choice("public", "private", "protected"))),
         field("type", $._base_type),
       ),
 
@@ -571,7 +572,7 @@ module.exports = grammar({
         ";",
       ),
 
-    access_specifier: () => seq(choice("public", "private"), ":"),
+    access_specifier: () => seq(choice("public", "private", "protected"), ":"),
 
     constructor_declaration: ($) =>
       seq(
@@ -654,13 +655,19 @@ module.exports = grammar({
           optional(field("return_mutable", "mut")),
           $._operator_declaration_body,
         ),
+        // A conversion operator: `operator Target()`, explicit unless
+        // declared `implicit`.
         seq(
+          optional(field("implicit", "implicit")),
           optional(field("virtual", "virtual")),
           optional(field("constant", "constexpr")),
           "operator",
-          field("conversion_type", "bool"),
+          // The parameter clause follows, so `bool()` is not a signature.
+          field("conversion_type", $._non_function_type),
           field("parameters", $.parameter_clause),
-          optional(field("mutable", "mut")),
+          optional(
+            choice(field("mutable", "mut"), field("consuming", "&&")),
+          ),
           optional(field("constraints", $.requires_clause)),
           optional(field("override", "override")),
           choice(field("body", $.block), $.pure_specifier, ";"),

@@ -438,7 +438,7 @@ class-key              = "class" | "struct" | "interface" | "union" ;
 
 base-clause            = ":" base-specifier { "," base-specifier } ;
 
-base-specifier         = [ "public" | "private" ] base-type ;
+base-specifier         = [ "public" | "protected" | "private" ] base-type ;
 
 class-member           = conditional-class-members
                        | nested-class-declaration
@@ -491,7 +491,7 @@ grouped-field-declaration
                          [ "=" initializer-expression
                          | direct-initializer ] ";" ;
 
-access-specifier       = ( "public" | "private" ) ":" ;
+access-specifier       = ( "public" | "protected" | "private" ) ":" ;
 
 (* A `mut { ... }` member is admitted only in a complete class or struct. Each
    direct grouped field has exactly the semantics of the same declaration with
@@ -506,14 +506,16 @@ access-specifier       = ( "public" | "private" ) ":" ;
    A union is always public and semantic analysis restricts it to passive
    instance fields; the shared parser surface keeps malformed declarations
    recoverable for one focused diagnostic.
-   Private members are accessible from methods of their declaring type.
+   Private members are accessible in their declaring type and lexical nested
+   types. Protected members additionally admit derived contexts; instance
+   access requires a receiver of that accessing derived type or a descendant.
 
    Inheritance is intentionally narrower than C++. Every base must be written
    with explicit `public` access. A class or struct may have at most one
    state-bearing class/struct base and any number of interface bases. An
    interface may inherit only interfaces. Duplicate bases, inheritance cycles,
-   and diamonds are invalid. Private inheritance is accepted by the parser only
-   so semantics can recommend composition; `protected` is not a keyword.
+   and diamonds are invalid. Private and protected inheritance are accepted
+   by the parser only so semantics can require explicit public inheritance.
 
    An interface is a public instance behavior-only contract. It cannot contain
    fields, constructors, destructors or instance method bodies. Its static
@@ -606,9 +608,21 @@ operator-declaration   = [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
                          non-call-overloadable-operator parameter-clause
                          [ call-receiver-qualifier ] [ requires-clause ] [ "override" ]
                          method-terminator
-                       | [ "virtual" ] [ "constexpr" ] "operator" "bool" parameter-clause
-                         [ "mut" ] [ requires-clause ] [ "override" ]
-                         method-terminator ;
+                       | conversion-operator-declaration ;
+
+(* A conversion operator is named by its target type, which is also its
+   result; `Target()` here is the target and its empty parameter clause, not
+   a function signature type. `implicit` is contextual: it is a modifier only
+   first in a conversion operator, before `virtual` or `constexpr`, and admits
+   the conversion in declaration initialization. *)
+conversion-operator-declaration
+                       = [ "implicit" ] [ "virtual" | "constexpr" ] "operator"
+                         conversion-target parameter-clause
+                         [ call-receiver-qualifier ] [ requires-clause ]
+                         [ "override" ] method-terminator ;
+
+conversion-target      = ( raw-pointer-base | base-type ) { array-extent }
+                         [ "&" ] ;
 
 method-terminator      = block | ";" | pure-specifier ;
 
@@ -809,11 +823,14 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    receiver.
    `operator->`
    performs one checked reference step; recursive proxy lookup is not provided.
-   `operator bool` participates only in conditions, logical `and`/`or`
-   (`&&`/`||`), and `!`. Operator operands are evaluated left to right. No free
-   operators, implicit conversions, argument-dependent lookup, reversed-
-   operand search, conversion ranking, or synthesized related candidates are
-   provided.
+   `operator bool` participates implicitly only in conditions, logical
+   `and`/`or` (`&&`/`||`), and `!`. A conversion operator `operator T()` takes
+   no parameters and uses a read-only, `mut`, or `&&` receiver; `T(value)`
+   calls it explicitly, and an `implicit` one also converts a declaration's
+   initializer (static-semantics.md, section 3.9.2). Operator operands are
+   evaluated left to right. No free operators, implicit argument conversions,
+   argument-dependent lookup, reversed-operand search, conversion ranking, or
+   synthesized related candidates are provided.
    Read-only, mutable, and consuming `operator()` overloads may coexist when
    their exact signatures and receiver qualifiers distinguish them. Other
    value-producing operators may pair read-only and consuming forms. *)
@@ -1712,8 +1729,10 @@ lambda-capture         = IDENTIFIER
 
 unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
 
-numeric-conversion     = ( integer-type | "float" | "double" | "char" )
+numeric-conversion     = ( integer-type | "float" | "double" | "char" | "bool" )
                          "(" assignment-expression ")" ;
+(* `bool(value)` and a numeric spelling applied to a class value call that
+   class's conversion operator to the named type. *)
 
 layout-query-expression
                        = layout-query-operator "(" type ")" ;

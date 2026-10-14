@@ -692,6 +692,16 @@ const implicitRow = fixtureLines.findIndex((line) =>
   line.includes("implicit ImplicitHighlight"),
 );
 requireCapture(implicitRow, "implicit", "keyword.modifier");
+const conversionRow = fixtureLines.findIndex((line) =>
+  line.includes("implicit operator int"),
+);
+requireCapture(conversionRow, "implicit", "keyword.modifier");
+requireCapture(conversionRow, "operator", "keyword.operator");
+
+const protectedRow = fixtureLines.findIndex((line) =>
+  line.includes("class ProtectedHighlight"),
+);
+requireCapture(protectedRow, "protected", "keyword.modifier");
 
 const testAttributeRow = fixtureLines.findIndex((line) =>
   line.includes("[[test]] void annotated_test_highlight"),

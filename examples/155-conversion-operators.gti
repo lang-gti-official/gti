@@ -1,0 +1,55 @@
+#include <std/string>
+
+// A strongly typed identifier. Nothing converts to it by accident: a raw
+// database key must be converted explicitly.
+struct UserId {
+  int64_t value;
+  UserId(int64_t raw) : value(raw) {}
+};
+
+// `operator UserId()` is explicit by default: only `UserId(key)` calls it.
+// `implicit operator int64_t()` also lets a declaration of an `int64_t`
+// take a key directly.
+struct RowKey {
+  int64_t raw;
+  RowKey(int64_t value) : raw(value) {}
+  operator UserId() { return UserId(this.raw); }
+  implicit operator int64_t() { return this.raw; }
+};
+
+// A consuming conversion hands its storage to the result instead of copying
+// it. It runs on a temporary or an explicitly moved builder, never on a
+// named one behind the caller's back.
+class Greeting {
+  mut std::string text;
+
+public:
+  Greeting(std::string_view name) : text("Hello, ") { this.text.append(name); }
+  Greeting exclaim() && {
+    this.text.push_back('!');
+    return std::move(this);
+  }
+  implicit operator std::string() && { return std::move(this.text); }
+};
+
+int lookup(UserId id) { return int(id.value); }
+
+int main() {
+  RowKey key{int64_t(42)};
+  UserId user = UserId(key);  // explicit conversion
+  int64_t bits = key;         // implicit declaration conversion
+  // lookup(key) would be an error: calls never convert.
+
+  std::string message = Greeting("GTI").exclaim();
+  Greeting named{"world"};
+  std::string moved = std::move(named);
+  // std::string copied = named; would be an error: the consuming conversion
+  // needs a temporary or std::move.
+
+  if (lookup(user) == 42 and bits == int64_t(42) and
+      message == "Hello, GTI!" and moved == "Hello, world") {
+    std::println("conversions are explicit unless declared implicit");
+    return 0;
+  }
+  return 1;
+}

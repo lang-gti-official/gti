@@ -2418,6 +2418,13 @@ auto SemanticVisitor::Impl::movedVariable(const ExprPtr &expression)
 auto SemanticVisitor::Impl::operatorBorrowSource(
     const ExprPtr &expression, const ResolvedOperatorInfo &resolved) const
     -> const ExprPtr * {
+  // A conversion's receiver is the converted value and it has no parameters.
+  if (const ExprPtr *receiver =
+          expression ? explicitConversionReceiver(*expression, resolved)
+                     : nullptr) {
+    return resolved.borrowOrigin == BorrowOriginKind::Receiver ? receiver
+                                                               : nullptr;
+  }
   if (resolved.borrowOrigin == BorrowOriginKind::Receiver) {
     if (const auto *call = exprAs<Call>(expression.get())) {
       return &call->callee();
@@ -3832,7 +3839,11 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
           semanticModel.findOperator(*expression)) {
     if (resolved->declaration != nullptr &&
         receiverAllowsMutation(resolved->declaration->receiverMutability())) {
-      if (const ExprPtr *receiver = operatorReceiverExpression(expression)) {
+      const ExprPtr *conversion =
+          explicitConversionReceiver(*expression, *resolved);
+      if (const ExprPtr *receiver =
+              conversion != nullptr ? conversion
+                                    : operatorReceiverExpression(expression)) {
         appendUniquePlace(places, transientLoanPlace(*receiver));
       }
     }

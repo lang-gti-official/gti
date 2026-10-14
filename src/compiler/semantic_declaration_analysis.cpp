@@ -3314,9 +3314,12 @@ auto SemanticVisitor::Impl::metaMethodFacts(const SemanticType &type,
   }
   const GenericSubstitution substitution = classSubstitution(type);
   MetaMethodFacts facts{
-      .name = declaration.operatorName()
-                  ? "operator" + declaration.operatorName()->symbol.lexeme
-                  : declaration.name().lexeme,
+      .name =
+          !declaration.operatorName() ? declaration.name().lexeme
+          : declaration.operatorName()->kind == OverloadedOperator::Conversion
+              ? "operator " + typeSpelling(substituteType(function->returnType,
+                                                          substitution))
+              : "operator" + declaration.operatorName()->symbol.lexeme,
       .declaration = &declaration,
       .staticMember = function->staticMember,
       .operatorMethod = declaration.operatorName().has_value(),
@@ -5274,18 +5277,24 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
     const ClassInfo *fieldOwner = classInfo(fieldType);
     if (fieldOwner == nullptr || (fieldOwner->abstract && !baseSubobject))
       return false;
-    // An open value expression is a deferred instance obligation, not a
-    // usable construction operation. Concrete analysis checks it afresh.
-    if (std::any_of(fieldType.valueArguments.begin(),
-                    fieldType.valueArguments.end(),
-                    [](const CompileTimeValue &value) {
-                      return value.kind != CompileTimeValue::Kind::UInt64;
-                    }))
-      return true;
+    // Open value expressions defer instance eligibility, but cannot create a
+    // constructor candidate. Concrete analysis checks the selected operation.
+    const bool openValueArguments = std::any_of(
+        fieldType.valueArguments.begin(), fieldType.valueArguments.end(),
+        [](const CompileTimeValue &value) {
+          return value.kind != CompileTimeValue::Kind::UInt64;
+        });
     const ConstructorInfo *constructor = defaultConstructor(*fieldOwner);
     if (constructor != nullptr) {
-      return constructor->access == AccessModifier::Public &&
-             resolveDefaultConstruction(fieldType, baseSubobject) &&
+      if (constructor->requiresUnsafe ||
+          !constructor->genericParameters.empty() ||
+          (constructor->access != AccessModifier::Public &&
+           !(baseSubobject &&
+             constructor->access == AccessModifier::Protected)))
+        return false;
+      if (openValueArguments)
+        return true;
+      return resolveDefaultConstruction(fieldType, baseSubobject) &&
              (!requestsStructuralDefaultConstruction(*constructor) ||
               classCanUseStructuralDefaultConstruction(fieldType, visiting));
     }
@@ -5296,7 +5305,8 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
         });
     return defaultConstructorCandidateCount(*fieldOwner) == 0 &&
            (fieldOwner->constructors.empty() || declaredDefaults) &&
-           classCanUseStructuralDefaultConstruction(fieldType, visiting);
+           (openValueArguments ||
+            classCanUseStructuralDefaultConstruction(fieldType, visiting));
   };
   bool valid = true;
   for (const FieldInfo &field : owner->fields) {
@@ -5359,7 +5369,7 @@ auto SemanticVisitor::Impl::baseHasAccessibleDefaultConstructor(
   const ClassInfo &owner = classInfo(base.type.classId);
   if (const ConstructorInfo *declared = defaultConstructor(owner)) {
     if (declared->requiresUnsafe ||
-        (declared->access != AccessModifier::Public && owner.id != derived)) {
+        (declared->access == AccessModifier::Private && owner.id != derived)) {
       return false;
     }
     return !requestsStructuralDefaultConstruction(*declared) ||
@@ -5481,11 +5491,12 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     diagnostics.emplace_back(std::move(diagnostic));
   }
   if (selected.constructor != nullptr &&
-      selected.constructor->access != AccessModifier::Public &&
-      !isWithinClass(baseOwner.id)) {
+      !canAccessMember(selected.constructor->access, baseOwner.id)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, location,
-        "Constructor of base '" + typeSpelling(baseType) + "' is private.");
+        "Constructor of base '" + typeSpelling(baseType) + "' is " +
+            std::string(accessModifierSpelling(selected.constructor->access)) +
+            ".");
     diagnostic.related.push_back(
         {tokenSpan(selected.constructor->declaration->name()),
          "Constructor declared here."});
@@ -8111,9 +8122,9 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
     }
     if (const auto *specifier = stmtAs<AccessSpecifierDecl>(statement.get())) {
       if (owner.kind == ClassKind::Union &&
-          specifier->modifier() == AccessModifier::Private) {
+          specifier->modifier() != AccessModifier::Public) {
         report(specifier->keyword(),
-               "Union fields are public; a union cannot declare a private "
+               "Union fields are public; a union cannot declare a non-public "
                "section.",
                "GTI-S2066");
         access = AccessModifier::Public;
@@ -8398,7 +8409,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
         diagnostics.emplace_back(std::move(diagnostic));
         continue;
       }
-      if (access == AccessModifier::Private) {
+      if (access != AccessModifier::Public) {
         report(destructor->tilde(),
                "Destructors must be public in the current ownership layer.",
                "GTI-S2021");

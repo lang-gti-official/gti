@@ -2,6 +2,21 @@
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+add_executable(gti_protected_member_tests protected_member_tests.cpp)
+target_link_libraries(gti_protected_member_tests PRIVATE gti_compiler)
+add_test(NAME protected_members COMMAND gti_protected_member_tests)
+set_tests_properties(protected_members PROPERTIES TIMEOUT 30)
+add_test(NAME protected_member_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/protected_member_runtime_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(protected_member_runtime PROPERTIES TIMEOUT 600)
+if(TARGET gti_lsp)
+  add_test(NAME protected_member_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/protected_member_lsp_test.py"
+      $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(protected_member_lsp PROPERTIES TIMEOUT 90)
+endif()
+
 add_executable(gti_nested_type_syntax_tests nested_type_syntax_tests.cpp)
 target_link_libraries(gti_nested_type_syntax_tests PRIVATE gti_compiler)
 add_test(NAME nested_type_syntax COMMAND gti_nested_type_syntax_tests)
@@ -1110,6 +1125,10 @@ add_executable(gti_initialization_and_native_identity_tests
   "${PROJECT_SOURCE_DIR}/tests/initialization_and_native_identity_tests.cpp")
 target_link_libraries(gti_initialization_and_native_identity_tests PRIVATE gti_cpp_backend)
 add_test(NAME initialization_and_native_identity COMMAND gti_initialization_and_native_identity_tests)
+add_executable(gti_conversion_operator_tests
+  "${PROJECT_SOURCE_DIR}/tests/conversion_operator_tests.cpp")
+target_link_libraries(gti_conversion_operator_tests PRIVATE gti_cpp_backend)
+add_test(NAME conversion_operators COMMAND gti_conversion_operator_tests)
 add_test(NAME constructor_null_native_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constructor_null_native_runtime_test.py" $<TARGET_FILE:gti>)
 add_test(NAME payload_fresh_class_operands_runtime
@@ -1984,6 +2003,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(declaration_construction_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME conversion_operators_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/conversion_operators_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(conversion_operators_runtime PROPERTIES TIMEOUT 600)
 
   add_test(
     NAME recursive_cleanup_failure_runtime

@@ -402,6 +402,11 @@ building the GTI compiler.
   suppression rules.
 - constraints describe exact capabilities without SFINAE or overload ranking.
 
+Revision, 2026-10-14: the event-handler port demonstrated a current need for
+protected implementation state. Protected **member access** is implemented with
+receiver restrictions and ordinary ownership checks, demonstrated by example
+150; it is no longer deferred breadth. Protected inheritance remains excluded.
+
 ### Later breadth unless a readiness client proves necessity
 
 - unrestricted pointer-to-pointer and first-class function-pointer types beyond
@@ -409,10 +414,13 @@ building the GTI compiler.
   `new`/`delete`, placement construction, and manual lifetime;
 - textual macros and general-purpose preprocessing;
 - exceptions and native unwinding;
-- ADL, free operator lookup, rewritten equality, conversion operators, and
-  customization-point objects beyond exact domain-operator capabilities;
-- implicit user conversions and conversion-ranked overload resolution;
-- unrestricted multiple state-bearing inheritance, diamonds, `protected`, and
+- ADL, free operator lookup, rewritten equality, and customization-point
+  objects beyond exact domain-operator capabilities;
+- virtual or borrow-carrying conversion operators (explicit-by-default
+  conversion operators exist; see ADR 027);
+- implicit user conversions outside declaration initialization, and
+  conversion-ranked overload resolution;
+- unrestricted multiple state-bearing inheritance, diamonds, protected inheritance, and
   covariant virtual returns;
 - initializer-list preference, aggregate list conversion, CTAD, SFINAE,
   partial or constraint-selected specialization, and unrestricted compile-time
