@@ -1,0 +1,157 @@
+// A declaration `T name = initializer;` whose initializer has another type
+// constructs T through a constructor declared `implicit`, exactly as
+// `T name{initializer}` would. Each phase traces a
+// declaration beside its direct-initializer twin: construction prints a
+// tracked id and destruction its negation, so the output is an oracle that
+// follows from this source alone. Phase 0 covers by-value, defaulted,
+// owning and read-only-reference constructor arguments, a namespace binding,
+// a static field, a field default and constructor initializer, a generic
+// body, a lambda body and view assignment. Phases 1 and 2 construct from an
+// owned argument and then fail; the argument is released exactly once. In
+// phase 3 the construction is its function's only fallible operation.
+#include <std/string>
+#include <std/vector>
+
+// Construction prints a tracked id and destruction its negation, so each
+// phase's trace shows exactly which values exist and when each is released.
+class Tracked {
+  int id;
+
+public:
+  implicit Tracked(int value) : id(value) {
+    std::println(std::to_string(value));
+  }
+  ~Tracked() {
+    std::println(std::to_string(-this.id));
+  }
+  int read() { return this.id; }
+};
+
+// One explicit argument by value and a trailing default.
+class Named {
+  std::string text;
+  Tracked tracked;
+
+public:
+  implicit Named(std::string_view value, int offset = 100)
+      : text(value), tracked(int(value.size()) + offset) {}
+  int size() { return int(this.text.size()); }
+};
+
+// Takes ownership of its argument; the default divisor cannot fail.
+class Keeper {
+  Tracked kept;
+  int ratio;
+
+public:
+  implicit Keeper(Tracked value, int divisor = 1)
+      : kept(std::move(value)), ratio(10 / divisor) {}
+  int read() { return this.kept.read() + this.ratio; }
+};
+
+// Takes ownership of its argument and then fails: the stored argument is
+// released by the constructor's own failure cleanup, exactly once.
+class FailingKeeper {
+  Tracked kept;
+  int ratio;
+
+public:
+  implicit FailingKeeper(Tracked value, int divisor = 0)
+      : kept(std::move(value)), ratio(20 / divisor) {}
+  int read() { return this.kept.read() + this.ratio; }
+};
+
+struct Pair {
+  int first = 0;
+  int second = 0;
+  Pair(int left, int right) : first(left), second(right) {}
+};
+
+// A read-only reference parameter borrows the initializer for the call only.
+struct Sum {
+  int total;
+  implicit Sum(Pair& pair) : total(pair.first + pair.second) {}
+};
+
+struct Celsius {
+  int degrees;
+  implicit Celsius(int value) : degrees(value) {}
+};
+
+Celsius freezing = 0;
+
+struct Thermostat {
+  static Celsius baseline = 18;
+};
+
+class Report {
+public:
+  std::string title = "untitled";
+  std::string body;
+  implicit Report(std::string_view text) : body(text) {}
+};
+
+struct Ratio {
+  int value;
+  implicit Ratio(int divisor) : value(30 / divisor) {}
+};
+
+int ratio_of(int divisor) {
+  Ratio ratio = divisor;
+  return ratio.value;
+}
+
+int generic_degrees<T>(T value) {
+  Celsius local = 4;
+  T copy = value;
+  return local.degrees;
+}
+
+int run(int selected) {
+  if (selected == 0) {
+    {
+      Tracked declared = 1;
+      Tracked direct{2};
+      std::println(std::to_string(declared.read() + direct.read()));
+    }
+    {
+      Named declared = "abc";
+      Named direct{"abcd"};
+      std::println(std::to_string(declared.size() + direct.size()));
+    }
+    {
+      Keeper declared = Tracked(5);
+      Keeper direct{Tracked(6)};
+      std::println(std::to_string(declared.read() + direct.read()));
+    }
+    Pair pair{3, 4};
+    Sum sum = pair;
+    Celsius warm = 21;
+    Report report = "notes";
+    mut std::string text = "Sampling...";
+    text = "Done";
+    auto convert = [](int degrees) -> int {
+      Celsius converted = degrees;
+      return converted.degrees;
+    };
+    std::println(std::to_string(sum.total + warm.degrees + freezing.degrees +
+                                Thermostat::baseline.degrees +
+                                generic_degrees(int(4)) + convert(6) +
+                                int(report.title.size()) +
+                                int(report.body.size()) + int(text.size())));
+    return 0;
+  }
+  if (selected == 1) {
+    FailingKeeper declared = Tracked(7);
+    return declared.read();
+  }
+  if (selected == 2) {
+    FailingKeeper direct{Tracked(8)};
+    return direct.read();
+  }
+  return ratio_of(selected - 3);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return run(argc - 1);
+}

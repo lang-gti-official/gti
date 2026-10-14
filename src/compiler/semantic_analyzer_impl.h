@@ -2819,12 +2819,15 @@ private:
   forwardedPackArgumentMatches(const SemanticType &parameter,
                                const SemanticType &argument) const;
 
+  // A contextual construction consumes `construction` as its sole argument;
+  // the selection is recorded beside the expression's own records.
   void analyzeConstructorCallArguments(
       const Expr &construction, ClassId classId,
       const std::vector<SemanticType> &typeArguments,
       const std::vector<CompileTimeValue> &valueArguments,
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
-      bool requireExactNullParameter = false);
+      bool requireExactNullParameter = false,
+      bool contextualConstruction = false);
 
   void analyzeExpectedMemberCall(const Call &call, const Get &member,
                                  const SemanticType &expected,
@@ -3674,6 +3677,12 @@ private:
 
   void recordProgramCallEffects(const Expr &expression);
 
+  // Whether the construction's closed effects were open and recording stopped.
+  [[nodiscard]] bool
+  recordProgramConstructionEffects(const Expr &site,
+                                   const ResolvedConstructionInfo &construction,
+                                   std::size_t suppliedArguments);
+
   [[nodiscard]] std::vector<SourceUnitId>
   programInitializationUnitOrder() const;
 
@@ -3792,7 +3801,31 @@ private:
 
   SemanticType analyzeInitializer(const ExprPtr &expr,
                                   const SemanticType &expectedType,
-                                  bool allowExactNullConstruction = false);
+                                  bool allowExactNullConstruction = false,
+                                  bool allowDeclarationConstruction = false);
+
+  [[nodiscard]] bool
+  declarationConstructionApplies(const ExprPtr &expr,
+                                 const SemanticType &declaredType,
+                                 const SemanticType &initializerType);
+
+  SemanticType
+  analyzeDeclarationConstruction(const ExprPtr &expr,
+                                 const SemanticType &declaredType,
+                                 const SemanticType &initializerType);
+
+  [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
+  contextualConstructionRawFields(const Expr &initializer,
+                                  const SemanticType &type);
+
+  // The hint for a declaration no implicit constructor accepts, with the
+  // explicit spelling that selects any constructor.
+  [[nodiscard]] static std::string
+  implicitConstructionHint(const std::string &explicitSpelling) {
+    return "Only a constructor declared 'implicit' constructs a declaration "
+           "from another type; write '" +
+           explicitSpelling + "' to call a constructor explicitly.";
+  }
 
   [[nodiscard]] bool isDefaultLibraryUnit(SourceUnitId sourceUnit) const;
 

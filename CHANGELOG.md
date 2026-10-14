@@ -9,6 +9,28 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.426.0 — Implicit constructors
+
+- `std::string text = "Sampling...";` now compiles. A constructor can be
+  declared `implicit`: `implicit Celsius(int value)`. A declaration whose
+  initializer has a different type then constructs the class through it, with
+  the constructor `T name{initializer}` would select, so construction,
+  ownership, failure and cleanup are the same. `Celsius warm = 21;` works once
+  that constructor is implicit. Field defaults and constructor initializers
+  construct the same way.
+- Constructors without `implicit` are still called only explicitly, so a type
+  decides which conversions read naturally. `std::string(std::string_view)` and
+  `std::filesystem::path(std::string_view)` are implicit; container
+  element-count constructors are not. Calls, returns and assignment still
+  require exact types.
+- `std::string` can be assigned from a `std::string_view`, including a
+  literal: `text = "Done";` replaces the contents and keeps the capacity.
+- When no implicit constructor takes the initializer's type, the declaration
+  reports the same exact-type error as before, with a hint showing the
+  explicit form. `implicit` must mark an ordinary constructor callable with
+  one argument (`GTI-S2121`) and cannot be combined with `unsafe`. It remains
+  an ordinary identifier outside constructor declarations.
+
 ## 0.425.2 — Faster compiles for reflection-heavy and optimized programs
 
 - Staged constant evaluation (`std::meta` predicates, `if constexpr`
