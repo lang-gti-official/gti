@@ -12,6 +12,7 @@ if __name__ == "__main__":
         "optional_callable": root / "coverage/reproducers/a32-optional-emplace-move-only-function.gti",
         "generic_callable_transport": root / "fixtures/generic_callable_transport.gti",
         "generic_closure_field_copy": root / "fixtures/generic_closure_field_copy.gti",
+        "generic_closure_field_construction": root / "fixtures/generic_closure_field_construction.gti",
         "nested_callable_results": root / "fixtures/nested_callable_results.gti",
         "loop_closure_reconstruction": root / "fixtures/loop_closure_reconstruction.gti",
         "nested_callable_reproducer": root / "coverage/reproducers/f14-nested-callable-invocation.gti",
@@ -20,6 +21,8 @@ if __name__ == "__main__":
     cases = {
         "generic_closure_field_copy": [
             ((), (0, "10\n13\n14\n99\n8\n7\n16\n8\n13\n14\n8\n9\n", ""))],
+        "generic_closure_field_construction": [
+            ((), (0, "2\n4\n5\n5\n6\n7\n8\n6\n13\n", ""))],
         "nested_callable_reproducer": [((), (0, "12\n", ""))],
         "higher_order_lambdas": [((), (0, "5 12 5 42 33\n", ""))],
     }

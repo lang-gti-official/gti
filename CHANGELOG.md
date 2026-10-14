@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.431.4 — Lambda-typed classes built in member initializers
+
+- Fix the internal compiler error that 0.431.2 still listed (`GTI-B0001`,
+  "backend failed while generating a representation") when a generic class
+  instantiated with a lambda type builds another such class in a member
+  initializer, such as `Outer(F f) : inner(Holder<F>(f)) {}`. The lambda can be
+  copied or moved into the inner class, which can itself be built inside
+  another class, fill two fields, or take extra arguments. This works for
+  lambdas without captures and lambdas capturing numbers, plain enums or plain
+  structs, and when one class is used with several lambdas.
+- Such a member initializer still stops with this error beside a field that
+  takes ownership of another parameter, such as `name(std::move(name))`, or
+  beside an explicit base-class initializer.
+
 ## 0.431.3 — GTI's own expected representation
 
 - Generated C++ no longer uses `std::expected` under C++23 or the vendored
