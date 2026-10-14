@@ -363,8 +363,22 @@ enum class ClassKind {
 
 enum class AccessModifier {
   Private,
+  Protected,
   Public,
 };
+
+inline constexpr std::string_view
+accessModifierSpelling(AccessModifier access) {
+  switch (access) {
+  case AccessModifier::Private:
+    return "private";
+  case AccessModifier::Protected:
+    return "protected";
+  case AccessModifier::Public:
+    return "public";
+  }
+  return "public";
+}
 
 struct BaseSpecifier {
   std::optional<Token> access;

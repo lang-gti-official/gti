@@ -891,6 +891,14 @@ void testCppReservedIdentifiers() {
                std::string(spelling) + "'");
   }
 
+  const std::vector<lang::Token> protectedTokens =
+      lexer.scan("protected", "protected-token.gti");
+  expect(protectedTokens.size() == 2 &&
+             protectedTokens.front().kind == lang::TokenKind::PROTECTED &&
+             lang::isKeywordToken(protectedTokens.front().kind) &&
+             !lang::isCppReservedIdentifier("protected"),
+         "protected should be an implemented GTI access keyword");
+
   const std::vector<lang::Token> deleteTokens =
       lexer.scan("delete", "delete-token.gti");
   expect(deleteTokens.size() == 2 &&
