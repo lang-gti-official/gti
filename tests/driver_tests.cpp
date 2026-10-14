@@ -16,6 +16,7 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -2166,6 +2167,83 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              !nativeSourceHit.nativeProcess,
          "an unchanged declared native source should verify and restore the "
          "cached executable without native compilation");
+
+  // Discovery memo: the probe's outcome is persisted beneath the cache root
+  // and answers an unchanged source without the preprocessor. The record's
+  // `written` line moves when stamps are repaired, so compare the rest.
+  const std::filesystem::path discoveryRoot = cache.root / "native-discovery";
+  std::vector<std::filesystem::path> discoveryRecords;
+  std::error_code discoveryError;
+  for (const auto &entry :
+       std::filesystem::directory_iterator(discoveryRoot, discoveryError)) {
+    discoveryRecords.push_back(entry.path());
+  }
+  const auto recordWithoutWritten = [](const std::string &text) {
+    std::string kept;
+    std::istringstream lines(text);
+    std::string line;
+    while (std::getline(lines, line)) {
+      if (!line.starts_with("written ")) {
+        kept += line + "\n";
+      }
+    }
+    return kept;
+  };
+  const auto recordDirectoryLine = [](const std::string &text,
+                                      const std::filesystem::path &directory) {
+    const std::string suffix =
+        " " + std::filesystem::weakly_canonical(directory).generic_string();
+    std::istringstream lines(text);
+    std::string line;
+    while (std::getline(lines, line)) {
+      if (line.starts_with("directory ") && line.ends_with(suffix)) {
+        return line;
+      }
+    }
+    return std::string();
+  };
+  expect(!discoveryError && discoveryRecords.size() == 1 &&
+             readFile(discoveryRecords.front())
+                 .starts_with("gti-native-discovery-v1\n") &&
+             readFile(discoveryRecords.front())
+                     .find(" " +
+                           std::filesystem::weakly_canonical(nativeHeader)
+                               .generic_string() +
+                           "\n") != std::string::npos &&
+             !recordDirectoryLine(readFile(discoveryRecords.front()), project)
+                  .empty(),
+         "a declared native source's discovery should persist one memo record "
+         "naming its discovered header and watching the source directory");
+  const std::string memoAfterHit = discoveryRecords.empty()
+                                       ? std::string()
+                                       : readFile(discoveryRecords.front());
+  const lang::driver::ExecutableBuildResult nativeSourceMemoHit =
+      buildWithNativeSource();
+  expect(nativeSourceMemoHit.succeeded() &&
+             nativeSourceMemoHit.cache.status ==
+                 lang::driver::BuildCacheStatus::Hit &&
+             nativeSourceMemoHit.cache.key == nativeSourceBuild.cache.key &&
+             !discoveryRecords.empty() &&
+             recordWithoutWritten(readFile(discoveryRecords.front())) ==
+                 recordWithoutWritten(memoAfterHit),
+         "a memoized discovery should reproduce the probe's identity exactly "
+         "and keep its dependency and watch lines");
+  expect(writeFile(project / "cache-native-neighbour.hpp", "// unused\n"),
+         "the neighbouring native header fixture should be writable");
+  const lang::driver::ExecutableBuildResult nativeNeighbourHit =
+      buildWithNativeSource();
+  expect(nativeNeighbourHit.succeeded() &&
+             nativeNeighbourHit.cache.status ==
+                 lang::driver::BuildCacheStatus::Hit &&
+             nativeNeighbourHit.cache.key == nativeSourceBuild.cache.key &&
+             !discoveryRecords.empty() &&
+             recordDirectoryLine(readFile(discoveryRecords.front()), project) !=
+                 recordDirectoryLine(memoAfterHit, project) &&
+             !recordDirectoryLine(readFile(discoveryRecords.front()), project)
+                  .empty(),
+         "a new file beside a discovered input should re-run the probe (the "
+         "watched directory changed) and, resolving identically, still hit");
+
   expect(writeFile(nativeHeader, "#define GTI_CACHE_NATIVE_VALUE 2\n"),
          "the native transitive-header fixture should be writable");
   const lang::driver::ExecutableBuildResult nativeHeaderChange =
