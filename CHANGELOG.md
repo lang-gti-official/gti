@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.432.2 — Copies of lambdas kept in locals
+## 0.432.3 — Copies of lambdas kept in locals
 
 - Fix the native C++ compile failure (`no member named 'construct'` in the
   saved backend log) when a generic function copies a lambda parameter into a
@@ -21,6 +21,28 @@ for what minor and patch releases mean.
 - Fix the runtime error "verified MIR lifetime slot was constructed twice"
   when a loop copies a lambda into a local on each iteration, such as
   `auto copy = f;` inside a `for` loop, in any function.
+
+## 0.432.2 — Lambda-typed member classes beside bases and owned fields
+
+- Fix the internal compiler error that 0.432.1 still listed (`GTI-B0001`,
+  "backend failed while generating a representation") when a generic class
+  instantiated with a lambda type builds another such class in a member
+  initializer next to one of these:
+  - a base-class initializer, such as `Derived(F f) : Base(10), inner(Holder<F>(f)) {}`,
+    including a base taking a parameter, an implicit default base and a base
+    beside an interface
+  - a field that takes ownership of another parameter, such as
+    `Named(F f, std::string name) : inner(Holder<F>(f)), name(std::move(name)) {}`,
+    in either order, including a second lambda moved into a field
+- For any class, generated C++ constructors now initialize such member fields,
+  and literal fields beside them, directly in the member-initializer list when
+  a base or an owned field sits beside them, as in the standard library's list
+  nodes and arenas. Program behavior is unchanged.
+- Such a member initializer still stops with this error in these cases:
+  - beside a base class whose constructor arguments are computed
+  - beside a base class whose constructor can fail
+  - when the inner class's constructor stores more than its lambda, such as
+    `Holder(F f) : callback(f), value(10) {}`
 
 ## 0.432.1 — Lambda-typed classes built in member initializers
 
