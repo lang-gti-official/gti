@@ -4210,6 +4210,32 @@ passiveScalarFieldSibling(const MirProgram &program,
   return selected;
 }
 
+// A closure copy that the constructor record publishes is copy-constructed in
+// the native member-initializer list from its exact parameter Load, which ends
+// at its full-expression boundary. Like a passive scalar sibling it is
+// effect-free and cannot fail, so it may precede native owned-field moves in
+// declaration order. The copy-parameter proof owns every other fact.
+[[nodiscard]] std::optional<CppMirCopyParameterFieldBinding>
+recordPublishedClosureCopy(const MirProgram &program,
+                           const MirConstructorInstance &constructor,
+                           std::size_t initializerIndex) {
+  if (initializerIndex >= constructor.initializers.size() ||
+      constructor.initializers[initializerIndex].targetType.kind !=
+          SemanticType::Lambda)
+    return std::nullopt;
+  const auto copies = cppMirCopyParameterFieldBindings(program, constructor);
+  if (!copies)
+    return std::nullopt;
+  const auto copy =
+      std::find_if(copies->begin(), copies->end(), [&](const auto &candidate) {
+        return candidate.initializer == initializerIndex &&
+               candidate.initializeInstruction == 0;
+      });
+  return copy == copies->end()
+             ? std::nullopt
+             : std::optional<CppMirCopyParameterFieldBinding>{*copy};
+}
+
 [[nodiscard]] const MirConstructorInitializer *
 ownedParameterFieldInitializer(const MirProgram &program, const MirBody &body,
                                HirConstructorInstanceId constructorId,
@@ -4287,12 +4313,24 @@ ownedParameterFieldInitializer(const MirProgram &program, const MirBody &body,
   }
   // A prefix of exact scalar parameter-to-field copies is effect-free. The
   // native owned-field move cannot observe those fields or raise, and the
-  // scalar stores still execute in the MIR body. Do not admit arbitrary
-  // computations, calls, borrows, cleanup, or reads of the moved parameter.
+  // scalar stores still execute in the MIR body. A record-published closure
+  // copy is equally effect-free and publishes natively before the move. Do
+  // not admit arbitrary computations, calls, borrows, cleanup, or reads of
+  // the moved parameter.
   const auto scalarPrefix = [&]() {
     auto cursor = entry->instructions.begin();
     std::size_t initializerIndex = 0;
     while (cursor != movePosition) {
+      if (const auto closure = recordPublishedClosureCopy(program, *constructor,
+                                                          initializerIndex)) {
+        if (std::distance(cursor, movePosition) < 2 ||
+            cursor->id != closure->loadInstruction ||
+            std::next(cursor)->id != closure->boundaryInstruction)
+          return false;
+        std::advance(cursor, 2);
+        ++initializerIndex;
+        continue;
+      }
       const auto scalar =
           passiveScalarFieldSibling(program, *constructor, initializerIndex);
       if (!scalar || std::distance(cursor, movePosition) < 3 ||
@@ -4377,22 +4415,23 @@ ownedParameterFieldInitializer(const MirProgram &program, const MirBody &body,
   // Owned/scalar initializers receive a complete ordered-prefix proof in
   // cppMirOwnedParameterFieldBindings. A singleton has no such later proof:
   // its prefix must already be one of the exact effect-free forms above.
-  return std::count_if(constructor->initializers.begin(),
-                       constructor->initializers.end(),
-                       [](const auto &initializer) {
-                         return initializer.ownedParameter.has_value();
-                       }) > 1 &&
-                 std::all_of(constructor->initializers.begin(),
-                             constructor->initializers.end(),
-                             [&](const MirConstructorInitializer &initializer) {
-                               return initializer.ownedParameter.has_value() ||
-                                      (!initializer.storesReference &&
-                                       !initializer.generatedDefault &&
-                                       passiveParameterFieldType(
-                                           program, initializer.targetType));
-                             })
-             ? matched
-             : nullptr;
+  bool ownedList =
+      std::count_if(constructor->initializers.begin(),
+                    constructor->initializers.end(),
+                    [](const auto &initializer) {
+                      return initializer.ownedParameter.has_value();
+                    }) > 1;
+  for (std::size_t index = 0;
+       ownedList && index < constructor->initializers.size(); ++index) {
+    const MirConstructorInitializer &initializer =
+        constructor->initializers[index];
+    ownedList =
+        initializer.ownedParameter.has_value() ||
+        (!initializer.storesReference && !initializer.generatedDefault &&
+         passiveParameterFieldType(program, initializer.targetType)) ||
+        recordPublishedClosureCopy(program, *constructor, index);
+  }
+  return ownedList ? matched : nullptr;
 }
 
 [[nodiscard]] std::optional<CppMirOwnedParameterFieldBinding>
@@ -4603,10 +4642,10 @@ constructedFieldMovedFormal(const MirProgram &program,
          constructedFieldMovedFormal(program, *constructor, place);
 }
 
-// A passive class copy also spells directly from the native by-value
-// parameter. Unlike the owned form it does not consume that parameter, but a
-// second lifetime slot would still manufacture an extra move and change the
-// exact copy/drop schedule.
+// A passive class or closure copy also spells directly from the native
+// by-value parameter. Unlike the owned form it does not consume that
+// parameter, but a second lifetime slot would still manufacture an extra copy
+// or move and change the exact copy/drop schedule.
 [[nodiscard]] bool copyParameterFieldSourcePlace(const MirProgram &program,
                                                  const MirBody &body,
                                                  const MirPlace &place) {
@@ -4633,8 +4672,9 @@ constructedFieldMovedFormal(const MirProgram &program,
          std::count_if(bindings->begin(), bindings->end(),
                        [&](const CppMirCopyParameterFieldBinding &binding) {
                          return binding.sourcePlace == place.id &&
-                                place.type.kind == SemanticType::Class &&
-                                binding.initializeInstruction != 0;
+                                ((place.type.kind == SemanticType::Class &&
+                                  binding.initializeInstruction != 0) ||
+                                 place.type.kind == SemanticType::Lambda);
                        }) == 1;
 }
 
@@ -14754,9 +14794,10 @@ failureConstructorPassiveBoundField(const MirProgram &program,
 storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
 
 // Hoisting passive copied fields is safe only for this complete first-field
-// prefix. The shared copy query proves the exact formal, Load, Initialize and
-// full-expression identity; borrowed carriers additionally prove their loan.
-// No later constructor work is moved before this prefix or treated as inert.
+// prefix. The shared copy query proves the exact formal, Load, Initialize (or
+// record publication) and full-expression identity; borrowed carriers
+// additionally prove their loan. No later constructor work is moved before
+// this prefix or treated as inert.
 [[nodiscard]] bool failureConstructorCopiedFieldPrefix(
     const MirProgram &program, const MirConstructorInstance &constructor,
     const MirClassInstance &owner,
@@ -14782,8 +14823,18 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
         [&](const auto &candidate) { return candidate.initializer == index; });
     if (copy == copies->end() ||
         copy->field != owner.declaredFields[index].symbol ||
-        entry->instructions.size() < offset + 3 ||
-        entry->instructions[offset].id != copy->loadInstruction ||
+        entry->instructions.size() < offset + 2 ||
+        entry->instructions[offset].id != copy->loadInstruction)
+      return false;
+    // A record-published closure copy has no Initialize between its Load
+    // and full-expression boundary.
+    if (copy->initializeInstruction == 0) {
+      if (entry->instructions[offset + 1].id != copy->boundaryInstruction)
+        return false;
+      offset += 2;
+      continue;
+    }
+    if (entry->instructions.size() < offset + 3 ||
         entry->instructions[offset + 1].id != copy->initializeInstruction)
       return false;
     const auto &field = owner.declaredFields[index];
@@ -15909,6 +15960,38 @@ lifecycleGuardedGeneratedMoveIsDefinedFailureFree(const MirProgram &program,
   return lifecycleGuardedGeneratedMoveClass(program, type) != nullptr;
 }
 
+// Copying a copyable, borrow-free closure as its native closure object replays
+// the GTI copy exactly when every capture is a scalar or payload-free enum
+// value or a passive generated-copy class: each capture copy is a generated
+// copy, and destroying the copy runs no source destructor or active cleanup.
+// A class capture still gives the closure a lexical drop, which MIR schedules
+// and which emits as a trivial drop.
+[[nodiscard]] bool nativeCopyClosure(const MirProgram &program,
+                                     const SemanticType &type,
+                                     const SemanticTypeTraits &traits) {
+  const MirLambdaInstance *lambda = type.kind == SemanticType::Lambda
+                                        ? program.findLambda(type.lambdaId)
+                                        : nullptr;
+  return lambda != nullptr && lambda->type == type && traits.copyable &&
+         !traits.containsBorrowedState &&
+         std::all_of(
+             lambda->captureTypes.begin(), lambda->captureTypes.end(),
+             [&](const SemanticType &capture) {
+               const auto representation = expectedTypeRepresentation(capture);
+               const MirClassInstance *passive =
+                   passiveGeneratedCopyClass(program, capture);
+               return (representation &&
+                       (*representation ==
+                            CppMirTypeRepresentationKind::Scalar ||
+                        (*representation ==
+                             CppMirTypeRepresentationKind::Enum &&
+                         program.findPayloadEnum(capture) == nullptr))) ||
+                      (passive != nullptr && !passive->cAbiRecord &&
+                       passive->compilerCapability ==
+                           CompilerCapabilityTypeKind::None);
+             });
+}
+
 // A cleanup-free generated class or passive closure copy is still evaluated at
 // its CallInput, before subsequent arguments. Its scalar fields need no drop
 // slot, but it must not be deferred to the C++ call's unspecified argument
@@ -15916,24 +15999,10 @@ lifecycleGuardedGeneratedMoveIsDefinedFailureFree(const MirProgram &program,
 [[nodiscard]] const MirPlace *
 passiveCopiedCallInput(const MirProgram &program, const MirBody &body,
                        const MirInstruction &stage) {
-  const MirLambdaInstance *lambda =
-      stage.info.type.kind == SemanticType::Lambda
-          ? program.findLambda(stage.info.type.lambdaId)
-          : nullptr;
+  // The staging slot schedules no drop, so the closure must drop trivially.
   const bool passiveClosure =
-      lambda != nullptr && lambda->type == stage.info.type &&
-      stage.info.traits.copyable &&
       stage.info.traits.drop == DropKind::Trivial &&
-      !stage.info.traits.containsBorrowedState &&
-      std::all_of(
-          lambda->captureTypes.begin(), lambda->captureTypes.end(),
-          [&](const SemanticType &type) {
-            const auto representation = expectedTypeRepresentation(type);
-            return representation &&
-                   (*representation == CppMirTypeRepresentationKind::Scalar ||
-                    (*representation == CppMirTypeRepresentationKind::Enum &&
-                     program.findPayloadEnum(type) == nullptr));
-          });
+      nativeCopyClosure(program, stage.info.type, stage.info.traits);
   if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
       stage.callInputKind != HirCallInputKind::CopyValue ||
       stage.callInputRole != MirCallInputRole::Argument ||
@@ -48802,10 +48871,12 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
         !carrier->cAbiRecord && !carrier->unionLayout &&
         carrier->bases.empty() && carrier->structuralBases.empty();
     // A fixed array of passive generated-copy records copies element-wise in
-    // the member initializer; its elements need no default constructor.
+    // the member initializer; its elements need no default constructor. A
+    // closure is admitted below, once its copied value's traits are known.
     return scalarParameterType(type) ||
            passiveGeneratedCopyClass(program, type) != nullptr ||
-           cleanupFreeCopyableFixedArray(program, type) || passiveBorrowedCopy;
+           cleanupFreeCopyableFixedArray(program, type) ||
+           passiveBorrowedCopy || type.kind == SemanticType::Lambda;
   };
 
   const MirClassInstance *owner = program.findClassInstance(constructor.owner);
@@ -48876,7 +48947,10 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
       load = definition;
       loadedValue = &value;
     }
-    if (sourceValueCount != 1 || load == nullptr || loadedValue == nullptr) {
+    if (sourceValueCount != 1 || load == nullptr || loadedValue == nullptr ||
+        (initializer.targetType.kind == SemanticType::Lambda &&
+         !nativeCopyClosure(program, initializer.targetType,
+                            loadedValue->info.traits))) {
       continue;
     }
 
@@ -48971,7 +49045,20 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
         uses.front().kind == MirValueUseKind::InstructionOperand &&
         uses.front().instruction == initialize->id &&
         uses.front().operandIndex == 0;
-    if (!exactPublication) {
+    // A closure field has no explicit stage: the constructor record publishes
+    // the otherwise unused Load (mirRecordPublishedConstructorInitializer).
+    // A closure has no native default state or assignment to receive a body
+    // publication, so the member-initializer list copies the parameter once,
+    // exactly where an explicit Initialize would have published it. The
+    // formal keeps its own MIR drop; the field's belongs to the owner.
+    const bool recordPublication =
+        !malformedInitialize && initializeMatches == 0 &&
+        initializer.targetType.kind == SemanticType::Lambda &&
+        !field->requiresActiveCleanup &&
+        onlyRootRecordUses(constructor.body, loadedValue->id) &&
+        mirRecordPublishedConstructorInitializer(
+            program, constructor.body, constructor.id, *load) == &initializer;
+    if (!exactPublication && !recordPublication) {
       continue;
     }
 
@@ -50764,11 +50851,17 @@ cppMirConstructedFieldInitializerBindings(
                               candidate.field == initializer.field;
                      });
     if (copied != copiedParameters->end()) {
+      // A record-published closure copy belongs to a constructor template
+      // shared by every closure instance of its class. A capture with a
+      // lexical drop leaves its formal's Drop after this prologue, so only
+      // keeping siblings body-staged, as the owned-parameter form does, gives
+      // every instance the same native member-initializer list.
+      if (copied->initializeInstruction == 0) {
+        return {};
+      }
       siblingInstructions.push_back(copied->loadInstruction);
       siblingInstructions.push_back(copied->boundaryInstruction);
-      if (copied->initializeInstruction != 0) {
-        siblingInstructions.push_back(copied->initializeInstruction);
-      }
+      siblingInstructions.push_back(copied->initializeInstruction);
       continue;
     }
 
@@ -52132,16 +52225,18 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
          .valueDrop = valueDropId,
          .fieldDrop = fieldDropId});
   }
-  const bool completeOwnedScalarInitializers =
-      bindings.size() > 1 &&
-      std::all_of(
-          constructor.initializers.begin(), constructor.initializers.end(),
-          [&](const MirConstructorInitializer &initializer) {
-            return initializer.ownedParameter.has_value() ||
-                   (!initializer.storesReference &&
-                    !initializer.generatedDefault &&
-                    passiveParameterFieldType(program, initializer.targetType));
-          });
+  bool completeOwnedScalarInitializers = bindings.size() > 1;
+  for (std::size_t index = 0; completeOwnedScalarInitializers &&
+                              index < constructor.initializers.size();
+       ++index) {
+    const MirConstructorInitializer &initializer =
+        constructor.initializers[index];
+    completeOwnedScalarInitializers =
+        initializer.ownedParameter.has_value() ||
+        (!initializer.storesReference && !initializer.generatedDefault &&
+         passiveParameterFieldType(program, initializer.targetType)) ||
+        recordPublishedClosureCopy(program, constructor, index);
+  }
   if (completeOwnedScalarInitializers) {
     // Moving several initializer expressions into the native C++ member
     // initializer list is exact only for a complete, field-ordered prologue.
@@ -52156,6 +52251,7 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
       return std::nullopt;
     }
     std::vector<PassiveScalarFieldSibling> scalarSiblings;
+    std::vector<MirInstructionId> closureRecords;
     std::size_t previousInitialize = 0;
     for (std::size_t initializerIndex = 0;
          initializerIndex < constructor.initializers.size();
@@ -52166,6 +52262,35 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
                          return candidate.initializer == initializerIndex;
                        });
       if (binding == bindings.end()) {
+        if (const auto closure = recordPublishedClosureCopy(
+                program, constructor, initializerIndex)) {
+          if (previousInitialize != 0 &&
+              closure->loadInstruction <= previousInitialize)
+            return std::nullopt;
+          previousInitialize = closure->loadInstruction;
+          closureRecords.push_back(closure->loadInstruction);
+          // A capture with a lexical drop leaves the copied formal its own
+          // unconditional scope-end Drop, a lexical parameter drop record.
+          for (const MirInstruction &instruction : entry->instructions) {
+            const MirDropObligation *drop =
+                instruction.kind == MirInstructionKind::Drop &&
+                        instruction.destination == closure->sourcePlace &&
+                        instruction.lifecycle.size() == 1
+                    ? constructor.body.findDropObligation(
+                          instruction.lifecycle.front().source)
+                    : nullptr;
+            const MirLifecycleEvent *event =
+                drop != nullptr ? &instruction.lifecycle.front() : nullptr;
+            if (event != nullptr &&
+                event->kind == MirLifecycleEventKind::Drop &&
+                event->target == 0 && !event->conditional &&
+                !event->failureCleanup &&
+                drop->kind == MirDropObligationKind::Binding &&
+                drop->place == closure->sourcePlace)
+              closureRecords.push_back(instruction.id);
+          }
+          continue;
+        }
         const auto scalar =
             passiveScalarFieldSibling(program, constructor, initializerIndex);
         if (!scalar || (previousInitialize != 0 &&
@@ -52219,7 +52344,9 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
                                instruction.id ==
                                    binding.initializeInstruction ||
                                instruction.id == binding.boundaryInstruction;
-                      });
+                      }) ||
+          std::find(closureRecords.begin(), closureRecords.end(),
+                    instruction.id) != closureRecords.end();
       const bool metadataBoundary =
           instruction.kind == MirInstructionKind::Lifecycle &&
           !instruction.result && !instruction.destination &&
@@ -54543,8 +54670,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (value.info.type.kind == SemanticType::Lambda) {
       // Lambda SSA records never declare. They either remain in the frozen
       // fused chain, publish into an exact lifetime slot, read a materialized
-      // receiver, or carry one no-intervening-use move to a call/construct or
-      // transformed return publication.
+      // receiver, carry one no-intervening-use move to a call/construct or
+      // transformed return publication, or move or copy a constructor
+      // parameter into its field in the native member-initializer list.
       const MirInstruction *definition =
           findInstruction(body, value.definition);
       const MovedChainTerminal terminal = movedChainTerminal(body, value.id);
@@ -54559,7 +54687,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           returnMoveDefinition(body, value.id) == definition;
       const bool ownedConstructorField =
           address.kind == MirBodyKind::Constructor &&
-          ownedParameterFieldBinding(program_, body, address.owner, value.id);
+          (ownedParameterFieldBinding(program_, body, address.owner,
+                                      value.id) ||
+           copyParameterFieldBinding(program_, body, address.owner, value.id));
       const auto uses = nonRootRecordUses(body, value.id);
       const MirInstruction *stage =
           uses.size() == 1 ? findInstruction(body, uses.front().instruction)
