@@ -6498,20 +6498,37 @@ public:
         generalMirBodyPlan({MirBodyKind::Constructor, instance.id});
     if (!plan.supportsBasePreparationText())
       return;
-    const auto preparation = cppMirBasePreparation(mir, instance);
-    if (!preparation)
-      throw std::logic_error(
-          "prepared constructor lost its admitted MIR partition");
     // Called only after the original signature has been closed by its caller.
+    // The carrier is completed beside the constructor definitions, where the
+    // class type of every temporary slot it holds is complete.
+    writeIndent();
+    output << "struct __gti_base_preparation_" << instance.id << ";\n";
+    writeIndent();
+    output << className << "(__gti_base_preparation_" << instance.id
+           << " __gti_prepared, bool *__gti_mir_constructor_success, "
+              "::gti_failure_record_v2 *__gti_mir_failure_record);\n";
+  }
+
+  // The carrier's constructor runs the verified pre-base partition. Passing
+  // its prvalue to the delegated constructor builds the carrier in place as
+  // that constructor's parameter, so a temporary slot keeps one address from
+  // its construction in the preparation to its Drop after the native base.
+  void emitBasePreparationDefinition(const MirConstructorInstance &instance,
+                                     std::string_view ownerSpelling,
+                                     const CppMirBasePreparation &preparation,
+                                     const CppMirBodyEmissionPlan &plan) {
     const auto *stage = [&]() -> const MirInstruction * {
       for (const auto &block : instance.body.blocks)
         for (const auto &instruction : block.instructions)
-          if (instruction.id == preparation->stage)
+          if (instruction.id == preparation.stage)
             return &instruction;
       return nullptr;
     }();
+    if (stage == nullptr)
+      throw std::logic_error("prepared constructor lost its base stage");
     writeIndent();
-    output << "struct __gti_base_preparation_" << instance.id << " {\n";
+    output << "struct " << ownerSpelling << "::__gti_base_preparation_"
+           << instance.id << " {\n";
     ++indentation;
     writeIndent();
     output << "bool ready = false;\n";
@@ -6526,12 +6543,12 @@ public:
       emitSemanticType(instance.parameterTypes[index]);
       output << " parameter_" << index << "{};\n";
     }
-    for (const auto id : preparation->carriedValues) {
+    for (const auto id : preparation.carriedValues) {
       writeIndent();
       emitSemanticType(instance.body.findValue(id)->info.type);
       output << " value_" << id << "{};\n";
     }
-    for (const auto id : preparation->places) {
+    for (const auto id : preparation.places) {
       const auto *place = instance.body.findPlace(id);
       if (place->root == MirPlaceRootKind::Symbol)
         continue;
@@ -6539,20 +6556,31 @@ public:
       emitSemanticType(place->type);
       output << " place_" << id << "{};\n";
     }
-    --indentation;
+    for (const auto id : preparation.slots) {
+      writeIndent();
+      output << "::gti_internal::backend::mir_lifetime_slot<";
+      emitSemanticType(instance.body.findPlace(id)->type);
+      output << "> slot_" << id << ";\n";
+    }
     writeIndent();
-    output << "};\n";
-    writeIndent();
-    output << "static __gti_base_preparation_" << instance.id
-           << " __gti_prepare_base_" << instance.id << '(';
+    output << "__gti_base_preparation_" << instance.id << '(';
     const auto count = emitLoweredMirParameters(instance.parameterTypes);
     if (count)
       output << ", ";
     output << "::gti_failure_record_v2 *__gti_mir_failure_record);\n";
+    --indentation;
     writeIndent();
-    output << className << "(__gti_base_preparation_" << instance.id
-           << " __gti_prepared, bool *__gti_mir_constructor_success, "
-              "::gti_failure_record_v2 *__gti_mir_failure_record);\n";
+    output << "};\n";
+    writeIndent();
+    output << ownerSpelling << "::__gti_base_preparation_" << instance.id
+           << "::__gti_base_preparation_" << instance.id << '(';
+    if (emitLoweredMirParameters(instance.parameterTypes))
+      output << ", ";
+    output << "::gti_failure_record_v2 *__gti_mir_failure_record) "
+           << CppMirBodyTextWriter::write(
+                  plan, CppMirBodyTextForm::BasePreparation,
+                  "scalar-cfg-base-preparation-v1", indentation)
+                  .text;
   }
 
   void emitBaseGateDeclaration(const MirConstructorInstance &instance,
@@ -6828,9 +6856,12 @@ public:
                       .text;
       }
       if (failure) {
+        if (preparation)
+          emitBasePreparationDefinition(*instance, ownerSpelling, *preparation,
+                                        generalMirBodyPlan(address));
         emitSignature(true);
         if (preparation) {
-          output << " : " << constructorName << "(__gti_prepare_base_"
+          output << " : " << constructorName << "(__gti_base_preparation_"
                  << instance->id << '(';
           for (std::size_t index = 0; index < instance->parameterTypes.size();
                ++index) {
@@ -6842,19 +6873,6 @@ public:
             output << ", ";
           output << "__gti_mir_failure_record), __gti_mir_constructor_success, "
                     "__gti_mir_failure_record) {}\n";
-          writeIndent();
-          output << ownerSpelling << "::__gti_base_preparation_" << instance->id
-                 << ' ' << ownerSpelling << "::__gti_prepare_base_"
-                 << instance->id << '(';
-          const auto count = emitLoweredMirParameters(instance->parameterTypes);
-          if (count)
-            output << ", ";
-          output << "::gti_failure_record_v2 *__gti_mir_failure_record) "
-                 << CppMirBodyTextWriter::write(
-                        generalMirBodyPlan(address),
-                        CppMirBodyTextForm::BasePreparation,
-                        "scalar-cfg-base-preparation-v1", indentation)
-                        .text;
           writeIndent();
           output << ownerSpelling << "::" << constructorName
                  << "(__gti_base_preparation_" << instance->id

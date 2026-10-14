@@ -1,0 +1,56 @@
+#include <std/string>
+#include <std/vector>
+
+mut int phase = 0;
+class Probe {
+  int id;
+public:
+  Probe(int id) : id(id) { std::println(id); }
+  ~Probe() { std::println(this.id + 100); }
+  int scaled(int factor) {
+    if (phase == 1 && this.id == 2) {
+      int zero = 0;
+      int failed = factor / zero;
+    }
+    return this.id * factor;
+  }
+};
+struct Plain {
+  int value;
+  Plain(int value) : value(value) {}
+};
+int weigh(Probe& probe) { return probe.scaled(10); }
+Plain make_plain(int value) { return Plain(value); }
+class Foundation {
+public:
+  int score;
+  Foundation(int first, int second, int third) : score(first + second + third) {
+    std::println(30);
+    if (phase == 2) {
+      int zero = 0;
+      int failed = score / zero;
+    }
+  }
+  ~Foundation() { std::println(130); }
+};
+// Each base argument goes through temporaries of the base initializer: a
+// method receiver, a reference argument, and field reads of a returned and a
+// constructed value. Both probes stay alive until the base is built.
+class Building : public Foundation {
+public:
+  Building(int seed)
+      : Foundation(Probe(seed).scaled(3), weigh(Probe(seed + 1)),
+                   make_plain(4).value + Plain(5).value) {
+    std::println(50);
+    if (phase == 3) {
+      int zero = 0;
+      int failed = phase / zero;
+    }
+  }
+  ~Building() { std::println(150); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Building value = Building(1);
+  return value.score - 32;
+}
