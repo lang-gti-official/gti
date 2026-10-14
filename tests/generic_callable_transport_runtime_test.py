@@ -25,7 +25,7 @@ if __name__ == "__main__":
         "generic_closure_field_construction": [
             ((), (0, "2\n4\n5\n5\n6\n7\n8\n6\n13\n", ""))],
         "generic_closure_field_composition": [
-            ((), (0, "11\n13\n14\n15\n16\n43\n44\n23\n24\n"
+            ((), (0, "11\n13\n14\n15\n16\n43\n44\n53\n54\n23\n24\n"
                      "named\n1\nnamed\n3\nnamed\n4\nlabeled\n3\nlabeled\n4\n"
                      "first\nsecond\n3\nfirst\nsecond\n4\nboth\n36\nboth\n37\n",
                   ""))],
