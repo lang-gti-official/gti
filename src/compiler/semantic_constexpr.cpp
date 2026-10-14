@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include "gti/support.h"
+
 #include "gti/failure_metadata.h"
 #include "gti/hir.h"
 #include "gti/mir_constant_evaluator.h"
@@ -168,6 +170,51 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   return copy;
 }
 
+auto SemanticVisitor::Impl::stagedWorkerFor(
+    const SemanticModel &stagingModel,
+    const std::shared_ptr<ConstexprWorkBudget> &work) -> Impl & {
+  std::size_t definitions = 0;
+  for (const FunctionDecl *definition : constexprDefinitionsAnalyzed)
+    definitions += declaredBeforeCurrent(definition) ? 1 : 0;
+  std::size_t constructors = 0;
+  for (const auto *definition : constexprConstructorsAnalyzed)
+    constructors += declaredBeforeCurrent(definition) ? 1 : 0;
+  StagedWorker &worker = stagedWorker;
+  if (worker.impl == nullptr || worker.stagingModel != &stagingModel ||
+      worker.declarationOrder != currentDeclarationOrder ||
+      worker.definitions != definitions ||
+      worker.constructors != constructors) {
+    const PhaseTimeScope workerScope("constexpr-staged-worker");
+    worker.impl = std::make_unique<Impl>(target, sourceGraph, false,
+                                         workMetrics, sources, rawPointerAudit);
+    worker.impl->catalog = catalog.snapshotForInstanceAnalysis();
+    worker.impl->semanticModel = stagingModel;
+    worker.impl->valueFlow = valueFlow;
+    for (const FunctionDecl *definition : constexprDefinitionsAnalyzed) {
+      if (declaredBeforeCurrent(definition))
+        worker.impl->constexprDefinitionsAnalyzed.insert(definition);
+    }
+    for (const auto *definition : constexprConstructorsAnalyzed) {
+      if (declaredBeforeCurrent(definition))
+        worker.impl->constexprConstructorsAnalyzed.insert(definition);
+    }
+    worker.impl->genericDefaultConstants = genericDefaultConstants;
+    worker.impl->defaultArgumentSyntax = defaultArgumentSyntax;
+    worker.impl->defaultArgumentDependencies = defaultArgumentDependencies;
+    worker.stagingModel = &stagingModel;
+    worker.declarationOrder = currentDeclarationOrder;
+    worker.definitions = definitions;
+    worker.constructors = constructors;
+  }
+  worker.impl->requestSession.constexprWork = work;
+  // Concrete constant bodies also demand source access summaries. Share
+  // their request-local cycle/depth accounting, not mutable body state.
+  worker.impl->requestSession.rawResultQueries =
+      requestSession.rawResultQueries;
+  worker.impl->nextLambdaId = nextLambdaId;
+  return *worker.impl;
+}
+
 auto SemanticVisitor::Impl::executeStagedConstexpr(
     const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
         &selected,
@@ -222,41 +269,26 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   // in-progress visitor. A request-local snapshot reuses the ordinary semantic
   // provider and exact declaration identities without lending it mutable caller
   // state. It lives until HIR has consumed every concrete instance delta.
-  std::unique_ptr<Impl> worker;
   StagedInstanceProvider provider(*this, [&]() -> SemanticInstanceProvider & {
-    if (!worker) {
-      worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
-                                      sources, rawPointerAudit);
-      worker->catalog = catalog.snapshotForInstanceAnalysis();
-      worker->semanticModel = stagingModel;
-      worker->valueFlow = valueFlow;
-      for (const FunctionDecl *definition : constexprDefinitionsAnalyzed) {
-        if (declaredBeforeCurrent(definition))
-          worker->constexprDefinitionsAnalyzed.insert(definition);
-      }
-      for (const auto *definition : constexprConstructorsAnalyzed) {
-        if (declaredBeforeCurrent(definition))
-          worker->constexprConstructorsAnalyzed.insert(definition);
-      }
-      worker->requestSession.constexprWork = context.work;
-      // Concrete constant bodies also demand source access summaries. Share
-      // their request-local cycle/depth accounting, not mutable body state.
-      worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
-      worker->genericDefaultConstants = genericDefaultConstants;
-      worker->defaultArgumentSyntax = defaultArgumentSyntax;
-      worker->defaultArgumentDependencies = defaultArgumentDependencies;
-      worker->nextLambdaId = nextLambdaId;
-    }
-    return *worker;
+    return stagedWorkerFor(stagingModel, context.work);
   });
+  std::string stagedDetail =
+      function ? info->qualifiedName : std::string("constructor");
+  for (const auto &[parameter, type] : substitution.types)
+    stagedDetail += " " + typeSpelling(type);
+  stagedDetail += " args=" + std::to_string(arguments.size());
+  const PhaseTimeScope stagedScope("constexpr-staged-mir", stagedDetail);
   HirLowerer lowerer(target);
-  auto hir = construction
-                 ? lowerer.lowerConstantConstructor(stagingModel, provider,
-                                                    *construction, completed,
-                                                    constructors)
-                 : lowerer.lowerConstantFunction(stagingModel, provider,
-                                                 info->id, completed,
-                                                 substitution, constructors);
+  auto hir = [&] {
+    const PhaseTimeScope lowerScope("constexpr-staged-hir");
+    return construction
+               ? lowerer.lowerConstantConstructor(stagingModel, provider,
+                                                  *construction, completed,
+                                                  constructors)
+               : lowerer.lowerConstantFunction(stagingModel, provider, info->id,
+                                               completed, substitution,
+                                               constructors);
+  }();
   if (!hir.valid()) {
     if (hasErrorDiagnostics(hir.diagnostics)) {
       diagnostics.insert(diagnostics.end(), hir.diagnostics.begin(),
@@ -281,12 +313,18 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   if (entry == nullptr) {
     return std::nullopt;
   }
-  auto metadata = FailureMetadataBuilder().build(*sourceGraph, *sources,
-                                                 hir.program, entry->path);
+  auto metadata = [&] {
+    const PhaseTimeScope metadataScope("constexpr-staged-failure-metadata");
+    return FailureMetadataBuilder().build(*sourceGraph, *sources, hir.program,
+                                          entry->path);
+  }();
   if (!metadata.valid()) {
     return std::nullopt;
   }
-  auto mir = MirLowerer().lower(hir.program, metadata.metadata);
+  auto mir = [&] {
+    const PhaseTimeScope mirScope("constexpr-staged-mir-lower");
+    return MirLowerer().lower(hir.program, metadata.metadata);
+  }();
   if (!mir.valid()) {
     return std::nullopt;
   }
@@ -318,11 +356,14 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       .steps = constexprExpressionStepLimit -
                std::min(context.work->steps, constexprExpressionStepLimit),
       .callDepth = constexprCallDepthLimit - context.work->stagingDepth + 1};
-  auto result = construction
-                    ? evaluateMirConstantConstructor(mir.program, root.owner,
-                                                     arguments, limits)
-                    : evaluateMirConstantFunction(mir.program, root.owner,
-                                                  arguments, limits, receiver);
+  auto result = [&] {
+    const PhaseTimeScope evaluateScope("constexpr-staged-evaluate");
+    return construction
+               ? evaluateMirConstantConstructor(mir.program, root.owner,
+                                                arguments, limits)
+               : evaluateMirConstantFunction(mir.program, root.owner, arguments,
+                                             limits, receiver);
+  }();
   context.work->steps += result.steps;
   const auto mutableLoans = [](const MirBody &body) {
     return std::any_of(

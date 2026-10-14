@@ -1028,6 +1028,8 @@ struct ConstructorInfo {
   std::vector<std::size_t> borrowParameters;
   bool constexprConstructor = false;
   bool requiresUnsafe = false;
+  // Declared `implicit`: a declaration may construct from its one argument.
+  bool implicitConstruction = false;
   bool compilerPrivate = false;
   bool parameterPack = false;
 };
@@ -2137,6 +2139,20 @@ public:
   [[nodiscard]] const ResolvedConstructionInfo *
   findArrayElementConstruction(const ArrayInitializer &initializer) const;
 
+  // The construction that consumes a declaration initializer whose own type
+  // differs from the declared class type. The initializer keeps every record
+  // of its own; this selected constructor takes it as the sole argument.
+  [[nodiscard]] const ResolvedConstructionInfo *
+  findContextualConstruction(const Expr &initializer) const;
+
+  // Whether this model, not a base, records the initializer's construction.
+  [[nodiscard]] bool
+  recordsContextualConstruction(const Expr &initializer) const;
+
+  // The initializer token a contextual construction reports and locates at.
+  [[nodiscard]] std::optional<Token>
+  contextualConstructionSite(const Expr &initializer) const;
+
   [[nodiscard]] const ResolvedConstructorInitializerInfo *
   findConstructorInitializer(const ConstructorInitializer &initializer) const;
 
@@ -2446,6 +2462,11 @@ private:
   void recordArrayElementConstruction(const ArrayInitializer &initializer,
                                       ResolvedConstructionInfo info);
 
+  void recordContextualConstruction(const Expr &initializer,
+                                    ResolvedConstructionInfo info, Token site);
+
+  void forgetContextualConstruction(const Expr &initializer);
+
   void record(const ConstructorInitializer &initializer,
               ResolvedConstructorInitializerInfo info);
 
@@ -2606,6 +2627,9 @@ private:
       collections;
   std::unordered_map<const ArrayInitializer *, ResolvedConstructionInfo>
       arrayElementConstructions;
+  std::unordered_map<const Expr *, ResolvedConstructionInfo>
+      contextualConstructions;
+  std::unordered_map<const Expr *, Token> contextualConstructionSites;
   std::unordered_map<const ConstructorInitializer *,
                      ResolvedConstructorInitializerInfo>
       constructorInitializers;

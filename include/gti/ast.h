@@ -1789,14 +1789,16 @@ public:
                   std::vector<ConstructorInitializer> initializers,
                   std::optional<SpecialMemberSpecifier> specifier,
                   std::unique_ptr<BlockStmt> body,
-                  std::optional<Token> unsafeKeyword = {})
+                  std::optional<Token> unsafeKeyword = {},
+                  std::optional<Token> implicitKeyword = {})
       : constexprKeyword_(std::move(constexprKeyword)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)),
         requiresClause_(std::move(requiresClause)),
         initializers_(std::move(initializers)),
         specifier_(std::move(specifier)), body_(std::move(body)),
-        unsafeKeyword_(std::move(unsafeKeyword)) {}
+        unsafeKeyword_(std::move(unsafeKeyword)),
+        implicitKeyword_(std::move(implicitKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitConstructorDecl(*this);
@@ -1831,6 +1833,12 @@ public:
     return unsafeKeyword_;
   }
 
+  // The contextual `implicit` modifier: a declaration may construct this
+  // class from the constructor's sole explicit argument type.
+  [[nodiscard]] const std::optional<Token> &implicitKeyword() const {
+    return implicitKeyword_;
+  }
+
 private:
   std::optional<Token> constexprKeyword_;
   Token name_;
@@ -1841,6 +1849,7 @@ private:
   std::optional<SpecialMemberSpecifier> specifier_;
   std::unique_ptr<BlockStmt> body_;
   std::optional<Token> unsafeKeyword_;
+  std::optional<Token> implicitKeyword_;
 };
 
 class DestructorDecl final : public StmtOfKind<StmtKind::DestructorDecl> {

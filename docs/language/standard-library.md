@@ -265,7 +265,9 @@ The current implemented foundation includes:
   mutating, linear-time operations returning `void`, not borrowed fluent
   receivers. Insert and replace accept a string or counted view without copying
   the source into another owner. Slice/erase/replace lengths clamp to the available remainder;
-  positions beyond `size()` raise `GTI-R0007`. Mutation retains capacity when
+  positions beyond `size()` raise `GTI-R0007`. The view constructor is
+  `implicit`, so `std::string text = "Sampling...";` constructs a string, and
+  assignment from a counted view (`text = "Done";`) replaces the contents. Mutation retains capacity when
   sufficient and excludes any live view into the destination, including a
   replacement argument that aliases it. These operations count bytes, not
   Unicode characters. This unit also provides

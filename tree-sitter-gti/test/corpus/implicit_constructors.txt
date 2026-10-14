@@ -1,0 +1,55 @@
+==================
+Implicit constructors
+==================
+
+struct Celsius {
+  implicit Celsius(int value) : degrees(value) {}
+  implicit constexpr Celsius(bool cold) : degrees(0) {}
+};
+int implicit = 1;
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (constructor_declaration
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (constructor_initializer_list
+          (constructor_initializer
+            (user_type
+              (identifier))
+            (constructor_initializer_argument_list
+              (primary_expression
+                (identifier)))))
+        (block))
+      (constructor_declaration
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (constructor_initializer_list
+          (constructor_initializer
+            (user_type
+              (identifier))
+            (constructor_initializer_argument_list
+              (primary_expression
+                (literal
+                  (integer_literal))))))
+        (block))))
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (integer_literal))))))

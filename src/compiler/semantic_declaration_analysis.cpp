@@ -8238,6 +8238,25 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
         }
       }
 
+      if (const std::optional<Token> &implicit =
+              constructor->implicitKeyword()) {
+        // A declaration constructs from one value of another type: a copy or
+        // move policy never has that role, and the constructor must be
+        // callable with exactly one explicit argument.
+        if (info.kind != ConstructorKind::Ordinary) {
+          report(*implicit, "A copy or move constructor cannot be implicit.",
+                 "GTI-S2121");
+        } else if (info.parameterPack || constructor->parameters().empty() ||
+                   info.requiredParameterCount > 1) {
+          report(*implicit,
+                 "An implicit constructor must accept exactly one explicit "
+                 "argument.",
+                 "GTI-S2121");
+        } else {
+          info.implicitConstruction = true;
+        }
+      }
+
       if (info.kind != ConstructorKind::Ordinary) {
         const Parameter &parameter = constructor->parameters().front();
         if (parameter.mutability == Mutability::Mutable) {

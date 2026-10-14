@@ -559,8 +559,10 @@ access-specifier       = ( "public" | "private" ) ":" ;
    and ambiguous return origins remain outside this contract. The full current
    lifetime and escape contract is specified in ownership-and-lifetimes.md. *)
 
+(* `implicit` is contextual: it is a modifier only here, before an ordinary
+   constructor's name or `constexpr`, and an identifier everywhere else. *)
 constructor-declaration
-                       = [ "unsafe" ] [ "constexpr" ] IDENTIFIER
+                       = [ "implicit" | "unsafe" ] [ "constexpr" ] IDENTIFIER
                          [ generic-parameter-clause ] parameter-clause
                          [ requires-clause ]
                          [ constructor-initializer-list ] block

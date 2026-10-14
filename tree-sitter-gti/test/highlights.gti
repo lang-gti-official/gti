@@ -322,3 +322,9 @@ struct NestedOwnerHighlight {
   NestedOwnerHighlight() {}
 };
 NestedOwnerHighlight::NestedChildHighlight nested_type_highlight;
+struct ImplicitHighlight {
+  int degrees;
+  implicit ImplicitHighlight(int value) : degrees(value) {}
+};
+
+[[test]] void annotated_test_highlight() {}
