@@ -392,9 +392,10 @@ evaluator, these results support `has_value()`, successful `value()`, and
 constant evaluation of `error()` remains later breadth. The same `error()`
 observer is available normally at runtime.
 
-The default C++23 target lowers to `std::expected`. The C++20 target lowers to
-the vendored `nonstd::expected` compatibility implementation. This is a
-representation choice only. Both backend modes lower `value()` and `error()`
-through the same explicit state check and defined-failure edge, so either
-wrong-state access reports `GTI-R0009`, runs the verified cleanup schedule, and
-terminates with the common runtime-failure status.
+Both C++ targets lower `expected` to the same GTI-owned representation in the
+generated support code; neither uses the host library's `std::expected` or a
+vendored implementation. This is a representation choice only. Both backend
+modes lower `value()` and `error()` through the same explicit state check and
+defined-failure edge, so either wrong-state access reports `GTI-R0009`, runs
+the verified cleanup schedule, and terminates with the common runtime-failure
+status.

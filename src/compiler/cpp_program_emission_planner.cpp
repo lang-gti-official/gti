@@ -9223,9 +9223,7 @@ public:
           output << '{';
         }
         if (!success)
-          output << (standard == CppStandard::Cpp23
-                         ? "std::unexpected("
-                         : "::nonstd::make_unexpected(");
+          output << "::gti_internal::backend::unexpected(";
         if (!node.elements.empty())
           emitConstant(node.elements[0],
                        &type->arguments[expected && !success ? 1 : 0]);
