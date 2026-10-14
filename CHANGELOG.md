@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.427.0 — Protected members
+## 0.429.0 — Protected members
 
 - Class members can use `protected:` sections for base implementation state,
   methods, constructors and nested types. Derived instance access requires a
@@ -18,6 +18,30 @@ for what minor and patch releases mean.
 - Compiler diagnostics and completion, formatting, and editor syntax recognize
   the access rule. [Example 150](examples/150-protected-events.gti) demonstrates
   event handlers and a generic storage base.
+
+## 0.428.0 — Memoized native dependency discovery
+
+- Project cache lookups no longer rerun the native preprocessor for every
+  declared C/C++ source (including dependency groups') when nothing it reads
+  has changed. Each probe's outcome is memoized beneath
+  `build/gti/cache/native-discovery/` with content digests, stat stamps and
+  directory watches; a lookup revalidates the record and contributes the same
+  identity bytes as the probe, so cache keys are unchanged. An unchanged
+  engine-sized target with 33 native sources now hits in about 1.4 s inside
+  the driver instead of 4 s. Bulk file reads replace a byte-at-a-time reader
+  on the same path.
+
+## 0.427.0 — Debug builds use the project cache
+
+- `gti build`, `run` and `test` with source-level debug info (`-g`, or a
+  profile's `debug-info = true`, as in the default `dev` profile of many
+  projects) now use the whole-program project cache instead of bypassing it.
+  An unchanged debug build is a cache hit that restores the executable and,
+  on macOS, its `.dSYM` bundle; the engine-sized editor target that rebuilt
+  everything in about 25-35 s now restores in about 4 s. Debug entries are
+  keyed on the loaded sources' paths and the `dsymutil` identity, so moving
+  a checkout or changing the symbol tool rebuilds. The cache schema is v3;
+  older entries are left unused.
 
 ## 0.426.0 — Implicit constructors
 

@@ -743,7 +743,7 @@ def main():
             line.startswith("+ ") for line in uncached_build.stderr.splitlines()
         )
 
-        cache_executables = list((project / "build/gti/cache/v2").glob(
+        cache_executables = list((project / "build/gti/cache/v3").glob(
             "*/executable"
         ))
         assert len(cache_executables) == 1
@@ -2340,7 +2340,7 @@ def main():
         rebuilt = cache_native_build()
         assert "gti: cache " in rebuilt.stderr
         entry_directory = (
-            cache_native / "build/gti/cache/v2" / cache_key(rebuilt)
+            cache_native / "build/gti/cache/v3" / cache_key(rebuilt)
         )
         if "gti: cache miss " in rebuilt.stderr:
             assert "gti: cache hit " in cache_native_build().stderr
