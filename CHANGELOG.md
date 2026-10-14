@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.427.0 — Conversion operators
+## 0.428.0 — Conversion operators
 
 - A class can declare a conversion to another type with `operator Target()`.
   It is explicit: `UserId(key)`, `int64_t(key)` and `bool(flag)` call it, and
@@ -31,6 +31,18 @@ for what minor and patch releases mean.
   covers the first. A condition's `operator bool` now counts toward the
   initialization-order check of a namespace or static initializer, which could
   previously miss storage it read.
+
+## 0.427.0 — Debug builds use the project cache
+
+- `gti build`, `run` and `test` with source-level debug info (`-g`, or a
+  profile's `debug-info = true`, as in the default `dev` profile of many
+  projects) now use the whole-program project cache instead of bypassing it.
+  An unchanged debug build is a cache hit that restores the executable and,
+  on macOS, its `.dSYM` bundle; the engine-sized editor target that rebuilt
+  everything in about 25-35 s now restores in about 4 s. Debug entries are
+  keyed on the loaded sources' paths and the `dsymutil` identity, so moving
+  a checkout or changing the symbol tool rebuilds. The cache schema is v3;
+  older entries are left unused.
 
 ## 0.426.0 — Implicit constructors
 
