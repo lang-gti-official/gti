@@ -48147,8 +48147,8 @@ cppMirBasePreparation(const MirProgram &program,
     };
     // Each temporary has one exact owner: a Value-rooted slot armed by its
     // producer with the slot's own value obligation, or, for a cleanup-free
-    // value read only through its fields, neither. A field view is read only
-    // by the preparation.
+    // value read only through its fields, neither. Every field view reads one
+    // of these temporaries, and only inside the preparation.
     std::vector<std::pair<MirPlaceId, MirDropObligationId>> owned;
     for (const MirValueId id : temporaries) {
       const MirValue *value = body.findValue(id);
@@ -48206,6 +48206,11 @@ cppMirBasePreparation(const MirProgram &program,
         owned.emplace_back(slot->id, drop->id);
       }
     }
+    for (const MirInstruction *view : fieldViews)
+      if (std::find(temporaries.begin(), temporaries.end(),
+                    body.findPlace(view->operands.front().place)->value) ==
+          temporaries.end())
+        return std::nullopt;
     const auto ownedSlot = [&](MirPlaceId place) {
       return std::any_of(owned.begin(), owned.end(), [&](const auto &entry) {
         return entry.first == place;
