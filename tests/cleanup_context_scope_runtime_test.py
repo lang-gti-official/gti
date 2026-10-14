@@ -137,7 +137,6 @@ def main():
                      "-fno-fast-math", "-ffp-contract=off",
                      "-D__gti_strict_ieee754=1", generated,
                      "-I", root / "runtime/include",
-                     "-I", root / "vendor/expected_lite/include",
                      runtime, "-pthread", "-o", binary])
                 result = run([binary])
                 assert not result.stdout and not result.stderr, result

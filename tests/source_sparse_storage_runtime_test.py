@@ -55,7 +55,6 @@ def main():
                                     "-fno-fast-math", "-ffp-contract=off",
                                     "-D__gti_strict_ieee754=1",
                                     "-I" + str(root / "runtime/include"),
-                                    "-I" + str(root / "vendor/expected_lite/include"),
                                     str(cpp), str(runtime), "-pthread", *extra,
                                     "-o", str(binary)],
                                    capture_output=True, text=True, timeout=120)

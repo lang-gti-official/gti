@@ -8593,8 +8593,8 @@ consumer, and release refreshes remain outstanding for the full campaign.
   generated defaults execute their ordinary field-write schedules. Example 142
   demonstrates recoverable budget configuration and reference-based slot
   construction. Unsupported result-bearing execution fails closed without an
-  AST fallback. Native C++20 non-literal result storage remains const; GTI
-  evaluation does not depend on native constexpr acceptance.
+  AST fallback. Native result storage is `constexpr` under both C++ standards;
+  GTI evaluation does not depend on native constexpr acceptance.
 - **Transient allocation/destruction:** Exclusive object allocation, source
   destructors, canonical drop recipes, concrete pack bindings and arrow/bool
   observers now execute verified MIR. Symbolic heap identities and exact loan

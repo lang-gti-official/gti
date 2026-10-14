@@ -1,5 +1,18 @@
 # Compiler Verification
 
+## Constructed closure fields of generic classes (0.432.1)
+
+`generic_callable_transport_runtime` adds `generic_closure_field_construction.gti`.
+Lambda-typed classes build `Holder<F>(f)` and `Moved<F>(std::move(f))` as
+member initializers, through two levels, into two fields from one formal, and
+with an extra argument. These run for captureless, scalar-capturing and
+struct-capturing lambdas of one class, in C++20/C++23 at O0/O1/O3, no-elide and
+ASan/UBSan. `stored_callable_types` requires the native constructed-field
+binding of each copied and moved instance, the `decltype` field spelling and
+admission under the closure overlay. It rejects a dropped staging lifecycle,
+a foreign argument index, a noncopyable closure, a consuming copy and a
+conditional formal drop.
+
 ## Copied closure fields of generic classes (0.431.2)
 
 `generic_callable_transport_runtime` adds `generic_closure_field_copy.gti`.
@@ -2046,8 +2059,8 @@ modes, including no-elide and ASan/UBSan, using the isolated optimized backend
 probe described below. Mandatory unchecked-access/loan negatives pass in both
 Off/Warn advisory modes, and MIR still selects bulk relocation structurally.
 
-The SIMD native-assembly probe now includes the same expected-lite headers as
-ordinary C++20 compilation. Its complete C++20/C++23 O0/O1/O3, scalar-reference,
+The SIMD native-assembly probe uses the same include paths as ordinary C++20
+compilation. Its complete C++20/C++23 O0/O1/O3, scalar-reference,
 sanitizer, macro-isolation and bounds matrix passes; native assembly has eleven
 SIMD instructions and the scalar reference has none. The c115/c116 storage
 failure corpus cases also pass with reviewed source-line changes only: exact

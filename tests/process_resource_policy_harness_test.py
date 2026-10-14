@@ -16,8 +16,7 @@ class InstalledResourcesTests(unittest.TestCase):
                 required = ["bin/gti", f"lib/{library}",
                             "share/gti/stdlib/prelude.gti",
                             "share/gti/stdlib/std/memory.gti",
-                            "include/gti/runtime.hpp", "include/gti/memory.h",
-                            "include/nonstd/expected.hpp"]
+                            "include/gti/runtime.hpp", "include/gti/memory.h"]
                 for name in required:
                     path = prefix / name
                     path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,7 +26,6 @@ class InstalledResourcesTests(unittest.TestCase):
                     "GTI_STDLIB_PATH": str(prefix / "share/gti/stdlib"),
                     "GTI_RUNTIME_INCLUDE": str(prefix / "include"),
                     "GTI_RUNTIME_LIBRARY": str(prefix / f"lib/{library}"),
-                    "GTI_VENDOR_INCLUDE": str(prefix / "include"),
                 })
                 for name in required[1:]:
                     path = prefix / name
