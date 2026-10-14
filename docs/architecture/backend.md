@@ -1116,7 +1116,9 @@ an `unexpected<E>` error wrapper (deduced from its argument) and an `unexpect`
 tag for in-place errors. Its observers are unchecked and nothing throws,
 because MIR tests the state before every extraction and raises `GTI-R0009`
 itself. Each special member is trivial exactly when both alternatives' are,
-so a scalar result stays trivially copyable and keeps its register ABI.
+so a scalar result stays trivially copyable and keeps its register ABI. Its
+constructors and destructor are constexpr, so a constant result, or a constant
+aggregate holding one, is native `constexpr` storage under both standards.
 `byte_expected` keeps byte-transport payloads in representation cells, and
 `expected_result` selects between the two in dependent code.
 
