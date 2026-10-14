@@ -128,6 +128,7 @@ enum class TokenKind : std::uint8_t {
   SIZEOF,
   SWITCH,
   TRUE,
+  TYPENAME,
   UNION,
   UNSAFE,
   USING,
@@ -319,7 +320,6 @@ inline constexpr std::string_view cppReservedIdentifiers[]{
     "try",
     "typedef",
     "typeid",
-    "typename",
     "unsigned",
     "volatile",
     "wchar_t",
@@ -542,6 +542,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "SWITCH";
   case TokenKind::TRUE:
     return "TRUE";
+  case TokenKind::TYPENAME:
+    return "TYPENAME";
   case TokenKind::UNION:
     return "UNION";
   case TokenKind::UNSAFE:

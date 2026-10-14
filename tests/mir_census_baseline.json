@@ -153,7 +153,8 @@
     "153-constexpr-allocation.gti": 47,
     "154-declaration-construction.gti": 129,
     "155-conversion-operators.gti": 132,
-    "156-borrowing-callbacks.gti": 68
+    "156-borrowing-callbacks.gti": 68,
+    "157-protocol-concepts.gti": 139
   },
-  "total": 16976
+  "total": 17115
 }

@@ -614,6 +614,7 @@ class ClassDecl;
 class CompileErrorDirective;
 class ConceptDecl;
 class ConditionalStmt;
+class ConformanceDecl;
 class ConstexprForStmt;
 class ConstructorDecl;
 class DestructorDecl;
@@ -807,6 +808,7 @@ public:
   virtual void
   visitCompileErrorDirective(const CompileErrorDirective &stmt) = 0;
   virtual void visitConceptDecl(const ConceptDecl &stmt) = 0;
+  virtual void visitConformanceDecl(const ConformanceDecl &stmt) = 0;
   virtual void visitConditionalStmt(const ConditionalStmt &stmt) = 0;
   virtual void visitConstexprForStmt(const ConstexprForStmt &stmt) = 0;
   virtual void visitConstructorDecl(const ConstructorDecl &stmt) = 0;
@@ -842,6 +844,7 @@ enum class StmtKind : std::uint8_t {
   CompileErrorDirective,
   ConceptDecl,
   ConditionalStmt,
+  ConformanceDecl,
   ConstexprForStmt,
   ConstructorDecl,
   DestructorDecl,
@@ -2660,16 +2663,32 @@ private:
   TypeRef target_;
 };
 
+/// One `typename name;` member of a protocol concept body.
+struct ProtocolAssociatedType {
+  Token keyword;
+  Token name;
+};
+
+/// The braced body of a protocol concept: associated type names and operation
+/// prototypes. A concept with a body is satisfied only by a conformance block.
+struct ProtocolConceptBody {
+  Token leftBrace;
+  std::vector<ProtocolAssociatedType> associatedTypes;
+  StmtList operations;
+};
+
 class ConceptDecl final : public StmtOfKind<StmtKind::ConceptDecl> {
 public:
   ConceptDecl(
       Token keyword, Token name, std::vector<Token> typeParameters,
       ConstraintExpression requirements,
-      std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt)
+      std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt,
+      std::optional<ProtocolConceptBody> protocolBody = std::nullopt)
       : keyword_(std::move(keyword)), name_(std::move(name)),
         typeParameters_(std::move(typeParameters)),
         requirements_(std::move(requirements)),
-        compilerBinding_(std::move(compilerBinding)) {}
+        compilerBinding_(std::move(compilerBinding)),
+        protocolBody_(std::move(protocolBody)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitConceptDecl(*this);
@@ -2690,6 +2709,10 @@ public:
   compilerBinding() const {
     return compilerBinding_;
   }
+  [[nodiscard]] bool isProtocol() const { return protocolBody_.has_value(); }
+  [[nodiscard]] const std::optional<ProtocolConceptBody> &protocolBody() const {
+    return protocolBody_;
+  }
 
 private:
   Token keyword_;
@@ -2697,6 +2720,41 @@ private:
   std::vector<Token> typeParameters_;
   ConstraintExpression requirements_;
   std::optional<CompilerConstraintBinding> compilerBinding_;
+  std::optional<ProtocolConceptBody> protocolBody_;
+};
+
+/// `for <Parameters> concept Concept<Pattern> { members };`: supplies a
+/// protocol concept's associated types and operations for the types matching
+/// the pattern. Members are `using` aliases and function definitions.
+class ConformanceDecl final : public StmtOfKind<StmtKind::ConformanceDecl> {
+public:
+  ConformanceDecl(Token forKeyword,
+                  std::vector<GenericParameter> genericParameters,
+                  Token conceptKeyword, ConceptApplication target,
+                  StmtList members)
+      : forKeyword_(std::move(forKeyword)),
+        genericParameters_(std::move(genericParameters)),
+        conceptKeyword_(std::move(conceptKeyword)), target_(std::move(target)),
+        members_(std::move(members)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitConformanceDecl(*this);
+  }
+
+  [[nodiscard]] const Token &forKeyword() const { return forKeyword_; }
+  [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return genericParameters_;
+  }
+  [[nodiscard]] const Token &conceptKeyword() const { return conceptKeyword_; }
+  [[nodiscard]] const ConceptApplication &target() const { return target_; }
+  [[nodiscard]] const StmtList &members() const { return members_; }
+
+private:
+  Token forKeyword_;
+  std::vector<GenericParameter> genericParameters_;
+  Token conceptKeyword_;
+  ConceptApplication target_;
+  StmtList members_;
 };
 
 class VariableDecl final : public StmtOfKind<StmtKind::VariableDecl> {

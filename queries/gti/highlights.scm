@@ -81,6 +81,8 @@
 (concept_declaration
   name: (identifier) @type.definition
   parameter: (identifier) @type.parameter)
+(associated_type_declaration
+  name: (identifier) @type.definition)
 (concept_application
   name: (identifier) @type)
 (member_requirement_expression
@@ -222,6 +224,7 @@
   "struct"
   "union"
   "using"
+  "typename"
 ] @keyword.type
 
 [
@@ -248,7 +251,7 @@
     "explicit" "friend" "goto" "inline" "long" "mutable" "new"
     "noexcept" "not" "not_eq" "or_eq" "protected" "register"
     "reinterpret_cast" "short" "signed" "static_cast"
-    "template" "thread_local" "throw" "try" "typedef" "typeid" "typename"
+    "template" "thread_local" "throw" "try" "typedef" "typeid"
     "unsigned" "volatile" "wchar_t" "xor" "xor_eq")
   (#set! priority 96))
 
@@ -269,6 +272,8 @@
 ] @keyword.repeat
 
 "return" @keyword.return
+; In a conformance block, `for` introduces a declaration, not a loop.
+(conformance_declaration "for" @keyword.type)
 (unsafe_statement "unsafe" @keyword)
 "unexpected" @keyword
 "requires" @keyword

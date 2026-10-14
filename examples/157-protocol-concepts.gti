@@ -1,0 +1,59 @@
+// Protocol concepts: a concept with a body declares associated types and
+// operations, and a `for concept` block supplies them for a type, outside
+// the type's own declaration. Generic code uses them through `requires`.
+#include <std/string>
+#include <std/vector>
+
+// Anything that can be measured, in units each type chooses.
+concept measurable<T> {
+  typename unit_type;
+  unit_type measure(T& item);
+  std::string describe(T& item);
+};
+
+struct Meters {
+  int value;
+  Meters(int amount) : value(amount) {}
+};
+
+class Rope {
+public:
+  int length;
+  Rope(int amount) : length(amount) {}
+};
+
+class Crate<T> {
+public:
+  T label;
+  int count;
+  Crate(T name, int amount) : label(std::move(name)), count(amount) {}
+};
+
+// A rope is measured in meters.
+for concept measurable<Rope> {
+  using unit_type = Meters;
+  Meters measure(Rope& item) { return Meters(item.length); }
+  std::string describe(Rope& item) { return std::string("a rope"); }
+};
+
+// Every crate is counted in items, whatever its label is.
+for <T> concept measurable<Crate<T>> {
+  using unit_type = int;
+  unit_type measure(Crate<T>& item) { return item.count; }
+  std::string describe(Crate<T>& item) { return std::string("a crate"); }
+};
+
+// Generic code names the associated type through the concept.
+measurable<T>::unit_type report<T>(T& item) requires measurable<T> {
+  std::println(measurable<T>::describe(item));
+  return measurable<T>::measure(item);
+}
+
+int main() {
+  Rope rope{12};
+  Crate<std::string> crate{std::string("apples"), 30};
+  Meters length = report(rope);
+  int items = report(crate);
+  std::println(std::to_string(length.value + items));
+  return 0;
+}

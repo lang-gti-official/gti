@@ -105,6 +105,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.genericConstraintConcepts = other.genericConstraintConcepts;
   copy.classes = other.classes;
   copy.exactClassSpecializations = other.exactClassSpecializations;
+  copy.conformances = other.conformances;
   copy.enums = other.enums;
   copy.predeclaredVariables = other.predeclaredVariables;
   copy.mutableFieldGroupOrigins = other.mutableFieldGroupOrigins;
@@ -155,6 +156,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.genericConstraintConcepts = genericConstraintConcepts;
   copy.classes = classes;
   copy.exactClassSpecializations = exactClassSpecializations;
+  copy.conformances = conformances;
   copy.enums = enums;
   copy.predeclaredVariables = predeclaredVariables;
   copy.mutableFieldGroupOrigins = mutableFieldGroupOrigins;

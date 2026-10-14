@@ -2309,11 +2309,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 13
       }
+    },
+    "157-protocol-concepts.gti": {
+      "declarations": 1282,
+      "bodies": 139,
+      "generated_items": 93,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 31,
+        "callable_adapter": 16,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 41
+      }
     }
   },
   "totals": {
-    "declarations": 112437,
-    "bodies": 16989,
-    "generated_items": 10517
+    "declarations": 113719,
+    "bodies": 17128,
+    "generated_items": 10610
   }
 }

@@ -1699,6 +1699,9 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     }
   }
   const RegisteredConcept &conceptInfo = concepts[requirement.conceptId - 1];
+  if (conceptInfo.protocol) {
+    return protocolConformanceFailure(requirement);
+  }
   const auto substitution =
       conceptSubstitution(conceptInfo, requirement.arguments);
   if (conceptInfo.definitionExpression != nullptr &&

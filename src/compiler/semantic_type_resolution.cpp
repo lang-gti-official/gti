@@ -439,6 +439,8 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
             actual.lambdaEnclosingFunctionValues ||
         pattern.referenceAccess != actual.referenceAccess ||
         pattern.pointerAccess != actual.pointerAccess ||
+        pattern.projectionConcept != actual.projectionConcept ||
+        pattern.projectionMember != actual.projectionMember ||
         (!targetArrayExtent && pattern.arrayLength != actual.arrayLength) ||
         pattern.valueArguments != actual.valueArguments ||
         pattern.concretePack != actual.concretePack ||
@@ -3357,6 +3359,11 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
                                          bool allowNativeFunctionType) -> void {
   const std::size_t diagnosticStart = diagnostics.size();
   if (type.qualifiedOwner) {
+    if (const std::optional<ConceptId> protocol =
+            protocolConceptOwner(*type.qualifiedOwner, currentNamespace)) {
+      validateAssociatedTypePath(type, *protocol);
+      return;
+    }
     validateType(*type.qualifiedOwner);
     if (diagnostics.size() != diagnosticStart) {
       return;
@@ -3883,6 +3890,14 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     if (!type.arguments.empty()) {
       report(type.name.last(),
              "Generic type parameters cannot take generic arguments.");
+    }
+    return;
+  }
+  if (type.name.segments.size() == 1 &&
+      blockAssociatedType(type.name.last().lexeme, currentNamespace)) {
+    if (!type.arguments.empty()) {
+      report(type.name.last(), "An associated type takes no generic arguments.",
+             "GTI-S2123");
     }
     return;
   }
@@ -6016,6 +6031,14 @@ auto SemanticVisitor::Impl::makeGenericParameters(
                    "concepts.",
                    "GTI-S2029");
             constraints = constraintBit(GenericConstraintKind::Invalid);
+          } else if (conceptInfo.protocol) {
+            // Satisfaction needs a conformance block, which an inline
+            // constraint's atomic facts cannot express.
+            report(parameter.constraint->last(),
+                   "A concept with a body must be written in a trailing "
+                   "requires clause.",
+                   "GTI-S2029");
+            constraints = constraintBit(GenericConstraintKind::Invalid);
           } else if (conceptInfo.hasStructuralRequirements &&
                      !allowStructural) {
             report(parameter.constraint->last(),
@@ -6375,6 +6398,13 @@ auto SemanticVisitor::Impl::resolveValueParameter(const Token &name) const
 auto SemanticVisitor::Impl::substituteType(
     const SemanticType &type, const GenericSubstitution &substitution) const
     -> SemanticType {
+  if (type.isAssociatedTypeProjection()) {
+    SemanticType result = type;
+    for (SemanticType &argument : result.arguments) {
+      argument = substituteType(argument, substitution);
+    }
+    return reduceAssociatedTypeProjection(std::move(result));
+  }
   if (type.kind == SemanticType::TypeParameter ||
       (type.kind == SemanticType::TypePack && !type.concretePack)) {
     const auto found = substitution.types.find(type.genericParameterId);

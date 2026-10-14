@@ -1818,6 +1818,33 @@ private:
     };
 
     if (const auto *namespaceDecl = stmtAs<NamespaceDecl>(&statement)) {
+      // A conformance block's generated namespace outlines as the block,
+      // with its associated types and operations as children.
+      const ConformanceDecl *block =
+          namespaceDecl->name().generated &&
+                  !namespaceDecl->declarations().empty()
+              ? stmtAs<ConformanceDecl>(
+                    namespaceDecl->declarations().front().get())
+              : nullptr;
+      if (block != nullptr) {
+        std::string spelling =
+            "for concept " +
+            semantic_spelling::pathSpelling(block->target().name) + "<";
+        for (std::size_t index = 0; index < block->target().arguments.size();
+             ++index) {
+          spelling +=
+              (index == 0 ? "" : ", ") + semantic_spelling::typeRefSpelling(
+                                             block->target().arguments[index]);
+        }
+        std::optional<DocumentSymbolInfo> info =
+            makeInfo(block->target().name.last(), DocumentSymbolKind::Concept,
+                     spelling + ">");
+        if (info) {
+          appendOutline(snapshot, sourceUnit, unitPath, target,
+                        block->members(), false, info->children);
+        }
+        return info;
+      }
       std::optional<DocumentSymbolInfo> info =
           makeInfo(namespaceDecl->name(), DocumentSymbolKind::Namespace);
       if (info) {

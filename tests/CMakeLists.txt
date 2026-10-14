@@ -1143,6 +1143,10 @@ add_executable(gti_conversion_operator_tests
   "${PROJECT_SOURCE_DIR}/tests/conversion_operator_tests.cpp")
 target_link_libraries(gti_conversion_operator_tests PRIVATE gti_cpp_backend)
 add_test(NAME conversion_operators COMMAND gti_conversion_operator_tests)
+add_executable(gti_protocol_concept_tests
+  "${PROJECT_SOURCE_DIR}/tests/protocol_concept_tests.cpp")
+target_link_libraries(gti_protocol_concept_tests PRIVATE gti_cpp_backend)
+add_test(NAME protocol_concepts COMMAND gti_protocol_concept_tests)
 add_test(NAME constructor_null_native_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constructor_null_native_runtime_test.py" $<TARGET_FILE:gti>)
 add_test(NAME payload_fresh_class_operands_runtime
@@ -2027,6 +2031,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(conversion_operators_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME protocol_concepts_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/protocol_concepts_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(protocol_concepts_runtime PROPERTIES TIMEOUT 900)
 
   add_test(
     NAME recursive_cleanup_failure_runtime

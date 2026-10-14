@@ -560,6 +560,7 @@ private:
     case StmtKind::AccessSpecifierDecl:
     case StmtKind::ClassDecl:
     case StmtKind::ConceptDecl:
+    case StmtKind::ConformanceDecl:
     case StmtKind::ConstructorDecl:
     case StmtKind::DestructorDecl:
     case StmtKind::EnumDecl:

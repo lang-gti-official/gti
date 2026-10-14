@@ -2125,6 +2125,72 @@ its identity and capability in HIR/MIR. Adding a relationship requires one new
 irreducible semantic question and a source-defined public client; it must not
 be implemented as a public-name case or backend expression probe.
 
+### Protocol Concepts And Conformance Blocks
+
+A concept with a body ([ADR 028](../decisions/028-protocol-concepts.md))
+resolves to `RegisteredConcept::protocol` state:
+- its associated names, in declaration order;
+- its operations' signatures, in the concept parameter's space.
+
+While the operations are typed, each associated name maps to a projection of
+the parameter. The concept has no atomic or structural facts, so an inline
+constraint cannot express it and is rejected.
+
+**Parser desugar.** The parser rewrites each `for concept` block into a
+namespace whose generated `__gti_conformance_<digest>` name no source can
+spell. The digest is derived from the concept application's tokens, so it is
+stable across compilations and distinct per block. The namespace holds:
+- the `ConformanceDecl` itself;
+- the block's functions, as ordinary generic functions over the block's
+  parameters.
+
+Every function also carries a requires clause naming the block's own
+application, built from generated tokens. Each existing declaration and
+lowering pass therefore sees ordinary namespace functions. HIR enqueues their
+instances from ordinary `ResolvedCallInfo` records, MIR lowers them like any
+generic function, and the C++ backend names them by the existing instance
+identity, which includes the generated namespace.
+
+**Registration** happens in two stages before the catalog is sealed:
+1. `registerConformances` runs right after concept resolution. It resolves
+   the concept from the block's enclosing namespace, then checks the pattern
+   shape, ADR 020 package coherence and overlap with earlier blocks. It
+   records each `using` type in the block's parameter space. A block with
+   missing or extra associated types still registers, so its operations are
+   still checked and its uses do not report a second error.
+2. `bindConformanceOperations` runs after namespace symbols exist. It selects
+   each operation's function from the generated namespace and compares both
+   signatures in the block's parameter space, with projections of the block's
+   own pattern resolved to its types.
+
+`SemanticCatalog::conformances` is copied into instance-analysis snapshots and
+included in the instance-reuse fingerprint.
+
+**Selection.** `matchConformance` canonicalizes a concrete argument and
+returns the block whose pattern it matches, with the block's parameters bound
+from the class arguments. Satisfaction of an application of a concept with a
+body first uses the ordinary forwarded proof from active requirement scopes.
+Otherwise it requires a matching block whose parameter constraints hold for
+the binding.
+
+**Projections.** A dependent `C<T>::name` is an opaque `TypeParameter` with
+no parameter identity. It carries `projectionConcept`, `projectionMember` and
+`T` as its only argument. `substituteType` substitutes the argument, and
+`selectExactClassSpecialization`, which ends every type resolution and
+substitution, reduces the projection once its argument is concrete. Reduction
+is depth-limited, so a cyclic block cannot recurse without bound.
+
+Inside a block's function, a bare associated name and a projection of the
+block's own pattern resolve to the block's `using` type, mapped onto the
+function's copies of the block parameters.
+
+**Operation calls.** A concrete `C<X>::operation(...)` resolves its callee to
+the selected block function's symbol, binds the block parameters as explicit
+type arguments, and then follows the ordinary single-overload call path.
+Through `requires C<T>`, a generic body checks arguments against the declared
+signature and records a symbolic call; each concrete instance resolves the
+real function.
+
 ## Transfer And Share Facts
 
 `SemanticTypeTraits` is the single authority for the independent

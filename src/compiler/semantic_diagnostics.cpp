@@ -220,6 +220,18 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
            "Required application '" + applicationSpelling(context) + "'."});
     }
     appendMemberReason(diagnostic, failure);
+    if (failure.missingConformance) {
+      const std::string name =
+          failure.constraintName
+              ? semantic_spelling::pathSpelling(*failure.constraintName)
+              : std::string("the concept");
+      diagnostic.hints.push_back(
+          "Concept '" + name +
+          "' has a body, so a type satisfies it only through a matching "
+          "'for concept " +
+          name + "<...>' block; none matches '" +
+          typeSpelling(failure.argument) + "'.");
+    }
     diagnostics.emplace_back(std::move(diagnostic));
   };
   if (!failure.alternatives.empty()) {
