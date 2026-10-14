@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.428.0 — Annotated isolated test suites
+## 0.429.0 — Annotated isolated test suites
 
 - Explicit test targets collect safe, non-generic, non-static `[[test]] void`
   functions with no parameters, including selected-package included and private
@@ -23,6 +23,18 @@ for what minor and patch releases mean.
   ordered additional prelude roots. Compiler diagnostics, editor hover and
   Tree-sitter recognise the attribute. `examples/annotated-tests` demonstrates
   the complete workflow.
+
+## 0.428.0 — Memoized native dependency discovery
+
+- Project cache lookups no longer rerun the native preprocessor for every
+  declared C/C++ source (including dependency groups') when nothing it reads
+  has changed. Each probe's outcome is memoized beneath
+  `build/gti/cache/native-discovery/` with content digests, stat stamps and
+  directory watches; a lookup revalidates the record and contributes the same
+  identity bytes as the probe, so cache keys are unchanged. An unchanged
+  engine-sized target with 33 native sources now hits in about 1.4 s inside
+  the driver instead of 4 s. Bulk file reads replace a byte-at-a-time reader
+  on the same path.
 
 ## 0.427.0 — Debug builds use the project cache
 
