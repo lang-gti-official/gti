@@ -1376,7 +1376,8 @@ collectSemanticTokens(std::string_view source,
           tokens[index].lexeme != "target" &&
           (!classifications[index] ||
            (classifications[index]->type != String &&
-            classifications[index]->type != Decorator))) {
+            classifications[index]->type != Decorator &&
+            classifications[index]->type != Keyword))) {
         if (inactive[index]) {
           classifications[index] = SemanticClassification{Variable, 0};
         } else {
