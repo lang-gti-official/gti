@@ -94,11 +94,11 @@ int main() { Derived d{}; return d.read() - 1; })");
   accept(base + R"(struct Derived : public Base {
 struct Nested { static int read(Derived& value) { return value.value; } };
 }; int main() { Derived d{}; return Derived::Nested::read(d) - 1; })");
-  for (const std::string &expression :
+  for (const std::string expression :
        {"item.value", "item.method()", "Base::secret()", "Base::shared"})
     reject(base + "int test(Base& item) { return " + expression + "; }");
-  for (const std::string &receiver : {"Base", "Sibling"}) {
-    for (const std::string &expression : {"peer.value", "peer.method()"})
+  for (const std::string receiver : {"Base", "Sibling"}) {
+    for (const std::string expression : {"peer.value", "peer.method()"})
       reject(base + "struct Derived : public Base { int test(" + receiver +
              "& peer) { return " + expression + "; } };");
   }
@@ -123,10 +123,12 @@ struct D<T> : public Base<T> { D(T x) : Base<T>(x) {} T bad(Base<T>& b) { return
 int main() { D<int> d{1}; Base<int> b{2}; return d.bad(b); })");
   reject(R"(class Base<T> { protected: static int secret() { return 1; } };
 struct Derived : public Base<int> { int bad() { return Base<bool>::secret(); } };
-int main() { Derived d{}; return d.bad(); })");
+int main() { Derived d{}; return d.bad(); })",
+         "GTI-S2039");
   reject(R"(class Base<T> { protected: static int secret = 1; };
 struct Derived : public Base<int> { int bad() { return Base<bool>::secret; } };
-int main() { Derived d{}; return d.bad(); })");
+int main() { Derived d{}; return d.bad(); })",
+         "GTI-S2039");
   reject(R"(class Base<T> { protected: int value = 1; };
 struct D<T> : public Base<T> { int bad(D<bool>& peer) { return peer.value; } };
 int main() { D<int> d{}; D<bool> peer{}; return d.bad(peer); })");
