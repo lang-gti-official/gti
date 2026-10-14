@@ -5254,6 +5254,13 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
     const ClassInfo *fieldOwner = classInfo(fieldType);
     if (fieldOwner == nullptr || (fieldOwner->abstract && !baseSubobject))
       return false;
+    // Open value expressions defer instance eligibility, but cannot create a
+    // constructor candidate. Concrete analysis checks the selected operation.
+    const bool openValueArguments = std::any_of(
+        fieldType.valueArguments.begin(), fieldType.valueArguments.end(),
+        [](const CompileTimeValue &value) {
+          return value.kind != CompileTimeValue::Kind::UInt64;
+        });
     const ConstructorInfo *constructor = defaultConstructor(*fieldOwner);
     if (constructor != nullptr) {
       if (constructor->requiresUnsafe ||
@@ -5262,14 +5269,7 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
            !(baseSubobject &&
              constructor->access == AccessModifier::Protected)))
         return false;
-      // Value-dependent eligibility is deferred only for an existing accessible
-      // default constructor. An open argument cannot manufacture a default
-      // operation beside a base's argument-taking constructor.
-      if (std::any_of(fieldType.valueArguments.begin(),
-                      fieldType.valueArguments.end(),
-                      [](const CompileTimeValue &value) {
-                        return value.kind != CompileTimeValue::Kind::UInt64;
-                      }))
+      if (openValueArguments)
         return true;
       return resolveDefaultConstruction(fieldType, baseSubobject) &&
              (!requestsStructuralDefaultConstruction(*constructor) ||
@@ -5282,7 +5282,8 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
         });
     return defaultConstructorCandidateCount(*fieldOwner) == 0 &&
            (fieldOwner->constructors.empty() || declaredDefaults) &&
-           classCanUseStructuralDefaultConstruction(fieldType, visiting);
+           (openValueArguments ||
+            classCanUseStructuralDefaultConstruction(fieldType, visiting));
   };
   bool valid = true;
   for (const FieldInfo &field : owner->fields) {
