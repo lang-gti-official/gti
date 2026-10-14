@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.431.1 — Base arguments of generic classes
+
+- Fix the internal compiler error that 0.430.1 still listed (`GTI-B0001`,
+  "backend failed while generating a representation") when a generic class
+  computes its base-class argument through a call or a temporary, such as
+  `Derived(T extra) : Base(third_of(30)), extra(extra) {}` in
+  `class Derived<T> : public Base`. The same holds when any class computes the
+  argument of a generic base, such as `Derived() : Foundation<int>(third_of(30)) {}`.
+  Each instance, such as `Derived<int>` and `Derived<bool>`, computes its own
+  arguments before its base is built. Temporaries and failures are cleaned up
+  as for a non-generic class.
+- A generic class instantiated with a lambda type, such as `Holder<F>` created
+  in `use<F>(F f)` called with a lambda, still stops with this error, with or
+  without a base class.
+
 ## 0.431.0 — Annotated isolated test suites
 
 - Explicit test targets collect safe, non-generic, non-static `[[test]] void`
