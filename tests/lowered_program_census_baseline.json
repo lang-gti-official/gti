@@ -2264,11 +2264,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 36
       }
+    },
+    "155-conversion-operators.gti": {
+      "declarations": 1123,
+      "bodies": 130,
+      "generated_items": 79,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 26,
+        "callable_adapter": 13,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 35
+      }
     }
   },
   "totals": {
-    "declarations": 108111,
-    "bodies": 16573,
-    "generated_items": 10193
+    "declarations": 109234,
+    "bodies": 16703,
+    "generated_items": 10272
   }
 }
