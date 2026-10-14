@@ -66,6 +66,164 @@ int main() { return 0; }
 )gti",
            "GTI-S2007");
 
+  // A declaration of an unrelated nominal class constructs it from an
+  // initializer of another type through an implicit constructor, exactly as
+  // its direct initializer would: a local, a namespace binding, a field
+  // default and a field constructor initializer, by value or read-only
+  // reference. `implicit` stays an ordinary name everywhere else.
+  auto declared = analyze(R"gti(
+class Celsius {
+  int degrees;
+public:
+  implicit Celsius(int value) : degrees(value) {}
+  int read() { return this.degrees; }
+};
+struct Pair {
+  int first = 0;
+  int second = 0;
+  Pair(int left, int right) : first(left), second(right) {}
+};
+struct Sum {
+  int total;
+  implicit Sum(Pair& pair, int bias = 1)
+      : total(pair.first + pair.second + bias) {}
+};
+class Reading {
+  Celsius current = 20;
+  Celsius minimum;
+public:
+  Reading(int low) : minimum(low) {}
+  int span() { return this.current.read() - this.minimum.read(); }
+};
+Celsius freezing = 0;
+int main() {
+  Celsius warm = 21;
+  Pair pair{3, 4};
+  Sum sum = pair;
+  Reading reading{5};
+  int implicit = 44;
+  return warm.read() + freezing.read() + reading.span() + sum.total - implicit;
+}
+)gti");
+  expect(declared.canGenerateCode(),
+         "a declaration must construct its class from one exact argument");
+  if (!declared.canGenerateCode())
+    for (const auto &d : declared.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+  if (declared.canGenerateCode())
+    expect(!gti_test::emitCpp(declared).contents.empty(),
+           "declaration construction must retain executable authority");
+  const std::string celsius = R"gti(
+class Celsius {
+  int degrees;
+public:
+  implicit Celsius(int value) : degrees(value) {}
+  int read() { return this.degrees; }
+};
+)gti";
+  // Calls, returns and assignment keep exact types.
+  rejected(celsius + "void take(Celsius value) {}\n"
+                     "int main() { take(21); return 0; }\n",
+           "GTI-S2003");
+  rejected(celsius + "Celsius make() { return 21; }\n"
+                     "int main() { return make().read(); }\n",
+           "GTI-S2003");
+  rejected(celsius + "int main() { mut Celsius value{1}; value = 5; "
+                     "return value.read(); }\n",
+           "GTI-S2003");
+  // No constructor accepts the initializer: the exact-type error remains.
+  rejected(celsius + "int main() { Celsius hot = \"hot\"; return 0; }\n",
+           "GTI-S2003");
+  // A constant binding keeps exact types.
+  rejected(R"gti(
+class Celsius {
+  int degrees;
+public:
+  implicit constexpr Celsius(int value) : degrees(value) {}
+};
+constexpr Celsius boiling = 100;
+int main() { return 0; }
+)gti",
+           "GTI-S2003");
+  // Selection is the direct initializer's: ambiguity and a named move-only
+  // argument are diagnosed by constructor selection itself.
+  rejected(R"gti(
+struct Twice {
+  int value;
+  implicit Twice(int first) : value(first) {}
+  implicit Twice(int first, int second = 2) : value(first + second) {}
+};
+int main() { Twice twice = 1; return twice.value; }
+)gti",
+           "GTI-S2013");
+  rejected(R"gti(
+struct Owner {
+  int value = 0;
+  Owner(int initial) : value(initial) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+};
+struct Holder {
+  Owner owner;
+  implicit Holder(Owner value) : owner(std::move(value)) {}
+};
+int main() { Owner named{1}; Holder holder = named; return 0; }
+)gti",
+           "GTI-S2018");
+  // A destination that carries a borrow keeps its explicit construction.
+  rejected(R"gti(
+class Borrow {
+  int& value;
+public:
+  implicit Borrow(int& source) : value(source) {}
+};
+int main() { int seven = 7; Borrow borrow = seven; return 0; }
+)gti",
+           "GTI-S2003");
+  // Without `implicit` a constructor is called only explicitly; the
+  // exact-type error says how to opt in or construct explicitly.
+  {
+    auto plain = analyze(R"gti(
+struct Buffer {
+  int capacity;
+  Buffer(int size) : capacity(size) {}
+};
+int main() { Buffer buffer = 64; return buffer.capacity; }
+)gti");
+    const auto found =
+        std::find_if(plain.diagnostics.begin(), plain.diagnostics.end(),
+                     [](const auto &d) { return d.code == "GTI-S2003"; });
+    expect(!plain.canGenerateCode() && found != plain.diagnostics.end() &&
+               std::any_of(found->hints.begin(), found->hints.end(),
+                           [](const std::string &hint) {
+                             return hint.find("'implicit'") !=
+                                        std::string::npos &&
+                                    hint.find("Buffer buffer{...}") !=
+                                        std::string::npos;
+                           }),
+           "a constructor without 'implicit' must not construct a "
+           "declaration, and the error must say how to construct");
+  }
+  // `implicit` marks only an ordinary constructor callable with one explicit
+  // argument, with a source body and no unsafe obligation.
+  rejected("struct Pair { implicit Pair(int a, int b) {} };\n"
+           "int main() { return 0; }\n",
+           "GTI-S2121");
+  rejected("struct Empty { implicit Empty() {} };\n"
+           "int main() { return 0; }\n",
+           "GTI-S2121");
+  rejected("struct Same { int value = 0; Same() {} implicit Same(Same& other) "
+           "{} };\n"
+           "int main() { return 0; }\n",
+           "GTI-S2121");
+  for (const char *spelling :
+       {"struct Bad { implicit unsafe Bad(int value) {} };",
+        "struct Bad { unsafe implicit Bad(int value) {} };",
+        "struct Bad { constexpr implicit Bad(int value) {} };",
+        "struct Bad { Bad() {} implicit Bad(Bad&& other) = default; };"})
+    rejected(std::string(spelling) + "\nint main() { return 0; }\n",
+             "GTI-P0001");
+
   const std::string nativeSource = R"gti(
 extern "C" {
   uint64_t strlen(const uint8_t* text);

@@ -306,8 +306,8 @@ shorthand, qualification, and alias spelling. Namespace- and class-scoped
 `using Name = Type;` aliases are declaration-order independent within their
 direct declaring scope after cycle validation. Every class-like body (`class`,
 `struct`, `interface`, and `union`) admits aliases as type members. An alias
-follows the owner's current `public:` or `private:` section and the class key's
-default access, and its name cannot collide with a value, callable, or another
+follows the owner's current `public:`, `protected:`, or `private:` section and
+the class key's default access, and its name cannot collide with a value, callable, or another
 type alias in that owner. A public alias of a non-generic type may be named with
 `Owner::Name` outside the class.
 
@@ -401,8 +401,11 @@ the GTI source graph does not.
 
 Initialization requires an exact type unless a specific rule permits a
 conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
-Constructors are selected by one exact parameter list and do not define implicit
-conversions.
+Constructors are selected by one exact parameter list, and a class may declare
+conversion operators to other types (section 3.9.2). Neither defines an
+implicit conversion for calls, returns, or assignment; only the declaration
+rule below selects one, declared `implicit`, for an initializer of another
+type.
 
 The source-defined `std::upcast_unique<Base, Derived>` operation is an explicit
 ownership conversion, not an overload conversion. Its trusted private step is
@@ -417,6 +420,52 @@ constructor whose sole parameter is exactly `nullptr_t`. The same conversion
 is not considered for function arguments, constructor arguments, or returns.
 Assignment does not use this construction rule; a class assignment from
 `nullptr` requires an exact member `operator=(nullptr_t)`.
+
+The same declarations also construct from an initializer of another type, but
+only through a constructor its class declares `implicit`. In
+`T name = initializer;`, where `T` is the declared class or struct type and
+the initializer has a type `U` that no other rule admits, the declaration
+constructs `T` exactly as `T name{initializer}` would, considering only `T`'s
+implicit constructors. It selects the one whose exact parameter list accepts
+the initializer as its sole explicit argument, by value or by read-only
+reference, with any trailing defaults. Overload selection, access, argument
+ownership, failure, and cleanup are those of the direct initializer. So
+`std::string text = "Sampling...";` uses `std::string`'s
+`implicit string(std::string_view)`, and `Celsius warm = 21;` calls a declared
+`implicit Celsius(int)`. A constructor without `implicit`, such as a
+container's element-count constructor, is only ever called explicitly. A named
+move-only initializer still requires `std::move`, and an ambiguous or
+unavailable selection is diagnosed as for direct initialization. When no
+implicit constructor accepts `U`, the declaration keeps its exact-type
+initialization error, with a hint naming the explicit form. The rule does not
+apply to `constexpr` bindings, range-`for` element bindings, reference fields,
+unions, abstract classes, a declared type that carries a borrow, or an
+initializer whose type comes from its destination: a brace list, a
+contextually typed call, or a function name. Function arguments, returns, and
+assignment never use it. A class assignment from another type requires an
+exact member `operator=`, such as `std::string`'s
+`operator=(std::string_view)`.
+
+A declaration whose initializer has a class type `U` also converts it
+through an implicit conversion operator of `U` to exactly the declared type,
+as `T(initializer)` would (section 3.9.2). This applies to every declared
+value type, including `bool` and numeric types, under the same exclusions,
+except that a declared class type need not be a constructible class. So
+`UserId id = raw;` calls `RawId`'s `implicit operator UserId()`, and
+`bool ready = flag;` calls an `implicit operator bool()`. When the declared
+class also has an implicit constructor that takes the initializer, the
+declaration is ambiguous (`GTI-S2122`): GTI never ranks a constructor against
+a conversion operator, and `T name{initializer}` still selects the
+constructor. A conversion operator without `implicit` converts only
+explicitly; the exact-type error's hint then names `T(...)`.
+
+`implicit` is written first in an ordinary constructor declaration, before
+`constexpr`. It requires a source body and a constructor callable with exactly
+one explicit argument, so any further parameters must have defaults. It is
+invalid on a copy or move constructor or a constructor with a parameter pack
+(`GTI-S2121`), and cannot be combined with `unsafe`: a construction a
+declaration performs implicitly carries no unsafe caller obligation.
+Misplaced spellings, such as `constexpr implicit`, are syntax errors.
 
 Value-assignment contexts, including initialization, assignment, and return,
 accept an integer literal when its mathematical value fits the destination.
@@ -1048,6 +1097,47 @@ public:
 };
 ```
 
+### Member visibility
+
+Class members default to `private`; struct members default to `public`.
+`public:`, `protected:`, and `private:` sections apply to following members,
+including instance/static fields, methods, constructors, aliases and nested
+types. Visibility is checked by GTI semantic analysis after lookup and overload
+selection, before executable lowering. A public overload or virtual override
+keeps its own declared access; a public API may use protected implementation
+members without exposing them to its callers.
+
+A protected member is accessible in its declaring class and lexically nested
+classes, and in classes that publicly derive from that declaring class,
+transitively, including their lexically nested classes. For instance members,
+access granted through a derived class `D` additionally requires the receiver's
+static type to be `D` or a descendant of `D`. A `Base&` or sibling receiver is
+insufficient even if its dynamic object might be a `D`. The declaring class
+itself may access the member on other objects of its own type. Implicit receiver
+access follows the same rule. Concrete generic owner/receiver types matter:
+deriving from `Base<int>` grants no access to `Base<bool>`'s protected members.
+
+Static members and member types have no instance-receiver restriction, but
+retain the declaring-class/derivation requirement. Ordinary static members
+declared in generic owners remain unsupported under GTI's existing qualified
+generic value-member path restriction; protected access does not expand it.
+Qualification and public aliases cannot bypass an inaccessible intermediate
+alias or nested type.
+Protected constructors may initialize a derived object's direct base, including
+implicit base default construction; this permission does not permit derived
+code to construct arbitrary complete base objects. An `implicit` constructor
+retains the same access requirement during declaration initialization. Copy/move
+policies and destructors remain public under the existing ownership rules. Interface instance
+requirements remain public; interface static helpers may use protected access.
+Unions and native C records retain their public-storage restrictions.
+
+Protected visibility changes no mutation, borrowing, initialization, lifetime,
+unsafe, transfer/share or compiler-private capability obligations. Inheritance
+must still be explicitly `public`; protected inheritance and friendship are
+not introduced. No runtime access check, allocation or extra object state is
+required. [`150-protected-events.gti`](../../examples/150-protected-events.gti)
+demonstrates event-handler state and an unrelated generic counter.
+
 ### Optional out-of-class method definitions
 
 An ordinary named method may keep its signature in a non-generic class, struct
@@ -1424,6 +1514,85 @@ Consequently a named expected with a move-only value or error is rejected;
 `?std::move(result)` is the explicit consuming form. `GTI-S2086` owns invalid
 operand types, enclosing return contexts, mismatched error types, and
 unavailable alternative transport.
+
+### 3.9.2 Conversion Operators
+
+A class declares a conversion to another type with a conversion operator,
+named by its target:
+
+```gti
+struct RawId {
+  int64_t raw;
+  RawId(int64_t value) : raw(value) {}
+  operator UserId() { return UserId(this.raw); }
+  implicit operator int64_t() { return this.raw; }
+};
+
+UserId user = UserId(raw);  // explicit: calls RawId's operator UserId()
+int64_t bits = raw;         // implicit: a declaration may use it
+```
+
+The target is the operator's result type. A conversion operator is a
+non-static member with no parameters and a read-only, `mut`, or consuming
+(`&&`) receiver, and it may be `constexpr` or virtual. Its target is an owned
+value type: not `void`, a reference, a text view (`std::string_view`,
+`c_string`), a type carrying a borrow, or its own class. The boolean
+conversion is spelled `operator bool()`; another spelling of `bool`, such as an
+alias, is rejected. A class declares at most one conversion operator per target
+and receiver. Aliases denote their resolved target, and `implicit` does not
+distinguish declarations, so `operator Count()` and `operator int()` collide
+when `Count` aliases `int`. A conversion operator is inherited and overridden
+like any member; an override has the same target and receiver.
+
+A conversion operator is explicit by default. Only `Target(value)` calls it,
+including the keyword forms `int(value)`, `double(value)`, `char(value)`, and
+`bool(value)`, and an alias of a numeric, raw pointer, or class target.
+`implicit operator Target()` also admits the declaration conversion of
+section 3.5. No other context converts: function arguments, returns,
+assignment, operator operands, and `auto` inference keep exact types, and brace
+construction `Target{value}` considers only constructors.
+
+**Selection.** In `Target(value)`, where `value` has a class type `U` that
+declares a conversion operator to exactly `Target`, the conversion has two
+possible paths: a constructor of `Target` that takes `value` as its one
+explicit argument, and a conversion operator of `U` to `Target`. Each path
+counts every declaration of its kind whose types match, whatever access,
+receiver, or ownership it would then require. Exactly one path may exist: a
+constructor and an operator together are ambiguous (`GTI-S2122`), with no
+preference rule. When `U` declares no conversion operator to `Target`,
+`Target(value)` is ordinary construction. On the operator path, ordinary
+receiver selection chooses among `U`'s operators to `Target`: a read-only
+receiver selects only a read-only operator, a mutable place prefers a `mut`
+operator, and an owned temporary or `std::move(value)` prefers a consuming
+operator. A consuming operator never consumes a named owner implicitly, and a
+`mut` operator requires a mutable place. Access is checked after selection,
+so a private operator is an access error, never a reason to use another path.
+A declaration considers only implicit constructors and implicit operators,
+under the same rule.
+
+At most one conversion applies. GTI never chains a conversion operator with a
+constructor, another conversion operator, or a numeric conversion: a
+conversion to `C` through an intermediate `B` must be written in two steps.
+
+**Execution.** A conversion calls the selected operator with the converted
+value as its receiver, exactly as a member call would: the receiver's
+ownership and borrow rules, failure propagation, and the cleanup of a
+temporary receiver at the end of its full expression are those of the call.
+Its result is a fresh value of the target type; a declaration initialized by
+it owns that value. A consuming conversion consumes its receiver and cannot
+return borrowed state.
+
+**Contextual `operator bool`.** Conditions, `!`, `&&`, `||`, and the
+conditional operator's condition use any `operator bool`, implicit or not.
+`bool(value)` calls one explicitly, and `bool flag = value;` requires
+`implicit operator bool()`.
+
+**Generics.** A conversion whose source is a class, including a class
+parameterized by type parameters, is resolved where it is written. Within
+`Box<T>`, `operator T()` converts to the type parameter, and in a generic body
+`T value = box;` uses it when it is implicit. A type-parameter target `T(value)`
+remains a numeric conversion, because a generic body is checked before its
+instances: GTI has no constraint that names a conversion operator.
 
 ## 3.10 Well-Formed Control Flow
 

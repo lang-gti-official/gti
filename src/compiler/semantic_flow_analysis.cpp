@@ -641,6 +641,74 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
   recordProgramCleanupEffects(type, span, visiting, includeDirectDestructor);
 }
 
+auto SemanticVisitor::Impl::recordProgramConstructionEffects(
+    const Expr &site, const ResolvedConstructionInfo &construction,
+    std::size_t suppliedArguments) -> bool {
+  recordProgramConstructorDefaultArgumentEffects(
+      programConstructor(construction.constructor), suppliedArguments,
+      tokenSpan(expressionToken(site)));
+  if (construction.constructedType.kind != SemanticType::Class ||
+      construction.constructedType.classId == 0) {
+    return false;
+  }
+  if (hasOpenProgramCleanupShape(construction.constructedType)) {
+    addUnknownProgramEffect(site, "a generic construction has no closed "
+                                  "program-storage effect summary");
+    return true;
+  }
+  const SourceSpan span = tokenSpan(expressionToken(site));
+  if (construction.generatedDefault || construction.constructor == 0) {
+    recordProgramDefaultConstructionEffects(construction.constructedType, span);
+  } else {
+    const ProgramEffectOwner fields{
+        .kind = ProgramEffectOwnerKind::FieldInitializers,
+        .id = construction.constructedType.classId};
+    if (!classInfo(construction.constructedType.classId)
+             .genericParameters.empty())
+      recordConcreteProgramEffect(fields, construction.constructedType, {}, {},
+                                  span);
+    else
+      addProgramEffectEdge(fields, span);
+    recordProgramSelectedConstructorEffect(
+        programConstructor(construction.constructor),
+        construction.constructedType, span, construction.typeArguments,
+        construction.valueArguments);
+  }
+  return false;
+}
+
+auto SemanticVisitor::Impl::recordProgramOperatorTargetEffects(
+    const Expr &expression, const ResolvedOperatorInfo &operation) -> void {
+  if (!currentProgramEffectOwner.valid()) {
+    return;
+  }
+  const FunctionInfo *target =
+      operation.function == 0 ? nullptr
+                              : semanticModel.findFunction(operation.function);
+  if (target != nullptr && target->linkage != LanguageLinkage::Gti) {
+    return;
+  }
+  if (operation.dispatch != CallDispatch::Static || target == nullptr ||
+      !target->genericParameters.empty()) {
+    addUnknownProgramEffect(
+        expression,
+        "an overloaded operation has no closed static GTI target set");
+  } else if (target->declaration != nullptr &&
+             target->declaration->runtimeBinding()) {
+    // Trusted runtime bindings cannot execute a hidden GTI body. Their
+    // explicit receiver/argument storage effects are the caller's.
+    return;
+  } else if (target->declaration == nullptr ||
+             target->bodyDeclaration()->body() == nullptr) {
+    addUnknownProgramEffect(expression,
+                            "a selected GTI operation has no executable body");
+  } else {
+    addProgramEffectEdge(
+        {.kind = ProgramEffectOwnerKind::Function, .id = target->id},
+        expression);
+  }
+}
+
 auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     -> void {
   if (!currentProgramEffectOwner.valid()) {
@@ -666,37 +734,9 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
       recordProgramArgumentBoundaryEffects(construction->parameterTypes,
                                            initializer->arguments());
     }
-    recordProgramConstructorDefaultArgumentEffects(
-        programConstructor(construction->constructor), suppliedArguments,
-        tokenSpan(expressionToken(expression)));
-    if (construction->constructedType.kind == SemanticType::Class &&
-        construction->constructedType.classId != 0) {
-      if (hasOpenProgramCleanupShape(construction->constructedType)) {
-        addUnknownProgramEffect(
-            expression,
-            "a generic construction has no closed program-storage effect "
-            "summary");
-        return;
-      }
-      const SourceSpan span = tokenSpan(expressionToken(expression));
-      if (construction->generatedDefault || construction->constructor == 0) {
-        recordProgramDefaultConstructionEffects(construction->constructedType,
-                                                span);
-      } else {
-        const ProgramEffectOwner fields{
-            .kind = ProgramEffectOwnerKind::FieldInitializers,
-            .id = construction->constructedType.classId};
-        if (!classInfo(construction->constructedType.classId)
-                 .genericParameters.empty())
-          recordConcreteProgramEffect(fields, construction->constructedType, {},
-                                      {}, span);
-        else
-          addProgramEffectEdge(fields, span);
-        recordProgramSelectedConstructorEffect(
-            programConstructor(construction->constructor),
-            construction->constructedType, span, construction->typeArguments,
-            construction->valueArguments);
-      }
+    if (recordProgramConstructionEffects(expression, *construction,
+                                         suppliedArguments)) {
+      return;
     }
   }
   if (const auto *initializer = exprAs<ArrayInitializer>(&expression)) {
@@ -752,32 +792,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
         forceProgramStorageBoundaryAccess(index->index());
       }
     }
-    const FunctionInfo *target =
-        operation->function == 0
-            ? nullptr
-            : semanticModel.findFunction(operation->function);
-    if (target != nullptr && target->linkage != LanguageLinkage::Gti) {
-      return;
-    }
-    if (operation->dispatch != CallDispatch::Static || target == nullptr ||
-        !target->genericParameters.empty()) {
-      addUnknownProgramEffect(
-          expression,
-          "an overloaded operation has no closed static GTI target set");
-    } else if (target->declaration != nullptr &&
-               target->declaration->runtimeBinding()) {
-      // Trusted runtime bindings cannot execute a hidden GTI body. Their
-      // explicit receiver/argument storage effects were retained above.
-      return;
-    } else if (target->declaration == nullptr ||
-               target->bodyDeclaration()->body() == nullptr) {
-      addUnknownProgramEffect(
-          expression, "a selected GTI operation has no executable body");
-    } else {
-      addProgramEffectEdge(
-          {.kind = ProgramEffectOwnerKind::Function, .id = target->id},
-          expression);
-    }
+    recordProgramOperatorTargetEffects(expression, *operation);
     return;
   }
   const auto *call = exprAs<Call>(&expression);
@@ -2858,9 +2873,9 @@ auto SemanticVisitor::Impl::analyzeExpectedCallableResult(
   return result;
 }
 
-auto SemanticVisitor::Impl::analyzeInitializer(const ExprPtr &expr,
-                                               const SemanticType &expectedType,
-                                               bool allowExactNullConstruction)
+auto SemanticVisitor::Impl::analyzeInitializer(
+    const ExprPtr &expr, const SemanticType &expectedType,
+    bool allowExactNullConstruction, bool allowDeclarationConstruction)
     -> SemanticType {
   const std::optional<SemanticType> enclosingType = contextualInitializerType;
   const Expr *enclosingExpression = contextualInitializerExpression;
@@ -2889,10 +2904,162 @@ auto SemanticVisitor::Impl::analyzeInitializer(const ExprPtr &expr,
     semanticModel.record(*expr, info);
     semanticModel.recordDefinedFailure(*expr,
                                        classifyDefinedFailure(*expr, info));
+  } else if (allowDeclarationConstruction) {
+    const bool construction =
+        declarationConstructionApplies(expr, expectedType, result);
+    if (declarationConversionApplies(expr, expectedType, result)) {
+      result = analyzeDeclarationConversion(expr, expectedType, result,
+                                            construction);
+    } else if (construction) {
+      result = analyzeDeclarationConstruction(expr, expectedType, result);
+    }
   }
   contextualInitializerType = enclosingType;
   contextualInitializerExpression = enclosingExpression;
   return result;
+}
+
+auto SemanticVisitor::Impl::declarationConstructionApplies(
+    const ExprPtr &expr, const SemanticType &declaredType,
+    const SemanticType &initializerType) -> bool {
+  if (!expr || declaredType.kind != SemanticType::Class ||
+      declaredType.classId == 0 || declaredType.classId > classes.size() ||
+      initializerType == SemanticType::Unknown ||
+      initializerType == SemanticType::NullPtr ||
+      initializerType == declaredType) {
+    return false;
+  }
+  // A union's initializer selects a member rather than a constructor, an
+  // abstract class has no complete object, and a borrow-carrying result needs
+  // the stored-borrow bookkeeping of a construction expression.
+  const ClassInfo &owner = classInfo(declaredType.classId);
+  if (owner.kind == ClassKind::Union || owner.abstract ||
+      typeTraits(declaredType).containsBorrowedState) {
+    return false;
+  }
+  // An initializer typed by its destination has no type of its own with which
+  // to select a constructor.
+  if (isContextualArrayArgument(expr) ||
+      isContextualCallableResultArgument(expr) ||
+      isContextualNativeFunctionArgument(expr)) {
+    return false;
+  }
+  return !isOwnershipAssignable(declaredType, initializerType, expr);
+}
+
+auto SemanticVisitor::Impl::analyzeDeclarationConstruction(
+    const ExprPtr &expr, const SemanticType &declaredType,
+    const SemanticType &initializerType) -> SemanticType {
+  // The declaration selects the constructor `T name{initializer}` would: one
+  // exact parameter list with the initializer as the sole argument.
+  semanticModel.forgetContextualConstruction(*expr);
+  const std::size_t diagnosticStart = diagnostics.size();
+  const SourceSpan site = tokenSpan(expressionToken(expr));
+  analyzeConstructorCallArguments(
+      *expr, declaredType.classId, declaredType.arguments,
+      declaredType.valueArguments,
+      {{.type = initializerType, .expression = &expr}}, expressionToken(expr),
+      false, true);
+  if (!semanticModel.recordsContextualConstruction(*expr)) {
+    // No constructor takes exactly this argument: the declaration keeps its
+    // exact-type initialization error. Any other rejection, such as an
+    // ambiguity or a required move, is the selection's own diagnostic.
+    if (diagnostics.size() == diagnosticStart + 1 &&
+        diagnostics.back().code == "GTI-S2012" &&
+        diagnostics.back().primary == site) {
+      diagnostics.pop_back();
+    }
+    return diagnostics.size() == diagnosticStart ? initializerType
+                                                 : SemanticType::Unknown;
+  }
+  const ResolvedConstructionInfo &construction =
+      *semanticModel.findContextualConstruction(*expr);
+  if (currentProgramEffectOwner.valid()) {
+    if (!construction.parameterTypes.empty() &&
+        (construction.parameterTypes.front().kind == SemanticType::Reference ||
+         construction.parameterTypes.front().kind ==
+             SemanticType::RawPointer)) {
+      forceProgramStorageBoundaryAccess(expr);
+    }
+    static_cast<void>(recordProgramConstructionEffects(*expr, construction, 1));
+  }
+  // The constructed value is the declaration's own, so its cleanup belongs
+  // to the enclosing effects exactly as a direct initializer's does.
+  if (requiresActiveCleanupFor(construction.constructedType)) {
+    recordProgramCleanupEffects(construction.constructedType, site);
+    applyRawCleanupWrites(
+        construction.constructedType, site,
+        contextualConstructionRawFields(*expr, construction.constructedType));
+  }
+  return construction.constructedType;
+}
+
+auto SemanticVisitor::Impl::declarationConversionApplies(
+    const ExprPtr &expr, const SemanticType &declaredType,
+    const SemanticType &initializerType) -> bool {
+  if (!expr || initializerType.kind != SemanticType::Class ||
+      declaredType == SemanticType::Unknown ||
+      declaredType.kind == SemanticType::Reference ||
+      declaredType == initializerType ||
+      isOwnershipAssignable(declaredType, initializerType, expr)) {
+    return false;
+  }
+  return !conversionOperatorCandidates(initializerType, declaredType, true)
+              .empty();
+}
+
+auto SemanticVisitor::Impl::analyzeDeclarationConversion(
+    const ExprPtr &expr, const SemanticType &declaredType,
+    const SemanticType &initializerType, bool constructionApplies)
+    -> SemanticType {
+  // The declaration converts as `Target(initializer)` would, through implicit
+  // operators only. An implicit constructor of the declared type that also
+  // takes the initializer is a second path, which makes it ambiguous.
+  semanticModel.forgetContextualConversion(*expr);
+  const Token site = expressionToken(expr);
+  if (const std::vector<const ConstructorInfo *> constructors =
+          constructionApplies
+              ? conversionConstructorCandidates(*expr, expr, initializerType,
+                                                declaredType, site, true)
+              : std::vector<const ConstructorInfo *>{};
+      !constructors.empty()) {
+    reportAmbiguousConversion(
+        site, initializerType, declaredType,
+        conversionOperatorCandidates(initializerType, declaredType, true),
+        constructors, true);
+    return SemanticType::Unknown;
+  }
+  if (!selectConversionOperator(*expr, expr, initializerType, declaredType,
+                                site, true) ||
+      !semanticModel.recordsContextualConversion(*expr)) {
+    return SemanticType::Unknown;
+  }
+  // The converted value is the declaration's own, so its cleanup belongs to
+  // the enclosing effects exactly as a constructed initializer's does.
+  if (requiresActiveCleanupFor(declaredType)) {
+    const SourceSpan span = tokenSpan(site);
+    recordProgramCleanupEffects(declaredType, span);
+    applyRawCleanupWrites(declaredType, span,
+                          contextualConstructionRawFields(*expr, declaredType));
+  }
+  return declaredType;
+}
+
+auto SemanticVisitor::Impl::contextualConstructionRawFields(
+    const Expr &initializer, const SemanticType &type)
+    -> std::vector<ProjectedRawPointerOrigins> {
+  // The selected constructor or conversion operator may store any address it
+  // receives or creates, and no query of its body is recorded here: every raw
+  // field is unresolved.
+  std::vector<ProjectedRawPointerOrigins> fields;
+  for (auto path : rawPointerFieldPaths(type)) {
+    mergeRawPointerFields(
+        fields,
+        {{std::move(path),
+          {{.addressSite = tokenSpan(expressionToken(initializer)),
+            .sourceResultQuery = std::numeric_limits<std::size_t>::max()}}}});
+  }
+  return fields;
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryUnit(SourceUnitId sourceUnit) const
@@ -3233,9 +3400,13 @@ auto SemanticVisitor::Impl::recordFunctionSymbol(
   const FunctionInfo *info = semanticModel.findFunction(declaration);
   if (info != nullptr && info->declaration != &declaration)
     return recordFunctionSymbol(*info->declaration);
-  const Token &name = declaration.operatorName()
-                          ? declaration.operatorName()->symbol
-                          : declaration.name();
+  // A conversion operator's target tokens are type references of their own;
+  // its declaration is the `operator` keyword.
+  const Token &name =
+      !declaration.operatorName() ? declaration.name()
+      : declaration.operatorName()->kind == OverloadedOperator::Conversion
+          ? declaration.operatorName()->keyword
+          : declaration.operatorName()->symbol;
   const bool method = info != nullptr && info->ownerClass != 0;
   const SymbolKind kind =
       declaration.operatorName()
@@ -3699,6 +3870,14 @@ auto SemanticVisitor::Impl::sameSignatureType(
 
 auto SemanticVisitor::Impl::sameFunctionSignature(
     const CallableCandidate &left, const CallableCandidate &right) -> bool {
+  // A conversion operator's target is part of its identity, although return
+  // types never distinguish ordinary overloads. Resolved types compare, so
+  // alias spellings of one target are one conversion.
+  if (isConversionOperator(left) && isConversionOperator(right) &&
+      !sameSignatureType(left.returnType, left.record().genericParameters,
+                         right.returnType, right.record().genericParameters)) {
+    return false;
+  }
   const auto unresolvedPack = [](const CallableCandidate &candidate) {
     return candidate.parameterPack &&
            (candidate.parameterTypes.empty() ||
@@ -3843,7 +4022,11 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
         sameFunctionSignature(previous, candidate)) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2011", DiagnosticPhase::Semantics, name,
-          "Duplicate overload signature for '" + name.lexeme + "'.");
+          isConversionOperator(candidate)
+              ? "Duplicate conversion operator to '" +
+                    typeSpelling(candidate.returnType) +
+                    "' with the same receiver."
+              : "Duplicate overload signature for '" + name.lexeme + "'.");
       diagnostic.related.push_back(
           {tokenSpan(previous.declaration->name()),
            "Previous overload with this parameter signature is here."});
@@ -4099,7 +4282,7 @@ auto SemanticVisitor::Impl::appendSymbolCompletions(
     std::vector<SemanticCompletionCandidateRecord> &result,
     const std::string &name, const std::string &qualifiedName,
     const Symbol &symbol, std::size_t scopeDistance, bool substitutedCallable,
-    bool mutableReceiver) const -> void {
+    bool mutableReceiver, const SemanticType &receiverType) const -> void {
   if (name.rfind("__gti_", 0) == 0 ||
       symbol.valueState != ValueState::Available ||
       (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4107,10 +4290,15 @@ auto SemanticVisitor::Impl::appendSymbolCompletions(
         semanticModel.isCompilerPrivateType(symbol.type)))) {
     return;
   }
-  if (currentStaticMemberFunction && symbol.ownerClass != 0 &&
-      !symbol.staticMember) {
+  if (currentStaticMemberFunction && receiverType == SemanticType::Unknown &&
+      symbol.ownerClass != 0 && !symbol.staticMember) {
     return;
   }
+  if (symbol.type != SemanticType::Function &&
+      !canAccessMember(symbol.access, symbol.ownerClass,
+                       symbol.staticMember ? SemanticType::Unknown
+                                           : receiverType))
+    return;
   if (symbol.type == SemanticType::Function) {
     for (const CallableCandidate &overload : symbol.overloads) {
       if (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4123,8 +4311,10 @@ auto SemanticVisitor::Impl::appendSymbolCompletions(
                        }))) {
         continue;
       }
-      if (overload.access == AccessModifier::Private &&
-          !isWithinClass(overload.ownerClass)) {
+      if (!canAccessMember(overload.access, overload.ownerClass,
+                           overload.staticMember ? SemanticType::Unknown
+                                                 : receiverType,
+                           overload.dispatchOwner)) {
         continue;
       }
       if (!mutableReceiver &&
@@ -4331,8 +4521,7 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
     }
     for (const auto &[name, alias] : owner.typeAliases) {
       if (!seen.insert(name).second ||
-          (alias.access == AccessModifier::Private &&
-           !isWithinClass(alias.ownerClass)) ||
+          (!canAccessMember(alias.access, alias.ownerClass)) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            (alias.compilerPrivate ||
             semanticModel.isCompilerPrivateType(alias.type)))) {
@@ -4363,8 +4552,7 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
          id = classInfo(id).enclosingClass) {
       const ClassInfo &nested = classInfo(id);
       if (nested.enclosingClass != 0 &&
-          nested.enclosingAccess == AccessModifier::Private &&
-          !isWithinClass(nested.enclosingClass)) {
+          !canAccessMember(nested.enclosingAccess, nested.enclosingClass)) {
         return true;
       }
     }
@@ -4439,16 +4627,14 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       if ((!isCompilerTrustedUnit(currentSourceUnit) &&
            nested.compilerPrivate) ||
           (nested.enclosingClass != 0 &&
-           nested.enclosingAccess == AccessModifier::Private &&
-           !isWithinClass(nested.enclosingClass))) {
+           !canAccessMember(nested.enclosingAccess, nested.enclosingClass))) {
         semanticModel.recordCompletion(std::move(context));
         return;
       }
     }
     for (const auto &[name, nestedId] : classType.nestedTypes) {
       const ClassInfo &nested = classInfo(nestedId);
-      if ((nested.enclosingAccess == AccessModifier::Private &&
-           !isWithinClass(*owner)) ||
+      if ((!canAccessMember(nested.enclosingAccess, *owner)) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            nested.compilerPrivate)) {
         continue;
@@ -4480,8 +4666,9 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
     for (const auto &[name, alias] : classType.typeAliases) {
       const SemanticType selectedType =
           substituteType(alias.type, substitution);
-      if ((alias.access == AccessModifier::Private &&
-           !isWithinClass(alias.ownerClass)) ||
+      if ((!canAccessMember(
+              alias.access, alias.ownerClass, SemanticType::Unknown,
+              specializedOwner.value_or(openClassType(*owner)))) ||
           (!specializedOwner && !classType.genericParameters.empty() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4509,8 +4696,9 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       if (alias.ownerClass != *owner ||
           alias.resolution != TypeAliasResolution::Resolved ||
           !seenTypeAliases.insert(alias.declaration->name().lexeme).second ||
-          (alias.access == AccessModifier::Private &&
-           !isWithinClass(alias.ownerClass)) ||
+          (!canAccessMember(
+              alias.access, alias.ownerClass, SemanticType::Unknown,
+              specializedOwner.value_or(openClassType(*owner)))) ||
           (!specializedOwner && !classType.genericParameters.empty() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
@@ -4535,15 +4723,19 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       // Do not advertise a spelling that ordinary symbol lookup cannot use.
       if (typeOnly || (specializedOwner && !ownerType) ||
           !member.symbol.staticMember ||
-          (member.access == AccessModifier::Private &&
-           !isWithinClass(member.symbol.ownerClass))) {
+          (member.symbol.type != SemanticType::Function &&
+           !canAccessMember(
+               member.access, member.symbol.ownerClass, SemanticType::Unknown,
+               specializedOwner.value_or(openClassType(*owner))))) {
         continue;
       }
       appendSymbolCompletions(
           context.candidates, name,
           qualifiedName(classType.namespaceScope,
                         classType.name.lexeme + "::" + name),
-          member.symbol, 0);
+          specializedOwner ? substituteSymbol(member.symbol, *specializedOwner)
+                           : member.symbol,
+          0);
     }
   } else if (const std::optional<std::string> owner =
                  resolveNamespacePath(ownerPath, currentNamespace)) {
@@ -4569,13 +4761,14 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
         if (member.symbol.staticMember) {
           continue;
         }
-        if (member.access == AccessModifier::Private &&
-            !isWithinClass(member.symbol.ownerClass)) {
+        if (member.symbol.type != SemanticType::Function &&
+            !canAccessMember(member.access, member.symbol.ownerClass,
+                             objectType)) {
           continue;
         }
         const Symbol substituted = substituteSymbol(member.symbol, objectType);
         appendSymbolCompletions(context.candidates, name, name, substituted, 0,
-                                true, mutableReceiver);
+                                true, mutableReceiver, objectType);
       }
     }
   } else if (objectType.kind == SemanticType::Array) {
@@ -5081,6 +5274,7 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
   }
   alias->type = substituteType(alias->type, classSubstitution(owner));
   alias->specializedOwner = true;
+  alias->ownerType = owner;
   if (auto qualifier = resolveTypeAliasPath(*type.qualifiedOwner, fromScope)) {
     alias->qualifiers.push_back(std::move(*qualifier));
   }
@@ -5162,6 +5356,7 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
       if (auto alias = member(ownerType.classId, path.last().lexeme)) {
         alias->type = substituteType(alias->type, classSubstitution(ownerType));
         alias->specializedOwner = true;
+        alias->ownerType = ownerType;
         alias->qualifiers.push_back(*qualifier);
         return alias;
       }
@@ -6548,15 +6743,17 @@ auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
     return nullptr;
   }
   if (member->symbol.type != SemanticType::Function &&
-      member->access == AccessModifier::Private &&
-      !isWithinClass(member->symbol.ownerClass) &&
+      !canAccessMember(member->access, member->symbol.ownerClass,
+                       member->symbol.staticMember ? SemanticType::Unknown
+                                                   : objectType) &&
       !(analyzingReflectedFieldAccess &&
         classInfo(member->symbol.ownerClass).reflectPrivate)) {
     const ClassInfo &declaringOwner = classInfo(member->symbol.ownerClass);
-    Diagnostic diagnostic =
-        makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, name,
-                       "Member '" + name.lexeme + "' of '" +
-                           declaringOwner.name.lexeme + "' is private.");
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2007", DiagnosticPhase::Semantics, name,
+        "Member '" + name.lexeme + "' of '" + declaringOwner.name.lexeme +
+            "' is " + std::string(accessModifierSpelling(member->access)) +
+            ".");
     diagnostic.related.push_back(
         {tokenSpan(member->symbol.declaration), "Member declared here."});
     diagnostics.emplace_back(std::move(diagnostic));

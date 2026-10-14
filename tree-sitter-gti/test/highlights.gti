@@ -322,3 +322,14 @@ struct NestedOwnerHighlight {
   NestedOwnerHighlight() {}
 };
 NestedOwnerHighlight::NestedChildHighlight nested_type_highlight;
+
+class ProtectedHighlight { protected: int state; };
+
+struct ImplicitHighlight {
+  int degrees;
+  implicit ImplicitHighlight(int value) : degrees(value) {}
+};
+struct ConversionHighlight {
+  int raw;
+  implicit operator int() { return this.raw; }
+};

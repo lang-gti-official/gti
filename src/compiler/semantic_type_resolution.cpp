@@ -1399,7 +1399,13 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     const std::vector<SemanticType> &typeArguments,
     const std::vector<CompileTimeValue> &valueArguments,
     std::vector<AnalyzedCallArgument> arguments, const Token &paren,
-    bool requireExactNullParameter) -> void {
+    bool requireExactNullParameter, bool contextualConstruction,
+    std::vector<const ConstructorInfo *> *candidateProbe) -> void {
+  // A probe collects the constructors whose parameter types take these
+  // arguments, whatever access or ownership the selection would then
+  // require. It reports nothing and records nothing.
+  if (candidateProbe != nullptr)
+    candidateProbe->clear();
   const SemanticType selectedClass = selectExactClassSpecialization(
       SemanticType::classType(classId, typeArguments, valueArguments));
   classId = selectedClass.classId;
@@ -1422,7 +1428,8 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     currentType = SemanticType::Unknown;
     return;
   }
-  if (typeTraits(constructedType).containsBorrowedState &&
+  if (candidateProbe == nullptr &&
+      typeTraits(constructedType).containsBorrowedState &&
       storedReferencePaths(constructedType).empty()) {
     const bool fieldAlreadyRejected = std::any_of(
         owner.fields.begin(), owner.fields.end(), [&](const FieldInfo &field) {
@@ -1444,13 +1451,13 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     currentType = SemanticType::Unknown;
     return;
   }
-  if (!isCompilerTrustedRequester(paren) &&
+  if (candidateProbe == nullptr && !isCompilerTrustedRequester(paren) &&
       typeRequiresThreads(constructedType) &&
       !validateConcurrentSurfaceAvailability(paren, "This concurrent value")) {
     currentType = SemanticType::Unknown;
     return;
   }
-  if (owner.abstract) {
+  if (candidateProbe == nullptr && owner.abstract) {
     report(paren,
            "Cannot construct abstract " +
                std::string(classKindSpelling(owner.kind)) + " '" +
@@ -1469,7 +1476,8 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   else if (const auto *direct = exprAs<DirectInitializer>(&construction);
            direct != nullptr && direct->arguments().size() == 1)
     writtenSource = &direct->arguments().front();
-  if (!requireExactNullParameter && arguments.size() == 1 &&
+  if (candidateProbe == nullptr && !requireExactNullParameter &&
+      !contextualConstruction && arguments.size() == 1 &&
       arguments.front().type == constructedType &&
       !arguments.front().forwardedPackElement && writtenSource != nullptr &&
       arguments.front().expression == writtenSource &&
@@ -1526,6 +1534,10 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   }
   for (const ConstructorInfo *candidatePointer : candidates) {
     const ConstructorInfo &constructor = *candidatePointer;
+    // A declaration constructs only through a constructor declared implicit.
+    if (contextualConstruction && !constructor.implicitConstruction) {
+      continue;
+    }
     const std::size_t fixedCount =
         constructor.parameterPack && !constructor.parameterTypes.empty()
             ? constructor.parameterTypes.size() - 1
@@ -1604,8 +1616,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
           conflicting != nullptr ? conflicting : missingParameter;
       if (failed != nullptr &&
           (isCompilerTrustedRequester(paren) || !constructor.compilerPrivate) &&
-          (constructor.access != AccessModifier::Private ||
-           currentClass == classId)) {
+          canAccessMember(constructor.access, classId, constructedType)) {
         rejectedInferences.push_back(
             {.constructor = &constructor,
              .parameter = failed,
@@ -1681,6 +1692,11 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
         }
       }
     }
+    if (candidateProbe != nullptr) {
+      if (exact || rejectedArgument)
+        candidateProbe->push_back(&constructor);
+      continue;
+    }
     if (exact) {
       if (!isCompilerTrustedRequester(paren) && constructor.compilerPrivate) {
         privateViable.push_back(&constructor);
@@ -1694,8 +1710,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     } else if (rejectedArgument &&
                (isCompilerTrustedRequester(paren) ||
                 !constructor.compilerPrivate) &&
-               (constructor.access != AccessModifier::Private ||
-                currentClass == classId)) {
+               canAccessMember(constructor.access, classId, constructedType)) {
       rejectedArguments.push_back(
           {&constructor, std::move(parameterTypes), *rejectedArgument});
     }
@@ -1715,11 +1730,16 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
                     contextualCallArgumentPotentiallyMatches(
                         firstType, argument.type, *argument.expression,
                         argument.deferred);
-      if (exact) {
+      if (exact && candidateProbe != nullptr) {
+        candidateProbe->push_back(nullptr);
+      } else if (exact) {
         viable.push_back(
             {nullptr, {firstType}, {}, {}, false, ConstructorKind::Ordinary});
       }
     }
+  }
+  if (candidateProbe != nullptr) {
+    return;
   }
 
   if (arguments.empty() && defaultConstructor(owner) == nullptr &&
@@ -1913,6 +1933,17 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
       diagnostic.hints.emplace_back(
           "Constructor calls do not perform implicit conversions; convert "
           "an argument explicitly with syntax such as 'uint64_t(value)'.");
+      if (viable.empty() && arguments.size() == 1 &&
+          !conversionOperatorCandidates(arguments.front().type, constructedType,
+                                        false)
+               .empty()) {
+        diagnostic.hints.emplace_back(
+            "'" + typeSpelling(arguments.front().type) + "' converts to '" +
+            typeSpelling(constructedType) +
+            "' through its conversion operator, which brace construction "
+            "never calls; write '" +
+            typeSpelling(constructedType) + "(value)' to use it.");
+      }
       for (const ConstructorInfo *candidatePointer : candidates) {
         const ConstructorInfo &candidate = *candidatePointer;
         if (candidate.declaration != nullptr &&
@@ -1983,8 +2014,9 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   }
 
   if (selected.constructor != nullptr && selected.constructor->requiresUnsafe) {
-    if (semanticModel.unsafeOperation(construction) ==
-        UnsafeOperationKind::ObjectLifetime) {
+    if (!contextualConstruction &&
+        semanticModel.unsafeOperation(construction) ==
+            UnsafeOperationKind::ObjectLifetime) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2055", DiagnosticPhase::Semantics, paren,
           "Raw in-place construction cannot invoke an unsafe constructor; "
@@ -2012,11 +2044,13 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   }
 
   if (selected.constructor != nullptr &&
-      selected.constructor->access == AccessModifier::Private &&
-      !isWithinClass(classId)) {
+      !canAccessMember(selected.constructor->access, classId,
+                       constructedType)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, paren,
-        "Constructor of '" + owner.name.lexeme + "' is private.");
+        "Constructor of '" + owner.name.lexeme + "' is " +
+            std::string(accessModifierSpelling(selected.constructor->access)) +
+            ".");
     diagnostic.related.push_back(
         {tokenSpan(selected.constructor->declaration->name()),
          "Constructor declared here."});
@@ -2112,34 +2146,39 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
                storedFieldSymbols(selected.parameterTypes[binding.parameter],
                                   binding.sourceFields),
            .access = binding.destination.reference.referenceAccess});
-  semanticModel.record(
-      construction,
-      ResolvedConstructionInfo{
-          .constructor =
-              selected.constructor == nullptr ? 0 : selected.constructor->id,
-          .declaration = selected.constructor == nullptr
-                             ? nullptr
-                             : selected.constructor->declaration,
-          .constructedType = constructedType,
-          .typeArguments = selected.typeArguments,
-          .valueArguments = selected.valueArguments,
-          .requirements = selected.requirements,
-          .parameterTypes = selected.parameterTypes,
-          .defaultArguments = std::move(defaultArguments),
-          .borrowOrigin =
-              storedParameter
-                  ? BorrowOriginKind::Argument
-                  : (selected.kind != ConstructorKind::Ordinary &&
-                             typeTraits(constructedType).containsBorrowedState
-                         ? BorrowOriginKind::Argument
-                         : BorrowOriginKind::None),
-          .borrowArgument = storedParameter.value_or(0),
-          .borrowAccess = storedAccess,
-          .borrowArguments = std::move(storedParameters),
-          .borrowFields = std::move(storedFields),
-          .generatedDefault = selected.generatedDefault,
-          .kind = selected.kind});
-  recordSelectedConstructionOccurrence(construction);
+  ResolvedConstructionInfo resolved{
+      .constructor =
+          selected.constructor == nullptr ? 0 : selected.constructor->id,
+      .declaration = selected.constructor == nullptr
+                         ? nullptr
+                         : selected.constructor->declaration,
+      .constructedType = constructedType,
+      .typeArguments = selected.typeArguments,
+      .valueArguments = selected.valueArguments,
+      .requirements = selected.requirements,
+      .parameterTypes = selected.parameterTypes,
+      .defaultArguments = std::move(defaultArguments),
+      .borrowOrigin =
+          storedParameter
+              ? BorrowOriginKind::Argument
+              : (selected.kind != ConstructorKind::Ordinary &&
+                         typeTraits(constructedType).containsBorrowedState
+                     ? BorrowOriginKind::Argument
+                     : BorrowOriginKind::None),
+      .borrowArgument = storedParameter.value_or(0),
+      .borrowAccess = storedAccess,
+      .borrowArguments = std::move(storedParameters),
+      .borrowFields = std::move(storedFields),
+      .generatedDefault = selected.generatedDefault,
+      .kind = selected.kind};
+  if (contextualConstruction) {
+    // The initializer keeps its own construction, call and occurrence records.
+    semanticModel.recordContextualConstruction(construction,
+                                               std::move(resolved), paren);
+  } else {
+    semanticModel.record(construction, std::move(resolved));
+    recordSelectedConstructionOccurrence(construction);
+  }
   currentType = constructedType;
 }
 
@@ -2805,8 +2844,8 @@ auto SemanticVisitor::Impl::resolveDefaultConstruction(const SemanticType &type,
                                     .generatedDefault = true};
   }
   if (constructor->requiresUnsafe || !constructor->genericParameters.empty() ||
-      (constructor->access == AccessModifier::Private &&
-       !isWithinClass(owner->id))) {
+      (!(baseSubobject && constructor->access == AccessModifier::Protected) &&
+       !canAccessMember(constructor->access, owner->id, type))) {
     return std::nullopt;
   }
 
@@ -3179,6 +3218,61 @@ auto SemanticVisitor::Impl::isWithinClass(ClassId owner) const -> bool {
   return false;
 }
 
+auto SemanticVisitor::Impl::memberDeclaringType(const SemanticType &type,
+                                                ClassId owner) const
+    -> SemanticType {
+  std::vector<SemanticType> pending{type};
+  std::vector<SemanticType> visited;
+  while (!pending.empty()) {
+    SemanticType current = pending.back();
+    pending.pop_back();
+    if (current.kind != SemanticType::Class || current.classId == 0 ||
+        current.classId > classes.size() ||
+        std::find(visited.begin(), visited.end(), current) != visited.end())
+      continue;
+    if (current.classId == owner)
+      return current;
+    visited.push_back(current);
+    // Invalid inheritance cycles are diagnosed independently. Bound recovery
+    // even when such a cycle transforms its generic arguments at each step.
+    if (visited.size() > classes.size())
+      return SemanticType::Unknown;
+    const auto substitution = classSubstitution(current);
+    for (const auto &base : classInfo(current.classId).bases)
+      pending.push_back(substituteType(base.type, substitution));
+  }
+  return SemanticType::Unknown;
+}
+
+auto SemanticVisitor::Impl::canAccessMember(
+    AccessModifier access, ClassId owner, const SemanticType &receiver,
+    const SemanticType &lookupType) const -> bool {
+  if (owner == 0 || access == AccessModifier::Public)
+    return true;
+  if (access == AccessModifier::Private)
+    return isWithinClass(owner);
+  const SemanticType *unwrapped = &receiver;
+  while ((unwrapped->kind == SemanticType::Reference ||
+          unwrapped->kind == SemanticType::RawPointer) &&
+         unwrapped->arguments.size() == 1)
+    unwrapped = &unwrapped->arguments.front();
+  const SemanticType &object = *unwrapped;
+  const SemanticType declaringType = memberDeclaringType(
+      lookupType == SemanticType::Unknown ? object : lookupType, owner);
+  for (ClassId context = currentClass.value_or(0); context != 0;
+       context = classInfo(context).enclosingClass) {
+    const SemanticType contextType = openClassType(context);
+    const SemanticType contextOwner = memberDeclaringType(contextType, owner);
+    if (contextOwner != SemanticType::Unknown &&
+        (declaringType == SemanticType::Unknown ||
+         declaringType == contextOwner) &&
+        (context == owner || object == SemanticType::Unknown ||
+         object == contextType || isPublicBaseConversion(object, contextType)))
+      return true;
+  }
+  return false;
+}
+
 auto SemanticVisitor::Impl::validateNestedClassAccess(ClassId id,
                                                       const Token &use)
     -> bool {
@@ -3186,12 +3280,13 @@ auto SemanticVisitor::Impl::validateNestedClassAccess(ClassId id,
        current = classInfo(current).enclosingClass) {
     const ClassInfo &nested = classInfo(current);
     if (nested.enclosingClass != 0 &&
-        nested.enclosingAccess == AccessModifier::Private &&
-        !isWithinClass(nested.enclosingClass)) {
+        !canAccessMember(nested.enclosingAccess, nested.enclosingClass)) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2007", DiagnosticPhase::Semantics, use,
           "Nested type '" + nested.name.lexeme + "' of '" +
-              classInfo(nested.enclosingClass).name.lexeme + "' is private.");
+              classInfo(nested.enclosingClass).name.lexeme + "' is " +
+              std::string(accessModifierSpelling(nested.enclosingAccess)) +
+              ".");
       diagnostic.related.push_back(
           {tokenSpan(nested.name), "Nested type is declared here."});
       diagnostics.emplace_back(std::move(diagnostic));
@@ -3225,13 +3320,15 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
     reportCompilerPrivateAccess(use, alias.qualifiedName);
     return false;
   }
-  if (alias.ownerClass != 0 && alias.access == AccessModifier::Private &&
-      !isWithinClass(alias.ownerClass)) {
+  if (alias.ownerClass != 0 &&
+      !canAccessMember(alias.access, alias.ownerClass, SemanticType::Unknown,
+                       alias.ownerType)) {
     const ClassInfo &owner = classInfo(alias.ownerClass);
-    Diagnostic diagnostic =
-        makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, use,
-                       "Type alias '" + alias.declaration->name().lexeme +
-                           "' of '" + owner.name.lexeme + "' is private.");
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2007", DiagnosticPhase::Semantics, use,
+        "Type alias '" + alias.declaration->name().lexeme + "' of '" +
+            owner.name.lexeme + "' is " +
+            std::string(accessModifierSpelling(alias.access)) + ".");
     diagnostic.related.push_back(
         {tokenSpan(alias.declaration->name()), "Type alias is declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
@@ -7273,9 +7370,14 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
   case OverloadedOperator::PreDecrement:
   case OverloadedOperator::BitwiseNot:
   case OverloadedOperator::ContextualBool:
+  case OverloadedOperator::Conversion:
     break;
   }
-  if (expectedArity && function.parameters().size() != *expectedArity) {
+  if (name.kind == OverloadedOperator::Conversion &&
+      !function.parameters().empty()) {
+    fail("A conversion operator takes no parameters; its receiver is the "
+         "converted value.");
+  } else if (expectedArity && function.parameters().size() != *expectedArity) {
     fail(std::string(operatorSourceSpelling(name.kind)) + " expects " +
          std::to_string(*expectedArity) + " parameter" +
          (*expectedArity == 1 ? "." : "s."));
@@ -7284,9 +7386,10 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
   const SemanticType returnType =
       typeOf(function.returnType(), function.returnMutability());
   if (function.receiverMutability() == ReceiverMutability::Consuming) {
-    if (name.kind != OverloadedOperator::Call && !valueOperator) {
+    if (name.kind != OverloadedOperator::Call && !valueOperator &&
+        name.kind != OverloadedOperator::Conversion) {
       fail("A consuming receiver is supported only by value-producing "
-           "operators and operator().");
+           "operators, conversion operators and operator().");
     }
     if (returnType.kind == SemanticType::Reference ||
         typeTraits(returnType).containsBorrowedState) {
@@ -7298,6 +7401,34 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
   if ((comparisonOperator || name.kind == OverloadedOperator::ContextualBool) &&
       returnType != SemanticType::Bool) {
     fail(std::string(operatorSourceSpelling(name.kind)) + " must return bool.");
+  }
+  if (name.kind == OverloadedOperator::Conversion &&
+      returnType != SemanticType::Unknown) {
+    // One explicitly requested or implicit-declaration step to exactly this
+    // value type. Reference and borrow-carrying results need the stored-borrow
+    // provenance a conversion site does not yet record.
+    if (returnType == SemanticType::Void) {
+      fail("A conversion operator must produce a value, not void.");
+    } else if (returnType == SemanticType::Bool) {
+      fail("Declare the boolean conversion as 'operator bool()'.");
+    } else if (returnType.kind == SemanticType::Reference) {
+      fail("A conversion operator must produce a value; reference "
+           "conversions are not supported yet.");
+    } else if (conversionTargetCarriesBorrow(returnType)) {
+      fail("A conversion operator cannot produce borrowed state yet; return "
+           "an owned value, or provide a named method returning the view.");
+    } else if (currentClass && returnType == openClassType(*currentClass)) {
+      fail("A conversion operator cannot target its own class.");
+    }
+    // Every target shares one member name, so virtual dispatch would need a
+    // slot per target that the C++ representation does not yet provide.
+    const bool interfaceContract =
+        currentClass && classInfo(*currentClass).kind == ClassKind::Interface;
+    if (function.isVirtual() || function.isPure() || function.isOverride() ||
+        interfaceContract) {
+      fail("A conversion operator cannot be virtual yet; declare a virtual "
+           "named method, and a conversion operator that calls it.");
+    }
   }
   if (name.kind == OverloadedOperator::Dereference &&
       returnType.kind != SemanticType::Reference &&

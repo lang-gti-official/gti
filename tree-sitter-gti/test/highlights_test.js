@@ -688,6 +688,20 @@ const nestedTypeRow = fixtureLines.findIndex((line) =>
 requireCapture(nestedOwnerRow, "NestedOwnerHighlight", "type.definition");
 requireCapture(nestedChildRow, "NestedChildHighlight", "type.definition");
 requireCapture(nestedTypeRow, "NestedChildHighlight", "type");
+const implicitRow = fixtureLines.findIndex((line) =>
+  line.includes("implicit ImplicitHighlight"),
+);
+requireCapture(implicitRow, "implicit", "keyword.modifier");
+const conversionRow = fixtureLines.findIndex((line) =>
+  line.includes("implicit operator int"),
+);
+requireCapture(conversionRow, "implicit", "keyword.modifier");
+requireCapture(conversionRow, "operator", "keyword.operator");
+
+const protectedRow = fixtureLines.findIndex((line) =>
+  line.includes("class ProtectedHighlight"),
+);
+requireCapture(protectedRow, "protected", "keyword.modifier");
 
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",

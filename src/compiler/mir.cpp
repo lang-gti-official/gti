@@ -5508,18 +5508,27 @@ rewriteMirDeadInstruction(MirProgram &program, MirBodyAddress address,
                                                        instructionId);
 }
 
-std::optional<MirDeadInstructionRewrite>
-mir_detail::rewriteVerifiedMirDeadInstruction(MirProgram &program,
-                                              MirBodyAddress address,
-                                              MirInstructionId instructionId) {
-  MirProgram candidate = program;
-  MirBody *body = findMirBody(candidate, address);
+namespace {
+
+// The body, block and instruction a dead-instruction rewrite would tombstone,
+// when the instruction is an unused, effect-free computation nothing else
+// refers to; the shared preconditions of the trial and the rewrite.
+struct DeadInstructionTarget {
+  const MirBody *body = nullptr;
+  const MirBlock *block = nullptr;
+  const MirInstruction *instruction = nullptr;
+};
+
+std::optional<DeadInstructionTarget>
+deadInstructionTarget(const MirProgram &program, MirBodyAddress address,
+                      MirInstructionId instructionId) {
+  const MirBody *body = findMirBody(program, address);
   if (body == nullptr || instructionId == 0) {
     return std::nullopt;
   }
-  MirBlock *ownerBlock = nullptr;
-  MirInstruction *target = nullptr;
-  for (MirBlock &block : body->blocks) {
+  const MirBlock *ownerBlock = nullptr;
+  const MirInstruction *target = nullptr;
+  for (const MirBlock &block : body->blocks) {
     const auto found =
         std::find_if(block.instructions.begin(), block.instructions.end(),
                      [&](const MirInstruction &instruction) {
@@ -5537,7 +5546,7 @@ mir_detail::rewriteVerifiedMirDeadInstruction(MirProgram &program,
       !body->usesOf(*target->result).empty()) {
     return std::nullopt;
   }
-  const MirEffectTraits effect = effects(candidate, *target);
+  const MirEffectTraits effect = effects(program, *target);
   const bool neutral =
       effect.removableWhenUnused && !effect.mayTrap && !effect.writesPlace &&
       !effect.readsUnknownMemory && !effect.writesUnknownMemory &&
@@ -5555,31 +5564,55 @@ mir_detail::rewriteVerifiedMirDeadInstruction(MirProgram &program,
   if (!neutral) {
     return std::nullopt;
   }
-  // The body records no use, but the constructor record still publishes a
-  // field from this value: removing it would leave the backend writing the
-  // field from an undefined value.
-  if (mirRecordPublishedConstructorInitializer(candidate, *body, address.owner,
+  if (mirRecordPublishedConstructorInitializer(program, *body, address.owner,
                                                *target) != nullptr) {
     return std::nullopt;
   }
+  return DeadInstructionTarget{
+      .body = body, .block = ownerBlock, .instruction = target};
+}
 
+} // namespace
+
+bool mir_detail::canRewriteVerifiedMirDeadInstruction(
+    const MirProgram &program, MirBodyAddress address,
+    MirInstructionId instructionId) {
+  return deadInstructionTarget(program, address, instructionId).has_value();
+}
+
+std::optional<MirDeadInstructionRewrite>
+mir_detail::rewriteVerifiedMirDeadInstruction(MirProgram &program,
+                                              MirBodyAddress address,
+                                              MirInstructionId instructionId) {
+  const std::optional<DeadInstructionTarget> found =
+      deadInstructionTarget(program, address, instructionId);
+  if (!found) {
+    return std::nullopt;
+  }
+  // The program is ours to mutate; the finder only reads it.
+  MirBody *body = const_cast<MirBody *>(found->body);
+  MirInstruction *target = const_cast<MirInstruction *>(found->instruction);
   const MirDeadInstructionRewrite rewrite{.body = address,
-                                          .block = ownerBlock->id,
+                                          .block = found->block->id,
                                           .instruction = target->id,
                                           .sourceValue = target->hirValue,
                                           .sourceStatement =
                                               target->hirStatement,
                                           .result = target->result};
+  // Mutate in place; a refused rewrite restores the one instruction it
+  // touched and the body-wide facts derived from it.
+  const MirInstruction saved = *target;
   *target = makeMirInstructionTombstone(*target);
-  if (!rebuildMirValueUses(*body)) {
-    return std::nullopt;
+  if (rebuildMirValueUses(*body)) {
+    rebuildMirReachability(*body);
+    if (verifyMirBody(*body, address.owner).valid()) {
+      return rewrite;
+    }
   }
+  *target = saved;
+  (void)rebuildMirValueUses(*body);
   rebuildMirReachability(*body);
-  if (!verifyMirProgram(candidate).valid()) {
-    return std::nullopt;
-  }
-  program = std::move(candidate);
-  return rewrite;
+  return std::nullopt;
 }
 
 std::optional<MirUnreachableBlockRewrite>

@@ -98,6 +98,11 @@ int main() {
       "class Box {\n  constexpr Box<T>(T x)\n    requires std::copyable<T> :\n"
       "      value(x) {};\n};\n",
       options);
+  check("class Box{implicit Box(int x):a(x){}implicit constexpr Box(bool y):"
+        "a(1){}};",
+        "class Box {\n  implicit Box(int x) :\n      a(x) {}\n"
+        "  implicit constexpr Box(bool y) :\n      a(1) {}\n};\n",
+        options);
   check("class Box:ns::Base<int>{Box():ns::Base<int>(1),field(2){};};",
         "class Box : ns::Base<int> {\n  Box() :\n    "
         "  ns::Base<int>(1),\n      field(2) {};\n};\n",
@@ -208,6 +213,20 @@ int main() {
   options = config.options;
   options.disableFormat = true;
   check(source, source, options);
+
+  // Conversion operators are named by their target type, so the modifiers,
+  // a qualified or generic target, and a consuming receiver keep their
+  // declaration layout. `bool(value)` is an ordinary conversion expression.
+  check("struct Id{operator UserId(){return UserId(this.raw);}implicit "
+        "operator std::string()&&{return text;}implicit virtual operator "
+        "Box<int>()mut;implicit constexpr operator bool(){return true;}};"
+        "bool on=bool(id);",
+        "struct Id {\n  operator UserId() {\n    return UserId(this.raw);\n"
+        "  }\n  implicit operator std::string() && {\n    return text;\n  }\n"
+        "  implicit virtual operator Box<int>() mut;\n"
+        "  implicit constexpr operator bool() {\n    return true;\n  }\n};\n"
+        "bool on = bool(id);\n",
+        lang::FormatOptions{});
   std::cout << "Constructor formatting configuration, layout, token "
                "preservation and idempotence passed\n";
 }

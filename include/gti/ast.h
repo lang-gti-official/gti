@@ -185,6 +185,9 @@ enum class OverloadedOperator {
   Greater,
   GreaterEqual,
   ContextualBool,
+  // `operator Target()` for any target other than bool; the declaration's
+  // return type is the target.
+  Conversion,
 };
 
 struct OperatorName {
@@ -266,6 +269,8 @@ operatorFunctionName(OverloadedOperator kind) {
     return "__gti_operator_greater_equal";
   case OverloadedOperator::ContextualBool:
     return "__gti_operator_bool";
+  case OverloadedOperator::Conversion:
+    return "__gti_operator_conversion";
   }
   return "__gti_operator_unknown";
 }
@@ -343,6 +348,8 @@ operatorSourceSpelling(OverloadedOperator kind) {
     return "operator>=";
   case OverloadedOperator::ContextualBool:
     return "operator bool";
+  case OverloadedOperator::Conversion:
+    return "a conversion operator";
   }
   return "operator";
 }
@@ -356,8 +363,22 @@ enum class ClassKind {
 
 enum class AccessModifier {
   Private,
+  Protected,
   Public,
 };
+
+inline constexpr std::string_view
+accessModifierSpelling(AccessModifier access) {
+  switch (access) {
+  case AccessModifier::Private:
+    return "private";
+  case AccessModifier::Protected:
+    return "protected";
+  case AccessModifier::Public:
+    return "public";
+  }
+  return "public";
+}
 
 struct BaseSpecifier {
   std::optional<Token> access;
@@ -1801,14 +1822,16 @@ public:
                   std::vector<ConstructorInitializer> initializers,
                   std::optional<SpecialMemberSpecifier> specifier,
                   std::unique_ptr<BlockStmt> body,
-                  std::optional<Token> unsafeKeyword = {})
+                  std::optional<Token> unsafeKeyword = {},
+                  std::optional<Token> implicitKeyword = {})
       : constexprKeyword_(std::move(constexprKeyword)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)),
         requiresClause_(std::move(requiresClause)),
         initializers_(std::move(initializers)),
         specifier_(std::move(specifier)), body_(std::move(body)),
-        unsafeKeyword_(std::move(unsafeKeyword)) {}
+        unsafeKeyword_(std::move(unsafeKeyword)),
+        implicitKeyword_(std::move(implicitKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitConstructorDecl(*this);
@@ -1843,6 +1866,12 @@ public:
     return unsafeKeyword_;
   }
 
+  // The contextual `implicit` modifier: a declaration may construct this
+  // class from the constructor's sole explicit argument type.
+  [[nodiscard]] const std::optional<Token> &implicitKeyword() const {
+    return implicitKeyword_;
+  }
+
 private:
   std::optional<Token> constexprKeyword_;
   Token name_;
@@ -1853,6 +1882,7 @@ private:
   std::optional<SpecialMemberSpecifier> specifier_;
   std::unique_ptr<BlockStmt> body_;
   std::optional<Token> unsafeKeyword_;
+  std::optional<Token> implicitKeyword_;
 };
 
 class DestructorDecl final : public StmtOfKind<StmtKind::DestructorDecl> {
@@ -2294,6 +2324,15 @@ public:
         functionAttributes_(std::move(functionAttributes)),
         definitionOwner_(std::move(definitionOwner)) {}
 
+  // The contextual `implicit` modifier of a conversion operator: an
+  // explicitly typed declaration may convert through it.
+  void setImplicitKeyword(Token keyword) {
+    implicitKeyword_ = std::move(keyword);
+  }
+  [[nodiscard]] const std::optional<Token> &implicitKeyword() const {
+    return implicitKeyword_;
+  }
+
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
   }
@@ -2401,6 +2440,7 @@ private:
   std::optional<Token> unsafeKeyword_;
   std::vector<FunctionAttribute> functionAttributes_;
   std::optional<NamePath> definitionOwner_;
+  std::optional<Token> implicitKeyword_;
 };
 
 class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {

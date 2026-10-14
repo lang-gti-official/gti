@@ -393,6 +393,27 @@ may also be running. `--progress=never` preserves byte-identical serial/parallel
 presentation; elapsed progress is intentionally not byte-stable. The display
 does not imply that waiting for one target means the other targets are idle.
 
+### Compile-time telemetry
+
+`gti --time-trace <path>` writes a Chrome Trace Format profile of one
+compilation through LLVM's time profiler. Every `PhaseTimeScope` in the
+compiler contributes a nested, named region; tracing costs nothing when it is
+off. The regions are the driver phases (`gti-source-load`, `gti-parse`,
+`gti-semantics`, `gti-hir-lowering`, `gti-failure-metadata`,
+`gti-mir-lowering`, `gti-optimize`, `gti-lowered-program`, `gti-backend`),
+each optimizer pass (`mir-pass` with the pass name as detail, plus
+`hir-compatibility-folding`, `mir-verify-input` and
+`mir-verify-output-coherence`), the lowered-program builder's verification
+and collection steps (`lowered-verify-*`, `lowered-collect`), the backend
+(`backend-verify-lowered-program`, `backend-plan`, `backend-plan-program`,
+`backend-write`), HIR's concrete instance analyses (`hir-instance-analysis`
+with the declaration as detail, `hir-verify-plans`), staged constant
+evaluation (`constexpr-staged-*`, `constexpr-for`), the safety analysis
+(`mir-safety-analysis`) and the optimization coherence verifier's replays
+(`coherence-*`). Regions nest, so a viewer's self time, not the sum of
+totals, attributes cost; a region that runs many times (instance analyses,
+staged evaluations) is best read as a count and a total.
+
 ## Direct Mode
 
 Executable requests explicitly require a compiler-selected global `main`
@@ -546,9 +567,15 @@ collisions. Bundle publication is recoverable but not a transaction with the
 separately atomic executable replacement. A non-debug build does not delete
 an existing bundle; the debugger checks native UUIDs before using it.
 
-Debug builds bypass the executable cache in this first slice: native metadata
-retains absolute source/checkout paths, and cached symbol sidecars are not yet
-modeled. Debug builds are not promised byte-reproducible native artifacts.
+Debug builds use the executable cache like any other build. Their artifacts
+embed the loaded units' absolute paths (line directives, native DWARF, the
+symbol bundle), so a debug build is keyed on those paths as well as on
+logical names, and on Darwin on the `dsymutil` identity; a moved checkout is a
+miss where a plain build would hit. A cache entry of a Darwin debug build
+keeps a copy of the published `.dSYM` bundle with a digest over its files,
+and a hit restores the bundle through the same owned-bundle publication a
+fresh build uses. Debug builds are not promised byte-reproducible native
+artifacts.
 Schema-2 build reports add `debug_info` (absent in old reports means false);
 the artifact fingerprint still covers the executable, not the `.dSYM` contents.
 The benchmark harness accepts old and new non-debug reports, validates the
@@ -1788,6 +1815,10 @@ The current key includes:
 - the GTI release and project-manifest model identities, normalized GTI
   configuration flags, backend C++ standard, optimization, execution profile,
   target triple, and complete GTI data layout;
+- the source-level debug policy and, when it is on, every loaded unit's path
+  as loaded plus (on Darwin) the `dsymutil` command, executable content and
+  version, because debug artifacts embed those paths and the bundle is that
+  tool's output;
 - for an internally enabled dormant library plan, its library/shared kind and
   canonical public-symbol-to-qualified-function export rows (ordinary
   executable/test identities remain byte-compatible);
@@ -1821,7 +1852,8 @@ The current key includes:
   consumes the compiler's own make-style dependency report for the exact
   discovered input set, hashes every discovered file's content and path
   identity, and hashes the preprocessed translation unit itself so include
-  resolution is captured as the compiler saw it at lookup time;
+  resolution is captured as the compiler saw it at lookup time (memoized as
+  described below, so an unchanged source does not rerun the preprocessor);
 - exact link files and file link operands classified content-complete by
   magic (regular archives and relocatable objects), with content identity; and
 - bounded scalar native-toolchain environment values that affect policy without
@@ -1834,6 +1866,25 @@ that no input content identity can record. The scan is a conservative byte
 match; a spelling inside a comment costs a rebuild, never a stale hit. A
 failed probe, unreadable discovered input, or unparseable dependency report
 likewise bypasses with an `identity unavailable` reason.
+
+Discovery is memoized beneath `build/gti/cache/native-discovery/`, one
+`gti-native-discovery-v1` record per probe, keyed on the native environment
+values, the compilers' command, executable content and version, and the exact
+probe argument vector with its staged output paths blanked. A record holds the
+preprocessed unit's digest, every discovered file with its content digest and
+a stat stamp (size, modification time, inode), and the entry-name digest of
+every directory where a new file could change include resolution: the parent
+of every discovered file (quote lookup) and every declared and toolchain
+include directory (angle lookup). At lookup the driver relists those
+directories and checks every dependency: an unchanged stamp that settled at
+least two seconds before the record was written vouches for its digest,
+anything else is rehashed and must match. A record that holds contributes
+exactly the identity bytes the probe would have and the preprocessor is not
+run; otherwise the probe runs and rewrites the record. Writing a record is
+best effort; a missing or unparseable one only costs a probe. The residual
+difference from re-running the preprocessor is a new file in a system include
+directory that contributed nothing before and now shadows another system
+header; toolchain changes of that kind are the compiler identity's domain.
 
 Application GTI paths in a resolved package graph use package
 `name@version` plus the package-relative unit path; standalone application
@@ -1853,11 +1904,12 @@ multiple roots for frontend callers. A later manifest/profile feature may
 supply more than one only through an immutable resolved policy, with direct,
 project, and CLI coverage for that ordering contract.
 
-Schema-v2 entries live beneath `build/gti/cache/v2/<sha256>/` and begin with the
-`gti-build-cache-v2` metadata marker. Older `v1` entries and metadata are not
-interpreted under the new ordered-root identity. Each v2 entry contains
-generated C++, the executable, and strict metadata recording the digest and
-size of both.
+Schema-v3 entries live beneath `build/gti/cache/v3/<sha256>/` and begin with the
+`gti-build-cache-v3` metadata marker. Older `v1` and `v2` entries and metadata
+are not interpreted. Each v3 entry contains generated C++, the executable, for
+a Darwin debug build a `symbols.dSYM` copy of the published bundle, and strict
+metadata recording the digest and size of the first two and a digest over the
+bundle's files (or `symbols none`).
 Executable permissions are recorded as well. Metadata is published last and
 acts as the commit marker. A hit verifies every digest and the executable mode
 before atomically copying the executable to the requested output; it

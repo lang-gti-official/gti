@@ -189,6 +189,9 @@ def test_inheritance_tooling(executable, root):
         "RangeIterator end(){return RangeIterator();}};\n"
         "int sum(Range& values){mut int result=0;"
         "for(auto& value:values){result+=value;}return result;}\n"
+        "struct Meter{int value;implicit Meter(int initial):value(initial){}};\n"
+        "int echo(int implicit){return implicit;}\n"
+        "struct Gauge{int raw;implicit operator Meter(){return Meter(this.raw);}};\n"
     )
     path = root / "inheritance-tooling.gti"
     path.write_text(source, encoding="utf-8")
@@ -251,6 +254,42 @@ def test_inheritance_tooling(executable, root):
         assert token_type("Base", sprite_base) == 4
         assert token_type("virtual") == 0
         assert token_type("override") == 0
+        # `implicit` is a keyword only as a constructor or conversion operator
+        # modifier.
+        assert token_type("implicit") == 0
+        assert token_type("implicit", source.index("int implicit")) != 0
+        conversion = source.index("implicit operator Meter")
+        assert token_type("implicit", conversion) == 0
+        # A conversion operator is named by its target in hover and outline.
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(
+                        source, conversion + len("implicit ") + 1
+                    ),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 10)[
+            "result"
+        ]
+        assert "implicit Gauge::operator Meter()" in hover["contents"]["value"], hover
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": "textDocument/documentSymbol",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        outline = session.receive_until(lambda message: message.get("id") == 11)[
+            "result"
+        ]
+        assert any(symbol["name"] == "operator Meter" for symbol in outline), outline
         render_call = source.index("render", source.index("return value.render"))
         assert token_type("render", render_call) == 6
         range_binding = source.index("value", source.index("for(auto& value"))

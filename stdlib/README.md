@@ -569,7 +569,7 @@ lifetimes. They have no empty state and do not infer cross-thread capability.
 exact stateless target, not a native C callback pointer. General checked
 `erase_ref`/`erase_mut` and unsafe exact-type `restore_ref<T>`/`restore_mut<T>`
 underpin the ordinary source wrappers. See
-[the borrowing-callback example](../examples/154-borrowing-callbacks.gti).
+[the borrowing-callback example](../examples/156-borrowing-callbacks.gti).
 
 | Include | Scaffolded surface |
 | --- | --- |

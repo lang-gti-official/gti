@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -182,9 +183,20 @@ def main():
         assert "debug-info=false" in result.stdout + result.stderr
         assert '#line ' not in project_cpp.read_text(encoding="utf-8")
         run([gti, "build", "--all", "-g"], project)
+        rebuilt = run([gti, "build", "-g", "--verbose"], project)
+        assert "gti: cache hit " in rebuilt.stderr, rebuilt.stderr
         assert '#line ' in project_cpp.read_text(encoding="utf-8")
+        project_executable = project_cpp.parent.parent / "app"
+        project_bundle = Path(str(project_executable) + ".dSYM")
+        if sys.platform == "darwin":
+            assert (project_bundle / ".gti-debug-symbols").is_file()
+            shutil.rmtree(project_bundle)
+        project_executable.unlink()
         result = run([gti, "run", "-g", "--verbose"], project)
-        assert "caching these is not yet supported" in result.stdout + result.stderr
+        assert "gti: cache hit " in result.stderr, result.stderr
+        assert project_executable.is_file()
+        if sys.platform == "darwin":
+            assert (project_bundle / ".gti-debug-symbols").is_file()
         run([gti, "check"], project)
         with (project / "gti.toml").open("a", encoding="utf-8") as manifest_output:
             manifest_output.write('[targets.unit]\nkind = "test"\nroot = "src/main.gti"\n')

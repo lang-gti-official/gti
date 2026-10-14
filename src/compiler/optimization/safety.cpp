@@ -1,6 +1,7 @@
 #include "gti/optimization/safety.h"
 #include "evidence_set.h"
 #include "gti/optimization/coverage.h"
+#include "gti/support.h"
 
 #include "../mir_verification_queries.h"
 #include "gti/checked_integer.h"
@@ -8443,6 +8444,7 @@ MirClosedCallSafetyAnalysis::find(MirBodyAddress body) const {
 
 MirClosedCallSafetyAnalysis
 analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
+  const PhaseTimeScope timeScope("mir-safety-analysis");
   constexpr std::size_t kMaximumBodyAnalyses = 32;
   constexpr std::size_t kWidenAfterContextUpdates = 4;
   constexpr std::size_t kMaximumContextUpdates = 8;

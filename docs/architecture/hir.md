@@ -805,6 +805,18 @@ constructor's real argument type. A selected member `operator=` is represented
 as an ordinary call with an explicit named-place receiver and exact right-hand
 argument. Neither form is inferred from a public standard-library type name.
 
+A declaration initializer with a contextual construction lowers as itself, and
+a source-less `DirectInitializer` then constructs the declared value from it.
+Its first operand is the initializer's own value, any selected defaults
+follow, and its call plan stages them exactly as a direct initializer's.
+`HirBody::contextualConstructions` pairs each such value with its initializer.
+The declaration's full expression ends with the construction, and
+`initializerValueForSource` returns it for the binding or field it
+initializes. The HIR model checks every entry against the semantic record: the
+selected constructor, parameter types and defaults, the constructor failure
+channel, and the absence of a result borrow. MIR lowers it as any constructor
+call; no MIR operation is added.
+
 The bounded M-EXEC-01 invocation slices give an eligible ordinary call,
 resolved class operator call, or ordinary constructor a `HirCallPlan`.
 Eligibility is deliberately narrow: the
@@ -902,13 +914,21 @@ a class value is eligible only when it can be moved. The operand vector remains
 source provenance; MIR consumes the plan as schedule authority for these
 slices.
 
-A contextual `operator bool` is an explicit synthetic HIR call whose receiver
+A contextual conversion, a condition's `operator bool` or a declaration's
+implicit conversion operator, is an explicit synthetic HIR call whose receiver
 operand is the already lowered source expression. It has its own target,
-dispatch, failure, receiver, and call-plan identity. When one source expression
-therefore produces both a value and an outer conversion call, full-expression
-root mapping selects the outermost lowered value and reaches the producer
-through its operand. MIR never synthesizes a contextual call from side
-metadata.
+dispatch, failure, borrow, receiver, and call-plan identity, and the
+conversion's result type and traits; the source value keeps its own. When one
+source expression therefore produces both a value and an outer conversion
+call, full-expression root mapping and `initializerValueForSource` select the
+outermost lowered value and reach the producer through its operand. The HIR
+model validates a namespace initializer's conversion call against the
+semantic conversion rather than the source expression. An explicit conversion,
+`Target(source)` or `int(source)`, lowers as the same receiver-only `Call`
+value with the conversion node as its source and the converted value as its
+receiver operand; it is never a `HirValueKind::Conversion`, which MIR treats
+as a value-preserving wrapper. MIR never synthesizes a conversion call from
+side metadata.
 
 `HirValueKind::PackFold` is a separate bounded schedule, not a request for HIR
 to interpret a general fold expression. Semantics has already selected one

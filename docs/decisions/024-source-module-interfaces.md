@@ -20,7 +20,8 @@ Modules are GTI language boundaries, not C++ modules or binary distributions.
 - Namespace-scope declarations are private to that source unit unless prefixed
   with `export`. `export namespace n { ... }` exports the enclosed declarations;
   `namespace n { export ... }` exports only the selected declarations. Class
-  member access remains the existing `public`/`private` rule.
+  member access remains independent of exports and follows the class visibility
+  rules (`public`/`private` at adoption, extended with `protected` on 2026-10-14).
 - `import name;` imports an interface, and `export import name;` deliberately
   re-exports its public surface from another interface. Ordinary imports never
   re-export. Imports and the module header are unconditional source-unit-level

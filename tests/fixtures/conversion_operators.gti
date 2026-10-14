@@ -1,0 +1,163 @@
+// A conversion calls its selected operator with the converted value as the
+// receiver, exactly as a member call would. Construction prints a tracked id
+// and destruction its negation, so each phase's trace is an oracle that
+// follows from this source alone. Phase 0 covers read-only, mutable and
+// consuming conversions from places, temporaries and explicit moves, numeric
+// and bool targets, a namespace binding, a field default and a generic body.
+// Phases 1 and 2 fail inside the selected operator: a temporary receiver and
+// a consumed receiver are each released exactly once. In phases 3 and 4 the
+// conversion is its function's only fallible operation.
+#include <std/string>
+#include <std/vector>
+
+class Tracked {
+  int id;
+
+public:
+  Tracked(int value) : id(value) { std::println(std::to_string(value)); }
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+// A read-only conversion constructs a fresh value.
+class Token {
+  Tracked tracked;
+
+public:
+  Token(int value) : tracked(Tracked(value)) {}
+  implicit operator Tracked() { return Tracked(this.tracked.read() + 100); }
+  operator int() { return this.tracked.read(); }
+};
+
+// A consuming conversion moves its state out of the receiver.
+class Handle {
+  mut Tracked tracked;
+
+public:
+  Handle(int value) : tracked(Tracked(value)) {}
+  implicit operator Tracked() && { return std::move(this.tracked); }
+};
+
+// A mutable conversion updates its receiver.
+struct Counter {
+  mut int calls = 0;
+  operator int() mut {
+    this.calls++;
+    return this.calls;
+  }
+};
+
+struct Flag {
+  bool on;
+  Flag(bool value) : on(value) {}
+  implicit operator bool() { return this.on; }
+};
+
+struct Plain {
+  int raw = 9;
+  implicit operator int() { return this.raw; }
+};
+
+struct Box<T> {
+  T value;
+  Box(T initial) : value(initial) {}
+  implicit operator T() { return this.value; }
+};
+
+// Fails inside the operator, after its temporary receiver was constructed.
+class Failing {
+  Tracked tracked;
+  int divisor;
+
+public:
+  Failing(int value, int by) : tracked(Tracked(value)), divisor(by) {}
+  implicit operator Tracked() { return Tracked(10 / this.divisor); }
+};
+
+// A consuming operator that fails before moving its state out.
+class FailingHandle {
+  mut Tracked tracked;
+  int divisor;
+
+public:
+  FailingHandle(int value, int by) : tracked(Tracked(value)), divisor(by) {}
+  implicit operator Tracked() && {
+    int scaled = 20 / this.divisor;
+    std::println(std::to_string(scaled));
+    return std::move(this.tracked);
+  }
+};
+
+struct Ratio {
+  int divisor;
+  Ratio(int value) : divisor(value) {}
+  operator int() { return 30 / this.divisor; }
+};
+
+int global_bits = Plain();
+
+T unwrap<T>(Box<T> box) {
+  T value = box;
+  return value;
+}
+
+int ratio_of(int divisor) { return int(Ratio(divisor)); }
+
+// A field default converts a temporary. Its receiver is released when the
+// initializer completes, before the constructor body runs.
+class Track {
+  Tracked lap = Token(6);
+
+public:
+  Track() { std::println(std::to_string(this.lap.read() + 1)); }
+  int read() { return this.lap.read(); }
+};
+
+int run(int selected) {
+  if (selected == 0) {
+    {
+      Token token{1};
+      Tracked declared = token;
+      Tracked explicit_value = Tracked(token);
+      std::println(std::to_string(declared.read() + explicit_value.read() +
+                                  int(token)));
+    }
+    {
+      Tracked fresh = Token(2);
+      std::println(std::to_string(fresh.read()));
+    }
+    {
+      Tracked consumed = Handle(3);
+      Handle named{4};
+      Tracked moved = std::move(named);
+      std::println(std::to_string(consumed.read() + moved.read()));
+    }
+    {
+      Track track{};
+      std::println(std::to_string(track.read()));
+    }
+    mut Counter counter{};
+    int first = int(counter);
+    int second = int(counter);
+    Flag flag{true};
+    bool on = flag;
+    Box<int> box{5};
+    std::println(std::to_string(first + second + global_bits + unwrap(box) +
+                                (on ? 1 : 0) + (bool(flag) ? 10 : 0)));
+    return 0;
+  }
+  if (selected == 1) {
+    Tracked failed = Failing(7, 0);
+    return failed.read();
+  }
+  if (selected == 2) {
+    FailingHandle handle{8, 0};
+    Tracked failed = std::move(handle);
+    return failed.read();
+  }
+  return ratio_of(selected - 3);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return run(argc - 1);
+}
