@@ -16061,10 +16061,8 @@ lifecycleGuardedGeneratedMoveIsDefinedFailureFree(const MirProgram &program,
 [[nodiscard]] bool nativeCopyClosure(const MirProgram &program,
                                      const SemanticType &type,
                                      const SemanticTypeTraits &traits) {
-  const MirLambdaInstance *lambda = type.kind == SemanticType::Lambda
-                                        ? program.findLambda(type.lambdaId)
-                                        : nullptr;
-  return lambda != nullptr && lambda->type == type && traits.copyable &&
+  const MirLambdaInstance *lambda = program.findLambdaForType(type);
+  return lambda != nullptr && traits.copyable &&
          !traits.containsBorrowedState &&
          std::all_of(
              lambda->captureTypes.begin(), lambda->captureTypes.end(),

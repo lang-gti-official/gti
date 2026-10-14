@@ -6126,8 +6126,7 @@ verifyMirPayloadEnums(const MirProgram &program) {
                  : std::optional<bool>{enumeration->requiresActiveCleanup};
     }
     case SemanticType::Lambda: {
-      const MirLambdaInstance *lambda =
-          type.lambdaId == 0 ? nullptr : program.findLambda(type.lambdaId);
+      const MirLambdaInstance *lambda = program.findLambdaForType(type);
       if (lambda == nullptr ||
           lambda->captureTypes.size() !=
               lambda->captureRequiresActiveCleanup.size()) {

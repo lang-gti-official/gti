@@ -1908,6 +1908,19 @@ public:
     return id == 0 || id > lambdas.size() ? nullptr : &lambdas[id - 1];
   }
 
+  // A closure type names its semantic lambda, whose numbering is separate
+  // from the instance ids above; the two coincide only when every semantic
+  // lambda is instantiated. Resolve the exact instance by its closure type.
+  [[nodiscard]] const MirLambdaInstance *
+  findLambdaForType(const SemanticType &type) const {
+    if (type.kind != SemanticType::Lambda)
+      return nullptr;
+    for (const MirLambdaInstance &instance : lambdas)
+      if (instance.type == type)
+        return &instance;
+    return nullptr;
+  }
+
   [[nodiscard]] std::size_t blockCount() const;
 
   friend bool operator==(const MirProgram &, const MirProgram &) = default;
