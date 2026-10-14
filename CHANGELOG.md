@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.430.2 — Fields of temporaries with destructors
+
+- Fix an internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a program reads a field directly from a
+  temporary whose class has a destructor, such as
+  `int32_t v = Holder(3).value;`. The same read now also works in field
+  defaults and member initializers (`int32_t width = Holder(3).value;`), in
+  base-class initializers (`Derived() : Base(Holder(3).value) {}`), inside
+  `&&` and `||` operands, through nested fields, and when a method is called on
+  the field (`Outer(4).inner.twice()`). The temporary is destroyed exactly
+  once, at the end of its full expression, after the field is read.
+
 ## 0.430.1 — Temporaries in constructor initializers
 
 - Fix an internal compiler error ("backend failed while generating a
@@ -24,9 +36,8 @@ for what minor and patch releases mean.
   base is constructed and is destroyed before the next initializer. If the
   argument, the base constructor or the constructor body fails, each
   temporary is still destroyed exactly once.
-- Reading a field of a constructed temporary that has a destructor, such as
-  `Holder(3).value`, and computing a base argument through a call in a generic
-  class still stop with this error.
+- Computing a base argument through a call in a generic class still stops
+  with this error.
 
 ## 0.430.0 — Protected members
 

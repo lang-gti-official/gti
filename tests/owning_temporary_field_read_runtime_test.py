@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""A field of an owning class temporary, including the payload of an owning
-Expected temporary, is read in place before the temporary is destroyed
-exactly once."""
+"""A field of an owning class temporary, whether a call result, a construction
+or the payload of an owning Expected temporary, is read in place before the
+temporary is destroyed exactly once."""
 
 from pathlib import Path
 
@@ -27,4 +27,11 @@ if __name__ == "__main__":
          (70, "", failure("return value + 1;", overflow))),
         (("producer-failure", "before", "read"),
          (70, "", failure("return counted(number + 1);", overflow))),
+        # The failure cleanup destroys the constructed temporary once, after
+        # its read; a failed construction is never destroyed.
+        (("later-failure", "after", "constructed", "read"),
+         (70, "destroyed 4\n", failure("return value + 1;", overflow))),
+        (("constructor-failure", "before", "constructed", "read", "now"),
+         (70, "", failure("checked_traced(int32_t number) : number(number + 1)",
+                          overflow))),
     ]})
