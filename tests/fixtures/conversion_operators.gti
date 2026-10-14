@@ -3,10 +3,10 @@
 // and destruction its negation, so each phase's trace is an oracle that
 // follows from this source alone. Phase 0 covers read-only, mutable and
 // consuming conversions from places, temporaries and explicit moves, numeric
-// and bool targets, a namespace binding and a generic body. Phases 1 and 2
-// fail inside the selected operator: a temporary receiver and a consumed
-// receiver are each released exactly once. In phases 3 and 4 the conversion
-// is its function's only fallible operation.
+// and bool targets, a namespace binding, a field default and a generic body.
+// Phases 1 and 2 fail inside the selected operator: a temporary receiver and
+// a consumed receiver are each released exactly once. In phases 3 and 4 the
+// conversion is its function's only fallible operation.
 #include <std/string>
 #include <std/vector>
 
@@ -103,6 +103,16 @@ T unwrap<T>(Box<T> box) {
 
 int ratio_of(int divisor) { return int(Ratio(divisor)); }
 
+// A field default converts a temporary. Its receiver is released when the
+// initializer completes, before the constructor body runs.
+class Track {
+  Tracked lap = Token(6);
+
+public:
+  Track() { std::println(std::to_string(this.lap.read() + 1)); }
+  int read() { return this.lap.read(); }
+};
+
 int run(int selected) {
   if (selected == 0) {
     {
@@ -121,6 +131,10 @@ int run(int selected) {
       Handle named{4};
       Tracked moved = std::move(named);
       std::println(std::to_string(consumed.read() + moved.read()));
+    }
+    {
+      Track track{};
+      std::println(std::to_string(track.read()));
     }
     mut Counter counter{};
     int first = int(counter);

@@ -19,6 +19,18 @@ for what minor and patch releases mean.
   the access rule. [Example 150](examples/150-protected-events.gti) demonstrates
   event handlers and a generic storage base.
 
+## 0.429.1 — Methods on temporaries in field initializers
+
+- Fix an internal compiler error ("failed to construct valid MIR") when a field
+  default or member initializer calls a method on a temporary, such as
+  `Meters lap = Feet(30).to_meters();`, or converts one through a conversion
+  operator, such as `Meters lap = Feet(30);` with `implicit operator Meters()`.
+  Field defaults run by a generated default constructor are fixed too. The
+  temporary is destroyed right after its field is initialized, before the next
+  initializer and the constructor body. Binding such a temporary to a
+  reference parameter, or calling a method on one in a base-class initializer,
+  still stops with an internal compiler error in the C++ backend.
+
 ## 0.429.0 — Conversion operators
 
 - A class can declare a conversion to another type with `operator Target()`.
