@@ -960,6 +960,11 @@ private:
         }
       }
       std::size_t position = start;
+      // Constructor modifiers: the contextual `implicit`, then `constexpr`.
+      if (lexemes[significant[position]].text == "implicit" &&
+          kindAt(position + 1, Kind::Word)) {
+        ++position;
+      }
       if (lexemes[significant[position]].text == "constexpr") {
         ++position;
       }
