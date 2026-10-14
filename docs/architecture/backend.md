@@ -2261,11 +2261,20 @@ later edge may re-enter the prefix, whose instructions the resumed body skips.
 
 This preparation family requires scalar derived parameters and scalar base
 arguments, with a passive non-borrowing base whose declared cleanup is guarded
-and whose representation has no state-bearing ancestor. Owned or borrowed
-derived parameters and base arguments, generic carrier families and recursively
-inactive owning/nested bases need the frame, transfer/loan and shell
-prerequisites recorded in the implementation sequence. They are not accepted
-through native C++ delegation shortcuts.
+and whose representation has no state-bearing ancestor. The derived class and
+the selected base may be generic instances, such as `Building<int>` built over
+`Foundation<int>`: the MIR proofs treat a generic instance like any class. The
+carrier and the gate constructor, however, are members of each class's own C++
+definition. The representation snapshot therefore marks a generic application
+that is emitted as its own concrete class (`concreteGenericClass`), and the
+emitter admits a preparation or gate only for such a class or a non-generic
+one. A generic class retained as a native class template, such as one
+instantiated with a lexical closure type, would need template specialization of
+those members and remains refused. Owned or borrowed derived parameters and
+base arguments, retained generic carrier templates and recursively inactive
+owning/nested bases need the frame, transfer/loan and shell prerequisites
+recorded in the implementation sequence. They are not accepted through native
+C++ delegation shortcuts.
 
 When a field or static initializer selects a failure-capable source
 constructor, the private C++ representation snapshot derives one exact
