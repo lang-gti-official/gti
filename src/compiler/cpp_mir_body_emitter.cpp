@@ -22726,6 +22726,27 @@ valueRootedClassPrvalueAssignmentSlot(
     const MirProgram &program, const CppMirBodyEmissionMap &representations,
     const MirBody &body, MirValueId valueId);
 
+// MIR ends a call's fresh-argument loans (MirLoanKind::CallArgument) right
+// after the invocation on every path, and the C++ body erases those loans.
+// Such an EndBorrow separates nothing in the representation from the producer
+// whose call site staged the loan. Any other EndBorrow keeps its own position.
+[[nodiscard]] bool producerArgumentLoanEnd(const MirBody &body,
+                                           const MirInstruction &producer,
+                                           const MirInstruction &instruction) {
+  const MirLoan *loan =
+      instruction.kind == MirInstructionKind::EndBorrow && instruction.loan
+          ? body.findLoan(*instruction.loan)
+          : nullptr;
+  return loan != nullptr && loan->kind == MirLoanKind::CallArgument &&
+         producer.callSite != 0 && loan->producedBy == producer.callSite &&
+         !instruction.result && !instruction.destination &&
+         !instruction.receiver && instruction.operands.empty() &&
+         instruction.lifecycle.empty() && instruction.definedFailure.empty() &&
+         instruction.localFailureSites.empty() &&
+         instruction.fullExpressionEnd == 0 &&
+         instruction.cleanupBoundaryEnd == 0;
+}
+
 // A whole class or Expected value initializes one constructor field as that
 // field's selected member initializer, immediately after its producer
 // succeeds. The field's empty representation is replaced by the moved value.
@@ -22777,7 +22798,16 @@ valueRootedClassPrvalueAssignmentSlot(
       consumer->hirValue != producer.hirValue)
     return nullptr;
   // The field is published only where the producer has just succeeded. That
-  // success edge may only activate the producer's own result obligation.
+  // success edge may only activate the producer's own result obligation, and
+  // only the end of the producer's own argument loans may come first, as when
+  // a temporary is bound to a reference parameter.
+  const auto publishedFrom = [&](const MirBlock &block, std::size_t index) {
+    while (index < block.instructions.size() &&
+           producerArgumentLoanEnd(body, producer, block.instructions[index]))
+      ++index;
+    return index < block.instructions.size() &&
+           &block.instructions[index] == consumer;
+  };
   if (const MirBlock *invoke = invokeProducerBlock(body, producer)) {
     const MirBlock *success = body.findBlock(invoke->terminator.target);
     return success != nullptr &&
@@ -22785,16 +22815,14 @@ valueRootedClassPrvalueAssignmentSlot(
                     (producer.successResultDrop &&
                      invokeSuccessActivates(body, producer,
                                             *producer.successResultDrop))) &&
-                   !success->instructions.empty() &&
-                   &success->instructions.front() == consumer
+                   publishedFrom(*success, 0)
                ? consumer
                : nullptr;
   }
   for (const MirBlock &block : body.blocks)
-    for (std::size_t index = 0; index + 1 < block.instructions.size(); ++index)
-      if (&block.instructions[index] == &producer &&
-          &block.instructions[index + 1] == consumer)
-        return consumer;
+    for (std::size_t index = 0; index < block.instructions.size(); ++index)
+      if (&block.instructions[index] == &producer)
+        return publishedFrom(block, index + 1) ? consumer : nullptr;
   return nullptr;
 }
 
@@ -33077,8 +33105,12 @@ public:
     output << "// GTI verified-MIR body: " << familyLabel << " "
            << facts.instanceLabel << " " << facts.id << "\n";
     if (preparingBase) {
+      // The preparation runs as the carrier's constructor, so the carrier is
+      // built in place as the delegated constructor's parameter and its
+      // temporary slots never move.
       writeIndent();
-      output << "__gti_base_preparation_" << facts.id << " __gti_prepared{};\n";
+      output << "__gti_base_preparation_" << facts.id
+             << " &__gti_prepared = *this;\n";
     }
     if (failureForm && facts.kind == MirBodyKind::Constructor &&
         !preparingBase) {
@@ -33159,10 +33191,22 @@ public:
       }
     }
     for (const MirPlace &place : facts.body.places) {
-      if (preparingBase &&
+      const bool carrierSlot =
+          preparation != nullptr &&
+          std::find(preparation->slots.begin(), preparation->slots.end(),
+                    place.id) != preparation->slots.end();
+      if (preparingBase && !carrierSlot &&
           std::find(preparation->places.begin(), preparation->places.end(),
                     place.id) == preparation->places.end())
         continue;
+      if (carrierSlot) {
+        // A base-initializer temporary lives in the carrier from its
+        // construction in the preparation to its Drop after the base.
+        writeIndent();
+        output << "auto &__gti_mir_p_" << place.id << " = __gti_prepared.slot_"
+               << place.id << ";\n";
+        continue;
+      }
       if (provenanceOnlyProjectedPlace(program, representations, facts.body,
                                        place))
         continue;
@@ -34710,7 +34754,7 @@ public:
           writeIndent();
           output << "__gti_prepared.ready = true;\n";
           writeIndent();
-          output << "return __gti_prepared;\n";
+          output << "return;\n";
           break;
         }
         if (preparation && !preparingBase &&
@@ -45004,7 +45048,7 @@ private:
     case MirTerminatorKind::PropagateFailure:
       if (preparingBase) {
         writeIndent();
-        output << "return __gti_prepared;\n";
+        output << "return;\n";
         return;
       }
       if (!failureForm) {
@@ -47801,6 +47845,170 @@ cppMirBasePreparation(const MirProgram &program,
   for (const auto &argument : stage->operands)
     if (!operand(argument))
       return std::nullopt;
+  // A scalar base argument may be computed through class temporaries of the
+  // base initializer's full expression: a constructed or returned value used
+  // as a call receiver, bound to a reference parameter, or read through a
+  // scalar field. The walk records each such instruction; the proof after it
+  // ties them to the exact MIR temporaries, loans and drops.
+  const MirBody &body = constructor.body;
+  std::vector<MirValueId> temporaries;
+  std::vector<const MirInstruction *> borrowStages;
+  std::vector<const MirInstruction *> temporaryCalls;
+  std::vector<const MirInstruction *> loanEnds;
+  std::vector<const MirInstruction *> temporaryDrops;
+  std::vector<const MirInstruction *> fieldViews;
+  // Returns no value for an instruction outside this family, which the
+  // scalar rules below then judge.
+  const auto prefixTemporary =
+      [&](const MirInstruction &instruction) -> std::optional<bool> {
+    const MirValue *produced =
+        instruction.result ? body.findValue(*instruction.result) : nullptr;
+    const bool classResult =
+        produced != nullptr && produced->info.type.kind == SemanticType::Class;
+    const bool exactOperation =
+        !instruction.rawMemoryAccess && instruction.objectAllocation == 0 &&
+        !instruction.lambdaTarget && !instruction.bodyTarget &&
+        !instruction.callableInvocation &&
+        instruction.callableArguments.empty() &&
+        instruction.intrinsic == IntrinsicKind::None &&
+        instruction.dispatch == CallDispatch::Static &&
+        !instruction.successResultDestination &&
+        !instruction.preparedParameterDrop && !instruction.defaultArgument;
+    // A producer arms at most its own value obligation, either here or on
+    // its Invoke success edge; the proof below names that obligation.
+    const bool producerLifecycle =
+        instruction.lifecycle.empty() ||
+        (instruction.lifecycle.size() == 1 &&
+         instruction.lifecycle.front().kind ==
+             MirLifecycleEventKind::Initialize &&
+         instruction.lifecycle.front().source == 0 &&
+         instruction.lifecycle.front().target != 0 &&
+         !instruction.lifecycle.front().conditional &&
+         !instruction.lifecycle.front().failureCleanup &&
+         !instruction.successResultDrop);
+    const bool classProducer =
+        classResult && produced->info.type == instruction.info.type &&
+        !produced->info.traits.containsBorrowedState && producerLifecycle;
+    switch (instruction.kind) {
+    case MirInstructionKind::Construct:
+      if (!classProducer || !exactOperation || !instruction.constructorTarget ||
+          instruction.functionTarget || instruction.destination ||
+          instruction.receiver || instruction.loan ||
+          instruction.constructorKind != ConstructorKind::Ordinary)
+        return false;
+      for (const auto &argument : instruction.operands)
+        if (!operand(argument))
+          return false;
+      retain(temporaries, produced->id);
+      retain(result.values, produced->id);
+      return true;
+    case MirInstructionKind::CallInput:
+      if (instruction.callInputKind != HirCallInputKind::ReadTemporaryBorrow &&
+          instruction.callInputKind != HirCallInputKind::MutableTemporaryBorrow)
+        return std::nullopt;
+      if (produced == nullptr || !exactOperation || instruction.destination ||
+          instruction.receiver || instruction.successResultDrop ||
+          !instruction.lifecycle.empty() || instruction.operands.size() != 1)
+        return false;
+      borrowStages.push_back(&instruction);
+      retain(result.values, produced->id);
+      return true;
+    case MirInstructionKind::Call: {
+      const bool scalarOperands =
+          std::all_of(instruction.operands.begin(), instruction.operands.end(),
+                      [](const MirOperand &argument) {
+                        return preparationScalar(argument.type);
+                      });
+      if (!instruction.receiver && !classResult && scalarOperands &&
+          instruction.lifecycle.empty() && !instruction.successResultDrop)
+        return std::nullopt;
+      const auto *callee =
+          instruction.functionTarget
+              ? program.findFunctionInstance(*instruction.functionTarget)
+              : nullptr;
+      if (callee == nullptr || !exactOperation ||
+          instruction.constructorTarget || instruction.destination ||
+          instruction.loan || callee->returnType != instruction.info.type ||
+          (classResult ? !classProducer
+                       : (!instruction.lifecycle.empty() ||
+                          instruction.successResultDrop ||
+                          (callee->returnType != SemanticType::Void &&
+                           !preparationScalar(callee->returnType)))))
+        return false;
+      // A reference argument is proved below to borrow a temporary.
+      for (const auto &argument : instruction.operands)
+        if (argument.type.kind != SemanticType::Reference && !operand(argument))
+          return false;
+      if (produced != nullptr) {
+        if (classResult) {
+          retain(temporaries, produced->id);
+        } else if (produced->info.traits.drop != DropKind::Trivial ||
+                   produced->info.traits.containsBorrowedState) {
+          return false;
+        }
+        retain(result.values, produced->id);
+      }
+      temporaryCalls.push_back(&instruction);
+      return true;
+    }
+    case MirInstructionKind::EndBorrow:
+      if (!instruction.loan || produced != nullptr || instruction.destination ||
+          instruction.receiver || !instruction.operands.empty() ||
+          !instruction.lifecycle.empty() ||
+          !instruction.definedFailure.empty() ||
+          !instruction.localFailureSites.empty())
+        return false;
+      loanEnds.push_back(&instruction);
+      return true;
+    case MirInstructionKind::Drop: {
+      const auto *slot = instruction.destination
+                             ? body.findPlace(*instruction.destination)
+                             : nullptr;
+      if (slot == nullptr || slot->root != MirPlaceRootKind::Value ||
+          !slot->projections.empty() ||
+          slot->type.kind != SemanticType::Class || produced != nullptr ||
+          !exactOperation || instruction.receiver ||
+          !instruction.operands.empty() || instruction.loan ||
+          instruction.lifecycle.size() != 1 ||
+          instruction.lifecycle.front().kind != MirLifecycleEventKind::Drop ||
+          instruction.lifecycle.front().source == 0 ||
+          instruction.lifecycle.front().target != 0 ||
+          instruction.lifecycle.front().conditional)
+        return false;
+      temporaryDrops.push_back(&instruction);
+      return true;
+    }
+    case MirInstructionKind::Load: {
+      const auto *view =
+          instruction.operands.size() == 1 &&
+                  instruction.operands.front().kind == MirOperandKind::Copy
+              ? body.findPlace(instruction.operands.front().place)
+              : nullptr;
+      if (view == nullptr || view->root != MirPlaceRootKind::Value ||
+          view->projections.empty())
+        return std::nullopt;
+      if (produced == nullptr || !preparationScalar(produced->info.type) ||
+          produced->info.type != view->type ||
+          instruction.operands.front().type != view->type ||
+          produced->info.traits.drop != DropKind::Trivial ||
+          produced->info.traits.containsBorrowedState ||
+          instruction.destination || instruction.receiver || instruction.loan ||
+          !instruction.lifecycle.empty() ||
+          !instruction.definedFailure.empty() ||
+          !instruction.localFailureSites.empty() ||
+          !std::all_of(view->projections.begin(), view->projections.end(),
+                       [](const MirPlaceProjection &projection) {
+                         return projection.kind == MirProjectionKind::Field;
+                       }))
+        return false;
+      fieldViews.push_back(&instruction);
+      retain(result.values, produced->id);
+      return true;
+    }
+    default:
+      return std::nullopt;
+    }
+  };
   while (!pending.empty()) {
     const auto id = pending.back();
     pending.pop_back();
@@ -47826,6 +48034,12 @@ cppMirBasePreparation(const MirProgram &program,
         found = true;
         stop = true;
         break;
+      }
+      if (const std::optional<bool> admitted = prefixTemporary(instruction)) {
+        if (!*admitted)
+          return std::nullopt;
+        result.instructions.push_back(instruction.id);
+        continue;
       }
       if (instruction.destination) {
         const auto *place =
@@ -47906,6 +48120,7 @@ cppMirBasePreparation(const MirProgram &program,
       pending.push_back(block->terminator.elseTarget);
       break;
     case MirTerminatorKind::PropagateFailure:
+    case MirTerminatorKind::TerminateCleanupFailure:
       break;
     default:
       return std::nullopt;
@@ -47913,12 +48128,207 @@ cppMirBasePreparation(const MirProgram &program,
   }
   if (!found)
     return std::nullopt;
+  if (!temporaries.empty() || !borrowStages.empty() ||
+      !temporaryCalls.empty() || !loanEnds.empty() || !temporaryDrops.empty() ||
+      !fieldViews.empty()) {
+    const auto inPartition = [&](MirInstructionId id) {
+      return std::find(result.instructions.begin(), result.instructions.end(),
+                       id) != result.instructions.end();
+    };
+    const auto referencesPlace = [](const MirInstruction &instruction,
+                                    MirPlaceId place) {
+      return instruction.destination == place ||
+             (instruction.receiver && instruction.receiver->place == place) ||
+             std::any_of(instruction.operands.begin(),
+                         instruction.operands.end(),
+                         [&](const MirOperand &argument) {
+                           return argument.place == place;
+                         });
+    };
+    // Each temporary has one exact owner: a Value-rooted slot armed by its
+    // producer with the slot's own value obligation, or, for a cleanup-free
+    // value read only through its fields, neither. A field view is read only
+    // by the preparation.
+    std::vector<std::pair<MirPlaceId, MirDropObligationId>> owned;
+    for (const MirValueId id : temporaries) {
+      const MirValue *value = body.findValue(id);
+      const MirInstruction *producer = findInstruction(body, value->definition);
+      if (std::any_of(body.usesOf(id).begin(), body.usesOf(id).end(),
+                      [](const MirValueUse &use) {
+                        return use.kind != MirValueUseKind::PlaceRoot;
+                      }))
+        return std::nullopt;
+      const MirPlace *slot = nullptr;
+      for (const MirPlace &place : body.places) {
+        if (place.root != MirPlaceRootKind::Value || place.value != id)
+          continue;
+        if (place.projections.empty()) {
+          if (slot != nullptr || place.type != value->info.type)
+            return std::nullopt;
+          slot = &place;
+          continue;
+        }
+        for (const MirBlock &block : body.blocks)
+          for (const MirInstruction &instruction : block.instructions)
+            if (referencesPlace(instruction, place.id) &&
+                std::find(fieldViews.begin(), fieldViews.end(), &instruction) ==
+                    fieldViews.end())
+              return std::nullopt;
+        if (std::any_of(
+                body.loans.begin(), body.loans.end(),
+                [&](const MirLoan &loan) { return loan.source == place.id; }))
+          return std::nullopt;
+      }
+      const MirDropObligation *drop = nullptr;
+      for (const MirDropObligation &candidate : body.dropObligations) {
+        const MirPlace *place = body.findPlace(candidate.place);
+        if (place == nullptr || place->root != MirPlaceRootKind::Value ||
+            place->value != id)
+          continue;
+        if (drop != nullptr || place != slot ||
+            candidate.kind != MirDropObligationKind::Value ||
+            candidate.dropType.type != slot->type || candidate.initiallyActive)
+          return std::nullopt;
+        drop = &candidate;
+      }
+      const bool armed =
+          drop == nullptr
+              ? producer->lifecycle.empty() && !producer->successResultDrop
+          : producer->successResultDrop
+              ? *producer->successResultDrop == drop->id &&
+                    invokeSuccessActivates(body, *producer, drop->id)
+              : producer->lifecycle.size() == 1 &&
+                    producer->lifecycle.front().target == drop->id;
+      if (!armed || (slot == nullptr) != (drop == nullptr))
+        return std::nullopt;
+      if (slot != nullptr) {
+        result.slots.push_back(slot->id);
+        owned.emplace_back(slot->id, drop->id);
+      }
+    }
+    const auto ownedSlot = [&](MirPlaceId place) {
+      return std::any_of(owned.begin(), owned.end(), [&](const auto &entry) {
+        return entry.first == place;
+      });
+    };
+    // Every temporary borrow is the exact receiver or reference argument
+    // stage of one call in the preparation, borrowing an owned slot. Only an
+    // argument stage carries a loan: the call's fresh-argument loan.
+    std::vector<const MirInstruction *> provenStages;
+    for (const MirInstruction *call : temporaryCalls) {
+      const auto *callee = program.findFunctionInstance(*call->functionTarget);
+      if (call->receiver) {
+        const DirectTemporaryBorrow receiver =
+            directTemporaryReceiver(body, *call);
+        if (!receiver || !callee->owner || callee->staticMember ||
+            receiver.stage->loan || !ownedSlot(receiver.slot->id))
+          return std::nullopt;
+        provenStages.push_back(receiver.stage);
+      } else if (callee->owner && !callee->staticMember) {
+        return std::nullopt;
+      }
+      for (std::size_t index = 0; index < call->operands.size(); ++index) {
+        if (call->operands[index].type.kind != SemanticType::Reference)
+          continue;
+        const DirectTemporaryBorrow argument =
+            directTemporaryArgument(body, *call, index);
+        if (!argument || !ownedSlot(argument.slot->id))
+          return std::nullopt;
+        provenStages.push_back(argument.stage);
+      }
+    }
+    if (provenStages.size() != borrowStages.size() ||
+        !std::all_of(borrowStages.begin(), borrowStages.end(),
+                     [&](const MirInstruction *borrowStage) {
+                       return std::count(provenStages.begin(),
+                                         provenStages.end(), borrowStage) == 1;
+                     }))
+      return std::nullopt;
+    for (const MirInstruction *borrowStage : borrowStages)
+      for (const MirValueUse &use : body.usesOf(*borrowStage->result))
+        if ((use.kind != MirValueUseKind::InstructionOperand &&
+             use.kind != MirValueUseKind::InstructionReceiver) ||
+            !inPartition(use.instruction))
+          return std::nullopt;
+    const auto stageLoan = [&](MirLoanId loan) {
+      return std::any_of(borrowStages.begin(), borrowStages.end(),
+                         [&](const MirInstruction *borrowStage) {
+                           return borrowStage->loan == loan;
+                         });
+    };
+    // Those loans end inside the preparation, and nothing else borrows a
+    // temporary.
+    for (const MirInstruction *end : loanEnds)
+      if (!stageLoan(*end->loan))
+        return std::nullopt;
+    for (const MirLoan &loan : body.loans) {
+      const MirPlace *source = body.findPlace(loan.source);
+      if (source != nullptr && source->root == MirPlaceRootKind::Value &&
+          std::find(temporaries.begin(), temporaries.end(), source->value) !=
+              temporaries.end() &&
+          !stageLoan(loan.id))
+        return std::nullopt;
+    }
+    for (const MirInstruction *drop : temporaryDrops) {
+      const auto entry =
+          std::find_if(owned.begin(), owned.end(), [&](const auto &item) {
+            return item.first == *drop->destination;
+          });
+      if (entry == owned.end() ||
+          drop->lifecycle.front().source != entry->second)
+        return std::nullopt;
+    }
+    // After the stage, an owned slot is named only by its own Drop, and the
+    // preparation's loans are already over.
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (inPartition(instruction.id) || instruction.id == stage->id)
+          continue;
+        if (instruction.kind == MirInstructionKind::EndBorrow &&
+            instruction.loan && stageLoan(*instruction.loan))
+          return std::nullopt;
+        for (const auto &[slot, obligation] : owned)
+          if (referencesPlace(instruction, slot) &&
+              (instruction.kind != MirInstructionKind::Drop ||
+               instruction.lifecycle.size() != 1 ||
+               instruction.lifecycle.front().kind !=
+                   MirLifecycleEventKind::Drop ||
+               instruction.lifecycle.front().source != obligation ||
+               instruction.lifecycle.front().target != 0))
+            return std::nullopt;
+      }
+      if (block.terminator.value && ownedSlot(block.terminator.value->place))
+        return std::nullopt;
+    }
+    // The resumed constructor body skips every preparation instruction, so
+    // no edge from the stage block or after it may re-enter the preparation
+    // and lose a temporary's cleanup.
+    for (const MirBlock &block : body.blocks) {
+      if (block.id != result.stageBlock &&
+          std::find(result.blocks.begin(), result.blocks.end(), block.id) !=
+              result.blocks.end())
+        continue;
+      const MirTerminator &edge = block.terminator;
+      std::vector<MirBlockId> successors{edge.target, edge.elseTarget};
+      for (const MirSwitchTarget &target : edge.switchTargets)
+        successors.push_back(target.target);
+      for (const MirBlockId successor : successors)
+        if (successor != 0 &&
+            std::find(result.blocks.begin(), result.blocks.end(), successor) !=
+                result.blocks.end())
+          return std::nullopt;
+    }
+  }
   for (const auto id : result.values) {
     const auto *value = constructor.body.findValue(id);
     if (value->definition != 0 &&
         std::find(result.instructions.begin(), result.instructions.end(),
                   value->definition) == result.instructions.end())
       return std::nullopt;
+    // A temporary and its borrow stage never cross: the proof above confines
+    // them to the preparation, apart from the owned slot itself.
+    if (!preparationScalar(value->info.type))
+      continue;
     const bool crossesBoundary = std::any_of(
         constructor.body.usesOf(id).begin(), constructor.body.usesOf(id).end(),
         [&](const auto &use) {
@@ -52493,6 +52903,21 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         (failureForm ? !exactFailureBoundary : !baseBindings)) {
       {
         return false;
+      }
+    }
+    // A carrier slot replaces exactly the guarded lifetime slot the body
+    // would declare for that temporary; its MIR obligation, not scope exit,
+    // ends the value.
+    if (const auto preparation =
+            cppMirBasePreparation(program_, *constructor)) {
+      for (const MirPlaceId id : preparation->slots) {
+        const MirPlace *slot = constructor->body.findPlace(id);
+        if (slot == nullptr ||
+            !lifetimeSlotPlace(program_, representations_, constructor->body,
+                               *slot) ||
+            canonicalSlotId(constructor->body, *slot) != slot->id ||
+            !dropObligationGovernsSlot(constructor->body, *slot))
+          return false;
       }
     }
     if (!failureForm) {
