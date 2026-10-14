@@ -1105,12 +1105,23 @@ An `Unexpected` owns real local storage after its
 payload transfer; fallible return cleanup cannot publish it early or destroy
 the caller's uninitialized output. Checked consuming payload extraction may
 feed a subsequent Expected return through the existing local payload slot.
-State-checked native observers use unchecked dereference only after GTI's
-guard or verified state proof, avoiding the host `std::expected::value()`
-requirement that an error type be copyable.
+State-checked observers use unchecked dereference only after GTI's guard or
+verified state proof.
 
-`expected<T&, E>` does not use native `std::expected`, which forbids reference
-payloads. Its private C++20/C++23 carrier stores either `const T*` or `E`; GTI
+The generated support code defines GTI's own expected representation,
+identical under C++20 and C++23; the backend uses neither the host
+`std::expected` nor a vendored implementation. `gti_internal::backend::expected<T, E>`
+is a tag and a union of the two alternatives, with a `void` specialization,
+an `unexpected<E>` error wrapper (deduced from its argument) and an `unexpect`
+tag for in-place errors. Its observers are unchecked and nothing throws,
+because MIR tests the state before every extraction and raises `GTI-R0009`
+itself. Each special member is trivial exactly when both alternatives' are,
+so a scalar result stays trivially copyable and keeps its register ABI.
+`byte_expected` keeps byte-transport payloads in representation cells, and
+`expected_result` selects between the two in dependent code.
+
+`expected<T&, E>` is not an expected holding a reference. Its private C++20/C++23
+carrier, `borrowed_expected`, stores either `const T*` or `E`; GTI
 source still observes a non-null read-only reference. MIR supplies every
 pointer from an admitted loan. Direct successful returns and local
 initializations dereference that loan when constructing the carrier, while a

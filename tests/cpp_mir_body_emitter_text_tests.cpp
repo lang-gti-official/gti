@@ -2732,7 +2732,8 @@ int main() {
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::string &text = artifact.contents;
   const std::string passiveSlot =
-      "::gti_internal::backend::mir_lifetime_slot<std::expected<::__gti_"
+      "::gti_internal::backend::mir_lifetime_slot<::gti_internal::backend::"
+      "expected<::__gti_"
       "program::pair_value, std::int32_t>, true> __gti_mir_v_";
   const std::size_t declared = text.find(passiveSlot);
   expect(declared != std::string::npos,
@@ -2753,13 +2754,17 @@ int main() {
              text.find(slot + ".destroy();") != std::string::npos,
          "the producer should publish into the slot on success, the call "
          "should move its wrapper, and the slot should retire afterwards");
-  expect(text.find("mir_lifetime_slot<std::expected<std::int32_t, "
-                   "::__gti_program::code_value>") == std::string::npos &&
-             text.find("std::expected<std::int32_t, ::__gti_program::code_"
-                       "value> __gti_mir_v_") != std::string::npos,
-         "a non-placement Expected argument should keep its ordinary SSA "
-         "local");
-  expect(text.find("mir_lifetime_slot<std::expected<::__gti_program::tracked, "
+  expect(
+      text.find(
+          "mir_lifetime_slot<::gti_internal::backend::expected<std::int32_t, "
+          "::__gti_program::code_value>") == std::string::npos &&
+          text.find("::gti_internal::backend::expected<std::int32_t, "
+                    "::__gti_program::code_"
+                    "value> __gti_mir_v_") != std::string::npos,
+      "a non-placement Expected argument should keep its ordinary SSA "
+      "local");
+  expect(text.find("mir_lifetime_slot<::gti_internal::backend::expected<::__"
+                   "gti_program::tracked, "
                    "std::int32_t>, true> __gti_mir_v_") == std::string::npos &&
              text.find("read_tracked__gti_mir_failure(__gti_mir_p_") !=
                  std::string::npos,
@@ -2840,9 +2845,9 @@ int main() {
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::string &text = artifact.contents;
-  const std::string passiveSlot =
-      "::gti_internal::backend::mir_lifetime_slot<std::expected<::__gti_"
-      "program::pair_value, std::int32_t>, true> ";
+  const std::string passiveSlot = "::gti_internal::backend::mir_lifetime_slot<:"
+                                  ":gti_internal::backend::expected<::__gti_"
+                                  "program::pair_value, std::int32_t>, true> ";
   // Counts constructions that spell `marker` on a line naming `construction`.
   // Each must move one declared slot and retire it on the next line.
   const auto retiredConstructions = [&](std::string_view construction,
@@ -2883,7 +2888,8 @@ int main() {
   const std::size_t owned =
       text.find("::__gti_program::tracked_holder(::gti_internal::backend::"
                 "mir_failure_constructor_tag_v1<");
-  expect(text.find("mir_lifetime_slot<std::expected<::__gti_program::tracked, "
+  expect(text.find("mir_lifetime_slot<::gti_internal::backend::expected<::__"
+                   "gti_program::tracked, "
                    "std::int32_t>, true> __gti_mir_v_") == std::string::npos &&
              owned != std::string::npos &&
              text.find(">{}, __gti_mir_p_", owned) == text.find(">{}, ", owned),
@@ -2953,9 +2959,9 @@ int main() {
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::string &text = artifact.contents;
-  const std::string passiveSlot =
-      "::gti_internal::backend::mir_lifetime_slot<std::expected<::__gti_"
-      "program::pair_value, std::int32_t>, true> ";
+  const std::string passiveSlot = "::gti_internal::backend::mir_lifetime_slot<:"
+                                  ":gti_internal::backend::expected<::__gti_"
+                                  "program::pair_value, std::int32_t>, true> ";
   // Counts consumers that spell `marker` on a line naming `consumer`. Each
   // must move one declared slot that its copy constructed from a binding,
   // and retire that slot after the consumer.
@@ -2998,12 +3004,14 @@ int main() {
   expect(text.find("read_pair__gti_mir_failure(std::move(__gti_mir_p_") ==
              std::string::npos,
          "a copied binding should never be moved into the parameter");
-  expect(text.find("mir_lifetime_slot<std::expected<std::int32_t, "
-                   "::__gti_program::code_value>") == std::string::npos &&
-             text.find("read_scalar__gti_mir_failure(__gti_mir_v_") !=
-                 std::string::npos,
-         "a non-placement Expected copied argument should keep its ordinary "
-         "SSA local");
+  expect(
+      text.find(
+          "mir_lifetime_slot<::gti_internal::backend::expected<std::int32_t, "
+          "::__gti_program::code_value>") == std::string::npos &&
+          text.find("read_scalar__gti_mir_failure(__gti_mir_v_") !=
+              std::string::npos,
+      "a non-placement Expected copied argument should keep its ordinary "
+      "SSA local");
 }
 
 // A cleanup-free Expected<Class, E> call result that replaces a whole mutable
@@ -3079,7 +3087,8 @@ int main() {
                                     : text.find(slot + ".construct_from(");
   const std::size_t cleanup =
       text.rfind("__gti_mir_replacement_success_", assigned);
-  expect(text.find("::gti_internal::backend::mir_lifetime_slot<std::expected<"
+  expect(text.find("::gti_internal::backend::mir_lifetime_slot<::gti_internal::"
+                   "backend::expected<"
                    "::__gti_program::pair_value, std::int32_t>, true> " +
                    slot + ";") != std::string::npos &&
              published != std::string::npos && published < assigned &&
@@ -3088,10 +3097,12 @@ int main() {
          "the producer should publish into the slot, the inactive replacement "
          "cleanup should precede the Assign, and the slot should retire right "
          "after it");
-  expect(text.find("mir_lifetime_slot<std::expected<std::int32_t, "
-                   "::__gti_program::code_value>") == std::string::npos,
-         "a non-placement Expected replacing a binding should keep its "
-         "ordinary SSA local");
+  expect(
+      text.find(
+          "mir_lifetime_slot<::gti_internal::backend::expected<std::int32_t, "
+          "::__gti_program::code_value>") == std::string::npos,
+      "a non-placement Expected replacing a binding should keep its "
+      "ordinary SSA local");
 }
 
 // Moving a cleanup-free Expected<Class, E> binding into a new binding
@@ -3144,7 +3155,8 @@ int main() {
   const std::string destination =
       "__gti_mir_p_" + text.substr(idStart, text.find('\n', idStart) - idStart);
   const std::size_t declared =
-      text.find("::gti_internal::backend::mir_lifetime_slot<std::expected<"
+      text.find("::gti_internal::backend::mir_lifetime_slot<::gti_internal::"
+                "backend::expected<"
                 "::__gti_program::point, std::int32_t>> " +
                 destination + ";");
   const std::size_t constructed = text.rfind(
@@ -3154,7 +3166,8 @@ int main() {
              text.find('\n', constructed) == text.rfind('\n', initialized),
          "the Move should construct the new binding's lifetime slot from the "
          "moved source immediately before its Initialize");
-  expect(text.find("std::expected<::__gti_program::point, std::int32_t> "
+  expect(text.find("::gti_internal::backend::expected<::__gti_program::point, "
+                   "std::int32_t> "
                    "__gti_mir_v_") == std::string::npos,
          "no Expected should value-initialize an ordinary local");
 }
@@ -3206,7 +3219,8 @@ int main() {
   const std::string destination =
       "__gti_mir_p_" + text.substr(idStart, text.find('\n', idStart) - idStart);
   const std::size_t declared =
-      text.find("::gti_internal::backend::mir_lifetime_slot<std::expected<"
+      text.find("::gti_internal::backend::mir_lifetime_slot<::gti_internal::"
+                "backend::expected<"
                 "::__gti_program::point, std::int32_t>> " +
                 destination + ";");
   const std::size_t constructed =
@@ -3216,7 +3230,8 @@ int main() {
              text.find('\n', constructed) == text.rfind('\n', initialized),
          "the Load should copy-construct the new binding's lifetime slot "
          "from the source immediately before its Initialize");
-  expect(text.find("std::expected<::__gti_program::point, std::int32_t> "
+  expect(text.find("::gti_internal::backend::expected<::__gti_program::point, "
+                   "std::int32_t> "
                    "__gti_mir_v_") == std::string::npos,
          "no Expected should value-initialize an ordinary local");
 }
@@ -3416,7 +3431,8 @@ int main() {
     }
     if (starts(line, "::gti_internal::backend::assign_representation(__gti_"
                      "mir_p_") &&
-        line.find(".get(), std::unexpected(") != std::string::npos &&
+        line.find(".get(), ::gti_internal::backend::unexpected(") !=
+            std::string::npos &&
         afterCleanup(index))
       ++unexpecteds;
     if (line.find(".get() = ::__gti_program::pair_value(") !=
@@ -3432,7 +3448,8 @@ int main() {
              text.find("__gti_mir_unique_cleanup_failure") != std::string::npos,
          "an owning call result should move out of its slot after the active "
          "replacement cleanup and retire the moved-from slot");
-  expect(text.find("std::expected<::__gti_program::pair_value, std::int32_t> "
+  expect(text.find("::gti_internal::backend::expected<::__gti_program::pair_"
+                   "value, std::int32_t> "
                    "__gti_mir_v_") == std::string::npos,
          "no replacement source should declare a value-initialized Expected "
          "local");
@@ -3594,18 +3611,21 @@ int main() {
   expect(transferredShells == 1,
          "an owning payload should move into the binding and end its "
          "transferred-out shell at the Assign");
-  expect(text.find(".get(), std::unexpected(__gti_mir_v_") != std::string::npos,
-         "an owning binding should accept an inline Unexpected replacement");
   expect(
-      text.find(".construct(std::unexpected(::__gti_program::code_value(") !=
-              std::string::npos &&
-          text.find(".get(), std::unexpected(::__gti_program::code_value(") !=
-              std::string::npos,
-      "an Unexpected wrapping a fresh class error should construct inline "
-      "at a binding initializer and replacement");
+      text.find(".get(), ::gti_internal::backend::unexpected(__gti_mir_v_") !=
+          std::string::npos,
+      "an owning binding should accept an inline Unexpected replacement");
+  expect(text.find(".construct(::gti_internal::backend::unexpected(::__gti_"
+                   "program::code_value(") != std::string::npos &&
+             text.find(".get(), "
+                       "::gti_internal::backend::unexpected(::__gti_program::"
+                       "code_value(") != std::string::npos,
+         "an Unexpected wrapping a fresh class error should construct inline "
+         "at a binding initializer and replacement");
   std::size_t stagedErrors = 0;
   for (std::size_t index = 0; index + 1 < lines.size(); ++index) {
-    const std::string marker = ".get(), std::unexpected(std::move(__gti_mir_v_";
+    const std::string marker =
+        ".get(), ::gti_internal::backend::unexpected(std::move(__gti_mir_v_";
     const std::size_t staged = lines[index].find(marker);
     if (staged == std::string::npos ||
         !contains(lines[index], "assign_representation("))
@@ -3621,7 +3641,8 @@ int main() {
          "a fresh class error replacing an owning binding should be "
          "constructed in its slot at its MIR position, moved into the "
          "Unexpected at the Assign and retired there");
-  expect(text.find("std::expected<::__gti_program::tracked, std::int32_t> "
+  expect(text.find("::gti_internal::backend::expected<::__gti_program::tracked,"
+                   " std::int32_t> "
                    "__gti_mir_v_") == std::string::npos,
          "no owning replacement should declare a value-initialized Expected "
          "local");
@@ -3714,7 +3735,8 @@ int main() { auto result = Make(1); return result ? 0 : 1; }
 // producer constructs the staged slot, the construction moves its wrapper and
 // the slot retires right after. A cleanup-owning payload keeps MIR's
 // value-rooted transfer slot. (Regression: the former gti-lang-official issue
-// #6 emitted a default-constructed std::expected<Item, E> local.)
+// #6 emitted a default-constructed ::gti_internal::backend::expected<Item, E>
+// local.)
 void testExpectedClassArgumentReturnedConstruction() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-expected-class-returned-construction.gti", R"(
@@ -3774,9 +3796,9 @@ int main() {
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::string &text = artifact.contents;
-  const std::string slotType =
-      "::gti_internal::backend::mir_lifetime_slot<std::expected<::__gti_"
-      "program::item_value, std::int32_t>, true> ";
+  const std::string slotType = "::gti_internal::backend::mir_lifetime_slot<::"
+                               "gti_internal::backend::expected<::__gti_"
+                               "program::item_value, std::int32_t>, true> ";
   // Counts item_holder constructions publishing at `destination` that move a
   // slot the producer constructed and retire it on the next line.
   const auto publishedConstructions = [&](std::string_view destination) {
@@ -3815,7 +3837,8 @@ int main() {
   expect(publishedConstructions("std::addressof(") == 1,
          "a member-initializer construction should publish into its field "
          "from the staged wrapper and retire it afterwards");
-  expect(text.find("std::expected<::__gti_program::item_value, std::int32_t> "
+  expect(text.find("::gti_internal::backend::expected<::__gti_program::item_"
+                   "value, std::int32_t> "
                    "__gti_mir_v_") == std::string::npos,
          "no Expected without a default-constructible payload should "
          "value-initialize an ordinary local");
@@ -3836,7 +3859,8 @@ int main() {
 // representation retires right after that read. A class payload moves into
 // its own field-read slot. An owning temporary is read in place from MIR's
 // value-rooted slot, which MIR's own Drop retires. (Regression: these
-// value-initialized std::expected<Item, E> or reported GTI-B0001.)
+// value-initialized ::gti_internal::backend::expected<Item, E> or reported
+// GTI-B0001.)
 void testExpectedTemporaryObservationSlot() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-expected-temporary-observation.gti", R"(
@@ -3882,7 +3906,8 @@ int main() { return observe(true) + observe(false) - 13; }
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::string &text = artifact.contents;
   const std::string slotType =
-      "::gti_internal::backend::mir_lifetime_slot<std::expected<::__gti_"
+      "::gti_internal::backend::mir_lifetime_slot<::gti_internal::backend::"
+      "expected<::__gti_"
       "program::item_value, std::int32_t>, true> __gti_mir_v_";
   // Each observed slot is constructed by its producer, read once through
   // get() on the next line, and retired on the line after that read.
@@ -3924,11 +3949,13 @@ int main() { return observe(true) + observe(false) - 13; }
                        payloadSlot + ";") != std::string::npos &&
              text.find(payloadSlot + ".get().number") != std::string::npos,
          "value() should move the payload into its own field-read slot");
-  expect(text.find("std::expected<::__gti_program::item_value, std::int32_t> "
+  expect(text.find("::gti_internal::backend::expected<::__gti_program::item_"
+                   "value, std::int32_t> "
                    "__gti_mir_v_") == std::string::npos,
          "no observed Expected should value-initialize an ordinary local");
   expect(text.find("mir_expected_error_v1(__gti_mir_p_") != std::string::npos &&
-             text.find("mir_lifetime_slot<std::expected<::__gti_program::"
+             text.find("mir_lifetime_slot<::gti_internal::backend::expected<::_"
+                       "_gti_program::"
                        "tracked, std::int32_t>, true>") == std::string::npos,
          "an owning temporary should be read in place from MIR's value-rooted "
          "slot");
@@ -4166,7 +4193,8 @@ int main() {
     join = slot;
   }
   expect(publications == 2 && !join.empty() &&
-             text.find("mir_lifetime_slot<std::expected<::__gti_program::item_"
+             text.find("mir_lifetime_slot<::gti_internal::backend::expected<::_"
+                       "_gti_program::item_"
                        "value, std::int32_t>, true> " +
                        join + ";") != std::string::npos &&
              text.find(join + ".get().has_value();") != std::string::npos,
@@ -4191,7 +4219,8 @@ int main() {
                               "__gti_fn_") != std::string::npos &&
              text.find(slot + ".destroy();", moved) != std::string::npos,
          "the field initializer should move a staged result into the field");
-  expect(text.find("std::expected<::__gti_program::item_value, std::int32_t> "
+  expect(text.find("::gti_internal::backend::expected<::__gti_program::item_"
+                   "value, std::int32_t> "
                    "__gti_mir_v_") == std::string::npos,
          "no Expected should value-initialize an ordinary local");
 }
@@ -4282,19 +4311,22 @@ int main() {
       slotEnd >= lineEnd ? std::string()
                          : text.substr(slotStart + 4, slotEnd - slotStart - 4);
   const std::size_t declared =
-      slot.empty() ? std::string::npos
-                   : text.rfind("::gti_internal::backend::mir_lifetime_slot<"
-                                "std::expected<::__gti_program::counted, "
-                                "std::int32_t>> " +
-                                    slot + ";",
-                                constructed);
+      slot.empty()
+          ? std::string::npos
+          : text.rfind(
+                "::gti_internal::backend::mir_lifetime_slot<"
+                "::gti_internal::backend::expected<::__gti_program::counted, "
+                "std::int32_t>> " +
+                    slot + ";",
+                constructed);
   expect(declared != std::string::npos &&
              text.find(slot + ".construct_from([&]() { return ::__gti_"
                               "program::__gti_fn_",
                        declared) < constructed,
          "the member should be constructed in place from the owned result's "
          "slot, taken once after its producer published it");
-  expect(text.find("std::expected<::__gti_program::counted, std::int32_t> "
+  expect(text.find("::gti_internal::backend::expected<::__gti_program::counted,"
+                   " std::int32_t> "
                    "__gti_mir_v_") == std::string::npos,
          "no Expected should value-initialize an ordinary local");
 }
@@ -4349,7 +4381,8 @@ int main() {
     const std::size_t slotStart = text.rfind("__gti_mir_p_", at);
     const std::string slot = text.substr(slotStart, at - slotStart);
     const std::size_t declared =
-        text.rfind("::gti_internal::backend::mir_lifetime_slot<std::expected<"
+        text.rfind("::gti_internal::backend::mir_lifetime_slot<::gti_internal::"
+                   "backend::expected<"
                    "::__gti_program::counted, std::int32_t>> " +
                        slot + ";",
                    at);
@@ -4369,7 +4402,8 @@ int main() {
          "each owning Expected field should be constructed in place from its "
          "result's lifetime slot, including after a checked producer, and "
          "the slot should retire without a semantic drop");
-  expect(text.find("std::expected<::__gti_program::counted, std::int32_t> "
+  expect(text.find("::gti_internal::backend::expected<::__gti_program::counted,"
+                   " std::int32_t> "
                    "__gti_mir_v_") == std::string::npos,
          "no Expected should value-initialize an ordinary local");
 }
