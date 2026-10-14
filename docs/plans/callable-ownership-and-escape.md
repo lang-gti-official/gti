@@ -749,7 +749,7 @@ row. None may be introduced as an incidental extension of L-CALL-01. Conversely,
 a concrete regression in valid use of the implemented API is a correctness
 issue, not automatically one of these deferrals.
 
-## L-CALL-03: Checked Borrowing Callbacks (Shipped 0.432.0)
+## L-CALL-03: Checked Borrowing Callbacks (Shipped 0.433.0)
 
 The accepted source spelling is `[&value]` for shared/read-only access and
 `[mut &value]` for exclusive mutable access. These captures borrow existing
@@ -788,7 +788,7 @@ movement, last-use and cleanup endpoints, and rejection of invalid escapes,
 conflicting owner use, exclusive copies and conflicting reentrant access.
 Verifier mutations, O0/O1/O3 execution, relevant C++20/23 parity, editor syntax
 and diagnostics, runnable examples and optimized cost evidence accompany the
-feature. The slice shipped in 0.432.0 with example 156 and the
+feature. The slice shipped in 0.433.0 with example 156 and the
 `borrowing_callbacks`, `checked_callable_erasure`, `checked_callable_pointer`
 and `checked_callable_transport` fixtures across the native matrix. Two
 representation boundaries remain explicit: an owning class result through

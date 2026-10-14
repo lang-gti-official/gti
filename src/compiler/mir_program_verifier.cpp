@@ -13736,9 +13736,11 @@ verifyMirProgramContracts(const MirProgram &program) {
       case SemanticType::Lambda: {
         // A closure environment stored by value is a borrow-carrying field
         // like a class carrier: its borrowed state is its reference
-        // captures, published through the same explicit field stage.
+        // captures, published through the same explicit field stage. A
+        // closure without borrowed state publishes through the constructor
+        // record instead and takes no stage.
         const auto traits = concreteMirTypeTraits(program, type);
-        return traits.has_value();
+        return traits.has_value() && traits->containsBorrowedState;
       }
       default:
         return false;

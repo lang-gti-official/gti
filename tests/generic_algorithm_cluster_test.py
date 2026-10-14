@@ -324,20 +324,11 @@ def main() -> int:
                 (
                     "Owned callable argument 3 requires an explicit std::move "
                     "ownership transfer.",
-                    "Move an exact movable callable whose stored state contains no "
-                    "references or tracked borrowed state.",
+                    "Move an exact movable callable; any checked dependencies "
+                    "must outlive its destination.",
                     "Raw implementation state must be encapsulated by an owner "
                     "with a valid unsafe transfer contract; direct raw-pointer "
                     "captures are not supported.",
-                ),
-            ),
-            (
-                "generic_algorithm_for_each_borrow_capture.gti",
-                "GTI-S2046",
-                (
-                    "Owned callable argument 3 contains borrowed or raw-pointer "
-                    "capture state.",
-                    "Exact owned callable parameter declared here.",
                 ),
             ),
             (
@@ -380,6 +371,23 @@ def main() -> int:
                 ),
             ),
         )
+        # A moved owned callable may carry checked borrowed state whose
+        # owners outlive its destination (borrowing callbacks); the borrowed
+        # observer therefore compiles and runs under the same contract.
+        borrowed = fixtures / "generic_algorithm_for_each_borrow_capture.gti"
+        accepted = emit_artifact(
+            compiler,
+            borrowed,
+            "--emit-mir",
+            root / f"{borrowed.stem}.mir",
+            environment,
+        )
+        if (
+            accepted.returncode != 0
+            or accepted.stdout.splitlines()[-1] != "Diagnostics: 0 errors, 0 warnings"
+            or "error[" in accepted.stderr
+        ):
+            return fail("borrowed observer moved into for_each", accepted)
         for filename, code, fragments in negative_cases:
             source = fixtures / filename
             expected_summary = (
