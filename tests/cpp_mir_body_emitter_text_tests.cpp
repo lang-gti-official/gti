@@ -645,6 +645,149 @@ int main() {
          "its callable-template body from verified MIR");
 }
 
+// A closure local initialized by a copy, a closure-returning call or a move is
+// constructed in place by that producer, and the same proof declares the
+// local as a lifetime slot. A deduced-callable body therefore declares and
+// constructs one slot per local even though it creates no literal of the
+// closure type. A passive closure's slot is representation-only, so each
+// producer first retires the previous representation, as a loop rebuilding a
+// copy of a materialized closure requires.
+
+void testProducedClosureLocalSlots() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-produced-closure-locals.gti", R"(
+#include <std/utility>
+
+F pass<F>(F f) { return f; }
+
+int call<F>(F f) { return f(); }
+
+int relay<F>(F f) {
+  F copied = f;
+  F returned = pass(copied);
+  F moved = std::move(returned);
+  return call(std::move(moved));
+}
+
+int main() {
+  int k = 3;
+  mut int x = 1;
+  auto local = [x]() -> int { return x; };
+  x = 2;
+  mut int total = relay([k]() -> int { return k; });
+  for (mut int index = 0; index < 2; index++) {
+    auto copy = local;
+    total += call(std::move(copy));
+  }
+  return total - 5;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the produced closure-local fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // The definition (not a declaration) whose signature contains `marker`,
+  // through its closing brace at the definition's own indentation.
+  const auto definition = [&](std::string_view marker) {
+    for (std::size_t at = text.find(marker); at != std::string::npos;
+         at = text.find(marker, at + marker.size())) {
+      const std::size_t lineStart = text.rfind('\n', at) + 1;
+      const std::size_t lineEnd = text.find('\n', at);
+      if (lineEnd == std::string::npos || text[lineEnd - 1] != '{') {
+        continue;
+      }
+      const std::size_t indent =
+          text.find_first_not_of(' ', lineStart) - lineStart;
+      const std::string closing = "\n" + std::string(indent, ' ') + "}\n";
+      const std::size_t end = text.find(closing, lineEnd);
+      return end == std::string::npos
+                 ? std::string{}
+                 : text.substr(lineStart, end + closing.size() - lineStart);
+    }
+    return std::string{};
+  };
+  const auto count = [](const std::string &body, std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = body.find(needle); at != std::string::npos;
+         at = body.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+  const auto startsAt = [](const std::string &body, std::size_t at,
+                           std::string_view needle) {
+    return at != std::string::npos &&
+           body.compare(at, needle.size(), needle) == 0;
+  };
+  // The number of representation-only slots declared for `type`, provided
+  // each is rearmed immediately before its one construction.
+  const auto rearmedSlots =
+      [&](const std::string &body,
+          std::string_view type) -> std::optional<std::size_t> {
+    const std::string declaration =
+        "::gti_internal::backend::mir_lifetime_slot<" + std::string(type) +
+        ", true> ";
+    std::size_t slots = 0;
+    for (std::size_t at = body.find(declaration); at != std::string::npos;
+         at = body.find(declaration, at + declaration.size())) {
+      const std::size_t nameAt = at + declaration.size();
+      const std::string name =
+          body.substr(nameAt, body.find(';', nameAt) - nameAt);
+      const std::string rearm = name + ".destroy_if_engaged();\n";
+      const std::string construction = name + ".construct";
+      const std::size_t rearmAt = body.find(rearm);
+      if (rearmAt == std::string::npos ||
+          !startsAt(body, body.find_first_not_of(' ', rearmAt + rearm.size()),
+                    construction) ||
+          count(body, construction) != 1) {
+        return std::nullopt;
+      }
+      ++slots;
+    }
+    return slots;
+  };
+  const std::string relay = definition("_relay__gti_mir_failure(F ");
+  const std::size_t plainLocal = relay.find(" F __gti_mir_p_");
+  expect(!relay.empty() && rearmedSlots(relay, "F") == 3 &&
+             count(relay, "was constructed at its producing step") == 3 &&
+             count(relay, "joins the fused chain") == 0,
+         "the copied, call-returned and moved closure locals should each be "
+         "a representation-only slot constructed by its producer");
+  expect(count(relay, " F __gti_mir_p_") == 1 &&
+             startsAt(relay,
+                      plainLocal == std::string::npos
+                          ? std::string::npos
+                          : relay.find(" = ", plainLocal),
+                      " = __gti_mir_arg_0;"),
+         "only the closure parameter should declare a plain closure value");
+  const std::string entry = definition("bool __gti_entry__gti_mir_failure(");
+  std::size_t entrySlots = 0;
+  bool entryRearmed = true;
+  constexpr std::string_view alias = "using ";
+  constexpr std::string_view closureType = "__gti_mir_closure_type_";
+  const std::string closureAlias =
+      std::string(alias) + std::string(closureType);
+  for (std::size_t at = entry.find(closureAlias); at != std::string::npos;
+       at = entry.find(closureAlias, at + closureAlias.size())) {
+    const std::size_t nameAt = at + alias.size();
+    const std::optional<std::size_t> slots = rearmedSlots(
+        entry, entry.substr(nameAt, entry.find(" = ", nameAt) - nameAt));
+    entryRearmed = entryRearmed && slots.has_value();
+    entrySlots += slots.value_or(0);
+  }
+  expect(entryRearmed && entrySlots == 2 &&
+             count(entry, "was constructed at its producing step") == 1,
+         "the materialized closure and its loop copy should each rebuild "
+         "their representation-only slot after retiring the previous one");
+}
+
 void testInlineCapturingLiteralAsAlgorithmArgument() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-inline-capture-argument.gti", R"(
@@ -4986,6 +5129,7 @@ constexpr NamedTest kTests[] = {
      testClosureCaptureFreezeMaterializes},
     {"testLexicalCopyCaptureThroughCallableTemplate",
      testLexicalCopyCaptureThroughCallableTemplate},
+    {"testProducedClosureLocalSlots", testProducedClosureLocalSlots},
     {"testInlineCapturingLiteralAsAlgorithmArgument",
      testInlineCapturingLiteralAsAlgorithmArgument},
     {"testInlineCaptureControlFlowProofFailsClosed",

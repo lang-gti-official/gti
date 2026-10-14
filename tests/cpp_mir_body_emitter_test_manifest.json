@@ -254,6 +254,10 @@
       "suite": "text"
     },
     {
+      "name": "testProducedClosureLocalSlots",
+      "suite": "text"
+    },
+    {
       "name": "testInlineCapturingLiteralAsAlgorithmArgument",
       "suite": "text"
     },
