@@ -692,6 +692,16 @@ struct SemanticType {
   AccessMode pointerAccess = AccessMode::Mutable;
   ReceiverMutability signatureReceiver = ReceiverMutability::ReadOnly;
   bool concretePack = false;
+  // An associated type projection `Concept<X>::name` whose argument X is
+  // still open: an opaque TypeParameter with no parameter identity, the
+  // concept and the member's position, and X as its only argument. It is
+  // reduced to the conformance block's type once X becomes concrete.
+  ConceptId projectionConcept = 0;
+  std::uint32_t projectionMember = 0;
+
+  [[nodiscard]] bool isAssociatedTypeProjection() const {
+    return kind == TypeParameter && projectionConcept != 0;
+  }
 };
 
 struct AppliedConceptRequirement {

@@ -9,6 +9,27 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.433.0 — Protocol concepts and conformance blocks
+
+- A concept can now have a body instead of `= constraint;`. It declares
+  associated types with `typename name;` and operations as function
+  prototypes, for example
+  `concept measurable<T> { typename unit_type; unit_type measure(T& item); };`.
+- A type satisfies such a concept only through a conformance block, written
+  outside the type:
+  `for <T> concept measurable<Crate<T>> { using unit_type = int; unit_type measure(Crate<T>& item) { ... } };`.
+  The block defines every associated type and operation with exactly the
+  concept's signatures. A type matches at most one block, and a package may
+  write a block only for a concept or a type it owns.
+- `measurable<X>::unit_type` names the associated type and
+  `measurable<X>::measure(item)` calls the operation. Generic code uses both
+  after `requires measurable<T>`, and each instance calls the selected
+  block's function directly. Block functions never change what an ordinary
+  member call means.
+- `typename` is now a keyword. It was already reserved, so no valid program
+  changes meaning.
+- Example 156 demonstrates a concrete and a generic block.
+
 ## 0.432.2 — Lambda-typed member classes beside bases and owned fields
 
 - Fix the internal compiler error that 0.432.1 still listed (`GTI-B0001`,

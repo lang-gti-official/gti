@@ -175,6 +175,11 @@ requireCapture(100, "#include", "keyword.import");
 requireCapture(103, "first", "variable");
 requireCapture(103, "second", "variable");
 requireCapture(107, "concept", "keyword.type");
+// Protocol concept bodies and conformance blocks.
+requireCapture(338, "typename", "keyword.type");
+requireCapture(338, "measure_type", "type.definition");
+requireCapture(341, "for", "keyword.type");
+requireCapture(341, "concept", "keyword.type");
 requireCapture(107, "sortable", "type.definition");
 requireCapture(107, "T", "type.parameter");
 requireCapture(107, "totally_ordered", "type");

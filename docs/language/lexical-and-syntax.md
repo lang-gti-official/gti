@@ -69,6 +69,12 @@ lets a declaration convert through that operator
 ([conversion operators](static-semantics.md#392-conversion-operators)).
 Anywhere else it is an ordinary identifier.
 
+`typename` is a keyword. In a concept with a body, `typename name;` declares
+an associated type, and `for` followed by `<` or `concept` begins a
+conformance block rather than a loop ([protocol
+concepts](concepts.md#protocol-concepts-and-conformance-blocks)). `typename`
+was already reserved as a C++ spelling, so no valid program changes meaning.
+
 `sizeof` and `alignof` are reserved word operators. They cannot be used as
 identifiers and are accepted only in the parenthesized type forms
 `sizeof(type)` and `alignof(type)`. They do not introduce expression-operand

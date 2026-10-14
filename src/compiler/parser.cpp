@@ -184,6 +184,9 @@ private:
     if (match({TokenKind::NAMESPACE})) {
       return namespaceDeclaration();
     }
+    if (isConformanceStart()) {
+      return conformanceDeclaration(advance());
+    }
     if (match({TokenKind::CONCEPT})) {
       return conceptDeclaration(previous());
     }
@@ -466,9 +469,13 @@ private:
     consumeGenericClose("Expect '>' after concept type parameters.");
 
     ConstraintExpression requirements;
+    std::optional<ProtocolConceptBody> protocolBody;
     if (compilerBinding) {
       consume(TokenKind::SEMICOLON,
               "Compiler-bound concepts are declarations and must end in ';'.");
+    } else if (check(TokenKind::LEFT_BRACE)) {
+      protocolBody = protocolConceptBody();
+      consume(TokenKind::SEMICOLON, "Expect ';' after concept declaration.");
     } else {
       consume(TokenKind::EQUAL, "Expect '=' after concept parameter list.");
       requirements = constraintExpression();
@@ -477,7 +484,156 @@ private:
 
     return std::make_shared<ConceptDecl>(
         std::move(keyword), std::move(name), std::move(typeParameters),
-        std::move(requirements), std::move(compilerBinding));
+        std::move(requirements), std::move(compilerBinding),
+        std::move(protocolBody));
+  }
+
+  // `{ typename name; Result operation(Parameters); ... }`. Members are only
+  // parsed here; semantics validates their names and signatures.
+  ProtocolConceptBody protocolConceptBody() {
+    ProtocolConceptBody body;
+    body.leftBrace =
+        consume(TokenKind::LEFT_BRACE, "Expect '{' before concept body.");
+    while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      const Token start = peek();
+      try {
+        if (match({TokenKind::TYPENAME})) {
+          Token keyword = previous();
+          Token name =
+              consume(TokenKind::IDENTIFIER,
+                      "Expect an associated type name after 'typename'.");
+          consume(TokenKind::SEMICOLON,
+                  "Expect ';' after associated type declaration.");
+          body.associatedTypes.push_back(
+              {.keyword = std::move(keyword), .name = std::move(name)});
+          continue;
+        }
+        StmtPtr operation = typedDeclaration(true);
+        const auto *function =
+            dynamic_cast<const FunctionDecl *>(operation.get());
+        if (function == nullptr || function->body() != nullptr ||
+            function->isPure()) {
+          (void)error(start, "Concept body members are 'typename' associated "
+                             "types or operation declarations ending in "
+                             "';'.");
+          continue;
+        }
+        stampExtent(operation, start);
+        body.operations.push_back(std::move(operation));
+      } catch (const ParseError &) {
+        synchronize(true, false, false, true);
+      }
+    }
+    consume(TokenKind::RIGHT_BRACE, "Expect '}' after concept body.");
+    return body;
+  }
+
+  [[nodiscard]] bool isConformanceStart() const {
+    return check(TokenKind::FOR) && (peekAt(1).kind == TokenKind::LESS ||
+                                     peekAt(1).kind == TokenKind::CONCEPT);
+  }
+
+  // `for <Parameters> concept Concept<Pattern> { using ...; functions };`
+  //
+  // The block's functions are ordinary generic functions over the block's
+  // parameters. They are placed, with the ConformanceDecl that semantics
+  // validates and registers, in a namespace whose generated `__gti_` name no
+  // source can spell, so a block operation is reachable only through its
+  // concept. The name derives from the concept application's tokens, so it
+  // is stable across compilations and distinct for each block.
+  StmtPtr conformanceDeclaration(Token forKeyword) {
+    std::vector<GenericParameter> genericParameters;
+    if (check(TokenKind::LESS)) {
+      genericParameters = genericParameterList();
+    }
+    Token conceptKeyword =
+        consume(TokenKind::CONCEPT,
+                "Expect 'concept' after the conformance block's parameters.");
+    const std::size_t targetStart = current;
+    ConceptApplication target = conceptApplication();
+    std::string targetSpelling;
+    for (std::size_t index = targetStart; index < current; ++index) {
+      targetSpelling += tokens[index].lexeme;
+      targetSpelling.push_back(' ');
+    }
+    // Each operation requires the block's own application, which the block
+    // proves; inside it, `Concept<Pattern>::name` is therefore available.
+    RequiresClause blockRequirement;
+    blockRequirement.keyword = forKeyword;
+    blockRequirement.keyword.kind = TokenKind::REQUIRES;
+    blockRequirement.keyword.lexeme = "requires";
+    blockRequirement.keyword.generated = true;
+    blockRequirement.expression.applications.push_back(target);
+    blockRequirement.expression.nodes.push_back(
+        {.kind = ConstraintExpressionKind::Application, .application = 0});
+    blockRequirement.expression.root = 0;
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before conformance block body.");
+    StmtList members;
+    StmtList functions;
+    while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      const Token start = peek();
+      try {
+        StmtPtr member;
+        if (match({TokenKind::USING})) {
+          member = typeAliasDeclaration(previous());
+        } else {
+          conformanceGenericParameters = genericParameters;
+          conformanceRequirement = blockRequirement;
+          member = typedDeclaration(true);
+          conformanceGenericParameters.reset();
+          conformanceRequirement.reset();
+          const auto *function =
+              dynamic_cast<const FunctionDecl *>(member.get());
+          if (function == nullptr || function->body() == nullptr) {
+            (void)error(start, "Conformance block members are 'using' "
+                               "associated types or operation definitions "
+                               "with bodies.");
+            continue;
+          }
+          functions.push_back(member);
+        }
+        stampExtent(member, start);
+        members.push_back(std::move(member));
+      } catch (const ParseError &) {
+        conformanceGenericParameters.reset();
+        conformanceRequirement.reset();
+        synchronize(true, false, false, true);
+      }
+    }
+    consume(TokenKind::RIGHT_BRACE, "Expect '}' after conformance block body.");
+    consume(TokenKind::SEMICOLON, "Expect ';' after conformance block.");
+
+    auto conformance = std::make_shared<ConformanceDecl>(
+        forKeyword, std::move(genericParameters), std::move(conceptKeyword),
+        std::move(target), std::move(members));
+    stampExtent(conformance, forKeyword);
+    StmtList declarations;
+    declarations.push_back(std::move(conformance));
+    for (StmtPtr &function : functions) {
+      declarations.push_back(std::move(function));
+    }
+    Token carrier = std::move(forKeyword);
+    carrier.kind = TokenKind::IDENTIFIER;
+    carrier.lexeme = "__gti_conformance_" + stableNameDigest(targetSpelling);
+    carrier.generated = true;
+    return std::make_shared<NamespaceDecl>(std::move(carrier),
+                                           std::move(declarations));
+  }
+
+  // FNV-1a over the spelling: stable across compilations and platforms.
+  static std::string stableNameDigest(std::string_view spelling) {
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const char character : spelling) {
+      hash ^= static_cast<unsigned char>(character);
+      hash *= 1099511628211ULL;
+    }
+    static constexpr std::string_view digits = "0123456789abcdef";
+    std::string result(16, '0');
+    for (std::size_t index = 0; index < result.size(); ++index) {
+      result[result.size() - 1 - index] = digits[hash & 0xfU];
+      hash >>= 4U;
+    }
+    return result;
   }
 
   ConceptApplication conceptApplication() {
@@ -1009,6 +1165,11 @@ private:
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
       std::vector<FunctionAttribute> functionAttributes = {}) {
+    // Taken at entry, so declarations nested in the body never see them.
+    std::optional<std::vector<GenericParameter>> blockParameters =
+        std::exchange(conformanceGenericParameters, std::nullopt);
+    std::optional<RequiresClause> blockRequirement =
+        std::exchange(conformanceRequirement, std::nullopt);
     if (match({TokenKind::UNSAFE})) {
       if (unsafeKeyword) {
         throw error(previous(), "A function cannot repeat 'unsafe'.");
@@ -1085,6 +1246,13 @@ private:
     if (!operatorName && check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
     }
+    if (blockParameters) {
+      if (!genericParameters.empty()) {
+        (void)error(name, "A conformance block operation takes the block's "
+                          "generic parameters and cannot declare its own.");
+      }
+      genericParameters = std::move(*blockParameters);
+    }
 
     if (match({TokenKind::LEFT_PAREN})) {
       if (!allowFunction) {
@@ -1104,6 +1272,7 @@ private:
                     "Operator overloads require an object receiver and cannot "
                     "be static.");
       }
+      conformanceRequirement = std::move(blockRequirement);
       return functionDeclaration(
           std::move(type), name, std::move(genericParameters),
           std::move(runtimeBinding),
@@ -1173,6 +1342,8 @@ private:
       std::optional<Token> unsafeKeyword = std::nullopt,
       std::vector<FunctionAttribute> functionAttributes = {},
       std::optional<NamePath> definitionOwner = std::nullopt) {
+    std::optional<RequiresClause> blockRequirement =
+        std::exchange(conformanceRequirement, std::nullopt);
     std::vector<Parameter> parameters = parameterList();
     if (operatorName && operatorName->kind == OverloadedOperator::Dereference &&
         !parameters.empty()) {
@@ -1221,6 +1392,15 @@ private:
       Token keyword = previous();
       requiresClause =
           RequiresClause{std::move(keyword), constraintExpression()};
+      if (blockRequirement) {
+        (void)error(requiresClause->keyword,
+                    "A conformance block operation cannot declare a "
+                    "requires clause; the block's concept application "
+                    "applies to it.");
+      }
+    }
+    if (blockRequirement) {
+      requiresClause = std::move(blockRequirement);
     }
 
     std::optional<Token> overrideKeyword;
@@ -2302,6 +2482,9 @@ private:
     if (match({TokenKind::CONCEPT})) {
       throw error(previous(),
                   "Concept declarations are limited to namespace scope.");
+    }
+    if (isConformanceStart()) {
+      throw error(peek(), "Conformance blocks are limited to namespace scope.");
     }
     if (match({TokenKind::EXTERN})) {
       throw error(previous(),
@@ -4206,6 +4389,9 @@ private:
         if (allowAccessSpecifiers && check(TokenKind::OPERATOR)) {
           return;
         }
+        if (allowAccessSpecifiers && check(TokenKind::TYPENAME)) {
+          return;
+        }
 
         if (allowClasses &&
             (check(TokenKind::HASH_IF) || check(TokenKind::HASH_IFDEF) ||
@@ -4214,7 +4400,8 @@ private:
              check(TokenKind::CONCEPT) || check(TokenKind::ENUM) ||
              check(TokenKind::EXTERN) || check(TokenKind::STRUCT) ||
              check(TokenKind::INTERFACE) || check(TokenKind::UNION) ||
-             check(TokenKind::NAMESPACE) || check(TokenKind::USING))) {
+             check(TokenKind::NAMESPACE) || check(TokenKind::USING) ||
+             isConformanceStart())) {
           return;
         }
         if (allowStatements &&
@@ -4249,6 +4436,10 @@ private:
   std::size_t current = 0;
   std::size_t nestingDepth = 0;
   std::size_t casePatternDepth = 0;
+  // Generic parameters of the conformance block whose member is being parsed,
+  // and the block's concept application, which applies to each operation.
+  std::optional<std::vector<GenericParameter>> conformanceGenericParameters;
+  std::optional<RequiresClause> conformanceRequirement;
   // Number of compile-time conditionals whose body is currently being parsed.
   // A conditional-continuation directive (`#elif`/`#else`/`#endif`) is a
   // recovery boundary only while one is open; nested recovery propagates it to

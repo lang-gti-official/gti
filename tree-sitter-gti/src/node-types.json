@@ -24,6 +24,10 @@
         "named": true
       },
       {
+        "type": "conformance_declaration",
+        "named": true
+      },
+      {
         "type": "empty_declaration",
         "named": true
       },
@@ -533,6 +537,22 @@
         "types": [
           {
             "type": "initializer_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "associated_type_declaration",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
             "named": true
           }
         ]
@@ -1317,6 +1337,25 @@
     }
   },
   {
+    "type": "concept_body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "associated_type_declaration",
+          "named": true
+        },
+        {
+          "type": "function_declaration",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "concept_declaration",
     "named": true,
     "fields": {
@@ -1326,6 +1365,16 @@
         "types": [
           {
             "type": "compiler_constraint_binding",
+            "named": true
+          }
+        ]
+      },
+      "body": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "concept_body",
             "named": true
           }
         ]
@@ -1696,6 +1745,61 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "conformance_body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "function_declaration",
+          "named": true
+        },
+        {
+          "type": "type_alias_declaration",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "conformance_declaration",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "conformance_body",
+            "named": true
+          }
+        ]
+      },
+      "concept": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "concept_application",
+            "named": true
+          }
+        ]
+      },
+      "type_parameters": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "generic_parameter_clause",
             "named": true
           }
         ]
@@ -6283,6 +6387,10 @@
   },
   {
     "type": "true",
+    "named": false
+  },
+  {
+    "type": "typename",
     "named": false
   },
   {

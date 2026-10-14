@@ -1042,7 +1042,9 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
   conceptInfo.definitionExpression = nullptr;
   conceptInfo.hasStructuralRequirements = false;
   bool valid = true;
-  if (declaration.compilerBinding()) {
+  if (declaration.isProtocol()) {
+    resolveProtocolConcept(conceptInfo, valid);
+  } else if (declaration.compilerBinding()) {
     const CompilerConstraintBinding &binding = *declaration.compilerBinding();
     const bool trustedAtomicConstraint =
         (isAtomicLibraryUnit(conceptInfo.sourceUnit) &&
@@ -3889,6 +3891,9 @@ auto SemanticVisitor::Impl::selectExactClassSpecialization(
   }
   for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
     argument = selectExactClassSpecialization(std::move(argument));
+  }
+  if (type.isAssociatedTypeProjection()) {
+    return reduceAssociatedTypeProjection(std::move(type));
   }
   type = rewriteCompilerType(std::move(type));
   if (type.kind != SemanticType::Class || type.classId == 0 ||
