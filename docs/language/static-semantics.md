@@ -1069,7 +1069,9 @@ access follows the same rule. Concrete generic owner/receiver types matter:
 deriving from `Base<int>` grants no access to `Base<bool>`'s protected members.
 
 Static members and member types have no instance-receiver restriction, but
-retain the declaring-class/derivation requirement. Qualification and public
+retain the declaring-class/derivation requirement. Ordinary static members
+declared in generic owners remain unsupported under GTI's existing qualified
+generic value-member path restriction; protected access does not expand it. Qualification and public
 aliases cannot bypass an inaccessible intermediate alias or nested type.
 Protected constructors may initialize a derived object's direct base, including
 implicit base default construction; this permission does not permit derived
