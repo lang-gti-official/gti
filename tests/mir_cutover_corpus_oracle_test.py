@@ -183,7 +183,6 @@ def main() -> int:
     env["GTI_STDLIB_PATH"] = str(root / "stdlib")
     env["GTI_RUNTIME_INCLUDE"] = str(root / "runtime" / "include")
     env["GTI_RUNTIME_LIBRARY"] = str(runtime_library)
-    env["GTI_VENDOR_INCLUDE"] = str(root / "vendor" / "expected_lite" / "include")
 
     results: dict[tuple[str, str, str], CaseResult] = {}
     with tempfile.TemporaryDirectory(prefix="gti-mir-cutover-oracle-") as raw:

@@ -72,7 +72,6 @@ def main() -> int:
                 "-ffp-contract=off",
                 "-D__gti_strict_ieee754=1",
                 f"-I{source_root / 'runtime' / 'include'}",
-                f"-I{source_root / 'vendor' / 'expected_lite' / 'include'}",
                 str(emitted_cpp),
                 str(runtime_library),
                 "-o",

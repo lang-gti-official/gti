@@ -1065,6 +1065,8 @@ def load_build_provenance(
         if not isinstance(header, dict):
             raise BenchmarkError(f"{context} must contain an object")
         require_exact_keys(header, {"kind", "logical_identity", "material"}, context)
+        # GTI before 0.431.3 reported vendored expected-lite headers as
+        # "compatibility"; a benchmarked toolchain may be that old.
         if header["kind"] not in {"runtime", "compatibility"}:
             raise BenchmarkError(f"{context}.kind is invalid")
         saw_runtime = saw_runtime or header["kind"] == "runtime"
@@ -1945,6 +1947,8 @@ def main() -> int:
                 "cpu_model": cpu_model(),
                 "logical_cpu_count": os.cpu_count(),
                 "python": platform.python_version(),
+                # GTI_VENDOR_INCLUDE only affects toolchains before 0.432.0;
+                # it stays recorded so schema-1 reports keep their shape.
                 "gti_toolchain_overrides": {
                     name: os.environ.get(name)
                     for name in (

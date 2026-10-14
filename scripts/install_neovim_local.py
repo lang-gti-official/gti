@@ -395,7 +395,7 @@ def main():
         checksum.write_text(f"{digest}  {archive.name}\n")
         environment = os.environ.copy()
         for key in ("GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY",
-                    "GTI_VENDOR_INCLUDE", "GTI_PATH", "GTI_LSP_PATH", "GTI_TREE_SITTER_PATH"):
+                    "GTI_PATH", "GTI_LSP_PATH", "GTI_TREE_SITTER_PATH"):
             environment.pop(key, None)
         environment.update(GTI_TEST_REPOSITORY=str(ROOT), GTI_TEST_ARCHIVE=str(archive),
                            GTI_TEST_CHECKSUM=str(checksum), GTI_TEST_PLATFORM=native_platform)

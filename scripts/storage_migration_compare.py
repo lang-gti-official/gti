@@ -64,7 +64,7 @@ def main() -> None:
         directory.mkdir()
         snapshot = directory / 'source'
         snapshot.mkdir()
-        resources = ('stdlib', 'runtime/include', 'vendor/expected_lite/include')
+        resources = ('stdlib', 'runtime/include')
         if name == 'baseline':
             archive = subprocess.check_output(['git', 'archive', revision, *resources], cwd=ROOT)
             with tarfile.open(fileobj=io.BytesIO(archive)) as bundle:
@@ -85,7 +85,6 @@ def main() -> None:
             raise RuntimeError('baseline binary build identity does not match clean snapshot')
         env = dict(os.environ, GTI_STDLIB_PATH=str(snapshot / 'stdlib'),
                    GTI_RUNTIME_INCLUDE=str(snapshot / 'runtime/include'),
-                   GTI_VENDOR_INCLUDE=str(snapshot / 'vendor/expected_lite/include'),
                    GTI_RUNTIME_LIBRARY=str(runtime))
         environments[name] = env
         executable = directory / 'workload'
@@ -99,7 +98,7 @@ def main() -> None:
             'resources': [benchmark.file_evidence(path)
                           for path in sorted(snapshot.rglob('*')) if path.is_file()],
             'environment': {key: env[key] for key in ('GTI_STDLIB_PATH',
-                'GTI_RUNTIME_INCLUDE', 'GTI_VENDOR_INCLUDE', 'GTI_RUNTIME_LIBRARY')},
+                'GTI_RUNTIME_INCLUDE', 'GTI_RUNTIME_LIBRARY')},
             'compile_samples': {}, 'runtime_samples': {}, 'runtime_warmups': {}}
 
     def invoke(command: list[str], label: str, name: str) -> dict:

@@ -29,7 +29,6 @@ def main():
     environment = dict(os.environ, GTI_STDLIB_PATH=str(root / "stdlib"),
                        GTI_RUNTIME_INCLUDE=str(root / "runtime/include"),
                        GTI_RUNTIME_LIBRARY=str(library),
-                       GTI_VENDOR_INCLUDE=str(root / "vendor/expected_lite/include"),
                        GTI_ENVIRONMENT_EMPTY="",
                        GTI_ENVIRONMENT_SPACES="two words = exact value",
                        GTI_ENVIRONMENT_UNICODE="café",

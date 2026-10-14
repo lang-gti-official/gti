@@ -49,7 +49,7 @@ def main() -> None:
     if release_layout is None:
         fail("release resource overrides must cover the final registered test inventory")
     for resource in ("GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE",
-                     "GTI_RUNTIME_LIBRARY", "GTI_VENDOR_INCLUDE"):
+                     "GTI_RUNTIME_LIBRARY"):
         if f'"{resource}=' not in release_layout.group("environment"):
             fail(f"release build-tree tests lack {resource}")
 
@@ -101,8 +101,7 @@ def main() -> None:
                     fail("release layout erased an existing test environment")
                 expected = [f"GTI_STDLIB_PATH={source}/stdlib",
                             f"GTI_RUNTIME_INCLUDE={source}/runtime/include",
-                            f"GTI_RUNTIME_LIBRARY={build}/runtime.a",
-                            f"GTI_VENDOR_INCLUDE={source}/vendor/expected_lite/include"]
+                            f"GTI_RUNTIME_LIBRARY={build}/runtime.a"]
                 for value in expected:
                     if (value in environment) != (release == "ON"):
                         fail(f"{release}/{test['name']}: incorrect override {value}")
