@@ -402,12 +402,68 @@ void checkBaseInitializerTemporaries(const std::filesystem::path &fixtures) {
   expect(exercised, "the base initializer fixture prepared owned temporaries");
 }
 
+// Each concrete instance of a generic derived class prepares its generic
+// base's arguments. The carrier and the base gate are members of the two
+// classes' own concrete C++ definitions; a class without one, such as a
+// retained native class template, is refused rather than mis-spelled.
+void checkGenericBaseArguments(const std::filesystem::path &fixtures) {
+  const auto path = fixtures / "fixtures/generic_base_arguments.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(), "generic base arguments analyze");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto rows = buildRows(frontend, frontend.mir);
+  expect(
+      lang::CppMirBodyEmitter(frontend.mir, lang::CppMirBodyEmissionMap(rows))
+          .analyzeProgram()
+          .ready(),
+      "generic base arguments have complete backend authority");
+  std::size_t prepared = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    if (!lang::cppMirBasePreparation(frontend.mir, constructor))
+      continue;
+    ++prepared;
+    const lang::MirConstructorInstance *target = nullptr;
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::InitializeBase &&
+            instruction.constructorTarget)
+          target = frontend.mir.findConstructorInstance(
+              *instruction.constructorTarget);
+    expect(target != nullptr, "a prepared generic base keeps its target");
+    if (target == nullptr)
+      continue;
+    for (const auto owner : {constructor.owner, target->owner}) {
+      const auto *instance = frontend.mir.findClassInstance(owner);
+      auto forged = rows;
+      bool marked = false;
+      for (auto &row : forged.types)
+        if (row.type == instance->type) {
+          marked = row.concreteGenericClass;
+          row.concreteGenericClass = false;
+        }
+      expect(marked, "a generic derived or base instance is a concrete class");
+      expect(!lang::CppMirBodyEmitter(frontend.mir,
+                                      lang::CppMirBodyEmissionMap(forged))
+                  .analyzeProgram()
+                  .ready(),
+             "a generic class without its own C++ definition never receives "
+             "a preparation carrier or base gate");
+    }
+  }
+  expect(prepared == 2,
+         "each concrete generic derived instance prepares its base");
+}
+
 int main() {
   checkSelectedGeneratedBaseSchedule();
   checkFieldArgumentOrder();
   checkOwningEnumBaseArgumentAuthority();
   const auto fixtures = std::filesystem::path(__FILE__).parent_path();
   checkBaseInitializerTemporaries(fixtures);
+  checkGenericBaseArguments(fixtures);
   for (const auto name :
        {"coverage/reproducers/a45-base-state-rollback-unsupported.gti",
         "coverage/reproducers/a45-base-plus-string-field-unsupported.gti",
@@ -417,7 +473,8 @@ int main() {
         "fixtures/base_constructor_stages.gti",
         "fixtures/checked_base_arguments.gti",
         "fixtures/effectful_base_arguments.gti",
-        "fixtures/base_initializer_temporaries.gti"}) {
+        "fixtures/base_initializer_temporaries.gti",
+        "fixtures/generic_base_arguments.gti"}) {
     const auto path = fixtures / name;
     std::ifstream input(path);
     const std::string source{std::istreambuf_iterator<char>(input), {}};
@@ -438,7 +495,8 @@ int main() {
       if (std::string_view(name) == "fixtures/checked_base_arguments.gti" ||
           std::string_view(name) == "fixtures/effectful_base_arguments.gti" ||
           std::string_view(name) ==
-              "fixtures/base_initializer_temporaries.gti") {
+              "fixtures/base_initializer_temporaries.gti" ||
+          std::string_view(name) == "fixtures/generic_base_arguments.gti") {
         const auto preparation =
             lang::cppMirBasePreparation(frontend.mir, constructor);
         expect(

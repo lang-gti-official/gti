@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Copied closure fields of generic classes (0.431.1)
+## Copied closure fields of generic classes (0.431.2)
 
 `generic_callable_transport_runtime` adds `generic_closure_field_copy.gti`.
 Generic classes instantiated with captureless, scalar-capturing and
@@ -16,6 +16,17 @@ field cleanup, a lost initializer record, and a captured class without a
 generated copy. It also requires the owned move after a closure copy to keep
 its native binding, and rejects it once the copy's Load and boundary are
 reordered.
+
+## Generic base arguments (0.431.1)
+
+`base_constructor_stage_runtime` adds `generic_base_arguments.gti`. In it, two
+concrete instances of a generic derived class compute their generic base's
+arguments through a checked call and a temporary receiver. In C++20/C++23 at
+O0/O1/O3, no-elide and ASan/UBSan it checks the temporary's drop after each
+base, and an argument, base-constructor or body failure ending each value
+exactly once. `base_constructor_stage` requires a preparation for both
+instances. It rejects the carrier and the gate when the `concreteGenericClass`
+representation fact of either the derived or the base class is cleared.
 
 ## Annotated test suites
 

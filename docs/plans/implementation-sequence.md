@@ -6643,8 +6643,11 @@ construction. This is not closure of the full base-initializer goal:
 owned derived parameters need one reference-bound frame with no extra native
 moves/copies/drops; owned base arguments need exact `CallInput` transfer and
 prepared-drop facts; borrowed arguments need original places/access/loan
-endpoints and temporary/escape rejections. Generic owners require exact carrier
-identities and declarations. Owning/nested bases require a recursively inactive
+endpoints and temporary/escape rejections. Generic derived and base instances
+emitted as their own concrete classes now use the same carrier and gate; a
+generic class retained as a native class template still requires exact carrier
+identities and template-specialized declarations. Owning/nested bases require a
+recursively inactive
 shell that suppresses observable defaults until preparation succeeds, retaining
 the original typed constructor schedule. Acceptance must cover preparation,
 ancestor, field and body failure, primary/secondary records and exact reverse
