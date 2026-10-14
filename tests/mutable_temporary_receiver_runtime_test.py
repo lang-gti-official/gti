@@ -59,6 +59,52 @@ Tracker make_tracker(int32_t value) {
   return Tracker(value);
 }
 
+class Reading {
+public:
+  int32_t value;
+  Reading(int32_t amount) : value(amount) {}
+};
+
+class Gauge {
+public:
+  Gauge(int32_t initial) : value(initial) {}
+
+  ~Gauge() {
+    drops += 1;
+  }
+
+  Reading reading() { return Reading(this.value); }
+
+  Reading adjusted(int32_t amount) mut {
+    this.value += amount;
+    return Reading(this.value);
+  }
+
+private:
+  mut int32_t value;
+};
+
+// Field declaration defaults run inside the selected constructor. Each
+// temporary receiver ends with its own initializer, before the next one.
+class Lane {
+public:
+  Reading lap = Gauge(7).reading();
+  int32_t after_lap = drops;
+  Reading tuned = Gauge(8).adjusted(1);
+  int32_t after_tuned = drops;
+  mut int32_t in_body = 0;
+
+  Lane() { this.in_body = drops; }
+  Lane(int32_t seed) : lap(Gauge(seed).adjusted(seed)) {
+    this.in_body = drops;
+  }
+};
+
+// A generated default constructor runs the same declaration default.
+struct Split {
+  int32_t lap = Gauge(12).reading().value;
+};
+
 int main() {
   int32_t first = Tracker(1).update(2);
   if (first != 3 || drops != 1) {
@@ -83,6 +129,24 @@ int main() {
   int32_t invoked = Invoker()();
   if (invoked != 5 || drops != 5) {
     return 5;
+  }
+
+  Lane lane{};
+  if (lane.lap.value != 7 || lane.after_lap != 6 || lane.tuned.value != 9 ||
+      lane.after_tuned != 7 || lane.in_body != 7 || drops != 7) {
+    return 6;
+  }
+
+  Lane seeded = Lane(3);
+  if (seeded.lap.value != 6 || seeded.after_lap != 8 ||
+      seeded.tuned.value != 9 || seeded.after_tuned != 9 ||
+      seeded.in_body != 9 || drops != 9) {
+    return 7;
+  }
+
+  Split split{};
+  if (split.lap != 12 || drops != 10) {
+    return 8;
   }
   return 0;
 }
@@ -113,7 +177,8 @@ int main() {
                 executed = run([str(executable)])
                 if executed.returncode != 0:
                     sys.stderr.write(
-                        "mutable temporary receiver cleanup or overload selection "
+                        "temporary receiver cleanup, overload selection or "
+                        "initializer ordering "
                         f"failed for {standard} {optimization}: "
                         f"exit={executed.returncode} stdout={executed.stdout!r} "
                         f"stderr={executed.stderr!r}\n"

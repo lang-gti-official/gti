@@ -1348,6 +1348,26 @@ struct ResolvedOperatorInfo {
   ExpressionInfo receiverInfo;
 };
 
+// The receiver of the conversion operator an explicit conversion selected:
+// the value of `int(source)`, or the sole argument of `Target(source)`. A
+// conversion operator has no parameters.
+[[nodiscard]] inline const ExprPtr *
+explicitConversionReceiver(const Expr &expression,
+                           const ResolvedOperatorInfo &resolved) {
+  if (resolved.kind != OverloadedOperator::Conversion &&
+      resolved.kind != OverloadedOperator::ContextualBool) {
+    return nullptr;
+  }
+  if (const auto *conversion = exprAs<Conversion>(&expression)) {
+    return &conversion->value();
+  }
+  if (const auto *call = exprAs<Call>(&expression);
+      call != nullptr && call->arguments().size() == 1) {
+    return &call->arguments().front();
+  }
+  return nullptr;
+}
+
 enum class SemanticBindingKind {
   None,
   GlobalVariable,
@@ -2112,8 +2132,14 @@ public:
   [[nodiscard]] const ResolvedOperatorInfo *
   findProjectionOperator(const Expr &expression) const;
 
+  // The conversion operator applied to an expression's value where its context
+  // requires another type: a condition's operator bool, or the implicit
+  // conversion of a declaration initializer to the declared type.
   [[nodiscard]] const ResolvedOperatorInfo *
   findContextualConversion(const Expr &expression) const;
+
+  // Whether this model, not a base, records the expression's conversion.
+  [[nodiscard]] bool recordsContextualConversion(const Expr &expression) const;
 
   [[nodiscard]] bool isContextualIntegerOperand(const Expr &expression) const;
 
@@ -2452,6 +2478,8 @@ private:
 
   void recordContextualConversion(const Expr &expression,
                                   ResolvedOperatorInfo info);
+
+  void forgetContextualConversion(const Expr &expression);
 
   void recordContextualIntegerOperand(const Expr &expression);
 

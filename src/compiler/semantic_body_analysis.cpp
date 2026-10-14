@@ -1,7 +1,5 @@
 #include "semantic_analyzer_impl.h"
 
-#include "gti/support.h"
-
 #include <iterator>
 
 namespace lang {
@@ -1924,8 +1922,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
           .projections = {{.kind = PlaceProjectionKind::Field,
                            .field = toolingSymbolFor(member->second.symbol)}},
           .receiver = true};
-      if (semanticModel.recordsContextualConstruction(
-              *declaration.initializer()))
+      if (recordsDeclarationConversion(*declaration.initializer()))
         applyRawPointerFields(fieldPlace,
                               contextualConstructionRawFields(
                                   *declaration.initializer(), fieldType),
@@ -1938,6 +1935,11 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   std::unordered_set<std::string> initializedFields;
   std::optional<std::size_t> previousFieldIndex;
   const ClassBaseTypeInfo *base = concreteBase(owner);
+  const SemanticType baseType =
+      base == nullptr
+          ? SemanticType::Unknown
+          : substituteType(base->type,
+                           classSubstitution(openClassType(owner.id)));
   bool initializedBase = false;
   bool sawFieldInitializer = false;
   for (const ConstructorInitializer &initializer : stmt.initializers()) {
@@ -1957,7 +1959,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     }
 
     if (field == nullptr && base != nullptr &&
-        typeOf(initializer.target, owner.namespaceScope) == base->type) {
+        typeOf(initializer.target, owner.namespaceScope) == baseType) {
       validateType(initializer.target);
       if (initializedBase) {
         report(target,
@@ -1972,7 +1974,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                "GTI-S2040");
       }
       initializedBase = true;
-      analyzeBaseConstructorInitializer(initializer, base->type);
+      analyzeBaseConstructorInitializer(initializer, baseType);
       continue;
     }
 
@@ -2068,8 +2070,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                                initializer.arguments.front());
     } else if (field != nullptr && initializer.arguments.size() == 1 &&
                !recursiveLayoutFields.contains(field) &&
-               !semanticModel.recordsContextualConstruction(
-                   *initializer.arguments.front()) &&
+               !recordsDeclarationConversion(*initializer.arguments.front()) &&
                !isOwnershipAssignable(fieldType, valueType,
                                       initializer.arguments.front())) {
       if (fieldType == valueType && isMoveOnlyOwnerType(fieldType)) {
@@ -2093,7 +2094,9 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                    typeSpelling(fieldType) + "' with a value of type '" +
                    typeSpelling(valueType) + "'.",
                "GTI-S2003");
-        if (declarationConstructionApplies(initializer.arguments.front(),
+        if (!conversionOperatorCandidates(valueType, fieldType, false)
+                 .empty() ||
+            declarationConstructionApplies(initializer.arguments.front(),
                                            fieldType, valueType)) {
           diagnostics.back().hints.emplace_back(implicitConstructionHint(
               target.lexeme + "(" + typeSpelling(fieldType) + "(...))"));
@@ -2133,8 +2136,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
             .projections = {{.kind = PlaceProjectionKind::Field,
                              .field = fieldSymbol}},
             .receiver = true};
-        if (semanticModel.recordsContextualConstruction(
-                *initializer.arguments.front()))
+        if (recordsDeclarationConversion(*initializer.arguments.front()))
           applyRawPointerFields(fieldPlace,
                                 contextualConstructionRawFields(
                                     *initializer.arguments.front(), fieldType),
@@ -2793,8 +2795,15 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   const bool staticMethod =
       functionInfo != nullptr && functionInfo->staticMember;
   const bool requirementsValid = beginRequirementScope(functionInfo);
-  const Token &functionToken =
-      stmt.operatorName() ? stmt.operatorName()->symbol : stmt.name();
+  // A conversion operator is named by its target, whose tokens are type
+  // references of their own, so its occurrence is the `operator` keyword.
+  const bool conversionOperator =
+      stmt.operatorName() &&
+      stmt.operatorName()->kind == OverloadedOperator::Conversion;
+  const Token &functionToken = !stmt.operatorName() ? stmt.name()
+                               : conversionOperator
+                                   ? stmt.operatorName()->keyword
+                                   : stmt.operatorName()->symbol;
   const SymbolId functionSymbol = recordFunctionSymbol(stmt);
   attachDeclarationDocumentation(functionSymbol, stmt);
   OccurrenceRole functionRoles = OccurrenceRole::Declaration;
@@ -2807,9 +2816,11 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
        .kind = SemanticOccurrenceKind::Function,
        .symbol = functionSymbol,
        .roles = functionRoles,
-       .name = stmt.operatorName() ? std::string(operatorSourceSpelling(
-                                         stmt.operatorName()->kind))
-                                   : stmt.name().lexeme,
+       .name = conversionOperator && functionInfo != nullptr
+                   ? "operator " + typeSpelling(functionInfo->returnType)
+               : stmt.operatorName() ? std::string(operatorSourceSpelling(
+                                           stmt.operatorName()->kind))
+                                     : stmt.name().lexeme,
        .type = functionInfo == nullptr ? SemanticType::Unknown
                                        : functionInfo->returnType,
        .function = &stmt});
@@ -5341,9 +5352,10 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     semanticModel.record(stmt, std::move(updated));
   }
 
-  // A contextual construction is a fresh value of the declared type.
+  // A contextual construction or conversion is a fresh value of the declared
+  // type.
   const bool contextualConstruction =
-      initializer && semanticModel.recordsContextualConstruction(*initializer);
+      initializer && recordsDeclarationConversion(*initializer);
   const bool initializerAssignable =
       !initializer || contextualConstruction ||
       isOwnershipAssignable(declaredType, initializerType, initializer);
@@ -5411,6 +5423,12 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
         diagnostics.back().hints.emplace_back(
             "Move-only owners cannot be copied; transfer ownership "
             "explicitly with std::move(owner).");
+      } else if (!stmt.isConstexpr() && !stmt.isRangeBinding() &&
+                 !conversionOperatorCandidates(initializerType, declaredType,
+                                               false)
+                      .empty()) {
+        diagnostics.back().hints.emplace_back(
+            implicitConstructionHint(typeSpelling(declaredType) + "(...)"));
       } else if (!stmt.isConstexpr() && !stmt.isRangeBinding() &&
                  declarationConstructionApplies(initializer, declaredType,
                                                 initializerType)) {
@@ -5524,15 +5542,21 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     currentType = analyze(expr.value());
     return;
   }
-  if (qualified && symbol.ownerClass != 0 &&
-      symbol.access == AccessModifier::Private &&
-      !isWithinClass(symbol.ownerClass)) {
+  if (symbol.ownerClass != 0 &&
+      !canAccessMember(symbol.access, symbol.ownerClass,
+                       symbol.staticMember || !currentClass
+                           ? SemanticType::Unknown
+                           : openClassType(*currentClass))) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, expr.name(),
-        "Static member '" + expr.name().lexeme + "' of '" +
-            classInfo(symbol.ownerClass).name.lexeme + "' is private.");
+        std::string(symbol.staticMember ? "Static member '" : "Member '") +
+            expr.name().lexeme + "' of '" +
+            classInfo(symbol.ownerClass).name.lexeme + "' is " +
+            std::string(accessModifierSpelling(symbol.access)) + ".");
     diagnostic.related.push_back(
-        {tokenSpan(symbol.declaration), "Static member declared here."});
+        {tokenSpan(symbol.declaration), symbol.staticMember
+                                            ? "Static member declared here."
+                                            : "Member declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
   }
   const SemanticType targetType = symbol.type.kind == SemanticType::Reference &&
@@ -6216,6 +6240,12 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         analyzeContextualCallArguments(expr.arguments());
     std::vector<SemanticType> &argumentTypes = argumentAnalysis.types;
     if (alias->type.kind == SemanticType::Class) {
+      if (expr.arguments().size() == 1 &&
+          analyzeExplicitConversion(expr, expr.arguments().front(),
+                                    argumentTypes.front(), alias->type,
+                                    expr.paren())) {
+        return;
+      }
       analyzeConstructorCall(expr, alias->type.classId, alias->type.arguments,
                              alias->type.valueArguments, argumentTypes,
                              expr.arguments(), expr.paren());
@@ -6446,6 +6476,14 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           isContextualCallableResultArgument(expr.arguments()[index]);
       if (!contextualArrayTail && argumentAnalysis.deferred[index])
         argumentTypes[index] = analyze(expr.arguments()[index]);
+    }
+    // `Target(source)` converts through a conversion operator of the source
+    // when it declares one to exactly the target.
+    if (expr.arguments().size() == 1 && !contextualArrayTail &&
+        analyzeExplicitConversion(expr, expr.arguments().front(),
+                                  argumentTypes.front(), constructed,
+                                  expr.paren())) {
+      return;
     }
     analyzeConstructorCall(expr, calleeType.classId, genericArguments.types,
                            genericArguments.values, argumentTypes,
@@ -7211,6 +7249,16 @@ auto SemanticVisitor::Impl::analyzeAliasConversion(
   }
 
   const SemanticType valueType = analyze(expr.arguments().front());
+  if (analyzeExplicitConversion(expr, expr.arguments().front(), valueType,
+                                targetType, expressionToken(expr.callee()))) {
+    return;
+  }
+  if (valueType.kind == SemanticType::Class) {
+    reportMissingConversionOperator(expressionToken(expr.arguments().front()),
+                                    valueType, targetType);
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (targetType.kind == SemanticType::RawPointer) {
     const bool shaped =
         valueType.kind == SemanticType::RawPointer &&
@@ -7411,6 +7459,19 @@ auto SemanticVisitor::Impl::visitConversionExpr(const Conversion &expr)
   validateType(expr.targetType());
   const SemanticType targetType = typeOf(expr.targetType());
   const SemanticType valueType = analyze(expr.value());
+  // A class value converts only through its own conversion operator to
+  // exactly the target.
+  if (analyzeExplicitConversion(expr, expr.value(), valueType, targetType,
+                                expr.targetType().name.last())) {
+    return;
+  }
+  if (valueType.kind == SemanticType::Class &&
+      targetType != SemanticType::Unknown) {
+    reportMissingConversionOperator(expressionToken(expr.value()), valueType,
+                                    targetType);
+    currentType = SemanticType::Unknown;
+    return;
+  }
   const bool characterCodeConversion =
       isCharacterCodeConversion(valueType, targetType);
   if (!isNumeric(targetType) && !characterCodeConversion) {
@@ -9466,12 +9527,15 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
     return;
   }
   if (symbol->ownerClass != 0 && symbol->type != SemanticType::Function &&
-      symbol->access == AccessModifier::Private &&
-      !isWithinClass(symbol->ownerClass)) {
+      !canAccessMember(symbol->access, symbol->ownerClass,
+                       SemanticType::Unknown,
+                       expr.ownerType() ? typeOf(*expr.ownerType())
+                                        : SemanticType::Unknown)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, expr.name().last(),
         "Static member '" + expr.name().last().lexeme + "' of '" +
-            classInfo(symbol->ownerClass).name.lexeme + "' is private.");
+            classInfo(symbol->ownerClass).name.lexeme + "' is " +
+            std::string(accessModifierSpelling(symbol->access)) + ".");
     diagnostic.related.push_back(
         {tokenSpan(symbol->declaration), "Static member declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
@@ -10189,13 +10253,17 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
                             : "Class and struct members cannot be referenced "
                               "from field initializers yet.");
   }
-  if (symbol->ownerClass != 0 && symbol->access == AccessModifier::Private &&
-      !isWithinClass(symbol->ownerClass)) {
+  if (symbol->ownerClass != 0 &&
+      !canAccessMember(symbol->access, symbol->ownerClass,
+                       symbol->staticMember || !currentClass
+                           ? SemanticType::Unknown
+                           : openClassType(*currentClass))) {
     const ClassInfo &declaringOwner = classInfo(symbol->ownerClass);
-    Diagnostic diagnostic =
-        makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, expr.name(),
-                       "Member '" + expr.name().lexeme + "' of '" +
-                           declaringOwner.name.lexeme + "' is private.");
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2007", DiagnosticPhase::Semantics, expr.name(),
+        "Member '" + expr.name().lexeme + "' of '" +
+            declaringOwner.name.lexeme + "' is " +
+            std::string(accessModifierSpelling(symbol->access)) + ".");
     diagnostic.related.push_back(
         {tokenSpan(symbol->declaration), "Member declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
@@ -11358,7 +11426,10 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
     // operands; the same call boundary and verified MIR execute the body.
     const Expr *receiver = nullptr;
     std::vector<const Expr *> arguments;
-    if (const auto *binary = exprAs<Binary>(&source)) {
+    if (const ExprPtr *converted =
+            explicitConversionReceiver(source, *operation)) {
+      receiver = converted->get();
+    } else if (const auto *binary = exprAs<Binary>(&source)) {
       receiver = binary->left().get();
       arguments.push_back(binary->right().get());
     } else if (const auto *unary = exprAs<Unary>(&source)) {

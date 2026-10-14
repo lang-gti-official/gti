@@ -52,6 +52,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Build constants with mutable helpers, result composition, constructors, enum states and reflection | [142: constexpr builders](142-constexpr-builders.gti) |
 | Use temporary owning allocations and deterministic cleanup during constant evaluation | [153: constexpr allocation](153-constexpr-allocation.gti) |
 | Initialize a string or class from one value of another type with an implicit constructor | [154: declaration construction](154-declaration-construction.gti) |
+| Convert a value to another type with an explicit or `implicit` conversion operator | [155: conversion operators](155-conversion-operators.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
@@ -210,6 +211,7 @@ is a teaching helper, not a production server.
 | `142-constexpr-builders.gti` | checked mutable constexpr references, result propagation, constructor reference arguments/defaults, generated defaults, enum states, mutable arrays and reflection-driven field mutation, with runtime parity |
 | `153-constexpr-allocation.gti` | transient exclusive allocation, source-defined destruction and a passive result that survives constant evaluation, with runtime parity |
 | `154-declaration-construction.gti` | `implicit` constructors letting declarations construct `std::string` from a literal and an application class from an `int`, a field default and constructor initializer doing the same, a constructor without `implicit` called explicitly, and `std::string` assignment from a view |
+| `155-conversion-operators.gti` | an explicit conversion operator to a strongly typed identifier, an `implicit` one that a declaration may use, and a consuming conversion from a temporary and an explicitly moved builder |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
@@ -217,6 +219,7 @@ is a teaching helper, not a production server.
 | `147-standard-library-import.gti` | one portable standard-library import, vector, owning strings and formatting, without importing platform-only APIs |
 | `148-nested-configuration.gti` | named nested structs/classes, public qualified type paths, three-level nesting, and recursive reflected JSON configuration decoding and encoding |
 | `149-interface-static-factories.gti` | concrete static interface factories, recoverable backend selection, explicit owning upcasts and ordinary virtual dispatch |
+| `150-protected-events.gti` | protected event state, derived peer and transitive access, protected base construction, public observations and generic counter storage |
 | `150-out-of-class-methods.gti` | optional split method definitions, private receiver state, declaration defaults, constexpr statics and receiver-borrowed results |
 | `151-c-string-import.gti` | unsafe C-string construction, recoverable null/allocation errors, independent owned copies and an unrelated unsafe constructor |
 | `152-unsafe-expressions.gti` | directly initialized owned results from unsafe expressions, checked factory results, and an unrelated raw reader |

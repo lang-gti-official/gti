@@ -2264,11 +2264,41 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 36
       }
+    },
+    "150-protected-events.gti": {
+      "declarations": 122,
+      "bodies": 32,
+      "generated_items": 4,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 3
+      }
+    },
+    "155-conversion-operators.gti": {
+      "declarations": 1123,
+      "bodies": 130,
+      "generated_items": 79,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 26,
+        "callable_adapter": 13,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 35
+      }
     }
   },
   "totals": {
-    "declarations": 108113,
-    "bodies": 16573,
-    "generated_items": 10193
+    "declarations": 109358,
+    "bodies": 16735,
+    "generated_items": 10276
   }
 }

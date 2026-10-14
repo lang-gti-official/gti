@@ -107,7 +107,20 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (declaration != nullptr && declaration->isConstexpr()) {
     result += "constexpr ";
   }
-  result += types.print(returnType) + " " + functionName(info);
+  const bool conversion =
+      declaration != nullptr && declaration->operatorName() &&
+      (declaration->operatorName()->kind == OverloadedOperator::Conversion ||
+       declaration->operatorName()->kind == OverloadedOperator::ContextualBool);
+  if (conversion) {
+    // A conversion operator is named by its target; no result type precedes
+    // it.
+    if (declaration->implicitKeyword()) {
+      result += "implicit ";
+    }
+    result += functionName(info);
+  } else {
+    result += types.print(returnType) + " " + functionName(info);
+  }
   if (selected != nullptr &&
       (!selected->typeArguments.empty() || !selected->valueArguments.empty())) {
     result += '<';
@@ -464,6 +477,11 @@ SignaturePrinter::functionName(const FunctionInfo &info) const {
   const std::string scope = separator == std::string::npos
                                 ? std::string{}
                                 : info.qualifiedName.substr(0, separator + 2);
+  if (info.declaration->operatorName()->kind ==
+      OverloadedOperator::Conversion) {
+    return (exactOwner.empty() ? scope : exactOwner) + "operator " +
+           types.print(info.returnType);
+  }
   return (exactOwner.empty() ? scope : exactOwner) +
          std::string(
              operatorSourceSpelling(info.declaration->operatorName()->kind));
@@ -1867,9 +1885,13 @@ private:
     }
     if (const auto *function = stmtAs<FunctionDecl>(&statement)) {
       if (function->operatorName()) {
-        return makeInfo(function->name(), DocumentSymbolKind::Operator,
-                        std::string(operatorSourceSpelling(
-                            function->operatorName()->kind)));
+        return makeInfo(
+            function->name(), DocumentSymbolKind::Operator,
+            function->operatorName()->kind == OverloadedOperator::Conversion
+                ? "operator " +
+                      semantic_spelling::typeRefSpelling(function->returnType())
+                : std::string(
+                      operatorSourceSpelling(function->operatorName()->kind)));
       }
       return makeInfo(function->name(), insideClass
                                             ? DocumentSymbolKind::Method
