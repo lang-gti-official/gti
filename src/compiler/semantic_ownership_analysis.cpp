@@ -2000,6 +2000,30 @@ auto SemanticVisitor::Impl::nestsBorrowedState(const SemanticType &type) const
          !isDirectStoredReferenceType(type);
 }
 
+// A carrier composes its fields' origins when it has several reference
+// paths, or when a single path runs through a closure capture or ends in an
+// opaque erased object: those are environment fields, not another spelling of
+// the value itself. A plain single-path class (a span, a view) keeps the
+// child-reborrow path, so its reborrows stay children of their source loan.
+auto SemanticVisitor::Impl::composedCarrierPaths(
+    std::span<const StoredReferencePath> paths) const -> bool {
+  if (paths.size() > 1)
+    return true;
+  if (paths.empty())
+    return false;
+  const auto &path = paths.front();
+  if (std::any_of(
+          path.fields.begin(), path.fields.end(),
+          [](const StoredField &field) { return field.capture != nullptr; }))
+    return true;
+  const auto *referent = path.reference.kind == SemanticType::Reference &&
+                                 path.reference.arguments.size() == 1
+                             ? classInfo(path.reference.arguments.front())
+                             : nullptr;
+  return referent != nullptr && referent->compilerCapability ==
+                                    CompilerCapabilityTypeKind::ErasedObject;
+}
+
 auto SemanticVisitor::Impl::isBorrowedCarrierReference(
     const SemanticType &type) const -> bool {
   if (type.kind != SemanticType::Reference || type.arguments.size() != 1) {
@@ -2679,9 +2703,14 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
   if (const auto *group = exprAs<Grouping>(expression.get())) {
     return storedBorrowDependencies(group->expression());
   }
+  // Recorded expression dependencies describe closure environments and
+  // erased referents, whose dependency layout the type alone cannot name.
+  // Ordinary carriers (a fallible borrow, a view) keep the structural
+  // derivation below, which aliases their external referent's loan.
   if (const auto dependencies =
           semanticModel.findBorrowDependencies(*expression);
-      !dependencies.empty())
+      !dependencies.empty() && composedCarrierPaths(storedReferencePaths(
+                                   semanticModel.typeOf(*expression))))
     return {dependencies.begin(), dependencies.end()};
   if (const auto *construction = semanticModel.findConstruction(*expression);
       construction != nullptr && construction->directInitialization) {
@@ -2870,17 +2899,23 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
       loan = semanticModel.findLoan(loan->storedDependency);
     }
     if (loan != nullptr && loan->kind == SemanticLoanKind::StoredValue) {
+      // A borrowed carrier read through this expression lends its loan as
+      // the authority of each dependency. A carrier consumed by a move ends
+      // instead: the new owner forwards the carrier's own ancestry rather
+      // than becoming a child of a loan that retires with the move.
+      const bool transferred = source->transfer;
       std::vector<SemanticLoanDependency> dependencies{
           {.place = loan->place,
            .designatedFields = loan->designatedFields,
            .access = loan->access,
            .protectsStorage = loan->protectsStorage,
-           .parent = loan->id}};
+           .parent = transferred ? loan->parent : loan->id}};
       dependencies.insert(dependencies.end(),
                           loan->additionalDependencies.begin(),
                           loan->additionalDependencies.end());
-      for (auto &dependency : dependencies)
-        dependency.parent = loan->id;
+      if (!transferred)
+        for (auto &dependency : dependencies)
+          dependency.parent = loan->id;
       if (loan->entry && loan->kind == SemanticLoanKind::StoredValue)
         for (auto &dependency : dependencies)
           for (const auto field : dependency.designatedFields)
@@ -4493,7 +4528,8 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
     if (!referenceParameter && !borrowedCarrierParameter) {
       continue;
     }
-    if (borrowedCarrierParameter && !storedReferencePaths(parameter).empty()) {
+    if (borrowedCarrierParameter &&
+        composedCarrierPaths(storedReferencePaths(parameter))) {
       for (const auto &dependency :
            storedBorrowDependencies(*arguments[index])) {
         places.push_back({.place = dependency.place,
@@ -5085,7 +5121,11 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   const SymbolId carrierSymbol = toolingSymbolFor(*carrier);
   const ExpressionInfo *info =
       expression ? semanticModel.findExpression(*expression) : nullptr;
-  if (expression) {
+  // A fallible borrow (`expected<T&, E>`) is a transparent carrier of its
+  // external referent: its binding aliases that referent's loan below, so
+  // a reference extracted from it later relays the same caller-owned
+  // authority. It does not take a dependency loan of its own here.
+  if (expression && !isFallibleBorrowType(carrier->type)) {
     const auto dependencies = semanticModel.findBorrowDependencies(*expression);
     if (!dependencies.empty()) {
       for (const auto &dependency : dependencies)
@@ -5223,7 +5263,12 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       }
     }
   }
-  if (!storedReferencePaths(carrier->type).empty() &&
+  // Multi-path carriers compose their fields' origins. A closure is composed
+  // the same way even with one borrowing capture, because its capture is a
+  // field of the environment, not the value's own spelling; an ordinary
+  // single-path carrier keeps the child-reborrow path below.
+  const auto carrierPaths = storedReferencePaths(carrier->type);
+  if (composedCarrierPaths(carrierPaths) &&
       ((construction != nullptr && (!construction->borrowArguments.empty() ||
                                     !construction->borrowFields.empty())) ||
        (resolved != nullptr && (!resolved->borrowArguments.empty() ||
@@ -5295,8 +5340,17 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
               transferredInputs.push_back(source->loan);
         }
     }
+    // The composed value's own source loan (a call result or constructed
+    // temporary) and its ancestors, including the transient receiver
+    // reborrows of the producing call, are the reborrow being retained, not
+    // competing borrows of the owner; they are exempt as for any reborrow.
+    const auto composedOrigin = retainedLoanSource(expression);
+    const SemanticLoanId composedThrough =
+        composedOrigin ? composedOrigin->loan : SemanticLoanId{0};
     for (const auto &dependency : dependencies) {
-      auto conflicts = conflictingLoans(dependency.place, dependency.access);
+      auto conflicts = conflictingLoans(
+          dependency.place, dependency.access,
+          composedThrough != 0 ? composedThrough : dependency.parent);
       std::erase_if(conflicts, [&](SemanticLoanId id) {
         return std::find(transferredInputs.begin(), transferredInputs.end(),
                          id) != transferredInputs.end() ||
@@ -5580,9 +5634,24 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         retainedStoredBorrow && isDirectStoredReferenceType(carrier->type) &&
         (sourceLoan->access == AccessMode::Mutable ||
          carrierAccess == AccessMode::ReadOnly);
+    // A shared ancestry (a view of a view of a shared element) retains no
+    // exclusive capability; only an exclusive source or an exclusive
+    // ancestor is the mutable reborrow this value cannot carry.
+    const auto mutableAncestry = [&]() {
+      std::unordered_set<SemanticLoanId> seen;
+      for (SemanticLoanId current = sourceLoan->parent;
+           current != 0 && seen.insert(current).second;) {
+        const auto *ancestor = semanticModel.findLoan(current);
+        if (ancestor == nullptr)
+          return false;
+        if (ancestor->access == AccessMode::Mutable)
+          return true;
+        current = ancestor->parent;
+      }
+      return false;
+    };
     if (retainedStoredBorrow && !exactStoredReborrow &&
-        (sourceLoan->access == AccessMode::Mutable ||
-         sourceLoan->parent != 0)) {
+        (sourceLoan->access == AccessMode::Mutable || mutableAncestry())) {
       report(expressionToken(expression),
              "A local borrowed-state value cannot retain a mutable parent "
              "or child reborrow.",
@@ -5609,10 +5678,16 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     const bool rangeForBinding =
         binding.isRangeBinding() || binding.isRangeOwner() ||
         binding.isRangeIterator() || binding.isRangeElementOwner();
+    // A composed carrier (a closure environment, an erased referent) and a
+    // carrier constructed here from the shared input take that distinct
+    // publication: the new object has its own storage and dependency. A
+    // carrier that arrives as a call result or by name (a fallible borrow,
+    // a view) keeps the shared path, aliasing its external referent's loan.
     if (sourceLoan->access == AccessMode::ReadOnly &&
         !(retainedStoredBorrow &&
-          sourceLoan->kind == SemanticLoanKind::Reference &&
-          !rangeForBinding)) {
+          sourceLoan->kind == SemanticLoanKind::Reference && !rangeForBinding &&
+          (construction != nullptr ||
+           composedCarrierPaths(storedReferencePaths(carrier->type))))) {
       if (lifecycleBoundBorrowCarrierFor(carrier->type) ||
           sourceLoan->lifecycleBound) {
         // A new cleanup-bearing value owns a distinct release obligation even
@@ -5695,11 +5770,63 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     // copying its read permission cannot release an exclusive ancestor or
     // extend a cleanup-protected lifetime. Range-for bindings always keep
     // their ancestry so the element loan stays under its range loan.
-    const auto parent = sourceLoan->access == AccessMode::ReadOnly &&
-                                sourceLoan->parent == 0 &&
-                                !sourceLoan->lifecycleBound && !rangeForBinding
-                            ? SemanticLoanId{0}
-                            : sourceLoan->id;
+    // Only a shared reference to an opaque erased object is published as an
+    // independent root: erasure hides the referent's layout and the copy's
+    // read permission protects the shell on its own. Every other carrier
+    // keeps its ancestry, as MIR expects when it pairs the binding's loan
+    // with the producing call's result chain.
+    const bool opaqueCarrier =
+        carrier->type.kind == SemanticType::Reference &&
+        carrier->type.arguments.size() == 1 &&
+        isBorrowedCarrierReference(carrier->type) &&
+        !isDirectStoredReferenceType(carrier->type.arguments.front());
+    // A carrier built directly from a caller-owned shared root (its
+    // constructor arguments name the entry reference itself) or from an
+    // opaque erased referent publishes an independent root: the copy's read
+    // permission protects its referent on its own. A carrier built through
+    // an accessor call, or from a body-local source such as a range loan,
+    // keeps its ancestry, which MIR pairs with the producing call chain.
+    const auto directCarrierSource = [&](const auto &self,
+                                         const Expr *candidate) -> bool {
+      while (const auto *group = exprAs<Grouping>(candidate))
+        candidate = group->expression().get();
+      if (exprAs<Variable>(candidate) != nullptr)
+        return true;
+      // A call that returns its carrier by value (an expected result, a
+      // view) publishes an independent root; only a reference-returning
+      // accessor keeps the chain from its result to the entry.
+      if (const auto *call = exprAs<Call>(candidate);
+          call != nullptr &&
+          semanticModel.findConstruction(*candidate) == nullptr) {
+        const auto intrinsic = intrinsicCandidate(call->callee());
+        if (!(intrinsic &&
+              intrinsic->record().intrinsic == IntrinsicKind::Move)) {
+          const auto *resolved = semanticModel.findCall(*call);
+          return resolved != nullptr &&
+                 resolved->returnType.kind != SemanticType::Reference;
+        }
+      }
+      const auto *arguments = [&]() -> const std::vector<ExprPtr> * {
+        if (const auto *call = exprAs<Call>(candidate))
+          return &call->arguments();
+        if (const auto *direct = exprAs<DirectInitializer>(candidate))
+          return &direct->arguments();
+        return nullptr;
+      }();
+      return arguments != nullptr && !arguments->empty() &&
+             std::all_of(arguments->begin(), arguments->end(),
+                         [&](const ExprPtr &argument) {
+                           return self(self, argument.get());
+                         });
+    };
+    const auto parent =
+        sourceLoan->access == AccessMode::ReadOnly && sourceLoan->parent == 0 &&
+                !sourceLoan->lifecycleBound && !rangeForBinding &&
+                ((sourceLoan->entry &&
+                  directCarrierSource(directCarrierSource, expression.get())) ||
+                 opaqueCarrier)
+            ? SemanticLoanId{0}
+            : sourceLoan->id;
     const SemanticLoanId child = createRetainedLoan(
         *carrier, carrierSymbol, kind, expression.get(), std::move(childPlace),
         sourceLoan->owner, sourceLoan->receiverOrigin, carrierAccess,

@@ -13733,6 +13733,13 @@ verifyMirProgramContracts(const MirProgram &program) {
                (!traits->containsBorrowedState ||
                 findStoredCarrierReference(program, type).has_value());
       }
+      case SemanticType::Lambda: {
+        // A closure environment stored by value is a borrow-carrying field
+        // like a class carrier: its borrowed state is its reference
+        // captures, published through the same explicit field stage.
+        const auto traits = concreteMirTypeTraits(program, type);
+        return traits.has_value();
+      }
       default:
         return false;
       }
@@ -14253,6 +14260,7 @@ verifyMirProgramContracts(const MirProgram &program) {
           cleanupFreeInitializerType(initializer.targetType) &&
           (field->dropKind == DropKind::Trivial ||
            initializer.targetType.kind == SemanticType::Class ||
+           initializer.targetType.kind == SemanticType::Lambda ||
            initializer.targetType.kind == SemanticType::Array ||
            initializer.targetType.kind == SemanticType::Expected) &&
           !field->requiresActiveCleanup;

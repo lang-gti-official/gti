@@ -264,6 +264,7 @@ public:
                initializer.targetType.kind == SemanticType::Expected ||
                initializer.targetType.kind == SemanticType::Array ||
                initializer.targetType.kind == SemanticType::Class ||
+               initializer.targetType.kind == SemanticType::Lambda ||
                (initializer.targetType.kind == SemanticType::Enum &&
                 std::any_of(program.enumDeclarations().begin(),
                             program.enumDeclarations().end(),
@@ -274,13 +275,18 @@ public:
                             }))) &&
               (field->info.traits.drop == DropKind::Trivial ||
                ((initializer.targetType.kind == SemanticType::Class ||
+                 initializer.targetType.kind == SemanticType::Lambda ||
                  initializer.targetType.kind == SemanticType::Array ||
                  initializer.targetType.kind == SemanticType::Expected) &&
                 !field->requiresActiveCleanup)) &&
+              // A closure environment stored by value is a borrow-carrying
+              // field exactly like a class carrier: the same Initialize,
+              // Borrow and EndBorrow shape publishes its dependencies.
               (!field->info.traits.containsBorrowedState ||
                (constructor != nullptr &&
                 constructor->borrowOrigin == BorrowOriginKind::Argument &&
-                initializer.targetType.kind == SemanticType::Class));
+                (initializer.targetType.kind == SemanticType::Class ||
+                 initializer.targetType.kind == SemanticType::Lambda)));
           const MirDropObligationId owningStageSource =
               constructorRollbackStageEligible(initializer)
                   ? dropObligationForValue(initializer.arguments.front())
@@ -6655,8 +6661,15 @@ private:
     // even though its receiver is not a local reference binding. Preserve
     // that authority when a checked accessor transforms the referent type.
     // The exact projected source remains separate from the parent's shell.
+    // Only a referent-transforming accessor (checked restoration) takes that
+    // abstract authority as its parent: an ordinary declared-origin call on
+    // such a field keeps publishing a root result, as its caller-side
+    // return-tail and accessor-chain rules expect.
     if (originLoan == 0 && value.borrowOrigin == BorrowOriginKind::Argument &&
-        value.borrowArgument < arguments.size()) {
+        value.borrowArgument < arguments.size() &&
+        (value.restoresReferenceResult ||
+         value.intrinsic == IntrinsicKind::RestoreReference ||
+         value.intrinsic == IntrinsicKind::RestoreReferenceMut)) {
       const auto *argument = findValue(arguments[value.borrowArgument]);
       if (argument && argument->storedReferenceAccess)
         originLoan = storedDependencyForPlace(origin);
@@ -12676,13 +12689,65 @@ private:
               }
             }
           }
-          MirLoan &loan = output.loans[borrow.loan - 1];
-          loan.kind = MirLoanKind::Return;
-          loan.escapes = true;
-          for (Scope &scope : scopes) {
-            std::erase(scope.loans, borrow.loan);
+          if ((output.loans[borrow.loan - 1].kind == MirLoanKind::CallResult ||
+               output.loans[borrow.loan - 1].kind == MirLoanKind::Stored) &&
+              output.loans[borrow.loan - 1].producedBy != 0) {
+            // A returned reference binding may alias the producing call's
+            // own result loan, or the Stored loan of the carrier it was
+            // extracted from. That call keeps its loan; the return publishes
+            // a fresh Return loan from it, exactly as a nested
+            // reference-returning call and a returned carrier do above, and
+            // retires the body-local capability at this boundary.
+            const MirLoan source = output.loans[borrow.loan - 1];
+            const HirValue *returned = findValue(*statement.value);
+            const MirLoanId published =
+                createLoan(MirLoanKind::Return, source.source, source.access,
+                           source.producedBy);
+            output.loans[published - 1].storedDependency =
+                source.storedDependency;
+            output.loans[published - 1].additionalDependencies =
+                source.additionalDependencies;
+            output.loans[published - 1].designatedFields =
+                source.designatedFields;
+            output.loans[published - 1].escapes = true;
+            (void)appendInstruction({.kind = MirInstructionKind::Borrow,
+                                     .hirValue = source.producedBy,
+                                     .operands = {{.kind = MirOperandKind::Loan,
+                                                   .loan = borrow.loan,
+                                                   .type = borrow.type}},
+                                     .loan = published,
+                                     .info = returned != nullptr
+                                                 ? returned->info
+                                                 : ExpressionInfo{}});
+            (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                     .hirValue = source.producedBy,
+                                     .loan = borrow.loan});
+            removeLoanFromState(borrow.loan, scopes, bindingLoans);
+            borrow = {.kind = MirOperandKind::Loan,
+                      .loan = published,
+                      .type = borrow.type};
+            returnLoan = published;
+          } else {
+            MirLoan &loan = output.loans[borrow.loan - 1];
+            loan.kind = MirLoanKind::Return;
+            loan.escapes = true;
+            // A Return loan publishes the body's dependency to its caller;
+            // it is never a child of a body-local loan, which ends here. A
+            // parent that was a stored owner authority becomes the stored
+            // dependency.
+            if (loan.parent != 0) {
+              const MirLoan &parent = output.loans[loan.parent - 1];
+              if (loan.storedDependency == 0 &&
+                  parent.kind == MirLoanKind::Stored) {
+                loan.storedDependency = loan.parent;
+              }
+              loan.parent = 0;
+            }
+            for (Scope &scope : scopes) {
+              std::erase(scope.loans, borrow.loan);
+            }
+            returnLoan = borrow.loan;
           }
-          returnLoan = borrow.loan;
         }
         result = borrow;
       } else {

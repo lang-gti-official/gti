@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include <algorithm>
+
 namespace lang {
 
 auto SemanticVisitor::Impl::restoredReferenceFields(
@@ -246,6 +248,24 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
   for (const auto &type :
        std::span<const SemanticType>(signature.arguments).subspan(1))
     SemanticType::appendExpandedArgument(parameters, type);
+  // An invocation pointer's thunk forwards its arguments and result by
+  // value through the typed invocation boundary. Arguments of any value
+  // type, including owning class values, stage through it; an owning class
+  // result (one with cleanup) has no backend representation across that
+  // boundary yet, so it is rejected here rather than at native compilation.
+  const auto owningValue = [&](const SemanticType &type) {
+    return type.kind == SemanticType::Class &&
+           !containsOpenTypeParameter(type) &&
+           typeTraits(type).drop != DropKind::Trivial;
+  };
+  if (owningValue(result)) {
+    report(expr.paren(),
+           "A GTI invocation pointer cannot return an owning class value in "
+           "this slice; return a reference, a view or a scalar.",
+           "GTI-S2093");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (forming) {
     const auto &target = arguments.front();
     FunctionId function = 0;

@@ -484,6 +484,16 @@ int main() {
 }
 )",
            "GTI-S2093");
+  negative("invocation-pointer-owning-result", R"(
+#include <std/functional>
+#include <std/string>
+std::string label(int value) { return std::string("label"); }
+int main() {
+  std::function_ptr<std::string(int)> pointer{label};
+  return 0;
+}
+)",
+           "GTI-S2093");
   negative("erased-reference-cannot-invent-mutable-access", R"(
 #include <std/memory>
 int main() {

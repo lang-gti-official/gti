@@ -6698,6 +6698,12 @@ public:
       std::string initializers;
       std::vector<std::string> banners;
       std::vector<std::string> closureConditions;
+      // Each closure-selected instance's initializer fields (name,
+      // expression). Fields whose expressions differ between instances are
+      // dispatched on the same closure identities as the body variants.
+      std::vector<std::pair<std::string,
+                            std::vector<std::pair<std::string, std::string>>>>
+          initializerVariants;
     };
     std::vector<GenericNormalBody> genericNormalBodies;
     for (const MirConstructorInstance *instance : instances) {
@@ -6801,6 +6807,8 @@ public:
           output = std::ostringstream{};
           emitGeneralMirConstructorInitializerList(*instance);
           std::string initializers = output.str();
+          const std::vector<std::pair<std::string, std::string>>
+              initializerFields = lastInitializerFields_;
           output = std::move(saved);
           // Unnamed callable parameters can select distinct verified bodies
           // even when their cleanup shapes agree. The native type carries the
@@ -6844,8 +6852,26 @@ public:
               });
           if (!genericNormalBodies.empty() &&
               genericNormalBodies.front().initializers != initializers) {
-            throw std::logic_error("generic-owner constructor instances have "
-                                   "incompatible MIR representations");
+            // A differing initializer expression (a checked helper spelled
+            // by its exact instance, say) is admissible only when this
+            // instance selects itself by closure identity and the field
+            // layout is the same; the assembly below dispatches each such
+            // field on those identities.
+            const auto &reference =
+                genericNormalBodies.front().initializerVariants;
+            const bool sameLayout =
+                !closureCondition.empty() && !reference.empty() &&
+                reference.front().second.size() == initializerFields.size() &&
+                std::equal(reference.front().second.begin(),
+                           reference.front().second.end(),
+                           initializerFields.begin(),
+                           [](const auto &left, const auto &right) {
+                             return left.first == right.first;
+                           });
+            if (!sameLayout)
+              throw std::logic_error(
+                  "generic-owner constructor instances have incompatible MIR "
+                  "representations");
           }
           for (const auto &body : genericNormalBodies) {
             if (body.cleanup != cleanup || body.text == normalized)
@@ -6862,13 +6888,16 @@ public:
                 {instance,
                  std::move(cleanup),
                  normalized,
-                 std::move(initializers),
+                 initializers,
                  {banner},
                  closureCondition.empty()
                      ? std::vector<std::string>{}
-                     : std::vector<std::string>{closureCondition}});
+                     : std::vector<std::string>{closureCondition},
+                 {{closureCondition, initializerFields}}});
           } else {
             previous->banners.push_back(banner);
+            previous->initializerVariants.push_back(
+                {closureCondition, initializerFields});
             if (!closureCondition.empty())
               previous->closureConditions.push_back(
                   std::move(closureCondition));
@@ -6978,13 +7007,60 @@ public:
         return text;
       };
       const GenericNormalBody &first = genericNormalBodies.front();
+      // Initializer fields that differ between closure-selected instances
+      // are chosen by the same identities inside an immediately invoked
+      // lambda; `decltype(auto)` keeps a reference initializer a reference
+      // and lets a prvalue initializer elide into the member.
+      const auto mergedInitializers = [&]() -> std::string {
+        std::vector<std::pair<std::string,
+                              std::vector<std::pair<std::string, std::string>>>>
+            variants;
+        for (const GenericNormalBody &body : genericNormalBodies)
+          for (const auto &variant : body.initializerVariants)
+            variants.push_back(variant);
+        if (variants.empty() ||
+            std::all_of(variants.begin(), variants.end(), [&](const auto &v) {
+              return v.second == variants.front().second;
+            }))
+          return first.initializers;
+        const std::size_t fields = variants.front().second.size();
+        for (const auto &variant : variants)
+          if (variant.first.empty() || variant.second.size() != fields)
+            throw std::logic_error("generic-owner constructor initializers "
+                                   "differ without an exact closure selector");
+        std::string text = " : ";
+        for (std::size_t field = 0; field < fields; ++field) {
+          if (field != 0)
+            text += ", ";
+          const auto &name = variants.front().second[field].first;
+          const bool same =
+              std::all_of(variants.begin(), variants.end(), [&](const auto &v) {
+                return v.second[field] == variants.front().second[field];
+              });
+          if (same) {
+            text += name + "(" + variants.front().second[field].second + ")";
+            continue;
+          }
+          text += name + "([&]() -> decltype(auto) { ";
+          for (std::size_t index = 0; index < variants.size(); ++index) {
+            text += (index == 0 ? "if constexpr (" : " else if constexpr (") +
+                    variants[index].first + ") { return " +
+                    variants[index].second[field].second + "; }";
+          }
+          const std::string discriminator = loweredPrimaryClassSpelling(owner);
+          text += " else { static_assert(!std::is_same_v<" + discriminator +
+                  ", " + discriminator +
+                  ">, \"unselected generic constructor initializer\"); } }())";
+        }
+        return text;
+      };
       emitLoweredClassTemplateHeaders(owner);
       emitLoweredTemplateDeclaration(constructor.genericParameters);
       writeIndent();
       output << loweredPrimaryClassSpelling(owner) << "::" << owner.name << '(';
       emitLoweredGenericOwnerConstructorParameters(constructor, *first.instance,
                                                    false);
-      output << ')' << first.initializers << ' ';
+      output << ')' << mergedInitializers() << ' ';
       if (genericNormalBodies.size() == 1) {
         output << assemble(first);
       } else {
@@ -8456,10 +8532,28 @@ public:
           return left.initializer < right.initializer;
         });
     output << " : ";
+    // Each initializer's text is kept apart as `name` and `expression` so a
+    // generic-owner constructor can dispatch fields whose expressions differ
+    // between closure-selected instances.
+    lastInitializerFields_.clear();
+    std::size_t segmentStart = static_cast<std::size_t>(output.tellp());
+    const auto flushSegment = [&]() {
+      const std::string text = output.str().substr(segmentStart);
+      const std::size_t open = text.find('(');
+      if (open == std::string::npos || text.empty() || text.back() != ')') {
+        lastInitializerFields_.push_back({text, std::string()});
+        return;
+      }
+      lastInitializerFields_.push_back(
+          {text.substr(0, open),
+           text.substr(open + 1, text.size() - open - 2)});
+    };
     for (std::size_t index = 0; index < initializers.size(); ++index) {
       if (index != 0) {
+        flushSegment();
         output << ", ";
       }
+      segmentStart = static_cast<std::size_t>(output.tellp());
       const InitializerBinding &initializer = initializers[index];
       if (initializer.kind == BindingKind::Base) {
         emitSemanticType(initializer.baseType);
@@ -8632,6 +8726,9 @@ public:
       if (initializer.referenceFunction)
         output << ')';
       output << ')';
+    }
+    if (!initializers.empty()) {
+      flushSegment();
     }
   }
 
@@ -9520,6 +9617,9 @@ public:
       cppEmittedStandardNamespace;
 
   std::ostringstream output;
+  // Field name and expression text of the initializer list emitted last by
+  // emitGeneralMirConstructorInitializerList.
+  std::vector<std::pair<std::string, std::string>> lastInitializerFields_;
   CppStandard standard;
   const MirProgram &mir;
   const LoweredProgram &loweredProgram;
