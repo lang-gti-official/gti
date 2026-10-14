@@ -922,7 +922,7 @@ private:
     std::vector<ActiveLoanFlowSwitchArm> switchPath;
   };
 
-  struct LoanFlowConditionalBoundary {
+  struct LoanFlowStatementBoundary {
     std::size_t region = 0;
     std::size_t order = 0;
     const Stmt *statement = nullptr;
@@ -1032,7 +1032,7 @@ private:
     // or otherwise change the mandatory loan schedule.
     std::vector<PendingBorrowConflict> rawAuditConflicts;
     std::vector<LoanFlowUse> uses;
-    std::vector<LoanFlowConditionalBoundary> conditionalBoundaries;
+    std::vector<LoanFlowStatementBoundary> statementBoundaries;
     std::vector<LoanFlowSwitchBoundary> switchBoundaries;
     std::vector<LoanFlowLoop> loops;
     std::vector<std::size_t> activeLoops;
@@ -2230,6 +2230,8 @@ private:
 
   void analyzePolymorphicStorageIntrinsicCall(const Call &expr,
                                               IntrinsicKind intrinsic);
+  void analyzeReferenceErasureCall(const Call &expr, IntrinsicKind intrinsic);
+  void analyzeFunctionPointerCall(const Call &expr, IntrinsicKind intrinsic);
   [[nodiscard]] bool
   inlinePolymorphicPayload(const SemanticType &model,
                            const SemanticType &interface) const;
@@ -2459,10 +2461,12 @@ private:
   [[nodiscard]] bool
   containsDisallowedCallableCaptureState(const SemanticType &type,
                                          std::unordered_set<ClassId> &visiting,
-                                         bool reviewedRawState = false) const;
+                                         bool reviewedRawState = false,
+                                         bool checkedBorrows = false) const;
 
   [[nodiscard]] bool
-  containsDisallowedCallableCaptureState(const SemanticType &type) const;
+  containsDisallowedCallableCaptureState(const SemanticType &type,
+                                         bool checkedBorrows = false) const;
 
   [[nodiscard]] std::optional<std::size_t>
   movedFunctionParameter(const ExprPtr &expression,

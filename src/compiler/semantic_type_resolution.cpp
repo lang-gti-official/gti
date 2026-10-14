@@ -1411,6 +1411,14 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   const ClassInfo &owner = classInfo(classId);
   const GenericSubstitution substitution = classSubstitution(selectedClass);
   const SemanticType constructedType = selectedClass;
+  if (owner.compilerCapability == CompilerCapabilityTypeKind::ErasedObject ||
+      (owner.compilerCapability == CompilerCapabilityTypeKind::FunctionPointer &&
+       (arguments.size() != 1 || arguments.front().type != constructedType))) {
+    report(paren, "This opaque capability cannot be constructed as an object; "
+                  "use its checked reference or invocation factory.", "GTI-S2019");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (typeTraits(constructedType).containsBorrowedState &&
       storedReferencePaths(constructedType).empty()) {
     const bool fieldAlreadyRejected = std::any_of(
@@ -4983,10 +4991,24 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
     }
     if (source != nullptr && construction->directInitialization)
       return storedCarrierReturnProvenance(*source, parameter, visiting);
-    if (source != nullptr &&
-        storedCarrierReturnProvenance(*source, parameter, visiting) ==
-            StoredCarrierReturnProvenance::ExternalReferent) {
-      return StoredCarrierReturnProvenance::CarrierValue;
+    if (source != nullptr) {
+      const auto provenance =
+          storedCarrierReturnProvenance(*source, parameter, visiting);
+      const auto bindings = storedCarrierConstructorBindings(
+          construction->constructedType, construction->declaration,
+          construction->parameterTypes);
+      // A constructor can preserve a carrier's exact external dependencies
+      // under another ordinary field. Its validated field map distinguishes
+      // this from borrowing the temporary parameter shell itself.
+      if (!bindings.empty() &&
+          std::all_of(bindings.begin(), bindings.end(), [&](const auto &binding) {
+            return binding.parameter == construction->borrowArgument &&
+                   !binding.sourceFields.empty();
+          }) &&
+          provenance == StoredCarrierReturnProvenance::CarrierValue)
+        return StoredCarrierReturnProvenance::CarrierValue;
+      if (provenance == StoredCarrierReturnProvenance::ExternalReferent)
+        return StoredCarrierReturnProvenance::CarrierValue;
     }
     return StoredCarrierReturnProvenance::None;
   }

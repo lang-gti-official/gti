@@ -1,0 +1,11 @@
+#include "kernel.gti"
+
+int main() {
+  mut uint64_t state = 3;
+  mut auto update = [mut &state](uint64_t bias) -> void {
+    state = (state * uint64_t(17) + bias) % uint64_t(65521);
+  };
+  run(update);
+  report(state);
+  return 0;
+}

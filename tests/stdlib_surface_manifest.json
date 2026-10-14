@@ -19,14 +19,14 @@
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "a5a15a5fcf0b908e161df030798829c11a95bfd4d9bc8c116394469e6d56af1a",
-    "stdlib/std/functional.gti": "36655633f83576c320307577ddf51204ae4a2f6d8498b539b6176f5cf079d7ea",
+    "stdlib/std/functional.gti": "eb67dac2d118e9b4782d8a2d29b4c947546e9005a40f5f95050ccaad86da6ffe",
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
     "stdlib/std/iterator.gti": "89bca11053f5e8fa115c3625047bb3b6708c34b6c18f350e74cf4a8c9b96f286",
     "stdlib/std/json.gti": "0baff47898a7646937e3fff4e8425d1a3b51b80b92fd1160653e765bc001b82d",
     "stdlib/std/list.gti": "b670d0cf766d8bfae1cc32c51517510bcd434dc834ed31d8f8a46ff59da800e0",
     "stdlib/std/map.gti": "24bf0e1e969a92e4d6df567d6b13e1e5e2519e3bf2f80c225ca5937dcfeba3cf",
-    "stdlib/std/memory.gti": "6d013f19f4f7ad14060d546fbd9f5724d3325dd271be4d4b6e45533b34b1ce8b",
+    "stdlib/std/memory.gti": "27d3221ed33ca461825a22a19829c0f8704ffd15afc5eecb833406f1ba4922df",
     "stdlib/std/meta.gti": "a153608856dee42b8a5e72d66b6af77167b0e226c6893147158a130400a26a3e",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
@@ -682,6 +682,20 @@
       "id": "functional",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_functional.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "borrowing-callable-erasure",
+      "mode": "run",
+      "source": "tests/fixtures/checked_callable_erasure.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "borrowing-callable-example",
+      "mode": "run",
+      "source": "examples/154-borrowing-callbacks.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -2221,6 +2235,15 @@
       "evidence": ["tests/fixtures/stdlib_surface_functional.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_cluster_test.py", "stdlib/std/functional.gti"]
     },
     {
+      "id": "functional.borrowing",
+      "source": "stdlib/std/functional.gti",
+      "status": "executable",
+      "operations": ["std::function_ref::function_ref", "std::function_ref::operator()", "std::function_ptr::function_ptr", "std::function_ptr::operator()"],
+      "case_ids": ["borrowing-callable-erasure", "borrowing-callable-example"],
+      "required_instantiations": ["shared and exclusive signature-erased callbacks", "stateless function item and captureless lambda", "owning string argument/result", "user-defined generic stored exclusive environment"],
+      "evidence": ["stdlib/std/functional.gti", "tests/fixtures/checked_callable_erasure.gti", "tests/borrowing_capture_tests.cpp", "tests/borrowing_callbacks_runtime_test.py", "examples/154-borrowing-callbacks.gti"]
+    },
+    {
       "id": "functional.hashes",
       "source": "stdlib/std/functional.gti",
       "status": "executable",
@@ -2792,6 +2815,15 @@
       "case_ids": ["manual-object-lifetimes", "manual-object-pool"],
       "required_instantiations": ["unrelated immovable Sensor", "owning std::string", "fixed-address inline owner with checked read-only and exclusive access", "unrelated passive Packet and move-only bitwise Ticket range"],
       "evidence": ["examples/125-manual-object-lifetimes.gti", "examples/128-inline-object-pool.gti", "tests/uninitialized_carrier_tests.cpp", "tests/uninitialized_carrier_runtime_test.py", "tests/object_lifetime_tests.cpp", "tests/object_construction_runtime_test.py", "tests/object_relocation_runtime_test.py", "docs/language/raw-pointers.md"]
+    },
+    {
+      "id": "memory.checked-erasure",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": ["std::erased_object", "std::erase_ref", "std::erase_mut", "std::restore_ref", "std::restore_mut"],
+      "case_ids": ["borrowing-callable-erasure", "borrowing-callable-example"],
+      "required_instantiations": ["unrelated Inspection wrapper", "shared/exclusive callable environments"],
+      "evidence": ["stdlib/std/memory.gti", "tests/fixtures/checked_callable_erasure.gti", "tests/borrowing_capture_tests.cpp", "tests/borrowing_callbacks_runtime_test.py"]
     },
     {
       "id": "memory.scaffold",

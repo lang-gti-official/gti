@@ -8206,7 +8206,7 @@ public:
     const bool preparedBase =
         failureForm && cppMirBasePreparation(mir, constructor).has_value();
     const std::optional<std::vector<CppMirStoredReferenceBinding>> bindings =
-        cppMirStoredReferenceBindings(constructor);
+        cppMirStoredReferenceBindings(mir, constructor);
     const std::optional<std::vector<CppMirBaseParameterInitializerBinding>>
         baseBindings = cppMirBaseParameterInitializerBindings(mir, constructor);
     const std::optional<std::vector<CppMirOwnedParameterFieldBinding>>
@@ -8232,6 +8232,7 @@ public:
       std::size_t initializer = 0;
       SymbolId field = 0;
       std::size_t parameter = 0;
+      std::optional<HirFunctionInstanceId> referenceFunction;
       bool moved = false;
       SemanticType fieldType = SemanticType::Unknown;
       SemanticType baseType = SemanticType::Unknown;
@@ -8258,7 +8259,8 @@ public:
     for (const CppMirStoredReferenceBinding &binding : *bindings) {
       initializers.push_back({.initializer = binding.initializer,
                               .field = binding.field,
-                              .parameter = binding.parameter});
+                              .parameter = binding.parameter,
+                              .referenceFunction = binding.functionTarget});
     }
     for (const CppMirCopyParameterFieldBinding &binding : *copiedBindings) {
       initializers.push_back({.initializer = binding.initializer,
@@ -8502,6 +8504,17 @@ public:
         continue;
       }
       output << fieldName << '(';
+      if (initializer.referenceFunction) {
+        const MirBodyAddress address{.kind = MirBodyKind::Function,
+                                     .owner = *initializer.referenceFunction};
+        const auto row = std::find_if(
+            generalEmissionMap->bodies().begin(), generalEmissionMap->bodies().end(),
+            [&](const auto &candidate) { return candidate.address == address; });
+        if (row == generalEmissionMap->bodies().end() || row->spelling.empty() ||
+            row->conditionalResultParameter || row->callSiteTemplateArguments)
+          throw std::logic_error("checked reference initializer lost its exact helper spelling");
+        output << row->spelling << '(';
+      }
       if (initializer.moved) {
         output << "std::move(";
       }
@@ -8510,6 +8523,8 @@ public:
       if (initializer.moved) {
         output << ')';
       }
+      if (initializer.referenceFunction)
+        output << ')';
       output << ')';
     }
   }

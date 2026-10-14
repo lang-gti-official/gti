@@ -2562,6 +2562,9 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       const bool trustedPolymorphicCapabilityScope =
           isPolymorphicLibraryUnit(currentSourceUnit) &&
           scope == std::vector<std::string>{"gti_internal"};
+      const bool trustedFunctionalCapabilityScope =
+          isFunctionalLibraryUnit(currentSourceUnit) &&
+          scope == std::vector<std::string>{"gti_internal"};
       const auto &generics = classDecl->genericParameters();
       if (trustedMemoryCapabilityScope &&
           classDecl->genericParameters().size() == 1 &&
@@ -2574,6 +2577,13 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         } else if (classDecl->name().lexeme == "uninitialized_storage") {
           compilerCapability = CompilerCapabilityTypeKind::UninitializedStorage;
         }
+      } else if (trustedMemoryCapabilityScope && generics.empty() &&
+                 classDecl->name().lexeme == "erased_object") {
+        compilerCapability = CompilerCapabilityTypeKind::ErasedObject;
+      } else if (trustedFunctionalCapabilityScope && generics.size() == 1 &&
+                 !generics.front().valueType && !generics.front().pack &&
+                 classDecl->name().lexeme == "function_pointer") {
+        compilerCapability = CompilerCapabilityTypeKind::FunctionPointer;
       } else if (trustedOptionalCapabilityScope &&
                  classDecl->genericParameters().size() == 1 &&
                  !classDecl->genericParameters().front().valueType &&
@@ -5322,6 +5332,8 @@ auto SemanticVisitor::Impl::classCanGenerateDefaultConstructor(
   // state. Newly supplied omitted-nominal defaults cannot manufacture another
   // construction entry point beside an owner's declared argument-taking API.
   return owner != nullptr && defaultConstructorCandidateCount(*owner) == 0 &&
+         owner->compilerCapability != CompilerCapabilityTypeKind::ErasedObject &&
+         owner->compilerCapability != CompilerCapabilityTypeKind::FunctionPointer &&
          (owner->constructors.empty() || declaredDefaults) &&
          classCanUseStructuralDefaultConstruction(type);
 }
@@ -6653,6 +6665,16 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       if (constructor.declaration == nullptr) {
         continue;
       }
+      const auto bindings = storedCarrierConstructorBindings(
+          SemanticType::classType(owner.id), constructor.declaration,
+          constructor.parameterTypes);
+      if (bindings.size() == 1) {
+        constructor.borrowParameter = bindings.front().parameter;
+        constructor.borrowAccess = isDefaultLibraryMutexGuardCarrier(owner)
+                                       ? AccessMode::Mutable
+                                       : stored.access;
+        continue;
+      }
       const ConstructorInitializer *binding = nullptr;
       for (const ConstructorInitializer &initializer :
            constructor.declaration->initializers()) {
@@ -7280,6 +7302,10 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
         case IntrinsicKind::OptionalStorageReadMut:
         case IntrinsicKind::PolymorphicStorageRead:
         case IntrinsicKind::PolymorphicStorageReadMut:
+        case IntrinsicKind::EraseReference:
+        case IntrinsicKind::EraseReferenceMut:
+        case IntrinsicKind::RestoreReference:
+        case IntrinsicKind::RestoreReferenceMut:
           return self(self, call->arguments().front(), context, contextOwner);
         default:
           break;

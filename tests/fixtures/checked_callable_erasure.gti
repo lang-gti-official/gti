@@ -1,0 +1,54 @@
+#include <std/memory>
+#include <std/functional>
+#include <std/string>
+
+class Inspection {
+  std::erased_object& object;
+public:
+  Inspection(int& object) : object(std::erase_ref(object)) {}
+  int read() {
+    unsafe { int& original = std::restore_ref<int>(this.object); return original; }
+  }
+};
+
+int next(int value) { return value + 1; }
+std::string echo(std::string value) { return std::move(value); }
+int apply(std::function_ref<int(int)>& callback, int input) { return callback(input); }
+
+class Handler<F> {
+  mut F callback;
+public:
+  Handler(F callback) : callback(std::move(callback)) {}
+  int run() mut { return this.callback(); }
+};
+Handler<F> store<F>(F callback) { return Handler<F>(std::move(callback)); }
+
+int main() {
+  int value = 4;
+  Inspection inspection{value};
+  if (inspection.read() != 4) return 1;
+  std::function_ptr<int(int)> named{next};
+  std::function_ptr<int(int)> lambda{[](int input) -> int { return input + 2; }};
+  if (named(3) != 4 || lambda(3) != 5) return 2;
+
+  auto reader = [&value](int input) -> int { return value + input; };
+  std::function_ref<int(int)> shared{reader};
+  if (apply(shared, 3) != 7) return 3;
+
+  mut int count = 0;
+  mut auto writer = [mut &count](int step) -> int { count += step; return count; };
+  mut std::function_ref<int(int) mut> exclusive{writer};
+  if (exclusive(2) != 2 || exclusive(3) != 5) return 4;
+  if (count != 5) return 5;
+
+  mut int stored_count = 2;
+  mut auto update = [mut &stored_count]() -> int { stored_count += 3; return stored_count; };
+  mut auto stored = store(std::move(update));
+  if (stored.run() != 5) return 6;
+
+  std::function_ptr<std::string(std::string)> owning{echo};
+  std::string input{"owned argument"};
+  auto returned = owning(std::move(input));
+  if (returned != "owned argument") return 7;
+  return 0;
+}

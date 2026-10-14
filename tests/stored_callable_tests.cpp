@@ -1348,7 +1348,7 @@ int main() {
       const auto *call = lang::exprAs<lang::Call>(returned->value().get());
       const auto *requirement =
           frontend.semantics.findDeferredCallableCall(*call);
-      if (requirement && requirement->receiverField != 0) {
+      if (requirement && requirement->receiverBinding != 0) {
         storedRequirement = true;
         expect(!requirement->boundary &&
                    requirement->returnType == lang::SemanticType::Int32,

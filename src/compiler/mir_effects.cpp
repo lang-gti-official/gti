@@ -218,6 +218,16 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
     // PolymorphicStorageReset: ends an inert payload lifetime.
     MirEffectTraits{.writesPlace = true, .dropsValue = true},
+    // Erase/restore checked references retain ordinary loan authority.
+    MirEffectTraits{.startsLoan = true, .dependsOnLoan = true},
+    MirEffectTraits{.startsLoan = true, .dependsOnLoan = true},
+    MirEffectTraits{.startsLoan = true, .dependsOnLoan = true},
+    MirEffectTraits{.startsLoan = true, .dependsOnLoan = true},
+    // Stateless target formation has no runtime environment.
+    MirEffectTraits{.initializesValue = true},
+    // Signature erasure hides target effects but preserves its failure ABI.
+    MirEffectTraits{.readsUnknownMemory = true, .writesUnknownMemory = true,
+                    .mayTrap = true, .invokesUserCode = true},
     // StringViewSize: a pure read of the view's stored length.
     MirEffectTraits{},
     // StringViewEmpty
@@ -598,6 +608,12 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "polymorphic-storage-read",
     "polymorphic-storage-read-mut",
     "polymorphic-storage-reset",
+    "erase-reference",
+    "erase-reference-mut",
+    "restore-reference",
+    "restore-reference-mut",
+    "function-pointer-from-item",
+    "function-pointer-invoke",
     "string-view-size",
     "string-view-empty",
     "expected-value",
@@ -1086,6 +1102,9 @@ namespace {
       break;
     }
   }
+  if (instruction.kind == MirInstructionKind::Compute &&
+      instruction.operation == MirOperation::Closure && instruction.loan)
+    result.startsLoan = true;
   if (instruction.receiver &&
       instruction.receiver->kind == MirOperandKind::Loan) {
     result.dependsOnLoan = true;
@@ -1887,7 +1906,8 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
       return RelocationKind::Unavailable;
     auto result = RelocationKind::Bitwise;
     if (owner->compilerCapability == CompilerCapabilityTypeKind::TextView ||
-        owner->compilerCapability == CompilerCapabilityTypeKind::CString) {
+        owner->compilerCapability == CompilerCapabilityTypeKind::CString ||
+        owner->compilerCapability == CompilerCapabilityTypeKind::FunctionPointer) {
       result = RelocationKind::Bitwise;
     } else if (owner->compilerCapability ==
                    CompilerCapabilityTypeKind::SharedOwner ||

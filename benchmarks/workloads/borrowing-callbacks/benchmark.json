@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "name": "borrowing-callbacks",
+  "description": "Allocation-free mutable borrowed callback, exact and signature-erased, with the same checked state update",
+  "work_units": 40000000,
+  "minimum_sample_seconds": 0.05,
+  "variants": [
+    {"name": "gti-erased", "kind": "gti", "source": "erased.gti", "execution_profile": "single-threaded"},
+    {"name": "gti-exact", "kind": "gti", "source": "exact.gti", "execution_profile": "single-threaded"},
+    {"name": "cpp-semantic", "kind": "cpp", "source": "semantic.cpp", "execution_profile": null}
+  ]
+}

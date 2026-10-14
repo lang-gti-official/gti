@@ -274,7 +274,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v103 valid=" << program.valid() << '\n';
+    output << "mir-v104 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -751,7 +751,7 @@ public:
       type(instance.type);
       output << " returns=";
       type(instance.returnType);
-      output << " parameters=[";
+      output << " invocation=" << number(instance.capability) << " parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
            ++index) {
         separator(index);
@@ -795,7 +795,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v84\n";
+    output << "mir-body-v85\n";
     body(value, 0);
   }
 
@@ -1533,6 +1533,11 @@ private:
     output << " payload-index=";
     optional(value.payloadIndex);
     output << " intrinsic=" << name(value.intrinsic)
+           << " function-pointer-function=";
+    optional(value.functionPointerFunctionTarget);
+    output << " function-pointer-lambda=";
+    optional(value.functionPointerLambdaTarget);
+    output
            << " noreturn=" << value.neverReturns
            << " track-caller=" << value.tracksCaller
            << " caller-site=" << value.callerLocationSite

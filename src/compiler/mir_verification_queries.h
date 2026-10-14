@@ -39,6 +39,23 @@ generatedUniqueConstruction(const MirInstruction &instruction);
 // access authority come from the explicit witness in operand one.
 [[nodiscard]] const MirLoan *
 rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
+[[nodiscard]] const MirLoan *
+erasedReferenceResultLoan(const MirProgram &program, const MirBody &body,
+                          const MirInstruction &instruction);
+// Exact safe GTI invocation signature and stateless selected body. These are
+// language-call boundaries, not native C function-pointer adaptation.
+[[nodiscard]] const SemanticType *
+functionPointerSignature(const MirProgram &program, const SemanticType &type);
+// A reference field may bind the exact reference returned by an ordinary
+// checked helper. This correlates the initializer call, argument-origin
+// contract and escaping Stored publication without assuming equal referent
+// types or replacing execution of the helper with its input address.
+[[nodiscard]] const MirInstruction *
+referenceInitializerCall(const MirProgram &program,
+                         const MirConstructorInstance &constructor,
+                         const MirConstructorInitializer &initializer);
+[[nodiscard]] bool functionPointerOperation(const MirProgram &program,
+                                             const MirInstruction &instruction);
 // Unsafe raw text assertions retain a checked witness without assigning
 // ownership or validity to the address itself. The exact ordered input
 // stages and resulting loan source are shared by verification and emission.

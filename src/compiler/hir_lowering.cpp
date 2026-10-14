@@ -5766,6 +5766,21 @@ private:
         if (value.nativeCalleeType)
           value.callableInvocation = CallableInvocationCapability::Read;
         value.intrinsic = resolved->intrinsic;
+        if (value.intrinsic == IntrinsicKind::FunctionPointerFromItem) {
+          if (resolved->functionPointerFunction != 0) {
+            if (const auto *target = baseModel->findFunction(resolved->functionPointerFunction))
+              value.functionPointerFunctionTarget = enqueueFunction(
+                  *target, {}, {}, {}, {}, target->returnType, target->parameterTypes);
+          }
+          if (resolved->functionPointerLambda != 0) {
+            if (const auto target = lambdaTargets.find(resolved->functionPointerLambda);
+                target != lambdaTargets.end())
+              value.functionPointerLambdaTarget = target->second;
+          }
+          if (value.functionPointerFunctionTarget.has_value() ==
+              value.functionPointerLambdaTarget.has_value())
+            lifecycleValid = false;
+        }
         if ((value.intrinsic == IntrinsicKind::ObjectDestroy ||
              value.intrinsic == IntrinsicKind::ObjectRelocate ||
              value.intrinsic == IntrinsicKind::ObjectRelocateRange ||
@@ -5805,6 +5820,7 @@ private:
         value.borrowArgument = resolved->borrowArgument;
         value.borrowArguments = resolved->borrowArguments;
         value.borrowFields = resolved->borrowFields;
+        value.restoredBorrowFields = resolved->restoredBorrowFields;
         value.borrowAccess = resolved->borrowAccess;
         value.borrowPlace = resolved->borrowPlace;
         if (value.borrowOrigin == BorrowOriginKind::Global &&

@@ -1062,6 +1062,13 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     if (classInfo == nullptr) {
       return "void";
     }
+    if (classInfo->compilerCapability == CompilerCapabilityTypeKind::ErasedObject)
+      return "std::byte";
+    if (classInfo->compilerCapability == CompilerCapabilityTypeKind::FunctionPointer)
+      return type.arguments.size() == 1
+                 ? "::gti_internal::backend::function_pointer<" +
+                       spell(type.arguments.front()) + ">"
+                 : "void";
     if (classInfo->compilerCapability ==
         CompilerCapabilityTypeKind::ThreadHandle) {
       return "::gti_internal::backend::thread_handle";

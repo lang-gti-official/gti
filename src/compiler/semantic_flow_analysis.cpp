@@ -2061,6 +2061,11 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           addFailureOutcome(operation, DefinedFailureCode::Panic,
                             DefinedFailureDetail::ExplicitPanic);
           break;
+        case IntrinsicKind::FunctionPointerInvoke:
+          // The erased signature preserves GTI failure propagation but not
+          // a statically selected target's narrower failure set.
+          operation.propagation = FailurePropagationKind::Callable;
+          break;
         case IntrinsicKind::NumericTypeParameterConversion:
         case IntrinsicKind::NumericAliasConversion:
           if (!call->arguments().empty() &&
@@ -2116,6 +2121,11 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             DefinedFailureDetail::MemberAccess);
           break;
         case IntrinsicKind::TextViewFromAddress:
+        case IntrinsicKind::EraseReference:
+        case IntrinsicKind::EraseReferenceMut:
+        case IntrinsicKind::RestoreReference:
+        case IntrinsicKind::RestoreReferenceMut:
+        case IntrinsicKind::FunctionPointerFromItem:
         case IntrinsicKind::CStringFromAddress:
         case IntrinsicKind::OptionalStorageHasValue:
         case IntrinsicKind::OptionalStorageReset:
@@ -9268,6 +9278,10 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
   // of purity: it may replace its allocation before returning the new object.
   switch (resolved->intrinsic) {
   case IntrinsicKind::RawBorrow:
+  case IntrinsicKind::EraseReference:
+  case IntrinsicKind::EraseReferenceMut:
+  case IntrinsicKind::RestoreReference:
+  case IntrinsicKind::RestoreReferenceMut:
   case IntrinsicKind::RawBorrowMut:
   case IntrinsicKind::UniqueOwnerBorrow:
   case IntrinsicKind::UniqueOwnerBorrowMut:

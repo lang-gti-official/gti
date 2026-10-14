@@ -32,6 +32,7 @@ enum class UnsafeOperationKind {
   DeclaredUnsafeCall,
   ObjectLifetime,
   DeclaredUnsafeConstruction,
+  ErasedReferenceRestore,
 };
 
 struct SemanticLoanEndpoint {
@@ -341,6 +342,12 @@ enum class IntrinsicKind {
   PolymorphicStorageRead,
   PolymorphicStorageReadMut,
   PolymorphicStorageReset,
+  EraseReference,
+  EraseReferenceMut,
+  RestoreReference,
+  RestoreReferenceMut,
+  FunctionPointerFromItem,
+  FunctionPointerInvoke,
   StringViewSize,
   StringViewEmpty,
   ExpectedValue,
@@ -548,6 +555,8 @@ enum class CompilerCapabilityTypeKind {
   CString,
   OptionalStorage,
   PolymorphicStorage,
+  ErasedObject,
+  FunctionPointer,
   ThreadHandle,
   AtomicStorage,
   MutexStorage,
@@ -657,6 +666,17 @@ struct BorrowedFieldOrigin {
 
   friend bool operator==(const BorrowedFieldOrigin &,
                          const BorrowedFieldOrigin &) = default;
+};
+
+// A restored referent's abstract checked field dependency. The unsafe exact-T
+// restoration contract certifies these fields belong to the original object;
+// every dependency remains bounded by the input opaque reference witness.
+struct RestoredBorrowField {
+  std::vector<SymbolId> fields;
+  SemanticType referenceType = SemanticType::Unknown;
+
+  friend bool operator==(const RestoredBorrowField &,
+                         const RestoredBorrowField &) = default;
 };
 
 // An exact, domain-independent global/static storage origin. Callers qualify
@@ -1146,6 +1166,11 @@ struct ResolvedCallInfo {
   bool tracksCaller = false;
   SynchronizationOperation synchronization;
   std::optional<ResolvedThreadTaskEntry> threadTaskEntry;
+  // Exact stateless target selected before GTI signature erasure. The
+  // signature and concrete target type are retained in typeArguments.
+  FunctionId functionPointerFunction = 0;
+  LambdaId functionPointerLambda = 0;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   std::vector<ResolvedScopedThreadTask> scopedThreadTasks;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
@@ -1320,9 +1345,9 @@ struct DeferredCallableCallInfo {
   AccessMode access = AccessMode::ReadOnly;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary = CallableBoundary::Confined;
-  // A stored receiver is checked again against its concrete field type.
+  // A field or local receiver is checked again against its concrete type.
   // It is not a confined parameter or an ownership-transfer boundary.
-  SymbolId receiverField = 0;
+  SymbolId receiverBinding = 0;
   bool inferResultFromInstantiation = false;
 };
 
