@@ -224,7 +224,10 @@ def live_lowering_probe(probe, env):
                         if not data: break
                         chunks.append(data)
                     text = b"".join(chunks).decode(errors="replace")
-                    if re.search(rf"{verb}  label-probe \([0-9.]+s elapsed\)", text):
+                    # The first transient row follows the durable banner; the
+                    # next heartbeat actually rewrites it with cursor controls.
+                    if (re.search(rf"{verb}  label-probe \([0-9.]+s elapsed\)", text)
+                            and "\x1b[2K" in text):
                         assert process.poll() is None, "heartbeat arrived after exit"
                         observed = True
                         break
