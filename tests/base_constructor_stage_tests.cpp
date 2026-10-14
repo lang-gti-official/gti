@@ -312,11 +312,103 @@ int main() { Derived value{}; Parcel parcel = Parcel::empty; return 0; }
          "owning enum mutation exercised an exact selected base argument");
 }
 
+// A base argument computed through temporaries keeps each owned temporary in
+// a preparation carrier slot. Its slot, borrow stage, drop obligation and the
+// edges around the preparation are exact authority, never inferred.
+void checkBaseInitializerTemporaries(const std::filesystem::path &fixtures) {
+  const auto path = fixtures / "fixtures/base_initializer_temporaries.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(), "base initializer temporaries analyze");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyzeProgram().ready(),
+         "base initializer temporaries have complete backend authority");
+  bool exercised = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto preparation =
+        lang::cppMirBasePreparation(frontend.mir, constructor);
+    if (!preparation || preparation->slots.empty())
+      continue;
+    exercised = true;
+    // The two probes own slots; the cleanup-free Plain values are read
+    // through their fields inside the preparation and need none.
+    expect(preparation->slots.size() == 2,
+           "each owned base-initializer temporary has one carrier slot");
+    const auto plan =
+        emitter.buildPlan({lang::MirBodyKind::Constructor, constructor.id});
+    expect(plan.supportsBasePreparationText() && plan.supportsFailureText(),
+           "a carrier with temporary slots is admitted in the body plan");
+    const auto &body = constructor.body;
+    const auto *slot = body.findPlace(preparation->slots.front());
+    const auto obligation = std::find_if(
+        body.dropObligations.begin(), body.dropObligations.end(),
+        [&](const auto &candidate) { return candidate.place == slot->id; });
+    expect(obligation != body.dropObligations.end(),
+           "a carrier slot keeps its temporary's value obligation");
+    if (obligation == body.dropObligations.end())
+      continue;
+    const auto stageBlock = preparation->stageBlock;
+    for (int mutation = 0; mutation < 4; ++mutation) {
+      auto malformed = frontend.mir;
+      auto *changed = const_cast<lang::MirConstructorInstance *>(
+          malformed.findConstructorInstance(constructor.id));
+      bool applied = false;
+      if (mutation == 0) {
+        changed->body.dropObligations[obligation->id - 1].initiallyActive =
+            true;
+        applied = true;
+      }
+      for (auto &block : changed->body.blocks) {
+        for (auto &instruction : block.instructions) {
+          const bool inPreparation =
+              std::find(preparation->instructions.begin(),
+                        preparation->instructions.end(),
+                        instruction.id) != preparation->instructions.end();
+          if (mutation == 1 && !applied && !inPreparation &&
+              instruction.kind == lang::MirInstructionKind::Drop &&
+              instruction.destination == slot->id) {
+            // After the base, a slot is ended only by its own obligation.
+            instruction.lifecycle.front().source =
+                obligation->id == 1 ? 2 : 1;
+            applied = true;
+          }
+          if (mutation == 2 && !applied && inPreparation &&
+              instruction.kind == lang::MirInstructionKind::CallInput &&
+              (instruction.callInputKind ==
+                   lang::HirCallInputKind::ReadTemporaryBorrow ||
+               instruction.callInputKind ==
+                   lang::HirCallInputKind::MutableTemporaryBorrow)) {
+            instruction.callSite += 1000;
+            applied = true;
+          }
+        }
+      }
+      if (mutation == 3) {
+        // Re-entering the preparation after the base would skip its drops.
+        changed->body.blocks[stageBlock - 1].terminator.target = body.entry;
+        applied = true;
+      }
+      expect(applied, "base temporary mutation found its exact target");
+      expect(!lang::cppMirBasePreparation(malformed, *changed),
+             "preparation rejects forged temporary obligation, drop, borrow "
+             "and re-entry authority");
+      expect(!lang::CppMirBodyEmitter(malformed, map).analyzeProgram().ready(),
+             "a forged base temporary never reaches native emission");
+    }
+  }
+  expect(exercised, "the base initializer fixture prepared owned temporaries");
+}
+
 int main() {
   checkSelectedGeneratedBaseSchedule();
   checkFieldArgumentOrder();
   checkOwningEnumBaseArgumentAuthority();
   const auto fixtures = std::filesystem::path(__FILE__).parent_path();
+  checkBaseInitializerTemporaries(fixtures);
   for (const auto name :
        {"coverage/reproducers/a45-base-state-rollback-unsupported.gti",
         "coverage/reproducers/a45-base-plus-string-field-unsupported.gti",
@@ -325,7 +417,8 @@ int main() {
         "coverage/reproducers/a45-derived-destructor-generated-ctor.gti",
         "fixtures/base_constructor_stages.gti",
         "fixtures/checked_base_arguments.gti",
-        "fixtures/effectful_base_arguments.gti"}) {
+        "fixtures/effectful_base_arguments.gti",
+        "fixtures/base_initializer_temporaries.gti"}) {
     const auto path = fixtures / name;
     std::ifstream input(path);
     const std::string source{std::istreambuf_iterator<char>(input), {}};
@@ -344,7 +437,9 @@ int main() {
       if (!base)
         continue;
       if (std::string_view(name) == "fixtures/checked_base_arguments.gti" ||
-          std::string_view(name) == "fixtures/effectful_base_arguments.gti") {
+          std::string_view(name) == "fixtures/effectful_base_arguments.gti" ||
+          std::string_view(name) ==
+              "fixtures/base_initializer_temporaries.gti") {
         const auto preparation =
             lang::cppMirBasePreparation(frontend.mir, constructor);
         expect(
