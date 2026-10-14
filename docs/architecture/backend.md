@@ -1507,21 +1507,27 @@ non-field projections, cleanup-owning temporaries, and incoherent type rows
 reject this route rather than falling back to native temporary behavior.
 A cleanup-owning class result keeps MIR's value-rooted slot and its
 full-expression Drop, and may instead be read through field views of that
-slot. That covers `make_tracked(7).number`, nested fields, and a field lent to
-one member call as in `make_named().text.size()`. A view is a pure field
-projection of the result's value root with exact field rows. It carries no
-loan or drop and is touched only by copying `Load`s or by read-only borrow
-stages consumed by one call. It declares no local and spells
+slot. The result may come from a call, as in `make_tracked(7).number`, or from
+an ordinary `Construct`, as in `tracked(7).number`. A failure-free constructor
+constructs the slot in place and arms the result's obligation with its own
+`Initialize`. A raising one places the object at the slot's construction
+address and arms the obligation on its Invoke success edge. Either way the
+construction's only other uses must be field views. Views cover nested fields
+and a field lent to one member call as in `make_named().text.size()`, in
+function bodies as well as field defaults and member initializers. A view is a
+pure field projection of the result's value root with exact field rows. It
+carries no loan or drop and is touched only by copying `Load`s or by read-only
+borrow stages consumed by one call. It declares no local and spells
 `slot.get().field`, so a field class without a default constructor is never
 default-constructed. MIR's verified initialization bounds every read, and the
 result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.
 An owning Expected temporary's payload whose fields alone are read moves into
 the payload's own result slot on the checked extraction's success edge, then is
 read the same way, as in `make_named(true).value().text.size()`.
-Inside a short-circuit operand or a conditional arm, the producer instead
-constructs the result in a conditional temporary that holds the result's own
-obligation. A failure-free producer does so at its destination; a transformed
-one arms the temporary on its Invoke success edge. When the result is read only
+Inside a short-circuit operand or a conditional arm, the producer, a call or a
+construction, instead constructs the result in a conditional temporary that
+holds the result's own obligation. A failure-free producer does so at its
+destination; a transformed one arms the temporary on its Invoke success edge. When the result is read only
 through field views, that temporary is its storage: the views spell
 `temporary.get().field`, the result declares no local, and MIR's conditional
 Drop destroys the temporary exactly once if its operand ran, on the normal path
