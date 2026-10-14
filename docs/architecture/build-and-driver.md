@@ -303,7 +303,10 @@ dependency preparation are backend detail. They are still observed, but they
 get rows only under `--verbose`, which restores `Lowering`, `Emitting` and
 `Native` between `Checking` and `Publishing`. While one of these hidden stages
 runs, the live display shows `Building  <name>` with the build's total elapsed
-time instead, so a long native link does not look like a hang.
+time instead, so a long native link does not look like a hang. Project `check`
+uses `Checking` for its initial banner and overall elapsed-time rows instead.
+It still reports `Lowering` under `--verbose`; checking does not generate or
+link an executable, and progress labels do not alter analysis or caching.
 
 `--progress=auto` is the default: a capable stderr terminal updates one active
 row in place, refreshing elapsed time every 200 ms. Redirected streams and
