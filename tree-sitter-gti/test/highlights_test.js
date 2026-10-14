@@ -697,7 +697,7 @@ const testAttributeRow = fixtureLines.findIndex((line) =>
   line.includes("[[test]] void annotated_test_highlight"),
 );
 requireCapture(testAttributeRow, "test", "attribute");
-requireCapture(testAttributeRow, "annotated_test_highlight", "function.definition");
+requireCapture(testAttributeRow, "annotated_test_highlight", "function");
 
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
