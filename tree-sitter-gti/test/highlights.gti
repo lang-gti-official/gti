@@ -329,3 +329,7 @@ struct ImplicitHighlight {
   int degrees;
   implicit ImplicitHighlight(int value) : degrees(value) {}
 };
+struct ConversionHighlight {
+  int raw;
+  implicit operator int() { return this.raw; }
+};

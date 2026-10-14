@@ -1429,6 +1429,7 @@ std::string cppFunctionSpelling(const LoweredFunctionDeclaration &function,
     case OverloadedOperator::Subscript:
     case OverloadedOperator::Call:
     case OverloadedOperator::ContextualBool:
+    case OverloadedOperator::Conversion:
       break;
     }
   }

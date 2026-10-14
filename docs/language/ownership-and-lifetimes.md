@@ -1010,12 +1010,17 @@ value and field state and report a later read when any reachable path consumed
 the place; loops conservatively account for zero or more iterations.
 
 Ordinary instance methods and value-producing arithmetic/bitwise operators
-may declare a consuming receiver with trailing `&&`, as may `operator()`.
+may declare a consuming receiver with trailing `&&`, as may `operator()` and
+conversion operators (`operator Target() &&`).
 This is a receiver capability, not a general `T&&` type. Free and static
 functions have no receiver and cannot use this qualifier. Assignment,
 compound assignment, and increment/decrement retain their mutable contracts;
 comparisons and `operator bool` retain their read-only contracts. Dereference,
-arrow, and subscript do not gain consuming forms.
+arrow, and subscript do not gain consuming forms. A conversion, whether
+`Target(value)` or a declaration's implicit conversion, selects its receiver
+exactly as a member call does: `std::string text = make_builder();` consumes the
+temporary, `std::string text = std::move(builder);` the moved owner, and
+`std::string text = builder;` is rejected rather than consuming `builder`.
 
 A named value never selects a consuming member implicitly. An owned movable
 temporary, including a returned intermediate or conditional result, or an

@@ -5981,7 +5981,8 @@ auto SemanticVisitor::Impl::resolveOperator(
     std::span<const ExprPtr> arguments, bool contextual,
     std::optional<CallableBoundary> boundary,
     std::optional<OperatorReceiverState> receiverState, bool projection,
-    bool preferReadOnlyReceiver, ContextualCallArguments *contextualArguments)
+    bool preferReadOnlyReceiver, ContextualCallArguments *contextualArguments,
+    std::optional<SemanticType> conversionTarget, bool implicitOnly)
     -> std::optional<CallableCandidate> {
   if (receiverType.kind == SemanticType::TypeParameter) {
     return resolveSymbolicOperator(site, kind, receiver, receiverType, token,
@@ -6038,8 +6039,19 @@ auto SemanticVisitor::Impl::resolveOperator(
 
   const Symbol overloadSet =
       substituteSymbol(found->second.symbol, receiverType);
+  // A conversion's diagnostics name its target; other operators name their
+  // spelling.
+  const std::string subject =
+      conversionTarget
+          ? "Conversion to '" + typeSpelling(*conversionTarget) + "'"
+          : std::string(operatorSourceSpelling(kind));
+  const std::string object =
+      conversionTarget
+          ? "the conversion to '" + typeSpelling(*conversionTarget) + "'"
+          : std::string(operatorSourceSpelling(kind));
   const bool consumingReceiver = consumingReceiverValue(receiver) &&
                                  (kind == OverloadedOperator::Call ||
+                                  kind == OverloadedOperator::Conversion ||
                                   isArithmeticOrBitwiseValueOperator(kind));
   bool rejectedMutableReceiver = false;
   std::optional<CallableCandidate> rejectedMutableFunction;
@@ -6053,6 +6065,13 @@ auto SemanticVisitor::Impl::resolveOperator(
   std::vector<ViableOperator> viable;
   for (const CallableCandidate &declared : overloadSet.overloads) {
     CallableCandidate candidate = declared;
+    // A conversion selects exactly its requested target; a declaration
+    // considers only conversions declared implicit.
+    if ((conversionTarget && candidate.returnType != *conversionTarget) ||
+        (implicitOnly && (candidate.declaration == nullptr ||
+                          !candidate.declaration->implicitKeyword()))) {
+      continue;
+    }
     if (kind == OverloadedOperator::Call && candidate.parameterPack &&
         candidate.record().genericParameters.empty()) {
       const auto *call = exprAs<Call>(&site);
@@ -6169,8 +6188,7 @@ auto SemanticVisitor::Impl::resolveOperator(
 
   if (viable.size() != 1) {
     if (viable.empty() && rejectedCompilerPrivate) {
-      reportCompilerPrivateAccess(token,
-                                  std::string(operatorSourceSpelling(kind)));
+      reportCompilerPrivateAccess(token, object);
     } else if (viable.empty() && rejectedConsumingReceiver) {
       const auto *call =
           kind == OverloadedOperator::Call ? exprAs<Call>(&site) : nullptr;
@@ -6178,10 +6196,12 @@ auto SemanticVisitor::Impl::resolveOperator(
         (void)validateCallableCapability(*call,
                                          CallableInvocationCapability::Once);
       } else {
-        Diagnostic diagnostic =
-            makeDiagnostic("GTI-S2022", DiagnosticPhase::Semantics, token,
-                           "A consuming operator requires an owned temporary "
-                           "or an explicitly moved receiver.");
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2022", DiagnosticPhase::Semantics, token,
+            std::string(conversionTarget ? "A consuming conversion operator"
+                                         : "A consuming operator") +
+                " requires an owned temporary or an explicitly moved "
+                "receiver.");
         diagnostic.hints.emplace_back("Use std::move(value) as the receiver to "
                                       "transfer a named value's ownership.");
         diagnostics.emplace_back(std::move(diagnostic));
@@ -6194,12 +6214,9 @@ auto SemanticVisitor::Impl::resolveOperator(
                                          CallableInvocationCapability::Mutable);
       } else if (rejectedMutableFunction && !receiverState) {
         reportMutableReceiverFailure(receiver, token, *rejectedMutableFunction,
-                                     std::string(operatorSourceSpelling(kind)));
+                                     subject);
       } else {
-        report(token,
-               std::string(operatorSourceSpelling(kind)) +
-                   " requires a mutable receiver.",
-               "GTI-S2022");
+        report(token, subject + " requires a mutable receiver.", "GTI-S2022");
       }
     } else if (viable.empty() && rejectedRequirements) {
       report(token,
@@ -6218,10 +6235,9 @@ auto SemanticVisitor::Impl::resolveOperator(
         }
         received += ')';
       }
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2022", DiagnosticPhase::Semantics, token,
-          "No exact overload of " + std::string(operatorSourceSpelling(kind)) +
-              received + ".");
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2022", DiagnosticPhase::Semantics, token,
+                         "No exact overload of " + object + received + ".");
       bool referenceMismatch = false;
       for (const CallableCandidate &candidate : overloadSet.overloads) {
         if (candidate.declaration != nullptr &&
@@ -6273,10 +6289,7 @@ auto SemanticVisitor::Impl::resolveOperator(
                 "parameter types and ownership requirements.");
       diagnostics.emplace_back(std::move(diagnostic));
     } else {
-      report(token,
-             "Use of " + std::string(operatorSourceSpelling(kind)) +
-                 " is ambiguous.",
-             "GTI-S2022");
+      report(token, "Use of " + object + " is ambiguous.", "GTI-S2022");
     }
     return std::nullopt;
   }
@@ -6309,11 +6322,14 @@ auto SemanticVisitor::Impl::resolveOperator(
   }
   if (!canAccessMember(selected.access, selected.ownerClass, receiverType,
                        selected.dispatchOwner)) {
+    const std::string access(accessModifierSpelling(selected.access));
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, token,
-        std::string(operatorSourceSpelling(kind)) + " of '" +
-            owner->name.lexeme + "' is " +
-            std::string(accessModifierSpelling(selected.access)) + ".");
+        conversionTarget
+            ? "The conversion of '" + owner->name.lexeme + "' to '" +
+                  typeSpelling(*conversionTarget) + "' is " + access + "."
+            : std::string(operatorSourceSpelling(kind)) + " of '" +
+                  owner->name.lexeme + "' is " + access + ".");
     diagnostic.related.push_back(
         {tokenSpan(selected.declaration->operatorName()->keyword),
          "Operator declared here."});
@@ -6447,6 +6463,9 @@ auto SemanticVisitor::Impl::resolveOperator(
   applyRawOperatorInvocation(site, rawInvocation, contextual,
                              projection || kind == OverloadedOperator::Arrow);
   if (contextual) {
+    // The site's own analysis recorded the effects of computing its value;
+    // the conversion applied to that value is a further call.
+    recordProgramOperatorTargetEffects(site, resolved);
     semanticModel.recordContextualConversion(site, std::move(resolved));
   } else if (projection) {
     semanticModel.recordProjectionOperator(site, std::move(resolved));
@@ -6454,6 +6473,168 @@ auto SemanticVisitor::Impl::resolveOperator(
     semanticModel.recordOperator(site, std::move(resolved));
   }
   return selected;
+}
+
+auto SemanticVisitor::Impl::conversionOperatorCandidates(
+    const SemanticType &source, const SemanticType &target, bool implicitOnly)
+    -> std::vector<CallableCandidate> {
+  std::vector<CallableCandidate> candidates;
+  if (source.kind != SemanticType::Class || target == SemanticType::Unknown ||
+      source == target) {
+    return candidates;
+  }
+  const ClassInfo *owner = classInfo(source);
+  if (owner == nullptr) {
+    return candidates;
+  }
+  const auto found = owner->members.find(
+      std::string(operatorFunctionName(conversionOperatorKind(target))));
+  if (found == owner->members.end() ||
+      found->second.symbol.type != SemanticType::Function) {
+    return candidates;
+  }
+  // Every declared conversion to exactly this target participates, whatever
+  // access or receiver it then requires: a rejected candidate never lets the
+  // conversion fall back to another path.
+  for (const CallableCandidate &candidate :
+       substituteSymbol(found->second.symbol, source).overloads) {
+    if (candidate.returnType == target &&
+        (!implicitOnly || (candidate.declaration != nullptr &&
+                           candidate.declaration->implicitKeyword()))) {
+      candidates.push_back(candidate);
+    }
+  }
+  return candidates;
+}
+
+auto SemanticVisitor::Impl::conversionConstructorCandidates(
+    const Expr &site, const ExprPtr &argument, const SemanticType &argumentType,
+    const SemanticType &target, const Token &token, bool implicitOnly)
+    -> std::vector<const ConstructorInfo *> {
+  std::vector<const ConstructorInfo *> candidates;
+  if (target.kind != SemanticType::Class || target.classId == 0 ||
+      target.classId > classes.size()) {
+    return candidates;
+  }
+  const SemanticType enclosingType = currentType;
+  analyzeConstructorCallArguments(
+      site, target.classId, target.arguments, target.valueArguments,
+      {{.type = argumentType, .expression = &argument}}, token, false,
+      implicitOnly, &candidates);
+  currentType = enclosingType;
+  return candidates;
+}
+
+auto SemanticVisitor::Impl::reportAmbiguousConversion(
+    const Token &token, const SemanticType &source, const SemanticType &target,
+    std::span<const CallableCandidate> operators,
+    std::span<const ConstructorInfo *const> constructors, bool declaration)
+    -> void {
+  const std::string sourceName = typeSpelling(source);
+  const std::string targetName = typeSpelling(target);
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2122", DiagnosticPhase::Semantics, token,
+      declaration
+          ? "Initialization of '" + targetName + "' from '" + sourceName +
+                "' is ambiguous: an implicit constructor of '" + targetName +
+                "' and an implicit conversion operator of '" + sourceName +
+                "' both apply."
+          : "Conversion of '" + sourceName + "' to '" + targetName +
+                "' is ambiguous: a constructor of '" + targetName +
+                "' and a conversion operator of '" + sourceName +
+                "' both apply.");
+  for (const CallableCandidate &candidate : operators) {
+    if (candidate.declaration != nullptr &&
+        candidate.declaration->operatorName()) {
+      diagnostic.related.push_back(
+          {tokenSpan(candidate.declaration->operatorName()->keyword),
+           "Conversion operator declared here."});
+    }
+  }
+  for (const ConstructorInfo *constructor : constructors) {
+    if (constructor != nullptr && constructor->declaration != nullptr) {
+      diagnostic.related.push_back({tokenSpan(constructor->declaration->name()),
+                                    "Constructor declared here."});
+    }
+  }
+  diagnostic.hints.emplace_back(
+      "GTI does not rank a constructor against a conversion operator. Brace "
+      "construction '" +
+      targetName +
+      "{...}' always selects a constructor; remove one of the conversions or "
+      "give one a named method to choose the other.");
+  diagnostics.emplace_back(std::move(diagnostic));
+}
+
+auto SemanticVisitor::Impl::reportMissingConversionOperator(
+    const Token &token, const SemanticType &source, const SemanticType &target)
+    -> void {
+  Diagnostic diagnostic =
+      makeDiagnostic("GTI-S2014", DiagnosticPhase::Semantics, token,
+                     "Type '" + typeSpelling(source) +
+                         "' declares no conversion operator to '" +
+                         typeSpelling(target) + "'.");
+  diagnostic.hints.emplace_back(
+      target == SemanticType::Bool
+          ? "Declare 'operator bool()' in '" + typeSpelling(source) +
+                "' to define this conversion."
+          : "Declare 'operator " + typeSpelling(target) + "()' in '" +
+                typeSpelling(source) + "' to define this conversion.");
+  diagnostics.emplace_back(std::move(diagnostic));
+}
+
+auto SemanticVisitor::Impl::selectConversionOperator(
+    const Expr &site, const ExprPtr &source, const SemanticType &sourceType,
+    const SemanticType &target, const Token &token, bool declaration)
+    -> std::optional<CallableCandidate> {
+  // Declarations already reject these targets. A generic instance can still
+  // reach one through a substituted target.
+  const std::vector<CallableCandidate> candidates =
+      conversionOperatorCandidates(sourceType, target, declaration);
+  if (conversionTargetCarriesBorrow(target) ||
+      std::any_of(candidates.begin(), candidates.end(),
+                  [](const CallableCandidate &candidate) {
+                    return candidate.returnBorrowOrigin !=
+                           BorrowOriginKind::None;
+                  })) {
+    report(token,
+           "A conversion operator cannot produce borrowed state yet; '" +
+               typeSpelling(target) +
+               "' carries a borrow. Call a named method returning the view.",
+           "GTI-S2122");
+    return std::nullopt;
+  }
+  return resolveOperator(site, conversionOperatorKind(target), source,
+                         sourceType, token, {}, {}, declaration, std::nullopt,
+                         std::nullopt, false, false, nullptr, target,
+                         declaration);
+}
+
+auto SemanticVisitor::Impl::analyzeExplicitConversion(
+    const Expr &site, const ExprPtr &source, const SemanticType &sourceType,
+    const SemanticType &target, const Token &token) -> bool {
+  if (!source) {
+    return false;
+  }
+  const std::vector<CallableCandidate> operators =
+      conversionOperatorCandidates(sourceType, target, false);
+  if (operators.empty()) {
+    return false;
+  }
+  // One explicit conversion has exactly one path: a constructor of the target
+  // that takes the source, or a conversion operator of the source.
+  if (const std::vector<const ConstructorInfo *> constructors =
+          conversionConstructorCandidates(site, source, sourceType, target,
+                                          token, false);
+      !constructors.empty()) {
+    reportAmbiguousConversion(token, sourceType, target, operators,
+                              constructors, false);
+  } else {
+    (void)selectConversionOperator(site, source, sourceType, target, token,
+                                   false);
+  }
+  currentType = target;
+  return true;
 }
 
 auto SemanticVisitor::Impl::arrowTargetType(const Expr &site,

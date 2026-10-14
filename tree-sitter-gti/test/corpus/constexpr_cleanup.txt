@@ -14,6 +14,7 @@ struct Ready {
     (identifier)
     (class_body
       (operator_declaration
+        (primitive_type)
         (parameter_clause)
         (block
           (return_statement
