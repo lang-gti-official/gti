@@ -386,6 +386,23 @@ The current implemented foundation includes:
   Borrowed captures/results, inferred fresh-lambda return types, global closure
   storage, and native callback conversion are outside this wrapper contract.
   Combined validation and local-delivery evidence is recorded under L-CALL-02; and
+- `<std/functional>` provides non-owning `std::function_ref<R(Args...)>` and
+  `std::function_ref<R(Args...) mut>`, directly constructed from a named callable
+  of the exact signature. Shared views borrow read-only; mutable views borrow
+  exclusively and require mutable access for invocation. They allocate nothing,
+  never copy the target, have no empty state, and cannot outlive either the
+  callable or its borrowed captures. Borrowed results require a future
+  signature-level origin contract; a view does not infer cross-thread capability.
+  `std::function_ptr<R(Args...)>` provides non-null GTI invocation addresses for
+  exact namespace-function items and captureless lambdas, preserving GTI failure
+  and argument/result ownership rules rather than the native C ABI; an owning
+  class result through an invocation pointer is a later slice.
+  The source-defined views use general checked-reference erasure from
+  `<std/memory>`: `erase_ref`/`erase_mut` preserve a borrow as an opaque
+  `erased_object` reference, and unsafe `restore_ref<T>`/`restore_mut<T>` restore
+  precisely its original type without removing checked lifetime/access facts.
+  See [borrowing captures and callable views](ownership-and-lifetimes.md#borrowing-captures-and-callable-views)
+  for the full contract; and
 - `<std/functional>` also provides move-only
   `std::transfer_function<R(Args...)>`, `R(Args...) mut`, and `R(Args...) &&`
   owners whose target must be transferable at construction and replacement.

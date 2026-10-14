@@ -401,6 +401,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .returnBorrowParameters = instance.returnBorrowParameters,
          .returnBorrowFields = instance.returnBorrowFields,
          .returnBorrowPlace = instance.returnBorrowPlace,
+         .restoresReferenceResult = instance.restoresReferenceResult,
+         .restoredBorrowFields = instance.restoredBorrowFields,
          .ownedPointeeProjection = instance.ownedPointeeProjection,
          .linkage = instance.linkage,
          .externalSymbol = instance.externalSymbol,
@@ -560,7 +562,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
                               .type = instance.type,
                               .returnType = instance.returnType,
                               .parameterTypes = instance.parameterTypes,
-                              .parameterBindings = instance.parameterBindings};
+                              .parameterBindings = instance.parameterBindings,
+                              .capability = instance.capability};
     lowered.captureTypes.reserve(instance.captures.size());
     lowered.captureModes.reserve(instance.captures.size());
     lowered.captureSymbols.reserve(instance.captures.size());

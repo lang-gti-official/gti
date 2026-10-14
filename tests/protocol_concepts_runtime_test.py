@@ -5,7 +5,7 @@ The fixture traces a concrete and a generic conformance block in every mode:
 calls through a requirement in generic code, block functions calling each
 other, associated types used for locals and results, and operations that take
 ownership of an owning operand, which is released exactly once when the
-operation returns or fails. Example 156 runs as documented. A two-package workspace
+operation returns or fails. Example 157 runs as documented. A two-package workspace
 checks package coherence: a package may supply a block for a concept or a
 type it owns, and not for a dependency's concept and type together.
 """
@@ -107,7 +107,7 @@ def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     tests = pathlib.Path(__file__).parent
     source = tests / "fixtures" / "protocol_concepts.gti"
-    example = tests.parent / "examples" / "156-protocol-concepts.gti"
+    example = tests.parent / "examples" / "157-protocol-concepts.gti"
     modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
              for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O2", "O3")]
     modes.append(("sanitized", ["--std", "c++23", "-O1"],

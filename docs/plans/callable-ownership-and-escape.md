@@ -749,7 +749,85 @@ row. None may be introduced as an incidental extension of L-CALL-01. Conversely,
 a concrete regression in valid use of the implemented API is a correctness
 issue, not automatically one of these deferrals.
 
+## L-CALL-03: Checked Borrowing Callbacks (Shipped 0.433.0)
+
+The accepted source spelling is `[&value]` for shared/read-only access and
+`[mut &value]` for exclusive mutable access. These captures borrow existing
+named bindings; a reference binding can select a disjoint field first. Capture
+defaults and arbitrary reference init-captures are not part of this spelling.
+Copy/move value captures retain their existing meanings.
+
+The outcome is scoped and stored callbacks that can use surrounding state
+without transferring its ownership, plus non-owning callable views. This is
+not permission to publish a callback after its referents die, to copy an
+exclusive capability, or to permit overlapping reentrant mutation. A mutable
+capture requires mutable invocation of the environment. Shared reentrancy is
+not prohibited merely because it is recursive; the ordinary access contract
+decides whether a particular call is valid.
+
+Implementation must extend the common stored-reference paths and loan graph.
+Every environment dependency carries an origin place, field/capture projection,
+access mode, parent capability where reborrowed, and a checked endpoint. Moving
+an environment transfers those dependencies; nested ordinary records preserve
+them. Multiple captured reference bindings must retain all parent capabilities,
+not just the first. Temporary carrier dependencies remain live for the enclosing
+full expression. Cleanup-bearing composition retains its existing drop boundary.
+Semantics publishes expression dependencies; concrete HIR qualifies their places;
+MIR preserves and verifies the same facts before production representation.
+
+The successful-path cost target is reference storage in the closure, with no
+heap allocation or ownership/reference-counting machinery added for borrowing.
+Callable views must not hide lifetime obligations behind unchecked pointers.
+Exact-type views can be source-defined; signature-erased views require either
+an existing general checked erasure representation or a justified minimal
+language facility, never a public `std::*` name exception.
+
+Acceptance includes shared/exclusive and mixed captures, multiple independent
+parents, disjoint fields, generic invocation/forwarding, stored callbacks,
+movement, last-use and cleanup endpoints, and rejection of invalid escapes,
+conflicting owner use, exclusive copies and conflicting reentrant access.
+Verifier mutations, O0/O1/O3 execution, relevant C++20/23 parity, editor syntax
+and diagnostics, runnable examples and optimized cost evidence accompany the
+feature. The slice shipped in 0.433.0 with example 156 and the
+`borrowing_callbacks`, `checked_callable_erasure`, `checked_callable_pointer`
+and `checked_callable_transport` fixtures across the native matrix. Two
+representation boundaries remain explicit: an owning class result through
+`std::function_ptr` is rejected before native compilation (owning arguments
+stage through the thunk), and a
+constructor that binds a native reference member through a helper call admits
+only a helper with no failure edge (`select_value` in the erasure fixture uses
+wrapping arithmetic for that reason).
+
 ## Completion Evidence
+
+### Direct signature erasure (owner-approved, shipped)
+
+The borrowing-callback release includes direct construction of
+`std::function_ref<R(Args...)>` and its mutable signature variant. The intended
+implementation is source-defined policy over two reusable language mechanisms:
+
+- checked reference erasure to an opaque referent, retaining the exact origin,
+  access and parent loans. Restoring a concrete type is unsafe: the caller must
+  select the original referent type, but cannot waive lifetime or access checks;
+- non-null typed GTI invocation pointers, formed from an exact namespace
+  function item or captureless lambda. They retain GTI's defined-failure calling
+  convention and are not interchangeable with C function pointers.
+
+The erased referent is not a byte buffer, constructible object, raw-pointer
+conversion, allocation, or permission to inspect representation bytes. Its
+backend may use an object-representation address while source can only retain
+the checked reference or restore its original type. Signature erasure must not
+invent transfer/sharing capabilities. Signatures whose results borrow need an
+explicit result-origin contract before those shapes are admitted.
+
+Captureless lambda parameter packs reuse the ordinary lexical pack binding and
+concrete parameter expansion model, allowing source-defined invocation thunks
+for arbitrary exact signatures. The public view stores a checked erased borrow
+and a typed thunk, with no target ownership, allocation, or reference counting.
+Shared views permit read invocation; exclusive views require mutable invocation
+and cannot duplicate their exclusive loan. An unrelated custom borrowed wrapper
+must exercise the same facilities. A named adapter remains a valid source
+technique, but is not the intended required public construction ceremony.
 
 D-CALL-01 is complete when this accepted contract is reflected in the
 restriction ledger and operational queue. It supplies:

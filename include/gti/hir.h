@@ -234,7 +234,10 @@ struct HirValue {
   // Exact argument origins retained for composed owner-dependent values.
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
+  std::vector<SemanticLoanDependency> borrowDependencies;
   bool storedReferenceAccess = false;
   bool retainedReceiverProjection = false;
   std::optional<HirValueId> retainedReceiverOwner;
@@ -258,6 +261,8 @@ struct HirValue {
   std::vector<HirPackFoldElement> packFoldElements;
   std::vector<HirPackExpansionElement> packExpansionElements;
   std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<HirFunctionInstanceId> functionPointerFunctionTarget;
+  std::optional<HirLambdaId> functionPointerLambdaTarget;
   std::optional<SemanticType> nativeCalleeType;
   std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<HirThreadTaskAdapterId> threadTaskAdapter;
@@ -443,6 +448,7 @@ struct HirLambda {
   std::vector<SemanticType> parameterTypes;
   std::vector<HirBindingId> parameterBindings;
   std::vector<LambdaCaptureInfo> captures;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::vector<bool> captureRequiresActiveCleanup;
   SemanticTypeTraits traits{};
   HirBody body;
@@ -584,6 +590,8 @@ struct HirFunctionInstance {
   std::vector<std::size_t> returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   HirBody body;
   std::optional<SourceSpan> instantiationSite;

@@ -1705,6 +1705,8 @@ lambda-expression      = lambda-capture-list parameter-clause "->" type block ;
 lambda-capture-list    = "[" [ lambda-capture { "," lambda-capture } ] "]" ;
 
 lambda-capture         = IDENTIFIER
+                       | "&" IDENTIFIER
+                       | "mut" "&" IDENTIFIER
                        | IDENTIFIER "=" "std" "::" "move"
                          "(" IDENTIFIER ")" ;
 
@@ -1713,8 +1715,11 @@ lambda-capture         = IDENTIFIER
    copyable local binding. `[owned = std::move(source)]` is the only init
    capture: it moves one available movable local or by-value parameter into an
    immutable environment field and immediately leaves `source` moved.
-   Capture defaults, reference and other init captures, implicit capture,
-   `this`, and mutable lambdas are rejected. Lambda values are lexical.
+   `[&name]` borrows a named addressable binding read-only; `[mut &name]`
+   borrows it exclusively and makes invocation require a mutable receiver.
+   Borrow dependencies survive concrete generic transport and field storage.
+   Capture defaults, other init captures, implicit capture, `this`, and a
+   trailing C++ `mutable` keyword are rejected. Lambda values are lexical.
    They may be copied into another local `auto` binding or passed to a direct
    by-value or checked-reference generic parameter whose visible body uses it as a confined
    callable. Calls may require exact `void`, exact `bool`, or an exact

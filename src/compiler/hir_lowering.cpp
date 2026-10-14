@@ -624,6 +624,8 @@ private:
          .returnBorrowParameters = declaration.returnBorrowParameters,
          .returnBorrowFields = declaration.returnBorrowFields,
          .returnBorrowPlace = declaration.returnBorrowPlace,
+         .restoresReferenceResult = declaration.restoresReferenceResult,
+         .restoredBorrowFields = declaration.restoredBorrowFields,
          .ownedPointeeProjection = declaration.ownedPointeeProjection,
          .instantiationSite = std::move(site),
          .staticMember = declaration.staticMember,
@@ -2064,6 +2066,10 @@ private:
           concrete->returnBorrowAccess;
       output.program.functions[index].returnBorrowPlace =
           concrete->returnBorrowPlace;
+      output.program.functions[index].restoresReferenceResult =
+          concrete->restoresReferenceResult;
+      output.program.functions[index].restoredBorrowFields =
+          concrete->restoredBorrowFields;
       output.program.functions[index].ownedPointeeProjection =
           concrete->ownedPointeeProjection;
     }
@@ -2642,7 +2648,8 @@ private:
   }
 
   void lowerLoans(const SemanticModel &model, HirBody &body,
-                  const Stmt *declaration = nullptr) {
+                  const Stmt *declaration = nullptr,
+                  std::span<const LambdaCaptureInfo> captures = {}) {
     ensurePlaceDomain(body);
     body.loans.clear();
     std::unordered_map<SymbolId, HirBindingId> bindings;
@@ -2655,11 +2662,20 @@ private:
     std::vector<SemanticLoanId> pending;
     for (const SemanticLoanInfo &loan : model.loans()) {
       if ((declaration != nullptr && loan.entryDeclaration == declaration) ||
+          (loan.entry && std::any_of(captures.begin(), captures.end(),
+                                     [&](const LambdaCaptureInfo &capture) {
+                                       return capture.bindingSymbol ==
+                                              loan.place.root;
+                                     })) ||
           std::any_of(
               loan.carriers.begin(), loan.carriers.end(),
               [&](SymbolId carrier) { return bindings.contains(carrier); }))
         pending.push_back(loan.id);
     }
+    for (const auto &value : body.values)
+      for (const auto &dependency : value.borrowDependencies)
+        if (dependency.parent != 0)
+          pending.push_back(dependency.parent);
     while (!pending.empty()) {
       const SemanticLoanId id = pending.back();
       pending.pop_back();
@@ -2670,6 +2686,9 @@ private:
         pending.push_back(loan->parent);
       if (loan->storedDependency != 0)
         pending.push_back(loan->storedDependency);
+      for (const auto &dependency : loan->additionalDependencies)
+        if (dependency.parent != 0)
+          pending.push_back(dependency.parent);
     }
     for (const SemanticLoanInfo &loan : model.loans()) {
       if (!included.contains(loan.id))
@@ -3757,7 +3776,7 @@ private:
                                  classValueArguments, body);
     currentSourceFunctionName = enclosingSourceFunctionName;
     finalizeLifetimes(body, model, true);
-    lowerLoans(model, body);
+    lowerLoans(model, body, nullptr, info->captures);
     std::vector<bool> captureRequiresActiveCleanup;
     captureRequiresActiveCleanup.reserve(info->captures.size());
     for (const LambdaCaptureInfo &capture : info->captures) {
@@ -3773,6 +3792,7 @@ private:
         .parameterTypes = info->parameterTypes,
         .parameterBindings = std::move(parameterBindings),
         .captures = info->captures,
+        .capability = info->capability,
         .captureRequiresActiveCleanup = std::move(captureRequiresActiveCleanup),
         .traits = info->traits,
         .body = std::move(body),
@@ -5712,6 +5732,11 @@ private:
                    .enumValue = enumValue,
                    .enumVariant = enumVariant,
                    .payloadIndex = payloadIndex};
+    for (const auto &dependency : model.findBorrowDependencies(*raw)) {
+      auto lowered = dependency;
+      lowered.place = qualifyPlace(dependency.place, body.placeDomain);
+      value.borrowDependencies.push_back(std::move(lowered));
+    }
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && exprAs<Get>(call->callee().get()) != nullptr &&
         model.typeOf(*call->callee()).kind != SemanticType::FunctionItem &&
@@ -5886,6 +5911,24 @@ private:
         if (value.nativeCalleeType)
           value.callableInvocation = CallableInvocationCapability::Read;
         value.intrinsic = resolved->intrinsic;
+        if (value.intrinsic == IntrinsicKind::FunctionPointerFromItem) {
+          if (resolved->functionPointerFunction != 0) {
+            if (const auto *target =
+                    baseModel->findFunction(resolved->functionPointerFunction))
+              value.functionPointerFunctionTarget =
+                  enqueueFunction(*target, {}, {}, {}, {}, target->returnType,
+                                  target->parameterTypes);
+          }
+          if (resolved->functionPointerLambda != 0) {
+            if (const auto target =
+                    lambdaTargets.find(resolved->functionPointerLambda);
+                target != lambdaTargets.end())
+              value.functionPointerLambdaTarget = target->second;
+          }
+          if (value.functionPointerFunctionTarget.has_value() ==
+              value.functionPointerLambdaTarget.has_value())
+            lifecycleValid = false;
+        }
         if ((value.intrinsic == IntrinsicKind::ObjectDestroy ||
              value.intrinsic == IntrinsicKind::ObjectRelocate ||
              value.intrinsic == IntrinsicKind::ObjectRelocateRange ||
@@ -5925,6 +5968,8 @@ private:
         value.borrowArgument = resolved->borrowArgument;
         value.borrowArguments = resolved->borrowArguments;
         value.borrowFields = resolved->borrowFields;
+        value.restoresReferenceResult = resolved->restoresReferenceResult;
+        value.restoredBorrowFields = resolved->restoredBorrowFields;
         value.borrowAccess = resolved->borrowAccess;
         value.borrowPlace = resolved->borrowPlace;
         if (value.borrowOrigin == BorrowOriginKind::Global &&
@@ -6520,9 +6565,17 @@ private:
         const auto planned = orderedArguments(arguments, value.parameterTypes,
                                               body, arguments.size());
         const auto receiverPlan = orderedReceiver(
-            *value.receiver, ReceiverMutability::ReadOnly,
+            *value.receiver,
+            value.callableInvocation == CallableInvocationCapability::Mutable
+                ? ReceiverMutability::Mutable
+                : ReceiverMutability::ReadOnly,
             receiver->retainedReceiverProjection ? CallReceiverMode::Consuming
-                                                 : CallReceiverMode::Value,
+            : receiver->info.category == ValueCategory::Place
+                ? value.callableInvocation ==
+                          CallableInvocationCapability::Mutable
+                      ? CallReceiverMode::MutablePlace
+                      : CallReceiverMode::ReadOnlyPlace
+                : CallReceiverMode::Value,
             body);
         if (planned && receiverPlan) {
           value.callPlan =

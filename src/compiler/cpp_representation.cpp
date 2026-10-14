@@ -391,6 +391,21 @@ computeConcreteClassIsCallableTemplateCarrier(const LoweredProgram &program) {
     // native carrier path rather than mixing direct and dependent class ABIs.
     return true;
   }
+  // A generic constructor can be the only boundary carrying a lexical
+  // closure. Its owner needs the same dependent-template representation as
+  // a function carrier; a concrete class declaration cannot name that local
+  // closure type in its parameter list.
+  for (const MirConstructorInstance &instance :
+       program.mir().constructorInstances()) {
+    if (std::any_of(instance.parameterTypes.begin(),
+                    instance.parameterTypes.end(),
+                    semanticTypeContainsLexicalClosure) ||
+        std::any_of(instance.typeArguments.begin(),
+                    instance.typeArguments.end(),
+                    semanticTypeContainsLexicalClosure)) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -808,7 +823,7 @@ bool cppRequiresBytePreservingTransport(const MirProgram &program,
             current.arguments.begin(), current.arguments.end(),
             [&](const auto &item) { return self(self, item, nativeField); });
       if (current.kind == SemanticType::Lambda) {
-        const auto *lambda = program.findLambda(current.lambdaId);
+        const auto *lambda = program.findLambdaForType(current);
         if (!lambda)
           return false;
         for (std::size_t index = 0; index < lambda->captureTypes.size();
@@ -1062,6 +1077,15 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     if (classInfo == nullptr) {
       return "void";
     }
+    if (classInfo->compilerCapability ==
+        CompilerCapabilityTypeKind::ErasedObject)
+      return "std::byte";
+    if (classInfo->compilerCapability ==
+        CompilerCapabilityTypeKind::FunctionPointer)
+      return type.arguments.size() == 1
+                 ? "::gti_internal::backend::function_pointer<" +
+                       spell(type.arguments.front()) + ">"
+                 : "void";
     if (classInfo->compilerCapability ==
         CompilerCapabilityTypeKind::ThreadHandle) {
       return "::gti_internal::backend::thread_handle";
@@ -1575,8 +1599,9 @@ cppCallableFreeFunctionSpelling(const LoweredProgram &program,
       selected == nullptr || selectedMir == nullptr ||
       (selected != &instance && *selected != instance) ||
       (selectedMir != &mirInstance && *selectedMir != mirInstance) ||
-      cppConcreteFunctionInstanceIsNameable(program, instance, mirInstance))
+      cppConcreteFunctionInstanceIsNameable(program, instance, mirInstance)) {
     return std::nullopt;
+  }
   const auto containsClosure = [](const auto &self,
                                   const SemanticType &type) -> bool {
     return type.kind == SemanticType::Lambda ||

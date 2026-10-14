@@ -53,6 +53,11 @@ struct LoweredProgramTestAccess {
     return program.constructorInstances_;
   }
 
+  static std::vector<LoweredLambdaInstance> &
+  lambdaInstances(LoweredProgram &program) {
+    return program.lambdaInstances_;
+  }
+
   static MirProgram &mir(LoweredProgram &program) { return program.mir_; }
 };
 
@@ -1142,6 +1147,79 @@ int main() { int value = 1; return borrow<0>(value); }
          "a forged concrete symbol type fails HIR provenance verification");
 }
 
+void testConcreteLambdaPacks() {
+  auto frontend = lang::Frontend().analyze("concrete-lambda-packs.gti", R"gti(
+int execute<Args...>(Args... args) {
+  auto callback = [](int tag, Args... forwarded) -> int { return tag; };
+  return callback(3, args...);
+}
+int main() { return execute() + execute(4) + execute(7, true) - 9; }
+)gti");
+  expect(
+      frontend.canGenerateCode(),
+      "concrete lambda packs analyze for empty, single and multiple elements");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(),
+         "detached lambda inventory preserves lexical packs and flattened ABI");
+  if (!built.valid()) {
+    for (const auto &issue : built.issues)
+      std::cerr << issue.detail << '\n';
+    return;
+  }
+  const auto &original = *built.program;
+  std::vector<std::size_t> sizes;
+  for (const auto &lambda : original.lambdaInstances()) {
+    expect(lambda.parameters.size() == 2 && lambda.parameters.back().pack &&
+               lambda.parameters.back().type.kind ==
+                   lang::SemanticType::TypePack &&
+               lambda.parameters.back().type.concretePack,
+           "lambda inventory keeps the exact lexical pack binding");
+    if (lambda.parameters.size() != 2)
+      continue;
+    sizes.push_back(lambda.parameters.back().type.arguments.size());
+    for (int mutation = 0; mutation != 8; ++mutation) {
+      auto changed = original;
+      auto &target = lang::LoweredProgramTestAccess::lambdaInstances(
+          changed)[lambda.id - 1];
+      auto &parameter = target.parameters.back();
+      if (mutation == 0)
+        parameter.pack = false;
+      else if (mutation == 1)
+        parameter.type.concretePack = false;
+      else if (mutation == 2)
+        parameter.type.arguments.push_back(lang::SemanticType::Bool);
+      else if (mutation == 3) {
+        if (parameter.type.arguments.empty())
+          parameter.type.arguments.push_back(lang::SemanticType::Int32);
+        else
+          parameter.type.arguments.pop_back();
+      } else if (mutation == 4)
+        parameter.symbol = target.parameters.front().symbol;
+      else if (mutation == 5)
+        target.parameters.pop_back();
+      else if (mutation == 6)
+        parameter.access = lang::AccessMode::Mutable;
+      else
+        target.parameters.front().pack = true;
+      expect(hasIssue(lang::verifyLoweredProgram(changed),
+                      lang::LoweredProgramIssueKind::InvalidInstanceInventory),
+             "malformed lambda pack shape, element, identity and access must "
+             "fail detached verification");
+    }
+  }
+  std::sort(sizes.begin(), sizes.end());
+  expect(
+      sizes == std::vector<std::size_t>{0, 1, 2},
+      "all three pack arities survive without invented or dropped parameters");
+}
+
 void testConcreteClassAliases() {
   auto frontend = lang::Frontend().analyze("concrete-class-aliases.gti", R"gti(
 namespace shapes {
@@ -1249,6 +1327,7 @@ int main() {
   testVerificationEvidenceOwnsItsProgram();
   testMutationRejection();
   testConcreteBranchSymbols();
+  testConcreteLambdaPacks();
   testConcreteClassAliases();
   if (failures != 0) {
     std::cerr << failures << " lowered-program test(s) failed\n";

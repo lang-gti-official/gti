@@ -420,6 +420,8 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     return scope.finish();
   }
   FunctionInfo concreteFunction = *function;
+  concreteFunction.restoresReferenceResult = false;
+  concreteFunction.restoredBorrowFields.clear();
   const GenericSubstitution substitution{.types = instanceTypeSubstitution,
                                          .values = instanceValueSubstitution};
   concreteFunction.returnType =
@@ -777,6 +779,9 @@ auto SemanticVisitor::Impl::leaveUnsafeRegion() -> void {
 }
 
 auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
+  loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
+                                          .order = loanFlow.currentOrder,
+                                          .statement = &stmt});
   if (stmt.isUnsafe())
     enterUnsafeRegion(*stmt.unsafeKeyword(), false);
   beginScope();
@@ -784,6 +789,7 @@ auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
   endScope();
   if (stmt.isUnsafe())
     leaveUnsafeRegion();
+  loanFlow.statementBoundaries.pop_back();
 }
 
 // The work visitClassDecl does before its members (tooling symbol, base and
@@ -3343,6 +3349,9 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     requireInitializedReceiver(functionToken);
   }
   finalizeLoanFlow();
+  if (functionInfo != nullptr && !functionErrors()) {
+    recordRestoredReferenceResult(*functionInfo);
+  }
   endScope();
   if (stmt.isConstexpr() && constexprDeclarationValid && !functionErrors()) {
     constexprDefinitionsAnalyzed.insert(&stmt);
@@ -4218,9 +4227,9 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
        .conflictBegin = loanFlow.conflicts.size(),
        .parentPath = loanFlow.activeConditionalArms,
        .parentSwitchPath = loanFlow.activeSwitchArms});
-  loanFlow.conditionalBoundaries.push_back({.region = loanFlow.currentRegion,
-                                            .order = loanFlow.currentOrder,
-                                            .statement = &stmt});
+  loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
+                                          .order = loanFlow.currentOrder,
+                                          .statement = &stmt});
   const SemanticType conditionType =
       analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
   requireBool(stmt.condition(), conditionType,
@@ -4294,7 +4303,7 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
   }
   scopes = loanScopes;
   applyMoveStates(moveScopes);
-  loanFlow.conditionalBoundaries.pop_back();
+  loanFlow.statementBoundaries.pop_back();
 }
 
 auto SemanticVisitor::Impl::visitLoopControlStmt(const LoopControlStmt &stmt)
@@ -5698,7 +5707,10 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
           {tokenSpan(symbol.declaration), "Binding declared here."});
     }
     diagnostic.hints.emplace_back(
-        symbol.lambdaCapture
+        symbol.lambdaCapture && symbol.type.kind == SemanticType::Reference
+            ? "A shared capture is read-only; use '[mut &name]' when the "
+              "source permits exclusive mutable access."
+        : symbol.lambdaCapture
             ? "Lambda captures are value snapshots and remain immutable."
         : symbol.constant
             ? "A constant cannot be mutated; use separate mutable storage if a "
@@ -8430,9 +8442,16 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   std::vector<SemanticType> parameterTypes;
   parameterTypes.reserve(expr.parameters().size());
   for (const Parameter &parameter : expr.parameters()) {
+    const bool previousAllowPack = allowPackTypeReference;
+    allowPackTypeReference = parameter.pack.has_value();
     validateType(parameter.type);
+    allowPackTypeReference = previousAllowPack;
     validateReferencePlacement(parameter.type, true, "lambda parameter");
-    const SemanticType parameterType = typeOf(parameter);
+    const SemanticType declaredType = typeOf(parameter);
+    const SemanticType parameterType =
+        parameter.pack && declaredType.kind == SemanticType::TypeParameter
+            ? SemanticType::typePack(declaredType.genericParameterId)
+            : declaredType;
     validateOwningPayloadEnumByValueBoundary(
         parameterType, parameter.type.name.last(), "lambda parameter",
         directOwningPayloadTransport);
@@ -8448,20 +8467,25 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       report(parameter.type.name.last(),
              "Lambda parameters cannot have type void.", "GTI-S2027");
     }
-    if (parameter.pack) {
+    if (parameter.pack && (&parameter != &expr.parameters().back() ||
+                           parameterType.kind != SemanticType::TypePack)) {
       report(*parameter.pack,
-             "Variadic lambda parameters are not supported yet.", "GTI-S2027");
+             "A lambda parameter pack must be final and name an enclosing "
+             "type pack.",
+             "GTI-S2027");
     }
     parameterTypes.push_back(parameterType);
   }
 
-  analyzeParameterDefaults(expr.parameters(), parameterTypes,
-                           std::span<const std::size_t>{},
-                           DefaultArgumentOwnerKind::Function, false,
-                           "lambda parameters", false, !instanceAnalysisActive);
+  analyzeParameterDefaults(
+      expr.parameters(), parameterTypes, std::span<const std::size_t>{},
+      DefaultArgumentOwnerKind::Function, false, "lambda parameters",
+      !expr.parameters().empty() && expr.parameters().back().pack.has_value(),
+      !instanceAnalysisActive);
 
   std::unordered_set<std::string> capturedNames;
   std::vector<LambdaCaptureInfo> captures;
+  std::vector<SemanticLoanDependency> captureDependencies;
   Scope captureScope;
   for (const LambdaCapture &capture : expr.captures()) {
     if (!capturedNames.insert(capture.name.lexeme).second) {
@@ -8532,11 +8556,13 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     }
 
     Symbol sourceBinding = *source;
-    const LambdaCaptureMode mode = capture.explicitInitializer()
-                                       ? LambdaCaptureMode::Move
-                                       : LambdaCaptureMode::Copy;
+    const LambdaCaptureMode mode =
+        capture.borrow ? (capture.mutKeyword ? LambdaCaptureMode::BorrowMut
+                                             : LambdaCaptureMode::BorrowRead)
+        : capture.explicitInitializer() ? LambdaCaptureMode::Move
+                                        : LambdaCaptureMode::Copy;
     const SemanticTypeTraits traits = typeTraits(source->type);
-    if (containsOwningPayloadEnum(source->type)) {
+    if (!isBorrowingCapture(mode) && containsOwningPayloadEnum(source->type)) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, capture.name,
           "Lambda capture '" + capture.name.lexeme + "' cannot " +
@@ -8554,7 +8580,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         source->type.kind == SemanticType::Reference) {
       report(capture.name,
              "Lambda capture '" + capture.name.lexeme +
-                 "' is a reference; reference captures are not supported.",
+                 "' names a reference; use an explicit '&' or 'mut &' capture.",
              "GTI-S2027");
     }
     if (mode == LambdaCaptureMode::Copy && !traits.copyable) {
@@ -8565,22 +8591,32 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                  ")]' to transfer ownership explicitly.",
              "GTI-S2027");
     }
-    if (mode == LambdaCaptureMode::Move && traits.containsBorrowedState) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2027", DiagnosticPhase::Semantics, capture.name,
-          "Owned lambda move capture cannot contain tracked borrowed "
-          "state.");
-      diagnostic.related.push_back({tokenSpan(sourceBinding.declaration),
-                                    "Borrowed-state source declared here."});
-      diagnostic.hints.emplace_back(
-          "Capture the owning value or keep this callable confined to a "
-          "scope whose lifetime is already proven.");
-      diagnostics.push_back(std::move(diagnostic));
-      continue;
-    }
-
     const std::size_t diagnosticsBeforeInitializer = diagnostics.size();
     const SemanticType initializerType = analyze(capture.initializer);
+    if (!isBorrowingCapture(mode)) {
+      const auto sourcePlace = retainedLoanPlace(capture.initializer);
+      for (const auto &previous : captureDependencies)
+        if ((mode == LambdaCaptureMode::Move ||
+             previous.access == AccessMode::Mutable) &&
+            loanPlacesOverlap(previous.place, sourcePlace))
+          report(capture.name,
+                 "A capture initializer conflicts with an earlier borrowing "
+                 "capture of the same storage.",
+                 "GTI-S2017");
+    }
+    const SemanticType captureType =
+        isBorrowingCapture(mode)
+            ? SemanticType::referenceTo(initializerType,
+                                        mode == LambdaCaptureMode::BorrowMut
+                                            ? AccessMode::Mutable
+                                            : AccessMode::ReadOnly)
+        : initializerType == SemanticType::Unknown ? sourceBinding.type
+                                                   : initializerType;
+    if (isBorrowingCapture(mode))
+      validateReferenceBinding(captureType, initializerType,
+                               capture.initializer);
+    if (mode == LambdaCaptureMode::BorrowMut)
+      recordMutableBindingUse(capture.initializer);
     if (mode == LambdaCaptureMode::Move &&
         diagnostics.size() == diagnosticsBeforeInitializer &&
         (moveCall == nullptr ||
@@ -8592,25 +8628,57 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     }
 
     const SymbolId sourceSymbol = toolingSymbolFor(sourceBinding);
-    const SymbolId bindingSymbol =
-        recordBindingOccurrence(capture.name, sourceBinding.type, false,
-                                SemanticBindingKind::LambdaCapture);
+    const SymbolId bindingSymbol = recordBindingOccurrence(
+        capture.name, captureType, mode == LambdaCaptureMode::BorrowMut,
+        SemanticBindingKind::LambdaCapture);
     semanticModel.recordLambdaCaptureMode(bindingSymbol, mode);
+    if (isBorrowingCapture(mode)) {
+      const auto sourceLoan = retainedLoanSource(capture.initializer);
+      SemanticLoanDependency dependency{
+          .place = retainedLoanPlace(capture.initializer),
+          .designatedFields = {bindingSymbol},
+          .access = captureType.referenceAccess,
+          .protectsStorage = true,
+          .parent = sourceLoan ? sourceLoan->loan : SemanticLoanId{0}};
+      for (const auto &previous : captureDependencies)
+        if ((previous.access == AccessMode::Mutable ||
+             dependency.access == AccessMode::Mutable) &&
+            loanPlacesOverlap(previous.place, dependency.place))
+          report(capture.name,
+                 "Borrowing captures overlap while at least one requires "
+                 "exclusive mutable access.",
+                 "GTI-S2017");
+      reportLoanPlaceConflict(
+          capture.name, dependency.place, dependency.access,
+          "A borrowing capture overlaps a borrow that may still be live.",
+          dependency.parent);
+      captureDependencies.push_back(std::move(dependency));
+    } else if (typeTraits(captureType).containsBorrowedState) {
+      auto dependencies = storedBorrowDependencies(capture.initializer);
+      if (storedReferencePaths(captureType).empty() || dependencies.empty())
+        report(capture.name,
+               "Captured borrowed state requires complete checked dependency "
+               "paths for its environment.",
+               "GTI-S2017");
+      for (auto &dependency : dependencies) {
+        dependency.designatedFields.insert(dependency.designatedFields.begin(),
+                                           bindingSymbol);
+        captureDependencies.push_back(std::move(dependency));
+      }
+    }
     captures.push_back({.capture = capture.name,
                         .declaration = sourceBinding.declaration,
                         .initializer = capture.initializer.get(),
-                        .type = initializerType == SemanticType::Unknown
-                                    ? sourceBinding.type
-                                    : initializerType,
-                        .traits = traits,
+                        .type = captureType,
+                        .traits = typeTraits(captureType),
                         .mode = mode,
                         .sourceSymbol = sourceSymbol,
                         .bindingSymbol = bindingSymbol});
     captureScope.emplace(
         capture.name.lexeme,
-        Symbol{.type = sourceBinding.type,
+        Symbol{.type = captureType,
                .sourceUnit = sourceBinding.sourceUnit,
-               .assignable = false,
+               .assignable = mode == LambdaCaptureMode::BorrowMut,
                .declaration = capture.name,
                .lambdaCapture = true,
                .bindingKind = SemanticBindingKind::LambdaCapture,
@@ -8657,7 +8725,12 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   scopes.clear();
   scopes.push_back(std::move(captureScope));
   currentReturnType = returnType;
-  currentReceiverMutability = ReceiverMutability::ReadOnly;
+  const bool mutableCaptures =
+      std::any_of(captures.begin(), captures.end(), [](const auto &capture) {
+        return capture.mode == LambdaCaptureMode::BorrowMut;
+      });
+  currentReceiverMutability = mutableCaptures ? ReceiverMutability::Mutable
+                                              : ReceiverMutability::ReadOnly;
   loanFlow = {};
   valueControlFlow.clear();
   analyzingCallCallee = false;
@@ -8679,11 +8752,38 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       requestSession.rawAccessObservation;
   requestSession.rawAccessObservation = 0;
 
+  for (const auto &capture : captures) {
+    auto *carrier = resolveMutable(capture.capture);
+    if (carrier == nullptr)
+      continue;
+    if (!isBorrowingCapture(capture.mode)) {
+      if (isDirectStoredReferenceType(capture.type))
+        recordStoredEntryDependency(*carrier, capture.bindingSymbol,
+                                    capture.type, false);
+      continue;
+    }
+    const auto dependency =
+        isDirectStoredReferenceType(capture.type.arguments.front())
+            ? recordStoredEntryDependency(*carrier, capture.bindingSymbol,
+                                          capture.type.arguments.front(), false)
+            : SemanticLoanId{0};
+    const auto id = createRetainedLoan(
+        *carrier, capture.bindingSymbol, SemanticLoanKind::Reference, nullptr,
+        {.root = capture.bindingSymbol}, capture.bindingSymbol, false,
+        capture.type.referenceAccess, true, 0, true);
+    if (dependency != 0) {
+      auto loan = *semanticModel.findLoan(id);
+      loan.storedDependency = dependency;
+      semanticModel.recordLoan(std::move(loan));
+    }
+  }
+
   for (const Parameter &parameter : expr.parameters()) {
     if (!parameter.name.lexeme.empty()) {
-      recordProgramCleanupEffects(typeOf(parameter), tokenSpan(parameter.name));
-      declare(parameter.name, typeOf(parameter),
-              parameter.mutability == Mutability::Mutable,
+      const auto index = std::size_t(&parameter - expr.parameters().data());
+      const auto &type = parameterTypes[index];
+      recordProgramCleanupEffects(type, tokenSpan(parameter.name));
+      declare(parameter.name, type, parameter.mutability == Mutability::Mutable,
               SemanticBindingKind::Parameter, nullptr, &parameter);
       recordParameterEntryLoan(parameter);
     }
@@ -8756,9 +8856,14 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
               : concrete->second);
     }
   }
+  std::vector<SemanticType> expandedParameterTypes;
+  for (const auto &parameterType : parameterTypes)
+    SemanticType::appendExpandedArgument(expandedParameterTypes, parameterType);
+  parameterTypes = std::move(expandedParameterTypes);
   currentType = SemanticType::lambdaType(
       id, returnType, parameterTypes, captureTypes, classTypeArguments,
       functionTypeArguments, classValueArguments, functionValueArguments);
+  semanticModel.recordBorrowDependencies(expr, std::move(captureDependencies));
   semanticModel.record(
       expr,
       LambdaInfo{.id = id,
@@ -8767,6 +8872,9 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                  .parameterTypes = std::move(parameterTypes),
                  .captures = std::move(captures),
                  .traits = lambdaTraitsForCaptures(captureTypes),
+                 .capability = mutableCaptures
+                                   ? CallableInvocationCapability::Mutable
+                                   : CallableInvocationCapability::Read,
                  .rawAccessFreeType =
                      rawAccessFree && !containsOpenTypeParameter(currentType)
                          ? currentType
@@ -13297,7 +13405,12 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
     validateReferenceBinding(inferredType, initializerType,
                              declaration.initializer());
   }
-  if (inferredType.kind == SemanticType::Lambda && declaration.isMutable()) {
+  const auto *inferredLambda =
+      inferredType.kind == SemanticType::Lambda
+          ? semanticModel.findLambda(inferredType.lambdaId)
+          : nullptr;
+  if (inferredLambda != nullptr && declaration.isMutable() &&
+      inferredLambda->capability != CallableInvocationCapability::Mutable) {
     report(declaration.name(),
            "Lambda bindings are immutable; captured snapshots cannot be "
            "made mutable with 'mut auto'.",
@@ -13400,10 +13513,9 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
                              : std::vector<ProjectedRawPointerOrigins>{};
   if (!predeclaredVariables.contains(&declaration)) {
     if (local) {
-      declare(
-          declaration.name(), inferredType,
-          declaration.isMutable() && inferredType.kind != SemanticType::Lambda,
-          SemanticBindingKind::LocalVariable, &declaration, nullptr, constant);
+      declare(declaration.name(), inferredType, declaration.isMutable(),
+              SemanticBindingKind::LocalVariable, &declaration, nullptr,
+              constant);
     } else {
       declareNamespaceSymbol(currentNamespace, declaration.name(), inferredType,
                              declaration.isMutable(), false, 0, &declaration,

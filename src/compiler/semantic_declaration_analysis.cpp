@@ -2583,6 +2583,9 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       const bool trustedPolymorphicCapabilityScope =
           isPolymorphicLibraryUnit(currentSourceUnit) &&
           scope == std::vector<std::string>{"gti_internal"};
+      const bool trustedFunctionalCapabilityScope =
+          isFunctionalLibraryUnit(currentSourceUnit) &&
+          scope == std::vector<std::string>{"gti_internal"};
       const auto &generics = classDecl->genericParameters();
       if (trustedMemoryCapabilityScope &&
           classDecl->genericParameters().size() == 1 &&
@@ -2595,6 +2598,13 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         } else if (classDecl->name().lexeme == "uninitialized_storage") {
           compilerCapability = CompilerCapabilityTypeKind::UninitializedStorage;
         }
+      } else if (trustedMemoryCapabilityScope && generics.empty() &&
+                 classDecl->name().lexeme == "erased_object") {
+        compilerCapability = CompilerCapabilityTypeKind::ErasedObject;
+      } else if (trustedFunctionalCapabilityScope && generics.size() == 1 &&
+                 !generics.front().valueType && !generics.front().pack &&
+                 classDecl->name().lexeme == "function_pointer") {
+        compilerCapability = CompilerCapabilityTypeKind::FunctionPointer;
       } else if (trustedOptionalCapabilityScope &&
                  classDecl->genericParameters().size() == 1 &&
                  !classDecl->genericParameters().front().valueType &&
@@ -4276,6 +4286,13 @@ auto SemanticVisitor::Impl::resolveClassInheritance() -> void {
       }
 
       const ClassInfo &base = classInfo(baseType.classId);
+      if (base.compilerCapability == CompilerCapabilityTypeKind::ErasedObject) {
+        report(location,
+               "An opaque erased referent has no object layout and cannot "
+               "be used as a base type.",
+               "GTI-S2040");
+        continue;
+      }
       if (base.kind == ClassKind::Union) {
         report(location, "A union cannot be used as a base type.", "GTI-S2066");
         continue;
@@ -5357,6 +5374,10 @@ auto SemanticVisitor::Impl::classCanGenerateDefaultConstructor(
   // state. Newly supplied omitted-nominal defaults cannot manufacture another
   // construction entry point beside an owner's declared argument-taking API.
   return owner != nullptr && defaultConstructorCandidateCount(*owner) == 0 &&
+         owner->compilerCapability !=
+             CompilerCapabilityTypeKind::ErasedObject &&
+         owner->compilerCapability !=
+             CompilerCapabilityTypeKind::FunctionPointer &&
          (owner->constructors.empty() || declaredDefaults) &&
          classCanUseStructuralDefaultConstruction(type);
 }
@@ -6599,7 +6620,7 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                      AccessMode::Mutable ||
                  right.destination.reference.referenceAccess ==
                      AccessMode::Mutable)) {
-              report(right.destination.fields.front()->name(),
+              report(right.destination.fields.front().name(),
                      "Stored reference fields cannot duplicate an exclusive "
                      "dependency from the same constructor parameter.",
                      "GTI-S2045");
@@ -6653,7 +6674,7 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       const auto path = storedReferencePath(ownerType);
       if (path) {
         if (owner.constructors.empty()) {
-          report(path->fields.front()->name(),
+          report(path->fields.front().name(),
                  "A nested stored-reference field requires a declared "
                  "constructor that binds it from one exact carrier parameter.",
                  "GTI-S2045");
@@ -6687,6 +6708,16 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
 
     for (ConstructorInfo &constructor : owner.constructors) {
       if (constructor.declaration == nullptr) {
+        continue;
+      }
+      const auto bindings = storedCarrierConstructorBindings(
+          SemanticType::classType(owner.id), constructor.declaration,
+          constructor.parameterTypes);
+      if (bindings.size() == 1) {
+        constructor.borrowParameter = bindings.front().parameter;
+        constructor.borrowAccess = isDefaultLibraryMutexGuardCarrier(owner)
+                                       ? AccessMode::Mutable
+                                       : stored.access;
         continue;
       }
       const ConstructorInitializer *binding = nullptr;
@@ -7316,6 +7347,10 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
         case IntrinsicKind::OptionalStorageReadMut:
         case IntrinsicKind::PolymorphicStorageRead:
         case IntrinsicKind::PolymorphicStorageReadMut:
+        case IntrinsicKind::EraseReference:
+        case IntrinsicKind::EraseReferenceMut:
+        case IntrinsicKind::RestoreReference:
+        case IntrinsicKind::RestoreReferenceMut:
           return self(self, call->arguments().front(), context, contextOwner);
         default:
           break;

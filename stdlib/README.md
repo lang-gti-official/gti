@@ -558,6 +558,19 @@ comparator, indirect iterator predicate/operation, and `once_action` concepts.
 `std::invoke_once` is the first consuming utility; no concept or wrapper name
 is recognized by the backend.
 
+For scoped callbacks that borrow application state, use `[&value]` for read-only
+capture or `[mut &value]` for exclusive capture. Exact generic callbacks retain
+their concrete environment type. For one API accepting different callback
+types, construct `std::function_ref<R(Args...)>` or
+`std::function_ref<R(Args...) mut>` from a named callable. These non-owning views
+allocate nothing; the compiler retains the callable's and its captures'
+lifetimes. They have no empty state and do not infer cross-thread capability.
+`std::function_ptr<R(Args...)>` holds a non-null GTI invocation address for an
+exact stateless target, not a native C callback pointer. General checked
+`erase_ref`/`erase_mut` and unsafe exact-type `restore_ref<T>`/`restore_mut<T>`
+underpin the ordinary source wrappers. See
+[the borrowing-callback example](../examples/156-borrowing-callbacks.gti).
+
 | Include | Scaffolded surface |
 | --- | --- |
 | `<std/algorithm>` | Search, bounds, extrema, sortedness, sequence/prefix comparison, contains/count and predicate algorithms; whole-range fill/replace; confined output copy/filter/replace/remove-copy families; vector transform/reverse/sort. See [range contracts](../docs/language/ranges.md#searching-and-rewriting-containers) for exact forms and remaining boundaries. |

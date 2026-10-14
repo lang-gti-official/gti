@@ -1,0 +1,69 @@
+==================
+Explicit borrowing captures
+==================
+
+int main() {
+  int source = 1;
+  mut int destination = 0;
+  mut auto callback = [&source, mut &destination]() -> void {
+    destination = source;
+  };
+  callback();
+  return destination;
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (variable_declaration
+        (type)
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (lambda_expression
+              (lambda_capture_list
+                (lambda_capture
+                  (identifier))
+                (lambda_capture
+                  (identifier)))
+              (parameter_clause)
+              (type)
+              (block
+                (expression_statement
+                  (assignment_expression
+                    (primary_expression
+                      (identifier))
+                    (initializer_expression
+                      (primary_expression
+                        (identifier))))))))))
+      (expression_statement
+        (call_expression
+          (primary_expression
+            (identifier))
+          (argument_list)))
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier)))))))

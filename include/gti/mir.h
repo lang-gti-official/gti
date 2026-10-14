@@ -331,6 +331,7 @@ enum class MirLoanKind {
 
 struct MirLoanDependency {
   MirPlaceId source = 0;
+  MirLoanId parent = 0;
   std::vector<SymbolId> designatedFields;
   AccessMode access = AccessMode::ReadOnly;
 
@@ -715,6 +716,8 @@ struct MirInstruction {
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   MirOperation operation = MirOperation::None;
   std::optional<Literal> literal;
   MirLiteralProvenance literalProvenance;
@@ -748,6 +751,8 @@ struct MirInstruction {
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<HirFunctionInstanceId> functionPointerFunctionTarget;
+  std::optional<HirLambdaId> functionPointerLambdaTarget;
   std::optional<SemanticType> nativeCalleeType;
   std::optional<MirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<MirThreadTaskAdapterId> threadTaskAdapter;
@@ -1377,6 +1382,8 @@ struct MirFunctionInstance {
   std::vector<std::size_t> returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  bool restoresReferenceResult = false;
+  std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
@@ -1506,6 +1513,7 @@ struct MirLambdaInstance {
   std::vector<HirBindingId> parameterBindings;
   std::vector<SemanticType> captureTypes;
   std::vector<LambdaCaptureMode> captureModes;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::vector<SymbolId> captureSymbols;
   std::vector<bool> captureRequiresActiveCleanup;
   MirEffectSummary effectSummary;
@@ -1898,6 +1906,19 @@ public:
 
   [[nodiscard]] const MirLambdaInstance *findLambda(HirLambdaId id) const {
     return id == 0 || id > lambdas.size() ? nullptr : &lambdas[id - 1];
+  }
+
+  // A closure type names its semantic lambda, whose numbering is separate
+  // from the instance ids above; the two coincide only when every semantic
+  // lambda is instantiated. Resolve the exact instance by its closure type.
+  [[nodiscard]] const MirLambdaInstance *
+  findLambdaForType(const SemanticType &type) const {
+    if (type.kind != SemanticType::Lambda)
+      return nullptr;
+    for (const MirLambdaInstance &instance : lambdas)
+      if (instance.type == type)
+        return &instance;
+    return nullptr;
   }
 
   [[nodiscard]] std::size_t blockCount() const;
