@@ -98,6 +98,11 @@ int main() {
       "class Box {\n  constexpr Box<T>(T x)\n    requires std::copyable<T> :\n"
       "      value(x) {};\n};\n",
       options);
+  check("class Box{implicit Box(int x):a(x){}implicit constexpr Box(bool y):"
+        "a(1){}};",
+        "class Box {\n  implicit Box(int x) :\n      a(x) {}\n"
+        "  implicit constexpr Box(bool y) :\n      a(1) {}\n};\n",
+        options);
   check("class Box:ns::Base<int>{Box():ns::Base<int>(1),field(2){};};",
         "class Box : ns::Base<int> {\n  Box() :\n    "
         "  ns::Base<int>(1),\n      field(2) {};\n};\n",

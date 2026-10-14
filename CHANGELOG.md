@@ -9,6 +9,58 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.427.0 — Protected members
+
+- Class members can use `protected:` sections for base implementation state,
+  methods, constructors and nested types. Derived instance access requires a
+  receiver of that derived type or a descendant; arbitrary base and sibling
+  objects remain inaccessible. Inheritance remains public.
+- Compiler diagnostics and completion, formatting, and editor syntax recognize
+  the access rule. [Example 150](examples/150-protected-events.gti) demonstrates
+  event handlers and a generic storage base.
+
+## 0.426.0 — Implicit constructors
+
+- `std::string text = "Sampling...";` now compiles. A constructor can be
+  declared `implicit`: `implicit Celsius(int value)`. A declaration whose
+  initializer has a different type then constructs the class through it, with
+  the constructor `T name{initializer}` would select, so construction,
+  ownership, failure and cleanup are the same. `Celsius warm = 21;` works once
+  that constructor is implicit. Field defaults and constructor initializers
+  construct the same way.
+- Constructors without `implicit` are still called only explicitly, so a type
+  decides which conversions read naturally. `std::string(std::string_view)` and
+  `std::filesystem::path(std::string_view)` are implicit; container
+  element-count constructors are not. Calls, returns and assignment still
+  require exact types.
+- `std::string` can be assigned from a `std::string_view`, including a
+  literal: `text = "Done";` replaces the contents and keeps the capacity.
+- When no implicit constructor takes the initializer's type, the declaration
+  reports the same exact-type error as before, with a hint showing the
+  explicit form. `implicit` must mark an ordinary constructor callable with
+  one argument (`GTI-S2121`) and cannot be combined with `unsafe`. It remains
+  an ordinary identifier outside constructor declarations.
+
+## 0.425.2 — Faster compiles for reflection-heavy and optimized programs
+
+- Staged constant evaluation (`std::meta` predicates, `if constexpr`
+  conditions, constexpr calls evaluated through verified MIR) no longer builds
+  a fresh analyzer, with a copy of the whole semantic model, for every
+  evaluation; one is kept while nothing it copied can have changed. A
+  reflection-driven JSON program (`examples/141-reflected-json.gti`) compiles
+  in about 2.9 s instead of 5.7 s at `-O0`.
+- The optimizer's dead-computation removal no longer copies and re-verifies the
+  whole MIR program for every removed instruction, and the lowered-program
+  builder no longer repeats the optimization pipeline's own input verification
+  and coherence replay. `examples/093-http-json-client.gti` compiles in about
+  3.8 s instead of 5.1 s at `-O3`. Over the whole example corpus, total
+  compile time falls to about 72% at `-O0` and 71% at `-O3`. Generated C++
+  and every verification result are unchanged.
+- `gti --time-trace` now covers the optimizer passes, the lowered-program
+  builder, the backend plan, instance analyses, staged constant evaluation and
+  the coherence replays (see "Compile-time telemetry" in the driver
+  documentation).
+
 ## 0.425.1 — Accurate check progress labels
 
 - `gti check` now says `Checking` in its initial banner and elapsed-time updates

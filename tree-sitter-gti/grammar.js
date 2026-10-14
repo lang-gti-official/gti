@@ -576,6 +576,7 @@ module.exports = grammar({
 
     constructor_declaration: ($) =>
       seq(
+        optional(field("implicit", "implicit")),
         optional(field("unsafe", "unsafe")),
         optional("constexpr"),
         field("name", $.identifier),

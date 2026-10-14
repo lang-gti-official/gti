@@ -1,4 +1,5 @@
 #include "cpp_program_emission_plan.h"
+#include "gti/support.h"
 
 #include "cpp_failure_support_writer.h"
 #include "cpp_mir_body_emitter.h"
@@ -40,8 +41,10 @@ public:
                                      CppStandard standard, bool debugInfo)
       : standard(standard), mir(verified.program().mir()),
         loweredProgram(verified.program()), debugInfo(debugInfo) {
-    CppMirRepresentationSnapshotBuild snapshot =
-        buildCppMirRepresentationSnapshot(verified, standard, debugInfo);
+    CppMirRepresentationSnapshotBuild snapshot = [&] {
+      const PhaseTimeScope timeScope("backend-representation-snapshot");
+      return buildCppMirRepresentationSnapshot(verified, standard, debugInfo);
+    }();
     if (!snapshot.valid()) {
       const auto internal =
           std::find_if(snapshot.issues.begin(), snapshot.issues.end(),
@@ -60,13 +63,17 @@ public:
           "C++ emitter requires a coherent representation snapshot: " + detail);
     }
     generalEmissionPlan = std::move(*snapshot.emissionPlan);
-    programPlan = planCppMirProgram(mir, std::move(*snapshot.snapshot));
+    {
+      const PhaseTimeScope timeScope("backend-program-plan");
+      programPlan = planCppMirProgram(mir, std::move(*snapshot.snapshot));
+    }
     if (selectCppMirBackendProgramRoute(programPlan) !=
             CppMirBackendProgramRoute::VerifiedMir ||
         !programPlan.complete()) {
       throw std::logic_error(
           "C++ emitter requires a complete generated-item program plan");
     }
+    const PhaseTimeScope timeScope("backend-emission-map");
     generalEmissionMap.emplace(
         buildCppMirBodyEmissionMapRows(loweredProgram, standard));
   }
@@ -122,6 +129,7 @@ public:
     };
     CppProgramEmissionPlan plan;
     capture(plan, CppProgramTextRole::SupportPreamble, [&] {
+      const PhaseTimeScope timeScope("backend-plan-support");
       writeCppSupportPreamble(output, supportFeatures);
       // Native declarations must implement the selected GTI target, not just
       // have equal-width arguments. Refuse a mismatched compiler data model.
@@ -155,9 +163,14 @@ public:
             [&] { writeCppMirFailureHelpers(output); });
     capture(plan, CppProgramTextRole::NativeAndThreadAdapter,
             [&] { writeCppCAbiTextViewAdapter(output, supportFeatures); });
-    capture(plan, CppProgramTextRole::DeclarationTypeMemberLifecycle,
-            [&] { emitLoweredUserMacroIsolation(); });
-    buildLoweredProgramTail(plan);
+    capture(plan, CppProgramTextRole::DeclarationTypeMemberLifecycle, [&] {
+      const PhaseTimeScope timeScope("backend-plan-declarations");
+      emitLoweredUserMacroIsolation();
+    });
+    {
+      const PhaseTimeScope timeScope("backend-plan-program");
+      buildLoweredProgramTail(plan);
+    }
     return plan;
   }
 
@@ -9478,8 +9491,17 @@ buildCppProgramEmissionPlan(const LoweredProgram &program, CppStandard standard,
 CppProgramEmissionPlan
 buildCppProgramEmissionPlan(const VerifiedLoweredProgram &program,
                             CppStandard standard, bool debugInfo) {
-  const CppRepresentationScope representation(program);
-  return CppProgramEmissionPlanner(program, standard, debugInfo).build();
+  const std::optional<CppRepresentationScope> representation = [&] {
+    const PhaseTimeScope timeScope("backend-representation");
+    return std::optional<CppRepresentationScope>(std::in_place, program);
+  }();
+  std::optional<CppProgramEmissionPlanner> planner;
+  {
+    const PhaseTimeScope timeScope("backend-planner-init");
+    planner.emplace(program, standard, debugInfo);
+  }
+  const PhaseTimeScope timeScope("backend-plan-build");
+  return planner->build();
 }
 
 } // namespace lang

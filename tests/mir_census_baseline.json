@@ -150,7 +150,8 @@
     "151-c-string-import.gti": 120,
     "152-unsafe-expressions.gti": 117,
     "153-constexpr-allocation.gti": 45,
+    "154-declaration-construction.gti": 127,
     "150-protected-events.gti": 32
   },
-  "total": 16465
+  "total": 16592
 }

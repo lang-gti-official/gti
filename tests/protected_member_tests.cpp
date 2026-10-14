@@ -109,6 +109,14 @@ struct Nested { static int read(Derived& value) { return value.value; } };
 struct Derived : public Base { Derived() : Base(1) {} Base make() { return Base(2); } };)");
   reject(
       R"(class Base { protected: Base() {} }; int main() { Base value{}; return 0; })");
+  accept(R"(class Converted { protected: implicit Converted(int value) {}
+public: static int make() { Converted value = 1; return 0; } };
+int main() { return Converted::make(); })");
+  reject(R"(class Converted { protected: implicit Converted(int value) {} };
+int main() { Converted value = 1; return 0; })");
+  reject(R"(class Converted { protected: implicit Converted(int value) {} };
+struct Derived : public Converted { Derived() : Converted(1) {}
+int read() { Converted value = 1; return 0; } };)");
   reject(R"(struct Base {}; struct Derived : protected Base {};)", "GTI-S2040");
   reject(R"(class Bad { protected: ~Bad() {} };)", "GTI-S2021");
   reject(R"(union Bad { protected: int value; };)", "GTI-S2066");
